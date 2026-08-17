@@ -504,7 +504,16 @@ impl SessionMemory {
         })
         .await
     }
-    /// Recall with an injectable diagnostic sink to avoid global stderr capture in tests.
+    /// Recall with an injectable diagnostic sink to avoid global stderr
+    /// capture in tests, keeping only the [`Recall`].
+    ///
+    /// Test-gated since #3358 moved the production callers to
+    /// [`Self::recalled_frames_anchored`], which returns the host's drop
+    /// report alongside the recall: a production caller of this form is a
+    /// caller discarding the drops again, which is the defect that issue
+    /// closed. The gate is what says so — without it the method is merely
+    /// unused, which is a lint, not a contract.
+    #[cfg(test)]
     pub(super) async fn recalled_frames_reporting(
         &self,
         goal: &str,
@@ -516,8 +525,8 @@ impl SessionMemory {
             .recall
     }
 
-    /// [`Self::recalled_frames_reporting`] with the anchor set chosen by the
-    /// caller — the seam the proactive re-query (#3243 Phase 3) queries
+    /// Recall with an injectable diagnostic sink AND the anchor set chosen by
+    /// the caller — the seam the proactive re-query (#3243 Phase 3) queries
     /// through, because a drifted turn's best anchors are the paths it has
     /// TOUCHED, which the goal string cannot name.
     pub(super) async fn recalled_frames_anchored(
