@@ -226,6 +226,18 @@ fn install(
              Delete that line to let it start."
         );
     }
+    // Installing into an untrusted workspace is legitimate — the copy is the
+    // operator's own act — but the loader will refuse to read the tier back
+    // (`roster::read_project_tier`), so the plugin sits on disk doing nothing.
+    // Said here rather than left for the user to discover: the whole point of
+    // gating the tier is defeated if "installed and inert" looks identical to
+    // "installed and running".
+    if scope == PluginScope::Project && !crate::settings::project_code_execution_trusted() {
+        println!(
+            "  ! this workspace is not trusted to run code, so `{name}` will not load. \
+             Set STELLA_TRUST_PROJECT=1 to let this repo's plugins run."
+        );
+    }
     Ok(())
 }
 

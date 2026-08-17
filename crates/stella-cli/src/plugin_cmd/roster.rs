@@ -33,6 +33,13 @@
 //! every event, rather than trusting anything the plugin's own process says
 //! at runtime. A process that registers for `Stop` without declaring it is
 //! simply never called, because no route to it was ever built.
+//!
+//! # The project tier is trust-gated, the user tier is not
+//!
+//! The two tiers are not equally trusted, because they did not arrive the same
+//! way: `~/.stella/plugins` holds what the operator installed, and
+//! `<workspace>/.stella/plugins` holds whatever a `git clone` carried in. See
+//! [`read_project_tier`].
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -43,6 +50,14 @@ use stella_plugin::{HookEvent, PluginManifest};
 use crate::settings::{Settings, Toggle};
 
 /// The manifest file inside a plugin directory.
+///
+/// **`plugin.toml`, exactly, and it is now specified rather than merely
+/// implemented** (`doc:pipeline-as-plugins` §A4, #3501 item 4). The name went
+/// unwritten while this loader and every published example plugin happened to
+/// agree on it, which is not agreement — it is a coincidence that would have
+/// been discovered by a third party's plugin silently not loading. A loader
+/// contradicting every published example is a shipped bug, so the spec names
+/// the file and `the_manifest_filename_is_the_specified_one` pins it here.
 pub(crate) const MANIFEST_FILE: &str = "plugin.toml";
 
 /// Every hook event, in the fixed order routes are emitted in. Exhaustive by
@@ -172,9 +187,28 @@ impl PluginRoster {
     /// must not be able to stop Stella from starting — but it must also never
     /// be silently ignored, because "I installed it and nothing happened" is
     /// unanswerable without the reason.
+    ///
+    /// The project tier is gated: see [`read_project_tier`] for why a cloned
+    /// repository's plugins do not load, and why the user tier is not gated
+    /// with them.
     pub(crate) fn load(workspace_root: &Path, settings: &Settings) -> (Self, Vec<String>) {
+        // The trusted launcher's filesystem-isolation boundary closes every
+        // filesystem-configured extension, *both* tiers — the same answer
+        // `agent::load_mcp_plan`, `rules::load_workspace_rules` and
+        // `CustomExtensions::load_with_authority` give. A plugin declares a
+        // process the host spawns, so it cannot be the one extension that
+        // stays on inside a boundary drawn to exclude executable ones.
+        if crate::settings::filesystem_settings_disabled() {
+            return (Self::default(), Vec::new());
+        }
         let mut notices = Vec::new();
-        let user = match crate::paths::stella_root() {
+        // `user_extension_root`, not `stella_root`: a plugin is a user-scope
+        // extension in exactly the sense rules, skills and custom tools are,
+        // so it honours the same visibility bit — which is what keeps a unit
+        // test from reading the developer's own `~/.stella/plugins` and
+        // answering for reasons that have nothing to do with the code under
+        // test. Identical to `stella_root` in production.
+        let user = match crate::paths::user_extension_root() {
             Some(root) => read_tier(
                 &stella_home::resolve_user_plugins_dir(Some(root)).unwrap_or_default(),
                 PluginScope::User,
@@ -182,11 +216,7 @@ impl PluginRoster {
             ),
             None => Vec::new(),
         };
-        let project = read_tier(
-            &stella_home::resolve_project_plugins_dir(workspace_root),
-            PluginScope::Project,
-            &mut notices,
-        );
+        let project = read_project_tier(workspace_root, &mut notices);
         (Self::compose(user, project, &settings.plugins), notices)
     }
 
@@ -236,6 +266,46 @@ impl PluginRoster {
         }
         routes
     }
+}
+
+/// Read the project tier — or refuse to, because this workspace has not been
+/// trusted to run code.
+///
+/// # Why a cloned repository's plugins do not load
+///
+/// `<workspace>/.stella/plugins` is content a `git clone` brought with it, and
+/// a plugin is strictly *more* powerful than the two project-scope surfaces
+/// already held behind `STELLA_TRUST_PROJECT` — `settings::merge`'s hooks and
+/// credential routing, and `agent::load_mcp_plan`'s `.stella/mcp.toml`. It
+/// declares a `[runtime]` argv the host spawns and a grant that can arbitrate
+/// the loop, so `git clone && stella` would otherwise be arbitrary code
+/// execution with no consent transaction anywhere on the path (#3509). Same
+/// risk, same gate, same flag.
+///
+/// The refusal is **spoken once**, in the shape `agent::load_mcp_plan`
+/// speaks it: a plugin that vanishes with no message is indistinguishable from
+/// one that is broken, and "I cloned this repo and its plugin does nothing" is
+/// unanswerable without the reason. It is spoken only when the directory
+/// actually exists, so the overwhelming majority of repositories — which ship
+/// no plugins — stay silent.
+///
+/// The **user** tier is deliberately not gated here. `~/.stella/plugins` is the
+/// operator's own machine-scope directory, the same trust level as their own
+/// hooks, and nothing arrives in it except through `stella plugin install`'s
+/// consent transaction.
+fn read_project_tier(workspace_root: &Path, notices: &mut Vec<String>) -> Vec<InstalledPlugin> {
+    let dir = stella_home::resolve_project_plugins_dir(workspace_root);
+    if !crate::settings::project_code_execution_trusted() {
+        if dir.is_dir() {
+            notices.push(format!(
+                "  ! {} was NOT loaded — set STELLA_TRUST_PROJECT=1 to let this repo run its \
+                 plugins (they spawn processes on your machine and can arbitrate the agent loop)",
+                dir.display()
+            ));
+        }
+        return Vec::new();
+    }
+    read_tier(&dir, PluginScope::Project, notices)
 }
 
 /// Read one tier's directory. A missing directory is an empty tier.
@@ -314,6 +384,35 @@ mod tests {
             dir: PathBuf::from("/ws/.stella/plugins").join(name),
             scope,
         }
+    }
+
+    /// The loader looks for the file the spec names and every published
+    /// example ships (`doc:pipeline-as-plugins` §A4, #3501 item 4).
+    ///
+    /// A constant is not usually worth a test. This one is: the name is a
+    /// contract with third-party authors who cannot read this file, it went
+    /// unspecified until #3501, and the failure mode of changing it is a
+    /// directory full of plugins that load as "not a plugin at all" — silence,
+    /// not an error. `load_manifest` is exercised against a real directory so
+    /// the pin covers the lookup and not merely the string.
+    #[test]
+    fn the_manifest_filename_is_the_specified_one() {
+        assert_eq!(MANIFEST_FILE, "plugin.toml");
+
+        let dir = tempfile::tempdir().expect("a temp dir");
+        assert!(
+            load_manifest(dir.path())
+                .expect("an unreadable directory is not an error")
+                .is_none(),
+            "a directory with no plugin.toml is not a plugin"
+        );
+
+        std::fs::write(dir.path().join("plugin.toml"), "name = \"named-by-spec\"")
+            .expect("write the manifest");
+        let found = load_manifest(dir.path())
+            .expect("the manifest loads")
+            .expect("a directory holding plugin.toml is a plugin");
+        assert_eq!(found.name, "named-by-spec");
     }
 
     /// [`EVENT_ORDER`] must name every variant: an event missing from it is

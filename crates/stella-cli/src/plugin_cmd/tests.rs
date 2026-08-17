@@ -13,22 +13,25 @@ use std::path::{Path, PathBuf};
 use super::roster::{PluginRoster, PluginScope};
 use super::*;
 
+/// The manifest text of the hostile package in #3509's repro: an `arbiter`
+/// that arbitrates the loop and spawns a process at two hook points.
+fn manifest_text(name: &str) -> String {
+    format!(
+        "name = \"{name}\"\n\
+         description = \"a fixture\"\n\n\
+         [loop]\nparticipation = \"arbiter\"\nhooks = [\"PreToolUse\", \"Stop\"]\n\n\
+         [requirements]\nr = \"the tests pass\"\n\n\
+         [runtime]\nargv = [\"python3\", \"${{plugin_dir}}/main.py\"]\ntimeout_secs = 30\nenv = [\"PATH\"]\n"
+    )
+}
+
 /// A manifest that declares both halves of a dispatch: the grant, and the
 /// process to dispatch into.
 fn package(dir: &Path, name: &str) -> PathBuf {
     let source = dir.join(format!("src-{name}"));
     std::fs::create_dir_all(source.join("lib")).expect("fixture dirs");
-    std::fs::write(
-        source.join(roster::MANIFEST_FILE),
-        format!(
-            "name = \"{name}\"\n\
-             description = \"a fixture\"\n\n\
-             [loop]\nparticipation = \"arbiter\"\nhooks = [\"PreToolUse\", \"Stop\"]\n\n\
-             [requirements]\nr = \"the tests pass\"\n\n\
-             [runtime]\nargv = [\"python3\", \"${{plugin_dir}}/main.py\"]\ntimeout_secs = 30\nenv = [\"PATH\"]\n"
-        ),
-    )
-    .expect("fixture manifest");
+    std::fs::write(source.join(roster::MANIFEST_FILE), manifest_text(name))
+        .expect("fixture manifest");
     std::fs::write(source.join("main.py"), "print('hi')\n").expect("fixture entrypoint");
     std::fs::write(source.join("lib").join("helper.py"), "\n").expect("fixture nested file");
     source
@@ -248,5 +251,180 @@ fn a_symlink_in_a_package_is_refused() {
     )
     .expect_err("must fail");
     assert!(error.contains("symlink"), "{error}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Plant a plugin in a tier the way a `git clone` does — files appearing on
+/// disk, with no `install` and so no consent transaction anywhere.
+fn plant(plugins_dir: &Path, name: &str) {
+    let dir = plugins_dir.join(name);
+    std::fs::create_dir_all(&dir).expect("fixture plugin dir");
+    std::fs::write(dir.join(roster::MANIFEST_FILE), manifest_text(name)).expect("fixture manifest");
+    std::fs::write(dir.join("main.py"), "print('pwned')\n").expect("fixture entrypoint");
+}
+
+/// **The clone witness (#3509).** A plugin that arrived with the repository is
+/// **not loaded, not listed, and dispatches no hook** until the operator
+/// trusts the workspace — and the same bytes load once they do.
+///
+/// The third assertion is the one that matters. `hook_routes` is what a host
+/// spawns from, so a test asserting only on the roster would pass against a
+/// build that still handed five dispatchable `argv`s to the loop. The refusal
+/// notice is asserted too: a plugin that vanishes silently is indistinguishable
+/// from one that is broken.
+#[test]
+fn an_untrusted_projects_plugins_do_not_load_are_not_listed_and_dispatch_no_hook() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("untrusted");
+    // A home of our own, so the *user* tier cannot answer for the project one.
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
+    let settings = Settings::default();
+
+    // What a freshly cloned repository sees: neither trust flag set.
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe {
+        std::env::remove_var("STELLA_TRUST_PROJECT");
+        std::env::remove_var("STELLA_PROJECT_HOOKS");
+    }
+    let (untrusted, notices) = PluginRoster::load(&root, &settings);
+    assert!(untrusted.get("vera").is_none(), "not loaded");
+    assert!(
+        untrusted.plugins().is_empty(),
+        "not listed: {:?}",
+        untrusted.plugins()
+    );
+    assert!(
+        untrusted.hook_routes().is_empty(),
+        "and above all dispatches nothing — a route is an argv the host spawns: {:?}",
+        untrusted.hook_routes()
+    );
+    assert!(
+        notices
+            .iter()
+            .any(|notice| notice.contains("STELLA_TRUST_PROJECT")),
+        "the refusal is spoken, not silent: {notices:?}"
+    );
+
+    // The opt-in is what changes the answer — nothing on disk moved.
+    // SAFETY: as above.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+    let (trusted, _) = PluginRoster::load(&root, &settings);
+    let loaded = trusted.get("vera").expect("a trusted workspace loads it");
+    assert_eq!(loaded.scope, PluginScope::Project);
+    assert_eq!(
+        trusted.hook_routes().len(),
+        2,
+        "one route per declared hook, once trusted"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The legacy hooks-only flag opens the same door, because
+/// `project_code_execution_trusted` is the *hooks* half of the trust pair —
+/// pinned so a future reader does not "tidy" plugins onto the credentials half
+/// and quietly change which flag admits them.
+#[test]
+fn the_legacy_project_hooks_flag_also_admits_a_projects_plugins() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("legacy-flag");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
+
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe {
+        std::env::remove_var("STELLA_TRUST_PROJECT");
+        std::env::set_var("STELLA_PROJECT_HOOKS", "1");
+    }
+    let (roster, _) = PluginRoster::load(&root, &Settings::default());
+    assert!(
+        roster.get("vera").is_some(),
+        "the legacy flag still opens it"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The user tier is **not** gated: `~/.stella/plugins` is the operator's own
+/// directory, reached only through `stella plugin install`'s consent
+/// transaction, so an untrusted *workspace* says nothing about it.
+///
+/// This is the half a blanket gate would break, and it is why the gate lives in
+/// `read_project_tier` rather than in `load`.
+#[test]
+fn the_user_tier_loads_and_routes_even_in_an_untrusted_workspace() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("user-tier");
+    let home = root.join("home");
+    let _paths = crate::paths::test_user_home(home.clone());
+    plant(
+        &stella_home::resolve_user_plugins_dir(Some(home.join(".stella")))
+            .expect("a home was installed, so the user tier resolves"),
+        "vera",
+    );
+
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe {
+        std::env::remove_var("STELLA_TRUST_PROJECT");
+        std::env::remove_var("STELLA_PROJECT_HOOKS");
+    }
+    let (roster, _) = PluginRoster::load(&root, &Settings::default());
+    let loaded = roster.get("vera").expect("the operator's own plugin loads");
+    assert_eq!(loaded.scope, PluginScope::User);
+    assert_eq!(
+        roster.hook_routes().len(),
+        2,
+        "and it still dispatches — the workspace's trust is not its business"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The trusted launcher's filesystem-isolation boundary closes **both** tiers,
+/// the same answer `load_mcp_plan` and the rules/skills/extensions loaders
+/// give. A plugin is the most executable extension there is, so it cannot be
+/// the one that survives a boundary drawn to exclude executable ones.
+#[test]
+fn filesystem_isolation_closes_both_tiers() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("isolated");
+    let home = root.join("home");
+    let _paths = crate::paths::test_user_home(home.clone());
+    plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
+    plant(
+        &stella_home::resolve_user_plugins_dir(Some(home.join(".stella")))
+            .expect("a home was installed, so the user tier resolves"),
+        "lint-gate",
+    );
+    // Trusted, so only the isolation boundary can be what closes the project
+    // tier — otherwise this would pass for the wrong reason.
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let (open, _) = PluginRoster::load(&root, &Settings::default());
+    assert_eq!(
+        open.plugins().len(),
+        2,
+        "both tiers load with the boundary open"
+    );
+
+    let _isolation = crate::paths::test_filesystem_isolation(true);
+    let (closed, notices) = PluginRoster::load(&root, &Settings::default());
+    assert!(closed.plugins().is_empty(), "{:?}", closed.plugins());
+    assert!(closed.hook_routes().is_empty());
+    assert!(
+        notices.is_empty(),
+        "an isolated run reports nothing: {notices:?}"
+    );
+
     let _ = std::fs::remove_dir_all(&root);
 }
