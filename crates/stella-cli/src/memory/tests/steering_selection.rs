@@ -228,9 +228,11 @@ async fn an_answered_requery_emits_one_context_recall() {
         .await
         .expect("store a recallable lesson");
 
+    // Through the seam both drivers take, so the witness covers the wiring
+    // and not just the adapter's ability to send.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let requery = crate::memory::SessionRequery::new(&memory, &[])
-        .with_events(stella_core::EventSender::new(tx));
+    let requery = crate::memory::requery_for_turn(Some(&memory), &[], tx.into())
+        .expect("a session with memory has a re-query adapter");
 
     let touched = vec!["crates/stella-model/anthropic.rs".to_string()];
     let drifted = stella_core::steering::TurnSignal {

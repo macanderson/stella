@@ -81,7 +81,11 @@ mod skill_files;
 // #3349: the SteeringPlane implementation — the frame adapter and the one
 // packing pass behind `recall_block_reported` / `pipeline_recall_block`.
 mod steering;
-pub(crate) use steering::{SessionRequery, requery_for_turn};
+/// Reachable by name only from tests: production drives the adapter through
+/// [`requery_for_turn`], which cannot forget to wire its telemetry (#3366).
+#[cfg(test)]
+pub(crate) use steering::SessionRequery;
+pub(crate) use steering::requery_for_turn;
 mod suppression;
 pub(crate) mod tuning;
 // Phase 4 (#715): context-use extraction — what a finished turn's frame

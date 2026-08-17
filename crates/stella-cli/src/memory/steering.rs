@@ -90,11 +90,11 @@ pub(super) struct GatheredSteering {
 ///   `inject_recall_block`'s any-prior-marker rule: whatever this returns
 ///   WILL be injected verbatim by the engine, so a byte-identical block must
 ///   die here.
-/// **Telemetry** — a re-query is a full recall fan-out, provider spend
-/// included, so it reports the same `ContextRecall` event the pre-turn block
-/// does (#3366). The pre-turn recall runs before the turn's channel exists and
-/// is carried forward by the caller; this one runs *inside* the step loop, so
-/// the adapter holds the sender itself and emits at the moment it spends.
+/// - **Telemetry** — a re-query is a full recall fan-out with provider spend
+///   behind it, so it reports the same `ContextRecall` event the pre-turn
+///   block does (#3366). The pre-turn recall runs before the turn's channel
+///   exists and is carried forward by the caller; this one runs *inside* the
+///   step loop, so the adapter holds the sender and emits as it spends.
 pub(crate) struct SessionRequery<'m> {
     memory: &'m super::SessionMemory,
     state: std::sync::Mutex<RequeryState>,
