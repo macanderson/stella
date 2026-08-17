@@ -78,6 +78,7 @@
 //! clamped per-point allowance, so what the plugin gets is what a human
 //! consented to at install and nothing more.
 
+mod child_turn;
 mod dispatch;
 mod error;
 mod host_call;
@@ -92,6 +93,7 @@ use stella_plugin::{
 };
 use stella_protocol::completion::CompletionMessage;
 
+pub use child_turn::{ChildTurnPlane, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CHILD_TURNS};
 pub use dispatch::{
     DEFAULT_HOST_MAX_HOLDS, DispatchReport, DrivenTurn, RoundInput, TurnDriver, TurnPrelude,
     WrapperDispatch,
@@ -99,7 +101,7 @@ pub use dispatch::{
 pub use error::WrapperError;
 pub use host_call::{
     DEFAULT_HOST_MAX_CALLS, DEFAULT_RECALL_FRAMES, HostCallChannel, HostCallGate, HostCapabilities,
-    NoHostCalls, PointChannel, RecallHost, RecallOnly, RefusedCall,
+    HostPlanes, NoHostCalls, PointChannel, RecallHost, RefusedCall,
 };
 pub use in_process::{InProcessWrapper, WrapperHandler};
 pub use subprocess::{

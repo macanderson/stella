@@ -326,6 +326,21 @@ candidate's test invocation, which #3498 solved narrowly by putting the plan in
 the request; it stays there, and the call is for the re-runs a verification
 plugin needs).
 
+**Two of the three are performed; the third is a declared gap.** `recall` and
+`child_turn` are served by `stella_runtime::wrapper::HostPlanes` — the latter
+through `ChildTurns`, over the host's own `SubAgentDispatcher`, so the budget is
+carved by `BudgetGuard::carve`, the child runs behind `ReadOnlyTools`, and every
+model call is the host's (#3564). A `child_turn` names a role intent the
+manifest declared; the host resolves it to a `ModelCallRole` seat, and **refuses
+outright any intent that resolves to the worker's seat** — a plugin may not
+spend the model whose work it is judging, which is the independence
+`Roster::independence_losses` merely *reports* for an operator's own
+configuration. Two things a caller must know rather than discover: the
+`verifier` tier binds to no seat by default (a host that wants it says so with
+`ChildTurns::with_seat`, because attributing a plugin's call to `verdict` would
+put a call on the receipt the pipeline did not make — #2584), and `run_test` is
+still `unsupported` from every host in the tree.
+
 ---
 
 ## 7. What this design deliberately does not do

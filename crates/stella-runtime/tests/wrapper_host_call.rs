@@ -29,7 +29,7 @@ use stella_plugin::{
     PluginManifest, RecallFrame, StageName, WrapperPoint,
 };
 use stella_runtime::wrapper::{
-    DEFAULT_HOST_MAX_CALLS, HostCallGate, RecallHost, RecallOnly, SubprocessWrapper, TurnWrapper,
+    DEFAULT_HOST_MAX_CALLS, HostCallGate, HostPlanes, RecallHost, SubprocessWrapper, TurnWrapper,
     WrapperError, admissible,
 };
 
@@ -87,7 +87,7 @@ fn gate(grant: LoopGrant, ceiling: u32) -> Arc<HostCallGate> {
     Arc::new(HostCallGate::declare(
         grant,
         ceiling,
-        Box::new(RecallOnly::new(Remembers)),
+        Box::new(HostPlanes::recalling(Remembers)),
     ))
 }
 

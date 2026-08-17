@@ -73,11 +73,11 @@ use stella_protocol::candidate::CandidateHandle;
 
 use crate::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
-    ChildTurnArgs, FlipObservation, HostCall, HostCallArgs, HostCallFailure, HostCallOk,
-    HostCallRefusal, HostCallRequest, HostCallResponse, ObservedEvidence, PROTOCOL_VERSION,
-    PublishedSignal, RecallArgs, RecallFrame, RecallResult, RunTestArgs, Signal, SignalKind,
-    SignalValue, StageName, TestBaseline, TestPlan, TurnOutcome, VolatileContext, WrapperPoint,
-    WrapperRequest, WrapperResponse,
+    ChildTurnArgs, ChildTurnResult, FlipObservation, HostCall, HostCallArgs, HostCallFailure,
+    HostCallOk, HostCallRefusal, HostCallRequest, HostCallResponse, ObservedEvidence,
+    PROTOCOL_VERSION, PublishedSignal, RecallArgs, RecallFrame, RecallResult, RunTestArgs, Signal,
+    SignalKind, SignalValue, StageName, TestBaseline, TestPlan, TurnOutcome, VolatileContext,
+    WrapperPoint, WrapperRequest, WrapperResponse,
 };
 
 /// The committed artifact's filename.
@@ -197,12 +197,21 @@ fn host_calls() -> Result<Value, serde_json::Error> {
 fn host_results() -> Result<Value, serde_json::Error> {
     Ok(Value::Array(vec![
         case(
-            "ok/full",
+            "recall/full",
             &HostCallResponse::ok(1, HostCallOk::Recall(recall_result_full())),
         )?,
         case(
-            "ok/minimal",
+            "recall/minimal",
             &HostCallResponse::ok(1, HostCallOk::Recall(RecallResult::default())),
+        )?,
+        // [`HostCallOk`] is untagged, so the `ok` table is the only thing that
+        // tells a plugin which result it is holding. Publishing it is therefore
+        // publishing the *discriminator*: a key renamed here does not merely
+        // change a field, it makes a `child_turn` answer decode as the `recall`
+        // variant tried before it. No optional member, so no pair.
+        case(
+            "child_turn",
+            &HostCallResponse::ok(4, HostCallOk::ChildTurn(child_turn_result())),
         )?,
         case(
             "err/full",
@@ -382,7 +391,8 @@ fn host_call_after(call: HostCall) -> Option<HostCall> {
 fn host_call_refusal_after(refusal: HostCallRefusal) -> Option<HostCallRefusal> {
     use HostCallRefusal as R;
     match refusal {
-        R::Undeclared => Some(R::Unsupported),
+        R::Undeclared => Some(R::Forbidden),
+        R::Forbidden => Some(R::Unsupported),
         R::Unsupported => Some(R::AllowanceSpent),
         R::AllowanceSpent => Some(R::Unavailable),
         R::Unavailable => Some(R::Failed),
@@ -600,6 +610,15 @@ fn run_test_call() -> HostCallRequest {
         args: HostCallArgs::RunTest(RunTestArgs {
             candidate: CandidateHandle::new("candidate-1"),
         }),
+    }
+}
+
+fn child_turn_result() -> ChildTurnResult {
+    ChildTurnResult {
+        role: "reviewer".to_string(),
+        seat: "research".to_string(),
+        report: "the diff drops the retry on a 429".to_string(),
+        completed: true,
     }
 }
 

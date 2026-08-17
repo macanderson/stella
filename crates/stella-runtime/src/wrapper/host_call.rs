@@ -60,6 +60,8 @@ use stella_plugin::{
     LoopGrant, RecallFrame, RecallResult,
 };
 
+use super::child_turn::ChildTurnPlane;
+
 /// The host's own ceiling on host calls per point, when a caller states none.
 ///
 /// Eight, and the number is the host's rather than the manifest's on purpose:
@@ -126,60 +128,137 @@ pub trait HostCapabilities: Send + Sync {
     async fn call(&self, args: HostCallArgs) -> Result<HostCallOk, HostCallFailure>;
 }
 
-/// The capabilities of a host that has a context plane and nothing else.
+/// What this host can actually do, assembled plane by plane.
 ///
-/// The shipped implementation, and an honest one: `recall` is performed, and
-/// `child_turn` and `run_test` are refused as [`HostCallRefusal::Unsupported`]
-/// with the issue that will wire them named in the detail. That is a *declared*
-/// gap — the plugin is told, the refusal is recorded — rather than a capability
-/// that appears to exist and returns nothing.
-pub struct RecallOnly<R> {
-    recall: R,
+/// **One implementation of [`HostCapabilities`] rather than a chain of them.**
+/// A chain — each link performing its capability and passing the rest along —
+/// was the obvious shape and it is the wrong one: the trait's whole argument is
+/// that an implementor answers for *every* capability, and in a chain
+/// "unsupported" stops meaning "this host declares it cannot" and starts
+/// meaning "nobody claimed it", which is the silence invariant 10 refuses.
+/// Here the `match` below is exhaustive and every arm is a sentence someone
+/// wrote.
+///
+/// A plane that is not installed answers [`HostCallRefusal::Unavailable`] —
+/// "the capability is implemented, this host has nothing behind it" — which is
+/// the honest code for a driver that has not wired its context plane yet.
+/// [`HostCall::RunTest`] answers [`HostCallRefusal::Unsupported`] from every
+/// host, because nothing in this tree performs it at all (#3580).
+///
+/// **No shipping driver has assembled one of these with a context plane yet** —
+/// `stella-cli` builds its transport without a gate, so an installed plugin's
+/// `recall` reaches no context plane on the `stella run` path. That is #3561,
+/// declared here rather than left to be discovered as an empty frame list; the
+/// same is true of the child-turn plane on that path (#3576).
+pub struct HostPlanes {
+    recall: Option<Box<dyn RecallHost>>,
     max_frames: u32,
+    child_turns: Option<Box<dyn ChildTurnPlane>>,
 }
 
-impl<R: RecallHost> RecallOnly<R> {
-    /// Serve `recall` from this host's context plane, at the default frame
-    /// ceiling.
+impl Default for HostPlanes {
+    /// [`HostPlanes::none`] — written out rather than derived, because a
+    /// derived `Default` would set `max_frames` to zero and a host that
+    /// silently returned no frames is the exact failure this module exists to
+    /// make impossible.
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
+impl std::fmt::Debug for HostPlanes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostPlanes")
+            .field("recall", &self.recall.is_some())
+            .field("max_frames", &self.max_frames)
+            .field("child_turns", &self.child_turns.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl HostPlanes {
+    /// A host with no planes at all: every capability is answered
+    /// [`HostCallRefusal::Unavailable`], and the plugin degrades honestly
+    /// rather than waiting for an answer that never comes.
     #[must_use]
-    pub fn new(recall: R) -> Self {
+    pub fn none() -> Self {
         Self {
-            recall,
+            recall: None,
             max_frames: DEFAULT_RECALL_FRAMES,
+            child_turns: None,
         }
     }
 
-    /// Set this host's ceiling on frames per call, whatever a plugin asks for.
+    /// A host whose only plane is the context plane — the common case, and the
+    /// one `stella-research` needs.
+    #[must_use]
+    pub fn recalling(recall: impl RecallHost + 'static) -> Self {
+        Self::none().with_recall(recall)
+    }
+
+    /// Serve `recall` from this context plane.
+    #[must_use]
+    pub fn with_recall(mut self, recall: impl RecallHost + 'static) -> Self {
+        self.recall = Some(Box::new(recall));
+        self
+    }
+
+    /// Set this host's ceiling on frames per `recall`, whatever a plugin asks
+    /// for.
     #[must_use]
     pub fn with_max_frames(mut self, frames: u32) -> Self {
         self.max_frames = frames;
         self
     }
+
+    /// Serve `child_turn` from this plane —
+    /// [`ChildTurns`](super::ChildTurns) over the host's own sub-agent
+    /// dispatcher, ordinarily.
+    #[must_use]
+    pub fn with_child_turns(mut self, child_turns: impl ChildTurnPlane + 'static) -> Self {
+        self.child_turns = Some(Box::new(child_turns));
+        self
+    }
 }
 
 #[async_trait]
-impl<R: RecallHost> HostCapabilities for RecallOnly<R> {
+impl HostCapabilities for HostPlanes {
     async fn call(&self, args: HostCallArgs) -> Result<HostCallOk, HostCallFailure> {
         match args {
             HostCallArgs::Recall(recall) => {
+                let Some(plane) = self.recall.as_ref() else {
+                    return Err(HostCallFailure::new(
+                        HostCallRefusal::Unavailable,
+                        "this host has no context plane configured, so there is nothing to recall \
+                         from",
+                    ));
+                };
                 // The plugin's limit is an ask; the host's ceiling is the
                 // authority. `unwrap_or(ceiling).min(ceiling)` is the same
                 // clamp shape `again` uses for `max_holds`, so "absent" means
                 // the ceiling rather than unbounded.
                 let limit = recall.limit.unwrap_or(self.max_frames).min(self.max_frames);
-                let mut frames = self.recall.recall(&recall.goal).await;
+                let mut frames = plane.recall(&recall.goal).await;
                 frames.truncate(limit as usize);
                 Ok(HostCallOk::Recall(RecallResult { frames }))
             }
-            HostCallArgs::ChildTurn(_) => Err(HostCallFailure::new(
-                HostCallRefusal::Unsupported,
-                "this host does not run child turns for plugins yet; the role intent a plugin \
-                 names in its before_turn response is the path that exists today (#3564)",
-            )),
+            HostCallArgs::ChildTurn(child_turn) => {
+                let Some(plane) = self.child_turns.as_ref() else {
+                    return Err(HostCallFailure::new(
+                        HostCallRefusal::Unavailable,
+                        "this host runs no child turns for plugins — no sub-agent dispatcher was \
+                         attached to its capabilities",
+                    ));
+                };
+                plane
+                    .child_turn(child_turn)
+                    .await
+                    .map(HostCallOk::ChildTurn)
+            }
             HostCallArgs::RunTest(_) => Err(HostCallFailure::new(
                 HostCallRefusal::Unsupported,
                 "this host does not re-run a candidate's tests for plugins yet; the test plan in \
-                 the candidate grant is the path that exists today (#3564)",
+                 the candidate grant is the path that exists today (#3580)",
             )),
         }
     }
@@ -479,7 +558,7 @@ mod tests {
         HostCallGate::declare(
             grant(calls, max_calls),
             DEFAULT_HOST_MAX_CALLS,
-            Box::new(RecallOnly::new(Frames(frames))),
+            Box::new(HostPlanes::recalling(Frames(frames))),
         )
     }
 
@@ -529,7 +608,7 @@ mod tests {
         let generous = HostCallGate::declare(
             grant(vec![HostCall::Recall], Some(1_000)),
             2,
-            Box::new(RecallOnly::new(Frames(1))),
+            Box::new(HostPlanes::recalling(Frames(1))),
         );
         assert_eq!(generous.max_calls(), 2);
 
@@ -562,7 +641,7 @@ mod tests {
         let gate = HostCallGate::declare(
             grant(vec![HostCall::Recall], None),
             DEFAULT_HOST_MAX_CALLS,
-            Box::new(RecallOnly::new(Frames(50)).with_max_frames(3)),
+            Box::new(HostPlanes::recalling(Frames(50)).with_max_frames(3)),
         );
         let channel = gate.open();
         let asked = HostCallArgs::Recall(RecallArgs {

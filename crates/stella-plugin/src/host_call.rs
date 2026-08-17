@@ -75,9 +75,12 @@ use crate::wire::{WrapperPoint, WrapperResponse, decode_body};
 ///   `ContextRecallPort::recall(goal) -> Recall { frames, .. }` fanned out over
 ///   `context.db` and `codegraph.db`. A plugin gets none of it without this.
 /// - `child_turn` — a bounded turn at a declared role intent, which
-///   `doc:turn-loop-wrappers` §9.3 named and nobody built: "a wrapper is handed
-///   a `ChildTurn` port… it names a role intent; the host resolves it, carves
-///   the budget, runs the turn and settles once."
+///   `doc:turn-loop-wrappers` §9.3 named: "a wrapper is handed a `ChildTurn`
+///   port… it names a role intent; the host resolves it, carves the budget,
+///   runs the turn and settles once." Performed by
+///   `stella_runtime::wrapper::ChildTurns` over the host's own sub-agent
+///   dispatcher (#3564), so the plugin holds no provider and no credential and
+///   every model call is the host's.
 /// - `run_test` — the candidate's test invocation, for the re-runs a
 ///   verification plugin needs. #3498 solved the *first* run narrowly by putting
 ///   the plan in the request; it stays there, and this call is the re-run.
@@ -447,6 +450,46 @@ pub enum HostCallOutcome {
 pub enum HostCallOk {
     /// `recall` — the frames the host retrieved and the gate permitted.
     Recall(RecallResult),
+    /// `child_turn` — what the bounded turn the host ran reported back.
+    ChildTurn(ChildTurnResult),
+}
+
+/// What one `child_turn` produced.
+///
+/// Deliberately the child's *report* and nothing else. A plugin does not get
+/// the transcript, the tool calls, the token counts or the dollars: those are
+/// the host's accounting, and the whole reason a child turn is worth spending
+/// is that its context stays on the host's side of the seam
+/// (`stella_core::subagent`'s context-economy guarantee). What crosses is the
+/// answer, plus enough for the plugin to say honestly where it came from.
+///
+/// Its required keys are `role`, `seat`, `report` and `completed`, and every
+/// one of them is disjoint from [`RecallResult`]'s `frames` — the rule
+/// [`HostCallOk`] states for adding an untagged variant, satisfied here by
+/// construction rather than by inspection, since both tables deny unknown
+/// fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChildTurnResult {
+    /// The role intent the plugin named, echoed back — the plugin's own
+    /// `[roles.<name>]` key, never a model, a provider or an endpoint.
+    pub role: String,
+    /// The responsibility the host resolved that intent to, and therefore the
+    /// one this call's spend is booked against on the receipt
+    /// (`ModelCallRole`'s wire token — `triage`, `research`, `plan`, …).
+    ///
+    /// It is here so a plugin can *report* what it spent rather than only that
+    /// it spent: `doc:turn-loop-wrappers` §9.2's whole argument for preferring
+    /// a declared role to a `judge` is that the spend becomes visible, and a
+    /// plugin that cannot name the seat cannot make it visible downstream.
+    pub seat: String,
+    /// The child's answer, already clamped by the host's report ceiling.
+    pub report: String,
+    /// Whether the child reached a final answer. `false` is an ordinary
+    /// outcome the plugin weighs — its carve ran out, its step cap hit — and
+    /// `report` then carries whatever text it had produced, which may be
+    /// empty.
+    pub completed: bool,
 }
 
 /// The frames one `recall` returned.
@@ -519,7 +562,8 @@ impl std::fmt::Display for HostCallFailure {
 ///
 /// Each one is a different thing for a plugin to do next, which is why they are
 /// not one code with a message: an [`Undeclared`](Self::Undeclared) call is the
-/// plugin author's manifest to fix, an [`Unsupported`](Self::Unsupported) one is
+/// plugin author's manifest to fix, a [`Forbidden`](Self::Forbidden) one is an
+/// ask no manifest can buy, an [`Unsupported`](Self::Unsupported) one is
 /// this host's gap, an [`AllowanceSpent`](Self::AllowanceSpent) one means stop
 /// asking and answer, [`Unavailable`](Self::Unavailable) means the capability
 /// exists but this host has no plane behind it, and [`Failed`](Self::Failed)
@@ -527,9 +571,23 @@ impl std::fmt::Display for HostCallFailure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HostCallRefusal {
-    /// The plugin's manifest does not declare this capability in `[loop] calls`,
-    /// so the host refused it — the way an undeclared hook is never invoked.
+    /// The plugin's manifest does not declare the thing that was asked for —
+    /// this capability in `[loop] calls`, or, for `child_turn`, the role
+    /// intent in `[roles]`. Refused the way an undeclared hook is never
+    /// invoked, and the same remedy either way: declare it, and let a human
+    /// read it at install.
     Undeclared,
+    /// The host will not perform this ask **whatever the manifest says**, and
+    /// declaring harder will not change the answer.
+    ///
+    /// Distinct from [`Undeclared`](Self::Undeclared) because the remedy is
+    /// different: there the plugin author edits the manifest, here they must
+    /// ask for something else. The standing case is verifier independence — a
+    /// `child_turn` whose role intent resolves to the **worker's** seat would
+    /// let a plugin grade the work with the model that did it, which is the
+    /// self-grading `stella_pipeline`'s roster already reports on and which a
+    /// plugin may not buy at all.
+    Forbidden,
     /// This host does not implement the capability at all. A declared gap on
     /// the host's side, not a fault of the plugin's.
     Unsupported,
@@ -549,6 +607,7 @@ impl HostCallRefusal {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Undeclared => "undeclared",
+            Self::Forbidden => "forbidden",
             Self::Unsupported => "unsupported",
             Self::AllowanceSpent => "allowance-spent",
             Self::Unavailable => "unavailable",
@@ -657,5 +716,58 @@ mod tests {
         let both: Result<HostCallResponse, _> =
             serde_json::from_str(r#"{"result":1,"ok":{},"err":{"refusal":"failed","detail":"x"}}"#);
         assert!(both.is_err(), "two outcomes must not decode");
+    }
+
+    /// The untagged rule [`HostCallOk`] states, checked rather than asserted:
+    /// a `child_turn` result must not be readable as a `recall` result, and
+    /// vice versa. Both tables deny unknown fields, which is what makes the
+    /// decode order irrelevant — and the only thing that does.
+    #[test]
+    fn a_child_turn_result_is_never_mistaken_for_a_recall_result() {
+        let answer = HostCallResponse::ok(
+            4,
+            HostCallOk::ChildTurn(ChildTurnResult {
+                role: "reviewer".to_string(),
+                seat: "research".to_string(),
+                report: "the diff drops the retry".to_string(),
+                completed: true,
+            }),
+        );
+        let text = serde_json::to_string(&answer).expect("encodes");
+        assert_eq!(
+            text,
+            r#"{"result":4,"ok":{"role":"reviewer","seat":"research","report":"the diff drops the retry","completed":true}}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<HostCallResponse>(&text).expect("decodes"),
+            answer,
+            "the child-turn arm survives a round trip through the untagged union"
+        );
+
+        // And the other direction: frames still read as frames, though `recall`
+        // is the variant tried first and would happily swallow a table it
+        // recognised.
+        let frames = HostCallResponse::ok(5, HostCallOk::Recall(RecallResult::default()));
+        let text = serde_json::to_string(&frames).expect("encodes");
+        assert_eq!(
+            serde_json::from_str::<HostCallResponse>(&text).expect("decodes"),
+            frames
+        );
+    }
+
+    /// `forbidden` is a code a plugin branches on, so it has to survive the
+    /// wire under the spelling the host writes.
+    #[test]
+    fn the_forbidden_refusal_crosses_the_wire_as_its_own_code() {
+        let text = serde_json::to_string(&HostCallResponse::err(
+            6,
+            HostCallFailure::new(HostCallRefusal::Forbidden, "that is the worker's seat"),
+        ))
+        .expect("encodes");
+        assert_eq!(
+            text,
+            r#"{"result":6,"err":{"refusal":"forbidden","detail":"that is the worker's seat"}}"#
+        );
+        assert_eq!(HostCallRefusal::Forbidden.as_str(), "forbidden");
     }
 }

@@ -33,7 +33,7 @@ use stella_plugin::{
 use stella_protocol::CandidateHandle;
 use stella_protocol::completion::MessageRole;
 use stella_runtime::wrapper::{
-    DEFAULT_HOST_MAX_CALLS, DrivenTurn, HostCallGate, RecallHost, RecallOnly, RoundInput,
+    DEFAULT_HOST_MAX_CALLS, DrivenTurn, HostCallGate, HostPlanes, RecallHost, RoundInput,
     SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
 };
 use tempfile::TempDir;
@@ -166,7 +166,7 @@ fn dispatch(manifest: PluginManifest) -> WrapperDispatch {
     let gate = Arc::new(HostCallGate::declare(
         manifest.loop_grant.clone(),
         DEFAULT_HOST_MAX_CALLS,
-        Box::new(RecallOnly::new(NothingToRecall)),
+        Box::new(HostPlanes::recalling(NothingToRecall)),
     ));
     let transport = transport(&manifest).serving(gate);
     WrapperDispatch::bind(manifest, Arc::new(transport))

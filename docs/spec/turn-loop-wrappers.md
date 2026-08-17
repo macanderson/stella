@@ -419,6 +419,19 @@ Two things make that enforceable rather than aspirational:
   `doc:wrapper-socket` and `doc:pipeline-as-plugins` §4 A3's landed note), so
   whatever eventually implements one earns `TurnCapabilities`'s guarantee only
   by calling `Engine::assemble` itself.
+- **Landed (#3564), and the last clause above is exactly how.** The port is the
+  `child_turn` host call, not a new `TurnWrapper` method:
+  `stella_runtime::wrapper::ChildTurns` resolves the declared role intent to a
+  `ModelCallRole` seat, clamps the count against the host's own ceiling, and
+  spends through the host's `SubAgentDispatcher` — which builds its child
+  through `Engine::assemble`, so the guarantee is inherited rather than
+  re-argued. Two clauses of this section are now enforced rather than described:
+  a plugin holds no provider and no credential because `ChildTurnArgs` has no
+  field that could carry one, and a role intent resolving to the **worker's**
+  seat is refused outright (`HostCallRefusal::Forbidden`), so a plugin cannot
+  nominate the model it is judging. What remains a host's own claim, as this
+  section always said: that its dispatcher attaches gate, steering and hooks —
+  `SubAgentDispatcher`'s contract requires it, and nothing here can check it.
 
 ### 9.4 The manifest needs two properties the sketch does not yet have
 

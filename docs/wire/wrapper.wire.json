@@ -45,7 +45,7 @@
   ],
   "host_results": [
     {
-      "case": "ok/full",
+      "case": "recall/full",
       "message": {
         "ok": {
           "frames": [
@@ -62,10 +62,22 @@
       }
     },
     {
-      "case": "ok/minimal",
+      "case": "recall/minimal",
       "message": {
         "ok": {},
         "result": 1
+      }
+    },
+    {
+      "case": "child_turn",
+      "message": {
+        "ok": {
+          "completed": true,
+          "report": "the diff drops the retry on a 429",
+          "role": "reviewer",
+          "seat": "research"
+        },
+        "result": 4
       }
     },
     {
@@ -377,6 +389,7 @@
     ],
     "host_call_refusal": [
       "undeclared",
+      "forbidden",
       "unsupported",
       "allowance-spent",
       "unavailable",

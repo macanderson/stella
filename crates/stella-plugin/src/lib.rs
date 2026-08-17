@@ -115,9 +115,9 @@ pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
 pub use error::ManifestError;
 pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
 pub use host_call::{
-    ChildTurnArgs, HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallOutcome,
-    HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage, RecallArgs, RecallFrame,
-    RecallResult, RunTestArgs,
+    ChildTurnArgs, ChildTurnResult, HostCall, HostCallArgs, HostCallFailure, HostCallOk,
+    HostCallOutcome, HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage, RecallArgs,
+    RecallFrame, RecallResult, RunTestArgs,
 };
 pub use manifest::{
     FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, OracleProcess, OracleProcessSource,
