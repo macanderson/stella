@@ -148,6 +148,21 @@ fn no_doc_comment_attributes_running_the_oracle_to_the_host() {
     );
 }
 
+/// The crate's own README, which is the page a contributor reads before any
+/// doc comment and which described "the host-run `[oracle]` contract" in its
+/// summary of what a loaded manifest has proved.
+#[test]
+fn the_crate_readme_does_not_describe_a_host_run_oracle() {
+    let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+    let text = fs::read_to_string(&readme).expect("the crate has a README");
+    let found = offences("README.md", &text);
+    assert!(
+        found.is_empty(),
+        "the README is the first page a contributor reads:\n{}",
+        found.join("\n")
+    );
+}
+
 /// The same ban over the fixtures a manifest author reads as examples. A
 /// fixture comment is the first documentation anyone writing a plugin sees,
 /// and `arbiter.toml` carried the retired claim in its opening sentence.

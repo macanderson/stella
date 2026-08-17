@@ -12,7 +12,9 @@ A value that came back `Ok` has passed every rule the epic states for the new
 blocks: the `[loop]` participation ladder (`none` < `observer` < `steering` <
 `arbiter`, monotone — each grade includes the ones below), hook grants
 (`Stop` only at `arbiter`, no hooks below `steering`), `max_holds` and
-`[requirements]` as arbiter-only powers, the host-run `[oracle]` contract,
+`[requirements]` as arbiter-only powers, the plugin-reported `[oracle]`
+contract (the plugin runs it and reports; the host evaluates the declared
+rule and runs nothing — #3511),
 and `[subloop]`/`[roles]` as declared stages with routing *intents* — never a
 credential or a URL. Unknown keys, unknown hook names, and unknown grades are
 load errors (`deny_unknown_fields` everywhere, the #1400 rule this crate
