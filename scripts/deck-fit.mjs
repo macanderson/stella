@@ -23,7 +23,22 @@
 //
 //   CHROME=/path/to/chrome node scripts/deck-fit.mjs
 //
-// Exit status is 0 when every slide fits at every viewport, 1 otherwise.
+// Exit status is 0 when every slide fits at every viewport, 1 otherwise — with
+// two statuses reserved for "the measurement never happened", because the
+// workflow above now walks the whole tree recursively (#3376) and hands this
+// script HTML that was never authored as a fixed-canvas deck:
+//
+//   0  every slide fits every viewport
+//   1  a slide overflows, or the file claims to be a deck and is malformed
+//   2  the harness is missing (no such file, no playwright-core)
+//   3  not a fixed-canvas deck — skipped, with the reason printed
+//
+// 3 exists so a skip is a named event rather than a silent pass. The shape it
+// names is the one this script can actually measure: `.slide` elements each
+// wrapping a `.frame`, the fixed stage the overflow is measured against. A
+// scrolling document under the same directory (website/public/presentations/
+// turn-loop/index.html has 34 `.slide` sections and no `.frame` at all) is not
+// that shape and must not be counted as either a pass or a failure.
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -61,6 +76,45 @@ try {
 }
 
 const browser = await chromium.launch({ executablePath: CHROME });
+
+// Ask what shape this file is before measuring it, in one cheap load. The
+// recursive walk in deck-fit.yml means "is this a deck?" is now a real question
+// with three answers, and each gets a different exit status rather than a
+// guess: nothing to measure (skip), a stage to measure (proceed), or a deck
+// that lost a `.frame` somewhere (a defect this script should report, not
+// crash on — `slide.querySelector(".frame")` used to be dereferenced blind).
+{
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(pathToFileURL(DECK).href);
+  await page.waitForLoadState("networkidle");
+  const shape = await page.evaluate(() => {
+    const slides = [...document.querySelectorAll(".slide")];
+    return {
+      slides: slides.length,
+      framed: slides.filter((s) => s.querySelector(".frame")).length,
+    };
+  });
+  await page.close();
+
+  if (shape.slides === 0 || shape.framed === 0) {
+    const reason =
+      shape.slides === 0
+        ? "no .slide elements"
+        : `${shape.slides} .slide elements, none wrapping a .frame`;
+    console.log(`deck-fit: skipping ${DECK} — not a fixed-canvas deck (${reason})`);
+    await browser.close();
+    process.exit(3);
+  }
+  if (shape.framed < shape.slides) {
+    console.error(
+      `deck-fit: ${DECK} — ${shape.slides - shape.framed} of ${shape.slides} slides have no .frame; ` +
+        "a fixed-canvas deck measures overflow against that stage, so this deck cannot be measured as authored.",
+    );
+    await browser.close();
+    process.exit(1);
+  }
+}
+
 let failures = 0;
 
 for (const vp of VIEWPORTS) {

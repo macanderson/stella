@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -216,6 +216,8 @@ def discover_trials(run_dir: Path, slugs: Sequence[str]) -> list[TrialArtifact]:
     submission record survived.
     """
     trials: list[TrialArtifact] = []
+    roots = _fetch_roots(run_dir)
+    seen: set[tuple[str, tuple[str, ...]]] = set()
     for path in sorted(run_dir.glob(_TRIAL_GLOB)):
         if not path.is_dir():
             continue
@@ -223,6 +225,16 @@ def discover_trials(run_dir: Path, slugs: Sequence[str]) -> list[TrialArtifact]:
             # Harbor writes siblings beside its trial directories; a directory
             # with neither half is not a trial and must not become a cell.
             continue
+        view = _trial_view(run_dir, path, roots)
+        if view in seen:
+            # The same trial, fetched twice into two roots. A `cloud run` that
+            # watches a gate downloads each job's whole prefix into its label
+            # directory, and the fetch tail downloads it again into the job-uuid
+            # directory — two byte-identical trees of one trial, both matching
+            # the glob above. Filing both produced a twin cell named `<trial>x2`
+            # and doubled every aggregate computed over cells (#3324).
+            continue
+        seen.add(view)
         job_dir = path.parent
         seat = seat_for_job_dir(job_dir.name, slugs)
         if seat is None:
@@ -240,6 +252,49 @@ def discover_trials(run_dir: Path, slugs: Sequence[str]) -> list[TrialArtifact]:
             )
         )
     return trials
+
+
+def _fetch_roots(run_dir: Path) -> dict[str, str]:
+    """Which fetch root directories name the same Batch job.
+
+    A trial's first path segment is the root it was fetched into, and one job
+    can own two of them: the gate watcher downloads a job's whole prefix into
+    its **label** directory while the fetch tail downloads it again into the
+    **job-uuid** directory. The submission sidecar carries both names on one
+    record, which is what makes this an equality rather than a guess — the
+    alternative, treating equal paths under different roots as one trial, would
+    silently drop a genuine cross-container name collision, the very case
+    :func:`link_name` exists for.
+
+    Maps every known root to its job id. A root the sidecar does not mention —
+    or a fetch that left no sidecar — maps to nothing and is deduplicated
+    against nothing, which is the pre-#3324 behaviour and the safe direction.
+    """
+    try:
+        record = json.loads((run_dir / "jobs.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    roots: dict[str, str] = {}
+    for job in record.get("jobs", []) if isinstance(record, dict) else []:
+        if not isinstance(job, dict) or not job.get("id"):
+            continue
+        job_id = str(job["id"])
+        roots[job_id] = job_id
+        if job.get("label"):
+            roots[str(job["label"])] = job_id
+    return roots
+
+
+def _trial_view(
+    run_dir: Path, trial: Path, roots: Mapping[str, str]
+) -> tuple[str, tuple[str, ...]]:
+    """A trial as (the job it belongs to, its path below that job's root).
+
+    Two fetch roots of one job yield the same view for the same upload, and
+    two different jobs never do — so equal views are one trial seen twice.
+    """
+    parts = trial.relative_to(run_dir).parts
+    return roots.get(parts[0], parts[0]), parts[1:]
 
 
 def _job_id_of(run_dir: Path, trial: Path) -> str:

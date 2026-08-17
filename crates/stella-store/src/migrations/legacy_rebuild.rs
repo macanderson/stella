@@ -1,19 +1,21 @@
-//! v0 -> v1: retrofitting the UNIQUE constraints the write paths always
-//! assumed.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! The two pre-versioning repairs: v0 → v1 and v1 → v2, which retrofit the
+//! UNIQUE keys the write paths had always assumed onto tables that predate
+//! them.
 //!
-//! Split out of `migrations.rs` (#3395): that file sat at exactly its
-//! 1500-line ceiling, and this is its largest single migration -- a full
-//! lang_altertable section 7 table rebuild carrying the dedupe keep-rule
-//! argument. Moving it whole keeps the reasoning with the code and leaves the
-//! ladder file room to grow a step. Behaviour is unchanged: the function is
-//! the same as the one that lived inline.
+//! They are grouped here because they share one shape — a `lang_altertable`
+//! §7 table rebuild with a newest-row keep-rule — and one audience: a legacy
+//! file stamped `user_version` 0, which is the only kind of file that can
+//! still hold historic duplicates. Nothing later in the ladder needs to
+//! re-read them.
 
 use rusqlite::params;
 
-use crate::Result;
-use crate::ddl::{TELEMETRY_INDEX, UNCHANGED_TABLES, events_ddl, telemetry_ddl};
-
 use super::{column_exists, table_exists};
+use crate::Result;
+use crate::ddl::{TELEMETRY_INDEX, UNCHANGED_TABLES, events_ddl, files_touched_ddl, telemetry_ddl};
 
 /// v0 → v1: retrofit the UNIQUE constraints the write paths have always
 /// assumed (see [`events_ddl`]/[`telemetry_ddl`]), deduping first — a
@@ -153,5 +155,31 @@ pub(super) fn migrate_v0_to_v1(tx: &rusqlite::Transaction<'_>) -> Result<()> {
         tx.execute_batch(&telemetry_ddl("telemetry"))?;
     }
     tx.execute_batch(TELEMETRY_INDEX)?;
+    Ok(())
+}
+
+/// v1 → v2: `files_touched` grows per-file line-delta totals and the ordered
+/// JSON audit log ([`FileTouchRow`](crate::FileTouchRow)), plus the UNIQUE (execution_id, path)
+/// key its writer has always assumed (the ledger emits exactly one record
+/// per normalized path per execution). SQLite cannot ALTER a UNIQUE
+/// constraint in, so the table is rebuilt per lang_altertable §7 with the
+/// same newest-row keep-rule as [`migrate_v0_to_v1`]. Legacy rows predate
+/// line telemetry and are backfilled with the column defaults: zero deltas,
+/// `'[]'` audit log.
+pub(super) fn migrate_v1_to_v2(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if table_exists(tx, "files_touched")? {
+        tx.execute_batch(&files_touched_ddl("files_touched_v2"))?;
+        tx.execute_batch(
+            "INSERT INTO files_touched_v2 (execution_id, path, ops)
+             SELECT execution_id, path, ops FROM files_touched
+             WHERE rowid IN (SELECT max(rowid) FROM files_touched GROUP BY execution_id, path);
+             DROP TABLE files_touched;
+             ALTER TABLE files_touched_v2 RENAME TO files_touched;",
+        )?;
+    } else {
+        // Partial v1 files exist just like partial v0 files: nothing to
+        // rebuild, create the v2 shape fresh.
+        tx.execute_batch(&files_touched_ddl("files_touched"))?;
+    }
     Ok(())
 }
