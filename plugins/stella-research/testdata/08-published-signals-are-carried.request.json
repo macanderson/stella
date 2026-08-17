@@ -1,0 +1,23 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "research-v1",
+    "stage": "research",
+    "round": 1,
+    "goal": "common_term",
+    "candidate": {
+      "handle": "candidate-1",
+      "root": "${workspace_root}",
+      "test": {
+        "program": "cargo",
+        "args": ["test"],
+        "baseline": "failed"
+      }
+    },
+    "published": [
+      { "signal": "questions", "value": { "count": 2 } },
+      { "signal": "conversational", "value": { "boolean": false } }
+    ]
+  }
+}

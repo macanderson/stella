@@ -1,0 +1,10 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 2,
+    "wrapper": "research-v1",
+    "stage": "research",
+    "round": 0,
+    "goal": "retry_budget is not honoured"
+  }
+}

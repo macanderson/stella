@@ -1,0 +1,20 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "context": [
+      {
+        "label": "research:workspace",
+        "text": "## Research: workspace orientation\n\nThe candidate root holds these top-level entries (hidden entries omitted):\n- AGENTS.md\n- README.md\n- src/\n- target/\n\nNot scanned, wherever they appear: hidden entries, symlinks, and __pycache__, build, dist, node_modules, target, vendor, venv."
+      },
+      {
+        "label": "research:retry_budget",
+        "text": "## Research: `retry_budget`\n\n2 matches in 2 files under the candidate root, as workspace-relative paths:\n- src/retry.rs:2: // retry_budget is honoured here\n- src/scheduler.rs:1: let b = retry_budget();"
+      },
+      {
+        "label": "research:honoured",
+        "text": "## Research: `honoured`\n\n1 match in 1 file under the candidate root, as workspace-relative paths:\n- src/retry.rs:2: // retry_budget is honoured here"
+      }
+    ]
+  }
+}
