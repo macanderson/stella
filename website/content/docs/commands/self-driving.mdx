@@ -8,6 +8,7 @@ Drive the perpetual delivery loop: plan, cycle, audit, watch.
 ## Synopsis
 
 ```bash
+stella self-driving surface [--format <text|json>]
 stella self-driving plan [--explain]
 stella self-driving state [--dry-streak | --format <text|json>]
 stella self-driving cycle begin
@@ -32,6 +33,27 @@ This command is the **deterministic half** of that loop: everything a machine ca
 State lives at `~/.stella/self-driving/<slug>/`, keyed by the repository's remote URL so every worktree of one repository shares one ledger, seen-set, and calibration. The [Observatory](/docs/commands/observe) reads the same files read-only. Everything works offline and needs no API key; only `queue`, `plan`, and `watch` read the defect queue through `gh` (and degrade gracefully without it).
 
 ## The verbs
+
+### surface — what a host outside the binary may call
+
+```bash
+stella self-driving surface
+stella self-driving surface --format json
+```
+
+Prints the **host-verb surface this build carries**: every verb a driver
+outside the binary may call, and the shape each writes to stdout.
+
+This exists because self-driving is a *host*, not a turn-loop wrapper — it
+drives Stella from outside, as `scripts/self-driving.sh` already does
+(`doc:pipeline-as-plugins` §10, work item D2). A host reads this surface once
+at start-up and refuses a build it was not written against, rather than meeting
+the skew halfway through a cycle as an `unrecognized subcommand`.
+
+The declaration is checked against the binary in **both** directions: a verb
+added to the CLI with no row fails, and a row naming a verb this build does not
+carry fails. Without the first it would silently stop describing the program;
+without the second it would be a document that only ever grows.
 
 ### plan — size the cycle to this machine
 
