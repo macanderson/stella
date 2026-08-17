@@ -203,3 +203,62 @@ fn the_same_skill_is_selected_once_the_prompt_anchors_in_its_domain() {
         "a prompt anchored in the domain still selects its skill: {selected:?}"
     );
 }
+
+/// **Witness (#3366).** An answered mid-turn re-query reports its recall into
+/// the turn's event stream — one `ContextRecall` for the spend it just made.
+///
+/// Fails on base twice over: `signal_recall_block` returned only the rendered
+/// `String`, discarding the [`Recall`] the event is built from, and
+/// `SessionRequery` held no event channel to report it into. A re-query runs a
+/// full fan-out with provider spend behind it, so a silent one is exactly the
+/// unmeterable cost #452 closed for pre-turn recall.
+#[tokio::test]
+async fn an_answered_requery_emits_one_context_recall() {
+    use stella_core::ports::SteeringRequery as _;
+
+    let dir = workspace();
+    let lesson = "the deploy script must run migrations before restarting the api";
+    let memory = session(dir.path());
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![MemoryInput::reflection(lesson, Vec::<String>::new())],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("store a recallable lesson");
+
+    // Through the seam both drivers take, so the witness covers the wiring
+    // and not just the adapter's ability to send.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let requery = crate::memory::requery_for_turn(Some(&memory), &[], tx.into())
+        .expect("a session with memory has a re-query adapter");
+
+    let touched = vec!["crates/stella-model/anthropic.rs".to_string()];
+    let drifted = stella_core::steering::TurnSignal {
+        prompt: lesson,
+        touched_paths: &touched,
+        since_last_query: 5,
+        ..Default::default()
+    };
+    requery
+        .requery(&drifted)
+        .await
+        .expect("the drifted signal recalls the planted lesson");
+
+    let recalls: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter(|event| matches!(event, stella_protocol::AgentEvent::ContextRecall { .. }))
+        .collect();
+    assert_eq!(
+        recalls.len(),
+        1,
+        "the re-query's recall reaches the turn's stream exactly once: {recalls:?}"
+    );
+    let stella_protocol::AgentEvent::ContextRecall { frames, .. } = &recalls[0] else {
+        unreachable!("filtered above")
+    };
+    assert!(
+        !frames.is_empty(),
+        "the event names the frames the re-query spent on"
+    );
+}

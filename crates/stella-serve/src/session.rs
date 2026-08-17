@@ -25,6 +25,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use stella_core::EngineConfig;
+use stella_core::event_sender::RunEnding;
 use stella_core::ports::{AuthzGate, NoAuthz, Principal};
 use stella_engine::{BudgetGuard, CancelToken, Engine, EventSender, TurnOutcome};
 use stella_protocol::{
@@ -529,7 +530,13 @@ pub(crate) async fn drive_turn(
     events: &mpsc::UnboundedSender<AgentEvent>,
     cancel: CancelToken,
 ) -> DrivenTurn {
-    let events = EventSender::new(events.clone());
+    // A served session is one run of one turn, so this is the run's owner and
+    // owes it a terminal event (#3379): the engine ends the turn with
+    // `TurnComplete` and says nothing about the run, because it cannot know
+    // whether its caller wants another. The wrapper emits `RunComplete` when it
+    // drops at the end of this function — after the turn, last on the stream
+    // the host is reading.
+    let events = RunEnding::sealing(EventSender::new(events.clone()));
     let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel);
     let outcome = engine.drive(&mut state, &events).await;
     let budget = *state.budget();

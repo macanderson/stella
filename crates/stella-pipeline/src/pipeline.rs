@@ -14,17 +14,17 @@
 //!
 //! # Event ownership
 //!
-//! `stella-core::Engine::run_turn` emits its own `Stage { Execute }`, a
-//! terminal `Stage { Complete }`, and a `Complete` — correct for *one turn*,
-//! but a multi-step plan or a revise loop runs several turns. The pipeline is
-//! the **single authority** for stage boundaries and the terminal event on an
-//! outcome-producing run: it gives each `run_turn` a private channel, then
-//! forwards every event to the consumer *except* the engine's
-//! `Stage`/`Complete` (which would otherwise falsely signal "done" after step
-//! one). The pipeline emits `Complete` for success or a non-retryable `Error`
-//! for terminal failure; hard [`PipelineRunError`] exits remain typed return
-//! values for the caller to close out. This mirrors the one-emission-point
-//! discipline of L-E1/L-T5.
+//! The connection to the engine is **one-directional** (#3379): it ends every
+//! turn with its own `TurnComplete` — *this turn is over*, never *the work is
+//! over* — and a plan step or revise round just **requests another turn**. Each
+//! reaches the consumer unedited: three turns put three in the journal, and
+//! the pipeline's ending is a separate event with a separate name: `Complete`
+//! on success or a non-retryable `Error` on failure, exactly once and last, as
+//! the wire contract promises and [`crate::replay::validate_stream`] enforces.
+//! Hard [`PipelineRunError`] exits stay typed return values for the caller to
+//! close out — the one-emission-point discipline of L-E1/L-T5. What it must
+//! **not** do is edit the engine's stream to get there, as it used to: see
+//! `Pipeline::filtered_turn_events` for what that sender does now.
 //!
 //! # Cache discipline (L-E8)
 //!
@@ -1263,8 +1263,7 @@ impl<'a> Pipeline<'a> {
         // N=1, so authoring can never mutate the session tree.
         // Best-of-N runs every candidate in an isolated snapshot of the
         // current tree state and adopts only the winner's changes (L-E7).
-        let (best, worker_model_label, candidates_run) = if n == 1 && !authored_witness && !isolate
-        {
+        let (best, candidates_run) = if n == 1 && !authored_witness && !isolate {
             let worker = match self.resolve_provider(Role::Worker) {
                 Ok(worker) => worker,
                 Err(error) => {
@@ -1277,7 +1276,6 @@ impl<'a> Pipeline<'a> {
             if let Some(fallback) = &worker.fallback {
                 self.emit_fallback(fallback);
             }
-            let worker_model_label = worker.model_ref.to_string();
             let mut single = self
                 .run_shared_candidates(
                     frame,
@@ -1293,7 +1291,7 @@ impl<'a> Pipeline<'a> {
             let best = single
                 .pop()
                 .expect("run_shared_candidates returns one result per requested candidate");
-            (best, Some(worker_model_label), ran)
+            (best, ran)
         } else {
             match self
                 .run_best_of_n(
@@ -1347,13 +1345,7 @@ impl<'a> Pipeline<'a> {
         // (`resume_stage`), so the two cannot drift.
         let mut best = best;
         *messages = std::mem::take(&mut best.messages);
-        Ok(self.settle_outcome(
-            best,
-            task_class,
-            total_cost,
-            worker_model_label,
-            candidates_run,
-        ))
+        Ok(self.settle_outcome(best, task_class, total_cost, candidates_run))
     }
 
     // Conversational fast path
@@ -1574,7 +1566,7 @@ impl<'a> Pipeline<'a> {
         frames: &[RecalledFrame],
         author_witness: bool,
         spend: &mut Spend<'_>,
-    ) -> Result<(CandidateResult, Option<String>, u32), PipelineError> {
+    ) -> Result<(CandidateResult, u32), PipelineError> {
         // Orchestrator pre-fetch (issue #248) — see `crate::mcp_prefetch::fold`.
         let prefetched = crate::mcp_prefetch::fold(self.mcp_prefetch, n, frame.base_messages).await;
         let frame = TaskFrame {
@@ -1590,7 +1582,6 @@ impl<'a> Pipeline<'a> {
                          workspace port is available"
                             .to_string(),
                     ),
-                    None,
                     // Nothing was dispatched: the isolation port is missing, so
                     // no candidate ever reached a model.
                     0,
@@ -1611,7 +1602,6 @@ impl<'a> Pipeline<'a> {
             if let Some(fallback) = &worker.fallback {
                 self.emit_fallback(fallback);
             }
-            let label = worker.model_ref.to_string();
             let candidates = self.run_shared_candidates(frame, &worker, n, spend).await;
             let best_idx = best_index(&candidates);
             let ran = executed_count(&candidates);
@@ -1621,7 +1611,6 @@ impl<'a> Pipeline<'a> {
                     .into_iter()
                     .nth(best_idx)
                     .expect("best_index returns an in-range index"),
-                Some(label),
                 ran,
             ));
         };
@@ -1635,7 +1624,6 @@ impl<'a> Pipeline<'a> {
         if let Some(fallback) = &worker.fallback {
             self.emit_fallback(fallback);
         }
-        let worker_label = worker.model_ref.to_string();
         // Losing the independent author costs the run its authored witness —
         // it must never cost the run the whole task. A single-model
         // configuration (every role pinned to one model, as benchmark and
@@ -1715,7 +1703,7 @@ impl<'a> Pipeline<'a> {
                 from_turn: false,
             });
         }
-        Ok((best, Some(worker_label), ran))
+        Ok((best, ran))
     }
 
     // Stages: execute + verify + revise (one candidate)

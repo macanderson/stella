@@ -6,9 +6,16 @@
 //! [`Pipeline::execute_plan`] walks a plan one engine turn per step,
 //! [`Pipeline::run_engine_turn`] drives one fresh turn, and
 //! [`Pipeline::resume_engine_turn`] drives a checkpoint-restored one. All
-//! three share [`Pipeline::filtered_turn_events`], the event filter that
+//! three share [`Pipeline::filtered_turn_events`], the wrapping sender that
 //! keeps the signal tallies and the flip-halt observation identical no matter
 //! which driver a turn came through.
+//!
+//! It is named for what it once did. Since #3379 it is overwhelmingly an
+//! *observer*: it counts file changes, mutating and opaque calls, errored
+//! commands, tool dispatches and turn endings as they stream past, and feeds
+//! the flip halt. It drops exactly two things — the best-effort previews of a
+//! concurrent fan-out, and the engine's `Stage` boundary — and the engine's
+//! ending is no longer one of them.
 
 use super::*;
 

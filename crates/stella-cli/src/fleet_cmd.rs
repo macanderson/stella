@@ -947,8 +947,15 @@ async fn run_task(
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
+                // A fleet worker owns its run (#3379) — no pipeline above it,
+                // so the run's terminator is this lane's to emit. It is sent
+                // once below, gated on the worker's own `success` flag, rather
+                // than sealed on drop here: a cancelled or aborted worker must
+                // end on `Error` alone, and only the code after the race knows
+                // which of the three ways this lane ended.
+                let worker = stella_core::EventSender::new(tx.clone());
                 tokio::select! {
-                    outcome = engine.run_turn(&mut messages, &mut budget, &tx) => {
+                    outcome = engine.run_turn_with_sender(&mut messages, &mut budget, &worker) => {
                         Raced::Outcome(outcome)
                     }
                     _ = stop_wait => Raced::Stopped,

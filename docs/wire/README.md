@@ -106,6 +106,31 @@ tag of its own, and re-serializes as the foreign object it wrapped. Validating
 a recorded stream against this schema will reject exactly those lines, and that
 rejection is information about version skew, not about corruption.
 
+## `turn_complete` vs `complete` — two endings, one meaning each
+
+A run can be several turns: a staged run with a revise loop drives the engine
+more than once. Those are two different facts, and since #3379 they are two
+different events, so a reader never has to guess which contract a line is
+holding.
+
+- **`turn_complete`** — the engine's. *One turn is over.* It appears once per
+  successful turn, so a run of three turns carries three of them, and it says
+  nothing about whether more work is coming.
+- **`complete`** — the run owner's, and unchanged: still exactly once, still
+  last, still only on success. A consumer that stops at `complete` stops at the
+  end of the run, exactly as before.
+
+The engine no longer emits `complete` at all, which is what makes the promise
+above true rather than merely usual. Before, a wrapper running several turns
+had to reach into the engine's stream and suppress its per-turn `complete` to
+keep this invariant — and a consumer reading a raw engine stream saw a word
+that meant something different there than it does here.
+
+A consumer that already ignores unknown tags needs no change: `turn_complete`
+is simply a new line it did not previously see. One that wants per-turn
+boundaries — cost per turn, where a revise round began — should read it rather
+than counting `complete`.
+
 Structural invariants that span *several* events — legal stage ordering,
 `tool_start`/`tool_result` pairing, a single terminal `complete`, monotonic
 budget — cannot be expressed in JSON Schema at all. They live in

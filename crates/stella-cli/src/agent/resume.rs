@@ -313,6 +313,11 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
+                // No `RunEnding` wrapper here: this function emits the resumed
+                // run's terminator once for *both* arms below, from the cost
+                // the reporting projection already settled (#3398). Sealing
+                // this arm as well would put two terminators on one stream,
+                // which `replay::validate_terminal` calls a violation.
                 ResumedEnd::Turn(drive_resumed_turn(&engine, state, &events).await)
             }
         }

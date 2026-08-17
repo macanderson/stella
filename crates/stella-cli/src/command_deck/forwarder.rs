@@ -83,7 +83,43 @@ pub(crate) fn spawn_forwarder(
             crate::diag_boot::dx(),
             Some(crate::diag_boot::workspace_root()),
         );
-        while let Some(event) = rx.recv().await {
+        // The lane's run ending, as a backstop (#3379/#3398). The engine ends
+        // each turn with `TurnComplete` and deliberately says nothing about
+        // the run, so the run-terminal `RunComplete` is the owner's to emit.
+        // Most deck lanes emit it themselves, because they alone know the
+        // run's true total: a staged lane's cost spans roles that never appear
+        // as a turn ending at all, so a total reconstructed here would
+        // under-report it. A lane that emits nothing — the subsession worker —
+        // still owes its deck row an ending, and this forwarder is the one
+        // place that knows the *stream* closed rather than merely that a turn
+        // did, which is what "the terminator is last" requires.
+        //
+        // So it synthesizes only for a stream that ended without one.
+        // Unconditional synthesis would put two terminators on every lane that
+        // does emit its own, which `replay::validate_terminal` calls a
+        // violation. Doing it inside the loop rather than after it puts the
+        // event through the same persist-then-forward path as everything else,
+        // so the lane's journal and the deck agree.
+        let mut turn_end: Option<(String, f64)> = None;
+        let mut run_ended = false;
+        loop {
+            let event = match rx.recv().await {
+                Some(event) => event,
+                None => match turn_end.take().filter(|_| !run_ended) {
+                    Some((model, cost_usd)) => AgentEvent::RunComplete { model, cost_usd },
+                    // The run's owner already ended it, the stream sealed on a
+                    // previous pass, or no turn of it ever succeeded — a
+                    // failed run ends on `Error`, never on `RunComplete`.
+                    None => break,
+                },
+            };
+            match &event {
+                AgentEvent::TurnComplete { model, cost_usd } => {
+                    turn_end = Some((model.clone(), *cost_usd));
+                }
+                AgentEvent::RunComplete { .. } => run_ended = true,
+                _ => {}
+            }
             bridge.observe(&event);
             // A plan that reached the gate is the plan whose progress the
             // board records, so this is where it becomes one. Seeded on the
@@ -185,7 +221,8 @@ pub(crate) fn spawn_forwarder(
 ///
 /// `drop(tx)` on its own never closes the channel: the turn handed the
 /// registry an `EventSender` clone (`ToolRegistry::attach_events`) so
-/// `record_touch` could announce `FileChange`s, and the registry outlives the
+/// registry-born events — the task board, sub-agent lifecycle — ride the
+/// turn's own stream, and the registry outlives the
 /// turn — the deck's session registry by design, a worker lane's because the
 /// closing future itself still holds the `Arc`. With that clone alive, the
 /// forwarder's `recv()` loop stayed pending forever and awaiting it wedged

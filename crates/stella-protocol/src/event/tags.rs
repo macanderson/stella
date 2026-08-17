@@ -266,17 +266,25 @@ agent_event_tags! {
     Error => "error",
         ConsumerPosture::Unclassified { issue: "#2703" },
         &[];
-    // Exemplar — `Behavioral`. The session journal classifies this as a
-    // transition, which is what makes it flush durably instead of buffering:
-    // the signal decides persistence timing, not just content.
+    // The engine's per-turn ending (#3379). `Behavioral`: the diagnostic
+    // bridge drains its in-flight tool-call retention map on it, because that
+    // is a *turn* obligation — a call still awaiting a result when a turn ends
+    // will never get one — and doing it only on the run's `RunComplete` carried
+    // one turn's stale entries into the next.
     //
-    // Renamed from `complete` in #3379. One turn of the loop ended; it does
-    // NOT mean the run ended, and a wrapped run emits several of these.
+    // The session journal is a second behavioral consumer: it classifies this
+    // as a transition, which is what makes it flush durably instead of
+    // buffering — the signal decides persistence timing, not just content.
+    //
+    // Deliberately not claiming the run owners as a third behavioral site:
+    // `RunEnding` observes this event to author `RunComplete`, but it branches on
+    // nothing — severing the signal would change what it reports, not what it
+    // does.
     TurnComplete => "turn_complete",
         ConsumerPosture::Behavioral {
-            site: "stella-store/src/journal.rs::JournalRecord::is_transition",
+            site: "stella-cli/src/diag_bridge.rs::DomainBridge::observe",
         },
-        &[];
+        &[Surface::Observatory];
     // The run's terminator — the only event that means "nothing more is
     // coming" (#3379). Behavioral rather than merely surfaced: it is what
     // ends a recording, settles the deck's terminal state, and closes the

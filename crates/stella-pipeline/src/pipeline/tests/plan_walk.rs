@@ -205,3 +205,65 @@ async fn a_no_tool_call_step_ends_the_walk_with_one_consolidated_check() {
         "the consolidated follow-up's reply is the run's final text"
     );
 }
+
+/// #3379/#3398 witness: every engine turn ends in the journal, and the
+/// pipeline — which is a wrapper, not the run's owner — ends nothing.
+///
+/// It lives beside the plan walk because this is the workspace's cheapest
+/// genuinely multi-turn run: an 8-step plan the worker never closes out is
+/// eight engine turns, deterministically, with no model call spent on a
+/// verdict.
+///
+/// Fails on `main`, where `filtered_turn_events` dropped every engine
+/// `Complete` before any consumer saw it and the pipeline emitted a terminator
+/// of its own — so a reader could not tell how many turns the run took, and a
+/// wrapper that cannot know whether it is the whole run claimed to be it. On
+/// `stella goal`, which drives one `Pipeline::run` per round over a single
+/// stream, that claim was demonstrably false and put one terminator per round
+/// on one run's stream.
+#[tokio::test]
+async fn every_engine_turn_ends_in_the_journal_and_the_pipeline_ends_nothing() {
+    let mut script = vec![text_result("multi"), eight_step_plan()];
+    for n in 1..=8 {
+        script.push(writing_tool_result(&format!("did step {n}")));
+        script.push(text_result(&format!("step {n} complete")));
+    }
+    let (outcome, events, _prompts) =
+        plan_walk_scenario!(ScriptedProvider::new(script), OneWritingTool);
+
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+
+    // The endings, in the order they were emitted.
+    let endings: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::TurnComplete { .. } => Some("turn"),
+            AgentEvent::RunComplete { .. } => Some("run"),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        endings.iter().filter(|e| **e == "turn").count(),
+        8,
+        "one engine ending per turn the run actually drove — the walk ran 8 \
+         steps, so 8 turns finished and the journal says so, none of them \
+         filtered out by the wrapper above them: {endings:?}"
+    );
+    assert_eq!(
+        endings.iter().filter(|e| **e == "run").count(),
+        0,
+        "the pipeline is a wrapper, not the owner of the stream it writes to, \
+         so it emits no run terminator at all (#3398). Whoever created the \
+         stream emits exactly one, after the pipeline returns: {endings:?}"
+    );
+
+    // Enforced mechanically too, not only by the assertions above: a per-turn
+    // ending let through as the run's terminator would fail the published
+    // terminal invariant here rather than merely reading oddly.
+    let violations = crate::replay::validate_stream(&events);
+    assert!(
+        violations.is_empty(),
+        "the stream still satisfies every structural invariant: {violations:?}"
+    );
+}

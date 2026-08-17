@@ -1418,7 +1418,7 @@ async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_abortin
             .filter(|e| matches!(e, AgentEvent::TurnComplete { .. }))
             .count(),
         1,
-        "exactly one Complete, so the turn reads as finished rather than killed"
+        "exactly one TurnComplete, so the turn reads as finished rather than killed"
     );
 }
 
@@ -1557,7 +1557,7 @@ async fn length_continuations_are_bounded_per_turn() {
             .filter(|e| matches!(e, AgentEvent::TurnComplete { .. }))
             .count(),
         1,
-        "exactly one Complete, from the final fall-through step"
+        "exactly one TurnComplete, from the final fall-through step"
     );
     assert!(
         events.iter().any(|e| matches!(

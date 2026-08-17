@@ -755,6 +755,9 @@ async fn run_worker(
         )
         .with_calibration(&calibration)
         .with_gate(gate.as_ref());
+        // The run-terminal `Complete` this lane's deck row settles on is
+        // synthesized by its forwarder when the stream closes (#3379), so the
+        // turn is driven on the plain sender exactly as before.
         let turn = engine.run_turn(&mut messages, &mut budget, &tx);
         // A dropped sender (driver gone at session teardown) must not read
         // as a stop — only an actual signal cancels, so the wait parks

@@ -761,32 +761,36 @@ pub enum AgentEvent {
         to: String,
         reason: String,
     },
-    /// A file was read/created/modified/deleted by the agent **through a
-    /// tool**, carrying both the authoritative line delta and a diff for
-    /// display.
+    /// A file was read/created/modified/deleted by the agent, carrying both
+    /// the authoritative line delta and a diff for display. Only the mutating
+    /// kinds have a live producer today (see the emission point below);
+    /// `Read` survives in the kind space because recorded journals carry it
+    /// and replay must parse them.
     ///
-    /// **Observability, never evidence.** This stream records what the agent
-    /// touched through tools whose *input* names a path; it is **not** a
-    /// complete record of workspace mutation, and nothing may found a claim
-    /// about what changed on counting it. `bash` names nothing — a heredoc, a
-    /// `patch`, a `make`, or a `>` redirect mutates the tree and emits no event
-    /// here, which on Terminal-Bench is most of the work. The authority on what
-    /// changed is the git diff of the tree, and a consumer that needs that
-    /// answer takes it from there (#2873, which removed the last three
-    /// decisions that read a count of these events; the tally survives as a
-    /// recorded-only field on `LadderSnapshot`).
+    /// **Observability, never evidence.** This stream records what the
+    /// pipeline *adopted* out of a winning candidate; it is **not** a complete
+    /// record of workspace mutation, and nothing may found a claim about what
+    /// changed on counting it. A turn the pipeline never delivered — an
+    /// engine-only `run_turn`, a declined candidate, a run whose work stayed
+    /// in the snapshot — mutates nothing here and so emits nothing here. The
+    /// authority on what changed is the git diff of the tree, and a consumer
+    /// that needs that answer takes it from there (#2873, which removed the
+    /// last three decisions that read a count of these events; the tally
+    /// survives as a recorded-only field on `LadderSnapshot`).
     ///
-    /// The single emission point is `ToolRegistry::record_touch` — the same
-    /// place that writes the session's file-touch ledger and its telemetry
-    /// payload — so the TUI, the audit log and the exported JSON can no longer
+    /// The single emission point is `Pipeline::deliver_winner`
+    /// (`stella-pipeline/src/pipeline/delivery.rs`), which emits one event per
+    /// `AdoptedChange` immediately beside the `CandidateWorkspace::attribute_adopted`
+    /// call that writes the session's durable file-touch ledger from the same
+    /// rows (#2907) — so the TUI, the audit log and the exported JSON cannot
     /// disagree about what a turn changed. (This doc once claimed one emission
     /// point "by construction" while the deck in fact synthesized its own
     /// events from tool inputs, in a wrapper that knew only four tool names and
     /// sat on one of three tool stacks. Files edited in bulk, or by a worker
     /// lane, were reported as `+0 -0`.)
     ///
-    /// `added`/`removed` are the counts the recorder derived from the real pre-
-    /// and post-images (`file_touch::line_diff`). Consumers **must** use them
+    /// `added`/`removed` are the counts adoption measured against the real
+    /// tree (git's numstat plus the patch it applied). Consumers **must** use them
     /// rather than counting `+`/`-` lines in `diff`: the diff is a bounded,
     /// deliberately coarse rendering of the changed region, and re-deriving
     /// from it is what made the two disagree. Reads carry `0/0` and no diff;

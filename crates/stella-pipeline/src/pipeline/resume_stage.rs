@@ -242,7 +242,6 @@ impl<'a> Pipeline<'a> {
         if let Some(fallback) = &worker.fallback {
             self.emit_fallback(fallback);
         }
-        let worker_label = worker.model_ref.to_string();
         let mut engine = Engine::with_sleeper(
             worker.provider,
             self.tools,
@@ -339,13 +338,7 @@ impl<'a> Pipeline<'a> {
                 total_cost += cost_usd;
                 let best =
                     CandidateResult::turn_aborted(state.messages, TurnAbort { reason, kind });
-                return Ok(self.settle_outcome(
-                    best,
-                    task_class,
-                    total_cost,
-                    Some(worker_label),
-                    1,
-                ));
+                return Ok(self.settle_outcome(best, task_class, total_cost, 1));
             }
         }
 
@@ -378,13 +371,7 @@ impl<'a> Pipeline<'a> {
                     .await
                 {
                     let best = CandidateResult::turn_aborted(state.messages, abort);
-                    return Ok(self.settle_outcome(
-                        best,
-                        task_class,
-                        total_cost,
-                        Some(worker_label),
-                        1,
-                    ));
+                    return Ok(self.settle_outcome(best, task_class, total_cost, 1));
                 }
             }
         }
@@ -415,7 +402,7 @@ impl<'a> Pipeline<'a> {
             || (task_class == TaskClass::SimpleLookup && files_touched);
         if !should_verify {
             let best = state.into_unverified();
-            return Ok(self.settle_outcome(best, task_class, total_cost, Some(worker_label), 1));
+            return Ok(self.settle_outcome(best, task_class, total_cost, 1));
         }
 
         let warrant = warrant(&state.diff_text, state.signals);
@@ -449,7 +436,7 @@ impl<'a> Pipeline<'a> {
             self.verify_candidate(frame, witness.as_ref(), &engine, surface, &mut spend, state)
                 .await
         };
-        Ok(self.settle_outcome(best, task_class, total_cost, Some(worker_label), 1))
+        Ok(self.settle_outcome(best, task_class, total_cost, 1))
     }
 
     /// The `--- 6. Complete ---` projection shared by [`Pipeline::run`] and
@@ -461,7 +448,6 @@ impl<'a> Pipeline<'a> {
         best: CandidateResult,
         task_class: TaskClass,
         total_cost: f64,
-        worker_model_label: Option<String>,
         candidates_run: u32,
     ) -> PipelineOutcome {
         if let Some(abort) = best.aborted {
