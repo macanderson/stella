@@ -1107,8 +1107,8 @@ fn skill_usage_records_per_execution_version_rows() {
     //       `execution_reflection.parse_error` (#2175). v24 splits
     //       `'abandoned'` from `'error'` in `tool_calls.state` (#3146). v25
     //       `tool_calls.error_class` (#3145): which KIND of failure, so an
-    //       error rate can exclude model misuse and policy refusals.
-    assert_eq!(SCHEMA_VERSION, 25);
+    //       error rate can exclude misuse. v26 splits wrapper from door (#3388).
+    assert_eq!(SCHEMA_VERSION, 26);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
