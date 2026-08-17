@@ -198,6 +198,23 @@ pub struct EngineConfig {
     /// reasoning that puts [`Self::cwd`] here rather than making the engine
     /// sniff it.
     pub checkpoint_sink: Option<Arc<dyn crate::step::CheckpointSink>>,
+    /// What this session has already learned about which output ceilings its
+    /// providers will fund (`super::output_budget_recovery`, #3307).
+    ///
+    /// `None` — the default — is exactly the behaviour every caller had
+    /// before: the clamp dies with the turn that learned it, so the next turn
+    /// re-sends the original ceiling and pays another 402 round-trip to be
+    /// told the same thing. Attaching a handle carries the clamp across the
+    /// turns of one session while leaving the per-turn rung allowance to reset
+    /// with the turn, as it must.
+    ///
+    /// Kept here rather than passed to `run_turn` for the same reason as
+    /// [`Self::checkpoint_sink`]: it is a property of the session the host is
+    /// running, not of any one turn. A host builds one handle per session and
+    /// clones it into each turn's config — `stella-cli` does this from
+    /// `Config`, so every role of a session (default, worker, verifier) shares
+    /// what any of them learned about the account paying for all of them.
+    pub session_output_ceilings: Option<Arc<super::output_budget_recovery::SessionOutputCeilings>>,
     /// A host-supplied "the goal is already met — stop now" signal, consulted
     /// at every step boundary.
     ///
@@ -337,6 +354,7 @@ impl Default for EngineConfig {
             // belongs, and a default location invented here would write one
             // process's turns into another's session.
             checkpoint_sink: None,
+            session_output_ceilings: None,
             // Off by default: a turn with no host-supplied notion of "done"
             // must behave exactly as it always has. Only a caller holding a
             // real completion signal — the pipeline's flip oracle — can say

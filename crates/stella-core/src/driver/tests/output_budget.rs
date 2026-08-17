@@ -24,6 +24,7 @@ use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolSchema};
 
 use super::super::*;
+use crate::driver::output_budget_recovery::SessionOutputCeilings;
 
 /// Rejects the first `refusals` calls as an unaffordable ceiling, naming
 /// `affordable` each time, then completes. Records the ceiling every attempt
@@ -80,6 +81,62 @@ impl Provider for RefuseCeilingThenComplete {
     }
 }
 
+/// A gateway that prices the *ask*: every request naming a ceiling above what
+/// the balance can fund is refused with the affordable figure, and every
+/// request at or under it completes. Closer to the recorded OpenRouter
+/// behaviour than [`RefuseCeilingThenComplete`]'s fixed refusal count, and the
+/// only shape that can show a turn paying — or not paying — a wasted 402.
+struct RefuseAskAbove {
+    affordable: u32,
+    asked: Mutex<Vec<Option<u32>>>,
+}
+
+impl RefuseAskAbove {
+    fn new(affordable: u32) -> Self {
+        Self {
+            affordable,
+            asked: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn asked(&self) -> Vec<Option<u32>> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for RefuseAskAbove {
+    fn id(&self) -> &str {
+        "scripted-gateway"
+    }
+
+    async fn complete_ref(
+        &self,
+        req: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.asked.lock().unwrap().push(req.max_output_tokens);
+        if req
+            .max_output_tokens
+            .is_none_or(|asked| asked > self.affordable)
+        {
+            return Err(ProviderError::OutputBudgetExceeded {
+                message: "Scripted cannot afford the requested output ceiling (HTTP 402)"
+                    .to_string(),
+                affordable_output_tokens: Some(self.affordable),
+            });
+        }
+        Ok(CompletionResult {
+            upstream_provider: None,
+            text: "recovered".to_string(),
+            tool_calls: Vec::new(),
+            usage: stella_protocol::CompletionUsage::default(),
+            model: "scripted-strong".to_string(),
+            cost_usd: 0.0,
+            finish_reason: None,
+        })
+    }
+}
+
 struct NoTools;
 
 #[async_trait::async_trait]
@@ -102,12 +159,20 @@ impl crate::retry::Sleeper for NoSleep {
     async fn sleep(&self, _duration_ms: u64) {}
 }
 
-/// One real turn against `provider` with a configured output ceiling.
-async fn run_turn_with_ceiling(provider: &dyn Provider, ceiling: u32) -> TurnOutcome {
+/// One real turn against `provider` with a configured output ceiling, and
+/// optionally the session-scoped carry a host attaches (#3307). Passing the
+/// same handle to two calls is what makes them two turns of ONE session
+/// rather than two unrelated sessions.
+async fn run_turn_with_ceiling_and_carry(
+    provider: &dyn Provider,
+    ceiling: u32,
+    carry: Option<&std::sync::Arc<SessionOutputCeilings>>,
+) -> TurnOutcome {
     let tools = NoTools;
     let sleeper = NoSleep;
     let config = EngineConfig {
         max_output_tokens: Some(ceiling),
+        session_output_ceilings: carry.cloned(),
         ..EngineConfig::default()
     };
     let engine = Engine::with_sleeper(provider, &tools, config, &sleeper);
@@ -115,6 +180,12 @@ async fn run_turn_with_ceiling(provider: &dyn Provider, ceiling: u32) -> TurnOut
     let mut messages = vec![CompletionMessage::user("do the thing")];
     let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
     engine.run_turn(&mut messages, &mut budget, &tx).await
+}
+
+/// One real turn against `provider`, with no session carry — the shape every
+/// test here had before the carry existed.
+async fn run_turn_with_ceiling(provider: &dyn Provider, ceiling: u32) -> TurnOutcome {
+    run_turn_with_ceiling_and_carry(provider, ceiling, None).await
 }
 
 /// The witness. On `main` the 402 is `ProviderError::Terminal` and the turn
@@ -155,6 +226,118 @@ async fn an_unnamed_ceiling_still_produces_a_smaller_ask() {
     assert!(
         matches!(outcome, TurnOutcome::Completed { .. }),
         "{outcome:?}"
+    );
+}
+
+/// The #3307 witness. Two turns of ONE session against a balance that stays
+/// low: the second turn must go out already reduced on its **first** attempt.
+///
+/// On `main` the clamp dies with the turn that learned it, so turn 2 re-sends
+/// the configured 128K, is refused, and only its retry goes out reduced — one
+/// wasted 402 round-trip per turn for as long as the balance stays low, which
+/// on a bench trial is dozens of them.
+#[tokio::test]
+async fn a_learned_ceiling_survives_the_turn_and_the_next_turn_pays_no_402() {
+    let provider = RefuseAskAbove::new(117_676);
+    let carry = std::sync::Arc::new(SessionOutputCeilings::default());
+
+    let first = run_turn_with_ceiling_and_carry(&provider, 128_000, Some(&carry)).await;
+    let after_first = provider.asked();
+    assert_eq!(
+        after_first.len(),
+        2,
+        "turn 1 learns the hard way: {after_first:?}"
+    );
+    assert_eq!(
+        after_first[0],
+        Some(128_000),
+        "turn 1 asks the configured ceiling"
+    );
+    let learned = after_first[1].expect("the retry must still name a ceiling");
+    assert!(matches!(first, TurnOutcome::Completed { .. }), "{first:?}");
+
+    let second = run_turn_with_ceiling_and_carry(&provider, 128_000, Some(&carry)).await;
+    let asked = provider.asked();
+    assert_eq!(
+        asked.len(),
+        3,
+        "turn 2 must not buy the same 402 again — one call, not two: {asked:?}"
+    );
+    assert_eq!(
+        asked[2],
+        Some(learned),
+        "turn 2's FIRST ask must already carry turn 1's clamp: {asked:?}"
+    );
+    assert!(
+        matches!(second, TurnOutcome::Completed { .. }),
+        "{second:?}"
+    );
+}
+
+/// The carry is opt-in, and its absence is exactly the old behaviour: an
+/// unattached host re-asks the configured ceiling every turn and pays the 402
+/// again. Guards the byte-stability half of the contract (invariant 7) — a
+/// session that never attaches a handle sends what it always sent.
+#[tokio::test]
+async fn without_a_carry_every_turn_re_asks_the_configured_ceiling() {
+    let provider = RefuseAskAbove::new(117_676);
+
+    run_turn_with_ceiling(&provider, 128_000).await;
+    run_turn_with_ceiling(&provider, 128_000).await;
+
+    let asked = provider.asked();
+    assert_eq!(
+        asked.len(),
+        4,
+        "two turns, each paying its own 402: {asked:?}"
+    );
+    assert_eq!(
+        asked[2],
+        Some(128_000),
+        "turn 2 re-asks the configured ceiling with no carry attached: {asked:?}"
+    );
+}
+
+/// A session whose balance was topped up must not stay capped forever.
+/// Nothing observable announces a top-up, so the carry decays into a re-probe:
+/// after [`REPROBE_TURNS`] turns the next call asks for the caller's full
+/// ceiling again, and here the gateway now funds it.
+///
+/// [`REPROBE_TURNS`]: crate::driver::output_budget_recovery::REPROBE_TURNS
+#[tokio::test]
+async fn a_topped_up_balance_is_honoured_within_the_reprobe_period() {
+    use crate::driver::output_budget_recovery::REPROBE_TURNS;
+
+    let low = RefuseAskAbove::new(117_676);
+    let carry = std::sync::Arc::new(SessionOutputCeilings::default());
+    run_turn_with_ceiling_and_carry(&low, 128_000, Some(&carry)).await;
+    assert!(
+        carry.standing("scripted-gateway").is_some(),
+        "turn 1 must have learned a ceiling"
+    );
+
+    // The top-up: the same session, now against a gateway that funds the full
+    // ask. Every turn ages the carry; by the reprobe period it is forgotten.
+    let topped_up = RefuseAskAbove::new(u32::MAX);
+    for _ in 0..REPROBE_TURNS {
+        run_turn_with_ceiling_and_carry(&topped_up, 128_000, Some(&carry)).await;
+    }
+
+    let asked = topped_up.asked();
+    assert_eq!(
+        asked.len(),
+        usize::try_from(REPROBE_TURNS).unwrap(),
+        "one call per turn, none of them refused: {asked:?}"
+    );
+    assert_eq!(
+        asked.last().copied().flatten(),
+        Some(128_000),
+        "the session must be back to its configured ceiling: {asked:?}"
+    );
+    assert_eq!(
+        carry.standing("scripted-gateway"),
+        None,
+        "the stale ceiling must have been forgotten, not merely unused"
     );
 }
 
