@@ -16,18 +16,34 @@ pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> Cali
     stella_runtime::seed_calibration(store.as_ref(), cfg.provider.id, &cfg.model_id)
 }
 
+/// The wrapper variant the staged pipeline records (#3388/#3381). Named once
+/// here so the value the store groups by cannot drift from the value the
+/// pipeline calls itself.
+pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = "classic";
+
 /// Begin an execution record; a failure degrades to "no persistence for this
 /// execution" rather than blocking the work.
+///
+/// `kind` is the **door** — which command the user ran — and nothing else.
+/// Which wrapper ran, if any, is `variant`: two separate facts in two
+/// separate columns, because they used to share one and a deck turn's door
+/// changed depending on whether the pipeline was on (#3388).
 pub(crate) fn begin_execution(
     store: &Option<Arc<Store>>,
     kind: &str,
     prompt: &str,
     cfg: &Config,
     session: Option<&str>,
+    variant: Option<&str>,
 ) -> Option<(Arc<Store>, i64)> {
     let store = store.as_ref()?;
     match store.begin_execution(kind, prompt, cfg.provider.id, &cfg.model_id) {
         Ok(id) => {
+            // Best-effort like the session link below: an unrecorded variant
+            // costs a row in a comparison, never the turn.
+            if let Some(variant) = variant {
+                let _ = store.set_pipeline_variant(id, variant);
+            }
             // Link the execution to its session (store schema v8) — what
             // lets the deck's SESSIONS overlay reassemble and replay the
             // session's full journal later. Best-effort like every other
@@ -39,6 +55,33 @@ pub(crate) fn begin_execution(
         }
         Err(_) => None,
     }
+}
+
+/// Begin the execution row for a `stella run` turn that the staged pipeline
+/// wraps.
+///
+/// The door is **`run`** — this is `stella run`, whatever wrapped it. That
+/// the pipeline wrapped it is the `variant`, a separate fact in a separate
+/// column (#3388). It used to be recorded as a door called `"pipeline"`,
+/// which made the door depend on the wrapper and split one door in two for
+/// anything grouping by it.
+///
+/// It lives here rather than at its one call site because `agent.rs` is a
+/// grandfathered god file closed to growth.
+pub(crate) fn begin_pipeline_execution(
+    store: &Option<Arc<Store>>,
+    prompt: &str,
+    cfg: &Config,
+    session: &str,
+) -> Option<(Arc<Store>, i64)> {
+    begin_execution(
+        store,
+        "run",
+        prompt,
+        cfg,
+        Some(session),
+        Some(PIPELINE_VARIANT_CLASSIC),
+    )
 }
 
 #[derive(Default)]

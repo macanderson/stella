@@ -88,7 +88,8 @@ pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
        usage_complete INTEGER NOT NULL DEFAULT 0 CHECK(usage_complete IN (0, 1)),
        usage_status TEXT NOT NULL DEFAULT 'pending'
          CHECK(usage_status IN ('pending', 'complete', 'incomplete')),
-       journal_era INTEGER NOT NULL DEFAULT 0
+       journal_era INTEGER NOT NULL DEFAULT 0,
+       pipeline_variant TEXT
      );
      CREATE INDEX IF NOT EXISTS executions_by_session
        ON executions(session_id, id);

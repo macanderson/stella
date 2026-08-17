@@ -1506,15 +1506,15 @@ pub async fn run_deck_session(
 
         // The execution record outlives the turn future so a cancelled turn
         // can still be closed out in the store.
-        // The session link (store schema v8) is what lets the SESSIONS
-        // overlay's `Enter` reassemble and replay the full journal long
-        // after this process is gone.
+        // The session link (store schema v8) is what lets the SESSIONS overlay's
+        // `Enter` reassemble and replay the full journal after this process is gone.
         let execution = agent::begin_execution(
             &store,
-            if pipeline_on { "deck-pipeline" } else { "deck" },
+            "deck",
             &prompt,
             cfg,
             Some(&session_record.id),
+            pipeline_on.then_some(agent::persistence::PIPELINE_VARIANT_CLASSIC),
         );
         if let Some((_, id)) = &execution {
             last_execution_id = Some(*id);

@@ -176,7 +176,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
             eprintln!("  {marker} {line}");
         }
     }
-    let execution = begin_execution(&store, "resume", &record.title, cfg, Some(&record.id));
+    let execution = begin_execution(&store, "resume", &record.title, cfg, Some(&record.id), None);
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let events = stella_core::EventSender::new(tx.clone());
     tools_registry.bridge_policy_plane(events.clone());

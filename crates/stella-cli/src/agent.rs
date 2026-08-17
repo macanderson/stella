@@ -55,7 +55,7 @@ mod graph;
 mod init;
 pub(crate) mod outcome;
 mod output;
-mod persistence;
+pub(crate) mod persistence;
 mod presence;
 mod prompt;
 mod reflect;
@@ -278,7 +278,7 @@ async fn run_pipeline_one_shot(
     // Machine-wide presence: the deck's SESSIONS overlay sees this run live
     // and can replay its journal after it ends.
     let mut presence = SessionPresence::announce(cfg, prompt);
-    let execution = begin_execution(&store, "pipeline", prompt, cfg, Some(presence.id()));
+    let execution = persistence::begin_pipeline_execution(&store, prompt, cfg, presence.id());
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
@@ -1612,7 +1612,7 @@ async fn run_turn(
 ) -> Result<(), CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
-    let execution = begin_execution(store, kind, prompt, cfg, session);
+    let execution = begin_execution(store, kind, prompt, cfg, session, None);
     stamp_and_record_skill_usage(
         &execution,
         session_memory.as_deref_mut(),
