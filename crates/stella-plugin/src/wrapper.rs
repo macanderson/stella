@@ -319,7 +319,9 @@ impl CompareOp {
         CompareOp::NotEqual,
     ];
 
-    fn from_wire(text: &str) -> Option<Self> {
+    /// Resolve a wire operator, shared with the evidence grammar so both
+    /// halves of the manifest compare with one vocabulary.
+    pub(crate) fn from_wire(text: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|op| op.as_str() == text)
     }
 

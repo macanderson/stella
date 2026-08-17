@@ -139,6 +139,93 @@ pub enum ManifestError {
     #[error("[oracle] command.timeout_secs must be at least 1")]
     ZeroOracleTimeout,
 
+    /// An `[oracle] measurements` entry was blank. A measurement's name is
+    /// what a check reads and what a hold message prints; a blank one can be
+    /// neither.
+    #[error("[oracle] measurements contains a blank name")]
+    EmptyMeasurementName,
+
+    /// `[oracle] measurements` named the same measurement twice. Always an
+    /// editing mistake, and deduplicating silently would hide it — the
+    /// [`ManifestError::DuplicateHook`] rule, for evidence.
+    #[error("[oracle] measurements declares \"{measurement}\" more than once")]
+    DuplicateMeasurement {
+        /// The name that appeared twice.
+        measurement: String,
+    },
+
+    /// A `[[oracle.checks]]` entry's text is outside the closed comparison
+    /// grammar. The grammar is `<measurement> <op> <integer>` and nothing
+    /// else — a richer expression syntax is a second program with no gate on
+    /// it, which is the [`crate::Condition`] argument applied to evidence.
+    #[error("[[oracle.checks]] for \"{requirement}\": cannot parse \"{check}\" — {reason}")]
+    UnparsableCheck {
+        /// The requirement whose check failed to parse.
+        requirement: String,
+        /// The check text as written.
+        check: String,
+        /// What was wrong with it, in the words an author needs.
+        reason: String,
+    },
+
+    /// A check read a measurement the same `[oracle]` block did not declare.
+    /// A rule over a number nothing reports would decide nothing at run
+    /// time, which is exactly the manifest that quietly does nothing.
+    #[error(
+        "[[oracle.checks]] for \"{requirement}\" reads \"{measurement}\", \
+         which [oracle] measurements does not declare (declared: {declared})"
+    )]
+    UnknownMeasurement {
+        /// The requirement whose check reads the unknown measurement.
+        requirement: String,
+        /// The check text as written.
+        check: String,
+        /// The undeclared name.
+        measurement: String,
+        /// The declared measurements, for the "did you mean" half.
+        declared: String,
+    },
+
+    /// A check named a requirement no `[requirements]` entry declares. Every
+    /// hold cites a named requirement, so a check that decides an unnamed one
+    /// can never be attributed.
+    #[error(
+        "[[oracle.checks]] names requirement \"{requirement}\", which \
+         [requirements] does not declare"
+    )]
+    CheckWithoutRequirement {
+        /// The requirement name the check cited.
+        requirement: String,
+    },
+
+    /// `flip = "not-applicable"` with a requirement no check decides. Without
+    /// a flip, a check is the only thing that can establish a requirement, so
+    /// an unchecked one is a clause of the definition of done that nothing
+    /// could ever meet — a hold with no way out.
+    #[error(
+        "[oracle] flip = \"not-applicable\" leaves requirement \
+         \"{requirement}\" undecidable: with no flip, every requirement needs \
+         a [[oracle.checks]] entry"
+    )]
+    UndecidableRequirement {
+        /// The requirement nothing decides.
+        requirement: String,
+    },
+
+    /// The oracle ran but reported no value for a measurement a check reads.
+    /// A missing number is never read as a satisfied budget — the
+    /// [`ManifestError::SignalNotProduced`] discipline, for evidence.
+    #[error(
+        "the oracle reported no value for \"{measurement}\", which the check \
+         for requirement \"{requirement}\" reads"
+    )]
+    MeasurementNotReported {
+        /// The requirement whose check could not be decided.
+        requirement: String,
+        /// The measurement that was missing from the reported set.
+        measurement: String,
+    },
+
     /// `[subloop]` was declared below `steering`. Subloop stages run as
     /// bounded child turns inside the host's loop — that is participation,
     /// which `none` and `observer` have disclaimed.

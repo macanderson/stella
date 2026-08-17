@@ -221,6 +221,15 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
                 one_line(name),
                 one_line(description)
             ));
+            // A budget a user cannot read before installing is not
+            // meaningfully declared: the whole gain of stating a verdict rule
+            // as data is that changing it is a visible change to a file
+            // somebody consented to (`doc:pipeline-as-plugins` §6.1).
+            for check in manifest.oracle.iter().flat_map(|oracle| &oracle.checks) {
+                if check.requirement == *name {
+                    lines.push(format!("          decided by: {}", one_line(&check.rule)));
+                }
+            }
         }
     }
 

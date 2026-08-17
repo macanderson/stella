@@ -48,6 +48,21 @@ load-checks and resolves. The crate takes no engine dependency by contract,
 which is what lets the load-time contract be complete ahead of the socket it
 describes.
 
+`[oracle]` carries **two** shapes of evidence, and a manifest may declare
+either or both. `flip = "required"` is the witness contract: the host credits
+the requirement on an observed fail→pass transition. `flip = "not-applicable"`
+plus `measurements` and `[[oracle.checks]]` is the other — the oracle reports
+numbers and each check compares one of them against a budget, in the same
+closed comparison grammar the `[wrapper]` conditions use. The second exists
+because the first can express only one definition of done; a performance-budget
+plugin (`tests/fixtures/perf-budget.toml`, the D-1 falsifier of
+`doc:pipeline-as-plugins` §6.1) observes no flip at all. Two rules keep it
+honest: a check reading a measurement the same `[oracle]` did not declare is a
+load error, and dropping the flip *adds* an obligation rather than removing
+one — under `not-applicable` every requirement must be decided by a check, so
+the grade cannot be used to hold a turn open on vibes. `Oracle::unmet` is the
+pure evaluator; running the process and decoding its numbers is the host's.
+
 `[[capabilities]]` (`doc:pipeline-as-plugins` §A1) is the other half of a
 consent document. `[loop]` says what a plugin may do *inside* a turn; this
 says what it may reach *outside* one — a tool name, the grade it asks for in
@@ -139,6 +154,9 @@ before it crosses.
 - `src/program.rs` — the reader: `SignalValues` (the host's answer for every
   published signal, total by construction), `Condition::evaluate`,
   `Wrapper::resolve`, and the resolved `StageProgram`.
+- `src/evidence.rs` — the `[oracle]` block's evidence half: `OracleCheck`,
+  the `MeasurementRule` grammar and its parser, the load-time rules that keep
+  a check readable and every requirement decidable, and `Oracle::unmet`.
 - `src/consent.rs` — the install-consent surface: `Capability` (the
   `[[capabilities]]` entry and its validation), `highest_risk`, and
   `consent_text`, the pure renderer of the whole consent document.

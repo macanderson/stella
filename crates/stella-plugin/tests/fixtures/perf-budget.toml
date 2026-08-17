@@ -1,0 +1,57 @@
+# The D-1 falsifier, as a manifest: a definition of done that is NOT
+# "a witness test flipped red to green" (`doc:pipeline-as-plugins` §6.1).
+#
+# Done here is a **performance budget**: the benchmark that covers the hot
+# path did not get more than 5% slower than the recorded baseline, and no
+# benchmark in the suite got more than 20% slower. Somebody really installs
+# this — it is the check a team reaches for the week after "all tests green"
+# shipped a 3x regression to production.
+#
+# It stresses the grammar in three places the witness contract never does:
+#
+# 1. **There is no flip.** The benchmark passes before and passes after; what
+#    changed is a number. `flip = "not-applicable"` says so, and pays for it:
+#    with no flip, every requirement must be decided by a check below.
+# 2. **The verdict is a threshold**, and a threshold that lives inside the
+#    oracle binary would be the plugin deciding done — invisible at install,
+#    undiffable in review. It is `[[oracle.checks]]` data instead, so the host
+#    evaluates it and a change to a budget is a change to this file.
+# 3. **The measurements are the plugin's vocabulary**, not the host's. The
+#    host cannot enumerate every benchmark anyone will budget, so the oracle
+#    declares the names it reports and a check may read nothing else.
+#
+# What did NOT fit and was left as friction rather than widened: the numbers
+# are non-negative integers, so a fractional or signed budget must be declared
+# in an integer unit. This oracle reports **percent of baseline** — 100 is
+# unchanged, 105 is five percent slower, an improvement is below 100 — which
+# costs the sub-percent resolution a microbenchmark might want (#3488).
+name = "perf-budget"
+description = "Holds a finished turn open until the benchmarks are inside their budget."
+
+[loop]
+participation = "arbiter"
+hooks = ["Stop"]
+max_holds = 2
+
+[requirements]
+hot-path-within-budget = "agent_loop/step p50 is at most 5% slower than the recorded baseline"
+no-new-slow-path = "no benchmark in the suite is more than 20% slower than its baseline"
+
+[oracle]
+command = { argv = ["${plugin_dir}/bin/bench-oracle", "--baseline", "benches/baseline.json"], timeout_secs = 900 }
+# No red-to-green transition exists to observe here.
+flip = "not-applicable"
+# This one carries over from the witness contract unchanged, and it is
+# load-bearing: `benches/baseline.json` is the "before" half of every
+# comparison, so a worker that rewrites it wins the budget without touching
+# the code. Artifact identity is exactly the right guard for that.
+tamper = "artifact-identity"
+measurements = ["agent-loop-step-p50-pct-of-baseline", "worst-bench-pct-of-baseline"]
+
+[[oracle.checks]]
+requirement = "hot-path-within-budget"
+check = "agent-loop-step-p50-pct-of-baseline <= 105"
+
+[[oracle.checks]]
+requirement = "no-new-slow-path"
+check = "worst-bench-pct-of-baseline <= 120"

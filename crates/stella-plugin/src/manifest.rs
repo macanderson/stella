@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::{Capability, validate_capabilities};
 use crate::error::ManifestError;
+use crate::evidence::OracleCheck;
 use crate::wrapper::Wrapper;
 
 /// How much of a say in the turn loop a plugin has declared (#3245 §2).
@@ -141,11 +142,18 @@ impl LoopGrant {
     }
 }
 
-/// The `[oracle]` block — the witness protocol as a wire contract.
+/// The `[oracle]` block — the witness protocol as a wire contract, and the
+/// evidence protocol beside it.
 ///
 /// The HOST runs this; the plugin never grades its own work (the #2584
 /// discipline, stated for plugins). Arbiter-only: the oracle exists to
 /// decide requirements, and below `arbiter` there are none to decide.
+///
+/// Two shapes of evidence, and a manifest may declare either or both: a
+/// fail→pass flip ([`FlipPolicy`]), and numbers the oracle reports which
+/// declared checks compare against a budget ([`crate::OracleCheck`]). The
+/// second exists because the first can only express one definition of done —
+/// see `evidence.rs` for the falsifier that established that.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Oracle {
@@ -156,6 +164,18 @@ pub struct Oracle {
     pub flip: FlipPolicy,
     /// How the host detects tampering with the witness artifacts.
     pub tamper: TamperPolicy,
+    /// The names of the numbers this oracle reports. Non-blank and unique; a
+    /// check may only read a name declared here, which is the evidence half
+    /// of "a rule reading something nothing publishes is a load error".
+    ///
+    /// A declared measurement no check reads is allowed: reporting a number
+    /// for the trace is legitimate, and only *deciding* on an undeclared one
+    /// is the silence this crate refuses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub measurements: Vec<String>,
+    /// The `[[oracle.checks]]` entries — the verdict rule, as data.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<OracleCheck>,
 }
 
 /// The process an oracle runs as, with the host-enforced bound.
@@ -171,15 +191,24 @@ pub struct OracleCommand {
 }
 
 /// Whether a fail→pass flip is required before the oracle's requirement is
-/// credited. One variant today, deliberately: `#3245` defines only
-/// `"required"`, and an unknown value must be a load error rather than a
-/// silently weaker contract — a future relaxation adds a variant here.
+/// credited. Closed, so an unknown value is a load error rather than a
+/// silently weaker contract; a further relaxation adds a variant here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum FlipPolicy {
     /// The host credits the oracle only on an observed fail-before /
     /// pass-after flip.
     Required,
+    /// This oracle's evidence is not a flip: its measurements are what decide
+    /// its requirements. A performance budget is the reference case — the
+    /// benchmark passes before and after, and what changed is a number
+    /// (`doc:pipeline-as-plugins` §6.1).
+    ///
+    /// **Not a weaker contract.** With no flip to decide anything, every
+    /// requirement must be decided by a declared check or the manifest is
+    /// refused ([`ManifestError::UndecidableRequirement`]), so this trades
+    /// one host-evaluated rule for another rather than dropping one.
+    NotApplicable,
 }
 
 /// How the host detects witness-artifact tampering. One variant today, for
@@ -366,6 +395,7 @@ impl PluginManifest {
             if oracle.command.timeout_secs == 0 {
                 return Err(ManifestError::ZeroOracleTimeout);
             }
+            oracle.validate_evidence(self.requirements.as_ref())?;
         }
 
         if let Some(subloop) = &self.subloop {
@@ -668,6 +698,25 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, ManifestError::Parse(_)));
+    }
+
+    /// The flip vocabulary's wire strings, pinned on both sides. `kebab-case`
+    /// replaced `lowercase` when `not-applicable` joined the enum, which is
+    /// invisible for `Required` and would silently rename any future variant
+    /// spelled in two words — every shipped manifest naming it would stop
+    /// loading. Pinning both spellings makes that a red test instead.
+    #[test]
+    fn flip_policy_wire_strings_are_pinned() {
+        for (policy, wire) in [
+            (FlipPolicy::Required, "required"),
+            (FlipPolicy::NotApplicable, "not-applicable"),
+        ] {
+            assert_eq!(serde_json::to_value(policy).unwrap(), wire);
+            assert_eq!(
+                serde_json::from_value::<FlipPolicy>(wire.into()).unwrap(),
+                policy
+            );
+        }
     }
 
     #[test]

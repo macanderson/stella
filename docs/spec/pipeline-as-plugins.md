@@ -373,6 +373,83 @@ different definition of done — not Vera's — as declarative data. What will n
 fit is the evidence for widening the grammar, and it is far cheaper to find
 before the socket exists than after.
 
+### 6.1 The falsifier, run
+
+Run on 2026-08-17, before A3. **The decision held; the grammar did not, in two
+places, and both were widened rather than reopened.**
+
+**What was expressed: a performance budget.** Done means a named benchmark's
+p50 did not regress past a recorded baseline — the check a team reaches for the
+week after an all-green test suite shipped a 3x regression. It was picked over
+the coverage-floor and schema-compatibility candidates because it is the one
+whose verdict is a *relation between two measurements* rather than a property
+of the post-state, so it stresses the grammar in three independent places at
+once instead of one. The manifest is
+`crates/stella-plugin/tests/fixtures/perf-budget.toml` and the exercise is
+executable, not a memo: `crates/stella-plugin/tests/non_witness_done.rs`.
+
+**What fit, unchanged.** The `[loop]` ladder carried it exactly: this is an
+`arbiter`, it binds the Stop gate, it declares `max_holds = 2`.
+`[requirements]` carried the definition of done as two named, enumerable
+clauses. `[oracle]`'s command/timeout carried the evidence-gathering process —
+a benchmark run is precisely the workload the in-process bus cannot host, which
+is §6's own argument arriving intact from a completely different plugin. And
+`tamper = "artifact-identity"` transferred with no change of meaning and turned
+out to be load-bearing for a reason nobody designed it for: the recorded
+baseline is the "before" half of every comparison, so a worker that rewrites
+`benches/baseline.json` wins the budget without touching the code.
+
+**What did not fit — the unflattering half.**
+
+1. **Every oracle in the grammar was a witness oracle.** `flip` is a required
+   field with a single variant, `"required"`, so the manifest could state
+   exactly one definition of done: a red test went green. A benchmark passes
+   before *and* after; what changes is a number. A performance plugin could
+   only load by writing `flip = "required"` about a flip that does not exist.
+2. **A threshold had nowhere to live.** `[requirements]` values are human
+   prose, so "at most 5% slower" could only exist as a constant inside the
+   oracle binary. That is precisely the arrangement §6 rejects, arriving by a
+   side door: the plugin would be deciding done, the budget would be invisible
+   at install, and a change to it would be invisible in review.
+
+**What was widened** (both closed, both load-validated, both with tests):
+
+- **`flip = "not-applicable"`** — this oracle's evidence is not a transition.
+  It is *stricter*, not an escape hatch: with no flip to decide anything, every
+  requirement must be decided by a declared check, or the manifest is refused
+  (`UndecidableRequirement`). Vera's manifest is untouched and still says
+  `required`.
+- **`[oracle] measurements` + `[[oracle.checks]]`** — the oracle declares the
+  names of the numbers it reports, and each check states one rule over one of
+  them in the same closed comparison grammar `[wrapper]` conditions already
+  use (`<measurement> <op> <integer>`). A check reading an undeclared
+  measurement is a load error, and a number the oracle failed to report is an
+  error at evaluation, never a satisfied budget. `Oracle::unmet` is the pure
+  evaluator, and `consent_text` prints the budget under the requirement it
+  decides — a rule a user cannot read before installing is not meaningfully
+  declared.
+
+The measurement namespace is the **plugin's**, not the host's, which is the one
+deliberate asymmetry with `Signal`: the host cannot enumerate every benchmark
+anyone will ever budget. What stays closed is what matters — the comparison
+vocabulary, the shape of a rule, and the requirement that every name a rule
+reads was declared in the same manifest a human consented to.
+
+**Left as friction, not widened.** The literals are non-negative integers, so a
+fractional or signed budget must be declared in an integer unit (the fixture
+reports *percent of baseline*, which costs sub-percent resolution). A float in
+a completion gate brings `NaN` — under which every comparison is false and a
+broken oracle silently *passes* a `<=` budget — so the widening was not made on
+the falsifier's say-so; #3488 carries the decision. Also unstated: the
+provenance of a baseline (that it is the one from the merge base, not merely
+unmodified since), and any quantifier over a set the host does not know, such
+as "no changed file is at zero coverage". The general shape of that second
+limit is worth naming, because it bounds what this grammar will ever do: **it
+carries a verdict over an aggregate the oracle computes, not a quantifier the
+host evaluates.** That is a real constraint and it is also the reason the
+decision survives — the plugin chooses what to measure, and the manifest, which
+a human reads and a reviewer diffs, decides what counts as done.
+
 ---
 
 ## 7. Track B — extraction order

@@ -28,18 +28,27 @@
 //! on cannot disagree. [`consent_text`] renders both halves into the words an
 //! install prompt shows, purely and deterministically.
 //!
+//! `[oracle]`'s evidence half — `measurements` and `[[oracle.checks]]` — is
+//! what lets a definition of done that is **not** a witness test be stated as
+//! data: the oracle declares the numbers it reports, and each check compares
+//! one of them against a budget in the same closed grammar. See
+//! `evidence.rs` for the falsifier that established the need and
+//! [`Oracle::unmet`] for the pure evaluator that decides it.
+//!
 //! The one function a host must not bypass is [`LoopGrant::permits_hook`]:
 //! it is the authoritative filter behind the epic's rule that an undeclared
 //! hook is never invoked, even if the plugin's process registers for it.
 
 mod consent;
 mod error;
+mod evidence;
 mod manifest;
 mod program;
 mod wrapper;
 
 pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
 pub use error::ManifestError;
+pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
 pub use manifest::{
     FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, Participation, PluginManifest, Role,
     Subloop, TamperPolicy,
