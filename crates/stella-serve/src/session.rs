@@ -536,7 +536,16 @@ pub(crate) async fn drive_turn(
     // whether its caller wants another. The wrapper emits `RunComplete` when it
     // drops at the end of this function — after the turn, last on the stream
     // the host is reading.
-    let events = RunEnding::sealing(EventSender::new(events.clone()));
+    //
+    // It owes the run's stage boundaries too, because the engine emits none
+    // (#3416): `pairing_stage_complete` puts the closing `Stage(Complete)`
+    // immediately ahead of the engine's `TurnComplete`, and the opening
+    // `Stage(Execute)` goes out below.
+    let events = RunEnding::sealing(EventSender::new(events.clone()).pairing_stage_complete());
+    let _ = events.send(AgentEvent::Stage {
+        name: stella_protocol::StageKind::Execute,
+        scope: stella_protocol::StageScope::Run,
+    });
     let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel);
     let outcome = engine.drive(&mut state, &events).await;
     let budget = *state.budget();

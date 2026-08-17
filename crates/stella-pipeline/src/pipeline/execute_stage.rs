@@ -336,8 +336,8 @@ impl<'a> Pipeline<'a> {
     /// Run one engine turn, forwarding every event to the consumer **live**
     /// (a concurrent drain task, not a post-hoc flush — an execute turn can
     /// run tool loops for minutes, and buffering froze the renderer for the
-    /// whole turn) **except** the engine's `Stage`/`Complete` (the pipeline
-    /// owns those), tallying `FileChange`s into `signals.file_changes` for
+    /// whole turn) **except** the engine's `Complete` (the pipeline owns the
+    /// run's terminal event), tallying `FileChange`s into `signals.file_changes` for
     /// the zero-diff guard and mutating-capable `ToolStart`s into
     /// `signals.mutating_actions` for the ladder's no-op rung.
     ///
@@ -461,10 +461,12 @@ impl<'a> Pipeline<'a> {
         let filtered = EventSender::from_fn(move |event| {
             match &event {
                 // Nothing is dropped here any more (#3398). The engine's
-                // stages and its turn terminator are true statements about a
-                // turn that really happened, and every consumer that branches
-                // on them now selects a `StageScope` — so the two vocabularies
-                // coexist in one stream instead of one silencing the other.
+                // turn terminator is a true statement about a turn that really
+                // happened, and every consumer that branches on it now selects
+                // a `StageScope` — so the two vocabularies coexist in one
+                // stream instead of one silencing the other. The engine also
+                // no longer emits a `Stage` of its own (#3416): that boundary
+                // moved out to the run owner, which here is the pipeline.
                 // Concurrent candidates share this stream, and these two are
                 // the only events whose meaning depends on arriving
                 // uninterrupted: `TextDelta` is a preview its own `Text` event

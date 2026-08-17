@@ -51,6 +51,39 @@ impl EventSender {
     pub fn send(&self, event: AgentEvent) -> Result<(), EventSendError> {
         (self.send)(event)
     }
+
+    /// Wrap this sender so a run owner's closing `Stage(Complete)` rides
+    /// immediately ahead of the engine's terminal `TurnComplete`.
+    ///
+    /// The engine emits no stage boundary of its own: `StageKind` is the run
+    /// *owner's* vocabulary, and a turn is one step of a run that may have six
+    /// stages left to go (#3416). A raw run owner still owes its consumers the
+    /// boundary — `stella-tui`'s `hud.stage` and `plain`'s stage rule both read
+    /// it — and owes it in the order they already render, which is why this is
+    /// a sender combinator rather than a send after the turn returns: the
+    /// engine's `TurnComplete` is emitted *inside* the turn, so anything appended
+    /// afterwards would arrive behind the terminal event some consumers stop
+    /// at.
+    ///
+    /// Only the completed path gets a boundary, exactly as the engine's copy
+    /// did — an aborted turn reached no completion, and a boundary claiming
+    /// otherwise would be a HUD's last word on a run that failed. A staged run
+    /// owner must **not** use this: the pipeline emits every boundary of its
+    /// own, on its own schedule.
+    pub fn pairing_stage_complete(&self) -> Self {
+        let inner = self.clone();
+        Self::from_fn(move |event| {
+            if matches!(event, AgentEvent::TurnComplete { .. }) {
+                inner.send(AgentEvent::Stage {
+                    name: stella_protocol::StageKind::Complete,
+                    // The owner's vocabulary spans the whole run, not the turn
+                    // that happened to trigger it (#3398's `StageScope`).
+                    scope: stella_protocol::StageScope::Run,
+                })?;
+            }
+            inner.send(event)
+        })
+    }
 }
 
 /// The run owner's half of the one-way ending contract (#3379).

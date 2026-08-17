@@ -3,7 +3,6 @@
 use std::io::Write;
 use std::sync::Arc;
 
-use stella_core::event_sender::RunEnding;
 use stella_core::ports::Clock;
 use stella_core::{EventSendError, EventSender};
 use stella_protocol::AgentEvent;
@@ -161,27 +160,44 @@ pub(super) fn event_sender_for_run(
     (EventSender::new(sender), false)
 }
 
-/// [`event_sender_for_run`] for a run the CLI drives as bare engine turns,
-/// with no pipeline above it (#3379).
+/// Open a raw (non-staged) run's turn on `events`: this turn's `ContextRecall`,
+/// if recall ran, and then the run owner's own `Stage(Execute)`.
 ///
-/// The difference is who ends the run. A staged run's ending is the
-/// pipeline's, authored from a verdict it alone holds. A raw run has no such
-/// author: the engine ends each turn with `TurnComplete` and deliberately
-/// says nothing about the run, so the CLI — the owner here — emits the
-/// terminal `RunComplete` itself. [`RunEnding`] does that when this sender's
-/// last clone drops, which is precisely when the run's stream closes and
-/// therefore the only moment "last" is guaranteed rather than assumed.
+/// Both halves are ordered deliberately. Recall goes first because the context
+/// was assembled *before* the turn began, and a receipt that ordered it after
+/// the first stage would misdescribe when it entered. The stage boundary is
+/// here at all because the engine emits none — `StageKind` is the run owner's
+/// vocabulary, not the loop's (#3416) — and it lives in this module rather than
+/// at the call site because `agent.rs` is a god file closed to growth.
+pub(super) fn open_raw_turn(events: &EventSender, recall_event: Option<AgentEvent>) {
+    if let Some(event) = recall_event {
+        let _ = events.send(event);
+    }
+    let _ = events.send(AgentEvent::Stage {
+        name: stella_protocol::StageKind::Execute,
+        scope: stella_protocol::StageScope::Run,
+    });
+}
+
+/// [`event_sender_for_run`] for a **raw** (non-staged) run: the same boundary,
+/// plus the run owner's closing `Stage(Complete)` paired onto the engine's
+/// terminal event — see [`EventSender::pairing_stage_complete`].
 ///
-/// Wrapping *outside* the durability boundary above is deliberate: the
-/// terminal event is journaled through the same persist-first sender as
-/// everything before it, so a durable stream still ends on the event that
-/// ended the run.
-pub(super) fn event_sender_for_raw_run(
+/// A separate constructor rather than a flag because the staged run shares
+/// `event_sender_for_run` and must not be paired: the pipeline emits every
+/// stage boundary of its own.
+///
+/// It pairs but does not *seal*: the run-terminal `RunComplete` is emitted
+/// explicitly by each raw owner (`persistence::emit_run_complete_on_raw`),
+/// and a `RunEnding` (`stella_core::event_sender::RunEnding`) here would put
+/// a second terminator on the goal path,
+/// which already emits its own. See #3379 for the ending contract.
+pub(super) fn raw_event_sender_for_run(
     sender: mpsc::UnboundedSender<AgentEvent>,
     format: OutputFormat,
 ) -> (EventSender, bool) {
     let (events, durable_pre_persisted) = event_sender_for_run(sender, format);
-    (RunEnding::sealing(events), durable_pre_persisted)
+    (events.pairing_stage_complete(), durable_pre_persisted)
 }
 
 /// The durable sink, and the point at which an event becomes a *line*.

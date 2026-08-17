@@ -58,7 +58,8 @@ pub(super) async fn run_lead_pipeline_turn(
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
-        crate::cache_insight::InsightScope::from_config(cfg),
+        // The pipeline emits every stage boundary of this lane itself.
+        crate::cache_insight::InsightScope::from_config(cfg).staged(),
         in_tx.clone(),
         LEAD.to_string(),
         Some(registry.task_board()),
