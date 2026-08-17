@@ -17,6 +17,19 @@ skipped-with-record so one unparseable file never aborts an index batch
 (L-L1). `GraphError` is reserved for real infrastructure faults — SQLite, I/O,
 a malformed built-in query.
 
+## Direction — a built-in that is shaped like an extension
+
+Stella's goal is an extensible turn loop whose capabilities arrive from outside the
+binary (`doc:turn-loop-wrappers`). This crate is the precedent that the boundary
+holds: the code graph ships in-tree and is still reached the way a third-party
+source is — as a CGP provider behind the host, with no privileged path into recall
+and no edge back from [`stella-context`](../stella-context). A capability written
+this way can move out of the workspace later without anything above it changing,
+which is exactly the property verification is being given (#3246).
+
+Keep it that way when extending: a new query is a provider capability, not a new
+seam into the retrieval plane, and the database path stays the caller's business.
+
 ## Where it sits
 
 Its only workspace dependencies are two leaves — [`stella-store`](../stella-store)

@@ -2,7 +2,7 @@
 
 The `ratatui` terminal UI: the single-session event-log REPL and the multi-tab
 **Command Deck** it grew into — the default interactive surface when `stella`
-runs on a TTY. 47 source files, ~36k lines.
+runs on a TTY.
 
 The hard boundary is **no engine access**. This crate never calls a model, a
 tool, or the store. `AgentEvent`s (single session) or `Inbound` envelopes
@@ -22,6 +22,29 @@ Third-party: `ratatui` + `crossterm`, `sysinfo` (CPU/MEM), `arboard` + `png`
 the driver side (`crates/stella-cli/src/command_deck.rs`, `src/tui.rs`). This crate
 builds no binary; the runnable surface is `examples/deck_demo.rs`. The driver
 and the TUI communicate over two channels and never call each other directly.
+
+## Direction — render what the loop says, including its ending
+
+Stella is becoming one turn loop with a plugin architecture around it, embeddable
+in any application (`doc:turn-loop-wrappers`, `doc:engine-embedding`). This crate
+is the reference *consumer* of that loop's event stream, and two changes in flight
+land squarely on the fold:
+
+- **One completion per turn, plus one per run.** Since #3379 the engine emits its
+  own terminal completion for every turn and no wrapper filters it; a wrapper's
+  run-level ending is a separately named signal. A fold that treats the first
+  completion it sees as "the work is over" is wrong for any multi-round run —
+  which is most of them.
+- **Stages are a wrapper's vocabulary, not the engine's.** The staged panels
+  render events from [`stella-pipeline`](../stella-pipeline), which is leaving the
+  workspace to become an installable plugin (#3246). The deck must stay legible
+  for a run with **no** wrapper at all — the raw loop is becoming the default
+  (#3381) — so a stage-shaped view has to degrade to "the loop ran and here is
+  what it changed" rather than look broken.
+
+The boundary is unchanged and is what makes this safe: everything drawn is derived
+from the inbound stream, so a new wrapper's events are new rows to fold, never a
+new dependency.
 
 ## Boundary — does this change belong here?
 

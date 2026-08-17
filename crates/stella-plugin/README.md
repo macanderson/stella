@@ -1,8 +1,8 @@
 # stella-plugin
 
 The plugin manifest: parsing and validation of a plugin's declared say in the
-turn loop — slice A of #3245 (plugins as turn-loop participants). One
-constructor vouches for a manifest:
+turn loop — slice A of the plugins-as-turn-loop-participants epic (#3245, whose
+sequencing now lives in #3246). One constructor vouches for a manifest:
 
 ```rust
 let manifest = stella_plugin::PluginManifest::from_toml_str(text)?;
@@ -36,6 +36,29 @@ Nothing here dispatches a stage: the four wrapper interception points are
 #3380 and do not exist yet, so a stage name is a declared name that
 load-checks. The crate takes no engine dependency by contract, which is what
 lets the load-time contract be complete ahead of the socket it describes.
+
+## Direction — this crate is the front of the product
+
+Stella's shape is one turn loop with a plugin architecture around it, embeddable
+in any application through the Rust ports or the HTTP surface. This crate holds
+the contract that makes "plugin" mean something enforceable rather than
+aspirational: a declaration a host can check *before* anything runs, written by
+someone who does not get to see the engine. Two things follow from that.
+
+**The first plugin is Stella's own verification.** The staged pipeline
+([`stella-pipeline`](../stella-pipeline)) is the wrapper the `[wrapper]` block
+was designed for, and it is leaving the workspace to become a plugin (#3246,
+`doc:turn-loop-wrappers`). When it does, Stella no longer verifies its own work
+unless that plugin is installed — which is exactly why the manifest's rules are
+load errors rather than warnings: an opt-in verifier that silently declined to
+participate would be worse than none.
+
+**Declared, then dispatched, in that order.** The manifest is deliberately ahead
+of the socket it describes. The four wrapper interception points are #3380 and do
+not exist yet; the `[wrapper]` stage list parses and load-checks but nothing
+reads it yet (#3408). That gap is tracked, not incidental — the crate takes no
+engine dependency, which is what lets the load-time contract be complete before
+the runtime half exists.
 
 The one function a host must never bypass is
 `LoopGrant::permits_hook(event)` — the authoritative filter behind the
@@ -103,7 +126,7 @@ before it crosses.
 
 ## Consumers
 
-None shipping yet, deliberately: this is the first slice of #3245, and the
+None shipping yet, deliberately: this is the first slice of the epic, and the
 host that consumes it (manifest loading, install consent, Stop-gate binding
 via the bounded verification loop, the subloop runner) arrives with slices
 B–E of that epic. The crate exists first because every one of those slices

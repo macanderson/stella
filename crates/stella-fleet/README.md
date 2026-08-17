@@ -17,6 +17,25 @@ so every test runs against fakes; `git`/`gh` are shelled out to through
 `tokio::process` rather than linking libgit2 (a deliberately-avoided heavy
 native build); and there is no `unwrap`/`panic` outside tests.
 
+## Direction — many turns, still one loop
+
+Stella's shape is one turn loop with a plugin architecture around it
+(`doc:turn-loop-wrappers`). This crate is the *fan-out* layer over that loop, and
+the distinction that keeps it from becoming a second engine is worth stating:
+a **wrapper** does more work around one prompt (propose, run a turn, judge,
+maybe go again); a **fleet** dispatches many independent prompts and records what
+each cost. Verification is a wrapper's job, not this crate's — and it is leaving
+the workspace for an installable plugin (#3246), so a fleet worker inherits
+whatever the run it dispatches was configured with, and nothing here should grow
+its own adjudication.
+
+Two practical consequences. `executions.kind = 'fleet'` is a *door*, and which
+wrapper ran belongs in `pipeline_variant` (#3388) — so a fleet run comparing two
+verification designs groups by the variant, not by the door. And the one-seam rule
+below is exactly the rule the wrapper contract adopts for child turns: a worker is
+handed a bounded, budget-carved turn through one API, never a hand-rolled engine
+of its own.
+
 ## Where it sits
 
 Depends on `stella-protocol` (`AgentEvent`, `PrStatus`, `CiStatus`),

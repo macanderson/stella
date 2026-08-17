@@ -16,6 +16,22 @@ whether a cloned repo's `mcp.toml` may spawn processes at all, and every print
 belong to `stella-cli` ([`mcp_cmd.rs`](../stella-cli/src/mcp_cmd.rs),
 [`agent.rs`](../stella-cli/src/agent.rs)).
 
+## Direction — the extension plane that already works
+
+Stella's goal is an extensible turn loop whose new capabilities arrive from outside
+the binary, and MCP is the half of that story already shipping: a server declares
+tools, the host admits them under its own trust gate, and the engine calls them
+exactly like a built-in. The other half is the turn-loop plugin — a participant
+that gets a say in the loop itself rather than a tool in the registry
+([`stella-plugin`](../stella-plugin) is its manifest, #3246 the sequencing).
+
+Keep the two apart when planning: **a tool answers a call; a plugin shapes a turn.**
+An MCP server that wants to gate completion, hold the loop, or judge a turn's work
+is asking for the plugin plane, not a wider client here. What this crate should keep
+inheriting from that plane is its posture, not its scope — the client stays a client,
+ignores every server-initiated request, and leaves path resolution and the trust gate
+to `stella-cli`.
+
 ## Where it sits
 
 It depends on `stella-protocol` (`ToolOutput`, `ToolSchema`) and `stella-core`

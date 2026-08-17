@@ -6,6 +6,17 @@ the rest of the engine. It reaches users as the `generate_image`,
 `generate_svg`, `generate_video`, and `poll_video` tools, which live in
 [`stella-tools`](../stella-tools/src/media.rs) and drive this crate.
 
+## Direction — a capability behind a port, reachable from any door
+
+Stella is becoming an embeddable turn loop with a plugin architecture around it
+(`doc:turn-loop-wrappers`, `doc:engine-embedding`). This crate is a plain
+capability in that shape: one port, BYOK credentials the host supplies, and the
+only way in is the four media tools in [`stella-tools`](../stella-tools) — so a
+host embedding the engine over HTTP gets the same surface a terminal user does,
+and neither gets a private path. Media generation is not part of the loop and
+never becomes a wrapper; it answers a tool call and returns an artifact
+reference.
+
 ## Where it sits
 
 The only workspace dependency is `stella-protocol` (`MediaKind`,

@@ -12,6 +12,17 @@ could set precisely one of `EngineConfig`'s ~15 tuning knobs, the goal loop
 and sub-agents were CLI-only, and the serve crate's own route tests covered 7
 of its 14 routes.
 
+This matrix is why "Stella is an embeddable engine" is a checkable claim rather
+than a slogan: the CLI is a door, the API is a door, and a capability that exists
+behind only one of them is a declared deferral with a name on it or a failing
+test. Two things the plugin era adds to its job. A **wrapper is not a surface** —
+verification leaving the workspace for a plugin (#3246,
+`doc:turn-loop-wrappers`) must not be recorded as an API-side absence; what the
+matrix should hold once the wrapper contract lands (#3380) is that both doors can
+*host* a wrapper, not that both ship one. And the rows covering
+[`stella-core`](../stella-core)'s goal module are the rows to expect churn in:
+that loop is a wrapper living inside the engine crate and is slated to leave it.
+
 The matrix makes that class of gap structural instead of tribal, with the same
 three instruments the provider matrix proved out:
 
