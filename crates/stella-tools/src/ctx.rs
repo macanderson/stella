@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use stella_core::bus::HookBus;
+use stella_core::workspace_scope::{ScopeDecision, WriteScope};
 
 /// What a tool may touch while it runs: the workspace root for path
 /// resolution, and the session's event channel scoped to this call's
@@ -45,6 +46,15 @@ pub struct ToolCtx {
     tool: String,
     bus: Option<HookBus>,
     allowed: Vec<String>,
+    /// Where this session may write ([`stella_core::workspace_scope`]).
+    ///
+    /// Carried on the context rather than constructed per tool because it is
+    /// one session-wide answer that several tools must give identically: a
+    /// `write_file` refusal and a `bash` refusal that disagreed about the
+    /// boundary would be worse than either alone. Defaults to the session
+    /// root, so a context built before an operator widened anything confines
+    /// to the workspace — the safe direction.
+    scope: WriteScope,
 }
 
 impl ToolCtx {
@@ -58,12 +68,23 @@ impl ToolCtx {
         bus: Option<HookBus>,
         allowed: Vec<String>,
     ) -> Self {
+        let scope = WriteScope::new(canonical_or_given(&root));
         Self {
             root,
             tool: tool.into(),
             bus,
             allowed,
+            scope,
         }
+    }
+
+    /// The same context, confined to `scope` instead of to the session root
+    /// alone — how an operator's `--allow-dir` / `stella.toml` widening
+    /// reaches the tools.
+    #[must_use]
+    pub fn with_scope(mut self, scope: WriteScope) -> Self {
+        self.scope = scope;
+        self
     }
 
     /// A context with no event channel — for tests and for callers that
@@ -71,11 +92,13 @@ impl ToolCtx {
     /// reports the drop.
     #[must_use]
     pub fn bare(root: PathBuf) -> Self {
+        let scope = WriteScope::new(canonical_or_given(&root));
         Self {
             root,
             tool: String::new(),
             bus: None,
             allowed: Vec::new(),
+            scope,
         }
     }
 
@@ -85,6 +108,168 @@ impl ToolCtx {
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Where this session may write, and what it may not read.
+    #[must_use]
+    pub fn scope(&self) -> &WriteScope {
+        &self.scope
+    }
+
+    /// Resolve a model-supplied path for a **mutation**, returning the allowed
+    /// root to open it under and its path relative to that root.
+    ///
+    /// This is the seam that makes more than one writable directory possible
+    /// without teaching [`crate::rootfd::RootHandle`] about sets: the handle
+    /// stays single-root and TOCTOU-safe, and this function decides *which*
+    /// root it should be opened on. A bare relative path resolves against the
+    /// session root, exactly as before; an absolute path — or one that climbs
+    /// out with `..` — resolves against whichever allowed root contains it,
+    /// and is refused when none does.
+    ///
+    /// The returned relative path is used only to walk the handle, so the
+    /// descriptor walk still re-checks every component. This decides policy;
+    /// `rootfd` closes the race.
+    pub fn resolve_for_write(&self, path: &str) -> Result<(PathBuf, String), String> {
+        let absolute = self.absolutize(path);
+
+        let decision = self.scope.may_write(&absolute);
+        if !decision.is_allowed() {
+            return Err(self.scope_refusal(&absolute, decision));
+        }
+
+        // The most specific containing root wins, so a nested allowed
+        // directory is opened as itself rather than reached through its
+        // parent — the handle's confinement is then the tighter of the two.
+        let normalized = lexically_normalize(&absolute);
+        let mut best: Option<&PathBuf> = None;
+        for root in self.scope.roots() {
+            if normalized.starts_with(root)
+                && best
+                    .is_none_or(|current| root.components().count() > current.components().count())
+            {
+                best = Some(root);
+            }
+        }
+        let Some(root) = best else {
+            return Err(self.scope_refusal(&absolute, ScopeDecision::OutsideScope));
+        };
+        let relative = normalized
+            .strip_prefix(root)
+            .map_err(|_| self.scope_refusal(&absolute, ScopeDecision::OutsideScope))?;
+        Ok((root.clone(), relative.to_string_lossy().into_owned()))
+    }
+
+    /// Whether a model-supplied path may be read, as a refusal string when it
+    /// may not. Only worktrees are ever refused — see
+    /// [`stella_core::workspace_scope`] on why reads are otherwise open.
+    pub fn refuse_read(&self, path: &str) -> Option<String> {
+        let absolute = self.absolutize(path);
+        let decision = self.scope.may_read(&absolute);
+        (!decision.is_allowed()).then(|| self.scope_refusal(&absolute, decision))
+    }
+
+    /// A model-supplied path as one absolute, **canonical-prefix** path, ready
+    /// for the scope to decide about.
+    ///
+    /// Two steps, and the second is the one that is easy to skip and wrong to
+    /// skip. A relative path joins the session root. Then the deepest part of
+    /// the result that actually exists is canonicalized, because a scope's
+    /// roots are canonical and a path that is not cannot be compared to them:
+    /// on macOS `/var` is a symlink to `/private/var`, so an allowed directory
+    /// handed in as `/var/…` and stored as `/private/var/…` would never match
+    /// itself. The non-existent tail (the file about to be created) is
+    /// re-appended lexically — it cannot be canonicalized because it is not
+    /// there yet.
+    ///
+    /// **The final component is never resolved.** Canonicalizing it would
+    /// follow a symlink, and `delete_file`'s whole contract is that it unlinks
+    /// the *link* and spares the target — resolving the leaf here would have
+    /// silently turned every symlink deletion into a deletion of the real
+    /// file. Only the directory part is canonicalized, which is all the scope
+    /// decision needs: a leaf cannot move a path into a different directory.
+    ///
+    /// This is deliberately I/O, which is why it lives here and not in
+    /// `stella_core::workspace_scope` (invariant #2). It also does not close
+    /// any race — `rootfd`'s descriptor walk does that; this only makes the
+    /// *policy* question answerable.
+    fn absolutize(&self, path: &str) -> PathBuf {
+        let requested = Path::new(path);
+        let joined = if requested.is_absolute() {
+            requested.to_path_buf()
+        } else {
+            self.root.join(requested)
+        };
+        let joined = lexically_normalize(&joined);
+
+        let (parent, leaf) = match (joined.parent(), joined.file_name()) {
+            (Some(parent), Some(leaf)) => (parent, leaf),
+            // A path with no parent is a filesystem root; there is no leaf to
+            // protect and nothing to canonicalize toward.
+            _ => return joined,
+        };
+
+        let mut existing = parent;
+        let mut missing: Vec<&std::ffi::OsStr> = Vec::new();
+        loop {
+            if let Ok(canonical) = existing.canonicalize() {
+                let mut resolved = canonical;
+                for part in missing.iter().rev() {
+                    resolved.push(part);
+                }
+                resolved.push(leaf);
+                return resolved;
+            }
+            let Some(next) = existing.parent() else {
+                // Nothing on the path exists; the lexical form is the best
+                // answer available, and the scope will judge it as such.
+                return joined;
+            };
+            if let Some(name) = existing.file_name() {
+                missing.push(name);
+            }
+            existing = next;
+        }
+    }
+
+    /// The refusal a tool returns for a path `scope` rejected, phrased for the
+    /// model rather than for a log.
+    ///
+    /// One spelling, shared by every tool that confines, so `write_file` and
+    /// `bash` cannot describe the same boundary two different ways. Each
+    /// refusal names the remedy the *agent* can act on, never one only the
+    /// user can: "ask the user to widen it" is a dead end mid-turn, while
+    /// "work inside these directories" is something the next tool call can do.
+    #[must_use]
+    pub fn scope_refusal(&self, path: &Path, decision: ScopeDecision) -> String {
+        match decision {
+            ScopeDecision::Allowed => String::new(),
+            ScopeDecision::DeniedWorktree => format!(
+                "`{}` is inside `{}`, which holds other sessions' git worktrees. \
+                 Those are separate checkouts of this repository at other revisions: \
+                 reading one returns a different branch's version of the file you are \
+                 working on, and writing one changes work this session does not own. \
+                 Work in the session root instead.",
+                path.display(),
+                stella_core::workspace_scope::DENIED_SUBPATH
+            ),
+            ScopeDecision::OutsideScope => {
+                let roots = self
+                    .scope
+                    .roots()
+                    .iter()
+                    .map(|root| root.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "`{}` is outside this session's writable directories ({roots}). \
+                     Reading anywhere is fine; creating, editing, deleting or running \
+                     a script outside those directories is not. Put the file inside one \
+                     of them.",
+                    path.display()
+                )
+            }
+        }
     }
 
     /// Emit one named event onto the session bus, if this tool's contract
@@ -115,6 +300,35 @@ impl ToolCtx {
     pub fn progress(&self, payload: Value) -> bool {
         self.emit(stella_core::bus::names::TOOL_CALL_PROGRESS, payload)
     }
+}
+
+/// `root` canonicalized, or `root` unchanged when it cannot be.
+///
+/// A scope's roots must be canonical or nothing can be compared against them
+/// (see [`ToolCtx::absolutize`]). A root that does not exist yet is kept as
+/// given rather than dropped: refusing to build a scope because the workspace
+/// is missing would fail the session for a reason the session cannot fix, and
+/// a non-canonical root still confines — it just confines a path spelled the
+/// same way.
+fn canonical_or_given(root: &Path) -> PathBuf {
+    root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+}
+
+/// Lexical `.`/`..` collapse — the same normalization
+/// [`stella_core::workspace_scope`] applies before deciding, repeated here so
+/// the path handed to `strip_prefix` is the one the decision was made about.
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

@@ -287,6 +287,14 @@ impl Tool for ReadFile {
             }
         };
 
+        // The one read the scope refuses: another session's git worktree. Not
+        // a security boundary — it is a correctness one. See
+        // `stella_core::workspace_scope` on why a parallel checkout of the
+        // same repository is the read an agent must not silently get.
+        if let Some(refusal) = ctx.refuse_read(path) {
+            return ToolOutput::error(refusal);
+        }
+
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
