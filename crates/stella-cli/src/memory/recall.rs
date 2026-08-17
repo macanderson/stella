@@ -168,10 +168,13 @@ impl SessionMemory {
         if self.ab_suppressed || !self.steering_enabled {
             return RecalledBlock::default();
         }
-        let recall = self.recalled_frames(prompt).await;
+        let RecalledFrames {
+            recall,
+            dropped: frame_drops,
+        } = self.recalled_frames(prompt).await;
 
         let all_skills = self.load_skills();
-        let selected = skills::select_skills(
+        let selected = skills::select_skills_reporting(
             &all_skills,
             prompt,
             &self.active_domains(prompt),
@@ -189,14 +192,20 @@ impl SessionMemory {
             prompt,
             ..Default::default()
         };
-        let set = query_gathered_plane(&signal, &recall.frames, &selected, record.as_ref());
+        let set = query_gathered_plane(
+            &signal,
+            &recall.frames,
+            &frame_drops,
+            &selected,
+            record.as_ref(),
+        );
         report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
 
         let mut sections: Vec<String> = Vec::new();
         if let Some(section) = render_context_section(&kept_frames(&recall.frames, &set)) {
             sections.push(section);
         }
-        let kept = kept_skills(&selected, &set);
+        let kept = kept_skills(&selected.selected, &set);
         if !kept.is_empty() {
             sections.push(skills::render_skills_section(&kept));
         }
@@ -248,7 +257,7 @@ impl SessionMemory {
             return None;
         }
         let all_skills = self.load_skills();
-        let selected = skills::select_skills(
+        let selected = skills::select_skills_reporting(
             &all_skills,
             prompt,
             &self.active_domains(prompt),
@@ -260,11 +269,11 @@ impl SessionMemory {
             prompt,
             ..Default::default()
         };
-        let set = query_gathered_plane(&signal, &[], &selected, record.as_ref());
+        let set = query_gathered_plane(&signal, &[], &[], &selected, record.as_ref());
         report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
 
         let mut sections: Vec<String> = Vec::new();
-        let kept = kept_skills(&selected, &set);
+        let kept = kept_skills(&selected.selected, &set);
         if !kept.is_empty() {
             sections.push(skills::render_skills_section(&kept));
         }
@@ -319,11 +328,18 @@ impl SessionMemory {
         }
         let domains = crate::contextgraph::query_domain_scope(&self.domains, &anchors);
 
-        let recall = self.recalled_frames_anchored(prompt, anchors, |_| {}).await;
+        let RecalledFrames {
+            recall,
+            dropped: frame_drops,
+        } = self.recalled_frames_anchored(prompt, anchors, |_| {}).await;
 
         let all_skills = self.load_skills();
-        let selected =
-            skills::select_skills(&all_skills, prompt, &domains, &SelectionConfig::default());
+        let selected = skills::select_skills_reporting(
+            &all_skills,
+            prompt,
+            &domains,
+            &SelectionConfig::default(),
+        );
 
         let mut paths = turn_path_tokens(prompt);
         for path in signal.touched_paths {
@@ -342,14 +358,20 @@ impl SessionMemory {
             )
         });
 
-        let set = query_gathered_plane(signal, &recall.frames, &selected, record.as_ref());
+        let set = query_gathered_plane(
+            signal,
+            &recall.frames,
+            &frame_drops,
+            &selected,
+            record.as_ref(),
+        );
         report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
 
         let mut sections: Vec<String> = Vec::new();
         if let Some(section) = render_context_section(&kept_frames(&recall.frames, &set)) {
             sections.push(section);
         }
-        let kept = kept_skills(&selected, &set);
+        let kept = kept_skills(&selected.selected, &set);
         if !kept.is_empty() {
             sections.push(skills::render_skills_section(&kept));
         }
@@ -475,9 +497,12 @@ impl SessionMemory {
 
     /// Authoritative prompt and pipeline recall, including a fresh quarantine
     /// read so prior-turn feedback applies immediately.
-    async fn recalled_frames(&self, goal: &str) -> Recall {
-        self.recalled_frames_reporting(goal, |message| eprintln!("  {} {message}", "!".yellow()))
-            .await
+    async fn recalled_frames(&self, goal: &str) -> RecalledFrames {
+        let anchors = goal_path_anchors(goal, &self.workspace_root);
+        self.recalled_frames_anchored(goal, anchors, |message| {
+            eprintln!("  {} {message}", "!".yellow())
+        })
+        .await
     }
     /// Recall with an injectable diagnostic sink to avoid global stderr capture in tests.
     pub(super) async fn recalled_frames_reporting(
@@ -486,7 +511,9 @@ impl SessionMemory {
         report: impl FnMut(String),
     ) -> Recall {
         let anchors = goal_path_anchors(goal, &self.workspace_root);
-        self.recalled_frames_anchored(goal, anchors, report).await
+        self.recalled_frames_anchored(goal, anchors, report)
+            .await
+            .recall
     }
 
     /// [`Self::recalled_frames_reporting`] with the anchor set chosen by the
@@ -498,7 +525,7 @@ impl SessionMemory {
         goal: &str,
         anchors: Vec<String>,
         mut report: impl FnMut(String),
-    ) -> Recall {
+    ) -> RecalledFrames {
         // Both withholding switches live HERE, at the frame query the rendered
         // block, the pipeline's `ContextRecallPort`, and the mid-turn re-query
         // all go through — not at the block renders alone. A control turn
@@ -511,7 +538,7 @@ impl SessionMemory {
         // into pipeline, fleet, and resumed turns after the org said no
         // (#3243).
         if self.ab_suppressed || !self.steering_enabled {
-            return Recall::default();
+            return RecalledFrames::default();
         }
         let query = ContextQuery {
             goal: goal.to_string(),
@@ -552,7 +579,7 @@ impl SessionMemory {
                 report(format!(
                     "memory recall disabled: suppression state unavailable: {error}"
                 ));
-                return Recall::default();
+                return RecalledFrames::default();
             }
         };
         // The usage report accounts for the fan-out that produced this turn's
@@ -584,20 +611,68 @@ impl SessionMemory {
                 ));
             }
         }
-        Recall {
-            frames: recalled
-                .frames
-                .into_iter()
-                .filter_map(project_recalled_frame)
-                .filter(|frame| !is_suppressed_local_frame(frame, &quarantined))
-                .collect(),
-            usage: Some(recalled.usage),
-            latency_ms,
-            // The host fan-out does not carry the accelerator flag across the
-            // provider-result boundary, and reporting `false` would read as
-            // "the index never fires" rather than "nobody said".
-            used_ann_index: None,
+        // ...and the same report goes to the ledger, which is the half that
+        // used to end here (#3358): the stderr line above is a warning a human
+        // sees once, on one of the several surfaces that recall, while
+        // `SteeringSet::dropped` is what the plane can be *queried* about.
+        let dropped = recalled.dropped.iter().map(frame_drop).collect();
+        RecalledFrames {
+            recall: Recall {
+                frames: recalled
+                    .frames
+                    .into_iter()
+                    .filter_map(project_recalled_frame)
+                    .filter(|frame| !is_suppressed_local_frame(frame, &quarantined))
+                    .collect(),
+                usage: Some(recalled.usage),
+                latency_ms,
+                // The host fan-out does not carry the accelerator flag across
+                // the provider-result boundary, and reporting `false` would
+                // read as "the index never fires" rather than "nobody said".
+                used_ann_index: None,
+            },
+            dropped,
         }
+    }
+}
+
+/// One turn's frame recall **and** what the host's merge could not fit.
+///
+/// A sibling channel rather than two more fields on [`Recall`]: `Recall` is a
+/// `stella-pipeline` type and the drop report is the CLI's own host-merge
+/// type over a `stella-context` reason, and the pipeline does not depend on
+/// the context crate (`ports.rs` states that direction deliberately). Mapping
+/// to `DroppedCandidate` here — at the one call site that has all of them in
+/// scope — keeps that boundary intact and still gets the drops to the plane.
+#[derive(Debug, Default)]
+pub(super) struct RecalledFrames {
+    pub recall: Recall,
+    /// The host merge's evictions, already in ledger shape.
+    pub dropped: Vec<stella_core::steering::DroppedCandidate>,
+}
+
+/// A host-merge eviction as a ledger entry.
+///
+/// The handle follows [`super::steering::frame_handle`]'s precedence — the
+/// stable `nod_…` id when the frame has one, its citation label otherwise —
+/// so a drop and a later selection of the same frame join on one identity.
+///
+/// `est_tokens` is the **host's** `token_cost`, not an estimate over
+/// [`frame_recall_line`]: a dropped frame never reached this process with a
+/// body, so there is no recall line to measure. The host's number is the one
+/// the budget actually refused, which is also what a caller sizing
+/// `context.retrieval.max_tokens` needs.
+pub(super) fn frame_drop(
+    drop: &crate::contextgraph::HostDroppedFrame,
+) -> stella_core::steering::DroppedCandidate {
+    stella_core::steering::DroppedCandidate {
+        source: stella_core::steering::SteeringSource::Memory,
+        handle: if drop.id.is_empty() {
+            drop.citation_label.clone()
+        } else {
+            drop.id.clone()
+        },
+        est_tokens: u64::from(drop.token_cost),
     }
 }
 
@@ -698,7 +773,7 @@ pub(super) fn goal_path_anchors(goal: &str, root: &std::path::Path) -> Vec<Strin
 #[async_trait::async_trait]
 impl ContextRecallPort for SessionMemory {
     async fn recall(&self, goal: &str) -> Recall {
-        self.recalled_frames(goal).await
+        self.recalled_frames(goal).await.recall
     }
 }
 
@@ -745,17 +820,19 @@ pub(super) fn frame_recall_line(f: &RecalledFrame) -> String {
 /// [`stella_core::steering::SteeringPlane`] query every context source now
 /// goes through (#3349). The frame slice is empty on pipeline-driven turns,
 /// whose frames travel on the pipeline's own recall port.
-fn query_gathered_plane(
+pub(super) fn query_gathered_plane(
     signal: &stella_core::steering::TurnSignal<'_>,
     frames: &[RecalledFrame],
-    selected: &[skills::SelectedSkill],
+    frame_drops: &[stella_core::steering::DroppedCandidate],
+    selected: &skills::SkillSelection,
     record: Option<&(&stella_core::records::Registry, RenderedChannel)>,
 ) -> stella_core::steering::SteeringSet {
     use stella_core::steering::{SteeringPlane, adapt};
 
     let mut candidates = super::steering::frame_candidates(frames);
-    candidates.extend(adapt::skill_candidates(selected));
-    let mut source_drops = Vec::new();
+    candidates.extend(adapt::skill_candidates(&selected.selected));
+    let mut source_drops = frame_drops.to_vec();
+    source_drops.extend(adapt::skill_drops(selected));
     if let Some((registry, rendered)) = record {
         candidates.extend(adapt::record_candidates(registry, rendered));
         source_drops.extend(adapt::record_drops(registry, rendered));
