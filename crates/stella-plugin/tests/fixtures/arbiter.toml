@@ -1,6 +1,6 @@
 # The strongest grant — #3245 §2's own example, completed: an arbiter binds
-# the Stop gate, names its definition of done, and declares the host-run
-# oracle whose fail→pass flip decides it.
+# the Stop gate, names its definition of done, and declares the oracle it runs
+# itself, whose reported fail→pass flip the host's rule decides on (#3511).
 name = "verified-done"
 description = "Holds the turn open until the declared oracle observes a fail→pass flip."
 

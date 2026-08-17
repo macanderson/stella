@@ -52,10 +52,12 @@
 //!
 //! # Invariant 7 is encoded, not remembered
 //!
-//! Contributed context is a [`VolatileContext`], and the only way to spend one
-//! is [`VolatileContext::into_message`], which returns a **user** message. See
-//! that type for why the alternative is not merely discouraged but
-//! unrepresentable.
+//! Contributed context is a [`VolatileContext`], whose body is a private field
+//! and whose only exit is [`VolatileContext::into_message`], returning a
+//! **user** message. Encoded is the operative word: the type carried this
+//! claim as a doc comment over two public `String`s until #3524, which is a
+//! rule a reviewer has to remember rather than one the compiler holds. See
+//! that type for the `compile_fail` doctest that now pins it.
 
 use std::collections::BTreeMap;
 
@@ -459,31 +461,78 @@ impl BeforeTurnResponse {
 /// `crates/stella-cli/src/memory.rs` already hold for recalled context.
 ///
 /// So this type carries no placement field. There is no `Placement::System`
-/// to pick, no `stable: bool` to set, and the only way to spend the value is
+/// to pick, no `stable: bool` to set, and **the body is not reachable as a
+/// field**: the one way out of the value is
 /// [`VolatileContext::into_message`], which builds a
 /// [`CompletionMessage::user`] — a message that by construction is not index
-/// 0's system message. A future contributor who wants prefix injection has to
-/// change this type in a diff a reviewer reads, which is the whole difference
-/// between a structural rule and a remembered one.
+/// 0's system message.
+///
+/// The privacy is the enforcement, and it was prose until #3524. While `text`
+/// was public, a host could write `prompt.push_str(&ctx.text)` into the stable
+/// prefix, change no type, and stay green — the unit test below constructs a
+/// value and calls `into_message`, so it can say nothing about a caller that
+/// never does. Every installed plugin then became a per-turn prompt-cache
+/// miss, which is exactly the cost regression this type exists to make
+/// unrepresentable. Now that line does not compile out of crate, which the
+/// `compile_fail` doctest below pins:
+///
+/// ```compile_fail,E0616
+/// let ctx = stella_plugin::VolatileContext::new("recall", "the last run failed on I/O");
+/// let mut prompt = String::from("<system prefix>");
+/// prompt.push_str(&ctx.text);
+/// ```
+///
+/// The sanctioned reads, and all of them: the provenance label a journal
+/// prints, and spending the value as the message it is.
+///
+/// ```
+/// use stella_plugin::VolatileContext;
+/// let ctx = VolatileContext::new("recall", "the last run failed on I/O");
+/// assert_eq!(ctx.label(), "recall");
+/// assert_eq!(ctx.into_message().content, "the last run failed on I/O");
+/// ```
+///
+/// What this does **not** claim: that a host cannot splice the body in
+/// anywhere at all. A caller that spends the contribution and then reaches
+/// into the returned [`CompletionMessage`] has unwrapped a *user* message on
+/// purpose, in a line that says so; no type can stop that, and pretending
+/// otherwise would be the same overclaim the field made. What is closed is the
+/// cheap path — the one a contributor takes without noticing they took it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VolatileContext {
     /// A short human-readable name for where this came from, for the journal
     /// and the deck. Not shown to the model as a header — the host decides
-    /// presentation.
-    pub label: String,
-    /// The context itself.
-    pub text: String,
+    /// presentation. Read through [`VolatileContext::label`].
+    label: String,
+    /// The context itself. Private on purpose — see the type docs; the only
+    /// exit is [`VolatileContext::into_message`].
+    text: String,
 }
 
 impl VolatileContext {
     /// Build a contribution.
+    ///
+    /// The only constructor, because the fields are private: a value on the
+    /// wire still decodes through `serde`, and a value in Rust is built here.
     #[must_use]
     pub fn new(label: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
             label: label.into(),
             text: text.into(),
         }
+    }
+
+    /// Where this contribution came from, for a journal or the deck.
+    ///
+    /// A borrow rather than a move, and deliberately the *only* borrowing
+    /// accessor: a label is provenance a surface prints beside the
+    /// contribution, and it is not the body. There is no `text(&self)` beside
+    /// it — that would hand back the one string the type exists to keep out of
+    /// the byte-stable prefix, and reopen the hole privacy just closed.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
     }
 
     /// Spend this contribution as the volatile message it is.
@@ -551,6 +600,25 @@ pub struct AfterTurnRequest {
     pub protocol_version: u32,
     /// The variant id of the wrapper being asked.
     pub wrapper: String,
+    /// Which declared stage this evidence is about, mirroring
+    /// [`BeforeTurnRequest::stage`] on the other side of the same round.
+    ///
+    /// **Optional, and the two cases are different answers.** A host that
+    /// resolved a [`StageProgram`](crate::StageProgram) names the same stage
+    /// its `before_turn` named, which is what lets a plugin declaring several
+    /// stages per round know which one it is reporting on, and what lets a
+    /// host correlate two evidence sets from one round. A host that runs no
+    /// stage program **omits the field** rather than naming a stand-in
+    /// boundary: there is no stage, and writing
+    /// [`StageName::Execute`](crate::StageName) here would be the host
+    /// inventing a declaration nobody made. `None` is therefore "this host
+    /// has no stages", never "some default stage".
+    ///
+    /// Additive (`PROTOCOL_VERSION` unchanged): a plugin written before this
+    /// field existed sends and reads messages without it, and a host that
+    /// omits it produces the identical bytes it always did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<StageName>,
     /// Which round of the wrapper's loop just ran.
     pub round: u32,
     /// The goal, as the user stated it.
@@ -706,7 +774,10 @@ pub struct VerdictRule {
     /// deterministic (invariant 7's discipline).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub requirements: BTreeMap<String, String>,
-    /// The host-run oracle's policy and checks, when the plugin declared one.
+    /// The plugin's oracle — its flip/tamper policy and its checks, when the
+    /// manifest declared one. The oracle runs in the plugin's own process and
+    /// reports what it saw (#3511); what travels here is the *rule*, which the
+    /// host reads off the manifest and evaluates itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oracle: Option<Oracle>,
 }

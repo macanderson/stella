@@ -80,8 +80,10 @@ pub enum ManifestError {
     OracleRequiresAfterTurn,
 
     /// `[oracle]` named no `command` and the manifest declares no `[runtime]`
-    /// for it to be. The oracle is a program the host runs; with neither
-    /// declaration there is nothing to run.
+    /// for it to be. The oracle is a program the *plugin* runs and reports the
+    /// result of (#3511); with neither declaration the manifest promises
+    /// evidence and names nothing that could produce it, and the install
+    /// prompt shows a user no program at all.
     #[error(
         "[oracle] declares no command and this manifest declares no [runtime] \
          to run as the oracle: declare one of the two"

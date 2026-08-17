@@ -89,6 +89,7 @@ fn after_request() -> AfterTurnRequest {
     AfterTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "staged-v1".into(),
+        stage: Some(StageName::Verify),
         round: 2,
         goal: "make the flaky test deterministic".into(),
         candidate: Some(grant()),
@@ -389,6 +390,86 @@ fn a_plugin_reads_the_candidate_root_and_its_test_out_of_the_request() {
         round_trip(&bare),
         r#"{"handle":"candidate-1","root":"/tmp/candidate-1"}"#
     );
+}
+
+/// **The #3524 witness for the after-turn stage.** A `[wrapper]` program may
+/// declare several stages per round; before this field, the request that
+/// carries a round's *evidence* named none of them, so a plugin could not tell
+/// which stage it was reporting on and a host could not correlate two evidence
+/// sets from one round. `before_turn` has named its stage since #3388.
+///
+/// Failing before the change for the plainest reason — `AfterTurnRequest` had
+/// no `stage` field, so `body.stage` did not exist and the fixture did not
+/// compile.
+#[test]
+fn an_after_turn_request_names_the_stage_its_evidence_is_about() {
+    let json = round_trip(&WrapperRequest::AfterTurn(after_request()));
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        value["body"]["stage"], "verify",
+        "the evidence half of a round must say which stage produced it"
+    );
+
+    // The correlation the field exists for: one round, two messages, one
+    // stage — the join a host needs to pair a contribution with its evidence.
+    let before = before_request();
+    let after = AfterTurnRequest {
+        stage: Some(before.stage),
+        round: before.round,
+        ..after_request()
+    };
+    assert_eq!(after.stage, Some(before.stage));
+    assert_eq!(after.round, before.round);
+
+    // A host that runs no stage program omits the field rather than naming a
+    // stand-in boundary, and the omission survives the round trip as `None`.
+    let unstaged = AfterTurnRequest {
+        stage: None,
+        ..after_request()
+    };
+    let json = round_trip(&unstaged);
+    assert!(
+        !json.contains("\"stage\""),
+        "no stage program means no stage key, not a default one: {json}"
+    );
+    assert_eq!(
+        serde_json::from_str::<AfterTurnRequest>(&json)
+            .expect("a message without a stage still parses")
+            .stage,
+        None
+    );
+}
+
+/// **The #3524 witness for [`VolatileContext`].** Invariant 7's rule — a
+/// contribution rides *after* the byte-stable prefix, never inside it — was
+/// carried by a doc comment over two public `String`s, so
+/// `prompt.push_str(&ctx.text)` compiled, changed no type, and left every test
+/// green. This test is out of crate, which is the only place the privacy is
+/// observable, and it pins the whole reachable surface: a provenance label for
+/// a journal, and spending the value as the message it is.
+///
+/// Failing before the change because `label()` did not exist. The other half —
+/// that `ctx.text` no longer compiles — cannot be asserted from a test that
+/// must itself compile, so it is pinned by the `compile_fail,E0616` doctest on
+/// the type.
+#[test]
+fn a_contribution_is_reachable_only_as_a_label_and_a_user_message() {
+    let ctx = VolatileContext::new("recall", "the last run failed on I/O");
+    assert_eq!(ctx.label(), "recall");
+
+    let message = ctx.into_message();
+    assert_eq!(
+        message.role,
+        stella_protocol::completion::MessageRole::User,
+        "the one exit is a message that is not index 0's system message"
+    );
+    assert_eq!(message.content, "the last run failed on I/O");
+
+    // The body still crosses the wire — privacy is about what a *host* can
+    // reach for in Rust, not about hiding the contribution from the plugin
+    // that sent it.
+    let json = round_trip(&VolatileContext::new("verdict", "budget exceeded"));
+    assert_eq!(json, r#"{"label":"verdict","text":"budget exceeded"}"#);
 }
 
 /// **The #3500 witness**, on the vector Track C ships as

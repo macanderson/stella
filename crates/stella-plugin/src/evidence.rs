@@ -1,8 +1,9 @@
-//! The `[oracle]` block's evidence half — the numbers a host-run oracle
+//! The `[oracle]` block's evidence half — the numbers a plugin's own oracle
 //! reports, and the checks over them that decide a requirement.
 //!
 //! [`crate::manifest`] declares *what* done means (`[requirements]`, one named
-//! entry per clause) and *who* establishes it (`[oracle]`, a host-run process).
+//! entry per clause) and *who* establishes it (`[oracle]`, a process the
+//! plugin runs and reports the result of — never one the host runs, #3511).
 //! Until this module, the only thing that could turn evidence into a verdict
 //! was [`FlipPolicy::Required`] — a fail→pass flip — so the grammar could carry
 //! exactly one definition of done: a witness test went from red to green.
@@ -42,10 +43,13 @@
 //!
 //! # Scope
 //!
-//! Nothing here runs an oracle or parses its output. [`Oracle::unmet`] is the
-//! pure evaluator: the host runs the process, decodes the numbers it reported,
-//! and hands them in — the same division of labour [`crate::program`] has with
-//! signal values.
+//! Nothing here runs an oracle or parses its output — and neither does the
+//! host (#3511). [`Oracle::unmet`] is the pure evaluator: the plugin runs its
+//! own oracle and reports the numbers on its `after_turn` response, the host
+//! decodes that report and hands them in, and the rule applied to them is the
+//! one the manifest declared and a human consented to. That is the same
+//! division of labour [`crate::program`] has with signal values, with the
+//! plugin standing where the producing process always stood.
 
 use std::collections::BTreeMap;
 
@@ -202,9 +206,12 @@ impl Oracle {
     /// The checks that did not hold, in declaration order.
     ///
     /// The whole evaluator for the evidence half of the grammar, and pure: the
-    /// host runs the oracle, decodes the numbers it reported, and hands them
-    /// in. An empty answer means every declared check held — which is not by
-    /// itself "done" whenever the flip policy also has something to say.
+    /// plugin runs its own oracle and reports the numbers, the host decodes
+    /// that report and hands them in, and this applies the manifest's rule to
+    /// them. Evaluating the rule is the host's half; running the oracle and
+    /// vouching for what it produced are the plugin's (#3511). An empty answer
+    /// means every declared check held — which is not by itself "done"
+    /// whenever the flip policy also has something to say.
     ///
     /// # Errors
     ///
