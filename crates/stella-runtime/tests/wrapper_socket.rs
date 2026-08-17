@@ -115,12 +115,13 @@ fn manifest() -> PluginManifest {
 }
 
 fn plugin(script: &str) -> SubprocessWrapper {
-    SubprocessWrapper::new(
+    SubprocessWrapper::declare(
         vec!["/bin/sh".into(), "-c".into(), script.into()],
         Vec::new(),
         DEFAULT_WRAPPER_TIMEOUT,
     )
     .expect("the transport is declared with a program and a budget")
+    .wrapper
 }
 
 fn before(stage: StageName, goal: &str) -> BeforeTurnRequest {
@@ -139,6 +140,10 @@ fn after(goal: &str) -> AfterTurnRequest {
     AfterTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "reference-v1".into(),
+        // The evidence this reference wrapper reports is the whole round's, so
+        // it names no stage: `None` is "this host has no stages", never a
+        // stand-in boundary.
+        stage: None,
         round: 0,
         goal: goal.into(),
         candidate: None,
@@ -264,10 +269,13 @@ async fn a_wrapper_plugin_participates_in_a_turn_and_the_host_decides_its_verdic
         panic!("an arbiter with holds left asks again, got {continuation:?}");
     };
     assert_eq!(correction.unmet, *unmet);
+    // `into_message` is the type's only exit — the body is private so it
+    // cannot reach the byte-stable prefix by accident — so the assertion
+    // spends the contribution the way a host would.
+    let guidance = correction.guidance.clone().into_message().content;
     assert!(
-        correction.guidance.text.contains("within-budget"),
-        "the correction names the clause: {}",
-        correction.guidance.text
+        guidance.contains("within-budget"),
+        "the correction names the clause: {guidance}"
     );
 }
 
@@ -342,12 +350,13 @@ cat >/dev/null
 if [ -n "${CARGO_MANIFEST_DIR:-}" ]; then inherited=1; else inherited=0; fi
 printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"inherited":%s,"granted":%s}}}}\n' "$inherited" "${GRANTED:-0}"
 "#;
-    let wrapper = SubprocessWrapper::new(
+    let wrapper = SubprocessWrapper::declare(
         vec!["/bin/sh".into(), "-c".into(), probe.into()],
         vec![("GRANTED".into(), "42".into())],
         DEFAULT_WRAPPER_TIMEOUT,
     )
-    .unwrap();
+    .unwrap()
+    .wrapper;
 
     let evidence = wrapper
         .after_turn(after("probe the environment"))
@@ -502,12 +511,13 @@ async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
 /// answered the wrong question, spoke a contract this host does not have.
 #[tokio::test]
 async fn each_failure_mode_is_named_rather_than_collapsed() {
-    let missing = SubprocessWrapper::new(
+    let missing = SubprocessWrapper::declare(
         vec!["/nonexistent/wrapper-plugin".into()],
         Vec::new(),
         DEFAULT_WRAPPER_TIMEOUT,
     )
     .unwrap()
+    .wrapper
     .after_turn(after("x"))
     .await
     .expect_err("the program does not exist");
@@ -577,35 +587,37 @@ async fn each_failure_mode_is_named_rather_than_collapsed() {
 /// itself an unbounded call any more than an unbounded loop.
 #[tokio::test]
 async fn a_plugin_that_does_not_answer_is_killed_at_its_budget() {
-    let hung = SubprocessWrapper::new(
+    let hung = SubprocessWrapper::declare(
         vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()],
         Vec::new(),
         Duration::from_millis(150),
     )
     .unwrap()
+    .wrapper
     .after_turn(after("x"))
     .await
     .expect_err("the plugin never answers");
     assert!(matches!(hung, WrapperError::Timeout { .. }), "got {hung:?}");
 
     assert_eq!(
-        SubprocessWrapper::new(
+        SubprocessWrapper::declare(
             vec!["/bin/sh".into()],
             Vec::new(),
             Duration::from_secs(60 * 60),
         )
         .unwrap()
+        .wrapper
         .timeout(),
         stella_runtime::wrapper::MAX_WRAPPER_TIMEOUT,
         "an hour-long ask is clamped to the ceiling"
     );
 
     assert!(matches!(
-        SubprocessWrapper::new(Vec::new(), Vec::new(), DEFAULT_WRAPPER_TIMEOUT),
+        SubprocessWrapper::declare(Vec::new(), Vec::new(), DEFAULT_WRAPPER_TIMEOUT),
         Err(WrapperError::EmptyArgv)
     ));
     assert!(matches!(
-        SubprocessWrapper::new(vec!["/bin/sh".into()], Vec::new(), Duration::ZERO),
+        SubprocessWrapper::declare(vec!["/bin/sh".into()], Vec::new(), Duration::ZERO),
         Err(WrapperError::ZeroTimeout)
     ));
 }

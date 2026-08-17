@@ -70,18 +70,20 @@ fn manifest() -> PluginManifest {
 }
 
 fn plugin(script: &str) -> SubprocessWrapper {
-    SubprocessWrapper::new(
+    SubprocessWrapper::declare(
         vec!["/bin/sh".into(), "-c".into(), script.into()],
         Vec::new(),
         DEFAULT_WRAPPER_TIMEOUT,
     )
     .expect("the transport is declared with a program and a budget")
+    .wrapper
 }
 
 fn after() -> AfterTurnRequest {
     AfterTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "witness-arbiter".into(),
+        stage: None,
         round: 0,
         goal: "make the flaky test deterministic".into(),
         candidate: None,

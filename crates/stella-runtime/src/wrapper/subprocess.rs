@@ -32,10 +32,26 @@
 //!   environment hands it `ANTHROPIC_API_KEY` and every other credential the
 //!   shell was carrying, silently, forever — which would make invariant 3's
 //!   "every model call is made by the host" a policy rather than a property.
-//!   Default-deny is structural: [`SubprocessWrapper::new`] takes the pairs,
+//!   Default-deny is structural: [`SubprocessWrapper::declare`] takes the pairs,
 //!   so an empty list is what a caller that thought about nothing gets. The
 //!   manifest half of that decision is `[runtime] env`, whose `child_env`
 //!   returns exactly the pairs to pass here.
+//! - **It refuses a model credential even when the manifest asked for one.**
+//!   Default-deny answers "what did the author not name?"; it does not answer
+//!   "what may the author name?", and `[runtime] env = ["ANTHROPIC_API_KEY"]`
+//!   is a well-formed manifest. So [`refuses_env_name`] is applied *here*, at
+//!   the boundary every host crosses, rather than in one binary's spawn
+//!   builder — a driver that is not `stella-cli` (`stella-serve`, an embedded
+//!   `stella-engine` host, a test) reaches this constructor and nothing else,
+//!   and a security property that only holds for one of the three drivers
+//!   `doc:wrapper-socket` §6 requires is a policy again (#3512).
+//!
+//!   The refusal is **reported, never silent**: [`SubprocessWrapper::declare`]
+//!   answers with an [`AdmittedWrapper`], whose `refused` list a caller has to
+//!   name to reach the wrapper beside it. A plugin that quietly does not get
+//!   what its manifest asked for is a bug its author cannot diagnose, and the
+//!   fix they have — declare a `[roles]` tier and let the host make the call —
+//!   is one they can only take if they are told.
 //! - **It does not interpret a shell string.** argv, always — the #1400 rule
 //!   every other spawned thing in this workspace follows.
 
@@ -48,6 +64,7 @@ use stella_plugin::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, PROTOCOL_VERSION,
     WrapperRequest, WrapperResponse,
 };
+use stella_tools::subprocess_env::is_sensitive_env_name;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -66,13 +83,85 @@ pub const MAX_WRAPPER_TIMEOUT: Duration = Duration::from_millis(MAX_HOOK_TIMEOUT
 /// How much of a child's stderr or unreadable stdout reaches an error message.
 const OUTPUT_EXCERPT_CHARS: usize = 2_000;
 
+/// Whether the socket withholds a declared environment name from a plugin.
+///
+/// The single implementation of that judgement, exported so a host's
+/// consent-time report and the spawn's actual behaviour cannot disagree — a
+/// prompt that promises a variable the spawn then refuses is a prompt
+/// describing a different program than the one that runs. `stella plugin
+/// install` prints from this predicate; [`SubprocessWrapper::declare`] enforces
+/// with it.
+///
+/// **Credentials only.** An ambient-authority name (`SSH_AUTH_SOCK`,
+/// `GIT_SSH_COMMAND`) is deliberately admitted: it is disclosed in the consent
+/// text, a plugin that drives git over a deploy key genuinely needs one, and
+/// unlike a credential it cannot spend the user's model budget. Refusing it
+/// would break a legitimate plugin to prevent nothing the install consent did
+/// not already show.
+///
+/// The judgement itself is `stella-tools`', including the names trusted
+/// settings registered at startup. That registry is process-global and
+/// monotonic, which is not a `no_ambient_reads` breach in either letter or
+/// spirit: it is read, never written, from here, and it can only ever move a
+/// name from admitted to refused — the direction that cannot widen what a
+/// plugin receives.
+#[must_use]
+pub fn refuses_env_name(name: &str) -> bool {
+    is_sensitive_env_name(name.as_ref())
+}
+
 /// A wrapper that runs as a child process and speaks the wire contract.
-#[derive(Debug, Clone)]
+///
+/// Its [`Debug`] is hand-written and prints environment **names** only; see
+/// the implementation below for why deriving it is a leak.
+#[derive(Clone)]
 pub struct SubprocessWrapper {
     program: String,
     args: Vec<String>,
     env: Vec<(String, String)>,
     timeout: Duration,
+}
+
+/// A declared wrapper, together with what the socket took away from it.
+///
+/// [`SubprocessWrapper::declare`] answers with this rather than a bare wrapper so
+/// that a refusal has to be *read*: a caller reaching for the transport names
+/// the field beside it on the way past. A silent filter is its own defect —
+/// the plugin author's fix is to stop asking for the credential and ask the
+/// host for a `[roles]` tier instead, and they can only take it if the
+/// refusal reaches them.
+#[derive(Debug)]
+#[must_use = "the refused names must be surfaced: a plugin that silently does not get what its \
+              manifest asked for is a bug its author cannot diagnose"]
+pub struct AdmittedWrapper {
+    /// The transport, carrying the admitted pairs and no others.
+    pub wrapper: SubprocessWrapper,
+    /// The declared names withheld as model credentials, in the order they
+    /// were given. Empty in the normal case.
+    pub refused: Vec<String>,
+}
+
+/// Names, never values.
+///
+/// Deriving [`Debug`] over the resolved pairs puts `GITHUB_TOKEN`'s value in
+/// every `tracing::debug!(?wrapper)`, every `dbg!`, and every assertion
+/// failure message — a credential leak whose blast radius is "wherever the
+/// host writes logs". The route type this is built from holds only an
+/// `env_allowlist: Vec<String>` for the same reason
+/// (`stella-cli`'s `plugin_cmd::roster::PluginHookRoute`); the transport is
+/// the first place the values exist, so it is the first place they can escape.
+impl std::fmt::Debug for SubprocessWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubprocessWrapper")
+            .field("program", &self.program)
+            .field("args", &self.args)
+            .field(
+                "env_names",
+                &self.env.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            )
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 impl SubprocessWrapper {
@@ -84,17 +173,33 @@ impl SubprocessWrapper {
     /// [`MAX_WRAPPER_TIMEOUT`] — a plugin cannot buy itself an unbounded call
     /// any more than it can buy an unbounded loop.
     ///
+    /// Every pair whose name [`refuses_env_name`] grades as a model credential
+    /// is dropped here and named in [`AdmittedWrapper::refused`]. This is the
+    /// boundary every host crosses, which is the whole point: the CLI's
+    /// install-time correction is a *report* of this decision, not the place
+    /// it is made (#3512).
+    ///
     /// # Errors
     ///
     /// [`WrapperError::EmptyArgv`] when `argv` names no program, and
     /// [`WrapperError::ZeroTimeout`] for a budget that would kill the child
     /// before it ran — the `[oracle] command.timeout_secs` rule, which a host
     /// building this from a manifest has already had enforced at load.
-    pub fn new(
+    ///
+    /// A refused credential is deliberately **not** an error: the manifest is
+    /// still loadable and the plugin still runs, exactly as the install
+    /// consent said it would ("it will not get it", never "it will not run").
+    ///
+    /// Named `declare` rather than `new` because it does not return `Self` —
+    /// the refusal report comes back beside the transport, and a `new` that
+    /// hands back something else is the shape `clippy::new_ret_no_self` exists
+    /// to catch. Renaming also makes the signature change visible at every
+    /// call site, which is the point of moving the refusal here.
+    pub fn declare(
         argv: Vec<String>,
         env: Vec<(String, String)>,
         timeout: Duration,
-    ) -> Result<Self, WrapperError> {
+    ) -> Result<AdmittedWrapper, WrapperError> {
         let Some((program, args)) = argv.split_first() else {
             return Err(WrapperError::EmptyArgv);
         };
@@ -102,11 +207,26 @@ impl SubprocessWrapper {
         if timeout.is_zero() {
             return Err(WrapperError::ZeroTimeout);
         }
-        Ok(Self {
-            program: program.clone(),
-            args: args.to_vec(),
-            env,
-            timeout,
+        let mut refused = Vec::new();
+        let mut admitted = Vec::with_capacity(env.len());
+        for (name, value) in env {
+            if refuses_env_name(&name) {
+                // The value is dropped rather than kept beside the name: a
+                // refused credential must not be reachable from the report
+                // either.
+                refused.push(name);
+            } else {
+                admitted.push((name, value));
+            }
+        }
+        Ok(AdmittedWrapper {
+            wrapper: Self {
+                program: program.clone(),
+                args: args.to_vec(),
+                env: admitted,
+                timeout,
+            },
+            refused,
         })
     }
 

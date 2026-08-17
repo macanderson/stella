@@ -24,11 +24,14 @@
 //!
 //! # Uninstall actually uninstalls
 //!
-//! Removing a plugin deletes its directory, and the roster is recomputed from
-//! disk on every load — so there is no second place a stale grant could
-//! survive. See [`roster`]'s module docs for why plugin hooks are derived
-//! rather than written into a settings file's `hooks` block, which is the
-//! shape that makes an uninstall unable to finish.
+//! Removing a plugin deletes its directory — in **every** tier that holds the
+//! name, resolved by manifest name rather than by directory name, because
+//! those are the two ways a `remove` that returned `Ok` still left the plugin
+//! dispatching (see [`remove`]). The roster is recomputed from disk on every
+//! load, so there is no second place a stale grant could survive. See
+//! [`roster`]'s module docs for why plugin hooks are derived rather than
+//! written into a settings file's `hooks` block, which is the shape that makes
+//! an uninstall unable to finish.
 
 use std::path::{Path, PathBuf};
 
@@ -155,7 +158,27 @@ fn install(
     })?;
     let name = checked_name(&manifest.name)?;
 
-    let destination = tier_dir(workspace_root, scope)?.join(name);
+    let tier = tier_dir(workspace_root, scope)?;
+    let destination = tier.join(name);
+    // Two ways this tier can already hold the name, and they are not the same
+    // question. The claim is the one that matters — a package installed in a
+    // directory of another name is what `list` shows and what a host routes —
+    // and the path is what the copy below would collide with.
+    let mut notices = Vec::new();
+    let claimed = roster::read_tier(&tier, scope, &mut notices)
+        .into_iter()
+        .find(|plugin| plugin.manifest.name == manifest.name)
+        .map(|plugin| plugin.dir);
+    for notice in &notices {
+        eprintln!("{notice}");
+    }
+    if let Some(dir) = claimed.filter(|dir| *dir != destination) {
+        return Err(format!(
+            "`{name}` is already installed at {} (a directory of another name declares it) — \
+             run `stella plugin remove {name}` first",
+            dir.display()
+        ));
+    }
     if destination.exists() {
         return Err(format!(
             "`{name}` is already installed at {} — run `stella plugin remove {name}` first",
@@ -214,7 +237,7 @@ fn install(
         }
     }
 
-    copy_tree(source, &destination)?;
+    stage_and_commit(source, &tier, &destination)?;
     println!(
         "installed `{name}` ({}) into {}",
         scope.as_str(),
@@ -311,25 +334,25 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
         }
     }
 
-    // What the child would actually be handed, asked of the same builder that
-    // will hand it over. A declared name that is refused as a model credential
-    // is reported here rather than discovered as a missing variable at the
-    // first dispatch — the plugin author's fix is to ask the host for a role,
-    // and they can only take it if they are told.
+    // What the child will actually be handed, asked of the same judgement the
+    // socket enforces with. A declared name that is refused as a model
+    // credential is reported here rather than discovered as a missing variable
+    // at the first dispatch — the plugin author's fix is to ask the host for a
+    // role, and they can only take it if they are told.
     let mut warned: Vec<&str> = Vec::new();
     for route in &routes {
         if warned.contains(&route.plugin.as_str()) {
             continue;
         }
-        let prepared = process::prepare_command(route, |name| std::env::var(name).ok());
-        if !prepared.refused.is_empty() {
+        let refused = process::refused_credentials(&route.env_allowlist);
+        if !refused.is_empty() {
             warned.push(&route.plugin);
             println!(
                 "\n  ! `{}` asks to inherit {} — refused: a plugin never receives the \
                  credential that pays for the agent. Declare a [roles] tier and let the \
                  host make the call.",
                 route.plugin,
-                prepared.refused.join(", ")
+                refused.join(", ")
             );
         }
     }
@@ -345,33 +368,177 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
     Ok(())
 }
 
+/// Uninstall `name` from **every** tier that holds it.
+///
+/// # Why it does not stop at the first tier
+///
+/// The same name can be installed in both, and that is the ordinary case:
+/// project scope exists so a workspace can pin a different build of a plugin
+/// the operator installed globally. A `remove` that deleted the project copy,
+/// printed "removed", and returned `Ok` left the user-tier copy on disk, in
+/// the roster, and dispatched by [`PluginRoster::hook_routes`] on every tool
+/// call — the user told a third party's process was gone while it was still
+/// wired into the loop. Uninstall is the one operation whose failure is a
+/// security failure (see this module's header), so it removes every copy and
+/// names each one it removed.
+///
+/// # Why the manifest name, not the directory name
+///
+/// The manifest's `name` is the identity everywhere else — the principal, the
+/// `plugins.<name>` switch, what `list` prints, what a route carries — so a
+/// directory `pkg/` whose manifest says `vera` is listed and routed as `vera`.
+/// Keyed on the directory name, `remove vera` found nothing and said `vera`
+/// was not installed while `list` was showing it: an unremovable plugin. The
+/// literal `<tier>/<name>` is still swept up as well, so a package whose
+/// manifest has stopped parsing does not become unremovable in turn.
 fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
     let name = checked_name(name)?;
+    let mut removed = 0usize;
     // Project first: it is the tier that shadows, so it is the one a user in
-    // a workspace means by an unqualified name.
+    // a workspace means by an unqualified name — and so the order the copies
+    // are reported in matches the precedence they had.
     for scope in [PluginScope::Project, PluginScope::User] {
         let Ok(tier) = tier_dir(workspace_root, scope) else {
             continue;
         };
-        let dir = tier.join(name);
-        if !dir.is_dir() {
-            continue;
+        let mut notices = Vec::new();
+        let installs = roster::read_tier(&tier, scope, &mut notices);
+        for notice in &notices {
+            eprintln!("{notice}");
         }
-        std::fs::remove_dir_all(&dir)
-            .map_err(|e| format!("cannot remove {}: {e}", dir.display()))?;
-        println!(
-            "removed `{name}` ({}) from {}",
-            scope.as_str(),
-            dir.display()
-        );
-        return Ok(());
+        for dir in removable_dirs(&tier, name, &installs) {
+            remove_plugin_dir(&tier, &dir)?;
+            println!(
+                "removed `{name}` ({}) from {}",
+                scope.as_str(),
+                dir.display()
+            );
+            removed += 1;
+        }
     }
-    Err(format!(
-        "`{name}` is not installed in either scope — `stella plugin list` shows what is"
-    ))
+    if removed == 0 {
+        return Err(format!(
+            "`{name}` is not installed in either scope — `stella plugin list` shows what is"
+        ));
+    }
+    Ok(())
 }
 
-/// Copy a plugin package into place.
+/// Every directory in `tier` that `remove <name>` must delete, in a
+/// deterministic order.
+///
+/// Both keys, deduplicated: every install whose *manifest* declares the name
+/// (there can be more than one — see
+/// [`roster::read_tier`]'s collision notice, where only the last is in force
+/// and the others are installed and inert), plus the literal `<tier>/<name>`
+/// when it exists, which is how a package whose manifest no longer parses is
+/// still reachable.
+fn removable_dirs(tier: &Path, name: &str, installs: &[roster::InstalledPlugin]) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = installs
+        .iter()
+        .filter(|plugin| plugin.manifest.name == name)
+        .map(|plugin| plugin.dir.clone())
+        .collect();
+    let by_path = tier.join(name);
+    if by_path.is_dir() && !dirs.contains(&by_path) {
+        dirs.push(by_path);
+    }
+    dirs
+}
+
+/// Delete one installed package, after proving it is one.
+///
+/// Two checks, both about the same hazard: `remove` deletes a tree, so the
+/// path it deletes must be a real directory this tier owns. A symlink is
+/// refused rather than followed — the tier is a directory third-party content
+/// lands in, and `remove_dir_all` down a link would delete whatever it names.
+fn remove_plugin_dir(tier: &Path, dir: &Path) -> Result<(), String> {
+    if dir.parent() != Some(tier) {
+        return Err(format!(
+            "refusing to remove {}: it is not a direct child of {}",
+            dir.display(),
+            tier.display()
+        ));
+    }
+    let meta = std::fs::symlink_metadata(dir)
+        .map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    if meta.file_type().is_symlink() {
+        return Err(format!(
+            "{} is a symlink, not an installed package — delete it by hand if you meant to",
+            dir.display()
+        ));
+    }
+    std::fs::remove_dir_all(dir).map_err(|e| format!("cannot remove {}: {e}", dir.display()))
+}
+
+/// Copy a package into the tier, then make it visible in one step.
+///
+/// # Why install is not `copy_tree` into the final directory
+///
+/// [`copy_tree`] creates its destination first and copies in `read_dir` order,
+/// so a failure part-way — a symlink in the package, a full disk, a permission
+/// error on the third file — left `<tier>/<name>` behind holding whatever had
+/// been copied so far. `plugin.toml` sorts early and is small, so the usual
+/// residue was a directory the roster loads and routes, with an `argv` naming
+/// a file that was never copied: a live hook dispatch into nothing. Worse, the
+/// name was then taken, so every later attempt to install it was refused as
+/// "already installed" and the only repair was deleting the directory by hand.
+///
+/// Staging into a sibling and `rename`-ing makes the failed install leave
+/// nothing: the plugin appears under its name complete or not at all. The
+/// staging directory is inside the tier so the rename is within one
+/// filesystem, which is what makes it atomic.
+fn stage_and_commit(source: &Path, tier: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(tier).map_err(|e| format!("cannot create {}: {e}", tier.display()))?;
+    let staging = tier.join(staging_name());
+    if let Err(reason) = copy_tree(source, &staging) {
+        discard(&staging);
+        return Err(reason);
+    }
+    if let Err(error) = std::fs::rename(&staging, destination) {
+        discard(&staging);
+        return Err(format!(
+            "cannot move the staged copy into {}: {error}",
+            destination.display()
+        ));
+    }
+    Ok(())
+}
+
+/// A name for the staging directory that no plugin can have and no concurrent
+/// install can collide with.
+///
+/// The leading dot is load-bearing twice: [`checked_name`] refuses it as a
+/// plugin name, and [`roster::read_tier`] skips it — so a tree that is
+/// mid-copy is never loaded, listed or routed. The pid and counter are what
+/// make the exists-check above meaningful under concurrency: two installs of
+/// different plugins into one tier stage into different directories and each
+/// renames its own.
+fn staging_name() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    format!(
+        ".staging-{}-{nanos}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// Drop a staging tree, best effort.
+///
+/// The error that brought us here is the one the caller reports; a second
+/// failure removing the scratch copy would replace a diagnosis with a
+/// housekeeping complaint. What matters is that the tree is not under a
+/// plugin's name, so even a leaked one is inert.
+fn discard(staging: &Path) {
+    let _ = std::fs::remove_dir_all(staging);
+}
+
+/// Copy a plugin package into a directory of our choosing — the staging tree
+/// [`stage_and_commit`] renames into place, never the installed name itself.
 ///
 /// **Symlinks are refused, not followed.** A package is third-party content
 /// and a symlink in it is a request to copy something the author does not

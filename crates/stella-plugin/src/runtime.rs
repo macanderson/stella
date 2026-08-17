@@ -31,9 +31,13 @@
 //!
 //! [`Runtime::child_env`] is the pure half — the host supplies a lookup and
 //! gets back the exact pairs to set after clearing the child's environment.
-//! Refusing a *credential* the manifest asked for is a further, host-side
-//! narrowing this crate cannot make: it has no credential vocabulary and must
-//! not grow one.
+//! Refusing a *credential* the manifest asked for is a further narrowing this
+//! crate cannot make: it has no credential vocabulary and must not grow one.
+//! That narrowing is not optional and it is not any one host's discretion:
+//! `stella_runtime::wrapper::SubprocessWrapper::declare` applies it at the
+//! socket, the boundary every driver crosses, and reports the names it
+//! withheld (#3512). So a manifest may still *name* `ANTHROPIC_API_KEY` and
+//! load cleanly; what it cannot do is receive it.
 
 use serde::{Deserialize, Serialize};
 
@@ -45,8 +49,11 @@ use crate::error::ManifestError;
 /// block already settled that a plugin names a program as an argv list and
 /// never as a shell string (the #1400 rule), and that `${plugin_dir}`
 /// interpolation is the host's job. This block is the same decision applied to
-/// the plugin's own process, plus the environment allowlist an oracle does not
-/// need because the host runs the oracle against a workspace it owns.
+/// the plugin's own process, plus the environment allowlist
+/// [`crate::OracleCommand`] does not carry — and does not need, because the
+/// oracle is the plugin's own process to run and report on (#3511, and #3501
+/// lets it be literally the same argv). The environment an oracle sees is the
+/// one declared here, which is the one a human consented to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Runtime {
@@ -85,7 +92,9 @@ impl Runtime {
     ///
     /// The caller must **clear** the child's environment before applying
     /// this; nothing here can un-inherit a variable the caller left in place.
-    /// `plugin_hook_command` in `stella-cli` is the reference caller.
+    /// `stella_runtime::wrapper::SubprocessWrapper` is the reference caller:
+    /// it clears, applies these pairs, and withholds the credentials among
+    /// them.
     #[must_use]
     pub fn child_env<F>(&self, mut lookup: F) -> Vec<(String, String)>
     where

@@ -66,6 +66,6 @@ pub use parts::{budget_guard, build_provider, open_store, seed_calibration};
 pub use session::{RuntimeBuilder, SessionRuntime};
 pub use spec::{Notice, NoticeSubject, Persistence, ProviderParts, RuntimeSpec};
 pub use wrapper::{
-    InProcessWrapper, SubprocessWrapper, TurnWrapper, WrapperError, WrapperHandler, admissible,
-    again, judge,
+    AdmittedWrapper, InProcessWrapper, SubprocessWrapper, TurnWrapper, WrapperError,
+    WrapperHandler, admissible, again, judge, refuses_env_name,
 };

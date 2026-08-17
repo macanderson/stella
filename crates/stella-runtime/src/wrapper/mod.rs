@@ -59,7 +59,10 @@ use stella_plugin::{
 
 pub use error::WrapperError;
 pub use in_process::{InProcessWrapper, WrapperHandler};
-pub use subprocess::{DEFAULT_WRAPPER_TIMEOUT, MAX_WRAPPER_TIMEOUT, SubprocessWrapper};
+pub use subprocess::{
+    AdmittedWrapper, DEFAULT_WRAPPER_TIMEOUT, MAX_WRAPPER_TIMEOUT, SubprocessWrapper,
+    refuses_env_name,
+};
 pub use verdict::{again, judge};
 
 /// The two points a wrapper answers.

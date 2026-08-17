@@ -200,12 +200,14 @@ fn a_manifest_name_that_escapes_the_plugins_directory_is_refused() {
 ///
 /// `stella_plugin::consent_text` prints the allowlist verbatim — that crate
 /// has no credential vocabulary and must not grow one — so anything the host
-/// then withholds has to be corrected at the prompt. This pins the two to one
-/// implementation: whatever `prepare_command` refuses is exactly what
-/// `refused_credentials` names, so the correction cannot drift from the
-/// withholding it describes.
+/// then withholds has to be corrected at the prompt. The withholding itself is
+/// no longer this binary's (#3512): it is
+/// `stella_runtime::wrapper::SubprocessWrapper::declare`, the boundary every
+/// driver crosses. That makes drift a *cross-crate* hazard, so this asserts
+/// across the boundary — what the prompt corrects is exactly what the socket
+/// then refuses to pass on.
 #[test]
-fn what_install_corrects_is_exactly_what_the_spawn_withholds() {
+fn what_install_corrects_is_exactly_what_the_socket_withholds() {
     let declared: Vec<String> = ["PATH", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY"]
         .into_iter()
         .map(str::to_string)
@@ -219,18 +221,18 @@ fn what_install_corrects_is_exactly_what_the_spawn_withholds() {
         ]
     );
 
-    let route = super::roster::PluginHookRoute {
-        plugin: "vera".into(),
-        principal: stella_core::ports::Principal::Plugin("vera".into()),
-        event: stella_plugin::HookEvent::PreToolUse,
-        argv: vec!["node".into()],
-        timeout_secs: 30,
-        env_allowlist: declared,
-    };
-    let prepared = process::prepare_command(&route, |name| Some(format!("value-of-{name}")));
+    let admitted = stella_runtime::wrapper::SubprocessWrapper::declare(
+        vec!["node".into()],
+        declared
+            .iter()
+            .map(|name| (name.clone(), format!("value-of-{name}")))
+            .collect(),
+        stella_runtime::wrapper::DEFAULT_WRAPPER_TIMEOUT,
+    )
+    .expect("the transport is declared with a program and a budget");
     assert_eq!(
-        prepared.refused, refused,
-        "the correction the prompt prints is the withholding the spawn performs"
+        admitted.refused, refused,
+        "the correction the prompt prints is the withholding the socket performs"
     );
 }
 
@@ -383,6 +385,211 @@ fn the_user_tier_loads_and_routes_even_in_an_untrusted_workspace() {
         2,
         "and it still dispatches — the workspace's trust is not its business"
     );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Plant a package whose directory name is **not** its manifest `name` — the
+/// shape a tarball, a `git subtree`, or a rename produces, and the shape the
+/// loader has to resolve by manifest rather than by path.
+///
+/// Written as plant-then-rename rather than a second fixture writer so there
+/// is still exactly one place that says what a planted package contains.
+fn plant_named(plugins_dir: &Path, dir_name: &str, manifest_name: &str) {
+    plant(plugins_dir, manifest_name);
+    std::fs::rename(plugins_dir.join(manifest_name), plugins_dir.join(dir_name))
+        .expect("fixture rename");
+}
+
+/// **Witness (#3380, defect 1).** `remove` uninstalls the name from *every*
+/// tier that holds it, not merely the first one it finds.
+///
+/// Installing at both scopes is the ordinary case, not a contrived one:
+/// pinning a workspace to a different build of a globally installed plugin is
+/// the reason project scope exists. The load-bearing assertion is
+/// `hook_routes` **after** the removal — a `remove` that deletes the project
+/// copy, prints "removed `vera` (project)" and returns `Ok` has told the user
+/// a third party's process is gone while the user-tier copy is still
+/// dispatched on every tool call.
+#[test]
+fn remove_uninstalls_every_tier_that_holds_the_name() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("both-tiers");
+    let home = root.join("home");
+    let _paths = crate::paths::test_user_home(home.clone());
+    let source = package(&root, "vera");
+    let settings = Settings::default();
+    // Trusted, so the project tier genuinely loads and the assertions below
+    // are about `remove` rather than about the trust gate.
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    install(&root, &source, PluginScope::User, true, &settings).expect("the user install");
+    install(&root, &source, PluginScope::Project, true, &settings).expect("the project install");
+    let user_dir = stella_home::resolve_user_plugins_dir(Some(home.join(".stella")))
+        .expect("a home was installed, so the user tier resolves")
+        .join("vera");
+    let project_dir = stella_home::resolve_project_plugins_dir(&root).join("vera");
+    assert!(user_dir.is_dir(), "the user tier holds a copy");
+    assert!(project_dir.is_dir(), "and so does the project tier");
+    let (before, _) = PluginRoster::load(&root, &settings);
+    assert_eq!(
+        before.hook_routes().len(),
+        2,
+        "the project copy shadows the user one and dispatches its two declared hooks"
+    );
+
+    remove(&root, "vera").expect("remove must succeed");
+
+    let (after, _) = PluginRoster::load(&root, &settings);
+    assert!(
+        after.hook_routes().is_empty(),
+        "a removed plugin must stop dispatching from EVERY tier — reporting success while \
+         another tier's copy is still wired into every tool call is the failure the roster \
+         exists to prevent: {:?}",
+        after.hook_routes()
+    );
+    assert!(!project_dir.exists(), "the project copy is gone");
+    assert!(
+        !user_dir.exists(),
+        "and so is the user copy — `remove` does not stop at the first tier"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **Witness (#3380, defect 2).** A package whose directory name disagrees
+/// with its manifest is listed and routed under the manifest name — so it must
+/// be removable under that name too.
+///
+/// Resolved by directory name, `remove vera` reported that `vera` was not
+/// installed at the same moment `list` was showing it and `hook_routes` was
+/// dispatching it: an uninstallable plugin, with no spelling of the command
+/// that reached it. The notice is asserted as well, because a name that exists
+/// nowhere on disk is otherwise something a user can only discover by reading
+/// the manifest themselves.
+#[test]
+fn a_package_whose_directory_disagrees_with_its_manifest_is_still_removable() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("dir-name");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    let tier = stella_home::resolve_project_plugins_dir(&root);
+    plant_named(&tier, "pkg", "vera");
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let (roster, notices) = PluginRoster::load(&root, &Settings::default());
+    assert!(
+        roster.get("vera").is_some(),
+        "the manifest name is the identity, everywhere"
+    );
+    assert_eq!(roster.hook_routes().len(), 2, "and it dispatches under it");
+    assert!(
+        notices
+            .iter()
+            .any(|notice| notice.contains("pkg") && notice.contains("vera")),
+        "the disagreement is spoken: the name a user is shown is on no directory: {notices:?}"
+    );
+
+    remove(&root, "vera").expect("what `list` shows under a name must be removable under it");
+
+    assert!(!tier.join("pkg").exists(), "the directory is gone");
+    let (after, _) = PluginRoster::load(&root, &Settings::default());
+    assert!(after.hook_routes().is_empty(), "and it dispatches nothing");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **Witness (#3380, defect 2, the collision half).** Two directories in one
+/// tier claiming one name are reported, and `remove` takes both.
+///
+/// `PluginRoster::compose` folds by name, so one of the two silently does not
+/// run — it is installed, inert, and one rename away from being the copy in
+/// force. Leaving it behind on `remove` would be the same defect as leaving
+/// the other tier's.
+#[test]
+fn two_directories_claiming_one_name_are_reported_and_both_removed() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("collision");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    let tier = stella_home::resolve_project_plugins_dir(&root);
+    plant_named(&tier, "a-copy", "vera");
+    plant_named(&tier, "b-copy", "vera");
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let (roster, notices) = PluginRoster::load(&root, &Settings::default());
+    assert_eq!(
+        roster.plugins().len(),
+        1,
+        "only one of them is in force — which is precisely why it is said"
+    );
+    assert!(
+        notices
+            .iter()
+            .any(|notice| notice.contains("a-copy") && notice.contains("b-copy")),
+        "the collapse is reported rather than silent: {notices:?}"
+    );
+
+    remove(&root, "vera").expect("remove must succeed");
+
+    assert!(
+        !tier.join("a-copy").exists(),
+        "the shadowed copy is removed"
+    );
+    assert!(!tier.join("b-copy").exists(), "and so is the one in force");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **Witness (#3380, defect 3).** A failed install leaves nothing behind and
+/// leaves the name free.
+///
+/// The copy used to create `<tier>/<name>` first and fill it in `read_dir`
+/// order, so an error part-way through left a directory the roster loads and
+/// routes with an `argv` naming files that were never copied — a live hook
+/// dispatch into nothing — and took the name, so every later install of it was
+/// refused as "already installed" until someone deleted the directory by hand.
+/// The symlink is simply a copy failure that is deterministic; the assertions
+/// are about the residue, not about symlinks.
+#[cfg(unix)]
+#[test]
+fn a_failed_install_leaves_no_directory_and_no_claim_on_the_name() {
+    let root = temp_root("atomic");
+    let source = package(&root, "vera");
+    let stolen = source.join("stolen");
+    std::os::unix::fs::symlink("/etc/passwd", &stolen).expect("fixture symlink");
+    let settings = Settings::default();
+    let tier = stella_home::resolve_project_plugins_dir(&root);
+
+    let error = install(&root, &source, PluginScope::Project, true, &settings)
+        .expect_err("the symlink must abort the copy");
+    assert!(error.contains("symlink"), "{error}");
+    assert!(
+        !tier.join("vera").exists(),
+        "a half-copied package must never appear under the plugin's name: the roster loads \
+         whatever is there and routes an argv at files that were never copied"
+    );
+    let leftovers: Vec<PathBuf> = std::fs::read_dir(&tier)
+        .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+        .unwrap_or_default();
+    assert!(
+        leftovers.is_empty(),
+        "and the staging tree is discarded with it: {leftovers:?}"
+    );
+
+    // The other half: the name is still free, so the fix is repairing the
+    // package rather than deleting a directory the user never chose to create.
+    std::fs::remove_file(&stolen).expect("repair the package");
+    install(&root, &source, PluginScope::Project, true, &settings)
+        .expect("a repaired package installs under the same name");
+    assert!(tier.join("vera").join("main.py").is_file());
 
     let _ = std::fs::remove_dir_all(&root);
 }
