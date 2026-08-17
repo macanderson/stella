@@ -35,12 +35,31 @@
 //! [`stella_core::redact::redact_secrets`] first, and nothing here writes to
 //! any store table an egress path reads (AGENTS.md invariant 3 — the
 //! content-free gate never sees this data because it never enters `store.db`).
+//!
+//! ## Plugins do not write traces (A9, docs/spec/pipeline-as-plugins.md §4)
+//!
+//! A plugin contributes a fact by emitting a `plugin.<id>.*` journal event
+//! ([`stella_core::bus::names::plugin_event_name`]) — never by appending to
+//! [`TRACES_FILE`] itself. [`fold_journal`]'s `AgentEvent::Unknown` arm folds
+//! those events into [`PluginFact`] exactly like every other field on
+//! [`TraceRecord`], which is what a plugin-contributed fact inherits by
+//! going through the fold instead of around it: replayability (the fact is
+//! reconstructible from the same journal every other field is), the
+//! [`TRACE_SCHEMA_VERSION`] skip-on-unknown contract (a reader that predates
+//! plugin facts sees an ordinary additive field, not a line it cannot
+//! parse), redaction (every payload leaf passes through
+//! [`stella_core::redact::redact_secrets`] before it reaches the file, same
+//! as `prompt_messages`), and the guarantee that nothing here reaches
+//! `store.db` (the fold reads the journal already written there; a plugin
+//! writing `traces.jsonl` directly would be a second, ungoverned write path
+//! with none of the above — not a shortcut, a regression on all four).
 
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use stella_core::bus::names as plugin_names;
 use stella_core::redact::redact_secrets;
 use stella_pipeline::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::{AgentEvent, CompletionMessage};
@@ -108,6 +127,13 @@ pub struct TraceRecord {
     /// evidence. Carries no model-authored text by construction; see
     /// [`stella_pipeline::reward`].
     pub reward: RewardLabel,
+    /// Facts plugins contributed to this execution, folded from
+    /// `plugin.<id>.*` journal events — see the module doc's "Plugins do not
+    /// write traces". Empty, never omitted, when no plugin ran: that is a
+    /// fact about this execution a dataset reader should see directly rather
+    /// than infer from a missing field.
+    #[serde(default)]
+    pub plugin_facts: Vec<PluginFact>,
     /// Every model call, in wire order.
     pub calls: Vec<TraceCall>,
 }
@@ -164,6 +190,30 @@ pub struct TraceToolUse {
     pub is_error: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+}
+
+/// One fact a plugin contributed to this execution, folded from a
+/// `plugin.<id>.*` journal event — see the module doc's "Plugins do not
+/// write traces". Additive: a reader compiled before this field existed
+/// simply never sees it, the same posture every other optional field on
+/// [`TraceRecord`] already has, so no [`TRACE_SCHEMA_VERSION`] bump is
+/// needed to add it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginFact {
+    /// The plugin's own id, recovered from the event name by
+    /// [`stella_core::bus::names::plugin_id_of`] — never trusted from the
+    /// payload, only from the namespace the name itself proves ownership of.
+    pub plugin_id: String,
+    /// The full dotted event name (`plugin.<id>.<local>`).
+    pub name: String,
+    /// The call this fact was attributed to — the same `(turn_instance,
+    /// step)` a [`TraceCall`] is keyed by — when one was open at the time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_instance: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<u64>,
+    /// The event's payload, secret-redacted exactly like `prompt_messages`.
+    pub payload: serde_json::Value,
 }
 
 /// The `[trace:exec-N]` episode tag — the join key recall carries back to
@@ -297,6 +347,14 @@ pub fn assemble(
         policy,
     );
 
+    // Redacted once here, the same discipline `prompt` and `prompt_messages`
+    // already follow, rather than inline in the fold — a plugin's payload is
+    // no more trusted than a model's.
+    let mut plugin_facts = fold.plugin_facts;
+    for fact in &mut plugin_facts {
+        redact_value(&mut fact.payload, &mut redacted);
+    }
+
     Ok(TraceRecord {
         schema: TRACE_SCHEMA_VERSION,
         execution_id,
@@ -311,6 +369,7 @@ pub fn assemble(
         change_digest: None,
         redacted,
         reward,
+        plugin_facts,
         calls,
     })
 }
@@ -331,6 +390,11 @@ struct JournalFold {
     /// [`TrajectoryCost::revisions`] for what that over-counts and why the
     /// direction is safe.
     verdicts: u32,
+    /// Every `plugin.<id>.*` event seen, in journal order, attributed to
+    /// whatever call was open when it arrived. Payloads are unredacted here
+    /// — [`assemble`] redacts once, after the fold, the same way it redacts
+    /// `prompt` and reconstructed messages.
+    plugin_facts: Vec<PluginFact>,
 }
 
 #[derive(Clone, Copy)]
@@ -416,6 +480,29 @@ fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
                 // revision rounds this counts.
                 fold.settlement = Some(Settlement::from_evidence(*passed, evidence));
                 fold.verdicts = fold.verdicts.saturating_add(1);
+            }
+            // A `plugin.<id>.*` name decodes to `Unknown` because it is not
+            // one of `KNOWN_TYPE_TAGS` — that variant is the vocabulary's
+            // designed extension point (`AgentEvent::Unknown`'s doc comment),
+            // so a plugin-contributed fact needs no new `AgentEvent` variant
+            // and therefore no new row in the signal-consumer ledger
+            // (`stella-protocol/src/event/consumers.rs`): nothing there
+            // changed shape. `plugin_id_of` re-validates the namespace rather
+            // than trusting `event_type` verbatim, so a malformed or
+            // non-plugin unknown tag is silently not a fact, not a crash.
+            AgentEvent::Unknown {
+                event_type,
+                payload,
+            } => {
+                if let Some(plugin_id) = plugin_names::plugin_id_of(event_type) {
+                    fold.plugin_facts.push(PluginFact {
+                        plugin_id: plugin_id.to_string(),
+                        name: event_type.clone(),
+                        turn_instance: current.map(|(turn, _, _)| turn),
+                        step: current.map(|(_, step, _)| step),
+                        payload: payload.clone(),
+                    });
+                }
             }
             _ => {}
         }
@@ -701,6 +788,97 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "traces are owner-only");
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A9 witness (docs/spec/pipeline-as-plugins.md §4): a plugin never
+    /// writes `traces.jsonl` — it emits a `plugin.<id>.*` journal event, and
+    /// the fact reaches the trace only through [`fold_journal`]. This
+    /// exercises both halves the task asks for: a well-formed
+    /// plugin-namespaced event becomes a [`PluginFact`], redacted like
+    /// everything else on the record, attributed to the call that was open
+    /// when it arrived; and a malformed `plugin.`-prefixed tag — one no
+    /// plugin id could ever own — is rejected by the fold rather than
+    /// faked into a fact.
+    #[test]
+    fn a_plugin_namespaced_journal_event_becomes_a_redacted_trace_fact() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("run", "review the diff", "zai", "glm-5.2")
+            .unwrap();
+
+        let owned_name = plugin_names::plugin_event_name("demo-reviewer", "finding.raised")
+            .expect("well-formed plugin id and local segment");
+
+        let events = [
+            AgentEvent::StepManifest {
+                turn_instance: 0,
+                step: 0,
+                call_seq: 0,
+                role: ModelCallRole::Worker,
+                provider: "zai".to_string(),
+                model: "glm-5.2".to_string(),
+                blocks: Vec::new(),
+                effective_budget_tokens: 1000,
+                calibration_factor: 1.0,
+                estimated_input_tokens: 10,
+                compiled_frame: None,
+            },
+            // A well-formed plugin event: owned by "demo-reviewer", carrying
+            // a secret the fold must redact exactly like `prompt_messages`.
+            AgentEvent::Unknown {
+                event_type: owned_name.clone(),
+                payload: serde_json::json!({
+                    "type": owned_name,
+                    "message": "leaked token ghp_0123456789abcdef0123456789abcdef012345",
+                }),
+            },
+            // A `plugin.`-prefixed tag with no id segment at all — outside
+            // any plugin's own namespace, and must not be attributed to one.
+            AgentEvent::Unknown {
+                event_type: "plugin.".to_string(),
+                payload: serde_json::json!({"type": "plugin."}),
+            },
+        ];
+        for (seq, event) in events.iter().enumerate() {
+            store.record_event(id, seq as u64, event).unwrap();
+        }
+        store
+            .finish_execution_accounted(id, "completed", 0.0, true)
+            .unwrap();
+
+        let record = assemble(&store, id, &RewardPolicy::default()).unwrap();
+
+        assert_eq!(
+            record.plugin_facts.len(),
+            1,
+            "the malformed plugin.-prefixed tag must not become a fact: {:?}",
+            record.plugin_facts
+        );
+        let fact = &record.plugin_facts[0];
+        assert_eq!(fact.plugin_id, "demo-reviewer");
+        assert_eq!(fact.name, "plugin.demo-reviewer.finding.raised");
+        assert_eq!(fact.turn_instance, Some(0));
+        assert_eq!(fact.step, Some(0));
+        assert!(record.redacted, "the ghp_ token must be recognized");
+        let payload_json = fact.payload.to_string();
+        assert!(
+            !payload_json.contains("ghp_") && payload_json.contains("[redacted]"),
+            "plugin fact payload is redacted: {payload_json}"
+        );
+
+        // The JSONL line round-trips: a plugin fact is an ordinary field on
+        // the serialized record, not a second write path.
+        let root = std::env::temp_dir().join(format!(
+            "stella-trace-plugin-test-{id}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let path = append_trace(&root, &record).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let back: TraceRecord = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+        assert_eq!(back.plugin_facts.len(), 1);
+        assert_eq!(back.plugin_facts[0].plugin_id, "demo-reviewer");
         let _ = std::fs::remove_dir_all(&root);
     }
 
