@@ -2983,6 +2983,9 @@ dependencies = [
 [[package]]
 name = "stella-diff"
 version = "0.9.79"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "stella-embed"
@@ -3298,6 +3301,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "stella-diag",
+ "stella-diff",
  "stella-protocol",
  "stella-tools",
  "sysinfo",

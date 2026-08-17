@@ -102,22 +102,57 @@ fn collapsed_tool_result_shows_a_capped_syntax_highlighted_inline_diff() {
         !text.contains("@@ -0,0"),
         "a single hunk's header is not worth a row inline:\n{text}"
     );
-    // The cap counts raw diff lines, hunk header included — so the last
-    // addition shown is number INLINE_DIFF_CAP - 1 and the rest fold away.
-    let last_shown = INLINE_DIFF_CAP - 1;
-    let first_hidden = last_shown + 1;
+    // The cap counts raw diff lines, hunk header included, and buys the two
+    // ENDS of the change rather than its first `cap` lines. One hunk of
+    // `FIXTURE_ADDS` additions cannot fit whole, so the budget splits: the
+    // head takes `cap.div_ceil(2)` raw lines (the header plus that many
+    // additions less one), the tail takes the remainder off the bottom.
+    //
+    // This test used to assert the opposite — additions 1 through
+    // `cap - 1` and nothing else — which is why the reader could never see
+    // where a long edit ended. It is named here as a deliberate change of
+    // contract, not a rewritten expectation.
+    let head_raw = INLINE_DIFF_CAP.div_ceil(2);
+    let tail_raw = INLINE_DIFF_CAP - head_raw;
+    let last_head_add = head_raw - 1; // raw line 0 is the hunk header
+    let first_tail_add = FIXTURE_ADDS - tail_raw + 1;
     let hidden = FIXTURE_ADDS + 1 - INLINE_DIFF_CAP;
     assert!(
-        text.contains(&format!("+let x{last_shown} = {last_shown};")),
-        "addition {last_shown} is the last one shown:\n{text}"
+        text.contains(&format!("+let x{last_head_add} = {last_head_add};")),
+        "addition {last_head_add} is the last one of the head:\n{text}"
     );
     assert!(
-        !text.contains(&format!("+let x{first_hidden} = {first_hidden};")),
-        "addition {first_hidden} is folded behind ctrl+o:\n{text}"
+        !text.contains(&format!(
+            "+let x{} = {};",
+            last_head_add + 1,
+            last_head_add + 1
+        )),
+        "the line after it is inside the elided middle:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("+let x{first_tail_add} = {first_tail_add};")),
+        "addition {first_tail_add} opens the tail:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("+let x{FIXTURE_ADDS} = {FIXTURE_ADDS};")),
+        "and the change's LAST line is shown — the whole point of a tail:\n{text}"
     );
     assert!(
         text.contains(&format!("⋯ {} · ctrl+o", plural_lines(hidden))),
         "the fold names the hidden count and the key:\n{text}"
+    );
+    // …and it sits between the two ends, not after them. A marker below the
+    // final row would say the change continues past a row that is already
+    // the change's last.
+    let rows: Vec<&str> = text.lines().collect();
+    let fold_at = rows.iter().position(|r| r.contains('⋯')).expect("fold row");
+    let last_at = rows
+        .iter()
+        .position(|r| r.contains(&format!("+let x{FIXTURE_ADDS} = ")))
+        .expect("last addition");
+    assert!(
+        fold_at < last_at,
+        "the elision is a middle, not a trailer:\n{text}"
     );
     // Line-level standard: added lines are numbered on the new side.
     assert!(text.contains("   1 +let x1 = 1;"), "gutter number:\n{text}");

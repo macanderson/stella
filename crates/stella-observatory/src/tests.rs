@@ -187,7 +187,8 @@ fn seeded_workspace() -> TempDir {
              (1, 3, 'tool_start', '{"type":"tool_start","call":{"call_id":"c1","name":"read_file","input":{"path":"src/lib.rs"}}}'),
              (1, 4, 'tool_result', '{"type":"tool_result","call_id":"c1","output":{"ok":{"content":"fn a() {}"}},"duration_ms":12,"speculated":false}'),
              (1, 5, 'text', '{"type":"text","delta":"added the function"}'),
-             (1, 6, 'text', '{"type":"text","text":"and named it well"}');"#,
+             (1, 6, 'text', '{"type":"text","text":"and named it well"}'),
+             (1, 7, 'file_change', '{"type":"file_change","path":"src/lib.rs","kind":"modified","added":2,"removed":1,"diff":"--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,3 +3,4 @@\n ctx\n-fn a() {}\n+fn a() -> u8 { 0 }\n+fn b() {}\n"}');"#,
     )
     .unwrap();
     // The context receipts (#1475), also in their own batch: one recorded

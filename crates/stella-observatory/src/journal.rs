@@ -75,7 +75,7 @@ pub(crate) fn entries(
            AND seq > ?2
            AND event_type IN ('stage', 'text', 'reasoning', 'tool_start',
                               'tool_result', 'speculation_discarded',
-                              'turn_parked', 'turn_woken',
+                              'turn_parked', 'turn_woken', 'file_change',
                               'candidate_delivery', 'turn_complete')
          ORDER BY seq ASC";
     let mut stmt = match conn.prepare(sql) {
@@ -201,6 +201,39 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
                 .or_else(|| payload["output"]["error"]["message"].as_str())
                 .unwrap_or("");
             set_journal_body(&mut out, body, full);
+        }
+        // What the turn changed on disk, with the diff (#2421 gave the deck
+        // and the plain surface this; the dashboard's transcript still ended
+        // at "some files were touched", listed by path in a side panel with
+        // no way to see WHAT changed — the one question a transcript is read
+        // to answer).
+        //
+        // `added`/`removed` ride the event from git's own numstat and are
+        // passed through untouched: they are the real delta, never recounted
+        // from `diff`, which is a bounded rendering of the changed region.
+        "file_change" => {
+            out["path"] = payload["path"].clone();
+            out["kind"] = payload["kind"].clone();
+            out["added"] = payload["added"].clone();
+            out["removed"] = payload["removed"].clone();
+            if let Some(text) = payload["diff"].as_str().filter(|d| !d.trim().is_empty()) {
+                // Text on the wire, hunks on the page: the event carries git's
+                // `-p` patch because it is measured by shelling to git, and the
+                // page has exactly one diff renderer, which draws hunks.
+                //
+                // `full` (the `?full=1` escape hatch) lifts the cap here the
+                // same way it lifts the body clip above — a reader who asked
+                // for everything gets everything.
+                let cap = if full {
+                    usize::MAX
+                } else {
+                    stella_diff::view::VIEW_CAP
+                };
+                let view = stella_diff::view::elide(&stella_diff::parse::hunks(text), cap);
+                out["hunks"] = stella_diff::json::hunks(&view.hunks);
+                out["elided"] = json!(view.hidden);
+                out["fold_before"] = json!(view.fold_before);
+            }
         }
         "speculation_discarded" => {
             out["call_id"] = payload["call_id"].clone();

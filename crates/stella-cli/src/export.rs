@@ -731,7 +731,41 @@ fn render_dashboard(
             max-height: 340px; overflow: auto; }}
   pre.out.err {{ color: var(--bad); }}
   pre.out.pending {{ color: var(--text-3); font-style: italic; }}
+  /* Only the fallback for diff text that parses to no hunks at all. */
   pre.diff {{ color: var(--text-2); max-height: 300px; overflow: auto; }}
+
+  /* Unified diff — git's shape, drawn the way a reviewer reads it and
+     byte-for-byte the component the Observatory uses
+     (`crates/stella-observatory/src/assets/index.html`). This archive is
+     attached to a pull request as evidence and read beside that dashboard, so
+     the two must not render one edit two ways. Old and new line numbers get
+     their own gutters, the sigil gets a third, and the change is carried by a
+     tinted ROW rather than by a coloured glyph — hue is never the only signal
+     (BRAND.md), and it is the only signal that survives a monochrome print. */
+  /* Square, like everything else on this page: a rounded corner says
+     "surface" where a hairline says "boundary", and this page is boundaries
+     (`the_dashboard_is_monospace_and_square` enforces it). */
+  .dx {{ overflow-x: auto; border: 1px solid var(--hairline);
+        background: var(--sunken); margin: var(--sp1) 10px var(--sp1) 100px; }}
+  .dx-hunk {{ min-width: 100%; }}
+  .dx-hunk + .dx-hunk {{ border-top: 1px solid var(--hairline); }}
+  .dx-at {{ color: var(--text-3); background: var(--raised); padding: 3px 12px;
+           white-space: pre; border-bottom: 1px solid var(--hairline); }}
+  .dx-line {{ display: grid; grid-template-columns: 52px 52px 22px minmax(max-content, 1fr);
+             color: var(--text-2); }}
+  .dx-line > span {{ padding: 0 6px; white-space: pre; }}
+  .dx-line .no, .dx-line .nn {{ color: var(--text-3); text-align: right;
+    font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; }}
+  .dx-line .sg {{ text-align: center; -webkit-user-select: none; user-select: none; }}
+  .dx-line.add {{ background: rgba(74, 222, 128, .10); color: var(--text); }}
+  .dx-line.add .sg {{ color: var(--ok); }}
+  .dx-line.rem {{ background: rgba(255, 92, 122, .10); color: var(--text); }}
+  .dx-line.rem .sg {{ color: var(--bad); }}
+  /* The elision sits between the hunks it replaces, so it has to read as
+     unmistakably not a line of the file: raised ground, centred, no gutter. */
+  .dx-fold {{ color: var(--text-3); background: var(--raised); text-align: center;
+             padding: 2px 12px; -webkit-user-select: none; user-select: none; }}
+  .dx-hunk + .dx-fold, .dx-fold + .dx-hunk {{ border-top: 1px solid var(--hairline); }}
   .empty {{ color: var(--text-2); padding: 10px 0; }}
 
   /* Under 720px the 92px indent costs more than it buys — the label becomes a

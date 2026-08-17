@@ -110,20 +110,21 @@ fn file_entry(journal: &WorkJournal, turn: u32, path: &str) -> serde_json::Value
         });
     }
     let diff = stella_diff::unified_diff(&old, &new, DIFF_CONTEXT);
+    // The row is a projection built for the dashboard, not an archive, so the
+    // view's budget is spent here rather than at read time: a half-megabyte
+    // file rewritten in one turn is half a megabyte of hunks persisted on
+    // every turn end and re-shipped to the browser on every poll. `elide`
+    // keeps the change's beginning and its end on the same policy the deck
+    // and the plain surface use. `added`/`removed` stay the measured delta —
+    // the tally must not shrink to whatever the view drew.
+    let view = stella_diff::view::elide(&diff.hunks, stella_diff::view::VIEW_CAP);
     serde_json::json!({
         "path": path,
         "added": diff.added,
         "removed": diff.removed,
-        "hunks": diff.hunks.iter().map(|h| serde_json::json!({
-            "old_start": h.old_start,
-            "old_count": h.old_count,
-            "new_start": h.new_start,
-            "new_count": h.new_count,
-            "lines": h.lines.iter().map(|l| serde_json::json!({
-                "op": l.op.tag(),
-                "text": l.text,
-            })).collect::<Vec<_>>(),
-        })).collect::<Vec<_>>(),
+        "hunks": stella_diff::json::hunks(&view.hunks),
+        "elided": view.hidden,
+        "fold_before": view.fold_before,
         "skipped": false,
     })
 }
