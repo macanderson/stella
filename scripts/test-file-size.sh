@@ -312,6 +312,130 @@ want "B9 growth on top of an inherited first-time crossing still fails" \
   expect-fail "$r" "src/big.rs is 1650 lines, over the 1500-line limit"
 unset FILE_SIZE_BASE_REF
 
+# ── What --update is allowed to WRITE (#3441) ────────────────────────────────
+#
+# Everything above tests the checker. These test the generator, which had the
+# complementary bug: the checker refuses a first-time crossing and names
+# "split it" as the remedy, while `--update` — the documented remedy for the
+# OTHER failure — silently recorded every over-limit file it could see and so
+# wrote exactly the entry the checker forbids. The two failures share a trigger
+# (the baseline going stale), so the moment `--update` is run is the moment an
+# unrelated crossing is most likely to be absorbed by it.
+#
+# U1 is the witness: it fails on the old script, which wrote the entry.
+
+# want_update <name> <expect-pass|expect-fail> <repo> <substring> [args...]
+#
+# Asserts the verdict, the message, AND — on a refusal — that the baseline is
+# byte-identical afterwards. The last part is the half that matters: a refusal
+# that has already rewritten the file has not refused anything.
+want_update() {
+  local name="$1" expect="$2" dir="$3" sub="$4"
+  shift 4
+  local bl="$dir/scripts/file-size-baseline.txt" before after out rc
+  before="$(cat "$bl" 2>/dev/null || true)"
+  out="$("$dir/scripts/check-file-size.sh" --update "$@" 2>&1)"
+  rc=$?
+  after="$(cat "$bl" 2>/dev/null || true)"
+  if [ "$expect" = "expect-fail" ]; then
+    if [ "$rc" -eq 0 ]; then
+      fail=$((fail + 1)); echo "FAIL $name — --update succeeded where it should have refused:"; echo "$out"
+      return
+    fi
+    if [ "$before" != "$after" ]; then
+      fail=$((fail + 1)); echo "FAIL $name — refused, but rewrote the baseline anyway."
+      return
+    fi
+  elif [ "$rc" -ne 0 ]; then
+    fail=$((fail + 1)); echo "FAIL $name — expected --update to succeed, got:"; echo "$out"
+    return
+  fi
+  case "$out" in
+    *"$sub"*) pass=$((pass + 1)); echo "ok   $name" ;;
+    *) fail=$((fail + 1)); echo "FAIL $name — wrong message (wanted '$sub'):"; echo "$out" ;;
+  esac
+}
+
+# The witness. A tree carrying BOTH failures at once, which is the realistic
+# shape: one grandfathered ceiling has drifted (the reason anyone runs
+# --update) and one unrelated file has crossed the limit for the first time.
+r="$(new_repo "update_refuses_new_entry")"
+plant "$r" "src/god.rs" 2004
+plant "$r" "src/fresh.rs" 1600
+set_baseline "$r" "2000 src/god.rs"
+commit "$r" "a drifted ceiling and an unrelated first-time crossing"
+want_update "U1 --update refuses to grandfather a file that is not already in the baseline" \
+  expect-fail "$r" "src/fresh.rs"
+
+# The down-ratchet, and the deliberate raise, must both keep working — this is
+# the whole reason --update exists and the refusal must not cost it.
+r="$(new_repo "update_rewrites_existing")"
+plant "$r" "src/shrunk.rs" 1600
+plant "$r" "src/grown.rs" 2004
+set_baseline "$r" "2400 src/shrunk.rs" "2000 src/grown.rs"
+commit "$r" "one entry retightens, one is deliberately raised"
+want_update "U2 --update still rewrites existing entries in both directions" \
+  expect-pass "$r" "baseline updated"
+bl="$r/scripts/file-size-baseline.txt"
+if grep -q '^1600 src/shrunk.rs$' "$bl" && grep -q '^2004 src/grown.rs$' "$bl"; then
+  pass=$((pass + 1)); echo "ok   U2b both ceilings were rewritten to the current sizes"
+else
+  fail=$((fail + 1)); echo "FAIL U2b ceilings not rewritten:"; cat "$bl"
+fi
+
+# An entry that dropped under the limit must still be retired, which is a
+# removal — the refusal only ever guards ADDITIONS.
+r="$(new_repo "update_retires_obsolete")"
+plant "$r" "src/fixed.rs" 900
+set_baseline "$r" "2000 src/fixed.rs"
+commit "$r" "the file was split and no longer needs an exemption"
+want_update "U3 --update still retires an obsolete entry" expect-pass "$r" "baseline updated"
+if grep -q 'src/fixed.rs' "$r/scripts/file-size-baseline.txt"; then
+  fail=$((fail + 1)); echo "FAIL U3b the obsolete entry survived --update"
+else
+  pass=$((pass + 1)); echo "ok   U3b the obsolete entry was retired"
+fi
+
+# The escape hatch: explicit, and it works.
+r="$(new_repo "update_grandfather_hatch")"
+plant "$r" "src/irreducible.rs" 1600
+set_baseline "$r"
+commit "$r" "a crossing someone has decided to grandfather deliberately"
+want_update "U4 --grandfather admits the named path" \
+  expect-pass "$r" "baseline updated" --grandfather src/irreducible.rs
+if grep -q '^1600 src/irreducible.rs$' "$r/scripts/file-size-baseline.txt"; then
+  pass=$((pass + 1)); echo "ok   U4b the deliberately grandfathered entry was written"
+else
+  fail=$((fail + 1)); echo "FAIL U4b --grandfather did not write the entry"
+fi
+
+# ...and it is scoped to the path it names, so passing it does not open the
+# door for everything else over the line in the same run.
+r="$(new_repo "update_grandfather_is_scoped")"
+plant "$r" "src/irreducible.rs" 1600
+plant "$r" "src/other.rs" 1700
+set_baseline "$r"
+commit "$r" "two crossings, one of them decided"
+want_update "U5 --grandfather does not admit the paths it did not name" \
+  expect-fail "$r" "src/other.rs" --grandfather src/irreducible.rs
+
+# A hatch that can be passed pointlessly stops meaning anything.
+r="$(new_repo "update_grandfather_pointless")"
+plant "$r" "src/small.rs" 10
+set_baseline "$r"
+commit "$r" "nothing is over the limit"
+want_update "U6 --grandfather naming a path that needs no entry is an error" \
+  expect-fail "$r" "need no new entry" --grandfather src/small.rs
+
+# Bootstrap: with no baseline at all there is no prior decision to contradict,
+# and the checker itself tells a fresh tree to run --update to create one.
+r="$(new_repo "update_bootstrap")"
+rm -f "$r/scripts/file-size-baseline.txt"
+plant "$r" "src/big.rs" 1600
+commit "$r" "a tree with no baseline yet"
+want_update "U7 --update bootstraps a missing baseline without refusing" \
+  expect-pass "$r" "baseline updated"
+
 echo
 echo "passed ${pass}, failed ${fail}"
 [ "$fail" -eq 0 ]
