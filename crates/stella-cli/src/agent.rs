@@ -1620,7 +1620,7 @@ async fn run_turn(
         &cfg.workspace_root,
     );
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
+    let (tx, durable_pre_persisted) = event_sender_for_raw_run(raw_tx, format);
     // The proactive re-query (#3243 Phase 3): the engine consults this at
     // every step boundary; the adapter's hysteresis makes an undrifted turn
     // free. Seeded from `messages` so the turn-opening block is never

@@ -131,3 +131,118 @@ impl From<UnboundedSender<AgentEvent>> for EventSender {
         Self::new(sender)
     }
 }
+
+#[cfg(test)]
+mod run_ending_tests {
+    use super::*;
+
+    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AgentEvent>) -> Vec<AgentEvent> {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            out.push(event);
+        }
+        out
+    }
+
+    /// The contract a raw run's consumers actually depend on: the engine's
+    /// per-turn ending goes through untouched, and the run's own follows it.
+    ///
+    /// This exists because losing it is silent. The wiring is one call at one
+    /// call site, and when a merge dropped that call (#3379 landing against
+    /// #3414, which rewrote the same lines) the only complaint was a dead-code
+    /// lint on the now-uncalled constructor. Nothing said the thing that
+    /// actually broke: a raw `stella run` emitted `turn_complete` and then
+    /// simply stopped, so every consumer waiting for the terminal event waited
+    /// forever. A lint on the producer is not a test of the behaviour.
+    #[test]
+    fn a_wrapped_turn_ending_is_forwarded_and_followed_by_the_run_ending() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = RunEnding::sealing(EventSender::new(tx));
+        events
+            .send(AgentEvent::TurnComplete {
+                model: "opus".to_string(),
+                cost_usd: 0.25,
+            })
+            .expect("the receiver is alive");
+        drop(events);
+
+        let seen = drain(&mut rx);
+        assert!(
+            matches!(
+                seen.as_slice(),
+                [
+                    AgentEvent::TurnComplete { .. },
+                    AgentEvent::Complete { model, cost_usd },
+                ] if model == "opus" && (*cost_usd - 0.25).abs() < f64::EPSILON
+            ),
+            "the turn ending passes through unedited and the run's follows it, \
+             carrying that turn's model and spend: {seen:?}"
+        );
+    }
+
+    /// Several turns settle as one run ending carrying their total — and the
+    /// per-turn endings are still all present, because this observes rather
+    /// than replaces them.
+    #[test]
+    fn several_turns_end_the_run_once_with_their_total() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = RunEnding::sealing(EventSender::new(tx));
+        for cost_usd in [0.1, 0.2, 0.3] {
+            events
+                .send(AgentEvent::TurnComplete {
+                    model: "opus".to_string(),
+                    cost_usd,
+                })
+                .expect("the receiver is alive");
+        }
+        drop(events);
+
+        let seen = drain(&mut rx);
+        assert_eq!(
+            seen.iter()
+                .filter(|e| matches!(e, AgentEvent::TurnComplete { .. }))
+                .count(),
+            3,
+            "every turn ending survives: {seen:?}"
+        );
+        let terminal: Vec<&AgentEvent> = seen
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::Complete { .. }))
+            .collect();
+        assert!(
+            matches!(
+                terminal.as_slice(),
+                [AgentEvent::Complete { cost_usd, .. }]
+                    if (*cost_usd - 0.6).abs() < 1e-9
+            ),
+            "exactly one run ending, carrying the run's total: {terminal:?}"
+        );
+        assert!(
+            matches!(seen.last(), Some(AgentEvent::Complete { .. })),
+            "and it is last: {seen:?}"
+        );
+    }
+
+    /// A run no turn of which succeeded ends on `Error`, never on `Complete` —
+    /// the same rule the engine used to apply one turn at a time.
+    #[test]
+    fn a_run_with_no_successful_turn_emits_no_run_ending() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = RunEnding::sealing(EventSender::new(tx));
+        events
+            .send(AgentEvent::Error {
+                message: "provider refused".to_string(),
+                retryable: false,
+            })
+            .expect("the receiver is alive");
+        drop(events);
+
+        let seen = drain(&mut rx);
+        assert!(
+            !seen
+                .iter()
+                .any(|e| matches!(e, AgentEvent::Complete { .. })),
+            "a failed run must not be sealed as a success: {seen:?}"
+        );
+    }
+}
