@@ -172,7 +172,13 @@ fn prose_block(
     };
     let open = state.is_open(run, node);
     let head = digest::first_sentence(&prose.text);
-    let rest = prose.text.trim().strip_prefix(head.as_str()).unwrap_or("");
+    let trimmed = prose.text.trim();
+    // When `first_sentence` finds a real boundary, `head` is a literal prefix and
+    // the remainder is what follows it. When it falls back to eliding (no sentence
+    // boundary in a long wall of text), `head` is a middle-ellipsis string that is
+    // NOT a prefix, so `strip_prefix` returns `None` — in that case show the full
+    // text in the expanded body rather than losing everything.
+    let rest = trimmed.strip_prefix(head.as_str()).unwrap_or(trimmed);
     let _ = write!(
         out,
         "<div class=\"role agent\"><div class=\"rolegut\">\

@@ -330,7 +330,11 @@ fn prose_lines(
     if !open {
         return;
     }
-    let rest = prose.text.trim().strip_prefix(head.as_str()).unwrap_or("");
+    // See `prose_block` in html.rs: when `first_sentence` elides rather than finding
+    // a sentence boundary, `head` is not a prefix and `strip_prefix` returns `None`,
+    // so fall back to the full text to avoid dropping the reasoning body.
+    let trimmed = prose.text.trim();
+    let rest = trimmed.strip_prefix(head.as_str()).unwrap_or(trimmed);
     for wrapped in wrap(rest.trim(), width.saturating_sub(12).max(20)) {
         out.push(vec![
             Cell::new("│         ", Color::Faint),

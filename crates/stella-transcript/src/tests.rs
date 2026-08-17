@@ -577,6 +577,40 @@ fn prose_folds_to_its_first_sentence() {
     assert_eq!(digest::first_sentence(text), "I'll read the file first.");
 }
 
+/// A wall of unpunctuated reasoning (>96 chars, no sentence boundary) folds to
+/// an elided head — which is NOT a literal prefix of the text. The expanded
+/// body must still carry the full reasoning rather than nothing.
+#[test]
+fn unpunctuated_prose_expands_to_its_full_body() {
+    let text = "considering whether the overfull hbox comes from the wide table \
+                or from an unbreakable url in the bibliography and how best to wrap it";
+    assert!(
+        digest::first_sentence(text).contains('…'),
+        "precondition: this text should elide, not split on a sentence boundary"
+    );
+    let mut run = run_with(vec![]);
+    run.turns[0].prose = vec![Prose {
+        text: text.to_string(),
+        before_step: 0,
+    }];
+
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Everything);
+
+    let markup = html::render_run(&run, &state);
+    assert!(
+        markup.contains("bibliography and how best to wrap it"),
+        "expanded HTML prose lost the tail of the reasoning"
+    );
+
+    let grid = grid::render(&run, &state, 100);
+    let text_out = grid::to_ansi256(&grid);
+    assert!(
+        text_out.contains("bibliography"),
+        "expanded grid prose lost the body of the reasoning"
+    );
+}
+
 // ------------------------------------------------------------------ render
 
 #[test]
