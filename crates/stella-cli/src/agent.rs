@@ -1629,6 +1629,10 @@ async fn run_turn(
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
+    // A mid-turn re-query spends on a provider inside the step loop, so —
+    // unlike the pre-turn recall carried in as `recall_event` — it reports
+    // its own `ContextRecall` through this turn's stream (#3366).
+    let requery = requery.map(|requery| requery.with_events(tx.clone()));
     // Journal the policy/extension audit plane through the same stream
     // (receipts spec §6.4) — a no-op unless a hook bus is attached.
     registry.bridge_policy_plane(tx.clone());

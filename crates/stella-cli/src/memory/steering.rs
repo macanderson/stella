@@ -90,9 +90,17 @@ pub(super) struct GatheredSteering {
 ///   `inject_recall_block`'s any-prior-marker rule: whatever this returns
 ///   WILL be injected verbatim by the engine, so a byte-identical block must
 ///   die here.
+/// **Telemetry** — a re-query is a full recall fan-out, provider spend
+/// included, so it reports the same `ContextRecall` event the pre-turn block
+/// does (#3366). The pre-turn recall runs before the turn's channel exists and
+/// is carried forward by the caller; this one runs *inside* the step loop, so
+/// the adapter holds the sender itself and emits at the moment it spends.
 pub(crate) struct SessionRequery<'m> {
     memory: &'m super::SessionMemory,
     state: std::sync::Mutex<RequeryState>,
+    /// The turn's event stream, when the driver has one — absent only in
+    /// tests, which construct the adapter without a channel.
+    events: Option<stella_core::EventSender>,
 }
 
 struct RequeryState {
@@ -128,7 +136,17 @@ impl<'m> SessionRequery<'m> {
                 produced,
                 answered_fingerprint: fingerprint(&[], &[]),
             }),
+            events: None,
         }
+    }
+
+    /// Report every answered re-query's recall into this turn's event stream
+    /// (#3366). Separate from [`Self::new`] because the sender does not exist
+    /// until the driver has opened the channel, which happens after the
+    /// adapter's borrow of session memory is taken.
+    pub(crate) fn with_events(mut self, events: stella_core::EventSender) -> Self {
+        self.events = Some(events);
+        self
     }
 }
 
@@ -159,12 +177,19 @@ impl stella_core::ports::SteeringRequery for SessionRequery<'_> {
         {
             return None;
         }
-        let block = self.memory.signal_recall_block(signal).await;
+        let recalled = self.memory.signal_recall_block(signal).await;
+        // The spend happened here, so it is reported here — before the dedup
+        // and the empty-block gate below, both of which can discard the text
+        // while the provider round trip is already paid for. That discard is
+        // exactly the unmeterable cost the event exists to surface (#3366).
+        if let (Some(events), Some(event)) = (&self.events, recalled.telemetry_event()) {
+            let _ = events.send(event);
+        }
         let mut state = self.state.lock().expect("requery state");
         // The signal is answered either way: a drift that surfaced nothing
         // new must not be re-asked every step until it drifts again.
         state.answered_fingerprint = current;
-        let block = block?;
+        let block = recalled.text?;
         state.produced.insert(block.clone()).then_some(block)
     }
 }
