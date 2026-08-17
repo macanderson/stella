@@ -75,6 +75,16 @@ pub struct SessionSpec {
     pub messages: Vec<CompletionMessage>,
     /// Engine knobs (step cap, compaction budget, sampling). `Default` is a
     /// sane starting point.
+    ///
+    /// One field here is session-scoped rather than turn-scoped and so is not
+    /// served by `Default` on a multi-turn embedder:
+    /// `EngineConfig::session_output_ceilings`, the carry that stops every
+    /// turn re-paying the affordability 402 it already learned about (#3307).
+    /// The `/v1/sessions` route fills it from the session registry (#3568); a
+    /// host driving [`Session`] directly across several turns attaches one
+    /// handle of its own and clones it into each turn's config. A handle
+    /// minted per turn is worse than none — it reads as wired and carries
+    /// nothing.
     pub config: EngineConfig,
     /// Spend guard for the turn.
     pub budget: BudgetGuard,
