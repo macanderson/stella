@@ -455,7 +455,7 @@ impl<'a> Pipeline<'a> {
                 // the witness stage, which `replay::validate_stage_ordering`
                 // correctly rejects as an illegal Witness -> Execute move. It
                 // is dropped here until stage ownership moves the same way the
-                // ending just did (#3379 residue).
+                // ending just did (#3416).
                 //
                 // The engine's *ending* is no longer dropped: `TurnComplete`
                 // goes straight through to the consumer, counted on the way
