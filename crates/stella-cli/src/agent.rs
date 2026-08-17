@@ -1694,6 +1694,10 @@ async fn run_turn(
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };
+    // The re-query adapter holds an `EventSender` clone of this run's channel
+    // (#3366 telemetry), so it must be released here too — otherwise it keeps
+    // the channel open and the renderer's `recv()` loop never ends (#2290).
+    drop(requery);
     // Releasing every sender — the registry's clones included — closes the
     // channel, ending the renderer's `recv()` loop; awaiting it ensures every
     // already-queued event has actually printed before this function returns
