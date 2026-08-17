@@ -322,3 +322,98 @@ fn record_scores_preserve_the_channels_force_then_precedence_rank() {
         info.score
     );
 }
+
+// ---- skill drops (#3358) ----
+
+/// A skill whose name and description both carry the prompt's terms, so
+/// selection is decided by score order rather than by whether it matched.
+fn scoring_skill(name: &str, body_bytes: usize) -> crate::skills::Skill {
+    crate::skills::Skill {
+        name: name.to_string(),
+        description: "format sql queries nicely".to_string(),
+        domains: vec!["sql".to_string()],
+        body: "x".repeat(body_bytes),
+        source_path: format!("{name}.md"),
+        origin: crate::skills::SkillOrigin::Workspace,
+    }
+}
+
+/// **Witness (#3358, skills / top-k).** A skill that matched, scored, and lost
+/// the last seat to `SelectionConfig::max_skills` is named in the ledger.
+///
+/// Fails on base, where `select_skills` `truncate`s and returns only the
+/// survivors: the tail is gone before any adapter can see it, so a skill that
+/// systematically loses its seat is indistinguishable from one that never
+/// matched — the exact coverage gap #2709 made observable for records.
+#[test]
+fn a_skill_cut_by_top_k_is_named_in_the_ledger() {
+    let skills: Vec<_> = ["a", "b", "c"]
+        .iter()
+        .map(|n| scoring_skill(n, 10))
+        .collect();
+    let config = crate::skills::SelectionConfig {
+        max_skills: 2,
+        ..crate::skills::SelectionConfig::default()
+    };
+
+    let selection = crate::skills::select_skills_reporting(
+        &skills,
+        "please format the sql for me",
+        &["sql".to_string()],
+        &config,
+    );
+    assert_eq!(
+        selection.selected.len(),
+        2,
+        "top-k still cuts at max_skills"
+    );
+
+    let drops = adapt::skill_drops(&selection);
+    let handles: Vec<&str> = drops.iter().map(|d| d.handle.as_str()).collect();
+    assert_eq!(handles, vec!["c"], "the cut skill is named: {drops:?}");
+    assert!(
+        drops.iter().all(|d| d.source == SteeringSource::Skill
+            && d.est_tokens
+                == stella_protocol::estimate_tokens(&crate::skills::rendered_skill_block(
+                    &selection.over_top_k[0]
+                ))),
+        "and costed over the block it would have rendered: {drops:?}"
+    );
+}
+
+/// **Witness (#3358, skills / section budget).** A skill the section renderer
+/// omits to fit `SKILLS_SECTION_TOKEN_BUDGET` is named in the ledger — and the
+/// rendered bytes are untouched, because the renderer still makes that cut
+/// itself.
+///
+/// Fails on base: the omission was an inline prose marker and nothing else, so
+/// which skills it stood for reached neither stderr nor the plane.
+#[test]
+fn a_skill_omitted_by_the_section_budget_is_named_without_changing_the_bytes() {
+    // Four skills whose bodies each fill the per-skill budget: three fit the
+    // section budget, and the fourth is the one the renderer omits.
+    let skills: Vec<_> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|n| scoring_skill(n, 40_000))
+        .collect();
+    let selection = crate::skills::select_skills_reporting(
+        &skills,
+        "please format the sql for me",
+        &["sql".to_string()],
+        &crate::skills::SelectionConfig::default(),
+    );
+    assert_eq!(selection.selected.len(), 4, "all four survive top-k");
+
+    let rendered = crate::skills::render_skills_section(&selection.selected);
+    assert!(
+        rendered.contains("### c") && !rendered.contains("### d"),
+        "the renderer's own cut is unchanged: {rendered}"
+    );
+
+    let drops = adapt::skill_drops(&selection);
+    assert_eq!(
+        drops.iter().map(|d| d.handle.as_str()).collect::<Vec<_>>(),
+        vec!["d"],
+        "the omitted skill is named rather than left to the prose marker: {drops:?}"
+    );
+}

@@ -429,6 +429,34 @@ pub fn select_skills(
     active_domains: &[String],
     config: &SelectionConfig,
 ) -> Vec<SelectedSkill> {
+    select_skills_reporting(skills, prompt, active_domains, config).selected
+}
+
+/// One selection pass, **including what the top-k cut threw away** (#3358).
+///
+/// [`select_skills`] returns only the survivors, which is all a renderer needs
+/// and exactly what made this source's evictions invisible: a skill that
+/// scores well every turn and loses the fifth seat every turn is
+/// indistinguishable, from outside, from a skill that never matched. The cut
+/// is the same `truncate` it always was — this form just keeps the tail so the
+/// steering ledger can name it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillSelection {
+    /// The top-k survivors, highest score first — byte-identical to what
+    /// [`select_skills`] returns, by construction.
+    pub selected: Vec<SelectedSkill>,
+    /// Skills that cleared `min_score` and corroboration but lost a seat to
+    /// `config.max_skills`, in the same descending order.
+    pub over_top_k: Vec<SelectedSkill>,
+}
+
+/// [`select_skills`] with the top-k tail retained. See [`SkillSelection`].
+pub fn select_skills_reporting(
+    skills: &[Skill],
+    prompt: &str,
+    active_domains: &[String],
+    config: &SelectionConfig,
+) -> SkillSelection {
     let prompt_terms: HashSet<String> = score_terms(prompt).into_iter().collect();
 
     let mut selected: Vec<SelectedSkill> = Vec::new();
@@ -482,8 +510,11 @@ pub fn select_skills(
             .total_cmp(&a.score)
             .then_with(|| a.skill.name.cmp(&b.skill.name))
     });
-    selected.truncate(config.max_skills);
-    selected
+    let over_top_k = selected.split_off(config.max_skills.min(selected.len()));
+    SkillSelection {
+        selected,
+        over_top_k,
+    }
 }
 
 // Rendering — the volatile context block injected after the stable prefix
@@ -571,23 +602,43 @@ pub fn render_skills_section(selected: &[SelectedSkill]) -> String {
     if selected.is_empty() {
         return String::new();
     }
+    let fit = section_fit(selected);
     let mut out =
         String::from("\n## Applicable skills (selected for this task — apply the relevant ones)\n");
-    let mut used_tokens: u64 = 0;
-    let mut rendered_any = false;
-
-    for sel in selected {
-        let block = rendered_skill_block(sel);
-        let block_tokens = stella_protocol::estimate_tokens(&block);
-        if rendered_any && used_tokens + block_tokens > SKILLS_SECTION_TOKEN_BUDGET {
-            out.push_str(SKILLS_SECTION_OMISSION_MARKER);
-            break;
-        }
-        out.push_str(&block);
-        used_tokens += block_tokens;
-        rendered_any = true;
+    for sel in &selected[..fit] {
+        out.push_str(&rendered_skill_block(sel));
+    }
+    if fit < selected.len() {
+        out.push_str(SKILLS_SECTION_OMISSION_MARKER);
     }
     out
+}
+
+/// How many of `selected`, in order, fit `SKILLS_SECTION_TOKEN_BUDGET` — the
+/// section renderer's own cut, as a number the ledger can also read.
+///
+/// The rule is unchanged and stated once: the top skill always renders (a
+/// budget that can select nothing is not a budget, it is a mute), and the
+/// first skill that would carry the running total past the section budget
+/// ends the section — the remainder is omitted rather than skipped over, so
+/// what renders is always a prefix of the ranking.
+///
+/// Split out of [`render_skills_section`]'s loop for the reason
+/// [`rendered_skill_block`] was: the steering adapter
+/// (`crate::steering::adapt::skill_drops`) must name the omitted skills, and
+/// a second copy of this arithmetic would be a second answer to "what fits"
+/// — the ledger would then under- or over-report a cut the prompt actually
+/// made (#3358, the #3334 single-producer discipline).
+pub fn section_fit(selected: &[SelectedSkill]) -> usize {
+    let mut used_tokens: u64 = 0;
+    for (index, sel) in selected.iter().enumerate() {
+        let block_tokens = stella_protocol::estimate_tokens(&rendered_skill_block(sel));
+        if index > 0 && used_tokens + block_tokens > SKILLS_SECTION_TOKEN_BUDGET {
+            return index;
+        }
+        used_tokens += block_tokens;
+    }
+    selected.len()
 }
 
 // Auto-creation — mining observations into new skills (the user requirement)
