@@ -322,9 +322,10 @@ pub(crate) fn spawn_renderer(
                 },
             }
         }
-        // `Complete` is a protocol terminator, not ordinary narration. Hold
-        // it until every later accounting/reflection event has drained, and
-        // persist/print exactly one terminal frame as the final stream item.
+        // `RunComplete` is the protocol terminator, not ordinary narration.
+        // Hold it until every later accounting/reflection event has drained,
+        // and persist/print exactly one terminal frame as the final stream
+        // item. Engine `TurnComplete` events pass through inline (#3379).
         if let Some(event) = stream_terminal {
             if let Some((store, id)) = &execution
                 && !persist_event(store, *id, seq, &event, &provider_id)
@@ -362,7 +363,7 @@ fn defer_stream_terminal(
     pending: &mut Option<AgentEvent>,
     event: AgentEvent,
 ) -> Option<AgentEvent> {
-    if matches!(event, AgentEvent::TurnComplete { .. }) {
+    if matches!(event, AgentEvent::RunComplete { .. }) {
         *pending = Some(event);
         None
     } else {
@@ -876,23 +877,23 @@ mod stream_tests {
     use super::*;
 
     #[test]
-    fn complete_is_unique_and_final_even_when_later_events_arrive() {
+    fn run_complete_is_final_even_when_later_events_arrive() {
+        // Engine `TurnComplete` events pass through inline as ordinary
+        // narration; only the run's `RunComplete` terminator is held back and
+        // emitted last, even when accounting/reflection events follow it in the
+        // channel (#3379).
         let events = vec![
-            AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute,
-                scope: stella_protocol::StageScope::Run,
-            },
             AgentEvent::TurnComplete {
-                model: "old".into(),
+                model: "worker".into(),
                 cost_usd: 1.0,
+            },
+            AgentEvent::RunComplete {
+                model: "final".into(),
+                cost_usd: 1.25,
             },
             AgentEvent::Stage {
                 name: stella_protocol::StageKind::Reflect,
                 scope: stella_protocol::StageScope::Run,
-            },
-            AgentEvent::TurnComplete {
-                model: "final".into(),
-                cost_usd: 1.25,
             },
         ];
         let mut terminal = None;
@@ -902,22 +903,29 @@ mod stream_tests {
             .collect();
         ordered.extend(terminal);
 
+        // The engine turn completion survives inline.
+        assert!(
+            ordered
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnComplete { .. }))
+        );
+        // Exactly one terminator, and it is the last event.
         assert_eq!(
             ordered
                 .iter()
-                .filter(|event| matches!(event, AgentEvent::TurnComplete { .. }))
+                .filter(|event| matches!(event, AgentEvent::RunComplete { .. }))
                 .count(),
             1
         );
         assert!(matches!(
             ordered.last(),
-            Some(AgentEvent::TurnComplete { model, cost_usd })
+            Some(AgentEvent::RunComplete { model, cost_usd })
                 if model == "final" && (*cost_usd - 1.25).abs() < f64::EPSILON
         ));
     }
 
     #[tokio::test]
-    async fn stream_renderer_persists_reflection_before_one_terminal_complete() {
+    async fn stream_renderer_persists_reflection_before_the_run_terminator() {
         let store = std::sync::Arc::new(stella_store::Store::in_memory().expect("store"));
         let execution_id = store
             .begin_execution("pipeline", "prompt", "anthropic", "claude")
@@ -933,9 +941,18 @@ mod stream_tests {
             "anthropic".into(),
             false,
         );
+        // The engine turn completes inline, then the run owner emits the
+        // terminator — but a reflection event still comes down the channel
+        // after it. The renderer must hold the terminator until that later
+        // event has drained, so `RunComplete` is the final durable line.
         tx.send(AgentEvent::TurnComplete {
             model: "worker".into(),
             cost_usd: 1.0,
+        })
+        .unwrap();
+        tx.send(AgentEvent::RunComplete {
+            model: "worker+reflection".into(),
+            cost_usd: 1.25,
         })
         .unwrap();
         tx.send(AgentEvent::Stage {
@@ -943,27 +960,30 @@ mod stream_tests {
             scope: stella_protocol::StageScope::Run,
         })
         .unwrap();
-        tx.send(AgentEvent::TurnComplete {
-            model: "worker+reflection".into(),
-            cost_usd: 1.25,
-        })
-        .unwrap();
         drop(tx);
 
         let outcome = renderer.await.expect("renderer");
         assert!(outcome.persistence_complete);
         let journal = store.session_events("stream-order").expect("journal");
-        assert_eq!(journal.events.len(), 2);
+        assert_eq!(journal.events.len(), 3);
+        // The engine turn completion passes through inline as narration.
         assert!(matches!(
             journal.events.first().map(|record| &record.event),
+            Some(AgentEvent::TurnComplete { model, .. }) if model == "worker"
+        ));
+        // The reflection event arrived after the terminator on the wire but is
+        // persisted before it.
+        assert!(matches!(
+            journal.events.get(1).map(|record| &record.event),
             Some(AgentEvent::Stage {
                 name: stella_protocol::StageKind::Reflect,
                 scope: stella_protocol::StageScope::Run
             })
         ));
+        // The run terminator is the final durable line.
         assert!(matches!(
             journal.events.last().map(|record| &record.event),
-            Some(AgentEvent::TurnComplete { model, cost_usd })
+            Some(AgentEvent::RunComplete { model, cost_usd })
                 if model == "worker+reflection"
                     && (*cost_usd - 1.25).abs() < f64::EPSILON
         ));
