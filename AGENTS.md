@@ -6,11 +6,16 @@ that aren't immediately apparent from reading a single file. The authoritative
 sources for the details behind each section are `README.md` and `CONTRIBUTING.md`.
 
 Stella is a fast, BYOK ("bring your own key"), model-agnostic terminal coding
-agent, written in Rust. Its defining contract: a task is **done** only when a
-**witness test** (a test that fails on the old code and passes on the new code)
-proves it — "verified done, not claimed done." It is the open-source reference
-implementation of Oxagen's *Engineering Deterministic AI Coding Agents* field
-manual.
+agent, written in Rust. Proving a task **done** with a **witness test** — one
+that fails on the old code and passes on the new — is what "verified done,
+not claimed done" means here, and that guarantee is **a property of the path
+that produced the evidence, not of the binary**: the built-in staged pipeline
+runs the check itself and watches the fail→pass flip, but verification
+supplied by an installed plugin is the plugin's own self-reported evidence,
+which Stella evaluates against a declared rule and does not re-run or
+re-check (#3511; `doc:pipeline-as-plugins` is the extraction plan moving the
+former into the latter). It is the open-source reference implementation of
+Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---
 
@@ -405,8 +410,10 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
 
 ## The definition of done: witness tests
 
-Stella refuses to call a task done until a test **fails on the old code and
-passes on the new** — and contributions are held to the same contract.
+This repository holds every contribution to its own gate: a PR ships a test
+that **fails on the old code and passes on the new**. That is
+`CONTRIBUTING.md`'s contract for a change to *this* repo, and it holds
+regardless of anything below — it is not what base Stella promises a user.
 
 For a behavior change or feature, a PR should include a **witness test**:
 
@@ -418,7 +425,15 @@ refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
-The staged pipeline enforces the same contract at runtime: when no
+**What follows is the staged pipeline's own witness/verify machinery, which is
+a different thing from the contract above.** It ships in-tree today and
+genuinely runs the check itself — this is the host-run half of the guarantee
+(see AGENTS.md's opening). Per the product decision recorded in
+`doc:pipeline-as-plugins` (#3511) it is being extracted into an installable
+verification plugin (Oxagen's Vera is the reference one); once it lands, a
+plugin reports its own evidence instead of Stella running the check, and this
+section's guarantee does not automatically transfer to that path. Until then,
+this section documents the mechanism as it exists: when no
 `--test-command` is configured, its **witness stage** has an independent model
 (the verifier's resolution, never the worker) author the failing witness test,
 tracks its fail→pass flip in the flip oracle, and refuses to credit the flip if

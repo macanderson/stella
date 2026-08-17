@@ -27,9 +27,14 @@
     unrecoverable move.
   - **Correctness is demonstrated or it is not claimed.** A witness test, a
     property, a golden diff someone actually read — a sentence in a PR
-    description is not evidence. Stella refuses to call a task done without
-    proof; this repo does not get to hold itself to less than the contract it
-    enforces on its users.
+    description is not evidence. This repo refuses to call a task done
+    without proof — and it holds a plugin's self-reported evidence to no less
+    a standard: state which check ran and what it found, the same discipline
+    this rule asks of a PR description. (See AGENTS.md's opening and
+    `doc:pipeline-as-plugins` on why "the check ran" now means two different
+    things depending on the path — host-run in the built-in pipeline,
+    self-reported by an installed plugin. Neither relaxes this rule: it is
+    about how *this repository* reviews *its own* changes.)
   - **Measure honestly, especially when it costs us.** A benchmark number that
     flatters Stella because of a measurement artifact is worse than a loss:
     it spends the exact reputation the project exists to build. Compare like

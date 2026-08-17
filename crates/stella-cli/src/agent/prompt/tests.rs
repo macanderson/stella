@@ -162,8 +162,8 @@ fn both_prompts_void_measurements_whose_producing_command_errored() {
 /// proportionality rule turns into a reason to verify nothing.
 ///
 /// The visibility claim is the load-bearing one: proportionality that may
-/// be taken silently is just "skip verification" with a nicer name, and
-/// this repository's whole contract is verified done, not claimed done.
+/// be taken silently is just "skip verification" with a nicer name, and a
+/// verification plugin can only judge the checks the agent told it about.
 #[test]
 fn both_prompts_size_verification_to_what_the_turn_changed() {
     let shared = verification_proportionality!();

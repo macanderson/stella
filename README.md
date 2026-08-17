@@ -40,8 +40,10 @@ in Rust as a workspace of focused crates.
   Pin a specific model per run or shell with `--model`.
 - **Deterministic definition of done** — the staged pipeline's witness stage
   has an independent model author a test that fails on the old code and passes
-  on the new, and tracks that fail→pass flip. A green suite alone is not
-  accepted.
+  on the new, and tracks that fail→pass flip, host-run out of the box. A green
+  suite alone is not accepted. This machinery is also becoming Vera, an
+  installable verification plugin — a plugin's oracle reports its own
+  evidence instead of Stella re-running the check.
 - **Single-threaded engine** — One deterministic step loop: plan, fan tools out
   in parallel, observe, compact if noisy, repeat. No coordinator or multi-agent
   swarm.

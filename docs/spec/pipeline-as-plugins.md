@@ -536,6 +536,24 @@ host evaluates.** That is a real constraint and it is also the reason the
 decision survives — the plugin chooses what to measure, and the manifest, which
 a human reads and a reviewer diffs, decides what counts as done.
 
+**What #3511 changes here, and what it does not.** The 2026-08-17 product
+decision (#3511, settled as Option 2) settles that Vera — the paid,
+Oxagen-owned verification plugin this document plans for — reports its own
+evidence rather than being host-verified, and says so plainly in the manifest
+and install consent text instead of leaving it implied. That is a distribution
+and messaging correction, not a reopening of this section's argument: `judge`
+still stays synchronous, I/O-free, and total, and a plugin still cannot grade
+its own work by calling a model inside the verdict check, because that is a
+property of the type signature this section fixes, not a promise the plugin
+keeps. What was already true here — "a plugin supplies evidence
+out-of-process" — is exactly what #3511 makes explicit: the oracle's evidence
+was always plugin-produced, and a host that let a manifest suggest otherwise
+(that the oracle's finding was host-run) was the gap #3511 closes, not
+`judge`'s purity. This is the plugin path specifically — it does not withdraw
+the guarantee from the built-in staged pipeline (§7, §8), which still runs its
+own check and watches the flip; see `AGENTS.md`'s opening description for the
+corrected, path-scoped wording.
+
 ---
 
 ## 7. Track B — extraction order
@@ -843,6 +861,18 @@ be finished first, not approximated.
   fine-tuning export can join trace to oracle flip.
 - `make gate` green throughout; no baseline entry added to
   `scripts/file-size-baseline.txt` to accommodate this work.
+
+**Note on #3511 (2026-08-17).** The product decision that a plugin's
+verification (Vera's) is its own self-reported evidence, not host-verified,
+does not change this list — it is what the list has been describing all
+along: `judge` stays pure because a plugin supplies evidence, not a verdict,
+and that evidence was never host-verified in the first place. What #3511
+changes is upstream of this section, in the claims Stella makes about itself:
+the manifest and consent text stop implying the oracle's finding is host-run,
+and orientation docs (`AGENTS.md`, `README.md`) stop stating "verified done,
+not claimed done" as something true of every path uniformly — it now reads as
+a property of the path (host-run in the built-in pipeline, self-reported by an
+installed plugin), not of the binary.
 
 ---
 

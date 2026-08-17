@@ -17,8 +17,9 @@ Stella is heading three places at once, and all three consume the same
 engine:
 
 1. **An embeddable engine** for companies building AI-agent applications —
-   Stella supplies the turn loop, verification, budgeting, and context
-   discipline; the host supplies keys, tools, and product.
+   Stella supplies the turn loop, budgeting, and context discipline, plus the
+   socket a verification plugin hooks into; the host supplies keys, tools,
+   product, and — if it wants verified output — that plugin (`doc:pipeline-as-plugins`).
 2. **A CLI that grows an API surface** — `stella` the tool and `stella-serve`
    the sidecar are two front doors to one machine.
 3. **A community edition of a commercial product** — which raises the bar on
@@ -159,9 +160,9 @@ Wire contract artifacts already exist: `docs/wire/serveframe.schema.json`,
 ### Mode C — the community CLI (the reference host)
 
 `stella` itself is Mode A taken to its richest conclusion: the CLI is the
-one host that wires *everything* — pipeline verification, memory, skills,
-MCP, fleet, the deck. Treat it as the living reference implementation for
-what a full embedding looks like; the parity matrix below is what keeps the
+one host that wires *everything* — the staged pipeline (including its
+witness/verify stages), memory, skills, MCP, fleet, the deck. Treat it as the
+living reference implementation for what a full embedding looks like; the parity matrix below is what keeps the
 API surface from quietly falling behind it.
 
 ---
@@ -232,13 +233,15 @@ over serve. An embedding host cannot even express "low effort, 8k output"
 today. Fix shape: an `engine` block on turn/session create mapping onto
 `EngineConfig`, matrix row `config.tuning` flipping to `Shipped`.
 
-**G3 — "Verified done" is unreachable from the API.** The pipeline (plan →
+**G3 — Verification is unreachable from the API.** The pipeline (plan →
 witness → verify → verdict), and with it the approval gate, is structurally
-absent from serve — the crate is not even linked. The product's defining
-contract is CLI-only, which for customer segment #1 is the single biggest
-gap. This needs the deferred design decision recorded in
-`docs/spec/serve-surface.md`: a `/v1/runs` pipeline resource vs. moving
-the approval boundary into the engine.
+absent from serve — the crate is not even linked. This built-in witness/verify
+machinery is itself being extracted into an installable verification plugin
+(`doc:pipeline-as-plugins`); until that lands it remains the CLI's own
+mechanism, unreachable from serve — for customer segment #1 (an embedding host
+that wants verified output) the single biggest gap either way. This needs the
+deferred design decision recorded in `docs/spec/serve-surface.md`: a
+`/v1/runs` pipeline resource vs. moving the approval boundary into the engine.
 
 **G4 — Goal loop and sub-agents are CLI-only.** Both are engine
 capabilities (`run_goal`, `run_sub_agent`) with wire-ready event
