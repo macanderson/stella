@@ -1620,7 +1620,7 @@ async fn run_turn(
         &cfg.workspace_root,
     );
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
+    let (tx, durable_pre_persisted) = output::raw_event_sender_for_run(raw_tx, format);
     // The proactive re-query (#3243 Phase 3): the engine consults this at
     // every step boundary; the adapter's hysteresis makes an undrifted turn
     // free. Seeded from `messages` so the turn-opening block is never
@@ -1639,13 +1639,9 @@ async fn run_turn(
         cfg.provider.id.to_string(),
         durable_pre_persisted,
     );
-    // First event of the turn: what recall put in front of the model. It
-    // precedes the stage boundaries deliberately — the context was assembled
-    // before the turn began, and a receipt that ordered it after the first
-    // stage would misdescribe when it entered.
-    if let Some(event) = recall_event {
-        let _ = tx.send(event);
-    }
+    // Recall's frames, then this run's own opening stage boundary — see
+    // `output::open_raw_turn` for the ordering and for why it lives there.
+    output::open_raw_turn(&tx, recall_event);
 
     // Mid-turn fallback (#2679): on an exhausted retry ladder the engine
     // re-resolves the worker role through this session router.
