@@ -20,6 +20,44 @@ observation, it says so.
 
 ---
 
+## 0. The architectural north star
+
+**Stella is a loop that drops into any application and runs over any surface —
+embedded as a library, over HTTP, from a CLI.** Everything below is judged
+against that sentence. Where speed and soundness conflict, speed wins on the
+things a later commit can fix, and soundness wins on the seams — because a seam
+is what a later commit cannot cheaply change.
+
+Four consequences, and they are acceptance criteria, not aspirations:
+
+1. **The wrapper socket must not assume a host.** A wrapper that only works when
+   a terminal, a git workspace, or `stella-cli`'s process is present is not a
+   socket, it is a CLI feature. The test: can `stella-serve` drive the same
+   wrapper an embedded library does?
+2. **The wire contract is the primary contract; in-process is an
+   optimisation.** This is the same conclusion §5 reaches for Python and
+   TypeScript, arrived at from a different direction — a loop driven over HTTP
+   and a plugin spoken to over a pipe need the same thing: the loop's
+   participation points expressed as data rather than as Rust borrows. Building
+   the wire contract twice, once for hosts and once for plugins, is the failure
+   to avoid.
+3. **No ambient authority anywhere on the path.** `stella-serve` already proves
+   the shape — its engine holds no credentials and remotes every model and tool
+   call to its host. A wrapper must be handed its capabilities, never reach for
+   them. This is what makes the loop embeddable in an application whose
+   filesystem, credentials and lifecycle belong to somebody else.
+4. **`stella-engine` and `stella-serve` are first-class consumers of this
+   work**, not surfaces to update afterwards. If a wrapper lands that
+   `stella-cli` can drive and they cannot, the seam is wrong and the fix is in
+   the seam.
+
+The failure mode this section exists to prevent is subtle and common: the
+extraction succeeds, every plugin works, and the socket has quietly grown a
+dependency on the CLI's process model — so the loop is excellent and only
+embeddable in one thing.
+
+---
+
 ## 1. The short version
 
 Nine plugins replace one pipeline and one built-in autonomous loop. Core keeps
@@ -583,6 +621,10 @@ be finished first, not approximated.
 
 ## 11. Definition of done for the whole plan
 
+- **The embeddability test passes**: one wrapper plugin runs unchanged when
+  driven by `stella-cli`, by `stella-serve` over HTTP, and by a minimal embedded
+  host linking `stella-engine`. Prove it with a test that exercises all three,
+  not with an argument that it should work (§0).
 - `stella-cli/Cargo.toml` does not declare `stella-pipeline`.
 - Core ships zero built-in wrappers and one role (`default`); every other role
   in `/models` is contributed by an installed plugin and disappears when it is
