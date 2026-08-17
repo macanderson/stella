@@ -16,8 +16,8 @@ pub(crate) mod help;
 
 use crate::{
     OutputFormat, build_info, commands_cmd, context_cmd, dataset_cmd, fleet_verbs, ingest_cmd,
-    inspect, memory_cmd, proposals_cmd, query_format, self_driving_cmd, stats, storage_cmd,
-    tune_cmd, usage_cmd,
+    inspect, memory_cmd, plugin_cmd, proposals_cmd, query_format, self_driving_cmd, stats,
+    storage_cmd, tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -827,6 +827,19 @@ pub(crate) enum Command {
     Commands {
         #[command(subcommand)]
         cmd: commands_cmd::CommandsCmd,
+    },
+
+    /// Install, list, and remove plugins
+    ///
+    /// A plugin declares its say in the turn loop — a participation grade,
+    /// the hook points it may act at, the process it runs as, and the exact
+    /// environment slice that process inherits. `install` shows the whole
+    /// declaration and installs nothing until you accept it; `remove` deletes
+    /// it, and its hooks stop being routed immediately. Offline: reads and
+    /// writes local files, needs no API key.
+    Plugin {
+        #[command(subcommand)]
+        cmd: plugin_cmd::PluginCmd,
     },
 
     /// Inspect the storage map — layers, namespaces, relations

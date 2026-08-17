@@ -81,6 +81,7 @@ const GROUPS: &[(&str, &[&str])] = &[
             "auth",
             "models",
             "mcp",
+            "plugin",
             "config",
             "migrate",
             "doctor",

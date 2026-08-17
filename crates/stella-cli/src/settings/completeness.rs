@@ -98,6 +98,7 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         reward,
         context,
         context_providers,
+        plugins,
         managed_authority,
         enterprise_telemetry,
         authority_policy,
@@ -141,6 +142,7 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
             Posture::Merged,
             context_providers != &d.context_providers,
         ),
+        keyed("plugins", Posture::Merged, plugins != &d.plugins),
         keyed(
             "authority",
             Posture::Merged,
@@ -284,6 +286,7 @@ const EVERY_KEY: &str = r#"{
   "context_providers": {
     "docs": { "transport": "stdio", "command": "docs-provider", "enabled": true }
   },
+  "plugins": { "vera": "off" },
   "authority": { "project_prompts": "on" },
   "enterprise_telemetry": { "source": "managed" }
 }"#;

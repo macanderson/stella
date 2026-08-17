@@ -231,6 +231,30 @@ pub struct Settings {
     /// dropped in favour of the trusted scopes' (see [`Settings::load`]).
     #[serde(default)]
     pub context_providers: ContextProviderSettings,
+    /// `plugins.<name>` — the per-plugin switch a scope uses to **retract**
+    /// an installed plugin (`doc:pipeline-as-plugins` §A4). Merged per key,
+    /// and `off` is sticky: once any scope retracts a plugin, no later scope
+    /// restores it. A name absent from every scope means the plugin runs if
+    /// it is installed.
+    ///
+    /// **This is the property `hooks` deliberately does not have**, and the
+    /// asymmetry is the point. Hook matchers concatenate across scopes because
+    /// an operator gate must not be removable by a lower-precedence file. A
+    /// plugin is not an operator gate: it is a third party's process, it is
+    /// *owned*, and "uninstalled" has to mean uninstalled. Deleting the
+    /// directory retracts a plugin within its own scope; this switch is how a
+    /// project retracts one the user scope installed, which is the case no
+    /// deletion can reach without editing someone else's home.
+    ///
+    /// Sticky-`off` rather than last-wins is what keeps this **outside** the
+    /// project trust boundary safely: the only thing a cloned repository can
+    /// do with this key is stop a plugin from running on the machine that
+    /// cloned it. It can never re-enable one the user switched off, so there
+    /// is no direction in which an untrusted file grants anything. To restore
+    /// a retracted plugin, delete the `off` line — which is an edit to a file
+    /// you own, deliberately.
+    #[serde(default)]
+    pub plugins: BTreeMap<String, Toggle>,
     /// Authority ceilings are honored only from the org-managed settings
     /// file. The serde name is intentionally short because the containing
     /// file is already the policy source.

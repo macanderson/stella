@@ -81,6 +81,9 @@ mod paths;
 // that selects it (`--plain`, `STELLA_PLAIN`, `plain_fallback`); it was
 // `tui` until #2421, which was the one name it is not.
 mod plain;
+// The plugin loader (`doc:pipeline-as-plugins` §A4): install/list/remove, the
+// two-tier roster, and the hook routes a declared grant produces.
+mod plugin_cmd;
 mod scoreboard_cmd;
 mod self_driving_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
@@ -717,6 +720,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // Reads (and, for convert, writes) definition files only.
             return commands_cmd::run_commands(cmd).map_err(failure::CliFailure::from);
         }
+        Some(Command::Plugin { cmd }) => {
+            // Reads plugin manifests and copies/removes local directories. No
+            // plugin process is started here — install is a consent
+            // transaction, not an execution.
+            return plugin_cmd::run_plugin(cmd).map_err(failure::CliFailure::from);
+        }
         // Reads context-record TOML and the tree, and appends to the local
         // lifecycle ledger on the review actions (Phase 3, #714). `propose
         // --commit` writes a local branch and commit. No store, model, or
@@ -1270,6 +1279,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         | Command::Search { .. }
         | Command::Storage { .. }
         | Command::Commands { .. }
+        | Command::Plugin { .. }
         | Command::Inspect { .. }
         | Command::Calibration { .. }
         // Phase 3 (#714)

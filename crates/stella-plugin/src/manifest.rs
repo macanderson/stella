@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use crate::consent::{Capability, validate_capabilities};
 use crate::error::ManifestError;
 use crate::evidence::OracleCheck;
+use crate::runtime::Runtime;
 use crate::wrapper::Wrapper;
 
 /// How much of a say in the turn loop a plugin has declared (#3245 §2).
@@ -286,6 +287,17 @@ pub struct PluginManifest {
     /// turn-loop wrapper.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrapper: Option<Wrapper>,
+    /// Observer and above: the process this plugin runs as, and the exact
+    /// environment slice it inherits (`doc:pipeline-as-plugins` §A5). Absent =
+    /// this plugin ships no process, so no hook grant it holds can be
+    /// dispatched anywhere.
+    ///
+    /// Deliberately **not** gated on `steering` even though only a steering
+    /// grade reaches a hook point: an `observer` is invoked too — it receives
+    /// the turn event stream — and that invocation is a process start like any
+    /// other. See [`Runtime`] for why there is no `language` field beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<Runtime>,
     /// What the plugin asks to reach *outside* the turn — the tools it wants,
     /// each graded in the gate's own [`stella_protocol::RiskLevel`], with the
     /// reason a human reads at install (`doc:pipeline-as-plugins` §A1).
@@ -427,6 +439,13 @@ impl PluginManifest {
                 return Err(ManifestError::WrapperRequiresSteering { participation });
             }
             wrapper.validate()?;
+        }
+
+        if let Some(runtime) = &self.runtime {
+            if !participation.includes(Participation::Observer) {
+                return Err(ManifestError::RuntimeRequiresObserver { participation });
+            }
+            runtime.validate()?;
         }
 
         if let Some(roles) = &self.roles {

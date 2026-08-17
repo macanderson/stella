@@ -187,6 +187,29 @@ impl Settings {
                 target.entries.insert(key.clone(), toggle);
             }
         }
+        // Plugin retraction, and the one place in this function where a later
+        // scope may take something away instead of adding to it.
+        //
+        // `concat_hooks` above is right for operator hooks and wrong for
+        // plugins, which is the defect `doc:pipeline-as-plugins` §A4 names: a
+        // hook matcher carries no owner, so once merged there is no way to
+        // remove the entries one plugin contributed without removing somebody
+        // else's. That is why plugin hooks never enter `hooks` at all — they
+        // are derived from the installed manifests by `plugin_cmd::roster`,
+        // per owner, and this map is the switch that drops an owner whole.
+        //
+        // `off` is STICKY: a scope may retract, never restore. That is what
+        // makes honouring the key from an untrusted project scope safe — the
+        // only reachable effect is stopping a process from running on the
+        // machine that cloned the repository.
+        for (name, &toggle) in &scope.plugins {
+            match self.plugins.get(name) {
+                Some(Toggle::Off) => {}
+                _ => {
+                    self.plugins.insert(name.clone(), toggle);
+                }
+            }
+        }
         if let Some(engine) = &scope.agent_engine_config {
             self.agent_engine_config
                 .get_or_insert_with(AgentEngineConfig::default)

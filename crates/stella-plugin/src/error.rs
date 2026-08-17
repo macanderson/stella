@@ -270,6 +270,60 @@ pub enum ManifestError {
         name: String,
     },
 
+    /// `[runtime]` was declared at `none`. A content bundle is never invoked
+    /// at any point in the turn, so the host would never start the process —
+    /// and an unreachable process declaration reads to its author as a
+    /// running one.
+    #[error(
+        "[runtime] is only meaningful at participation = \"observer\" or above \
+         (declared grade: \"{participation}\"): a content bundle is never \
+         invoked, so its process would never start"
+    )]
+    RuntimeRequiresObserver {
+        /// The declared grade, below `observer`.
+        participation: Participation,
+    },
+
+    /// `[runtime] argv` was empty — there is no program to run. The
+    /// [`Self::EmptyOracleArgv`] rule, applied to the plugin's own process.
+    #[error("[runtime] argv must name a program: it is empty")]
+    EmptyRuntimeArgv,
+
+    /// A `[runtime] argv` element was blank. A blank program name spawns
+    /// nothing and a blank argument is one the author did not mean to pass.
+    #[error("[runtime] argv contains a blank entry")]
+    BlankRuntimeArg,
+
+    /// `[runtime] timeout_secs = 0` — the host would kill the process before
+    /// it ran.
+    #[error("[runtime] timeout_secs must be at least 1")]
+    ZeroRuntimeTimeout,
+
+    /// A `[runtime] env` entry was the empty string, which names no variable.
+    #[error("[runtime] env contains an empty variable name")]
+    EmptyRuntimeEnvName,
+
+    /// A `[runtime] env` entry could never match a variable — it carried an
+    /// `=`, a NUL, or surrounding whitespace. Dead in an allowlist is worse
+    /// than absent: it reads to its author as granted.
+    #[error(
+        "[runtime] env entry `{name}` is not an environment variable name, so \
+         it can never match one"
+    )]
+    InvalidRuntimeEnvName {
+        /// The entry that names no variable.
+        name: String,
+    },
+
+    /// `[runtime] env` named the same variable twice. Always an editing
+    /// mistake, and deduplicating silently would hide it — the
+    /// [`Self::DuplicateHook`] rule for the other allowlist in this manifest.
+    #[error("[runtime] env declares `{name}` more than once")]
+    DuplicateRuntimeEnv {
+        /// The variable named twice.
+        name: String,
+    },
+
     /// The manifest's `name` was empty. The name is the identity every
     /// grant, chip, and hold attribution hangs off.
     #[error("manifest name must not be empty")]

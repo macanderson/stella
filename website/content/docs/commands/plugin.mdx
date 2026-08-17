@@ -1,0 +1,155 @@
+---
+title: stella plugin
+description: Install, list, and remove plugins — and see the whole grant a plugin asks for before any of it is granted.
+---
+
+`stella plugin` is the loader. A plugin declares, in one `plugin.toml`, exactly how much say it wants in your turn loop — a participation grade, the hook points it may act at, the process it runs as, and the precise list of environment variables that process inherits. This command shows you that declaration and installs nothing until you accept it.
+
+Offline: reads and writes local files, no API key.
+
+## Synopsis
+
+```bash
+stella plugin install <dir> [--scope project|user] [--yes]
+stella plugin list
+stella plugin remove <name>
+```
+
+## What a plugin declares
+
+A plugin is a directory containing `plugin.toml`. The blocks that matter to this command:
+
+```toml
+name = "vera"
+description = "Holds a turn open until the tests pass."
+
+[loop]
+participation = "arbiter"          # none < observer < steering < arbiter
+hooks = ["PreToolUse", "Stop"]     # exhaustive — an undeclared hook is never invoked
+max_holds = 3
+
+[requirements]
+tests_pass = "the workspace test command exits zero"
+
+[runtime]
+argv = ["python3", "${plugin_dir}/main.py"]
+timeout_secs = 30
+env = ["PATH"]                     # default-deny: exactly these, nothing else
+```
+
+Two of those are worth reading twice.
+
+**`[loop] hooks` is exhaustive.** stella routes a plugin only at the points its manifest names. A plugin process that registers for `Stop` without declaring it is simply never called — the grant is checked at routing time, not asked of the plugin.
+
+**`[runtime] env` is an allowlist, not a filter.** The child starts from an empty environment and receives the variables named here and nothing else. Anything your shell was carrying — an API key, an agent socket, a token a script exported — is not there unless the manifest asked for it and you accepted.
+
+There is deliberately no `language` field. `argv` already distinguishes `["python3", …]` from `["node", …]` from a compiled binary, so a plugin can be written in any language without stella learning what a language is.
+
+## `stella plugin install`
+
+```bash
+stella plugin install ./my-plugin
+stella plugin install ./my-plugin --scope user
+```
+
+Prints the plugin's whole declared grant, then asks. Nothing is copied until you answer yes.
+
+```text
+Install `vera`?
+Holds a turn open until the tests pass.
+
+Say in your turn loop: arbiter, the strongest grant — everything steering may
+do, and it also decides whether your turn is finished
+  - runs at these hook points: PreToolUse, Stop
+  - may refuse to let a finished turn end, up to 3 times per turn
+  - holds a turn open until it can say each of these is met:
+      tests_pass: the workspace test command exits zero
+  - runs as a process on your machine: `python3 ${plugin_dir}/main.py` (killed after 30s)
+      it inherits these environment variables and no others: PATH
+
+It asks for no tool capabilities.
+
+Every tool call `vera` makes is attributed to it, not to you: the authorization
+gate sees it as a caller of its own, and may refuse it regardless of what you
+are allowed to do yourself.
+Nothing above is granted until you accept.
+
+Install it? [y/N]
+```
+
+<CardGrid size="md">
+  <OptionCard name="<dir>">
+    The directory holding the plugin's `plugin.toml`.
+  </OptionCard>
+  <OptionCard name="--scope" defaultValue="project">
+    `project` installs into `.stella/plugins/` for this workspace only. `user` installs into `~/.stella/plugins/` for every workspace.
+  </OptionCard>
+  <OptionCard name="--yes">
+    Accept the declared grant without prompting. Required when no human is present to answer.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="warn">
+With no terminal attached — a pipe, a CI job — install **refuses** rather than assuming yes. `--yes` is the deliberate override, and it means you have read the declaration.
+</Callout>
+
+A package may contain only real files. A symlink inside it is refused rather than followed, so install can never be pointed at something the package does not ship.
+
+## `stella plugin list`
+
+Shows what is installed, which tier it came from, the grade it holds, the process it runs as, and — separately — the hook dispatches stella would actually make.
+
+```bash
+stella plugin list
+```
+
+```text
+vera                     project  arbiter
+  Holds a turn open until the tests pass.
+  /ws/.stella/plugins/vera
+  runs: python3 ${plugin_dir}/main.py (30s, env: PATH)
+
+hook dispatches:
+  vera                     PreToolUse -> python3 /ws/.stella/plugins/vera/main.py
+  vera                     Stop -> python3 /ws/.stella/plugins/vera/main.py
+```
+
+The two sections answer different questions. The first is what the plugin declared; the second is what would actually run. A plugin with a hook grant but no `[runtime]` appears in the first and not the second, which is the answer to "I declared `Stop` and nothing happens".
+
+A declared environment variable that stella grades as a model credential is refused and named here rather than discovered as a missing variable at the first dispatch. A plugin never receives the key that pays for the agent; the fix is a `[roles]` tier, so the host makes the call and the spend lands on the receipt.
+
+## `stella plugin remove`
+
+```bash
+stella plugin remove vera
+```
+
+Deletes the plugin's directory, project scope first. Its hook dispatches stop immediately: the roster is recomputed from disk every time it is read, so there is no second place a stale grant can survive.
+
+## Scopes, shadowing, and switching one off
+
+Two tiers are read as one roster:
+
+| Tier | Directory | Visible in |
+| --- | --- | --- |
+| user | `~/.stella/plugins/` | every workspace |
+| project | `<workspace>/.stella/plugins/` | this repository only |
+
+A project install **shadows** a user install of the same name entirely — one owner, one plugin, never both running. `install` tells you when it is about to do that.
+
+To stop a plugin from running without deleting anything — including one installed in the other tier — retract it in settings:
+
+```json
+{ "plugins": { "vera": "off" } }
+```
+
+`off` is sticky across scopes: a scope may retract a plugin, never restore one another scope switched off. That is what makes the key safe to honour from a repository you have not read — the only thing a cloned repo can do with it is stop something from running on your machine.
+
+<Callout type="info">
+This is deliberately unlike [lifecycle hooks](/docs/agent-tools/hooks), which *concatenate* across scopes so that no lower-precedence file can remove an operator's gate. A plugin is not an operator gate — it is a third party's process, it is owned, and "uninstalled" has to mean uninstalled.
+</Callout>
+
+## See also
+
+- [Permissions](/docs/agent-tools/permissions) — the authorization gate that sees a plugin as a caller of its own
+- [Hooks](/docs/agent-tools/hooks) — the operator-owned lifecycle hooks a plugin's grants are deliberately not merged into

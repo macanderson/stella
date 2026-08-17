@@ -247,6 +247,28 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
         ));
     }
 
+    // A subprocess a user cannot see before installing is the grant this whole
+    // module exists to make visible, and the environment slice is half of it:
+    // "runs `python3 main.py`" and "runs `python3 main.py`, and hands it your
+    // `GITHUB_TOKEN`" are different things to consent to.
+    if let Some(runtime) = &manifest.runtime {
+        let argv: Vec<String> = runtime.argv.iter().map(|arg| one_line(arg)).collect();
+        lines.push(format!(
+            "  - runs as a process on your machine: `{}` (killed after {}s)",
+            argv.join(" "),
+            runtime.timeout_secs
+        ));
+        lines.push(if runtime.env.is_empty() {
+            "      it inherits NO environment variables".into()
+        } else {
+            let names: Vec<String> = runtime.env.iter().map(|name| one_line(name)).collect();
+            format!(
+                "      it inherits these environment variables and no others: {}",
+                names.join(", ")
+            )
+        });
+    }
+
     if let Some(subloop) = &manifest.subloop {
         let stages: Vec<String> = subloop.stages.iter().map(|stage| one_line(stage)).collect();
         lines.push(format!(
@@ -473,6 +495,39 @@ mod tests {
         assert!(
             hostile_text.contains("a plugin It asks for no tool capabilities. [2JGRANTED"),
             "the text is kept, flattened, not dropped: {hostile_text}"
+        );
+    }
+
+    /// A process the plugin runs, and the environment slice it is handed,
+    /// are both grants — so both are shown. An install prompt that named the
+    /// argv and stayed silent about `GITHUB_TOKEN` would describe a narrower
+    /// grant than the one being given, which is the failure
+    /// [`a_declared_scope_is_labelled_as_the_plugins_claim`] guards on the
+    /// other half of the document.
+    #[test]
+    fn the_process_and_the_environment_it_inherits_are_both_disclosed() {
+        let text = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"observer\"\n\n[runtime]\nargv = [\"python3\", \"main.py\"]\ntimeout_secs = 30\nenv = [\"PATH\", \"GITHUB_TOKEN\"]",
+        ));
+        assert!(
+            text.contains(
+                "runs as a process on your machine: `python3 main.py` (killed after 30s)"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "it inherits these environment variables and no others: PATH, GITHUB_TOKEN"
+            ),
+            "{text}"
+        );
+
+        let sealed = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"observer\"\n\n[runtime]\nargv = [\"node\"]\ntimeout_secs = 5",
+        ));
+        assert!(
+            sealed.contains("it inherits NO environment variables"),
+            "the default-deny answer is stated, not left to omission: {sealed}"
         );
     }
 
