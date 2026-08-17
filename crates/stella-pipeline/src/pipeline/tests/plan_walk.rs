@@ -250,8 +250,8 @@ async fn every_engine_turn_ends_in_the_journal_and_the_run_ends_once() {
     assert_eq!(
         endings.iter().filter(|e| **e == "run").count(),
         1,
-        "the run terminates exactly once, and `complete` still means what \
-         `docs/wire/README.md` publishes: {endings:?}"
+        "the run terminates exactly once, and `complete` still means what the \
+         wire contract publishes: {endings:?}"
     );
     assert_eq!(
         endings.last(),

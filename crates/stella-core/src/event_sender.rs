@@ -71,10 +71,9 @@ impl EventSender {
 /// the ending it authors can be summarized honestly instead of guessed from
 /// configuration.
 ///
-/// A run whose turns all failed reports nothing to summarize, and
-/// [`RunEnding::seal`] emits nothing: a failed run ends on
-/// [`AgentEvent::Error`], never on `Complete`. That is the same rule the
-/// engine used to apply one turn at a time.
+/// A run whose turns all failed has nothing to summarize and emits nothing: a
+/// failed run ends on [`AgentEvent::Error`], never on `Complete`. That is the
+/// same rule the engine used to apply one turn at a time.
 /// # Why it seals on drop
 ///
 /// The run ends when its event stream does, and *that* is the moment the

@@ -755,13 +755,10 @@ async fn run_worker(
         )
         .with_calibration(&calibration)
         .with_gate(gate.as_ref());
-        // A worker lane owns its run exactly as the lead lane does (#3379):
-        // one dispatch is one run of one turn, and the engine no longer
-        // claims the terminal `Complete` the lane's deck row settles on.
-        // Bound inside this block so the seal lands after the race resolves
-        // and before the caller closes the stream.
-        let lane = crate::command_deck::forwarder::lane_turn_events(&tx);
-        let turn = engine.run_turn_with_sender(&mut messages, &mut budget, &lane);
+        // The run-terminal `Complete` this lane's deck row settles on is
+        // synthesized by its forwarder when the stream closes (#3379), so the
+        // turn is driven on the plain sender exactly as before.
+        let turn = engine.run_turn(&mut messages, &mut budget, &tx);
         // A dropped sender (driver gone at session teardown) must not read
         // as a stop — only an actual signal cancels, so the wait parks
         // forever on a closed channel and the turn always wins the race.

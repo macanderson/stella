@@ -3888,9 +3888,7 @@ async fn run_lead_turn(
         if let Some(requery) = &requery {
             engine = engine.with_requery(requery); // #3243 Phase 3
         }
-        engine
-            .run_turn_with_sender(messages, budget, &forwarder::lane_turn_events(&tx))
-            .await
+        engine.run_turn(messages, budget, &tx).await
     };
     // The model is done and the deck has already painted "done". Everything
     // below is bookkeeping that can take real time (the forwarder persists

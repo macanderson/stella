@@ -24,7 +24,7 @@ use crate::cache_insight::{InsightScope, cache_insight_for};
 ///
 /// It lives here rather than beside its one call site because `command_deck.rs`
 /// is closed to growth, and because the deck's lanes are what this file is for.
-pub(crate) fn lane_turn_events(tx: &UnboundedSender<AgentEvent>) -> stella_core::EventSender {
+pub(crate) fn owned_events(tx: &UnboundedSender<AgentEvent>) -> stella_core::EventSender {
     RunEnding::sealing(stella_core::EventSender::new(tx.clone()))
 }
 
@@ -99,7 +99,29 @@ pub(crate) fn spawn_forwarder(
             crate::diag_boot::dx(),
             Some(crate::diag_boot::workspace_root()),
         );
-        while let Some(event) = rx.recv().await {
+        // The lane's run ending (#3379). The engine ends each turn with
+        // `TurnComplete` and deliberately says nothing about the run, so the
+        // run-terminal `Complete` is the owner's to emit — and for a deck lane
+        // this forwarder *is* that owner: it is the one place that knows the
+        // stream closed rather than merely that a turn did, which is exactly
+        // what "`complete` is last" requires. Synthesizing it into the loop
+        // rather than after it puts it through the same persist-then-forward
+        // path as every other event, so the lane's journal and the deck agree.
+        let mut turn_end: Option<(String, f64)> = None;
+        loop {
+            let event = match rx.recv().await {
+                Some(event) => event,
+                None => match turn_end.take() {
+                    Some((model, cost_usd)) => AgentEvent::Complete { model, cost_usd },
+                    // Either the run already sealed on the previous pass, or
+                    // no turn of it ever succeeded — a failed run ends on
+                    // `Error`, never on `Complete`.
+                    None => break,
+                },
+            };
+            if let AgentEvent::TurnComplete { model, cost_usd } = &event {
+                turn_end = Some((model.clone(), *cost_usd));
+            }
             bridge.observe(&event);
             // A plan that reached the gate is the plan whose progress the
             // board records, so this is where it becomes one. Seeded on the

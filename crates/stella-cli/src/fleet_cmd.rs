@@ -951,7 +951,7 @@ async fn run_task(
                 // so the terminal `Complete` the engine stopped claiming is
                 // this lane's to emit. Sealed when `worker` drops at the end
                 // of this block, after the race resolves.
-                let worker = crate::command_deck::forwarder::lane_turn_events(&tx);
+                let worker = crate::command_deck::forwarder::owned_events(&tx);
                 tokio::select! {
                     outcome = engine.run_turn_with_sender(&mut messages, &mut budget, &worker) => {
                         Raced::Outcome(outcome)
