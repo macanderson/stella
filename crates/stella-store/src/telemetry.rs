@@ -257,6 +257,32 @@ impl Store {
         Ok(())
     }
 
+    /// Record which wrapper variant ran this turn (#3388) — called right
+    /// after [`Store::begin_execution`] on a wrapped run, and not at all on
+    /// an unwrapped one.
+    ///
+    /// # NULL means "no wrapper", and that is a fact
+    ///
+    /// The raw turn loop is the ordinary case, so a NULL here is a positive
+    /// statement rather than a missing measurement. That is why nothing
+    /// writes a placeholder string for the unwrapped case: `'none'` and
+    /// "nobody recorded it" would then be indistinguishable, which is the
+    /// exact confusion this column was split out of `kind` to end.
+    ///
+    /// # Why this lives beside the accounting updates
+    ///
+    /// `kind` and this column are the two axes every per-variant comparison
+    /// groups by, and this module already owns the execution row's
+    /// column-level updates. It is deliberately not in `lib.rs`: that file is
+    /// a grandfathered god file closed to growth.
+    pub fn set_pipeline_variant(&self, execution_id: i64, variant: &str) -> Result<()> {
+        self.lock().execute(
+            "UPDATE executions SET pipeline_variant = ? WHERE id = ?",
+            params![variant, execution_id],
+        )?;
+        Ok(())
+    }
+
     /// The spend one execution has already SETTLED: the sum of the durable
     /// per-call receipts it wrote as it ran.
     ///

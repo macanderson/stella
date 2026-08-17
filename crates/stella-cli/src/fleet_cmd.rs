@@ -715,7 +715,7 @@ async fn run_task(
     let store = agent::open_store(root);
     // Owned above the pipeline so it outlives every engine it builds (#1595).
     let calibration = agent::seed_calibration(&store, &cfg);
-    let execution = agent::begin_execution(&store, "fleet", &task.prompt, &cfg, None);
+    let execution = agent::begin_execution(&store, "fleet", &task.prompt, &cfg, None, None);
     // From here on this attempt's spend is durable in the store even if this
     // thread never lives to report it — publish the handle that makes it
     // readable from the dispatch side (#1216).

@@ -21,9 +21,11 @@ use crate::{Result, StoreError};
 
 mod abandoned_state;
 mod error_class;
+mod pipeline_variant;
 mod token_unit;
 
 use error_class::migrate_v24_to_v25;
+use pipeline_variant::migrate_v25_to_v26;
 use token_unit::migrate_v18_to_v19;
 
 /// One schema migration: upgrades an existing database exactly one
@@ -36,7 +38,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 25] = [
+pub(crate) const MIGRATIONS: [Migration; 26] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -159,6 +161,10 @@ pub(crate) const MIGRATIONS: [Migration; 25] = [
     // older failure exists nowhere but its prose, and classifying by string
     // match is the practice this column replaces.
     migrate_v24_to_v25,
+    // v25 → v26: `executions.kind` becomes the door and only the door, and
+    // which wrapper ran moves to `executions.pipeline_variant` (#3388).
+    // Additive column plus a narrow backfill; see the module's own doc.
+    migrate_v25_to_v26,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -193,7 +199,8 @@ pub(crate) const MIGRATIONS: [Migration; 25] = [
     //
     //   v24 → v25: CLAIMED above by `tool_calls.error_class` (#3145).
     //
-    // Nothing is reserved now: take v25 → v26 and add your own line here.
+    //   v25 → v26: CLAIMED above by the door/wrapper split (#3388).
+    // Nothing is reserved now: take v26 → v27 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];
