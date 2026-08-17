@@ -39,6 +39,9 @@ use crate::consent::{Capability, validate_capabilities};
 use crate::error::ManifestError;
 use crate::evidence::OracleCheck;
 use crate::host_call::HostCall;
+use crate::package::{
+    RecordContribution, SkillContribution, ToolContribution, validate_contributions,
+};
 use crate::runtime::Runtime;
 use crate::wire::WrapperPoint;
 use crate::wrapper::Wrapper;
@@ -486,6 +489,24 @@ pub struct PluginManifest {
     /// those words rather than by omission.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<Capability>,
+    /// The script tools this package ships into the agent's tool surface
+    /// (#3565). See [`ToolContribution`] and [`crate::package`] for why these
+    /// three tables declare *names* rather than paths, and why the host's own
+    /// read is checked against them by [`PluginManifest::reconcile`].
+    ///
+    /// Gated on **no** participation grade, for [`Self::capabilities`]'
+    /// reason exactly: the ladder governs a plugin's say in the turn, and a
+    /// `none`-grade content bundle shipping one tool that runs `git push` is
+    /// asking for more of the world than an `observer` that only watches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolContribution>,
+    /// The skills this package ships (#3565).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<SkillContribution>,
+    /// The context records this package ships (#3565). Advisory only — see
+    /// [`crate::RecordEnforcement`] for the governance argument.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub records: Vec<RecordContribution>,
 }
 
 /// `skip_serializing_if` needs a named predicate; "the grant is the default"
@@ -720,6 +741,7 @@ impl PluginManifest {
         }
 
         validate_capabilities(&self.capabilities)?;
+        validate_contributions(self)?;
 
         Ok(())
     }

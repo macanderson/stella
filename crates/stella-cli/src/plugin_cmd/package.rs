@@ -58,10 +58,14 @@
 //!   [`stella_tools::custom::CustomTool::principal`] turns into
 //!   `Principal::Plugin`. For skills and records it is the source path,
 //!   which lies inside the package.
-//! - **Consent.** [`Inventory::consent_addendum`] renders what a package
-//!   ships into the *same* install transaction as
-//!   [`stella_plugin::consent_text`] — see that function's own docs for why
-//!   the host renders this half and the plugin crate does not.
+//! - **Consent.** [`stella_plugin::consent_text`] names every contribution,
+//!   because the manifest declares them (#3565). This module's job is the
+//!   other side of that: [`Inventory::listing`] hands the host's own read of
+//!   the directories to [`stella_plugin::PluginManifest::reconcile`], which
+//!   refuses a package whose declaration and directories disagree in either
+//!   direction. The host renders **nothing** of its own about what a package
+//!   ships; it used to, and the cost was an embedding host showing a document
+//!   that omitted executable code entering the agent's tool surface.
 //! - **Retraction.** Structural, per above.
 //!
 //! # The trust gate is the roster's, not a second one
@@ -167,115 +171,144 @@ pub(crate) fn contributed_record_dirs(workspace_root: &Path) -> Vec<ContributedD
     dirs_of(&session_roster(workspace_root), RECORDS_DIR)
 }
 
-/// What one package ships, counted and named — the answer to "what am I
-/// installing?" beyond the say in the loop.
+/// What one package ships, named as each surface names it — the host's read,
+/// and the thing a manifest's declaration is reconciled against.
+///
+/// **Every field holds the surface's identity, not the filesystem's** (#3565).
+/// This began as file stems, which is cheaper and was enough while the
+/// inventory only had to *describe* a package to a human. It is not enough to
+/// check a declaration against: a stem is not what the model calls, so a
+/// package shipping `tools/lint_fix.toml` whose manifest inside says
+/// `name = "deploy"` would reconcile against a declared `lint_fix` and still
+/// hand the model a tool the consent document never named. Reading the real
+/// identity costs one parse per file and closes that.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Inventory {
-    /// Tool manifest stems, sorted. The stem rather than the manifest's
-    /// `name` field on purpose: reading the name means parsing every
-    /// manifest, and a package whose TOML does not parse must still be
-    /// *described* to the human deciding whether to install it. A stem that
-    /// disagrees with the manifest's `name` is surfaced later, by
-    /// `stella plugin list`, off the real discovery.
+    /// Tool names as the model will see them — each shipped manifest's own
+    /// `name` field — sorted. A manifest that does not parse contributes its
+    /// file stem instead, so a broken package is still *described* rather than
+    /// silently shrinking to nothing (and, being described wrongly, is
+    /// refused at install rather than installed quietly).
     pub(crate) tools: Vec<String>,
     /// Skill slugs (the `<slug>/SKILL.md` directory names), sorted.
     pub(crate) skills: Vec<String>,
-    /// Context-record file stems, sorted.
+    /// Context-record lineage ids — the identity the registry merges on and
+    /// the promotion ledger names — sorted and deduplicated. One rules file is
+    /// a record *set* and may declare several, so the stem is not the identity
+    /// here either. An unparsable file contributes its stem, for the tools
+    /// rule's reason.
     pub(crate) records: Vec<String>,
 }
 
 impl Inventory {
     /// Read one package directory's inventory. Never fails: an unreadable
-    /// directory is an empty one, because a consent prompt that cannot be
-    /// rendered must not be the thing that stops an install from being
-    /// *refused*.
+    /// directory is an empty one, because a package that cannot be described
+    /// must not be the thing that stops an install from being *refused*.
     pub(crate) fn of_package(dir: &Path) -> Self {
         Self {
-            tools: entries(&dir.join(TOOLS_DIR), Kind::TomlFile),
-            skills: entries(&dir.join(SKILLS_DIR), Kind::SkillDir),
-            records: entries(&dir.join(RECORDS_DIR), Kind::TomlFile),
+            tools: tool_names(&dir.join(TOOLS_DIR)),
+            skills: skill_slugs(&dir.join(SKILLS_DIR)),
+            records: record_lineages(&dir.join(RECORDS_DIR)),
         }
     }
 
-    /// Whether the package ships nothing at all beyond its manifest.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.tools.is_empty() && self.skills.is_empty() && self.records.is_empty()
-    }
-
-    /// The lines the install prompt prints beside
-    /// [`stella_plugin::consent_text`], or `None` when the package ships
-    /// nothing.
+    /// This read, as the listing
+    /// [`stella_plugin::PluginManifest::reconcile`] checks a declaration
+    /// against.
     ///
-    /// # Why the host renders this and the plugin crate does not
-    ///
-    /// `stella-plugin` is pure — it parses borrowed text and performs no
-    /// I/O — and what a package ships is a fact about a *directory*. It
-    /// cannot see one, and giving it a filesystem to answer this would cost
-    /// that crate the property its whole boundary is built on.
-    ///
-    /// This is the same seam [`super::install`] already uses for the
-    /// credential correction: the crate renders what the manifest declared,
-    /// and the host prints what only the host can know, in the same
-    /// transaction, before the one y/N. **One prompt, one answer** — the
-    /// thing that would be wrong is a second consent *decision*, not a
-    /// paragraph the host contributes to the first.
-    ///
-    /// The sharpest line is the tools one, and it says so: a contributed
-    /// tool is executable code entering the agent's surface, which the model
-    /// may call on its own initiative for the rest of the session.
-    pub(crate) fn consent_addendum(&self, plugin: &str) -> Option<String> {
-        if self.is_empty() {
-            return None;
+    /// The host's half of the #3565 reconciliation, and the reason every field
+    /// above carries the identity its *surface* uses rather than the one the
+    /// filesystem does: the agreement worth enforcing is between the manifest
+    /// and what the model will actually be offered, not between the manifest
+    /// and a set of filenames.
+    pub(crate) fn listing(&self) -> stella_plugin::PackageListing {
+        stella_plugin::PackageListing {
+            tools: self.tools.clone(),
+            skills: self.skills.clone(),
+            records: self.records.clone(),
         }
-        let mut lines = vec![format!("`{plugin}` also installs:")];
-        if !self.tools.is_empty() {
-            lines.push(format!(
-                "  - {} tool(s) the model may call by itself, each a script this package \
-                 ships: {}",
-                self.tools.len(),
-                self.tools.join(", ")
-            ));
-            lines.push(
-                "      every one runs as `{plugin}`, not as you: the authorization gate sees \
-                 the plugin as the caller"
-                    .replace("{plugin}", plugin),
-            );
-        }
-        if !self.skills.is_empty() {
-            lines.push(format!(
-                "  - {} skill(s), injected into your prompts when they match: {}",
-                self.skills.len(),
-                self.skills.join(", ")
-            ));
-        }
-        if !self.records.is_empty() {
-            lines.push(format!(
-                "  - {} context record(s), which steer the model in this workspace: {}",
-                self.records.len(),
-                self.records.join(", ")
-            ));
-        }
-        lines.push(
-            "  All of it is removed by `stella plugin remove`, because none of it is copied \
-             into your own .stella/ — it is read from the package."
-                .into(),
-        );
-        Some(lines.join("\n"))
     }
 }
 
-/// What an entry in a package's contributed directory looks like.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    /// A `*.toml` file; the stem names the entry.
-    TomlFile,
-    /// A `<slug>/SKILL.md` directory; the directory name names the entry.
-    SkillDir,
+/// The tool names a package's `tools/` directory will contribute — each
+/// manifest's own `name`, which is the string the model calls.
+///
+/// Parsing is delegated to [`stella_tools::custom::parse_manifest`], the same
+/// function discovery uses, so this can never disagree with what actually
+/// loads. A file it rejects falls back to the stem: the entry stays visible in
+/// `stella plugin list` and in the reconciliation, where a broken manifest
+/// surfaces as a refusal naming it rather than as a package that quietly ships
+/// one fewer tool than it declared.
+fn tool_names(dir: &Path) -> Vec<String> {
+    let mut found: Vec<String> = toml_files(dir)
+        .into_iter()
+        .filter_map(|(path, stem)| {
+            let name = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| stella_tools::custom::parse_manifest(&text, &path).ok())
+                .map(|tool| tool.name);
+            Some(name.unwrap_or(stem))
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    found
 }
 
-/// The named entries of one contributed directory, sorted, or empty when the
-/// directory is absent or unreadable.
-fn entries(dir: &Path, kind: Kind) -> Vec<String> {
+/// The record lineages a package's `rules/` directory will contribute.
+///
+/// One file is a record *set*, so the answer is per record and not per file.
+/// [`stella_core::records::load_context_file`] is the same reader
+/// [`crate::context_records`] uses, for `tool_names`' reason; an unreadable
+/// file falls back to the stem for the same one.
+fn record_lineages(dir: &Path) -> Vec<String> {
+    let mut found: Vec<String> = toml_files(dir)
+        .into_iter()
+        .flat_map(|(path, stem)| {
+            let parsed = std::fs::read_to_string(&path).ok().and_then(|text| {
+                stella_core::records::load_context_file(&path.display().to_string(), &text).ok()
+            });
+            match parsed {
+                Some(records) if !records.is_empty() => records
+                    .into_iter()
+                    .map(|loaded| loaded.record.lineage_id)
+                    .collect::<Vec<_>>(),
+                _ => vec![stem],
+            }
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Every `*.toml` file in `dir` with its stem, or nothing when the directory
+/// is absent or unreadable.
+fn toml_files(dir: &Path) -> Vec<(PathBuf, String)> {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    read.flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let is_toml = path.extension().and_then(|ext| ext.to_str()) == Some("toml");
+            if !is_toml || !path.is_file() {
+                return None;
+            }
+            let stem = path.file_stem()?.to_str()?.to_string();
+            Some((path, stem))
+        })
+        .collect()
+}
+
+/// The skill slugs one contributed `skills/` directory holds — a `<slug>`
+/// directory with a `SKILL.md` in it — sorted, or empty when the directory is
+/// absent or unreadable.
+///
+/// The slug *is* the filesystem identity here, unlike a tool's name or a
+/// record's lineage: `stella_core::skills` names a skill by its directory, so
+/// there is nothing inside the file to read it from.
+fn skill_slugs(dir: &Path) -> Vec<String> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -283,17 +316,9 @@ fn entries(dir: &Path, kind: Kind) -> Vec<String> {
         .flatten()
         .filter_map(|entry| {
             let path = entry.path();
-            match kind {
-                Kind::TomlFile => {
-                    let is_toml = path.extension().and_then(|ext| ext.to_str()) == Some("toml");
-                    (is_toml && path.is_file())
-                        .then(|| path.file_stem()?.to_str().map(str::to_string))
-                        .flatten()
-                }
-                Kind::SkillDir => (path.is_dir() && path.join("SKILL.md").is_file())
-                    .then(|| path.file_name()?.to_str().map(str::to_string))
-                    .flatten(),
-            }
+            (path.is_dir() && path.join("SKILL.md").is_file())
+                .then(|| path.file_name()?.to_str().map(str::to_string))
+                .flatten()
         })
         .collect();
     found.sort();
@@ -314,61 +339,107 @@ pub(crate) fn inventories(roster: &PluginRoster) -> Vec<(&InstalledPlugin, Inven
 mod tests {
     use super::*;
 
+    /// A tool manifest of the shape `stella_tools::custom` reads, whose file
+    /// stem is deliberately **not** its `name` — the divergence the inventory
+    /// must resolve in the model's favour.
+    const TOOL: &str = "name = \"lint_fix\"\ndescription = \"run the fixer\"\n\
+                        command = [\"./scripts/lint-fix.sh\"]\n";
+
+    /// A record set of the shape `.stella/rules/*.toml` holds. Two records in
+    /// one file, so a stem cannot be the identity.
+    const RECORDS: &str = "schema = \"context-record/v0.1\"\nset_id = \"vera\"\n\n\
+         [[record]]\nlineage_id = \"ctx.vera.no-force-push\"\n\
+         record_id = \"rec_vera_1\"\nkind = \"rule\"\n\
+         statement = \"never force-push a shared branch\"\n\
+         origin = \"imported\"\nsharing_scope = \"repository\"\nstatus = \"active\"\n\n\
+         [[record]]\nlineage_id = \"ctx.vera.review-before-merge\"\n\
+         record_id = \"rec_vera_2\"\nkind = \"rule\"\n\
+         statement = \"a change is reviewed before it merges\"\n\
+         origin = \"imported\"\nsharing_scope = \"repository\"\nstatus = \"active\"\n";
+
     fn package(dir: &Path) {
         std::fs::create_dir_all(dir.join(TOOLS_DIR)).expect("tools dir");
         std::fs::create_dir_all(dir.join(SKILLS_DIR).join("house-style")).expect("skill dir");
         std::fs::create_dir_all(dir.join(RECORDS_DIR)).expect("rules dir");
-        std::fs::write(dir.join(TOOLS_DIR).join("lint_fix.toml"), "").expect("tool");
+        std::fs::write(dir.join(TOOLS_DIR).join("fixer.toml"), TOOL).expect("tool");
         std::fs::write(
             dir.join(SKILLS_DIR).join("house-style").join("SKILL.md"),
             "# style\n",
         )
         .expect("skill");
-        std::fs::write(dir.join(RECORDS_DIR).join("no-force-push.toml"), "").expect("record");
+        std::fs::write(dir.join(RECORDS_DIR).join("set.toml"), RECORDS).expect("record");
     }
 
-    /// The three directories are read as the three surfaces, by the names
-    /// the rest of the tree already uses for them.
+    /// **The #3565 host-side witness.** The three directories are read as the
+    /// three surfaces, and each entry is named by the identity **its surface**
+    /// uses — a tool by the name the model calls, a record by its lineage —
+    /// never by the filename. `fixer.toml` declaring `lint_fix`, and one
+    /// rules file holding two lineages, both answer differently under a
+    /// stem-based read.
     #[test]
-    fn a_package_inventory_names_all_three_surfaces() {
+    fn a_package_inventory_names_all_three_surfaces_as_the_surface_names_them() {
         let dir = tempfile::tempdir().expect("a temp dir");
         package(dir.path());
         let inventory = Inventory::of_package(dir.path());
-        assert_eq!(inventory.tools, vec!["lint_fix".to_string()]);
+        assert_eq!(
+            inventory.tools,
+            vec!["lint_fix".to_string()],
+            "the tool's own name, not its file stem `fixer`"
+        );
         assert_eq!(inventory.skills, vec!["house-style".to_string()]);
-        assert_eq!(inventory.records, vec!["no-force-push".to_string()]);
-        assert!(!inventory.is_empty());
+        assert_eq!(
+            inventory.records,
+            vec![
+                "ctx.vera.review-before-merge".to_string(),
+                "ctx.vera.no-force-push".to_string()
+            ]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>(),
+            "both lineages of one set file, not the stem `set`"
+        );
+        assert_ne!(inventory, Inventory::default());
     }
 
-    /// A package that ships nothing renders no addendum — the ordinary
-    /// wrapper plugin's prompt is unchanged.
+    /// **The reconciliation witness (#3565 item 2).** A manifest that names
+    /// exactly what the directories hold installs; one that names less, or
+    /// more, is refused with both sides in the message.
     #[test]
-    fn a_package_that_ships_nothing_adds_nothing_to_the_prompt() {
-        let dir = tempfile::tempdir().expect("a temp dir");
-        let inventory = Inventory::of_package(dir.path());
-        assert!(inventory.is_empty());
-        assert_eq!(inventory.consent_addendum("vera"), None);
-    }
-
-    /// **The consent witness.** Everything a package ships is named in the
-    /// install prompt, and the tool line says the thing a user most needs to
-    /// know: the code runs as the plugin, and the model calls it unprompted.
-    #[test]
-    fn the_consent_addendum_names_every_contribution_before_install() {
+    fn a_declaration_must_agree_with_the_directories() {
         let dir = tempfile::tempdir().expect("a temp dir");
         package(dir.path());
-        let text = Inventory::of_package(dir.path())
-            .consent_addendum("vera")
-            .expect("a package that ships something must say so");
+        let listing = Inventory::of_package(dir.path()).listing();
+
+        let complete = stella_plugin::PluginManifest::from_toml_str(
+            "name = \"vera\"\n\n\
+             [[tools]]\nname = \"lint_fix\"\ndescription = \"run the fixer\"\n\n\
+             [[skills]]\nslug = \"house-style\"\ndescription = \"how we write\"\n\n\
+             [[records]]\nlineage = \"ctx.vera.no-force-push\"\nstatement = \"no force-push\"\n\n\
+             [[records]]\nlineage = \"ctx.vera.review-before-merge\"\nstatement = \"review it\"\n",
+        )
+        .expect("a complete declaration must load");
+        complete
+            .reconcile(&listing)
+            .expect("a declaration that names everything must reconcile");
+
+        let silent = stella_plugin::PluginManifest::from_toml_str("name = \"vera\"")
+            .expect("a manifest declaring nothing still loads");
+        let refusal = silent
+            .reconcile(&listing)
+            .expect_err("a package whose directories nobody declared must be refused")
+            .to_string();
         for expected in [
             "lint_fix",
             "house-style",
-            "no-force-push",
-            "runs as `vera`, not as you",
-            "the model may call by itself",
-            "stella plugin remove",
+            "ctx.vera.no-force-push",
+            "[[tools]]",
+            "tools/",
         ] {
-            assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+            assert!(
+                refusal.contains(expected),
+                "missing {expected:?} in:\n{refusal}"
+            );
         }
     }
 
@@ -382,6 +453,25 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(TOOLS_DIR)).expect("dir");
         std::fs::write(dir.path().join(TOOLS_DIR).join("README.md"), "").expect("stray");
         let inventory = Inventory::of_package(dir.path());
-        assert!(inventory.is_empty(), "{inventory:?}");
+        assert_eq!(inventory, Inventory::default(), "{inventory:?}");
+    }
+
+    /// A manifest that does not parse still names its entry, by stem — so the
+    /// package is described rather than silently shrinking, and the
+    /// reconciliation refuses it instead of installing a tool nobody could
+    /// read.
+    #[test]
+    fn an_unparsable_contribution_falls_back_to_its_stem() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join(TOOLS_DIR)).expect("dir");
+        std::fs::write(
+            dir.path().join(TOOLS_DIR).join("broken.toml"),
+            "not = [toml",
+        )
+        .expect("broken");
+        assert_eq!(
+            Inventory::of_package(dir.path()).tools,
+            vec!["broken".to_string()]
+        );
     }
 }

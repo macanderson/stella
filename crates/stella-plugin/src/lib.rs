@@ -70,6 +70,20 @@
 //! permits, so an ask is the handing of a capability made explicit rather than
 //! ambient authority.
 //!
+//! `package.rs` (#3565) is the other half of what a plugin *is*: `[[tools]]`,
+//! `[[skills]]` and `[[records]]` declare what the package **ships** into the
+//! three surfaces a workspace already steers itself with. Those contributions
+//! are discovered by directory convention (#3380), which is what keeps
+//! provenance unforgeable — and is why nothing declared them, so
+//! [`consent_text`] could not name them and an embedding host showed a document
+//! that omitted executable code entering the agent's tool surface. The
+//! declaration closes that, and [`PluginManifest::reconcile`] keeps the two
+//! halves honest: the host hands over its own read as a [`PackageListing`] and
+//! any disagreement in either direction is a refusal, so a package can neither
+//! ship a tool it did not declare nor declare one it does not ship. See
+//! [`RecordEnforcement`] for why a package may ship a record that steers and
+//! never one that denies.
+//!
 //! The three functions a host must not bypass are [`LoopGrant::permits_hook`],
 //! [`LoopGrant::permits_point`] and [`LoopGrant::permits_call`]: they are the
 //! authoritative filters behind the epic's rule that an undeclared hook is never
@@ -83,6 +97,7 @@ mod evidence;
 mod host_call;
 mod manifest;
 mod observed;
+mod package;
 mod program;
 mod runtime;
 mod wire;
@@ -109,6 +124,10 @@ pub use manifest::{
     Participation, PluginManifest, Role, Subloop, TamperPolicy,
 };
 pub use observed::ObservedEvidence;
+pub use package::{
+    ContributionKind, KindMismatch, PackageListing, PackageMismatch, RecordContribution,
+    RecordEnforcement, SkillContribution, ToolContribution,
+};
 pub use program::{SignalValues, StageProgram};
 pub use runtime::Runtime;
 pub use wire::{

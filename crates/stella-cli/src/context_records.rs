@@ -459,9 +459,23 @@ fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str
     // ledger that fails verification grants NOTHING (fail closed for
     // enforcement) — the validator, not this load path, is where the
     // violation is surfaced loudly.
+    //
+    // **A grant arms the repository's own record and nothing else** (#3565).
+    // The ledger keys on a lineage, and a plugin's contributed records load
+    // into this same project tier — so without the filter below, a package
+    // shipping a record whose `lineage_id` matches a live grant would inherit
+    // the authority to deny tool calls without any promotion entry naming it,
+    // reviewed by nobody, from files outside the Git tree the hash chain is
+    // verified against. Placing plugin records first in merge order (see
+    // `plugin_first`) is necessary and not sufficient: it only settles the
+    // collision when the workspace still *has* a record of that lineage, and a
+    // grant outlives the file it was written for.
     if let Ok(events) = read_promotions(root) {
+        let repo_owned = repo_owned_lineages(root, files);
         for lineage in stella_core::records::promotion::blocking_grants(&events).into_keys() {
-            approved_blocking.insert((Trust::Project, lineage));
+            if repo_owned.contains(&lineage) {
+                approved_blocking.insert((Trust::Project, lineage));
+            }
         }
     }
 
@@ -475,6 +489,42 @@ fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str
             now,
         },
     )
+}
+
+/// The lineages the **repository's own** project-tier files declare — every
+/// project rule file that did not arrive inside an installed plugin package.
+///
+/// The set a promotion grant may arm. `.stella/rules/promotions.jsonl` is the
+/// repository's ledger: it is reviewed through the repository's pull requests,
+/// hash-chained against the repository's own history, and `stella context
+/// validate` verifies it against the repository's tree. None of that reaches a
+/// package's `rules/` directory, which arrives with an install rather than a
+/// review. So a grant in it says something about a lineage *of this
+/// repository*, and answering "is this lineage the repository's?" is what keeps
+/// a third party's record from stepping into an approval it was never given.
+///
+/// Cheap by construction: `parse_records` is already run twice on this path
+/// (see [`load_registry_with`]) and this is a third pass over a handful of
+/// small files, which is the same trade that path already documents.
+fn repo_owned_lineages(root: &Path, files: &TieredFiles) -> BTreeSet<String> {
+    let plugin_dirs: Vec<String> = crate::plugin_cmd::package::contributed_record_dirs(root)
+        .into_iter()
+        .map(|contributed| contributed.dir.display().to_string())
+        .collect();
+    // Prefix comparison is exact here rather than heuristic: both strings are
+    // produced from the same `PathBuf`s by the same `display()` call —
+    // `plugin_first` hands these very directories to `read_rule_files`, which
+    // joins each with a file name.
+    let repo_owned: Vec<RuleFile> = files
+        .project
+        .iter()
+        .filter(|file| !plugin_dirs.iter().any(|dir| file.path.starts_with(dir)))
+        .cloned()
+        .collect();
+    parse_records(&repo_owned)
+        .into_iter()
+        .map(|loaded| loaded.record.lineage_id)
+        .collect()
 }
 
 /// The lineage a published record file holds — `.stella/rules/<lineage>.toml`.

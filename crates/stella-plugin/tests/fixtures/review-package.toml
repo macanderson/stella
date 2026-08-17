@@ -1,0 +1,37 @@
+# A package plugin: an arbiter that also SHIPS the three surfaces a workspace
+# steers itself with (#3565). The declaration is what makes those shippable
+# contributions consentable — before it, they were discovered by directory
+# convention and no consent document a crate rendered could name them.
+name = "vera"
+description = "reviews a diff the way this shop reviews diffs"
+
+[loop]
+participation = "arbiter"
+hooks = ["Stop"]
+points = ["after_turn"]
+
+[requirements]
+witness = "a failing test flips to passing"
+
+[oracle]
+flip = "required"
+
+[runtime]
+argv = ["python3", "${plugin_dir}/main.py"]
+timeout_secs = 60
+env = ["PATH"]
+
+# What it ships. Each entry is named by the identity its own surface uses: a
+# tool by the name the model calls, a skill by its slug, a record by its
+# lineage.
+[[tools]]
+name = "vera_review"
+description = "review the working diff and report what it found"
+
+[[skills]]
+slug = "house-style"
+description = "how this shop writes and reviews code"
+
+[[records]]
+lineage = "ctx.acme.web.no-force-push"
+statement = "Never force-push to a shared branch."

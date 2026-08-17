@@ -7,6 +7,7 @@
 
 use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
+use crate::package::ContributionKind;
 use crate::wire::WrapperPoint;
 use crate::wrapper::{Signal, SignalKind, StageName};
 
@@ -462,6 +463,64 @@ pub enum ManifestError {
     DuplicateCapability {
         /// The tool requested twice.
         tool: String,
+    },
+
+    /// A `[[tools]]`/`[[skills]]`/`[[records]]` entry named nothing. The name
+    /// is the identity the surface merges on and the string a consent document
+    /// shows; a blank one describes a contribution nobody can consent to.
+    #[error("{} declares a {kind} with an empty name", .kind.table())]
+    EmptyContributionName {
+        /// Which surface the nameless entry was declared for.
+        kind: ContributionKind,
+    },
+
+    /// A contributed entry stated nothing about itself.
+    ///
+    /// [`Self::EmptyCapabilityPurpose`]'s rule for the other half of the
+    /// consent document: "this package installs a tool called `deploy`" is not
+    /// something a human can consent to, and a count with no prose is what a
+    /// consent prompt degrades into when this is optional.
+    #[error(
+        "the {kind} \"{name}\" states nothing about itself: a contribution with \
+         no description is not something a user can consent to"
+    )]
+    EmptyContributionDescription {
+        /// Which surface it was declared for.
+        kind: ContributionKind,
+        /// The entry's declared name.
+        name: String,
+    },
+
+    /// The same contribution was declared twice. Always an editing mistake —
+    /// the [`Self::DuplicateCapability`] rule for the package tables — and
+    /// deduplicating silently would make the consent document's count wrong.
+    #[error("{kind} \"{name}\" is declared more than once")]
+    DuplicateContribution {
+        /// Which surface it was declared for.
+        kind: ContributionKind,
+        /// The name declared twice.
+        name: String,
+    },
+
+    /// A `[[records]]` entry asked for `enforcement = "blocking"`.
+    ///
+    /// The governance rule, refused at load. A blocking record can deny a tool
+    /// call, and that authority is granted only through the repository's own
+    /// hash-chained promotion ledger (`.stella/rules/promotions.jsonl`), where
+    /// each grant names an approver and a reason and is reviewed with the
+    /// record it arms. A package's records live outside that repository and
+    /// outside that chain, so a package may ship records that steer and never
+    /// one that denies. See [`crate::RecordEnforcement`].
+    #[error(
+        "the record \"{lineage}\" asks for enforcement = \"blocking\", which a \
+         plugin may not ship: a record gains the authority to deny a tool call \
+         only through this repository's own promotion ledger, which a package's \
+         files are not covered by. Ship it as advisory and let the workspace \
+         promote it."
+    )]
+    PluginRecordCannotEnforce {
+        /// The lineage that asked to enforce.
+        lineage: String,
     },
 
     /// `[wrapper]` was declared below `steering`. A wrapper intercepts the

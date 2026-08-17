@@ -923,3 +923,163 @@ installed plugin), not of the binary.
   already identifies between goal mode and the pipeline. The flag inversion is
   the forcing function: if inverting the default feels unsafe, the extraction is
   not finished.
+
+---
+
+## 13. A plugin is a package: what it *ships*, not only what it *does*
+
+Landed 2026-08-17 (#3565, completing #3380's loader half). §4's A-items answer
+"what say does a plugin have in the turn?". This section answers the other
+half of the maintainer's directive — *"a plugin needs to be able to ship and
+also be a packaged set of tools and skills too… plugins to the turn loop need
+to be able to affect context records/recall, tools, and the loop bits we
+shipped"* — and states the rule that keeps the two halves from disagreeing.
+
+### 13.1 What a plugin may contribute, and why to existing surfaces
+
+A package is `.stella`-shaped and that is the whole format:
+
+```text
+<plugin_dir>/
+  plugin.toml              the say in the loop (§4), and the declaration below
+  tools/*.toml             the same manifests .stella/tools/*.toml holds
+  skills/<slug>/SKILL.md   the same files .stella/skills/ holds
+  rules/*.toml             the same records .stella/rules/ holds
+```
+
+Three surfaces, no fourth. Each directory is handed to the loader that already
+reads that surface as an additional source — a plugin's tool *is* a custom
+tool (`stella_tools::custom`), its skill *is* a skill (`stella_core::skills`),
+its record *is* a context record (`crate::context_records`).
+
+**Contributing to an existing surface beats a parallel one**, and the argument
+is not aesthetic. A parallel plane would be a second set of precedence rules, a
+second set of diagnostics, a second thing to remember to gate, and a second
+place a name can collide — and the failure mode of forgetting any one of them
+is silent. Reusing the surface means a plugin's tool passes the same foundry
+gate, is named in `stella tools` beside the user's own, collides under the same
+"your own copy wins" rule, and is refused in an untrusted workspace by the same
+`PluginRoster::load` check that refuses everything else the package carries.
+Nothing here is exempt by construction rather than by policy.
+
+Recall and the loop bits the directive also names are **not** contributions:
+they are asks. A plugin reaches recall through the host-call channel
+(`doc:wrapper-socket` §6b, #3540) under `[loop] calls`, and it reaches the loop
+through `[loop] hooks` / `points`. The difference is that a contribution
+persists across every session in the workspace, while an ask happens inside one
+point of one turn and is answered by the host.
+
+### 13.2 The provenance / consent / retraction triple
+
+Every contribution has to answer all three, and each is answered structurally:
+
+- **Provenance — from the directory, never the file.** A tool's contributing
+  plugin is stamped by discovery from the directory that was read
+  (`CustomTool::contributed_by`), which is what
+  `custom::tests::a_manifest_cannot_claim_to_have_been_shipped_by_a_plugin`
+  pins, and what `CustomTool::principal` turns into `Principal::Plugin`. The
+  §13.3 declaration is deliberately *not* an input to this: a manifest names
+  what it ships and can never claim to have shipped something it did not.
+- **Consent — the crate's bytes, not a host's.** `stella_plugin::consent_text`
+  names every contributed tool, skill and record, and it says the three things
+  about a tool a user actually needs: it is executable code, the model calls it
+  on its own initiative, and it runs as the plugin rather than as them. This was
+  the defect #3565 was filed for — the inventory was rendered host-side by
+  `plugin_cmd::package::Inventory::consent_addendum`, so `stella plugin
+  install` was complete and every embedding host was not. That renderer is gone;
+  there is one document.
+- **Retraction — structural, by never copying.** Nothing is written into
+  `.stella/tools`, `.stella/skills` or `.stella/rules`. Contributions are
+  recomputed from the installed packages on every load, so `stella plugin
+  remove` deletes a directory and there is nothing left to forget to clean up.
+  The alternative was tried with hook matchers and produced a removed plugin
+  whose process still ran on every `PreToolUse`: there is no expression that
+  removes one owner's rows from a merged list nobody stamped with an owner.
+
+### 13.3 Declaration vs. discovery — neither alone is sufficient
+
+Discovery by directory convention is what makes provenance unforgeable, and it
+is also why nothing could render the contributions: `stella-plugin` is pure, so
+`consent_text` cannot see a directory. The manifest therefore declares what the
+package ships, in the identity **each surface** uses:
+
+```toml
+[[tools]]
+name = "vera_review"                       # the name the model calls
+description = "review the working diff"
+
+[[skills]]
+slug = "house-style"
+description = "how this shop writes code"
+
+[[records]]
+lineage = "ctx.acme.web.no-force-push"     # the lineage the registry merges
+statement = "Never force-push to a shared branch."
+```
+
+Two rules govern the pair, and they are the whole design:
+
+> **A declaration nobody checks is a promise. A directory nobody declared
+> cannot be consented to.**
+
+So `PluginManifest::reconcile` takes the host's own read as a `PackageListing`
+and refuses **both** directions: an entry the directories hold that no
+declaration names, and an entry declared that the directories do not hold.
+`stella plugin install` calls it before it prints anything, which is what makes
+the consent document provably complete rather than well-intentioned.
+
+Three consequences worth stating:
+
+- **Names, never paths**, so nothing here needs `${plugin_dir}` interpolation
+  (contrast `[runtime]` and `[oracle] command`, where the host expands it).
+- **A `[[tools]]` entry deliberately does not restate the tool's argv.** Author
+  prose is labelled as the author's throughout the consent surface, but an argv
+  reads as a *fact about what will run*, and this crate cannot check it against
+  the file that decides. Printing an unverified command line is the "claimed
+  limit rendered as an enforced one" mistake in new clothes.
+- **The listing carries the effective identity, not the filename.** A package
+  shipping `tools/fixer.toml` whose manifest inside says `name = "lint_fix"`
+  must reconcile against `lint_fix`, or the agreement being enforced is between
+  the manifest and a filename while the model is handed something else.
+
+### 13.4 Governance: a contributed record steers, and may never enforce
+
+`.stella/rules/` is tracked in Git, and in the `regulated` tier a record gains
+the authority to *deny* a tool call only through the repository-visible,
+hash-chained promotion ledger (`.stella/rules/promotions.jsonl`), where each
+grant names its approver and its reason and is reviewed with the record it arms.
+A package's records are outside that repository and outside that chain: they
+arrive with an install, not a review, and `stella context validate` verifies the
+chain against the repository's tree, which never contained them.
+
+The loader half placed plugin records in the **project** trust tier and
+**first** in merge order so a user's own copy wins. Both halves are correct and
+together they are **not sufficient** — which was a live security finding when
+this section was written:
+
+> A promotion grant is keyed on a **lineage**, and `registry_from` armed
+> `(Trust::Project, lineage)` for every live grant in the ledger. A plugin's
+> records load into that same tier. So a package shipping a record whose
+> `lineage_id` matched a live grant inherited the authority to deny tool calls
+> with **no promotion entry naming it**. Merge order does not settle this: it
+> only decides the collision when the workspace still *has* a record of that
+> lineage, and a grant outlives the file it was written for — a record deleted,
+> renamed into another set file, or moved out without a retirement event leaves
+> the grant live and the lineage unclaimed.
+
+Closed on both sides, because either alone leaves a gap:
+
+1. **The declaration cannot ask for it.** `[[records]] enforcement` is a closed
+   vocabulary and `blocking` is refused at load
+   (`ManifestError::PluginRecordCannotEnforce`). The variant is spellable
+   precisely so the refusal can explain the governance rule instead of
+   degrading into a deserializer's "unknown variant".
+2. **The ledger cannot grant it.** `context_records::repo_owned_lineages`
+   restricts a grant to lineages the **repository's own** project files
+   declare — every project rule file that did not arrive inside an installed
+   package. A grant is the repository's statement about the repository's
+   record; it now says nothing about anyone else's.
+
+The witness is `a_promotion_grant_does_not_arm_a_record_a_plugin_shipped`, and
+its second half is the anti-vacuity half: the repository's own record of the
+very same lineage, under the very same grant, still arms.

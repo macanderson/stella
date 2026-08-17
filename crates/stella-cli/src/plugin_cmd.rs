@@ -187,18 +187,22 @@ fn install(
         ));
     }
 
-    println!("{}", stella_plugin::consent_text(&manifest));
+    // What the package *ships* — tools, skills, records — is declared in the
+    // manifest and rendered by `consent_text` with everything else (#3565).
+    // The host's job is the other half of that: check its own read of the
+    // directories against the declaration and refuse any disagreement, so the
+    // document below is provably complete. A `tools/` entry no `[[tools]]`
+    // names is executable code entering the model's surface that nobody
+    // consented to; a declaration with nothing behind it teaches a reader that
+    // the document is decorative. Both are refusals, and both come before
+    // anything is printed as though it were the truth.
+    manifest
+        .reconcile(&package::Inventory::of_package(source).listing())
+        .map_err(|mismatch| {
+            format!("`{name}` cannot be installed: {mismatch}\n\nNothing was copied.")
+        })?;
 
-    // What the package *ships* — tools, skills, records — read off the source
-    // directory, because only the host can see one (`package::Inventory::
-    // consent_addendum` argues the seam). Printed inside the same transaction
-    // and above the same single y/N: a contributed tool is executable code
-    // entering the model's surface, and consenting to it after the fact is not
-    // consenting to it.
-    let inventory = package::Inventory::of_package(source);
-    if let Some(addendum) = inventory.consent_addendum(name) {
-        println!("\n{addendum}");
-    }
+    println!("{}", stella_plugin::consent_text(&manifest));
 
     // The consent text lists the environment allowlist as the manifest wrote
     // it, because that crate has no credential vocabulary and must not grow

@@ -676,6 +676,89 @@ fn ships_a_package(source: &Path, plugin: &str) {
          \n[record.steering]\nforce = \"must\"\n",
     )
     .expect("record file");
+
+    // And the manifest declares all three (#3565). Not optional decoration:
+    // `install` reconciles the declaration against these very directories and
+    // refuses any disagreement, so a fixture that shipped without declaring is
+    // exactly the package that can no longer be installed.
+    let manifest = source.join(roster::MANIFEST_FILE);
+    let declared = format!(
+        "{}\n\
+         [[tools]]\nname = \"{plugin}_review\"\n\
+         description = \"review the diff the {plugin} way\"\n\n\
+         [[skills]]\nslug = \"house-style\"\n\
+         description = \"how this shop writes code\"\n\n\
+         [[records]]\nlineage = \"ctx.acme.web.marker\"\n\
+         statement = \"PACKAGE_RECORD_MARKER\"\n",
+        std::fs::read_to_string(&manifest).expect("the fixture manifest exists")
+    );
+    std::fs::write(&manifest, declared).expect("declared manifest");
+}
+
+/// **The reconciliation witness (#3565 item 2).** A package whose `tools/`
+/// holds a manifest the declaration does not name is **refused at install**,
+/// with both sides in the message and nothing copied.
+///
+/// The refusal is what makes `consent_text` provably complete: the document a
+/// user reads is rendered from the declaration alone, so a directory holding
+/// anything the declaration omits would put executable code into the agent's
+/// surface that nobody consented to. Before this, a package's contributions
+/// were discovered by directory convention and the manifest could not describe
+/// them at all.
+#[test]
+fn a_package_that_ships_more_than_it_declares_is_refused_at_install() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-undeclared");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    // One more tool than the manifest declares — the whole difference.
+    std::fs::write(
+        source.join(package::TOOLS_DIR).join("deploy.toml"),
+        "name = \"deploy\"\ndescription = \"ship it\"\ncommand = [\"/bin/true\"]\n",
+    )
+    .expect("undeclared tool");
+
+    let refusal = install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect_err("a package that ships an undeclared tool must be refused");
+    assert!(refusal.contains("deploy"), "{refusal}");
+    assert!(refusal.contains("[[tools]]"), "{refusal}");
+    assert!(refusal.contains("Nothing was copied"), "{refusal}");
+    assert!(
+        !stella_home::resolve_project_plugins_dir(&root)
+            .join("vera")
+            .exists(),
+        "and nothing was: a refused install leaves no directory behind"
+    );
+
+    // Declaring it is what makes the same bytes installable.
+    let manifest = source.join(roster::MANIFEST_FILE);
+    let declared = format!(
+        "{}\n[[tools]]\nname = \"deploy\"\ndescription = \"ship it\"\n",
+        std::fs::read_to_string(&manifest).expect("the fixture manifest exists")
+    );
+    std::fs::write(&manifest, declared).expect("declared manifest");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("a package that declares what it ships installs");
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// The custom-tool surface a session would assemble for `root`, gated
