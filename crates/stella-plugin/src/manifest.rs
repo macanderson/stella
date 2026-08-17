@@ -490,7 +490,7 @@ pub struct PluginManifest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<Capability>,
     /// The script tools this package ships into the agent's tool surface
-    /// (#3565). See [`ToolContribution`] and [`crate::package`] for why these
+    /// (#3565). See [`ToolContribution`] and [`crate::PackageListing`] for why these
     /// three tables declare *names* rather than paths, and why the host's own
     /// read is checked against them by [`PluginManifest::reconcile`].
     ///

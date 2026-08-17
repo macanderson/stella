@@ -17,7 +17,7 @@
 //! # The port is the one the host already has
 //!
 //! [`ChildTurns`] performs the capability over
-//! [`SubAgentDispatcher`](stella_core::SubAgentDispatcher) — the sub-agent
+//! [`SubAgentDispatcher`] — the sub-agent
 //! primitive `[subloop]` is already described in terms of, and the same one
 //! `task_assign` runs on. That is deliberate rather than convenient: a *new*
 //! port would have needed a second implementation of budget carving, spend
@@ -274,7 +274,7 @@ impl<D> ChildTurns<D> {
     ///
     /// Overrides the default table for that tier, and adds one the default
     /// table does not carry (`verifier` is the standing example — see
-    /// [`default_seats`]). Binding a tier to [`ModelCallRole::Worker`] does not
+    /// `default_seats`). Binding a tier to [`ModelCallRole::Worker`] does not
     /// buy a plugin the worker's seat: the independence refusal compares the
     /// resolved seat, so renaming the worker only changes which word gets
     /// refused.

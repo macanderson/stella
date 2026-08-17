@@ -32,7 +32,7 @@
 //! Ported from `scripts/self-driving.sh` (#1548); the shell driver now delegates
 //! these decisions instead of carrying a second copy of them.
 //!
-//! [`surface`] is the other half of that sentence: the loop is driven by a
+//! [`HOST_SURFACE`] is the other half of that sentence: the loop is driven by a
 //! **host** outside the binary (`doc:pipeline-as-plugins` §10, D2), so the
 //! verbs that host calls are a contract with a caller this repository does
 //! not own. [`HOST_SURFACE`] declares them and [`HOST_SURFACE_VERSION`] lets

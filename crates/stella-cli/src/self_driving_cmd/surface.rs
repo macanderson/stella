@@ -7,7 +7,7 @@
 //! the argument parser: the rendering, and the check that the declaration is
 //! **true of this binary**.
 //!
-//! [`surface_matches_the_argument_tree`] is that check, and it is the reason
+//! `surface_matches_the_argument_tree` is that check, and it is the reason
 //! the declaration is worth trusting. It walks the real
 //! [`super::SelfDrivingCmd`] clap tree and compares its leaves against
 //! [`stella_autonomy::HOST_SURFACE`] in **both** directions — a verb added to

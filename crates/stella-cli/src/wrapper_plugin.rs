@@ -9,7 +9,7 @@
 //! plugin participated in nothing. This module is that driver: it resolves
 //! `--pipeline <variant>` against what is installed, builds the transport the
 //! manifest's `[runtime]` block declares, and implements
-//! [`TurnDriver`](stella_runtime::TurnDriver) over the raw engine turn.
+//! [`TurnDriver`] over the raw engine turn.
 //!
 //! # What is here and what is deliberately one crate down
 //!

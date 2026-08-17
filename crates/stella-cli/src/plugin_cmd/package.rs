@@ -242,12 +242,11 @@ impl Inventory {
 fn tool_names(dir: &Path) -> Vec<String> {
     let mut found: Vec<String> = toml_files(dir)
         .into_iter()
-        .filter_map(|(path, stem)| {
-            let name = std::fs::read_to_string(&path)
+        .map(|(path, stem)| {
+            std::fs::read_to_string(&path)
                 .ok()
                 .and_then(|text| stella_tools::custom::parse_manifest(&text, &path).ok())
-                .map(|tool| tool.name);
-            Some(name.unwrap_or(stem))
+                .map_or(stem, |tool| tool.name)
         })
         .collect();
     found.sort();

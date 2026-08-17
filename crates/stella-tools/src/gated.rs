@@ -151,7 +151,7 @@ pub struct GatedToolSet<'a> {
     /// overwhelming majority — a lookup miss means [`Self::principal`], the
     /// session's own caller. A hit **replaces** it: an installed plugin's
     /// script tool is authorized as
-    /// [`Principal::Plugin`](stella_core::ports::Principal::Plugin), because
+    /// [`Principal::Plugin`], because
     /// the code that runs is the package's and the authority it holds is
     /// whatever the install consented to — not the human's. The derivation
     /// is [`crate::custom::CustomTool::principal`]; this field is only

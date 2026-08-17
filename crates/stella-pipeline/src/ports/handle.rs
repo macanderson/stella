@@ -389,7 +389,7 @@ impl<'p> CandidateHandles<'p> {
 
 /// The handle a grant over the host's own tree carries.
 ///
-/// Deliberately outside [`HANDLE_PREFIX`]'s namespace: it names no entry in any
+/// Deliberately outside `HANDLE_PREFIX`'s namespace: it names no entry in any
 /// [`CandidateHandles`] table, so every handle-addressed operation against it is
 /// [`CandidateDenial::UnknownHandle`] — which is the true answer. A tree the
 /// host is already running in has nothing to seal, no baseline to adopt
@@ -401,7 +401,7 @@ pub const HOST_TREE_HANDLE: &str = "host-tree";
 ///
 /// The shared-work-tree case, and the reason it is a function here rather than
 /// a second minting somewhere else: it resolves the root through the same
-/// [`canonical_root`] [`CandidateHandles::grant`] does, so a plugin's root and
+/// `canonical_root` [`CandidateHandles::grant`] does, so a plugin's root and
 /// the fence in [`resolve_in_root`] cannot come to disagree about which
 /// directory they mean. It fails closed the same two ways — a root the
 /// filesystem will not resolve, and a root this host cannot spell as UTF-8 —

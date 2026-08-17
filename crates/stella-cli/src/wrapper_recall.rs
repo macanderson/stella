@@ -29,7 +29,8 @@
 //!
 //! # A host with no context plane still attaches a gate
 //!
-//! [`SessionRecallHost::none`] answers every recall with no frames, and that is
+//! [`SessionRecallHost::open`] on a workspace whose context plane will not open
+//! keeps a `None` memory, and answers every recall with no frames. That is
 //! the point: a plugin reads an empty frame list and degrades honestly, which
 //! is what it is written to do. An **absent** gate is the one case it cannot be
 //! told about — its call hangs until the point timeout — so the driver attaches
