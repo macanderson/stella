@@ -139,7 +139,8 @@ pub use reward::{
     TrajectoryCost, WeightError, label,
 };
 pub use roster::{
-    AgentId, Assignment, AssignmentOverride, IndependenceLoss, Roster, RosterError, default_agent,
+    AgentId, Assignment, AssignmentOverride, IndependenceLoss, RoleTable, RoleTableError, Roster,
+    RosterError, default_agent,
 };
 pub use triage::TaskClass;
 pub use variant::{CLASSIC_MANIFEST, CLASSIC_VARIANT_ID, VariantError, classic, classic_program};

@@ -58,6 +58,12 @@
 //! uses for that lane. The internal role identifiers reach the rendered
 //! surface only inside a `from` path (`agents.triage.model`), where they are
 //! not a name for the slot but the literal key a user would edit.
+//!
+//! A role the deck has no word for — one a host contributed, which the table
+//! is open to since #3472 — is named by its own key. That is the one place an
+//! identifier is a label, and it is the honest option: the deck cannot invent
+//! a word for a role it has never heard of, and a category label ("plugin")
+//! would name the row after where it came from rather than after itself.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -67,7 +73,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::deck::{PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
-use crate::envelope::{EngineConfigState, RoleWiringRow};
+use crate::envelope::{EngineConfigState, RoleWiringRow, role_table};
 use crate::theme;
 use crate::views::cards;
 
@@ -84,9 +90,14 @@ const LABEL_W: usize = 10;
 /// land on the same row.
 const STANDING_W: usize = 12;
 
-/// The roles this dialog prints, in pipeline order with the interactive lane
-/// first: the settings key the driver sends each row under, and the word the
-/// deck says out loud for it.
+/// The roles this dialog has a **word** for, in pipeline order with the
+/// interactive lane first: the settings key the driver sends each row under,
+/// and the word the deck says out loud for it.
+///
+/// Not the roles it prints. It prints every row the driver sends
+/// ([`role_table`]); this list decides the order of the ones the deck has
+/// learned to name, and a role outside it is printed after them under its own
+/// key. Adding a name here is a copy decision, never a gate.
 const SLOTS: [(&str, &str); 6] = [
     ("default", "lead"),
     ("triage", "think"),
@@ -302,10 +313,20 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
         ))),
         Some(state) => {
             rows.extend(header_rows(model, state, ui.accessible));
-            for (key, word) in SLOTS {
-                if let Some(row) = state.roles.iter().find(|r| r.role == key) {
-                    rows.extend(role_rows(model, row, word, inner_w, ui.accessible));
-                }
+            // Folded, not looked up (#3472). Iterating [`SLOTS`] and looking
+            // each key up rendered exactly the six roles this file knows the
+            // names of, and dropped every other row the driver sent — so a
+            // role contributed by something the operator installed would
+            // resolve, run and spend while the one dialog that answers "what
+            // will each role run" denied it existed.
+            for entry in role_table(state, &SLOTS) {
+                rows.extend(role_rows(
+                    model,
+                    entry.row,
+                    entry.word,
+                    inner_w,
+                    ui.accessible,
+                ));
             }
         }
     }
@@ -382,14 +403,18 @@ mod tests {
             .join("\n")
     }
 
-    fn rendered(model: &WorkspaceModel, accessible: bool) -> String {
-        let state = state();
-        let mut lines = header_rows(model, &state, accessible);
-        for (key, word) in SLOTS {
-            let row = state.roles.iter().find(|r| r.role == key).unwrap();
-            lines.extend(role_rows(model, row, word, 68, accessible));
+    /// The body `render` builds, without a terminal: the same fold over the
+    /// same table, so a test cannot pass on rows the dialog would not print.
+    fn body_of(model: &WorkspaceModel, state: &EngineConfigState, accessible: bool) -> String {
+        let mut lines = header_rows(model, state, accessible);
+        for entry in role_table(state, &SLOTS) {
+            lines.extend(role_rows(model, entry.row, entry.word, 68, accessible));
         }
         text_of(&lines)
+    }
+
+    fn rendered(model: &WorkspaceModel, accessible: bool) -> String {
+        body_of(model, &state(), accessible)
     }
 
     /// The dialog's whole reason to exist: every role names the setting that
@@ -549,5 +574,69 @@ mod tests {
         ui.engine.state = Some(draft);
         let chosen = ui.engine.pristine.as_ref().or(ui.engine.state.as_ref());
         assert_eq!(chosen.unwrap().roles[0].model, "zai/glm-5.2");
+    }
+
+    /// **The #3472 witness.** A role the deck has no word for is *printed*,
+    /// with its model and the setting that chose it, and disappears when the
+    /// driver stops sending it — which is what happens when whatever
+    /// contributed it is removed.
+    ///
+    /// Before this, the dialog looped its own six-slot list and looked each
+    /// key up, so a contributed row was dropped silently: it resolved, ran and
+    /// spent, and the one surface that answers "what will each role run" said
+    /// nothing about it. The second half is what makes the first safe — a
+    /// table that could only ever grow would keep printing a routing answer
+    /// for a role that no longer routes anywhere.
+    #[test]
+    fn a_contributed_role_is_printed_and_leaves_with_its_contributor() {
+        let model = WorkspaceModel::new();
+        let mut installed = state();
+        installed.roles.push(wiring(
+            "vera-witness",
+            "anthropic/claude-opus-5-mini",
+            "high",
+            "plugin vera",
+        ));
+        let text = body_of(&model, &installed, false);
+        for needle in [
+            "vera-witness",
+            "anthropic/claude-opus-5-mini",
+            "plugin vera",
+        ] {
+            assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
+        }
+
+        let text = body_of(&model, &state(), false);
+        assert!(
+            !text.contains("vera-witness"),
+            "a role whose contributor is gone must leave the dialog with it:\n{text}"
+        );
+    }
+
+    /// The built-in rows keep their order and their words when a contributed
+    /// role joins them: the reading order someone has learned is not something
+    /// a contribution gets to rearrange.
+    #[test]
+    fn a_contributed_role_joins_the_end_and_moves_nothing() {
+        let mut state = state();
+        state
+            .roles
+            .push(wiring("aaa-contributed", "zai/glm-5.2", "low", "plugin a"));
+        let words: Vec<&str> = role_table(&state, &SLOTS)
+            .into_iter()
+            .map(|entry| entry.word)
+            .collect();
+        assert_eq!(
+            words,
+            vec![
+                "lead",
+                "think",
+                "research",
+                "plan",
+                "work",
+                "verify",
+                "aaa-contributed"
+            ]
+        );
     }
 }
