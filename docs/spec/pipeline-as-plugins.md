@@ -93,8 +93,12 @@ The starting position is better than "nothing" and worse than "nearly there".
   `Engine::stop_hook_feedback` (`crates/stella-core/src/driver/user_hooks.rs:291`)
   runs at completion; a `Deny` holds the turn open and the engine keeps
   stepping (`crates/stella-core/src/driver/completion.rs:183`). It is bounded by
-  `MAX_STOP_CONSULTS = 3` (`user_hooks.rs:99`), spent *before* the hooks run, and
-  the final round announces itself (`STOP_FINAL_ROUND_NOTE`, `:105`). It is
+  a host-supplied `stop_hold_allowance`, clamped to `STOP_HOLD_CEILING` (8) and
+  defaulting to `DEFAULT_STOP_HOLDS` (3) when no host asks
+  (`crates/stella-core/src/driver/config.rs:241`, `:250`, `:258`) — this is A7,
+  **landed** (aabb8d4; §4 below), which retired the `MAX_STOP_CONSULTS`
+  constant this bullet used to cite — spent *before* the hooks run, and
+  the final round announces itself (`STOP_FINAL_ROUND_NOTE`). It is
   fail-open by design (`:55-59`) — a hook that fails never blocks, because
   failing closed here means never completing.
 - Subprocess hooks: JSON on stdin, a `HookDecision` on stdout, 60s default and a
@@ -147,7 +151,14 @@ Ordered by dependency. Each item names the files it touches.
 
 ### A1. A plugin is not the user
 
-**Today Stella has no name for a plugin.** The authority vocabulary landed —
+**LANDED (ce9c7cd).** `Principal` gained a fifth variant,
+`Plugin(String)` — "an installed plugin, named by its manifest `name`"
+(`crates/stella-core/src/ports/authz.rs:76-77`) — distinct in shape and
+meaning from `Host(String)` exactly as this section required, plus a
+render of its grant for install consent. What follows is the reasoning that
+produced that addition, kept for the record.
+
+**Before this landed, Stella had no name for a plugin.** The authority vocabulary landed —
 `Principal` (`crates/stella-core/src/ports/authz.rs:62`), `AuthzGate` (`:244`),
 `RiskLevel` and `ToolContract` (`crates/stella-protocol/src/contract.rs:68`,
 `:197`) — and `Principal` has four variants: `User`, `Role`, `SubAgent`, `Host`.
@@ -236,23 +247,42 @@ expresses `["python3", "${plugin_dir}/main.py"]` and
 
 ### A6. Structured verdicts
 
-`HookDecision::Deny` carries only a `String` (`crates/stella-core/src/bus.rs:144`).
-A verification plugin must return which witness, which command, whether the flip
-was achieved, and the digest. This is invariant 5's own test — the driver and the
-trace fold both branch on it (#3246 §O1.2).
+**LANDED (aabb8d4, eb1fe9e).** `HookDecision::Deny` used to carry only a
+`String`. It now carries `Denial` (`crates/stella-protocol/src/denial.rs`):
+`reason` plus an optional `DenialEvidence` naming the witness, the command,
+`FlipOutcome`, and the artifact digest — exactly the four facts this item
+asked for. The driver reads it structurally rather than by parsing prose
+(`crates/stella-core/src/driver/user_hooks.rs:134-137`, `:379` emits the
+evidence into the `HOOK_STOP_BLOCKED` journal payload rather than only the
+rendered string). **Not independently verified here:** whether a trace fold
+in `stella-cli` already consumes that structured evidence, or only the
+journal payload exists so far — check before citing that half as done.
 
-While here: `RequireApproval` is surfaced as inapplicable at a turn boundary
-(`user_hooks.rs:327-329`). A paid plugin that must ask "verification budget
-exhausted, continue?" needs a real answer.
+While here: `RequireApproval` is **still** surfaced as inapplicable at a turn
+boundary (`user_hooks.rs:382-395`, renumbered from `:327-329`) — that half of
+this item did not land. A paid plugin that must ask "verification budget
+exhausted, continue?" still has no real answer; the code's own comment defers
+it to the wrapper socket (#3380).
 
 ### A7. `max_holds` becomes real
 
-`LoopGrant::max_holds` is declared at `manifest.rs:124` and **its value is
-read by nothing**; the live bound is the constant `MAX_STOP_CONSULTS`
-(`user_hooks.rs:99`). Load validation does read the field, but only for grade
-coherence — `manifest.rs:313-318` rejects it below `arbiter` and rejects zero.
-Nothing consults the number. Clamp the declared value to a host ceiling. A verification
-plugin needing four rounds cannot currently ask for them.
+**LANDED, engine side (aabb8d4).** The constant `MAX_STOP_CONSULTS` this
+section named is gone from the tree entirely — `grep` for it now returns
+nothing. In its place, `EngineConfig::stop_hold_allowance` is a host-supplied
+`Option<u32>` read through `EngineConfig::stop_holds()`
+(`crates/stella-core/src/driver/config.rs:241`, `:273-279`) and clamped to
+`STOP_HOLD_CEILING` (8) by `clamp_stop_holds`, defaulting to
+`DEFAULT_STOP_HOLDS` (3) when a host asks for nothing — `user_hooks.rs:353`
+consults it directly. A verification plugin's four-round ask is representable
+and consulted, exactly as this item asked.
+
+**Not landed: the wiring from a manifest to that field.** Nothing in
+`stella-cli` yet reads a `LoopGrant::max_holds` off an installed plugin's
+manifest and sets `stop_hold_allowance` from it — because A4 (the loader) has
+not landed, there is no installed manifest to read from. `config.rs`'s own doc
+comment states the intended caller ("the *host* reads `LoopGrant::max_holds`
+off a manifest, clamps it … and sets this field"); that caller does not exist
+in the tree yet.
 
 ### A8. Signals and stages grow to cover the pipeline
 
@@ -269,8 +299,13 @@ manifest is a second program with no gate on it."
 
 ### A9. Plugin events and the trace fold
 
-A `plugin.<id>.*` namespace in the bus catalog, plus the fold arm that reads
-it.
+**LANDED (ed18283).** `PLUGIN_NAMESPACE_PREFIX = "plugin."` is reserved in the
+bus catalog (`crates/stella-core/src/bus/names.rs:284`, with
+`plugin_event_name`/`plugin_id_of` validating and parsing it), and
+`crates/stella-cli/src/trace.rs` gained the fold arm: `TraceRecord::plugin_facts:
+Vec<PluginFact>` (`trace.rs:130-136`, `:195-207`), folded from `plugin.<id>.*`
+journal events (`trace.rs:351-354`) — present and empty, never omitted, when
+no plugin ran. Both halves this item asked for exist.
 
 (Correction, 2026-08-17: an earlier draft said this namespace was "already
 contemplated at `crates/stella-core/src/bus/names.rs:3-4`". It is not — the
@@ -299,6 +334,17 @@ Define the minimum serializable subset: create, root path, run-test, seal,
 adopt, remove. The host fences filesystem access; tamper snapshotting stays
 host-side, which `TamperPolicy::ArtifactIdentity` (`manifest.rs:187-192`)
 already assumes.
+
+**LANDED (9672787).** `CandidateOp::ALL` (`crates/stella-protocol/src/candidate.rs:121-141`)
+is exactly the six operations named above — `Create`, `Root`, `RunTest`,
+`Seal`, `Adopt`, `Remove` — and `crates/stella-pipeline/src/ports/handle.rs`'s
+`CandidateHandles` is the registry that mints a handle and answers each one by
+delegating to the existing `CandidateWorkspacePort`, fenced both lexically and
+on disk as this item required, with tamper snapshotting staying host-side.
+**Landed with a stated gap, not a silent one:** the module's own doc says
+"nothing on the shipping path constructs a `CandidateHandles` today" — the
+consumer is the wrapper socket's `after_turn` dispatch (A3), which does not
+exist yet — and names the seam that will wire it up as #3485.
 
 ---
 
@@ -574,21 +620,27 @@ Track A actually delivered a platform.
 
 ## 10. Track D — self-driving leaves core
 
-Self-driving differs from the pipeline in one respect that matters: **it is
-genuinely in `stella-core` today.** The pipeline left core long ago (core
-declares no `stella-pipeline` and holds no witness, ladder or flip code); this
-does not. `crates/stella-core/src/self_driving.rs` is 945 lines inside the
-engine crate.
+Self-driving used to differ from the pipeline in one respect that mattered: it
+was genuinely in `stella-core`. That is no longer true. D1 below — moving the
+deterministic decision core to a new leaf crate, `stella-autonomy` — **landed
+in 5c5c325**: `stella-core/src/lib.rs` no longer declares a `self_driving`
+module, `crates/stella-core/src/self_driving.rs` is gone, and the pure logic
+now lives at `crates/stella-autonomy/src/lib.rs` (958 lines) with its property
+tests in `crates/stella-autonomy/src/tests.rs`. The pipeline left core long ago
+in the same way (core declares no `stella-pipeline` and holds no witness,
+ladder or flip code); self-driving's decision core has now joined it. The rest
+of this section — D2 through D6 — is the plan as written; only D1 and the
+framing above it are updated to match the tree.
 
 ### What is there now
 
-The feature is already split three ways, and the split is good:
+The feature is split three ways, and the split is good:
 
 | Layer | Where | What |
 |---|---|---|
-| Decision | `crates/stella-core/src/self_driving.rs` | The AIMD controller sizing a cycle to its machine, the aperture ladder, the dry-streak oracle, digest normalization for the dedup set, the ledger folds. Pure, synchronous, owned data, property-tested. |
-| I/O | `crates/stella-cli/src/self_driving_cmd.rs` (+ `self_driving_cmd/probes.rs`, `self_driving_cmd/state.rs`) | Machine probes, state files, process spawning. Feeds results in, writes decisions out. |
-| Observation | `crates/stella-observatory/src/self_driving.rs` | Read-only fold over `~/.stella/self-driving/<slug>/` JSONL. Never writes. |
+| Decision | `crates/stella-autonomy/src/lib.rs` (leaf crate, no workspace-crate dependencies) | The AIMD controller sizing a cycle to its machine, the aperture ladder, the dry-streak oracle, digest normalization for the dedup set, the ledger folds. Pure, synchronous, owned data, property-tested. |
+| I/O | `crates/stella-cli/src/self_driving_cmd.rs` (+ `self_driving_cmd/probes.rs`, `self_driving_cmd/state.rs`) | Machine probes, state files, process spawning. Feeds results in, writes decisions out. Now depends on `stella-autonomy` rather than on `stella-core` for this logic. |
+| Observation | `crates/stella-observatory/src/self_driving.rs` | Read-only fold over `~/.stella/self-driving/<slug>/` JSONL, now also sourced from `stella-autonomy` instead of a private copy. Never writes. |
 
 There is also a shell driver (`scripts/self-driving.sh`) that delegates its
 decisions to the CLI verbs rather than carrying a second copy (#1548), a gate
@@ -597,18 +649,20 @@ logic hermetically, and a daemon path (`crates/stella-cli/src/daemon/`).
 Two specs already exist: `doc:self-driving-missions` and
 `doc:self-driving-foundry`.
 
-### Why it is in core, and why that is now wrong
+### Why it was in core, and why that premise stopped holding
 
-The module doc gives the reason plainly: the deterministic half lives in core so
+The module doc gave the reason plainly: the deterministic half lived in core so
 "the model never has to re-derive it and cannot get it subtly wrong", and
-keeping it free of I/O is what makes it property-testable.
+keeping it free of I/O is what made it property-testable.
 
-That reasoning is sound and the code is good. What has changed is the premise —
+That reasoning was sound and the code was good. What changed was the premise —
 core is meant to be a bare loop with minimal tools and one model, and an
 opinionated perpetual-delivery policy is not part of a bare loop. The AIMD
 controller and the aperture ladder are exactly the kind of policy Vera is
-leaving for. The purity that justified its placement is a property of the code,
-not of the crate it sits in: it stays property-testable in a plugin.
+leaving for. The purity that justified its original placement was a property
+of the code, not of the crate it sat in: it stays property-testable in
+`stella-autonomy`, a leaf on the `stella-diff` / `stella-home` pattern, exactly
+as D1 below specified.
 
 ### The honest problem: granularity
 
@@ -650,21 +704,24 @@ the plugin depends only on A1 (identity), not on #3380.
 
 ### The work
 
-- **D1. Move the pure core to a leaf crate — not into the plugin.** The module
-  imports only `std`, `serde` and `sha2`, nothing in `stella-core` calls it, and
-  `lib.rs:44` is the sole reference. Mechanically it is one `mod` line and three
-  `use` lines.
+- **D1. Move the pure core to a leaf crate — not into the plugin. DONE
+  (5c5c325).** The module imported only `std`, `serde` and `sha2`, nothing in
+  `stella-core` called it, and `lib.rs:44` was the sole reference — exactly as
+  predicted, the move was mechanical: one `mod` line removed from
+  `stella-core/src/lib.rs`, the file relocated to
+  `crates/stella-autonomy/src/lib.rs` with no behaviour change and no renamed
+  public items (verified: 25 `stella-autonomy` tests pass, and
+  `scripts/test-self-driving.sh` reports 60/60 checks with every assertion
+  intact — the behavioural golden D5 below names).
 
-  **It must land in a shared leaf crate, not inside the plugin binary**, because
-  `stella-observatory` links it deliberately — `Cargo.toml` carries the reason,
-  and it is a scar: the observatory previously carried its own `fold_runs` and
-  the two implementations drifted, so the dashboard and
-  `stella self-driving metrics` disagreed about whether the loop was `NOISY`
-  for every odd cycle count (#1613). Burying the fold in a plugin executable
-  re-creates that bug. A leaf crate on the `stella-diff` / `stella-home` pattern
-  keeps one copy for both readers.
-
-  Depends on nothing. Can land immediately, independent of every other track.
+  It landed in a shared leaf crate, not inside a plugin binary, as required:
+  `crates/stella-autonomy/Cargo.toml` declares zero workspace-crate
+  dependencies, and its header comment carries the reason —
+  `stella-observatory` links it deliberately because the observatory
+  previously carried its own `fold_runs` and the two implementations drifted,
+  so the dashboard and `stella self-driving metrics` disagreed about whether
+  the loop was `NOISY` for every odd cycle count (#1613). A leaf crate on the
+  `stella-diff` / `stella-home` pattern keeps one copy for both readers.
 
 - **D2. The plugin is a host, not a wrapper.** Settled by §10's granularity
   argument and by the fact that the shell driver already works this way. It
