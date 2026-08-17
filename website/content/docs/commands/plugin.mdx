@@ -124,7 +124,9 @@ A declared environment variable that stella grades as a model credential is refu
 stella plugin remove vera
 ```
 
-Deletes the plugin's directory, project scope first. Its hook dispatches stop immediately: the roster is recomputed from disk every time it is read, so there is no second place a stale grant can survive.
+Deletes the plugin's directory in **every** tier that holds the name — project scope first, then user — and names each copy it removed. Stopping at the first would report success while the other tier's copy was still dispatched on every tool call, which is the one failure uninstall may not have. The name is the one in the manifest, not the directory's, so a package that was unpacked or renamed into a differently named directory is still removable under the name `stella plugin list` prints for it.
+
+Its hook dispatches stop immediately: the roster is recomputed from disk every time it is read, so there is no second place a stale grant can survive.
 
 ## Scopes, shadowing, and switching one off
 

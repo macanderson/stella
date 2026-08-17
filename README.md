@@ -255,7 +255,13 @@ Prefer `api_key_env` over a literal `api_key` — settings files get committed.
 > silently point your real API key at its own server. Cosmetic fields
 > (`name`, `default_model`, `dialect`) still apply; the user and org-managed
 > scopes are always trusted. Project hooks are gated the same way, via
-> `STELLA_PROJECT_HOOKS`.
+> `STELLA_PROJECT_HOOKS`, and so are **project-scope plugins**
+> (`<workspace>/.stella/plugins`): a plugin declares a program Stella spawns
+> and can arbitrate the agent loop, so it is strictly more powerful than a
+> hook, and one that arrived with a `git clone` is not loaded, listed, or
+> dispatched until you set `STELLA_TRUST_PROJECT=1`. Plugins you installed
+> yourself with `stella plugin install --scope user` live in `~/.stella/plugins`
+> and are unaffected.
 
 ### Agent engine config (`agent_engine_config`)
 

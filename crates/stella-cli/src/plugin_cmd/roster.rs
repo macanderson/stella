@@ -308,8 +308,18 @@ fn read_project_tier(workspace_root: &Path, notices: &mut Vec<String>) -> Vec<In
     read_tier(&dir, PluginScope::Project, notices)
 }
 
-/// Read one tier's directory. A missing directory is an empty tier.
-fn read_tier(dir: &Path, scope: PluginScope, notices: &mut Vec<String>) -> Vec<InstalledPlugin> {
+/// Read one tier's directory, ungated. A missing directory is an empty tier.
+///
+/// Ungated is the contract: the project tier's trust decision belongs to
+/// [`read_project_tier`], because `stella plugin remove` must be able to reach
+/// a plugin sitting in a workspace the operator has *not* trusted — deleting a
+/// package is the one operation an untrusted tier must never be able to
+/// refuse. Reading a manifest parses TOML; it spawns nothing.
+pub(crate) fn read_tier(
+    dir: &Path,
+    scope: PluginScope,
+    notices: &mut Vec<String>,
+) -> Vec<InstalledPlugin> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
@@ -325,22 +335,81 @@ fn read_tier(dir: &Path, scope: PluginScope, notices: &mut Vec<String>) -> Vec<I
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
+        // A leading dot is never a plugin: `super::checked_name` refuses such
+        // a manifest name, so no install can produce one — and `install`
+        // stages its copy under exactly that spelling, so this is what keeps a
+        // half-copied tree from being loaded and routed in the window before
+        // it is renamed into place.
+        .filter(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+        })
         .collect();
     dirs.sort();
 
-    let mut found = Vec::new();
+    let mut found: Vec<InstalledPlugin> = Vec::new();
     for path in dirs {
         match load_manifest(&path) {
-            Ok(Some(manifest)) => found.push(InstalledPlugin {
-                manifest,
-                dir: path,
-                scope,
-            }),
+            Ok(Some(manifest)) => {
+                note_identity_surprises(&path, &manifest, &found, notices);
+                found.push(InstalledPlugin {
+                    manifest,
+                    dir: path,
+                    scope,
+                });
+            }
             Ok(None) => {}
             Err(reason) => notices.push(format!("  ! {reason}")),
         }
     }
     found
+}
+
+/// Report the two ways a directory's name and its manifest's `name` can leave
+/// a user reading about a plugin that is not the one on disk.
+///
+/// The manifest name is the identity **everywhere**: the principal a gate
+/// sees, the key `plugins.<name> = "off"` retracts, the word `stella plugin
+/// list` prints, and the argument `stella plugin remove` takes. The directory
+/// name is not the identity and never was — so neither of these is an error,
+/// and both are things a user cannot otherwise find out:
+///
+/// - a directory that disagrees with its manifest is listed and routed under a
+///   name that is nowhere on disk, and
+/// - two directories in one tier claiming one name **collapse** in
+///   [`PluginRoster::compose`], where `BTreeMap::insert` keeps the last of them
+///   in sorted order and the other silently does not run.
+fn note_identity_surprises(
+    path: &Path,
+    manifest: &PluginManifest,
+    earlier: &[InstalledPlugin],
+    notices: &mut Vec<String>,
+) {
+    if path
+        .file_name()
+        .is_some_and(|dir_name| dir_name != manifest.name.as_str())
+    {
+        notices.push(format!(
+            "  ! {} declares `name = \"{}\"` — it is listed, routed and removed under that \
+             name, not under its directory's",
+            path.display(),
+            manifest.name
+        ));
+    }
+    if let Some(shadowed) = earlier
+        .iter()
+        .find(|plugin| plugin.manifest.name == manifest.name)
+    {
+        notices.push(format!(
+            "  ! {} and {} both declare `name = \"{}\"` — only {} is in force; the other is \
+             installed and will never run",
+            shadowed.dir.display(),
+            path.display(),
+            manifest.name,
+            path.display()
+        ));
+    }
 }
 
 /// Parse one plugin directory's manifest. `Ok(None)` = no `plugin.toml`, so
@@ -413,6 +482,38 @@ mod tests {
             .expect("the manifest loads")
             .expect("a directory holding plugin.toml is a plugin");
         assert_eq!(found.name, "named-by-spec");
+    }
+
+    /// A directory whose name begins with a dot is not a plugin, even when it
+    /// holds a perfectly good manifest.
+    ///
+    /// This is what makes `install`'s staged copy safe: it fills
+    /// `.staging-<pid>-…` inside the tier and renames it into place, so for
+    /// the duration of the copy the tier holds a complete-looking package that
+    /// must not be loaded, listed or — above all — routed. `checked_name`
+    /// refuses a leading dot as a plugin name, so nothing legitimate is hidden
+    /// by this.
+    #[test]
+    fn a_dot_directory_is_never_loaded_as_a_plugin() {
+        let tier = tempfile::tempdir().expect("a temp dir");
+        for name in [".staging-1234-99-0", "vera"] {
+            let dir = tier.path().join(name);
+            std::fs::create_dir_all(&dir).expect("fixture dir");
+            std::fs::write(dir.join(MANIFEST_FILE), "name = \"vera\"").expect("fixture manifest");
+        }
+
+        let mut notices = Vec::new();
+        let found = read_tier(tier.path(), PluginScope::Project, &mut notices);
+        let names: Vec<&Path> = found.iter().map(|plugin| plugin.dir.as_path()).collect();
+        assert_eq!(
+            names,
+            vec![tier.path().join("vera").as_path()],
+            "the staging tree is invisible to the roster"
+        );
+        assert!(
+            notices.is_empty(),
+            "and it is not reported as a name collision either: {notices:?}"
+        );
     }
 
     /// [`EVENT_ORDER`] must name every variant: an event missing from it is
