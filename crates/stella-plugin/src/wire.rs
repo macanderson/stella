@@ -652,6 +652,23 @@ pub struct AfterTurnRequest {
 /// The engine always finishes its own turn and always says so; `completed` is
 /// that statement, and a wrapper's "the whole job is over" is a separate,
 /// separately named thing ([`Continuation`]) that cannot fake it.
+///
+/// # Why two of the four fields are optional
+///
+/// `tools` and `changed_files` are facts a host **may not have**, and the two
+/// answers a plugin needs to tell apart are "the turn dispatched no tools /
+/// changed no files" and "this host does not report them". They were plain
+/// `Vec`s until #3552, so every host that could not measure them sent `[]` —
+/// which reads as the first answer and *is* the second. A wrapper that gates
+/// its evidence on "did the turn touch anything" then graded every run as
+/// untouched, and nothing in the message let it notice.
+///
+/// So the absent case is spelled `None` (the key is omitted on the wire) and
+/// the empty case is spelled `Some(vec![])` (`[]`). Additive:
+/// [`PROTOCOL_VERSION`] is unchanged, a plugin written against the old shape
+/// reads `[]` exactly where it always did, and a host that omits the key sends
+/// bytes the old readers already accepted as "no entries" — the difference is
+/// that a reader who *cares* can now ask.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TurnOutcome {
@@ -660,12 +677,15 @@ pub struct TurnOutcome {
     /// The final assistant text.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub answer: String,
-    /// The tools the turn dispatched, in call order, by name.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<String>,
-    /// Workspace-relative paths the turn changed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub changed_files: Vec<String>,
+    /// The tools the turn dispatched, in call order, by name — or `None` when
+    /// this host does not observe them. See the type docs: `Some(vec![])` is
+    /// "the turn dispatched none", which is a different claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+    /// Workspace-relative paths the turn changed, or `None` when this host does
+    /// not measure them. `Some(vec![])` is "the turn changed nothing".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_files: Option<Vec<String>>,
 }
 
 /// The evidence a wrapper gathered.

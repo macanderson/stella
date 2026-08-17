@@ -160,6 +160,15 @@
       }
     },
     {
+      "case": "turn_outcome/measured-nothing",
+      "message": {
+        "answer": "nothing needed changing",
+        "changed_files": [],
+        "completed": true,
+        "tools": []
+      }
+    },
+    {
       "case": "turn_outcome/minimal",
       "message": {
         "completed": false

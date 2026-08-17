@@ -243,6 +243,10 @@ fn parts() -> Result<Value, serde_json::Error> {
         case("test_plan/full", &test_plan_full())?,
         case("test_plan/minimal", &test_plan_minimal())?,
         case("turn_outcome/full", &turn_outcome_full())?,
+        case(
+            "turn_outcome/measured-nothing",
+            &turn_outcome_measured_nothing(),
+        )?,
         case("turn_outcome/minimal", &turn_outcome_minimal())?,
         case("observed_evidence/full", &observed_evidence_full())?,
         case("observed_evidence/minimal", &observed_evidence_minimal())?,
@@ -543,17 +547,32 @@ fn turn_outcome_full() -> TurnOutcome {
     TurnOutcome {
         completed: true,
         answer: "the witness now passes".to_string(),
-        tools: vec!["read_file".to_string(), "edit_file".to_string()],
-        changed_files: vec!["crates/stella-plugin/src/wire.rs".to_string()],
+        tools: Some(vec!["read_file".to_string(), "edit_file".to_string()]),
+        changed_files: Some(vec!["crates/stella-plugin/src/wire.rs".to_string()]),
     }
 }
 
+/// A host that **does** report both facts, about a turn that did nothing — the
+/// `[]` half of the `null`-vs-`[]` distinction #3552 turns on. Published beside
+/// the other two so a future edit that collapses the empty case back into the
+/// absent one is a diff in this corpus rather than a silent re-widening.
+fn turn_outcome_measured_nothing() -> TurnOutcome {
+    TurnOutcome {
+        completed: true,
+        answer: "nothing needed changing".to_string(),
+        tools: Some(Vec::new()),
+        changed_files: Some(Vec::new()),
+    }
+}
+
+/// A host that reports neither fact: both keys are absent, which is "not
+/// measured here" and never "empty".
 fn turn_outcome_minimal() -> TurnOutcome {
     TurnOutcome {
         completed: false,
         answer: String::new(),
-        tools: Vec::new(),
-        changed_files: Vec::new(),
+        tools: None,
+        changed_files: None,
     }
 }
 

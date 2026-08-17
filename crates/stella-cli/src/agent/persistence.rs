@@ -32,12 +32,23 @@ pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = stella_pipeline::variant::CLAS
 /// ran** and nothing else; `variant` is the wrapper, and it is written *only
 /// when that manifest was the thing that ran*. A raw turn with no wrapper over
 /// it leaves the column NULL, which is a real answer ("no wrapper"), not a gap.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct TurnDoor<'a> {
     /// The door — `run`, `chat`, `deck`, …
     pub(crate) kind: &'a str,
     /// The wrapper variant that ran over this turn, if one did.
     pub(crate) variant: Option<&'a str>,
+    /// What the caller wants told about the turn it is asking for, when it
+    /// wants anything. `None` — every door but the wrapper driver's — installs
+    /// no tap and pays nothing.
+    ///
+    /// It rides on the door rather than as a parameter of its own because the
+    /// door is already the value that says *who is asking for this turn and on
+    /// whose behalf*, and because [`super::super::agent`]`::run_turn` lives in a
+    /// grandfathered god file closed to growth: threading a fact through a
+    /// value that is already threaded costs that file no lines (AGENTS.md
+    /// § "God files").
+    pub(crate) facts: Option<crate::turn_facts::TurnFacts>,
 }
 
 impl<'a> TurnDoor<'a> {
@@ -46,6 +57,7 @@ impl<'a> TurnDoor<'a> {
         Self {
             kind,
             variant: None,
+            facts: None,
         }
     }
 
@@ -57,6 +69,26 @@ impl<'a> TurnDoor<'a> {
         Self {
             variant: Some(variant),
             ..self
+        }
+    }
+
+    /// The same door, folding this turn's tools and file changes into `facts`
+    /// as its events go past (#3552).
+    pub(crate) fn reporting_to(self, facts: crate::turn_facts::TurnFacts) -> Self {
+        Self {
+            facts: Some(facts),
+            ..self
+        }
+    }
+
+    /// Wrap the turn's event sender with whatever observer this door asked for.
+    ///
+    /// Identity when it asked for none, so a door that wants no report pays no
+    /// closure — this is on the send path of every event of every turn.
+    pub(crate) fn observing(&self, events: stella_core::EventSender) -> stella_core::EventSender {
+        match &self.facts {
+            Some(facts) => facts.observing(events),
+            None => events,
         }
     }
 }

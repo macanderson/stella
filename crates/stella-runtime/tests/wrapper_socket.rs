@@ -150,8 +150,8 @@ fn after(goal: &str) -> AfterTurnRequest {
         turn: TurnOutcome {
             completed: true,
             answer: "rewrote the hot loop".into(),
-            tools: vec!["edit_file".into()],
-            changed_files: vec!["crates/stella-core/src/driver.rs".into()],
+            tools: Some(vec!["edit_file".into()]),
+            changed_files: Some(vec!["crates/stella-core/src/driver.rs".into()]),
         },
     }
 }

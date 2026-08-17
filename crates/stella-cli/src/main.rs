@@ -119,11 +119,14 @@ mod tool_switches;
 mod trace;
 mod tune_cmd;
 mod turn_diff;
+mod turn_facts;
 mod turn_files;
 mod usage_cmd;
 // The wrapper socket's first driver (#3494). Beside `agent.rs` rather than
 // inside it, because that file is a grandfathered god file closed to growth.
+mod wrapper_candidate;
 mod wrapper_plugin;
+mod wrapper_recall;
 
 /// Serializes tests that mutate process environment variables. `setenv` /
 /// `getenv` from concurrent threads is documented UB on POSIX, and the test

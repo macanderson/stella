@@ -64,13 +64,15 @@
 //! across the use, which is a substrate change, not a caller change — #3483,
 //! declared rather than pretended away.
 //!
-//! # No production caller yet, and that is tracked
+//! # Who calls this, and who deliberately does not
 //!
-//! Nothing on the shipping path constructs a [`CandidateHandles`] today: the
-//! consumer is the wrapper socket's `after_turn` dispatch
-//! (`doc:wrapper-socket` §5), which does not exist yet. [`CandidateHandles::register`]
-//! is the seam that will let the fan-out expose the workspaces it already
-//! creates instead of a second set beside them — #3485.
+//! `stella-cli`'s wrapper driver mints the grant its plugins receive — through
+//! [`host_tree_grant`], not through the table, because `stella run --pipeline
+//! <variant>` runs its turn in the **shared work tree** and a grant naming a
+//! worktree the turn never touched would be a lie a plugin cannot detect
+//! (#3553). The table itself still has no production caller: its consumer is a
+//! fan-out that exposes the workspaces it already creates, and
+//! [`CandidateHandles::register`] is the seam for that — #3485.
 //!
 //! # Tamper snapshotting stays host-side
 //!
@@ -383,6 +385,72 @@ impl<'p> CandidateHandles<'p> {
     ) -> std::sync::MutexGuard<'_, BTreeMap<CandidateHandle, Arc<dyn CandidateWorkspace>>> {
         self.live.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// The handle a grant over the host's own tree carries.
+///
+/// Deliberately outside [`HANDLE_PREFIX`]'s namespace: it names no entry in any
+/// [`CandidateHandles`] table, so every handle-addressed operation against it is
+/// [`CandidateDenial::UnknownHandle`] — which is the true answer. A tree the
+/// host is already running in has nothing to seal, no baseline to adopt
+/// against, and no workspace to remove; answering `Ok` to any of those would be
+/// the host claiming an isolation it does not have.
+pub const HOST_TREE_HANDLE: &str = "host-tree";
+
+/// Mint the [`CandidateGrant`] for a tree the host is **already running in**.
+///
+/// The shared-work-tree case, and the reason it is a function here rather than
+/// a second minting somewhere else: it resolves the root through the same
+/// [`canonical_root`] [`CandidateHandles::grant`] does, so a plugin's root and
+/// the fence in [`resolve_in_root`] cannot come to disagree about which
+/// directory they mean. It fails closed the same two ways — a root the
+/// filesystem will not resolve, and a root this host cannot spell as UTF-8 —
+/// rather than handing out a path nothing can be judged against.
+///
+/// What it does **not** mint is isolation. [`CandidateHandles`] is a table over
+/// [`CandidateWorkspacePort`], and the host's own tree is not a workspace that
+/// port created; registering it would need a `CandidateWorkspace` whose
+/// `seal`/`adopt`/`graft_witness` are all refusals, which is a second isolation
+/// implementation wearing the first one's trait. So the grant carries a real
+/// root and a real test plan — everything a plugin needs to *read* the tree the
+/// turn ran in and run the test there — and [`HOST_TREE_HANDLE`] addresses
+/// nothing.
+///
+/// # Errors
+///
+/// [`CandidateDenial::RootUnavailable`] for a root that cannot be resolved on
+/// this filesystem or is not valid UTF-8.
+pub fn host_tree_grant(
+    root: &str,
+    test: Option<TestPlan>,
+) -> Result<CandidateGrant, CandidateDenial> {
+    let canonical = canonical_root(root)?
+        .into_os_string()
+        .into_string()
+        .map_err(|_| CandidateDenial::RootUnavailable {
+            reason: "the workspace root is not valid UTF-8".to_string(),
+        })?;
+    Ok(CandidateGrant {
+        handle: CandidateHandle::new(HOST_TREE_HANDLE),
+        root: canonical,
+        test,
+    })
+}
+
+/// Resolve one caller-supplied relative path inside `root`, or refuse it.
+///
+/// The same funnel [`CandidateHandles::resolve_path`] runs, for a caller that
+/// holds a root rather than a handle — a driver checking the identity of a
+/// witness artifact inside the tree it granted, say. Both layers apply: see the
+/// module docs for what the answer promises and what it cannot.
+///
+/// # Errors
+///
+/// [`CandidateDenial::Path`] for a path that is absolute, traverses, is
+/// malformed or lands outside `root` once symlinks are followed;
+/// [`CandidateDenial::RootUnavailable`] for a root that will not canonicalise.
+pub fn resolve_in_root(root: &str, relative: &str) -> Result<PathBuf, CandidateDenial> {
+    fence(root, relative)
 }
 
 /// Build the wire [`TestPlan`] for one already-parsed invocation and what it

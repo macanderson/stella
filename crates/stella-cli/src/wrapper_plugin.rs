@@ -30,22 +30,31 @@
 //! growth (AGENTS.md § "God files"), so this is a sibling module — the same
 //! placement, for the same reason, as `crate::turn_files`.
 //!
-//! # Two honest gaps, declared rather than papered over
+//! # What a plugin is handed, and what it is told it cannot have
 //!
-//! 1. **No candidate workspace and no tamper snapshot.** The raw one-shot path
-//!    works in the shared tree, so [`RoundInput::candidate`] is `None` and this
-//!    host reports [`TamperFinding::NotChecked`] about its own check. A wrapper
-//!    whose `[oracle]` declares `flip = "required"` therefore gets
-//!    `Verdict::Undecided` on this path every time — correctly, since nothing
-//!    ran a witness — and a wrapper whose definition of done is a measurement
-//!    works today. Wiring the pipeline's candidate workspaces to the socket is
-//!    #3553, not this slice.
-//! 2. **`TurnOutcome::tools` and `changed_files` are empty.** The engine's
-//!    `TurnOutcome` carries the answer and the cost; the tool names and the
-//!    tree delta exist only as events already drained by the renderer when this
-//!    seam sees the turn. A plugin reading either gets an empty list, which is
-//!    indistinguishable from "the turn touched nothing" — a real defect for a
-//!    wrapper that reads them, tracked as #3552.
+//! The three holes this module shipped with are closed, and each closure names
+//! the limit that remains rather than implying there is none:
+//!
+//! 1. **A real candidate grant and a real tamper finding** (#3553). The grant
+//!    names the **shared work tree** — the tree the turn actually runs in — and
+//!    carries the parsed `--test-command` as a [`stella_plugin::TestPlan`], so a wrapper whose
+//!    `[oracle]` declares `flip = "required"` can observe red before and green
+//!    after and reach a *decided* verdict. The host pins the identity of the
+//!    artifacts that invocation names and vouches for them itself. See
+//!    [`crate::wrapper_candidate`] for why the grant is not an isolated
+//!    worktree, and for the invocation shapes whose tamper finding is still
+//!    [`stella_plugin::TamperFinding::NotChecked`].
+//! 2. **Real turn facts** (#3552). `TurnOutcome::tools` and `changed_files` are
+//!    folded from the turn's own event stream by [`crate::turn_facts`] and sent
+//!    as `Some(..)` — so `Some(vec![])` is "the turn touched nothing" and the
+//!    `None` the wire now also carries is "this host does not report it", which
+//!    is what a plugin could not tell apart before.
+//! 3. **A host-call gate** (#3561). Every wrapper is bound with one, so a
+//!    plugin's `recall` reaches this workspace's context plane
+//!    ([`crate::wrapper_recall`]) instead of finding no channel at all. A host
+//!    with no plane still attaches the gate and answers with no frames: an
+//!    empty answer is something a plugin can degrade on, and an absent gate is
+//!    the one thing it cannot be told about.
 //!
 //! And two scope limits: `--pipeline` is on `stella run` alone and a plugin's
 //! `Unmet` does not fail the process (#3554), and only this driver of
@@ -59,11 +68,11 @@ use stella_core::estimator::CalibrationMap;
 use stella_core::ports::ToolExecutor;
 use stella_core::router::Router;
 use stella_model::provider::Provider;
-use stella_plugin::{SignalValues, TamperFinding, TurnOutcome as WrapperTurnOutcome};
+use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
-    DispatchReport, DrivenTurn, RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude,
-    WrapperDispatch,
+    DEFAULT_HOST_MAX_CALLS, DispatchReport, DrivenTurn, HostCallGate, HostPlanes, RoundInput,
+    SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -147,11 +156,36 @@ impl<'a> PipelineChoice<'a> {
     }
 }
 
+/// One installed wrapper, bound to its process and to what this host will do
+/// for it.
+///
+/// The two travel together because the gate outlives the call that built it and
+/// nothing else can read it: [`WrapperDispatch`] holds the transport as an
+/// `Arc<dyn TurnWrapper>` and has no way to hand back the gate inside it, so a
+/// caller holding only the dispatch could never report what a plugin was
+/// refused — the silent half of "a refusal is reported, never silent".
+#[derive(Debug)]
+pub(crate) struct BoundWrapper {
+    /// The sequence that drives the plugin's points.
+    pub(crate) dispatch: WrapperDispatch,
+    /// The host-call gate this plugin's conversations run through, kept so
+    /// [`HostCallGate::refusals`] reaches a surface after the run.
+    gate: Arc<HostCallGate>,
+}
+
+impl BoundWrapper {
+    /// The variant id this wrapper runs under.
+    pub(crate) fn variant(&self) -> &str {
+        self.dispatch.variant()
+    }
+}
+
 /// Read what is installed and bind the wrapper `variant` names.
 ///
-/// The impure half — it reads the two plugin tiers and the settings that retract
-/// them — kept apart from [`bind_installed`], which is the decision and is
-/// therefore the half the tests drive.
+/// The impure half — it reads the two plugin tiers, the settings that retract
+/// them, and this workspace's context plane — kept apart from
+/// [`bind_installed`], which is the decision and is therefore the half the tests
+/// drive.
 ///
 /// # Errors
 ///
@@ -160,7 +194,7 @@ pub(crate) fn resolve(
     workspace_root: &std::path::Path,
     variant: &str,
     warn: &mut dyn FnMut(String),
-) -> Result<WrapperDispatch, String> {
+) -> Result<BoundWrapper, String> {
     let settings = crate::settings::Settings::load(workspace_root).unwrap_or_default();
     let (roster, notices) = PluginRoster::load(workspace_root, &settings);
     // A plugin that did not load must never vanish silently: "I installed it
@@ -168,7 +202,14 @@ pub(crate) fn resolve(
     for notice in notices {
         warn(notice.trim_start_matches(" ! ").to_string());
     }
-    bind_installed(&roster, variant, warn)
+    bind_installed(
+        &roster,
+        variant,
+        Box::new(crate::wrapper_recall::SessionRecallHost::open(
+            workspace_root,
+        )),
+        warn,
+    )
 }
 
 /// Find the installed wrapper plugin that declares `variant`, and bind it to
@@ -184,11 +225,19 @@ pub(crate) fn resolve(
 /// [`SubprocessWrapper::declare`] withholds model credentials at the socket for
 /// every driver (#3512), and a plugin author whose manifest asked for one can
 /// only stop asking if they are told.
+///
+/// `recall` is this host's context plane, taken as a parameter rather than
+/// opened here so the decision stays testable without a workspace on disk. It
+/// is always bound into a [`HostCallGate`], even when the plane behind it is
+/// empty: a plugin that asks and is answered "no frames" degrades honestly,
+/// while a plugin that asks through a transport with *no* gate has its stdin
+/// shut and waits for an answer that never comes (#3561).
 pub(crate) fn bind_installed(
     roster: &PluginRoster,
     variant: &str,
+    recall: Box<dyn stella_runtime::wrapper::RecallHost>,
     warn: &mut dyn FnMut(String),
-) -> Result<WrapperDispatch, String> {
+) -> Result<BoundWrapper, String> {
     let installed = roster
         .plugins()
         .iter()
@@ -254,8 +303,22 @@ pub(crate) fn bind_installed(
              receives a model credential; declare a [roles] tier instead"
         ));
     }
-    WrapperDispatch::bind(installed.manifest.clone(), Arc::new(admitted.wrapper))
-        .map_err(|error| format!("wrapper \"{variant}\" cannot be driven: {error}"))
+    // The manifest's own `[loop]` grant is the authoritative filter — an
+    // undeclared capability is refused before this host performs anything —
+    // and `DEFAULT_HOST_MAX_CALLS` clamps whatever allowance it asked for.
+    let gate = Arc::new(HostCallGate::declare(
+        installed.manifest.loop_grant.clone(),
+        DEFAULT_HOST_MAX_CALLS,
+        Box::new(HostPlanes::recalling(crate::wrapper_recall::BoxedRecall(
+            recall,
+        ))),
+    ));
+    let dispatch = WrapperDispatch::bind(
+        installed.manifest.clone(),
+        Arc::new(admitted.wrapper.serving(Arc::clone(&gate))),
+    )
+    .map_err(|error| format!("wrapper \"{variant}\" cannot be driven: {error}"))?;
+    Ok(BoundWrapper { dispatch, gate })
 }
 
 /// This host's published signal values, as they stand **before** the turn.
@@ -341,6 +404,9 @@ pub(crate) struct RawTurnDriver<'a> {
     pub(crate) recall_event: Option<AgentEvent>,
     /// The session memory, for the execution stamp and skill-usage record.
     pub(crate) memory: Option<&'a mut SessionMemory>,
+    /// The artifacts this host pinned before the run, and the finding it
+    /// reports about them after each turn (#3553).
+    pub(crate) watch: &'a crate::wrapper_candidate::TamperWatch,
     /// What each round's turn returned, in order — the caller's own view of a
     /// loop the dispatcher owns.
     pub(crate) results: Vec<Result<(), CliFailure>>,
@@ -353,6 +419,10 @@ impl TurnDriver for RawTurnDriver<'_> {
         // hands back user messages, and they are appended *after* the
         // byte-stable system prefix the conversation already opens with.
         self.messages.extend(prelude.into_messages());
+        // One observer per round: `tools` and `changed_files` are facts about
+        // *this* turn, and a fold shared across rounds would report the first
+        // round's tools as the third round's (#3552).
+        let facts = crate::turn_facts::TurnFacts::new();
         let outcome = crate::agent::run_turn(
             self.provider,
             self.base_tools,
@@ -365,7 +435,9 @@ impl TurnDriver for RawTurnDriver<'_> {
             self.cfg,
             self.format,
             self.store,
-            TurnDoor::new("run").wrapped_by(self.variant),
+            TurnDoor::new("run")
+                .wrapped_by(self.variant)
+                .reporting_to(facts.clone()),
             self.prompt,
             Some(self.session),
             self.recall_event.take(),
@@ -373,33 +445,31 @@ impl TurnDriver for RawTurnDriver<'_> {
         )
         .await;
 
+        // `Some` in every arm, including the aborted one: this host *does*
+        // observe both facts, and a turn that aborted after two tool calls made
+        // those two calls. `None` is reserved for a host that cannot look.
+        let observed = |completed: bool, answer: String| WrapperTurnOutcome {
+            completed,
+            answer,
+            tools: Some(facts.tools()),
+            changed_files: Some(facts.changed_files()),
+        };
         let turn = match &outcome {
-            Ok(stella_core::TurnOutcome::Completed { text, .. }) => WrapperTurnOutcome {
-                completed: true,
-                answer: text.clone(),
-                ..WrapperTurnOutcome::default()
-            },
+            Ok(stella_core::TurnOutcome::Completed { text, .. }) => observed(true, text.clone()),
             // An abort is evidence, not an error to swallow: a wrapper whose
             // job is to have an opinion about the turn gets to have one about a
             // turn that did not finish.
-            Ok(stella_core::TurnOutcome::Aborted { reason, .. }) => WrapperTurnOutcome {
-                completed: false,
-                answer: reason.clone(),
-                ..WrapperTurnOutcome::default()
-            },
-            Err(failure) => WrapperTurnOutcome {
-                completed: false,
-                answer: failure.to_string(),
-                ..WrapperTurnOutcome::default()
-            },
+            Ok(stella_core::TurnOutcome::Aborted { reason, .. }) => observed(false, reason.clone()),
+            Err(failure) => observed(false, failure.to_string()),
         };
         self.results.push(outcome.map(|_| ()));
         DrivenTurn {
             outcome: turn,
-            // This host holds no candidate worktree and took no authoring-time
-            // identity snapshot, so it says so about its own check rather than
-            // making the plugin admit to one it could never perform (#3499).
-            tamper: TamperFinding::NotChecked,
+            // The host's own comparison, over artifacts it pinned before the
+            // run — never the plugin's claim about its own witness (#3499).
+            // `NotChecked` survives as a real answer for an invocation that
+            // named nothing to watch; see `crate::wrapper_candidate`.
+            tamper: self.watch.finding(),
         }
     }
 }
@@ -419,24 +489,25 @@ impl TurnDriver for RawTurnDriver<'_> {
 /// The turn's own failure, or a wrapper whose declared stage order could not be
 /// resolved — which a validated manifest cannot hit.
 pub(crate) async fn run_wrapped(
-    dispatch: &WrapperDispatch,
+    bound: &BoundWrapper,
     goal: &str,
     signals: SignalValues,
+    candidate: Option<stella_plugin::CandidateGrant>,
     mut driver: RawTurnDriver<'_>,
 ) -> Result<(), CliFailure> {
     let format = driver.format;
     let input = RoundInput {
         goal: goal.to_string(),
         signals,
-        // The raw path works in the shared tree; see this module's declared
-        // gaps.
-        candidate: None,
+        // The tree the turn actually runs in — see `crate::wrapper_candidate`
+        // for why that is the shared work tree and not an isolated worktree.
+        candidate,
     };
-    let report = dispatch.run(input, &mut driver).await;
+    let report = bound.dispatch.run(input, &mut driver).await;
     let last = driver.results.pop();
     match report {
         Ok(report) => {
-            report_to(format, &report);
+            report_to(format, &report, &bound.gate);
             // A round always runs, so `results` always has an entry; an empty
             // one would mean the dispatcher returned without driving anything,
             // which is a report about the wrapper and not about the work.
@@ -446,13 +517,23 @@ pub(crate) async fn run_wrapped(
     }
 }
 
-/// Print what the wrapper concluded, and every point that abstained.
+/// Print what the wrapper concluded, every point that abstained, and every
+/// capability this host refused it.
+///
+/// The refusals are the host's half of "a refusal is reported, never silent"
+/// (#3561): the plugin already read the `err` and degraded, and a user watching
+/// a plugin contribute nothing needs the same sentence to know why. They print
+/// in every format, like the faults beside them, because an unanswered
+/// capability is a fact about the run rather than commentary about it.
 ///
 /// stderr in every format: stdout may be machine-readable JSON, and a wrapper's
 /// commentary is not part of either summary contract.
-fn report_to(format: OutputFormat, report: &DispatchReport) {
+fn report_to(format: OutputFormat, report: &DispatchReport, gate: &HostCallGate) {
     for fault in &report.faults {
         eprintln!("  ! wrapper: {fault}");
+    }
+    for refused in gate.refusals() {
+        eprintln!("  ! wrapper: {refused}");
     }
     if format == OutputFormat::Text || !report.met() {
         eprintln!("  ◇ {}", report.summary());
@@ -493,6 +574,35 @@ name = "execute"
 
     fn roster(plugins: Vec<InstalledPlugin>) -> PluginRoster {
         PluginRoster::compose(plugins, Vec::new(), &BTreeMap::new())
+    }
+
+    /// A context plane that answers every ask with one frame, so a test can
+    /// tell "the gate reached the plane" from "the gate refused".
+    struct OneFrame;
+
+    #[async_trait]
+    impl stella_runtime::wrapper::RecallHost for OneFrame {
+        async fn recall(&self, goal: &str) -> Vec<stella_plugin::RecallFrame> {
+            vec![stella_plugin::RecallFrame {
+                label: "the last run".to_string(),
+                kind: "memory".to_string(),
+                source: "context.db".to_string(),
+                uri: None,
+                content: format!("about {goal}"),
+            }]
+        }
+    }
+
+    fn no_recall() -> Box<dyn stella_runtime::wrapper::RecallHost> {
+        Box::new(crate::wrapper_recall::SessionRecallHost::none())
+    }
+
+    fn bound(
+        roster: &PluginRoster,
+        variant: &str,
+        warn: &mut dyn FnMut(String),
+    ) -> Result<BoundWrapper, String> {
+        bind_installed(roster, variant, no_recall(), warn)
     }
 
     /// The two flags cannot both decide the turn, and `classic` by name is the
@@ -562,10 +672,10 @@ name = "execute"
             "/home/dev/.stella/plugins/budget-keeper",
         )]);
         let mut warnings = Vec::new();
-        let dispatch = bind_installed(&roster, "budget-v1", &mut |line| warnings.push(line))
+        let wrapper = bound(&roster, "budget-v1", &mut |line| warnings.push(line))
             .expect("the installed plugin declares this variant");
-        assert_eq!(dispatch.variant(), "budget-v1");
-        assert_eq!(dispatch.manifest().name, "budget-keeper");
+        assert_eq!(wrapper.variant(), "budget-v1");
+        assert_eq!(wrapper.dispatch.manifest().name, "budget-keeper");
         assert_eq!(
             warnings.len(),
             1,
@@ -578,14 +688,101 @@ name = "execute"
     #[test]
     fn an_unknown_variant_names_the_installed_ones() {
         let roster = roster(vec![installed(WRAPPER_MANIFEST, "/plugins/budget-keeper")]);
-        let error = bind_installed(&roster, "vera-v2", &mut |_| {})
-            .expect_err("nothing installed declares it");
+        let error =
+            bound(&roster, "vera-v2", &mut |_| {}).expect_err("nothing installed declares it");
         assert!(error.contains("vera-v2"), "{error}");
         assert!(error.contains("budget-v1"), "{error}");
 
         let nothing = PluginRoster::default();
-        let empty = bind_installed(&nothing, "vera-v2", &mut |_| {}).expect_err("none at all");
+        let empty = bound(&nothing, "vera-v2", &mut |_| {}).expect_err("none at all");
         assert!(empty.contains("stella plugin list"), "{empty}");
+    }
+
+    /// A manifest that declares `[loop] calls = ["recall"]`.
+    const RECALLING_MANIFEST: &str = r#"
+name = "researcher"
+[loop]
+participation = "steering"
+points = ["before_turn"]
+calls = ["recall"]
+[runtime]
+argv = ["/bin/sh", "${plugin_dir}/main.sh"]
+timeout_secs = 30
+[wrapper]
+id = "research-v1"
+[[wrapper.stages]]
+name = "recall"
+"#;
+
+    /// **Witness (#3561).** Binding an installed wrapper attaches a host-call
+    /// gate, and a declared `recall` reaches this host's real context plane.
+    ///
+    /// Before this, `stella-cli` built its transport with
+    /// `SubprocessWrapper::declare` and bound it straight into the dispatch —
+    /// no `.serving(..)`, no `HostCallGate` anywhere in the crate — so the
+    /// plugin's `{"call":"recall",…}` had nowhere to go and `converse` answered
+    /// `UnannouncedCall`. There was no gate to open, so this test could not be
+    /// written.
+    #[tokio::test]
+    async fn a_declared_recall_reaches_this_hosts_context_plane() {
+        use stella_plugin::{HostCallArgs, HostCallOk, HostCallOutcome, RecallArgs};
+        use stella_runtime::wrapper::HostCallChannel;
+
+        let roster = roster(vec![installed(RECALLING_MANIFEST, "/plugins/researcher")]);
+        let wrapper = bind_installed(&roster, "research-v1", Box::new(OneFrame), &mut |_| {})
+            .expect("the installed plugin declares this variant");
+
+        let channel = wrapper.gate.open();
+        let outcome = channel
+            .call(HostCallArgs::Recall(RecallArgs {
+                goal: "the parser".to_string(),
+                limit: None,
+            }))
+            .await;
+        match outcome {
+            HostCallOutcome::Ok(HostCallOk::Recall(result)) => {
+                assert_eq!(result.frames.len(), 1);
+                assert_eq!(result.frames[0].content, "about the parser");
+            }
+            other => panic!("a declared recall must reach the plane, got {other:?}"),
+        }
+        assert!(
+            wrapper.gate.refusals().is_empty(),
+            "nothing was refused, so nothing is reported"
+        );
+    }
+
+    /// The gate is attached even when this workspace has no context plane, and
+    /// an undeclared capability is still refused — *and reported*, which is the
+    /// half a user can see. An absent gate is the one answer a plugin cannot be
+    /// given: its call would hang until the point timeout.
+    #[tokio::test]
+    async fn a_host_with_no_plane_still_gates_and_reports_what_it_refused() {
+        use stella_plugin::{ChildTurnArgs, HostCallArgs, HostCallOutcome, HostCallRefusal};
+        use stella_runtime::wrapper::HostCallChannel;
+
+        let roster = roster(vec![installed(RECALLING_MANIFEST, "/plugins/researcher")]);
+        let wrapper = bound(&roster, "research-v1", &mut |_| {}).expect("it binds");
+
+        let channel = wrapper.gate.open();
+        let undeclared = channel
+            .call(HostCallArgs::ChildTurn(ChildTurnArgs {
+                role: "verifier".to_string(),
+                instruction: "check it".to_string(),
+            }))
+            .await;
+        assert!(
+            matches!(
+                undeclared,
+                HostCallOutcome::Err(ref failure) if failure.refusal == HostCallRefusal::Undeclared
+            ),
+            "the manifest declares only recall, got {undeclared:?}"
+        );
+        assert_eq!(
+            wrapper.gate.refusals().len(),
+            1,
+            "a refusal only the plugin learns about is half of \"never silent\""
+        );
     }
 
     /// A wrapper declaration with no process to ask is refused by name, not
@@ -598,8 +795,7 @@ name = "execute"
             .replace("env = [\"PATH\", \"ANTHROPIC_API_KEY\"]\n", "")
             .replace("[runtime]\n", "");
         let roster = roster(vec![installed(&no_process, "/plugins/budget-keeper")]);
-        let error =
-            bind_installed(&roster, "budget-v1", &mut |_| {}).expect_err("no [runtime] block");
+        let error = bound(&roster, "budget-v1", &mut |_| {}).expect_err("no [runtime] block");
         assert!(error.contains("no [runtime] block"), "{error}");
     }
 

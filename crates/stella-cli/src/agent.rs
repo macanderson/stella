@@ -63,7 +63,7 @@ pub(crate) mod resume;
 mod skill_usage;
 mod summary;
 pub(crate) mod tool_stack;
-mod tools;
+pub(crate) mod tools;
 mod turn_close;
 pub(crate) use budget::{build_budget_guard, remaining_budget, settle_reflection_budget};
 
@@ -139,7 +139,15 @@ pub async fn run_one_shot(
         )
         .await
     } else {
-        run_raw_one_shot(cfg, prompt, budget_limit, format, pipeline.plugin()).await
+        run_raw_one_shot(
+            cfg,
+            prompt,
+            budget_limit,
+            format,
+            pipeline.plugin(),
+            test_command,
+        )
+        .await
     }
 }
 
@@ -1620,7 +1628,7 @@ pub(crate) async fn run_turn(
         &cfg.workspace_root,
     );
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let (tx, durable_pre_persisted) = output::raw_event_sender_for_run(raw_tx, format);
+    let (tx, durable_pre_persisted) = output::raw_event_sender_for_run(raw_tx, format, &door);
     // The proactive re-query (#3243 Phase 3): the engine consults this at
     // every step boundary; the adapter's hysteresis makes an undrifted turn
     // free. Seeded from `messages` so the turn-opening block is never

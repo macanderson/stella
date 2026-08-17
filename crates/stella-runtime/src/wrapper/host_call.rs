@@ -93,10 +93,12 @@ pub const DEFAULT_RECALL_FRAMES: u32 = 8;
 /// `stella-cli` can drive and `stella-serve` cannot is a CLI feature wearing a
 /// socket's name. The projection is the driver's, and it is mechanical.
 ///
-/// **No shipping driver has written that projection yet** — `stella-cli` builds
-/// its transport without a gate, so an installed plugin's `recall` reaches no
-/// context plane on the `stella run` path. That is #3561, declared here rather
-/// than left to be discovered as an empty frame list.
+/// `stella-cli` has written that projection (`src/wrapper_recall.rs`, #3561):
+/// it binds every wrapper's transport with a gate over this workspace's own
+/// context plane. The other two drivers §6 asks for are #3551, and a driver
+/// that has no plane yet still attaches a gate serving no frames — an empty
+/// answer is something a plugin degrades on, and an absent gate is the one
+/// thing it cannot be told about.
 #[async_trait]
 pub trait RecallHost: Send + Sync {
     /// Recall material relevant to `goal`.
@@ -145,11 +147,11 @@ pub trait HostCapabilities: Send + Sync {
 /// [`HostCall::RunTest`] answers [`HostCallRefusal::Unsupported`] from every
 /// host, because nothing in this tree performs it at all (#3580).
 ///
-/// **No shipping driver has assembled one of these with a context plane yet** —
-/// `stella-cli` builds its transport without a gate, so an installed plugin's
-/// `recall` reaches no context plane on the `stella run` path. That is #3561,
-/// declared here rather than left to be discovered as an empty frame list; the
-/// same is true of the child-turn plane on that path (#3576).
+/// `stella-cli` assembles one with a context plane on the `stella run` path
+/// (`src/wrapper_plugin.rs::bind_installed`, #3561). It installs **no**
+/// child-turn plane, so a plugin asking for one there is answered
+/// `Unavailable` — a declared gap the plugin is told about, tracked as #3576 —
+/// and the other two drivers §6 asks for assemble nothing yet (#3551).
 pub struct HostPlanes {
     recall: Option<Box<dyn RecallHost>>,
     max_frames: u32,

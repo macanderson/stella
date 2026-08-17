@@ -95,24 +95,43 @@ fn bare_loop_config(cfg: &Config) -> Config {
 /// have let the same deletion fall silently back to the un-narrowed argument —
 /// the half of #2511 no unit test can reach, since this function builds a
 /// provider, connects MCP and opens the store.
+///
+/// `test_command` is the user's `--test-command`. On the raw path it arms no
+/// ladder of this crate's own — there is none — but it is what lets a wrapper
+/// plugin's `[oracle]` observe a fail→pass flip at all: it crosses the host's
+/// strict parser and rides the candidate grant as a [`stella_plugin::TestPlan`]
+/// (#3553). Dropped before, which is why `pre_turn_signals` published
+/// `test_command: false` unconditionally.
 pub(crate) async fn run_raw_one_shot(
     full_cfg: &Config,
     prompt: &str,
     budget_limit: Option<f64>,
     format: OutputFormat,
     wrapper: Option<&str>,
+    test_command: Option<&str>,
 ) -> Result<(), crate::failure::CliFailure> {
     let bare = bare_loop_config(full_cfg);
     let cfg = &bare;
     // Resolved before the provider is built and before a single paid call: a
     // `--pipeline` that names nothing installed must fail as a typo, not after
-    // the run it was meant to shape.
-    let dispatch = match wrapper {
+    // the run it was meant to shape. The grant is minted in the same breath and
+    // for the same reason — a `--test-command` the host's parser refuses must
+    // stop the run here, not after it is paid for.
+    let bound = match wrapper {
         Some(variant) => Some(
             crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
                 eprintln!("  ! {line}");
             })
             .map_err(crate::failure::CliFailure::from)?,
+        ),
+        None => None,
+    };
+    // Pinned *before* the turn runs, which is the whole content of the tamper
+    // claim: an identity snapshotted afterwards vouches for nothing.
+    let candidate = match &bound {
+        Some(_) => Some(
+            crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
+                .map_err(crate::failure::CliFailure::from)?,
         ),
         None => None,
     };
@@ -216,12 +235,19 @@ pub(crate) async fn run_raw_one_shot(
     // The wrapper socket's first driver (#3494). With no `--pipeline` the arm
     // below is the one that has always run, unchanged: one turn, no dispatch,
     // and a NULL `pipeline_variant` because no wrapper ran over it.
-    let outcome = match &dispatch {
-        Some(dispatch) => {
+    let outcome = match (&bound, &candidate) {
+        // Both arms of one `Option` are set together above, so the mismatched
+        // pairs are unreachable; matching the tuple keeps that visible instead
+        // of unwrapping a grant on the strength of having checked the wrapper.
+        (Some(bound), Some(candidate)) => {
             crate::wrapper_plugin::run_wrapped(
-                dispatch,
+                bound,
                 prompt,
-                crate::wrapper_plugin::pre_turn_signals(false, budget_limit.is_some()),
+                crate::wrapper_plugin::pre_turn_signals(
+                    test_command.is_some(),
+                    budget_limit.is_some(),
+                ),
+                Some(candidate.grant.clone()),
                 crate::wrapper_plugin::RawTurnDriver {
                     provider: &*provider,
                     base_tools,
@@ -236,15 +262,16 @@ pub(crate) async fn run_raw_one_shot(
                     store: &store,
                     prompt,
                     session: presence.id(),
-                    variant: dispatch.variant(),
+                    variant: bound.variant(),
                     recall_event,
                     memory: memory.as_mut(),
+                    watch: &candidate.watch,
                     results: Vec::new(),
                 },
             )
             .await
         }
-        None => run_turn(
+        _ => run_turn(
             &*provider,
             base_tools,
             &custom_tools,

@@ -90,8 +90,8 @@ fn after() -> AfterTurnRequest {
         turn: TurnOutcome {
             completed: true,
             answer: "replaced the sleep with a barrier".into(),
-            tools: vec!["edit_file".into()],
-            changed_files: vec!["crates/stella-core/src/driver.rs".into()],
+            tools: Some(vec!["edit_file".into()]),
+            changed_files: Some(vec!["crates/stella-core/src/driver.rs".into()]),
         },
     }
 }
