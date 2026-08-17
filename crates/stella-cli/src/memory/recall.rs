@@ -506,12 +506,9 @@ impl SessionMemory {
     }
     /// Recall with an injectable diagnostic sink to avoid global stderr capture in tests.
     ///
-    /// `#[cfg(test)]` because that is the whole truth about it: production
-    /// recall goes through [`Self::recalled_frames`] (which reports to stderr)
-    /// or [`Self::recalled_frames_anchored`] (which takes the caller's own
-    /// sink), and #3435 left this wrapper with test callers alone. Gating it
-    /// is what makes `-D dead-code` agree with the doc comment, rather than an
-    /// `#[allow]` asserting over the top of it.
+    /// Test-only, and gated as such: every caller is inside a `#[cfg(test)]`
+    /// module, so the shipping binary carries no reference to it and
+    /// `clippy -D warnings` reads it as dead code in that build.
     #[cfg(test)]
     pub(super) async fn recalled_frames_reporting(
         &self,
@@ -524,8 +521,8 @@ impl SessionMemory {
             .recall
     }
 
-    /// [`Self::recalled_frames_reporting`] with the anchor set chosen by the
-    /// caller — the seam the proactive re-query (#3243 Phase 3) queries
+    /// Recall with an injectable diagnostic sink AND the anchor set chosen by
+    /// the caller — the seam the proactive re-query (#3243 Phase 3) queries
     /// through, because a drifted turn's best anchors are the paths it has
     /// TOUCHED, which the goal string cannot name.
     pub(super) async fn recalled_frames_anchored(
