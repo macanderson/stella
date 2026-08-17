@@ -19,11 +19,18 @@
 //! - every built-in's [`stella_protocol::ToolContract`] ([`crate::contracts`]).
 //!
 //! **To add a tool:** register it in
-//! [`ToolRegistry::new`](crate::registry::ToolRegistry), then add one line
-//! here. Nothing else needs a count bumped. Two PRs adding different tools
-//! merge to the correct union instead of a wrong integer, and a tool
-//! registered but never declared here fails the registry tests by *name*,
-//! not by an off-by-one.
+//! [`ToolRegistry::new`](crate::registry::ToolRegistry), add one line here,
+//! and introduce it in `stella-cli`'s `tool_steering!()` prose. Nothing else
+//! needs a count bumped. Two PRs adding different tools merge to the correct
+//! union instead of a wrong integer, and a tool registered but never declared
+//! here fails the registry tests by *name*, not by an off-by-one.
+//!
+//! The third step is enforced too (#3557): the steering block presents each
+//! group as a complete list, so a tool it never mentions reads to the model
+//! as one that does not exist. `stella-cli`'s `agent::prompt::tool_names`
+//! fails by name when a row here goes unintroduced, and both it and
+//! `tests/tool_name_liveness_witness.rs` fail when prose points the model at
+//! a name in [`RETIRED_TOOL_NAMES`] instead.
 
 use stella_protocol::RiskLevel;
 
@@ -190,6 +197,55 @@ catalog! {
     // platform, OS release, shell dialect, scratch dir (#2697).
     "get_environment"     => (true, true, Low, Always, "environment"),
 }
+
+/// Tool names Stella once dispatched and no longer does.
+///
+/// This list exists because #3244 deleted a tool surface that prose kept
+/// referring to. `bash`'s long-sleep advisory told the model to *"poll with
+/// `read_output`/`wait_for` instead"* for weeks after both tools stopped
+/// existing, and the test covering that string asserted it *contained*
+/// `read_output` — so the suite held the dead reference green until a manual
+/// sweep found it (#3555, #3557).
+///
+/// A retired name is the one that actually bites: a runtime string naming it
+/// hands the model a directive with nothing behind it, which is worse than
+/// silence — it teaches the model to discount the next directive too (#3031).
+/// So the liveness guards scan for **these** names rather than trying to
+/// decide in general which prose token is tool-shaped, and cannot false-fire
+/// on ordinary English.
+///
+/// Every entry must be absent from [`ALL_NAMES`], which
+/// `no_retired_name_is_also_a_live_tool` pins: restoring a tool means deleting
+/// its line here, in the same change.
+pub const RETIRED_TOOL_NAMES: &[&str] = &[
+    "apply_edits",
+    "ask_user",
+    "build_project",
+    "format_code",
+    "gather_context",
+    "graph_query",
+    "project_overview",
+    "read_output",
+    "read_symbol",
+    "run_lint",
+    "run_script",
+    "run_tests",
+    "start_process",
+    "verify_done",
+    "wait_for",
+];
+
+/// Retired names that are also ordinary words outside Stella — deliberately
+/// **not** in [`RETIRED_TOOL_NAMES`].
+///
+/// `grep` and `glob` were tool names before #3120 folded them into `search`,
+/// but they are also the shell command and the pattern syntax, and the prompt
+/// legitimately says "bash with grep only when you need every occurrence of
+/// one exact literal string". Scanning for them would fire on correct prose,
+/// so they are excluded and recorded here instead of silently omitted — the
+/// guards err toward missing a stale reference rather than blocking a true
+/// sentence, the same posture `bash.rs`'s `is_symbol_shaped` takes.
+pub const RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN: &[&str] = &["glob", "grep"];
 
 /// Look up a tool's canonical row by dispatch name.
 pub fn get(name: &str) -> Option<&'static ToolEntry> {
