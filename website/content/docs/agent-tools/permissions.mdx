@@ -13,15 +13,17 @@ Both exits are real outcomes: an allowed call executes and then fires `PostToolU
 
 Tools fall into two categories:
 
-- **Read-only tools** only observe session state and the environment. They never change anything or perform side effects. These tools are marked `read_only: true`. The authoritative read-only set in the [built-in catalog](/docs/agent-tools) is `task_list`, `get_state`, `list_state`, and `get_environment`.
-- **Mutating tools** perform side effects. Among the built-ins that means changing the task board, writing scratch state, or dispatching a sub-agent — `task_create`, `task_assign`, `task`, `save_state`, and `delete_state` are examples — and a custom or MCP tool can of course change files, run commands, or reach the network.
+- **Read-only tools** only observe — the workspace, session state, the environment. They never change anything or perform side effects. These tools are marked `read_only: true`. The authoritative read-only set in the [built-in catalog](/docs/agent-tools) is `read_file`, `search`, `task_list`, `get_state`, `list_state`, and `get_environment`.
+- **Mutating tools** perform side effects. Among the built-ins that means running a shell command, writing or deleting a workspace file, changing the task board, writing scratch state, or dispatching a sub-agent — `bash`, `write_file`, `edit_file`, `delete_file`, `task_create`, `task_assign`, `task`, `save_state`, and `delete_state` are all examples — and a custom or MCP tool can of course do the same or reach the network.
 
 The `read_only: true` marker is the signal that a tool is safe to run without changing anything. Tools without it should be treated as capable of side effects.
 
 Only the [speculation-safe subset](/docs/agent-tools) of the read-only tools is eligible for speculative execution during the model stream — a schema declares that separately with `speculation_safe: true`, because a retried stream can run a speculated call twice, and "free to run twice" is a stronger claim than "mutates nothing".
 
 <Callout type="info">
-Read-only vs. mutating is a property of the tool, not of a specific invocation. A friendly name can be a family whose members split across the boundary — on the task board, `task_list` is read-only while the other six task tools are mutating, and in the scratch-state family `get_state` / `list_state` are read-only while `save_state` / `delete_state` are mutating.
+Read-only vs. mutating is a property of the tool, not of a specific invocation. A friendly name can be a family whose members split across the boundary — in the file family, `read_file` is read-only while `write_file` / `edit_file` / `delete_file` are mutating; on the task board, `task_list` is read-only while the other six task tools are mutating; and in the scratch-state family `get_state` / `list_state` are read-only while `save_state` / `delete_state` are mutating.
+
+The two flags also come apart in the other direction. `search` is `read_only: true` but **not** speculation-safe: it changes no workspace file, yet its semantic rung writes embeddings through into `codegraph.db` while it ranks, so running it twice is not free.
 </Callout>
 
 ## Gating tool calls with hooks

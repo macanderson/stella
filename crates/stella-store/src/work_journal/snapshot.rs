@@ -12,10 +12,13 @@
 //!
 //! The 12-tool purge (#3244) removed every file-writing built-in along with the
 //! file-CRUD ledger that called `record`, and `record` has had **no production
-//! caller since**. What is left cannot name paths even in principle: an
-//! engine-only turn mutates the tree through MCP servers and custom script
-//! tools, neither of which describes a path in any schema the engine reads.
-//! So the choice is no longer "named paths or `add -A`" — it is "`add -A` or
+//! caller since** — including now that the file built-ins are back. Restoring
+//! `write_file` / `edit_file` / `delete_file` restored tools that *name* a
+//! path, but not a producer that can name every path a turn changed: `bash`
+//! mutates the tree without naming anything, and so do MCP servers and custom
+//! script tools. A `record` call driven by the file tools alone would stage a
+//! subset while looking exhaustive, which is a worse lie than `add -A` tells.
+//! So the choice is still not "named paths or `add -A`" — it is "`add -A` or
 //! nothing", and nothing is what shipped: `AgentEvent::FileChange`, the
 //! `files_touched` ledger and the `session_turn_diffs` projection are all
 //! empty for every non-pipeline turn.

@@ -185,7 +185,7 @@ rule of thumb is one sentence each:
 |---|---|
 | Change how the agent loop plans / retries / compacts / budgets | `stella-core` (**no I/O allowed here** — see ground rules) |
 | Add or fix a model provider (SSE, tool-call dialect, pricing) | `stella-model` |
-| Add or fix a built-in tool (`task_create`, `save_state`, `get_environment`, …) | `stella-tools` |
+| Add or fix a built-in tool (`bash`, `read_file`, `edit_file`, `search`, `task_create`, `save_state`, `get_environment`, …) | `stella-tools` |
 | Change a CLI command, flag, or the agent wiring | `stella-cli` |
 | Change the REPL rendering / panels / keybindings | `stella-tui` |
 | Touch shared types crossing a crate boundary | `stella-protocol` (zero logic, zero I/O — types only) |

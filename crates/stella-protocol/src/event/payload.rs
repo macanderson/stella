@@ -41,10 +41,11 @@ pub enum FileChangeKind {
     /// Content was successfully read — no mutation, never a diff.
     ///
     /// **Replay-only, permanently, and this is the decision rather than a gap
-    /// awaiting one (#3413).** It had a producer when a `read` built-in
-    /// existed; the 12-tool purge (#3244) removed it, and nothing will emit it
-    /// again. Neither surviving producer can: both diff a tree against a tree,
-    /// and a read leaves no trace in a tree to diff. Re-acquiring one would
+    /// awaiting one (#3413).** It had a producer when the `read` built-in
+    /// declared its own touches; the 12-tool purge (#3244) removed that
+    /// producer, and restoring `read_file` did not bring it back. Neither
+    /// surviving producer can emit it: both diff a tree against a tree, and a
+    /// read leaves no trace in a tree to diff. Re-acquiring one would
     /// mean going back to declaring file operations from tool inputs, which is
     /// the defect [`AgentEvent::FileChange`] documents rather than a capability
     /// worth restoring.

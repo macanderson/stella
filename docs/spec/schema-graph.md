@@ -11,8 +11,10 @@ SQL parsing and the Diesel `table!` detector). Phase 3's
 canonical schema model and `code_graph_schema_links`, and Phase 4's semantic
 edges, are unbuilt and have been absorbed into the superseding spec:
 `docs/spec/storage-map.md` (the vendor-agnostic storage map). The pre-write
-gate has no built-in host — no built-in tool writes workspace files — so the
-sections describing its wiring await a write surface to hook.
+gate is still unwired, but the reason has changed: the built-in write surface
+it needs now exists (`write_file` and `edit_file`, committing through
+`crates/stella-tools/src/durable_write.rs`), so the sections describing its
+wiring describe available work rather than a blocked design.
 **Goal:** On super-long-horizon tasks (200+ turns), the agent never creates a
 table/column/type that already exists, never proposes a conflicting definition,
 and retrieves schema alongside code when the domain matches.
