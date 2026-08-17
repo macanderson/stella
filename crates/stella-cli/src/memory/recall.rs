@@ -93,8 +93,9 @@ impl SessionMemory {
     }
 
     /// The record channel's section and eviction report, with an injectable
-    /// diagnostic sink — the same split as
-    /// [`Self::recalled_frames_reporting`] and for the same reason: the
+    /// diagnostic sink — the same split as `recalled_frames_reporting` (not
+    /// linked: that one is `#[cfg(test)]`, so the path does not resolve in a
+    /// docs build, which has no test cfg) and for the same reason: the
     /// eviction report must be testable without capturing global stderr. A
     /// record reported here MATCHED this turn's facts — the selector chose it
     /// and the budget evicted it — which is the coverage gap #2709 requires

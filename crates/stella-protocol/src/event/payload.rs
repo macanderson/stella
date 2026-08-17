@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The leaf payload types an [`AgentEvent`](super::AgentEvent) variant carries
+//! The leaf payload types an [`AgentEvent`] variant carries
 //! — file-change kinds, verdict evidence, scope/hunk proposals, media refs, PR
 //! and CI status, and the task-board item.
 //!
@@ -17,6 +17,15 @@
 
 use serde::{Deserialize, Serialize};
 
+// Imported for the doc links below, not for code: several payload types
+// document the `AgentEvent` variant they ride in, and an unresolved intra-doc
+// link is a `cargo doc -D warnings` failure. rustc cannot see a use that only
+// rustdoc makes, so `unused_imports` is wrong here specifically — and the
+// alternative, spelling `(super::AgentEvent::X)` in each link, would publish
+// Rust module paths into the `description` strings of docs/wire/*.d.ts, which
+// is the consumer-facing wire contract.
+#[allow(unused_imports)]
+use super::AgentEvent;
 use crate::ladder::LadderSnapshot;
 
 /// What happened to a file in a [`AgentEvent::FileChange`] event.
