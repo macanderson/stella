@@ -439,6 +439,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
 
     let counts: BTreeMap<&str, usize> = BTreeMap::from([
         ("StageKind", all_stage_kinds().len()),
+        ("StageScope", all_stage_scopes().len()),
         ("BudgetMode", all_budget_modes().len()),
         ("BudgetScope", all_budget_scopes().len()),
         ("PolicyKind", all_policy_kinds().len()),
@@ -490,6 +491,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
         .collect();
     let rows: BTreeSet<&str> = BTreeSet::from([
         "StageKind",
+        "StageScope",
         "BudgetMode",
         "BudgetScope",
         "PolicyKind",

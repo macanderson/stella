@@ -107,7 +107,7 @@ impl super::Engine<'_> {
     /// appeared in the total would be money no one saw arrive.
     ///
     /// `total_cost_usd` is `&mut` because the drained spend is the turn's
-    /// money too: `TurnOutcome`/`AgentEvent::Complete` report the turn total,
+    /// money too: `TurnOutcome`/`AgentEvent::TurnComplete` report the turn total,
     /// and `Complete`'s contract is "a summary of the `StepUsage` events that
     /// preceded it" — a child's `StepUsage` is deliberately forwarded onto
     /// the parent stream, so a total that excluded child spend contradicted

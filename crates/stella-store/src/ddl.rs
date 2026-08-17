@@ -74,6 +74,29 @@ pub(crate) const TABLES: [&str; 21] = [
 /// and it is deliberately the benign reading: a code this build does not know
 /// is treated as the oldest era, so an unfamiliar stamp can only ever
 /// under-alarm, never raise a false one.
+///
+/// # `kind`, `pipeline_variant` and `role` — one fact each
+///
+/// These three answer three different questions, and the column set exists
+/// because each used to be answered by `kind` alone:
+///
+/// - **`kind` is the door**: which command the user ran (`run`, `deck`,
+///   `goal`, `chat`, `fleet`). Nothing else. #3388 took the wrapper out of
+///   it; #3395 took the role out.
+/// - **`pipeline_variant` is the wrapper** that ran over the turn, or NULL
+///   when none did (the ordinary raw-loop case, a fact rather than an
+///   absence).
+/// - **`role` is the system-call role** for a row that is not a turn at all —
+///   a standalone model call such as `reflection` or `skill_author`, opened
+///   by `accounted_call::complete_standalone`. NULL means "this row is a
+///   turn", which is likewise a fact and not a gap.
+///
+/// Those role rows carry `kind = 'system'`, the one value that is not a door.
+/// It exists because `kind` is `NOT NULL` and so cannot spell "no door" as
+/// NULL; since the column has never had an unrecorded state, the sentinel
+/// cannot be confused with one. **A query over doors must exclude
+/// `kind = 'system'`** — see `migrations::execution_role` for the full
+/// argument.
 pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
        id INTEGER PRIMARY KEY AUTOINCREMENT,
        kind TEXT NOT NULL,
@@ -89,7 +112,8 @@ pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
        usage_status TEXT NOT NULL DEFAULT 'pending'
          CHECK(usage_status IN ('pending', 'complete', 'incomplete')),
        journal_era INTEGER NOT NULL DEFAULT 0,
-       pipeline_variant TEXT
+       pipeline_variant TEXT,
+       role TEXT
      );
      CREATE INDEX IF NOT EXISTS executions_by_session
        ON executions(session_id, id);

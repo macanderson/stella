@@ -167,6 +167,11 @@ pub(super) async fn run_lead_pipeline_turn(
             .with_turn_gate(pause.turn_gate());
         pipeline.run(prompt, messages, budget).await
     };
+    // The pipeline no longer emits the run's ending (#3398), so this turn —
+    // which owns the stream — does, on the same terms as `run_lead_turn`.
+    if let Ok(outcome) = &result {
+        agent::persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, outcome.total_cost_usd);
+    }
     // Same settle window as `run_lead_turn` — see `SteeringTap::mark_settling`.
     steering.mark_settling();
     let persistence_complete = close_turn_stream(registry, tx, forwarder).await;

@@ -98,8 +98,8 @@ async fn a_turn_emits_no_stage_boundary_of_its_own() {
 
     let mut stages = Vec::new();
     while let Some(event) = rx.recv().await {
-        if let AgentEvent::Stage { name } = event {
-            stages.push(name);
+        if let AgentEvent::Stage { name, scope } = event {
+            stages.push((name, scope));
         }
     }
     assert!(

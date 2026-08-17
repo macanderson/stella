@@ -245,6 +245,9 @@ impl Engine<'_> {
             // HUD showing the previous round's verdict while work was running.
             let _ = events.send(AgentEvent::Stage {
                 name: StageKind::Execute,
+                // Matches its `Verdict` sibling below: these are the round's
+                // own phases, and a HUD reading the pair must see one scope.
+                scope: stella_protocol::StageScope::Turn,
             });
             match round_engine.run_turn(messages, budget, events).await {
                 TurnOutcome::Completed { .. } => {}
@@ -260,6 +263,7 @@ impl Engine<'_> {
 
             let _ = events.send(AgentEvent::Stage {
                 name: StageKind::Verdict,
+                scope: stella_protocol::StageScope::Turn,
             });
             let (verdict, verifier_cost) = match round_engine
                 .assess(verifier, goal, messages, budget, events, goal_config)

@@ -27,6 +27,7 @@
 //! | [`live_tool_calls`], [`abandoned_state`], [`error_class`] | v17 → v18, v23 → v25 | `tool_calls` as a live projection and its `state`/`error_class` columns |
 //! | [`token_unit`] | v18 → v19 | the one-token-rule reconciliation |
 //! | [`pipeline_variant`] | v25 → v26 | the door/wrapper split |
+//! | [`execution_role`] | v26 → v27 | the door/role split |
 //!
 //! A new step gets a new module (or joins the group whose shape it shares),
 //! declares itself here, and takes the next slot in the ladder. It does not
@@ -48,6 +49,7 @@ mod abandoned_state;
 mod additive_tables;
 mod error_class;
 mod execution_plane;
+mod execution_role;
 mod legacy_rebuild;
 mod live_tool_calls;
 mod pipeline_variant;
@@ -70,6 +72,8 @@ use error_class::migrate_v24_to_v25;
 use execution_plane::{
     migrate_v7_to_v8, migrate_v8_to_v9, migrate_v9_to_v10, migrate_v21_to_v22, migrate_v22_to_v23,
 };
+use execution_role::migrate_v26_to_v27;
+pub(crate) use execution_role::{ROLE_KINDS, SYSTEM_NON_DOOR};
 use legacy_rebuild::{migrate_v0_to_v1, migrate_v1_to_v2};
 use live_tool_calls::migrate_v17_to_v18;
 use pipeline_variant::migrate_v25_to_v26;
@@ -90,7 +94,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 26] = [
+pub(crate) const MIGRATIONS: [Migration; 27] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -217,6 +221,10 @@ pub(crate) const MIGRATIONS: [Migration; 26] = [
     // which wrapper ran moves to `executions.pipeline_variant` (#3388).
     // Additive column plus a narrow backfill; see the module's own doc.
     migrate_v25_to_v26,
+    // v26 → v27: `executions.kind` stops carrying the five standalone
+    // system-call ROLE values, which move to `executions.role` (#3395). The
+    // same defect as v25 → v26 from the third direction; see the module doc.
+    migrate_v26_to_v27,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -252,7 +260,9 @@ pub(crate) const MIGRATIONS: [Migration; 26] = [
     //   v24 → v25: CLAIMED above by `tool_calls.error_class` (#3145).
     //
     //   v25 → v26: CLAIMED above by the door/wrapper split (#3388).
-    // Nothing is reserved now: take v26 → v27 and add your own line here.
+    //
+    //   v26 → v27: CLAIMED above by the door/role split (#3395).
+    // Nothing is reserved now: take v27 → v28 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

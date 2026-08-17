@@ -757,7 +757,8 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         } => Some(pr(url, *status, *number, *ci)),
         AgentEvent::TaskUpdate { tasks } => Some(task_board(tasks)),
         AgentEvent::Error { message, retryable } => Some(error(message, *retryable)),
-        AgentEvent::Complete { model, cost_usd } => Some(complete(model, *cost_usd)),
+        AgentEvent::TurnComplete { model, cost_usd } => Some(complete(model, *cost_usd)),
+        AgentEvent::RunComplete { model, cost_usd } => Some(complete(model, *cost_usd)),
     }
 }
 
@@ -1212,7 +1213,7 @@ mod tests {
                 message: "e".into(),
                 retryable: false,
             },
-            AgentEvent::Complete {
+            AgentEvent::RunComplete {
                 model: "m".into(),
                 cost_usd: 0.0,
             },
@@ -1252,6 +1253,7 @@ mod tests {
         let structural: Vec<AgentEvent> = vec![
             AgentEvent::Stage {
                 name: StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
             },
             AgentEvent::Text { text: "t".into() },
             AgentEvent::Reasoning { delta: "r".into() },

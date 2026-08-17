@@ -52,7 +52,7 @@ fn tool_call(m: &mut WorkspaceModel, agent: &str, id: &str, body: &str, ok: bool
 fn complete(m: &mut WorkspaceModel, agent: &str) {
     m.apply_inbound(&Inbound::Event {
         agent: agent.into(),
-        event: AgentEvent::Complete {
+        event: AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         },

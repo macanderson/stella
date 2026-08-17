@@ -91,30 +91,64 @@ pub(crate) fn spawn_forwarder(
         // bridge, forward) exactly as the engine's copies used to.
         //
         // `held` is how the closing boundary keeps its place *ahead* of the
-        // terminal `Complete` it annotates: the boundary is delivered in the
-        // arriving event's slot and the `Complete` rides the next iteration.
-        // Latched, so the re-delivered `Complete` cannot match again.
+        // terminal `TurnComplete` it annotates: the boundary is delivered in
+        // the arriving event's slot and the `TurnComplete` rides the next
+        // iteration. Latched, so the re-delivered event cannot match again.
         let mut held: Option<AgentEvent> = scope.opens_execute_stage.then_some(AgentEvent::Stage {
             name: stella_protocol::StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
         });
         let mut owes_stage_complete = scope.opens_execute_stage;
+        // The lane's run ending, as a backstop (#3379/#3398). The engine ends
+        // each turn with `TurnComplete` and deliberately says nothing about
+        // the run, so the run-terminal `RunComplete` is the owner's to emit.
+        // Most deck lanes emit it themselves, because they alone know the
+        // run's true total: a staged lane's cost spans roles that never appear
+        // as a turn ending at all, so a total reconstructed here would
+        // under-report it. A lane that emits nothing — the subsession worker —
+        // still owes its deck row an ending, and this forwarder is the one
+        // place that knows the *stream* closed rather than merely that a turn
+        // did, which is what "the terminator is last" requires.
+        //
+        // So it synthesizes only for a stream that ended without one.
+        // Unconditional synthesis would put two terminators on every lane that
+        // does emit its own, which `replay::validate_terminal` calls a
+        // violation. Doing it inside the loop rather than after it puts the
+        // event through the same persist-then-forward path as everything else,
+        // so the lane's journal and the deck agree.
+        let mut turn_end: Option<(String, f64)> = None;
+        let mut run_ended = false;
         loop {
             let event = match held.take() {
                 Some(held) => held,
                 None => match rx.recv().await {
                     Some(event) => event,
-                    None => break,
+                    None => match turn_end.take().filter(|_| !run_ended) {
+                        Some((model, cost_usd)) => AgentEvent::RunComplete { model, cost_usd },
+                        // The run's owner already ended it, the stream sealed
+                        // on a previous pass, or no turn of it ever succeeded
+                        // — a failed run ends on `Error`, never `RunComplete`.
+                        None => break,
+                    },
                 },
             };
-            let event = if owes_stage_complete && matches!(event, AgentEvent::Complete { .. }) {
+            let event = if owes_stage_complete && matches!(event, AgentEvent::TurnComplete { .. }) {
                 owes_stage_complete = false;
                 held = Some(event);
                 AgentEvent::Stage {
                     name: stella_protocol::StageKind::Complete,
+                    scope: stella_protocol::StageScope::Run,
                 }
             } else {
                 event
             };
+            match &event {
+                AgentEvent::TurnComplete { model, cost_usd } => {
+                    turn_end = Some((model.clone(), *cost_usd));
+                }
+                AgentEvent::RunComplete { .. } => run_ended = true,
+                _ => {}
+            }
             bridge.observe(&event);
             // A plan that reached the gate is the plan whose progress the
             // board records, so this is where it becomes one. Seeded on the
@@ -216,7 +250,8 @@ pub(crate) fn spawn_forwarder(
 ///
 /// `drop(tx)` on its own never closes the channel: the turn handed the
 /// registry an `EventSender` clone (`ToolRegistry::attach_events`) so
-/// `record_touch` could announce `FileChange`s, and the registry outlives the
+/// registry-born events — the task board, sub-agent lifecycle — ride the
+/// turn's own stream, and the registry outlives the
 /// turn — the deck's session registry by design, a worker lane's because the
 /// closing future itself still holds the `Arc`. With that clone alive, the
 /// forwarder's `recv()` loop stayed pending forever and awaiting it wedged
@@ -272,7 +307,7 @@ mod tests {
             None,
         );
         registry.attach_events(stella_core::EventSender::new(tx.clone()));
-        tx.send(AgentEvent::Complete {
+        tx.send(AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         })
@@ -315,7 +350,7 @@ mod tests {
         events
             .iter()
             .filter_map(|event| match event {
-                AgentEvent::Stage { name } => Some(*name),
+                AgentEvent::Stage { name, .. } => Some(*name),
                 _ => None,
             })
             .collect()
@@ -329,7 +364,7 @@ mod tests {
     /// which stage of which run its caller is in. The deck's HUD still reads
     /// both, and the deck's send side is in a god file, so this seam
     /// synthesizes them: the opener ahead of everything, the closer ahead of
-    /// the `Complete` it annotates — never behind it, which is where a
+    /// the `TurnComplete` it annotates — never behind it, which is where a
     /// post-turn emit would land and where the consumers that stop at the
     /// terminal event would never see it.
     #[tokio::test]
@@ -351,7 +386,7 @@ mod tests {
             None,
         );
         tx.send(AgentEvent::Text { text: "hi".into() }).unwrap();
-        tx.send(AgentEvent::Complete {
+        tx.send(AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         })
@@ -368,7 +403,7 @@ mod tests {
         );
         let complete = events
             .iter()
-            .position(|event| matches!(event, AgentEvent::Complete { .. }))
+            .position(|event| matches!(event, AgentEvent::TurnComplete { .. }))
             .expect("the terminal event survives");
         let stage_complete = events
             .iter()
@@ -376,7 +411,8 @@ mod tests {
                 matches!(
                     event,
                     AgentEvent::Stage {
-                        name: stella_protocol::StageKind::Complete
+                        name: stella_protocol::StageKind::Complete,
+                        ..
                     }
                 )
             })
@@ -408,7 +444,7 @@ mod tests {
             "lead".to_string(),
             None,
         );
-        tx.send(AgentEvent::Complete {
+        tx.send(AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         })

@@ -928,7 +928,7 @@ mod tests {
             },
             Inbound::Event {
                 agent: "lead".into(),
-                event: AgentEvent::Complete {
+                event: AgentEvent::TurnComplete {
                     model: "z/glm".into(),
                     cost_usd: 0.01,
                 },
@@ -1105,6 +1105,7 @@ mod tests {
                 agent: "lead".into(),
                 event: AgentEvent::Stage {
                     name: stella_protocol::StageKind::Execute,
+                    scope: stella_protocol::StageScope::Run,
                 },
             },
             Inbound::Event {
@@ -1170,7 +1171,7 @@ mod tests {
             },
             Inbound::Event {
                 agent: "lead".into(),
-                event: AgentEvent::Complete {
+                event: AgentEvent::TurnComplete {
                     model: "z/glm".into(),
                     cost_usd: 0.004,
                 },

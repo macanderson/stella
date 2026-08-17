@@ -60,6 +60,7 @@ pub mod error;
 pub mod event;
 pub mod journal;
 pub mod ladder;
+pub mod lane;
 pub mod proof;
 pub mod provider;
 pub mod receipt;
@@ -90,12 +91,13 @@ pub use event::{
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, HunkProposal,
     KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
     PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare, ScopeProposal, StageKind,
-    TaskItem, TaskStatus, UNKNOWN_MODEL, UsageIncompleteReason, VerdictEvidence,
+    StageScope, TaskItem, TaskStatus, UNKNOWN_MODEL, UsageIncompleteReason, VerdictEvidence,
 };
 // The journal line is the event plus the wall-clock stamp its sink adds
 // (#2111). Deliberately a separate type from `AgentEvent`: a stamp is a fact
 // about a write, and the engine that produces events owns no clock.
 pub use journal::{StampedEvent, stamped_line};
+pub use lane::{BuiltinLane, LaneId, TurnLane};
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
 pub use ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation, ProofTree};

@@ -25,6 +25,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use stella_core::EngineConfig;
+use stella_core::event_sender::RunEnding;
 use stella_core::ports::{AuthzGate, NoAuthz, Principal};
 use stella_engine::{BudgetGuard, CancelToken, Engine, EventSender, TurnOutcome};
 use stella_protocol::{
@@ -529,11 +530,21 @@ pub(crate) async fn drive_turn(
     events: &mpsc::UnboundedSender<AgentEvent>,
     cancel: CancelToken,
 ) -> DrivenTurn {
-    // The host driving this session is the run owner, and a run owner emits
-    // its own stage boundaries — the engine emits none (#3416).
-    let events = EventSender::new(events.clone()).pairing_stage_complete();
+    // A served session is one run of one turn, so this is the run's owner and
+    // owes it a terminal event (#3379): the engine ends the turn with
+    // `TurnComplete` and says nothing about the run, because it cannot know
+    // whether its caller wants another. The wrapper emits `RunComplete` when it
+    // drops at the end of this function — after the turn, last on the stream
+    // the host is reading.
+    //
+    // It owes the run's stage boundaries too, because the engine emits none
+    // (#3416): `pairing_stage_complete` puts the closing `Stage(Complete)`
+    // immediately ahead of the engine's `TurnComplete`, and the opening
+    // `Stage(Execute)` goes out below.
+    let events = RunEnding::sealing(EventSender::new(events.clone()).pairing_stage_complete());
     let _ = events.send(AgentEvent::Stage {
         name: stella_protocol::StageKind::Execute,
+        scope: stella_protocol::StageScope::Run,
     });
     let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel);
     let outcome = engine.drive(&mut state, &events).await;

@@ -420,9 +420,7 @@ impl<'a> Pipeline<'a> {
         // to make `baseline`, and a second snapshot from inside this stage would
         // be a tree nothing is proved against.
         let WitnessAuthoring { author, frames, .. } = authoring;
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Witness,
-        });
+        self.emit_stage(StageKind::Witness);
 
         // #1539: establish runner availability BEFORE spending a model turn.
         // The author cannot execute anything, so a missing toolchain is

@@ -789,7 +789,7 @@ mod tests {
         });
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Complete {
+            event: AgentEvent::TurnComplete {
                 model: "m".into(),
                 cost_usd: 0.0,
             },
@@ -1350,7 +1350,7 @@ mod tests {
                 speculated: false,
             });
         }
-        m.apply(&AgentEvent::Complete {
+        m.apply(&AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         });

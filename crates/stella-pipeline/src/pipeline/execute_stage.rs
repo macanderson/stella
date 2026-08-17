@@ -6,9 +6,16 @@
 //! [`Pipeline::execute_plan`] walks a plan one engine turn per step,
 //! [`Pipeline::run_engine_turn`] drives one fresh turn, and
 //! [`Pipeline::resume_engine_turn`] drives a checkpoint-restored one. All
-//! three share [`Pipeline::filtered_turn_events`], the event filter that
+//! three share [`Pipeline::filtered_turn_events`], the wrapping sender that
 //! keeps the signal tallies and the flip-halt observation identical no matter
 //! which driver a turn came through.
+//!
+//! It is named for what it once did. Since #3379 it is overwhelmingly an
+//! *observer*: it counts file changes, mutating and opaque calls, errored
+//! commands, tool dispatches and turn endings as they stream past, and feeds
+//! the flip halt. It drops exactly two things — the best-effort previews of a
+//! concurrent fan-out, and the engine's `Stage` boundary — and the engine's
+//! ending is no longer one of them.
 
 use super::*;
 
@@ -69,6 +76,19 @@ pub(super) struct PlanWalk<'p> {
 }
 
 impl<'a> Pipeline<'a> {
+    /// Emit one of THIS wrapper's stage boundaries.
+    ///
+    /// Every stage the pipeline emits is run-scoped by construction (#3398) —
+    /// the engine emits the turn-scoped ones itself. A helper rather than the
+    /// literal at ~30 call sites so the scope cannot be got wrong at one of
+    /// them, which is the failure mode a required field is meant to end.
+    pub(super) fn emit_stage(&self, name: StageKind) {
+        self.emit(AgentEvent::Stage {
+            name,
+            scope: stella_protocol::StageScope::Run,
+        });
+    }
+
     /// Execute stage: one turn for simple/single-task; one turn per plan step
     /// for multi-step (each step guides a fresh engine turn). The last turn's
     /// text lands in `state.final_text`; `Err` is the first aborted turn's
@@ -81,9 +101,7 @@ impl<'a> Pipeline<'a> {
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
+        self.emit_stage(StageKind::Execute);
         // Borrowed, not collected: the steps are only read, so materializing a
         // `Vec<&PlanStep>` per candidate bought nothing.
         let steps: &[PlanStep] = plan.unwrap_or_default();
@@ -442,12 +460,13 @@ impl<'a> Pipeline<'a> {
         let shared_lane = self.shared_event_lane.load(Ordering::Relaxed);
         let filtered = EventSender::from_fn(move |event| {
             match &event {
-                // The pipeline is the sole authority for the terminal event of
-                // an outcome-producing run — drop the engine's per-turn copy.
-                // (The engine no longer emits a `Stage` of its own: #3416
-                // moved that boundary out to the run owner, which is why this
-                // arm names only `Complete`.)
-                AgentEvent::Complete { .. } => Ok(()),
+                // Nothing is dropped here any more (#3398). The engine's
+                // turn terminator is a true statement about a turn that really
+                // happened, and every consumer that branches on it now selects
+                // a `StageScope` — so the two vocabularies coexist in one
+                // stream instead of one silencing the other. The engine also
+                // no longer emits a `Stage` of its own (#3416): that boundary
+                // moved out to the run owner, which here is the pipeline.
                 // Concurrent candidates share this stream, and these two are
                 // the only events whose meaning depends on arriving
                 // uninterrupted: `TextDelta` is a preview its own `Text` event

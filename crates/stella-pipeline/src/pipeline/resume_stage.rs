@@ -242,7 +242,6 @@ impl<'a> Pipeline<'a> {
         if let Some(fallback) = &worker.fallback {
             self.emit_fallback(fallback);
         }
-        let worker_label = worker.model_ref.to_string();
         let mut engine = Engine::with_sleeper(
             worker.provider,
             self.tools,
@@ -294,9 +293,7 @@ impl<'a> Pipeline<'a> {
         }
 
         // --- Execute, re-entered mid-turn. ---------------------------------
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
+        self.emit_stage(StageKind::Execute);
         let mut signals = ChangeSignals::default();
         let (outcome, messages, mut budget) = self
             .resume_engine_turn(&engine, resume.checkpoint, &mut signals, flip_halt.clone())
@@ -341,13 +338,7 @@ impl<'a> Pipeline<'a> {
                 total_cost += cost_usd;
                 let best =
                     CandidateResult::turn_aborted(state.messages, TurnAbort { reason, kind });
-                return Ok(self.settle_outcome(
-                    best,
-                    task_class,
-                    total_cost,
-                    Some(worker_label),
-                    1,
-                ));
+                return Ok(self.settle_outcome(best, task_class, total_cost, 1));
             }
         }
 
@@ -380,13 +371,7 @@ impl<'a> Pipeline<'a> {
                     .await
                 {
                     let best = CandidateResult::turn_aborted(state.messages, abort);
-                    return Ok(self.settle_outcome(
-                        best,
-                        task_class,
-                        total_cost,
-                        Some(worker_label),
-                        1,
-                    ));
+                    return Ok(self.settle_outcome(best, task_class, total_cost, 1));
                 }
             }
         }
@@ -417,7 +402,7 @@ impl<'a> Pipeline<'a> {
             || (task_class == TaskClass::SimpleLookup && files_touched);
         if !should_verify {
             let best = state.into_unverified();
-            return Ok(self.settle_outcome(best, task_class, total_cost, Some(worker_label), 1));
+            return Ok(self.settle_outcome(best, task_class, total_cost, 1));
         }
 
         let warrant = warrant(&state.diff_text, state.signals);
@@ -451,7 +436,7 @@ impl<'a> Pipeline<'a> {
             self.verify_candidate(frame, witness.as_ref(), &engine, surface, &mut spend, state)
                 .await
         };
-        Ok(self.settle_outcome(best, task_class, total_cost, Some(worker_label), 1))
+        Ok(self.settle_outcome(best, task_class, total_cost, 1))
     }
 
     /// The `--- 6. Complete ---` projection shared by [`Pipeline::run`] and
@@ -463,7 +448,6 @@ impl<'a> Pipeline<'a> {
         best: CandidateResult,
         task_class: TaskClass,
         total_cost: f64,
-        worker_model_label: Option<String>,
         candidates_run: u32,
     ) -> PipelineOutcome {
         if let Some(abort) = best.aborted {
@@ -493,9 +477,7 @@ impl<'a> Pipeline<'a> {
             };
         }
 
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Complete,
-        });
+        self.emit_stage(StageKind::Complete);
         // #2569: three standings, not two. The ladder's abstaining rungs
         // publish `passed: true` deliberately — an unprovable run is not a
         // broken one — and reading only that flag collapsed them onto
@@ -532,24 +514,15 @@ impl<'a> Pipeline<'a> {
             // state without aborting, and the stream's terminal frame is the
             // same one. What differs is the status the caller settles on, not
             // whether the run ended.
-            PipelineStatus::Completed | PipelineStatus::Unverified { .. } => {
-                self.emit(AgentEvent::Complete {
-                    // The label is `None` only when the candidate path returned
-                    // before it resolved a worker (a setup abort that then
-                    // degraded to a bare run). Re-resolve rather than emit
-                    // `Complete { model: "" }` — a terminal event that names no
-                    // model reads to every consumer as "no model ran", which is
-                    // exactly backwards on a path that did the work.
-                    model: worker_model_label
-                        .or_else(|| {
-                            self.resolve_provider(Role::Worker)
-                                .ok()
-                                .map(|worker| worker.model_ref.to_string())
-                        })
-                        .unwrap_or_default(),
-                    cost_usd: total_cost,
-                })
-            }
+            // The run's ending is NOT the pipeline's to emit (#3398): a
+            // wrapper cannot know whether it is the whole run, and on
+            // `stella goal` it is one of several rounds sharing a stream. The
+            // stream's owner emits exactly one terminator, from the
+            // `PipelineOutcome` returned below (which carries the same
+            // `total_cost_usd` this used to send). The FAILURE arm stays: an
+            // error is a fact about this pipeline run, not a claim about the
+            // run's ending.
+            PipelineStatus::Completed | PipelineStatus::Unverified { .. } => {}
             PipelineStatus::VerificationFailed { verdict } => {
                 self.emit(AgentEvent::Error {
                     message: format!("verification failed: {}", verdict.summary),

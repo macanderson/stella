@@ -192,8 +192,9 @@ impl<'a> Engine<'a> {
             // that may have six stages left to go, so an engine-emitted
             // terminal boundary was a claim about a caller it cannot see — and
             // the staged pipeline could only survive it by dropping the event.
-            // Every run owner emits its own.
-            let _ = events.send(AgentEvent::Complete {
+            // Every run owner emits its own. `TurnComplete` is the engine's
+            // own ending (#3417) and stays.
+            let _ = events.send(AgentEvent::TurnComplete {
                 model: result.model.clone(),
                 cost_usd: total_cost_usd,
             });

@@ -298,7 +298,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 let pipeline = crate::resume_frame::pipeline(
                     &cfg.durability,
                     ports,
-                    pipeline_event_sender(&events, OutputFormat::Text),
+                    events.clone(),
                     pipeline_config,
                 );
                 ResumedEnd::Pipeline(pipeline.resume(spec).await)
@@ -313,6 +313,11 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
+                // No `RunEnding` wrapper here: this function emits the resumed
+                // run's terminator once for *both* arms below, from the cost
+                // the reporting projection already settled (#3398). Sealing
+                // this arm as well would put two terminators on one stream,
+                // which `replay::validate_terminal` calls a violation.
                 ResumedEnd::Turn(drive_resumed_turn(&engine, state, &events).await)
             }
         }
@@ -421,6 +426,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         result,
     } = reported;
 
+    // One terminator for the resumed run (#3398), on both arms: the bare
+    // restored turn never had one, and the pipeline arm used to get the
+    // pipeline's. A failed resume already reported through `result`.
+    if result.is_ok() {
+        persistence::emit_run_complete(&events, &cfg.model_id, cost_usd);
+    }
     // The canonical teardown (#960): detach the registry's sender clones,
     // drop ours, and only then await the renderer — otherwise the channel
     // never closes and a completed resume hangs.
@@ -495,6 +506,7 @@ pub(crate) async fn drive_resumed_turn(
     let events = events.pairing_stage_complete();
     let _ = events.send(stella_protocol::AgentEvent::Stage {
         name: stella_protocol::StageKind::Execute,
+        scope: stella_protocol::StageScope::Run,
     });
     engine.drive(&mut state, &events).await
 }
@@ -690,12 +702,16 @@ mod tests {
         );
 
         // The renderer's contract: the resumed turn frames itself as an
-        // execute stage before its first event.
+        // execute stage before its first event. RUN-scoped: the engine emits
+        // no `Stage` at all any more (#3416), so this boundary is
+        // `drive_resumed_turn`'s — the run owner's — statement about its run,
+        // which is the scope `StageScope::Run` names (#3398).
         let first = rx.recv().await.expect("at least the stage event");
         assert!(matches!(
             first,
             AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute
+                name: stella_protocol::StageKind::Execute,
+                scope: stella_protocol::StageScope::Run
             }
         ));
     }

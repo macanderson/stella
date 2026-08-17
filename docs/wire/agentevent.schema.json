@@ -546,11 +546,11 @@
       ]
     },
     "FileChangeKind": {
-      "description": "What happened to a file in a [`AgentEvent::FileChange`] event — as declared\nby the tool that touched it, which is why [`Self::is_mutation`] answers\n\"was this call a write\" and never \"did the tree change\". See the variant's\ndoc for the difference and why only git can answer the second.",
+      "description": "What happened to a file in a [`AgentEvent::FileChange`] event.\n\nBoth live producers measure a tree against a tree, so every kind emitted\ntoday is a mutation — see [`Self::Read`] for the one that is not, and why\nit stays in the space anyway.",
       "oneOf": [
         {
           "const": "read",
-          "description": "Content was successfully read — no mutation, never a diff. Rides the\nsame event so the files-touched panel sees reads without a second\ndata path.",
+          "description": "Content was successfully read — no mutation, never a diff.\n\n**Replay-only, permanently, and this is the decision rather than a gap\nawaiting one (#3413).** It had a producer when a `read` built-in\nexisted; the 12-tool purge (#3244) removed it, and nothing will emit it\nagain. Neither surviving producer can: both diff a tree against a tree,\nand a read leaves no trace in a tree to diff. Re-acquiring one would\nmean going back to declaring file operations from tool inputs, which is\nthe defect [`AgentEvent::FileChange`] documents rather than a capability\nworth restoring.\n\nIt stays in the kind space because journals recorded before the purge\ncarry it and replay must parse them — deleting the variant would make\nthose streams unreadable. Consumers must keep handling it, and must not\ntreat its absence from a live stream as evidence that nothing was read.",
           "type": "string"
         },
         {
@@ -1523,7 +1523,6 @@
       "type": "object"
     },
     "StageKind": {
-      "description": "A named point in the turn's data flow. Exactly one stage vocabulary\nexists in this workspace — never duplicated per-crate (the TS-era\n`StageKind` duplication this structurally forbids, L-E1).",
       "oneOf": [
         {
           "const": "triage",
@@ -1583,6 +1582,21 @@
         {
           "const": "complete",
           "description": "The turn is done. The last stage boundary a turn emits.",
+          "type": "string"
+        }
+      ]
+    },
+    "StageScope": {
+      "description": "A named point in the turn's data flow. Exactly one stage vocabulary\nexists in this workspace — never duplicated per-crate (the TS-era\n`StageKind` duplication this structurally forbids, L-E1).\nWhose stage boundary an [`AgentEvent::Stage`] reports (#3398).\n\nDeliberately **not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
+      "oneOf": [
+        {
+          "const": "turn",
+          "description": "One engine turn's own phases. Several per run when a wrapper drives.",
+          "type": "string"
+        },
+        {
+          "const": "run",
+          "description": "A wrapper's stages over the whole run: triage, plan, witness, verify.",
           "type": "string"
         }
       ]
@@ -1923,10 +1937,13 @@
   "description": "One event in the turn's stream. Every stage boundary emits an event;\nnothing user-visible is derived from internal state that isn't also in\nthis stream.\n\n`remote = \"Self\"` keeps the derived codec as a pair of *inherent*\nassociated functions instead of the trait impls, so the hand-written\n[`Serialize`]/[`Deserialize`] impls below can delegate to it after routing\n[`AgentEvent::Unknown`] around it. Without that indirection the forward-\ncompat fallback would mean hand-writing a visitor for every variant.",
   "oneOf": [
     {
-      "description": "The turn entered a new pipeline stage. Every stage boundary emits one,\nin the order the pipeline walks them.",
+      "description": "A stage boundary was crossed. `scope` says **whose** stage it is, and\nit is not decoration (#3398).\n\nTwo disjoint authorities emit stages. The engine emits three kinds,\nonce per turn ([`crate::StageScope::Turn`]). A wrapper — the staged pipeline,\na goal loop — emits its own vocabulary once per run\n([`crate::StageScope::Run`]). Before this field existed the pipeline dropped\nthe engine's copies outright, because a consumer receiving both had no\nway to tell them apart and several branch on stage transitions.\n\nThe deck is the reason this is a required field rather than a hint: it\ntreats a stage transition away from a scope review as the human's\napproval of that review. A turn-scoped stage arriving while a scope\ngate is open would forge consent nobody gave, so every consumer that\nbranches on stages must be able to select the scope it means.",
       "properties": {
         "name": {
           "$ref": "#/$defs/StageKind"
+        },
+        "scope": {
+          "$ref": "#/$defs/StageScope"
         },
         "ts": {
           "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
@@ -1941,7 +1958,8 @@
       },
       "required": [
         "type",
-        "name"
+        "name",
+        "scope"
       ],
       "type": "object"
     },
@@ -2843,7 +2861,7 @@
       "type": "object"
     },
     {
-      "description": "A file was read/created/modified/deleted by the agent **through a\ntool**, carrying both the authoritative line delta and a diff for\ndisplay.\n\n**Observability, never evidence.** This stream records what the agent\ntouched through tools whose *input* names a path; it is **not** a\ncomplete record of workspace mutation, and nothing may found a claim\nabout what changed on counting it. `bash` names nothing — a heredoc, a\n`patch`, a `make`, or a `>` redirect mutates the tree and emits no event\nhere, which on Terminal-Bench is most of the work. The authority on what\nchanged is the git diff of the tree, and a consumer that needs that\nanswer takes it from there (#2873, which removed the last three\ndecisions that read a count of these events; the tally survives as a\nrecorded-only field on `LadderSnapshot`).\n\nThe single emission point is `ToolRegistry::record_touch` — the same\nplace that writes the session's file-touch ledger and its telemetry\npayload — so the TUI, the audit log and the exported JSON can no longer\ndisagree about what a turn changed. (This doc once claimed one emission\npoint \"by construction\" while the deck in fact synthesized its own\nevents from tool inputs, in a wrapper that knew only four tool names and\nsat on one of three tool stacks. Files edited in bulk, or by a worker\nlane, were reported as `+0 -0`.)\n\n`added`/`removed` are the counts the recorder derived from the real pre-\nand post-images (`file_touch::line_diff`). Consumers **must** use them\nrather than counting `+`/`-` lines in `diff`: the diff is a bounded,\ndeliberately coarse rendering of the changed region, and re-deriving\nfrom it is what made the two disagree. Reads carry `0/0` and no diff;\nconsumers that only care about mutations filter on `kind`.",
+      "description": "A file was created/modified/deleted during a turn, carrying both the\nauthoritative line delta and a diff for display.\n\n**Observability, never evidence.** Nothing may found a claim about what\nchanged on counting these — #2873 removed the last three decisions that\ndid, and the tally survives only as a recorded-only field on\n`LadderSnapshot`. The reason is sharper than \"it might be incomplete\":\nthe two producers below answer two *different* questions, and only one\nof them is about the agent.\n\n# The two producers, and what each one's answer means\n\n1. **Candidate adoption** — `Pipeline::deliver_winner`\n   (`stella-pipeline/src/pipeline/delivery.rs`), one event per\n   `AdoptedChange`, emitted beside the `CandidateWorkspace::attribute_adopted`\n   call that writes the same rows to the host's durable ledger (#2907).\n   This one **is** attribution: adoption measures a candidate against a\n   sealed baseline, so it can tell the agent's edits from anyone else's.\n2. **The shared-tree turn boundary** — `stella-cli`'s `turn_files`, over\n   `WorkJournal::snapshot_worktree` (#3413). This one is **not**\n   attribution. It answers *what changed in the tree during this turn*,\n   which is the honest question a whole-tree measurement can answer: a\n   user editing a file in another window mid-turn lands here\n   indistinguishably from the agent's own writes.\n\nA consumer that needs \"what did the agent do\" takes it from the git diff\nof the tree, or from adoption. This stream is for showing a human what\nmoved.\n\n# Why an engine-only turn is measured rather than hooked (#3413)\n\nIt once emitted from the tools, and for a while after that from nowhere:\nthe 12-tool purge (#3244) deleted every file-writing built-in and the\nfile-CRUD ledger that emitted these, and this doc went on naming a\n`ToolRegistry::record_touch` that no longer existed. Restoring a tool\nhook is not available and would not be right if it were. Nothing left\nnames a path — the twelve built-ins are the task board, the scratch\nstate plane, sub-agents and `get_environment`, and a turn that mutates\nthe tree does it through an MCP server or a custom script tool, neither\nof which describes its paths in any schema the engine reads. And\nsynthesizing these from tool *inputs* is the known defect, not the\ndesign: a wrapper that did exactly that, knowing four hard-coded tool\nnames and sitting on one of three tool stacks, is what reported files\nedited in bulk or by a worker lane as `+0 -0` (#2290).\n\nSo the answer is a measurement, taken once per turn at the boundary.\nThe cost is one `git add -A` plus a `write-tree` against a dedicated\nindex, after the model has answered.\n\n`added`/`removed` are what the producer measured — git's `--numstat`\nagainst the two trees, or, for adoption, numstat plus the patch it\napplied. Consumers **must** use them rather than counting `+`/`-` lines\nin `diff`: the diff is a bounded, deliberately coarse rendering of the\nchanged region, and re-deriving from it is what made the two disagree.\nA binary file carries `0/0` and its kind.",
       "properties": {
         "added": {
           "default": 0,
@@ -3501,7 +3519,7 @@
       "type": "object"
     },
     {
-      "description": "The turn finished — the stream's terminator, and the only event a\nconsumer may treat as \"nothing more is coming\". `cost_usd` is the\nturn's total spend and `model` the model that served its last committed\ncall; both are summaries of the `StepUsage` events that preceded it, not\na separate source of truth. A turn that fails ends on\n[`AgentEvent::Error`] instead, never on both.",
+      "description": "**One turn** finished. `cost_usd` is that turn's spend and `model` the\nmodel that served its last committed call; both summarize the\n`StepUsage` events that preceded it, not a separate source of truth. A\nturn that fails ends on [`AgentEvent::Error`] instead, never on both.\n\nThis is **not** \"the work is over\" (#3379). A wrapper — the staged\npipeline, goal mode — runs several turns, so several of these appear in\none run's stream, in order. The run's ending is [`AgentEvent::RunComplete`]\nand it appears exactly once.\n\nIt was called `Complete` until #3379, and the rename is the point: one\nword meant \"this turn is over\" when the engine said it and \"the whole\njob is over\" when the pipeline said it, and nothing reading the journal\ncould tell which contract it was holding. The old name is not aliased —\nevery call site was moved.",
       "properties": {
         "cost_usd": {
           "format": "double",
@@ -3517,7 +3535,35 @@
           "type": "integer"
         },
         "type": {
-          "const": "complete",
+          "const": "turn_complete",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "model",
+        "cost_usd"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "**The run** finished — the stream's terminator, and the only event a\nconsumer may treat as \"nothing more is coming\".\n\nEmitted exactly once, by whoever owns the run: a wrapper if one is\ndriving (after its \"another turn?\" answer is *no*), otherwise the host\nthat asked for the single turn. `cost_usd` is the whole run's spend\nacross every turn it contained, so it is `>=` any single\n[`AgentEvent::TurnComplete`]'s.\n\nA run that ends in failure ends on [`AgentEvent::Error`] with\n`retryable: false` instead, exactly as it did before this event\nexisted — never on both.\n\n# The one-directional contract (#3379)\n\nThe engine always finishes its turn and always says so; a wrapper that\nwants more work asks for another turn. It never suppresses, rewrites,\nor re-emits an engine event to manufacture an ending. Before this\nexisted the pipeline did exactly that — it dropped the engine's\nterminal events and emitted its own in their place — which is a\ntwo-way connection between the engine and one of its callers.",
+      "properties": {
+        "cost_usd": {
+          "format": "double",
+          "type": "number"
+        },
+        "model": {
+          "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "run_complete",
           "type": "string"
         }
       },
