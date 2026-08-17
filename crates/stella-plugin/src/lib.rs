@@ -74,6 +74,14 @@ mod observed;
 mod program;
 mod runtime;
 mod wire;
+/// The generated description of the wrapper socket's wire contract, published
+/// under `docs/wire/` and gate-checked by `scripts/check-wire-schema.sh`.
+///
+/// Behind the `schema` feature for the reason `stella-protocol`'s
+/// `schema_export` is: describing the wire format must cost the shipping binary
+/// nothing, so a default build never compiles it.
+#[cfg(feature = "schema")]
+pub mod wire_corpus;
 mod wrapper;
 
 pub use consent::{Capability, RiskLevel, consent_text, highest_risk};

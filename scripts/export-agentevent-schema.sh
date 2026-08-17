@@ -7,14 +7,23 @@
 #   docs/wire/serveframe.schema.json    JSON Schema for the stella-serve frame
 #   docs/wire/serveinbound.schema.json  …and the two bodies a host POSTs back
 #   docs/wire/serveframe.d.ts           …and their TypeScript declarations
+#   docs/wire/wrapper.wire.json         the wrapper socket's two messages
 #
-# Two exporters, one printer. `AgentEvent` is the payload (consumed by the TUI,
+# Three exporters. `AgentEvent` is the payload (consumed by the TUI,
 # by --output-format stream-json, AND by the server); a `ServerFrame` is the
 # envelope, and exists only between stella-serve and its host. They are
 # separate artifacts because they have separate blast radii — a transport
 # change must not read as a change to the CLI's output format — but both print
 # through stella_protocol::schema_export, so there is one subset of JSON Schema
 # to keep in step rather than two.
+#
+# The third is the wrapper socket (`doc:wrapper-socket` §3 commitment 2), and it
+# is a different *kind* of artifact on purpose: a corpus of every message in its
+# fullest and emptiest legal form rather than a JSON Schema. A schemars schema
+# needs a `JsonSchema` impl on the types, and hand-writing one beside
+# `stella-plugin`'s would be the second copy this whole directory exists to
+# avoid. `crates/stella-plugin/src/wire_corpus.rs` states exactly what the
+# corpus catches and what only the schema would (#3532).
 #
 # `AgentEvent` is the wire format for three surfaces at once — the TUI folds
 # it, `--output-format stream-json` prints it, and stella-serve streams it over
@@ -42,5 +51,6 @@ out_dir="${1:-docs/wire}"
 
 cargo run --quiet -p stella-protocol --features schema --bin export-wire-schema -- "$out_dir"
 cargo run --quiet -p stella-serve --features schema --bin export-serve-schema -- "$out_dir"
+cargo run --quiet -p stella-plugin --features schema --bin export-wrapper-wire -- "$out_dir"
 
 echo "export-agentevent-schema: OK — wire contract written to $out_dir/."

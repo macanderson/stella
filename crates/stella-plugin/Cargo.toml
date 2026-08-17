@@ -8,6 +8,20 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# OFF by default, mirroring stella-protocol's feature of the same name: it
+# gates `export-wrapper-wire`, which writes docs/wire/wrapper.wire.json, so a
+# default `cargo build -p stella-plugin` — i.e. every build of the shipping
+# binary — never compiles the exporter or the corpus it prints.
+#
+# It carries no dependency today, and that is the one difference from
+# stella-protocol worth knowing: the corpus is printed through the crate's own
+# `Serialize` impls rather than through `schemars`. When the JsonSchema derives
+# land on `wire.rs` (#3532) this becomes `schema = ["dep:schemars"]` and the
+# gate-checked artifact list grows a `.schema.json` beside the corpus; nothing
+# else about the wiring changes.
+schema = []
+
 # Near-leaf, deliberately: the engine never learns plugins exist (#3245 — the
 # host binds the grants to the engine's gates), so this crate must not depend
 # on stella-core, and stella-core must never depend on it.
@@ -36,6 +50,14 @@ serde_json.workspace = true
 stella-protocol = { path = "../stella-protocol" }
 thiserror.workspace = true
 toml.workspace = true
+
+# The wrapper socket's wire-contract exporter. `required-features` keeps it out
+# of a default build entirely, so the binary only exists when someone asks for
+# the contract.
+[[bin]]
+name = "export-wrapper-wire"
+path = "src/bin/export_wrapper_wire.rs"
+required-features = ["schema"]
 
 [dev-dependencies]
 # The wrapper resolver's claim is universal — "a manifest that loads resolves

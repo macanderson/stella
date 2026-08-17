@@ -192,7 +192,7 @@ fi
 # same question, and neither is derived from the other.
 
 wire_touched=0
-if grep -Eq '^(docs/wire/|crates/stella-protocol/|crates/stella-serve/|scripts/(export-agentevent-schema|check-wire-schema)\.sh$)' "$changed"; then
+if grep -Eq '^(docs/wire/|crates/stella-(protocol|serve|plugin)/|scripts/(export-agentevent-schema|check-wire-schema)\.sh$)' "$changed"; then
   wire_touched=1
 fi
 
