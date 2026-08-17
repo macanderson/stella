@@ -17,6 +17,7 @@ description = "The autonomous delivery loop: picks work, ships it, and stewards 
 [loop]
 participation = "arbiter"
 hooks = ["Stop", "PreToolUse", "PostToolUse"]
+points = ["after_turn"]
 max_holds = 3
 
 [requirements]

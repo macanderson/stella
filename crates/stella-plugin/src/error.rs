@@ -6,6 +6,7 @@
 //! the fix be obvious.
 
 use crate::manifest::{HookEvent, Participation};
+use crate::wire::WrapperPoint;
 use crate::wrapper::{Signal, SignalKind, StageName};
 
 /// A manifest failed to parse or failed validation.
@@ -42,6 +43,50 @@ pub enum ManifestError {
         /// The declared grade, below the one the hooks need.
         participation: Participation,
     },
+
+    /// `[loop] points` listed the same wrapper point twice — the
+    /// [`ManifestError::DuplicateHook`] rule, for the socket's points.
+    #[error("[loop] points declares {point} more than once")]
+    DuplicatePoint {
+        /// The point that appeared twice.
+        point: WrapperPoint,
+    },
+
+    /// A grade below `steering` declared wrapper points. A point is where a
+    /// plugin *contributes to* a turn — context, scope, a role intent, the
+    /// evidence a verdict reads — and that is the `steering` power exactly.
+    /// An `observer` watches the event stream and answers nothing.
+    #[error(
+        "[loop] participation = \"{participation}\" may not declare points; \
+         answering at a wrapper point requires \"steering\" or above"
+    )]
+    PointsRequireSteering {
+        /// The declared grade, below the one the points need.
+        participation: Participation,
+    },
+
+    /// `[oracle]` was declared without `after_turn` in `[loop] points`. The
+    /// oracle's evidence reaches the host in the `after_turn` response and
+    /// nowhere else, and an undeclared point is never dispatched — so the
+    /// host would judge every turn against
+    /// [`EvidenceSet::unobserved`](crate::EvidenceSet::unobserved) and abstain
+    /// forever (#3499). A verdict that can never be reached is the manifest
+    /// that quietly does nothing, wearing its most expensive costume.
+    #[error(
+        "[oracle] requires \"after_turn\" in [loop] points: the oracle's \
+         evidence arrives in the after_turn response, and an undeclared point \
+         is never dispatched"
+    )]
+    OracleRequiresAfterTurn,
+
+    /// `[oracle]` named no `command` and the manifest declares no `[runtime]`
+    /// for it to be. The oracle is a program the host runs; with neither
+    /// declaration there is nothing to run.
+    #[error(
+        "[oracle] declares no command and this manifest declares no [runtime] \
+         to run as the oracle: declare one of the two"
+    )]
+    OracleCommandRequired,
 
     /// A grade below `arbiter` declared the `Stop` hook. `Stop` is the
     /// completion gate; touching completion is exactly what separates

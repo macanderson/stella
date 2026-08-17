@@ -31,6 +31,7 @@ description = "Holds a finished turn open until the benchmarks are inside their 
 [loop]
 participation = "arbiter"
 hooks = ["Stop"]
+points = ["after_turn"]
 max_holds = 2
 
 [requirements]

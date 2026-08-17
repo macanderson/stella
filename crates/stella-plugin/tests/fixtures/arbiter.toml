@@ -7,6 +7,10 @@ description = "Holds the turn open until the declared oracle observes a fail→p
 [loop]
 participation = "arbiter"
 hooks = ["Stop", "PreToolUse"]
+# The socket points this plugin answers. An undeclared point is never
+# dispatched, and an [oracle] must declare after_turn: its evidence rides on
+# that response and nowhere else (#3501).
+points = ["after_turn"]
 max_holds = 3
 
 [requirements]
@@ -16,7 +20,9 @@ no-tamper = "witness artifact identity unchanged at verify time"
 [oracle]
 command = { argv = ["${plugin_dir}/bin/oracle", "verify"], timeout_secs = 120 }
 flip = "required"
-tamper = "artifact-identity"
+# No `tamper` line: the host snapshots artifact identity and reports what it
+# found, so a manifest restating the only policy a host has said nothing
+# (#3499). Declaring it explicitly is still legal — see perf-budget.toml.
 
 [subloop]
 stages = ["triage", "plan", "execute", "witness", "verify"]

@@ -231,6 +231,26 @@ across scopes and no scope can remove another's entries
 (`crates/stella-cli/src/settings/merge.rs:47`, `:171-172`). Correct for operator
 hooks, wrong for plugins.
 
+**The manifest file is `plugin.toml`, exactly** — one file, that name, at the
+root of the plugin's directory; a directory without one is not a plugin and is
+skipped rather than reported as broken. This was unwritten until #3501 while the
+loader and every published example happened to agree on it, which is not
+agreement: a third party's plugin discovers a disagreement here by silently not
+loading, and "I installed it and nothing happened" is the failure this whole
+crate exists to prevent. The loader's constant is
+`crates/stella-cli/src/plugin_cmd/roster.rs::MANIFEST_FILE`, pinned by
+`the_manifest_filename_is_the_specified_one`, and this paragraph is the
+normative half — if the two ever disagree, this one is right and the loader is
+the bug.
+
+**An undeclared point is never dispatched**, the same way an undeclared hook is
+never invoked. `[loop] points` names the wrapper socket points a plugin answers
+and `LoopGrant::permits_point` is the filter (#3501 item 2); before it, a host
+learned that a wrapper answers `after_turn` and refuses `before_turn` by getting
+the refusal at run time. An `[oracle]` must declare `after_turn`, because that
+is the one response its evidence rides on — a manifest that omits it buys the
+most expensive grant in the ladder and can never reach a verdict.
+
 ### A5. A process declaration in the manifest
 
 Today only the oracle may name an executable — `OracleCommand{argv,
@@ -244,6 +264,14 @@ Add `[runtime]` modelled directly on `OracleCommand`: `argv`, `timeout_secs`, an
 env allowlist. Deliberately **not** a `language` field — `argv` already
 expresses `["python3", "${plugin_dir}/main.py"]` and
 `["node", "${plugin_dir}/main.js"]` without Stella learning what a language is.
+
+**And `[oracle] command` is optional once `[runtime]` exists** (#3501 item 1).
+A plugin whose evidence comes from `after_turn` is its own oracle, and while
+`command` was mandatory every one of Track C's three reference plugins wrote its
+runtime argv out a second time, byte for byte — the sole reason their manifests
+differ in four lines rather than two. `PluginManifest::oracle_process()` resolves
+the two declarations into one answer, so a host never learns which shape an
+author chose.
 
 ### A6. Structured verdicts
 
@@ -345,6 +373,18 @@ on disk as this item required, with tamper snapshotting staying host-side.
 "nothing on the shipping path constructs a `CandidateHandles` today" — the
 consumer is the wrapper socket's `after_turn` dispatch (A3), which does not
 exist yet — and names the seam that will wire it up as #3485.
+
+**Host-side now means the plugin cannot even say it (#3499).** "Snapshotting
+stays host-side" was true of the *work* and false of the *wire*: the evidence a
+plugin returned carried a `tamper` field, so an honest plugin declared a policy
+it could not execute, answered `not-checked` because that was the only true
+thing it could say, and every verdict abstained — which all three of Track C's
+reference plugins hit identically, in three languages. The field is now split:
+`ObservedEvidence` (`crates/stella-plugin/src/observed.rs`) is what a plugin
+returns and has no tamper field in any language, and the host merges its own
+finding through `EvidenceSet::from_observed` before `judge` runs. A plugin that
+sends one anyway is refused by name rather than believed. Witness:
+`crates/stella-runtime/tests/host_owned_tamper.rs`.
 
 ---
 

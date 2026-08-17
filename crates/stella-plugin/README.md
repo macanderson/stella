@@ -169,6 +169,10 @@ before it crosses.
 - `src/evidence.rs` — the `[oracle]` block's evidence half: `OracleCheck`,
   the `MeasurementRule` grammar and its parser, the load-time rules that keep
   a check readable and every requirement decidable, and `Oracle::unmet`.
+- `src/observed.rs` — the line between what a plugin observes and what the
+  host checks: `ObservedEvidence` (the `after_turn` payload, with no tamper
+  field in any language) and `EvidenceSet::from_observed`, the host's merge.
+  #3499 is why that is two types rather than one rule.
 - `src/runtime.rs` — the `[runtime]` block: `Runtime`, its validation rules,
   and `Runtime::child_env`, the pure default-deny selection a host applies
   after clearing the child's environment.

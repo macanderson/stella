@@ -96,6 +96,12 @@ this document adds is the shape that resolution implies for the socket:
 > `judge` and `again?` are **not trait methods**. They are host functions over
 > the plugin's declared rule and the evidence its `after_turn` returned.
 
+The evidence a plugin returns is `ObservedEvidence` — the flip it watched and
+the numbers it measured. `EvidenceSet` is what `judge` reads, and it is the
+host's assembly: `EvidenceSet::from_observed(observed, tamper)` merges in the
+host's own artifact-identity finding, which no plugin can observe and therefore
+may not report (#3499, `doc:pipeline-as-plugins` §4 A10).
+
 ```text
 judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict
 again(verdict: &Verdict, round: &RoundState, grant: &LoopGrant) -> Continuation

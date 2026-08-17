@@ -313,6 +313,7 @@ mod tests {
              [loop]\n\
              participation = \"arbiter\"\n\
              hooks = [\"Stop\"]\n\
+             points = [\"after_turn\"]\n\
              [requirements]\n\
              within-budget = \"the benchmark is inside its budget\"\n\
              [oracle]\n\

@@ -43,7 +43,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
-use crate::manifest::{Participation, PluginManifest};
+use crate::manifest::{OracleProcessSource, Participation, PluginManifest};
 
 /// How bad one honest call of a tool is — re-exported from
 /// [`stella_protocol`], which is where the vocabulary lives.
@@ -156,6 +156,18 @@ pub(crate) fn validate_capabilities(capabilities: &[Capability]) -> Result<(), M
 /// repaint the terminal the user is consenting in. The number of lines this
 /// function emits is decided by the manifest's *structure* alone, which
 /// `author_prose_cannot_forge_a_line_of_the_prompt` pins.
+///
+/// # The sentence that must not be soft
+///
+/// For a plugin declaring an `[oracle]`, `oracle_self_report` is the most
+/// important paragraph this function emits, and it is the one that used to be
+/// false. Verification is a paid plugin's job now, and base Stella does not
+/// verify: the flip and the numbers a verdict turns on are what the plugin's
+/// own process **reported**, and the host neither runs the oracle nor checks
+/// the report (#3511). A user is trusting the plugin's honesty about its own
+/// work, so they are told so in those words before they install — the same
+/// argument `capability_grant`'s claimed-limit disclaimer makes on the other
+/// half of the document, pointed at the half that decides done.
 #[must_use]
 pub fn consent_text(manifest: &PluginManifest) -> String {
     let mut lines: Vec<String> = Vec::new();
@@ -169,6 +181,7 @@ pub fn consent_text(manifest: &PluginManifest) -> String {
 
     lines.push(String::new());
     lines.extend(loop_say(manifest));
+    lines.extend(oracle_self_report(manifest));
     lines.push(String::new());
     lines.extend(capability_grant(manifest));
     lines.push(String::new());
@@ -233,17 +246,23 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
         }
     }
 
-    if let Some(oracle) = &manifest.oracle {
-        let argv: Vec<String> = oracle
-            .command
-            .argv
-            .iter()
-            .map(|arg| one_line(arg))
-            .collect();
+    // Resolved rather than read off `[oracle] command`, because the oracle may
+    // be the plugin's own `[runtime]` process (#3501) — and what a human is
+    // consenting to is the program that runs, not which block happened to name
+    // it.
+    if let Some(oracle) = manifest.oracle_process() {
+        let argv: Vec<String> = oracle.argv.iter().map(|arg| one_line(arg)).collect();
+        // "a program of its own" is a different thing to consent to than "the
+        // process you already agreed to, run again", so the sentence says which
+        // one this is.
+        let what = match oracle.source {
+            OracleProcessSource::OracleCommand => "runs a program of its own as the oracle",
+            OracleProcessSource::Runtime => "runs its own process again as the oracle",
+        };
         lines.push(format!(
-            "  - runs a program of its own as the oracle that decides those: `{}` (killed after {}s)",
+            "  - {what} that decides those: `{}` (killed after {}s)",
             argv.join(" "),
-            oracle.command.timeout_secs
+            oracle.timeout_secs
         ));
     }
 
@@ -291,6 +310,54 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
     }
 
     lines
+}
+
+/// The disclosure a verification plugin's install prompt turns on: the
+/// evidence behind its verdict is the plugin's own report, and Stella does not
+/// check it.
+///
+/// Empty for a manifest with no `[oracle]`, on
+/// `the_scope_disclaimer_appears_only_when_a_scope_was_declared`'s reasoning —
+/// a disclaimer printed where there is no claim to qualify teaches a reader to
+/// skip the one that matters.
+///
+/// # Why this is the strongest sentence in the document
+///
+/// The manifest used to document `[oracle]` as host-run and this prompt
+/// repeated it, so a user approved a verification plugin on the strength of a
+/// guarantee no code provided: nothing executes `[oracle] command`, and
+/// `stella_runtime::wrapper::judge` decides on the flip and the measurements
+/// that arrived verbatim on the plugin's own `after_turn` response (#3511,
+/// settled as Option 2 on 2026-08-17). The sin was never self-reported
+/// evidence — a plugin running its own oracle is a reasonable design. The sin
+/// was telling a user it was host-verified when it was not, which is a
+/// consent defect rather than a documentation one, and is why the correction
+/// lands here and not only in a doc comment.
+///
+/// It states the two halves separately on purpose. What Stella still does —
+/// evaluate the declared rule, and own the tamper finding a plugin cannot
+/// write ([`crate::ObservedEvidence`]) — is real, and a disclosure that read
+/// as "none of this means anything" would mislead in the opposite direction.
+fn oracle_self_report(manifest: &PluginManifest) -> Vec<String> {
+    if manifest.oracle.is_none() {
+        return Vec::new();
+    }
+    let name = one_line(&manifest.name);
+    vec![
+        String::new(),
+        format!(
+            "`{name}` decides when your turn is done, and it reports its own evidence for \
+             that. Stella does not run the oracle itself and does not check what comes \
+             back: whether a test went fail→pass, and every number a declared check \
+             compares against a budget, are what `{name}`'s own process said happened."
+        ),
+        format!(
+            "Stella applies the rule above to those reported claims and will not credit a \
+             requirement they leave undecided — but it cannot tell an earned result from a \
+             typed one. Installing `{name}` means trusting it to report honestly about its \
+             own work."
+        ),
+    ]
 }
 
 /// The "what it may reach outside your turn" half — the capability list, its
@@ -529,6 +596,55 @@ mod tests {
             sealed.contains("it inherits NO environment variables"),
             "the default-deny answer is stated, not left to omission: {sealed}"
         );
+    }
+
+    /// **The #3511 witness.** A user installing a verification plugin is
+    /// trusting its honesty about its own work, and the prompt must say so:
+    /// the flip and the measurements a verdict turns on come back from the
+    /// plugin's process, and neither is run nor re-checked by Stella. This
+    /// prompt claimed the opposite for as long as it existed
+    /// (`manifest.rs`'s "the HOST runs this; the plugin never grades its own
+    /// work"), which is the consent defect Option 2 exists to close.
+    #[test]
+    fn an_oracle_is_disclosed_as_the_plugins_own_report() {
+        let text = consent_text(&parse(
+            "name = \"vera\"\n[loop]\nparticipation = \"arbiter\"\nhooks = [\"Stop\"]\n\
+             points = [\"after_turn\"]\n\n\
+             [requirements]\nwitness = \"a failing test flips to passing\"\n\n\
+             [oracle]\ncommand = { argv = [\"vera\", \"verify\"], timeout_secs = 60 }\n\
+             flip = \"required\"",
+        ));
+
+        assert!(
+            text.contains("reports its own evidence"),
+            "the prompt must say the evidence is the plugin's own report: {text}"
+        );
+        assert!(
+            text.contains(
+                "Stella does not run the oracle itself and does not check what comes \
+                 back"
+            ),
+            "the prompt must say Stella neither runs nor checks it: {text}"
+        );
+        assert!(
+            text.contains("trusting it to report honestly about its own work"),
+            "the prompt must name what the user is actually trusting: {text}"
+        );
+        assert!(
+            !text.contains("never grades its own work"),
+            "the retired host-run claim must not survive anywhere in the prompt: {text}"
+        );
+    }
+
+    /// The other half of the witness, on
+    /// `the_scope_disclaimer_appears_only_when_a_scope_was_declared`'s
+    /// reasoning: no oracle, no self-report paragraph.
+    #[test]
+    fn the_self_report_disclosure_appears_only_when_an_oracle_was_declared() {
+        let text = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"observer\"\n\n[runtime]\nargv = [\"node\"]\ntimeout_secs = 5",
+        ));
+        assert!(!text.contains("reports its own evidence"), "{text}");
     }
 
     #[test]
