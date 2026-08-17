@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The leaf payload types an [`AgentEvent`](super::AgentEvent) variant carries
+//! The leaf payload types an [`AgentEvent`] variant carries
 //! — file-change kinds, verdict evidence, scope/hunk proposals, media refs, PR
 //! and CI status, and the task-board item.
 //!
@@ -18,6 +18,16 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ladder::LadderSnapshot;
+// Referenced only by the intra-doc links below, which is a use rustc's
+// `unused_imports` lint does not count. `cfg(doc)` is what keeps both halves
+// honest: rustdoc sets it and resolves the links, every other build never sees
+// the import and so has nothing to warn about. The alternative — spelling the
+// links `[`AgentEvent::X`](super::AgentEvent::X)` — would leak a Rust module
+// path into the published wire contract, because schemars exports these doc
+// comments verbatim as the `description` of `docs/wire/agentevent.schema.json`
+// and `agentevent.d.ts` (#3450).
+#[cfg(doc)]
+use super::AgentEvent;
 
 /// What happened to a file in a [`AgentEvent::FileChange`] event.
 ///
