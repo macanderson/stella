@@ -1,14 +1,28 @@
 ---
 id: turn-loop-wrappers
 title: "One loop, six doors, and wrappers are plugins"
-status: proposed
+status: living
 ---
 
 # One loop, six doors, and wrappers are plugins
 
-**Status:** proposed, 2026-08-16. Written from Mac's architecture review of the
-"Stella Turn Loop — Step by Step" deck (`website/public/presentations/turn-loop/`,
-landed in #3377).
+**Status:** living, updated 2026-08-17. Written 2026-08-16 from Mac's
+architecture review of the "Stella Turn Loop — Step by Step" deck
+(`website/public/presentations/turn-loop/`, landed in #3377); §9 was added the
+same week to resolve four places the vision below hit something already
+decided in this repository, and both are now overtaken in part by what has
+actually shipped. **Move one (§3, the engine owns its ending) is landed.** Of
+move two (§4): the socket itself — the `TurnWrapper` trait, both transports,
+`judge`/`again`, and the wire contract — landed in `stella-runtime` and
+`stella-plugin` (#3479, `doc:wrapper-socket`, `doc:pipeline-as-plugins` Track
+A), but nothing yet drives a live turn through it, and neither the staged
+pipeline nor `goal.rs` has moved onto it (§9.1's subtraction from `stella-core`
+has not happened). Move three (§5) landed its manifest half — `[wrapper]`
+stages, the closed condition grammar, the `pipeline_variant` column — but the
+flag inversion (§5 "Flip the default") has not shipped. `doc:pipeline-as-plugins`
+is the completion plan and the current source of truth for exactly what has
+landed; this document is the vision it completes and the place §9's
+architecture-review corrections live.
 
 Everything this document says about today's code was read out of the tree at
 `main` `730f2286c`, not recalled. Where a claim comes from a file, the file is
@@ -387,12 +401,24 @@ Two things make that enforceable rather than aspirational:
   providers, carves the budget, attaches gate/steering/hooks, runs the turn, and
   settles once. For an out-of-process wrapper this is a JSON request on stdio
   and every model call is made by the host — invariant #3 and #3245 §3, intact.
-- **This is gated on #3274 slice 2, not merely related to it.**
-  `crates/stella-core/src/subagent.rs:61` documents in its own module doc that
-  the current fork constructor cannot carry `gate`/`steering`/`hooks`. Until
-  `TurnCapabilities` exists, "the blessed constructor attaches all three" is a
-  promise with nothing behind it. Move two should not claim the bug class is
-  dead before that slice lands.
+- **This was gated on #3274 slice 2 — it has since landed, with a correction
+  worth carrying forward.** `TurnCapabilities` (#3387) now exists in
+  `crates/stella-core/src/driver/capabilities.rs`, and
+  `crates/stella-core/src/subagent.rs`'s child fork is built through
+  `Engine::assemble`, which takes one. But read `TurnCapabilities`'s own module
+  doc before citing it the way this section originally did: "it was tempting to
+  state this as 'the constructor *cannot* carry those seams' … That is not
+  true of this tree" — `with_gate`/`with_steering`/`with_hooks` are `pub` and
+  directly callable today, so the fix is not that the old path became
+  impossible. What `TurnCapabilities` actually enforces is *totality*: no
+  `Default`, so a struct-literal assembly site must answer every seam by name,
+  and forgetting one is a compile error rather than a silently unset builder
+  call. This is real progress against the bug class, and it is *not yet* wired
+  to the wrapper socket — `stella-runtime`'s `TurnWrapper` has no child-turn
+  port at all today (§9.1's `ChildTurn` is still design, not code; see
+  `doc:wrapper-socket` and `doc:pipeline-as-plugins` §4 A3's landed note), so
+  whatever eventually implements one earns `TurnCapabilities`'s guarantee only
+  by calling `Engine::assemble` itself.
 
 ### 9.4 The manifest needs two properties the sketch does not yet have
 

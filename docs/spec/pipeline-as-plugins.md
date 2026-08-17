@@ -1,12 +1,19 @@
 ---
 id: pipeline-as-plugins
 title: "Every wrapper is a plugin: the full extraction plan"
-status: proposed
+status: living
 ---
 
 # Every wrapper is a plugin: the full extraction plan
 
-**Status:** proposed, 2026-08-17.
+**Status:** living, updated 2026-08-17. First written 2026-08-17 as a
+completion plan; each item below is tracked to landed/open individually as it
+ships, which is the reason this reads as "proposed" in no single place — most
+of Track A (A1, A3–A10; A2 still open) and Track D's D1 have landed (#3479,
+building on ce9c7cd/aabb8d4/eb1fe9e/ed18283/9672787/5c5c325), and Tracks B, C
+and the rest of D remain the plan as written. §2's "governing gap" paragraph
+is left in place as history, with a correction above it, because it is the
+clearest record of what A3–A5/A8–A10 actually closed.
 
 `doc:turn-loop-wrappers` established the direction — one loop, six doors,
 wrappers are plugins — and sequenced its first three moves. This document is the
@@ -109,14 +116,25 @@ The starting position is better than "nothing" and worse than "nearly there".
   `[requirements]`, `[subloop]`, `[roles]`, and a closed condition grammar with
   a load-time stage-graph check (`crates/stella-plugin/src/{manifest,wrapper}.rs`).
 
-**The governing gap:** `stella-plugin` has **zero consumers**. Nothing calls
-`PluginManifest::from_toml_str`, there is no `.stella/plugins/` resolver, no
-install command, no loader. `crates/stella-plugin/src/wrapper.rs:29-33` says it
-plainly — a `StageName` is "a declared name that load-checks, not a dispatch
-target".
+**Update, 2026-08-17: Track A landed (#3479), and the paragraph below is what
+it read like before that.** Kept for the record, because it names precisely
+the gap A3–A5, A8–A10 closed. `stella-plugin` no longer has zero consumers —
+`stella-runtime`, `stella-cli` and `stella-pipeline` all consume it now, per
+`stella-plugin`'s own README "Consumers" section — and `.stella/plugins/`
+resolution, `stella plugin install|list|remove`, and a `TurnWrapper` trait
+with two working transports all exist. **What is still true, restated
+precisely rather than as "zero consumers": nothing drives a live turn through
+the socket yet.** `stella-runtime` has no host sequence that calls
+`before_turn`/`after_turn`/`judge`/`again?` in order (§4 A3's landed note has
+the detail), so a manifest an installed plugin declares is loaded, shown for
+consent, and otherwise inert on the path a real `stella run` takes.
 
-So the manifest describes a socket that does not exist. Track A builds the
-socket; everything else is downstream of it.
+> *Original text, now historical:* "`stella-plugin` has **zero consumers**.
+> Nothing calls `PluginManifest::from_toml_str`, there is no `.stella/plugins/`
+> resolver, no install command, no loader. `crates/stella-plugin/src/wrapper.rs:29-33`
+> says it plainly — a `StageName` is 'a declared name that load-checks, not a
+> dispatch target'. So the manifest describes a socket that does not exist.
+> Track A builds the socket; everything else is downstream of it."
 
 ---
 
@@ -205,26 +223,48 @@ mode already shipped. One constructor, or every wrapper re-authors the defect.
 
 ### A3. The wrapper socket (#3380)
 
-The four points, defined in **`stella-runtime`** — not `stella-core`, because
-`before_turn` performs recall and `after_turn` spawns processes, and invariant 2
-bans I/O in the engine (`doc:turn-loop-wrappers` §9.1).
+**LANDED, both halves (#3479).** The four points are defined in
+**`stella-runtime`** — not `stella-core`, because `before_turn` performs recall
+and `after_turn` spawns processes, and invariant 2 bans I/O in the engine
+(`doc:turn-loop-wrappers` §9.1).
 
-Two halves, and they are separable:
+Two halves, and they shipped together:
 
-- **A3a — the in-process contract.** A Rust trait in `stella-runtime`, plus the
-  manifest vocabulary for the four points (which `[wrapper]` does not yet have —
-  it declares stages, not points).
-- **A3b — the wire contract.** The same four points expressed as serialized
-  request/response, so a plugin can be a separate process. This is the half that
-  decides whether Python and TypeScript are first-class or bolted on, and §5
-  argues it must be designed **with** A3a rather than after it.
+- **A3a — the in-process contract.** The `TurnWrapper` trait
+  (`crates/stella-runtime/src/wrapper/mod.rs`), plus `[loop] points` — the
+  manifest vocabulary for the four points `[wrapper]` was missing when this
+  item was written — and `LoopGrant::permits_point` as its filter (folded into
+  A4 below).
+- **A3b — the wire contract.** `crates/stella-plugin/src/wire.rs`: the same
+  points as serialized request/response, so a plugin can be a separate
+  process, plus `docs/wire/wrapper.wire.json` as the generated, gate-checked
+  corpus (`doc:wrapper-socket` §3 commitment 2).
+
+**What "landed" does not yet cover, stated so this item is not read as more
+finished than it is.** There is no `dispatch` function and no host-sequence
+type in `stella-runtime` today — `admissible`, `judge` and `again` are free
+functions and `TurnWrapper` is a trait a caller implements against, but
+nothing in this crate calls all four points in order for a live turn. The
+socket is proven end-to-end against one real (non-Rust, `/bin/sh`) subprocess
+plugin by a test harness that runs its own round loop
+(`crates/stella-runtime/tests/wrapper_socket.rs`) — that is real evidence the
+trait and both transports work, but it is not §6's acceptance test, which asks
+for the same plugin driven unchanged by `stella-cli`, `stella-serve`, and an
+embedded `stella-engine` host. None of the three drivers calls `TurnWrapper`
+yet. Track B (§7) is where a real caller — and with it, a candidate
+dispatcher — would first appear.
 
 ### A4. A loader
 
-`.stella/plugins/` and `~/.stella/plugins/` resolvers (`crates/stella-home/`),
-`stella plugin install|list|remove` (`crates/stella-cli/`), a consent prompt on
-install that shows the declared participation grade and hook grants, and
-`LoopGrant::permits_hook` (`manifest.rs:137-140`) as the routing filter.
+**LANDED (#3479).** `.stella/plugins/` and `~/.stella/plugins/` resolvers,
+`stella plugin install|list|remove`, and the install consent prompt all ship
+in `crates/stella-cli/src/plugin_cmd.rs` + `plugin_cmd/{roster,process}.rs`,
+gated on `project_code_execution_trusted()` for the project tier (#3509,
+below). `LoopGrant::permits_hook` and `LoopGrant::permits_point` are both
+consulted as routing filters. **What loading does not yet do: drive a turn.**
+The loader resolves a manifest, shows consent, and stops — nothing calls
+`stella-runtime`'s `TurnWrapper` with what it resolved, because (per A3) there
+is no host sequence yet for it to call.
 
 **Uninstall must actually uninstall.** Hook settings currently *concatenate*
 across scopes and no scope can remove another's entries
@@ -253,25 +293,17 @@ most expensive grant in the ladder and can never reach a verdict.
 
 ### A5. A process declaration in the manifest
 
-Today only the oracle may name an executable — `OracleCommand{argv,
-timeout_secs}` (`crates/stella-plugin/src/manifest.rs:163-170`), "never a shell
-string", with `${plugin_dir}` interpolation as the host's job. There is no
-`runtime`, `language`, or `entrypoint` field on `PluginManifest`
-(`:227-259`), and `deny_unknown_fields` on every table means one cannot be added
-without editing the crate.
-
-Add `[runtime]` modelled directly on `OracleCommand`: `argv`, `timeout_secs`, an
-env allowlist. Deliberately **not** a `language` field — `argv` already
-expresses `["python3", "${plugin_dir}/main.py"]` and
+**LANDED (#3479).** `[runtime]` exists (`crates/stella-plugin/src/runtime.rs`):
+`argv`, `timeout_secs`, and a **default-deny** environment allowlist, modelled
+directly on `OracleCommand`. Deliberately **not** a `language` field — `argv`
+already expresses `["python3", "${plugin_dir}/main.py"]` and
 `["node", "${plugin_dir}/main.js"]` without Stella learning what a language is.
 
-**And `[oracle] command` is optional once `[runtime]` exists** (#3501 item 1).
-A plugin whose evidence comes from `after_turn` is its own oracle, and while
-`command` was mandatory every one of Track C's three reference plugins wrote its
-runtime argv out a second time, byte for byte — the sole reason their manifests
-differ in four lines rather than two. `PluginManifest::oracle_process()` resolves
-the two declarations into one answer, so a host never learns which shape an
-author chose.
+**`[oracle] command` is optional once `[runtime]` exists**, exactly as this
+item asked (#3501 item 1): `PluginManifest::oracle_process()` resolves the two
+declarations into one `OracleProcess` and reports which source it came from
+(`OracleProcessSource::OracleCommand` or `::Runtime`), so a host never learns
+which shape an author chose.
 
 ### A6. Structured verdicts
 
@@ -314,16 +346,18 @@ in the tree yet.
 
 ### A8. Signals and stages grow to cover the pipeline
 
-`StageName` is 8 of 12 — `verdict`, `reflect`, `contextwrite`, `complete` are
-undeclarable (`wrapper.rs:114-131` against `StageKind` in
-`crates/stella-protocol/src/event.rs:137+`). `Signal` is 5 values and only
-`Triage` publishes any (`wrapper.rs:140-156`), so no condition can read a diff
-size, a flip state, a test result, or a budget — which are precisely the
-pipeline's live skip conditions (`pipeline.rs:1141-1159`, `:1198`).
-
-Grow both to cover what the pipeline actually branches on. Keep the closed
-grammar: `wrapper.rs:16-21` is right that "a Turing-complete condition in a
-manifest is a second program with no gate on it."
+**LANDED (#3479).** `StageName` is now all 12 (`Triage`, `Recall`, `Research`,
+`Plan`, `Scope`, `Execute`, `Witness`, `Verify`, `Verdict`, `Reflect`,
+`ContextWrite`, `Complete` — `crates/stella-plugin/src/wrapper.rs`), matching
+`StageKind` in full. `Signal` grew from 5 to 15, and publication grew with it:
+`Execute` publishes `MutatingActions`/`DiffLines`, `Witness` publishes
+`WitnessAuthored`, `Verify` publishes `FlipAchieved`/`TestsRed`/`TestsGreen` —
+so a condition can now read a diff size, a flip state and a test result, which
+were exactly the gaps this item named. `BudgetMetered` is a host-published
+signal rather than stage-published (`Signal::publisher` returns `None` for
+it), which still closes the same gap from the other side. The closed grammar
+held throughout: nothing here admits a Turing-complete condition, matching the
+rule this item was written to protect.
 
 ### A9. Plugin events and the trace fold
 

@@ -348,7 +348,7 @@
         11,
         12
       ],
-      "status": "proposed",
+      "status": "living",
       "title": "Every wrapper is a plugin: the full extraction plan"
     },
     "pipeline-as-plugins-execution": {
@@ -729,7 +729,7 @@
         8,
         9
       ],
-      "status": "proposed",
+      "status": "living",
       "title": "One loop, six doors, and wrappers are plugins"
     },
     "verification-gate": {
@@ -768,7 +768,7 @@
         7,
         8
       ],
-      "status": "proposed",
+      "status": "implemented",
       "title": "The wrapper socket: four points, one wire, no host assumed"
     }
   },

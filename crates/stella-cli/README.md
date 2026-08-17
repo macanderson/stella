@@ -37,7 +37,7 @@ not. [`stella-parity`](../stella-parity) is the enforcement of that instinct: a
 capability that ships on this surface and silently misses the API surface fails a
 test rather than a review.
 
-Three specific changes in flight that this crate is the far end of:
+Four specific changes in flight that this crate is the far end of:
 
 - **Verification is becoming opt-in.** [`stella-pipeline`](../stella-pipeline) is
   still the default `stella run` path and `--no-pipeline` still opts out, but the
@@ -56,6 +56,14 @@ Three specific changes in flight that this crate is the far end of:
   `executions.pipeline_variant` records which wrapper ran, NULL for an unwrapped
   turn (#3388). Writing `"pipeline"` or `"deck-pipeline"` into `kind` is the bug
   that migration fixed; the measurement surface double-counts if it grows back.
+- **A plugin can be installed, but nothing dispatches one yet.**
+  [`src/plugin_cmd.rs`](src/plugin_cmd.rs) resolves a manifest and shows
+  install consent (#3380/#3479) — real I/O, real code, genuinely landed — but
+  the wrapper socket it loads a manifest *for* has no host sequence in
+  `stella-runtime` that a live turn calls, so an installed plugin is inert on
+  the path `stella run` actually takes today. Do not read "install works" as
+  "plugins run"; see [`stella-runtime`](../stella-runtime)'s README for
+  exactly what has and has not landed there.
 
 ## Boundary — does this change belong here?
 
@@ -147,6 +155,7 @@ file), never as a planning assumption.
 | [`src/command_deck.rs`](src/command_deck.rs) + [`src/command_deck/`](src/command_deck), [`src/subsession.rs`](src/subsession.rs), [`src/session_persist.rs`](src/session_persist.rs), [`src/claims.rs`](src/claims.rs), [`src/cache_insight.rs`](src/cache_insight.rs) | The deck driver: bridges engine `AgentEvent`s into `stella-tui`'s `Inbound` fold, runs per-prompt sub-sessions, tees every fold-relevant envelope to the resume journal, and coordinates concurrent writers by claim-on-first-write. |
 | [`src/tui.rs`](src/tui.rs), [`src/interactive.rs`](src/interactive.rs) | The non-deck surfaces: `render_event`'s plain streaming renderer and the approvals plane's TTY question io (`AskUserIo`). |
 | [`src/auth_cmd.rs`](src/auth_cmd.rs), [`src/mcp_cmd.rs`](src/mcp_cmd.rs), [`src/memory_cmd.rs`](src/memory_cmd.rs), [`src/usage_cmd.rs`](src/usage_cmd.rs), [`src/fleet_cmd.rs`](src/fleet_cmd.rs), [`src/inspect.rs`](src/inspect.rs), [`src/stats.rs`](src/stats.rs), [`src/export.rs`](src/export.rs) | One module per command family. Everything but `fleet_cmd` runs without a resolved provider. |
+| [`src/plugin_cmd.rs`](src/plugin_cmd.rs) + [`src/plugin_cmd/`](src/plugin_cmd) (`roster.rs`, `process.rs`) | `stella plugin install\|list\|remove` (#3380/#3479): resolves `.stella/plugins/` and `~/.stella/plugins/`, renders `stella_plugin::consent_text` before anything executes, gates the project scope on `project_code_execution_trusted()` (#3509), and is the one place `LoopGrant::permits_hook`/`permits_point` are consulted against an installed manifest. Loads and shows consent for a manifest; does not yet drive a turn through one — `stella-runtime` has no host sequence for it to call (see that crate's README). |
 | [`src/model_catalog.rs`](src/model_catalog.rs), [`src/credential_handoff.rs`](src/credential_handoff.rs), [`src/credential_status.rs`](src/credential_status.rs), [`src/enterprise_telemetry.rs`](src/enterprise_telemetry.rs) | The only place that knows both models.dev's provider ids and stella's (`bootstrap()` installs the catalog slug validation and pricing resolve against); launcher FD key handoff; the shared "where did this key come from" verdict for `models`/`config`/`auth list`; the managed-only operational spool. |
 | [`src/arena.rs`](src/arena.rs), [`src/candidate_ws.rs`](src/candidate_ws.rs) | The arena-bench adapter (`--task-dir/--journal/--state-dir/--resume`) and best-of-N candidate isolation over detached git worktrees. |
 | [`src/skill_manager.rs`](src/skill_manager.rs), [`src/agents_installed.rs`](src/agents_installed.rs), [`src/extensions.rs`](src/extensions.rs) | Disk I/O for the deck's SKILLS and INSTALLED AGENTS panes, and the `.claude/`/`.agents/` adoption sync. |

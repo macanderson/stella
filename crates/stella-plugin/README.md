@@ -56,11 +56,15 @@ is exactly what makes resolution **total**: a manifest that loads resolves for
 every possible set of signal values, which `tests/wrapper_program.rs` asserts
 as a proptest property rather than a promise.
 
-Nothing here dispatches a stage: the four wrapper interception points are
-#3380 and do not exist yet, so a stage name is a declared name that
-load-checks and resolves. The crate takes no engine dependency by contract,
-which is what lets the load-time contract be complete ahead of the socket it
-describes.
+Nothing here dispatches a stage itself: this crate declares the stage names
+and the wire contract a plugin speaks over them (`wire.rs`), but the trait
+that actually calls `before_turn`/`after_turn` — and the `judge`/`again` that
+follow — lives one crate up, in `stella-runtime` (#3380, landed #3479,
+`doc:wrapper-socket` §2). No live turn calls that trait yet; see
+`stella-runtime`'s own README for exactly what "landed" covers there. The
+crate still takes no engine dependency by contract, which is what let the
+load-time contract ship complete before the runtime half existed, and still
+holds now that it does.
 
 `[oracle]` carries **two** shapes of evidence, and a manifest may declare
 either or both. `flip = "required"` is the witness contract: the host credits
@@ -122,12 +126,19 @@ unless that plugin is installed — which is exactly why the manifest's rules ar
 load errors rather than warnings: an opt-in verifier that silently declined to
 participate would be worse than none.
 
-**Declared, then dispatched, in that order.** The manifest is deliberately ahead
-of the socket it describes. The four wrapper interception points are #3380 and do
-not exist yet; the `[wrapper]` stage list parses and load-checks but nothing
-reads it yet (#3408). That gap is tracked, not incidental — the crate takes no
-engine dependency, which is what lets the load-time contract be complete before
-the runtime half exists.
+**Declared, then callable — still not driven.** The manifest is declared here.
+The socket a caller would drive it through — the `TurnWrapper` trait, `judge`,
+`again`, and both an in-process and a subprocess transport — landed in
+`stella-runtime` (#3380, shipped #3479, `doc:wrapper-socket`), proven
+end-to-end against a real subprocess plugin in that crate's own tests. What has
+**not** landed is a host sequence that calls all four points for a live turn,
+or anything driving one: `stella-pipeline`'s `variant.rs` resolves the shipped
+`[wrapper]` block into a `StageProgram` (#3408) but `pipeline.rs` does not
+consult it to run a turn, and `stella-cli`'s loader (`stella plugin
+install|list|remove`) resolves and shows consent for a manifest without
+driving a turn through it either. That gap is tracked, not incidental — the
+crate takes no engine dependency, which is what let the load-time contract
+ship complete before the runtime half existed.
 
 The one function a host must never bypass is
 `LoopGrant::permits_hook(event)` — the authoritative filter behind the
@@ -204,6 +215,16 @@ before it crosses.
 - `src/consent.rs` — the install-consent surface: `Capability` (the
   `[[capabilities]]` entry and its validation), `highest_risk`, and
   `consent_text`, the pure renderer of the whole consent document.
+- `src/wire.rs` — the wrapper socket's wire contract (#3380, `doc:wrapper-socket`
+  §2): `BeforeTurnRequest`/`Response`, `AfterTurnRequest`/`Response`,
+  `WrapperPoint`, `CandidateGrant`, `EvidenceSet`, and `VerdictRule` — the
+  serialized request/response shapes `stella-runtime`'s `TurnWrapper` trait is
+  a typed view of, and the JSON a non-Rust plugin author needs and nothing
+  more.
+- `src/wire_corpus.rs` (behind the `schema` feature) — the generated wire-vector
+  corpus `bin/export_wrapper_wire.rs` prints, published under `docs/wire/` and
+  gate-checked by `scripts/check-wire-schema.sh`; compiled into no default
+  build.
 - `src/error.rs` — `ManifestError`, typed per rule (invariant 5).
 - `tests/manifest_grades.rs` + `tests/fixtures/*.toml` — slice A's
   acceptance: one fixture per grade, round-tripped through both TOML and
@@ -216,6 +237,21 @@ before it crosses.
   resolves into a stage order, and the proptest property that the two graph
   rules make that resolution total, deterministic and order-preserving for
   every set of signal values.
+- `tests/wire_contract.rs` — invariant 4 held to the letter for the wrapper
+  socket: `WrapperRequest`/`WrapperResponse` and everything reachable from them
+  round-tripped byte-for-byte through `serde_json` at both their fullest and
+  emptiest legal shape, every closed vocabulary pinned on both sides, and an
+  unknown envelope or body field refused rather than ignored.
+- `tests/non_witness_done.rs` — the §6.1 falsifier: a performance-budget
+  manifest expressing a definition of done that is not a witness flip
+  (`tests/fixtures/perf-budget.toml`), proving the grammar widens rather than
+  reopens.
+- `tests/one_oracle_story.rs` — the #3524 mechanical guard behind #3511's
+  correction: no doc comment anywhere in this crate may say the host runs or
+  re-checks the oracle. A crate asserting the retired claim in one comment and
+  the current one in another leaves a reader no way to tell which is true, and
+  the check matches whitespace-normalized text so a claim split across a line
+  break cannot hide from it.
 - `tests/install_consent.rs` + `tests/fixtures/self-driving.toml` — A1's
   acceptance: the widest grant anyone will ask for, written out, and the
   proof that it is both expressible here and fully shown before install.
