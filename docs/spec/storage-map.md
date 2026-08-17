@@ -28,8 +28,9 @@ field by field; the ORM definition is kept"); Mongoose and DynamoDB default
 to their own `mongo`/`dynamodb` layers, so the cross-layer conflict fires.
 The gate simulates post-edit content, so a model gaining a
 field is checked as a column addition (rings 1–2) with no ALTER anywhere.
-The ring logic has no built-in host today — no built-in tool writes workspace
-files — and awaits a write surface to hook.
+The ring logic is not hosted anywhere today, but the write surface it needs is
+no longer missing: `write_file` and `edit_file` are built-ins, so hooking the
+gate ahead of them is available work rather than a blocked design.
 **Not yet built:** ActiveRecord + `$jsonSchema` adapters and the Diesel
 field upgrade (§4a table), context.db embedding of the cards +
 `NodeKind::Storage` recall integration (§7b–c), the LLM inference fold

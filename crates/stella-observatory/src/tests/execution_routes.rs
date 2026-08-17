@@ -73,7 +73,8 @@ fn execution_journal_replays_transcript_without_deltas() {
             "tool_start",
             "tool_result",
             "text",
-            "text"
+            "text",
+            "file_change"
         ],
         "seq order, text_delta excluded"
     );
@@ -162,8 +163,8 @@ fn transcript_route_names_the_parameter_it_is_missing() {
 #[test]
 fn execution_journal_after_seq_returns_only_newer_rows() {
     let ws = seeded_workspace();
-    // Seq 3 is the tool_start row; only tool_result (4) and the two text
-    // rows (5, 6) — all > 3 — should come back.
+    // Seq 3 is the tool_start row; only tool_result (4), the two text rows
+    // (5, 6) and the file_change (7) — all > 3 — should come back.
     let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=3");
     let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let seqs: Vec<i64> = v
@@ -172,7 +173,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
         .iter()
         .map(|e| e["seq"].as_i64().unwrap())
         .collect();
-    assert_eq!(seqs, [4, 5, 6], "only rows with seq > 3 come back");
+    assert_eq!(seqs, [4, 5, 6, 7], "only rows with seq > 3 come back");
     // A cursor past every seeded row degrades to empty, not an error.
     let none = respond(ws.path(), "/api/execution-journal?id=1&after_seq=99");
     let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
@@ -183,7 +184,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
     let v: serde_json::Value = serde_json::from_slice(&all.body).unwrap();
     assert_eq!(
         v.as_array().unwrap().len(),
-        6,
+        7,
         "seq 0 survives after_seq=-1"
     );
 }
@@ -398,4 +399,129 @@ fn execution_context_clips_long_messages_unless_full() {
         v["context"]["messages"][0]["body"].as_str().unwrap().len(),
         long.len()
     );
+}
+
+/// A file change reaches the transcript **with its diff**, as hunks.
+///
+/// The transcript used to stop at "some files were touched" — the paths were
+/// listed in a side panel with their line counts, and nothing on the page
+/// said *what* changed, which is the question a transcript is opened to
+/// answer. The deck and the plain surface have shown the diff inline since
+/// #2421; this is the same row.
+///
+/// The event carries git's `-p` patch as TEXT (it is measured by shelling to
+/// git at the turn boundary), and the page has exactly one diff renderer,
+/// which draws hunks — so the projection parses. Fails on main: the route's
+/// `event_type IN (…)` filter did not select `file_change` at all.
+#[test]
+fn execution_journal_carries_a_file_changes_diff_as_hunks() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/execution-journal?id=1");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let change = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["type"] == "file_change")
+        .expect("the fixture seeds a file_change");
+    assert_eq!(change["path"], "src/lib.rs");
+    assert_eq!(change["kind"], "modified");
+    // The counts ride the event from git's numstat. They are NOT recounted
+    // from the diff, which is a capped rendering — re-deriving would report
+    // the size of the view as the size of the change.
+    assert_eq!(change["added"], 2);
+    assert_eq!(change["removed"], 1);
+
+    let hunks = change["hunks"].as_array().expect("hunks");
+    assert_eq!(hunks.len(), 1, "{change}");
+    assert_eq!(hunks[0]["old_start"], 3, "positioned in the file, not at 1");
+    let ops: Vec<&str> = hunks[0]["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["op"].as_str().unwrap())
+        .collect();
+    assert_eq!(ops, ["equal", "remove", "add", "add"]);
+    assert_eq!(hunks[0]["lines"][1]["text"], "fn a() {}");
+    // Nothing was elided here, so the fold field says so rather than naming
+    // index 0 — which is a real position a renderer would draw a marker at.
+    assert_eq!(change["elided"], 0);
+    assert!(change["fold_before"].is_null(), "{change}");
+}
+
+/// A diff longer than the view's budget shows its beginning and its end, and
+/// states the size of the middle it dropped.
+///
+/// Only the changed lines, never the file — and never more of them than
+/// `stella_diff::view::VIEW_CAP`, because this payload is re-shipped to the
+/// browser on every dashboard poll. `?full=1` lifts the cap, the same escape
+/// hatch that lifts the body clip.
+#[test]
+fn a_long_file_change_diff_is_elided_from_the_middle_and_says_so() {
+    let ws = seeded_workspace();
+    let adds = stella_diff::view::VIEW_CAP * 2;
+    let body: String = (1..=adds).map(|i| format!("+line {i}\n")).collect();
+    let diff = format!("--- a/big.rs\n+++ b/big.rs\n@@ -0,0 +1,{adds} @@\n{body}");
+    let payload = serde_json::json!({
+        "type": "file_change",
+        "path": "big.rs",
+        "kind": "created",
+        "added": adds,
+        "removed": 0,
+        "diff": diff,
+    });
+    let conn = rusqlite::Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+    conn.execute(
+        "INSERT INTO events (execution_id, seq, event_type, payload)
+         VALUES (1, 8, 'file_change', ?1)",
+        [payload.to_string()],
+    )
+    .unwrap();
+    drop(conn);
+
+    let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=7");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let change = &v.as_array().unwrap()[0];
+    let hunks = change["hunks"].as_array().expect("hunks");
+    let shown: usize = hunks
+        .iter()
+        .map(|h| h["lines"].as_array().map_or(0, Vec::len))
+        .sum();
+    assert!(
+        shown <= stella_diff::view::VIEW_CAP,
+        "{shown} lines shipped against a cap of {}",
+        stella_diff::view::VIEW_CAP
+    );
+    assert_eq!(
+        change["elided"],
+        adds - shown,
+        "the drop is counted: {shown}"
+    );
+    // Both ends survive, and the tail's header names the file's real lines
+    // rather than restarting the gutter from 1.
+    assert_eq!(hunks[0]["lines"][0]["text"], "line 1");
+    let tail = hunks.last().unwrap();
+    let last = tail["lines"].as_array().unwrap().last().unwrap();
+    assert_eq!(last["text"], format!("line {adds}"));
+    assert!(
+        hunks.len() >= 2 && change["fold_before"].as_u64() == Some(1),
+        "the marker belongs between the two ends: {change}"
+    );
+    assert_eq!(
+        tail["new_start"].as_u64().map(|n| n as usize),
+        Some(adds + 1 - tail["lines"].as_array().unwrap().len())
+    );
+
+    // `?full=1` is the reader who asked for everything.
+    let full = respond(ws.path(), "/api/execution-journal?id=1&after_seq=7&full=1");
+    let v: serde_json::Value = serde_json::from_slice(&full.body).unwrap();
+    let change = &v.as_array().unwrap()[0];
+    assert_eq!(change["elided"], 0, "nothing withheld under ?full=1");
+    let shown: usize = change["hunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["lines"].as_array().map_or(0, Vec::len))
+        .sum();
+    assert_eq!(shown, adds);
 }

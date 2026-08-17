@@ -40,8 +40,10 @@ in Rust as a workspace of focused crates.
   Pin a specific model per run or shell with `--model`.
 - **Deterministic definition of done** — the staged pipeline's witness stage
   has an independent model author a test that fails on the old code and passes
-  on the new, and tracks that fail→pass flip. A green suite alone is not
-  accepted.
+  on the new, and tracks that fail→pass flip, host-run out of the box. A green
+  suite alone is not accepted. This machinery is also becoming Vera, an
+  installable verification plugin — a plugin's oracle reports its own
+  evidence instead of Stella re-running the check.
 - **Single-threaded engine** — One deterministic step loop: plan, fan tools out
   in parallel, observe, compact if noisy, repeat. No coordinator or multi-agent
   swarm.
@@ -253,7 +255,13 @@ Prefer `api_key_env` over a literal `api_key` — settings files get committed.
 > silently point your real API key at its own server. Cosmetic fields
 > (`name`, `default_model`, `dialect`) still apply; the user and org-managed
 > scopes are always trusted. Project hooks are gated the same way, via
-> `STELLA_PROJECT_HOOKS`.
+> `STELLA_PROJECT_HOOKS`, and so are **project-scope plugins**
+> (`<workspace>/.stella/plugins`): a plugin declares a program Stella spawns
+> and can arbitrate the agent loop, so it is strictly more powerful than a
+> hook, and one that arrived with a `git clone` is not loaded, listed, or
+> dispatched until you set `STELLA_TRUST_PROJECT=1`. Plugins you installed
+> yourself with `stella plugin install --scope user` live in `~/.stella/plugins`
+> and are unaffected.
 
 ### Agent engine config (`agent_engine_config`)
 
@@ -486,11 +494,16 @@ are also accepted case-insensitively.
 
 ## Built-in tools
 
-Twelve built-ins, in four families — the task board, sub-agent delegation,
-scratch state, and the environment probe:
+Eighteen built-ins, in six families — the shell, file CRUD, code search, the
+task board, sub-agent delegation, scratch state, and the environment probe.
+The first three are the working surface (the rows that touch the world outside
+the process); the rest are coordination:
 
 | Tool                                                                                         | Description                                                                                                                                                                                                                             |
 | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bash`                                                                                       | Run a shell command in the workspace root, stdout+stderr with a timeout backstop — the one built-in that runs something nobody bounded, and the only `high`-risk row that is not delegation                                              |
+| `read_file` · `write_file` · `edit_file` · `delete_file`                                     | File CRUD confined to the workspace: numbered reads with an offset/limit window, whole-file writes, exact-substring edits that refuse an ambiguous match, and a delete that removes a symlink as the link rather than its target         |
+| `search`                                                                                     | Find code by meaning as well as by text — one call returns the answering files with their symbols, callers, imports and source attached, and always states which strategies ran and whether it truncated                                 |
 | `task_create` · `task_list` · `task_start` · `task_complete` · `task_cancel` · `task_assign` | The session task board — one row per deliverable, exactly one in progress, `task_assign` delegates a board task to a parallel sub-agent                                                                                                 |
 | `task`                                                                                       | Delegate a self-contained research question to a read-only sub-agent that returns only its findings — bulky evidence stays out of the parent conversation, and independent questions dispatched in one step run concurrently             |
 | `save_state` · `get_state` · `list_state` · `delete_state`                                   | The scratch state plane: session-private key/value state (parse results, extracted lists, computed digests) saved once and referenced later instead of re-derived — paged reads by byte offset, deleted automatically at session end     |
@@ -615,7 +628,7 @@ flowchart TD
       ENG["step driver · goal loop · budget<br/>retry · compaction · loop-detection · router"]
     end
     CORE -->|Provider port| MODEL["stella-model — adapters<br/>anthropic · openai · gemini · vertex · bedrock · zai<br/>(+ any OpenAI-compatible: xai · deepseek · openrouter · local)"]
-    CORE -->|ToolExecutor port| TOOLS["stella-tools<br/>task board · sub-agents · scratch state · environment"]
+    CORE -->|ToolExecutor port| TOOLS["stella-tools<br/>bash · file CRUD · search<br/>task board · sub-agents · scratch state · environment"]
     MCP["stella-mcp<br/>external MCP servers"] -.->|merges tools into registry| TOOLS
     CORE -->|emits AgentEvent stream| STORE["stella-store<br/>SQLite: executions · events · telemetry"]
     U -->|"recall · episodes · bi-temporal facts"| CTX["stella-context — context plane<br/>recall · embeddings · memory"]
@@ -661,7 +674,7 @@ extending it.
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`stella-cli`](crates/stella-cli/README.md)                 | CLI binary — clap surface + agent loop wiring                                                                                                                                                                                          |
 | [`stella-core`](crates/stella-core/README.md)               | The step-driver engine (no I/O): parallel tools, goal loop, budget, retry, compaction, loop detection, router                                                                                                                          |
-| [`stella-tools`](crates/stella-tools/README.md)             | The built-in tools (the task board, the `task` sub-agent, the scratch state plane, `get_environment` — every one registered by default, each withholdable via `tools` switches)                                                              |
+| [`stella-tools`](crates/stella-tools/README.md)             | The built-in tools (`bash`, file CRUD, `search`, the task board, the `task` sub-agent, the scratch state plane, `get_environment` — every one registered by default, each withholdable via `tools` switches)                                |
 | [`stella-model`](crates/stella-model/README.md)             | The `Provider` port's adapters: anthropic, openai, gemini, vertex, bedrock, zai (SSE, tool-call dialects, SigV4, pricing)                                                                                                              |
 | [`stella-store`](crates/stella-store/README.md)             | SQLite persistence — executions, events, telemetry, files-touched                                                                                                                                                                      |
 | [`stella-mcp`](crates/stella-mcp/README.md)                 | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry                                                                                                                                              |

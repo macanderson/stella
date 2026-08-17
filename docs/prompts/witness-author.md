@@ -6,10 +6,16 @@ status: living
 
 # `witness_author`
 
-Writing the witness test that arms the flip oracle. This is the role that
-makes "verified done, not claimed done" mechanical: it authors a test that must
-**fail on the current code** and **pass once the goal is met**, and that
-fail→pass flip is what credits the work.
+Writing the witness test that arms the flip oracle for the staged pipeline's
+built-in path: it authors a test that must **fail on the current code** and
+**pass once the goal is met**, and that fail→pass flip is what credits the
+work — genuinely, host-run: this stage's model writes the test, but Stella
+itself executes it and watches the flip. This mechanism is being extracted
+into an installable verification plugin (Oxagen's Vera is the reference one,
+`doc:pipeline-as-plugins`, #3511); once it lands, this guarantee does not
+automatically transfer — a plugin's oracle reports its own evidence and
+Stella does not re-run it. This page documents the in-tree, host-run
+mechanism as it exists today.
 
 The stage is **demand-driven and runs after execution** — once the warrant has
 read the executed diff and found something worth proving. The canonical stage

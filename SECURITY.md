@@ -24,11 +24,18 @@ for confirmed issues, keeping you informed along the way.
 Especially interesting, given what Stella promises:
 
 - **Workspace-root escape** — any way a tool call reaches outside the pinned
-  workspace root: traversal, symlinks, race conditions. The built-in surface
-  is the task board, the scratch state plane, and `get_environment` — no
-  built-in file CRUD or shell — so the paths that matter run through the
-  built-ins' own state files under `.stella/` and through the extension
-  surfaces (custom manifest tools, hooks, MCP servers).
+  workspace root: traversal, symlinks, race conditions. This is the highest-value
+  class here, because the built-in surface includes file CRUD (`read_file`,
+  `write_file`, `edit_file`, `delete_file`) and `bash`. Those file paths are
+  confined by `crates/stella-tools/src/rootfd.rs` — a held root descriptor,
+  `openat(… O_DIRECTORY | O_NOFOLLOW)` per component, `..` popping the
+  descriptor stack rather than opening `".."`, and bounded symlink expansion
+  re-walked from the root — so a report that defeats *that* is squarely in
+  scope, as is anything reaching outside the root through the built-ins' own
+  state files under `.stella/` or through the extension surfaces (custom
+  manifest tools, hooks, MCP servers). A command `bash` spawns is deliberately
+  **not** confined in-process; that is a documented limit, not a vulnerability
+  (see [`docs/spec/remote-sandboxes.md`](docs/spec/remote-sandboxes.md)).
 - **Phone-home violations** — telemetry, update checks, or analytics leaving the
   machine in Community/default mode. Zero is the contract there, and the only
   governed exception is an explicitly enrolled Oxagen Enterprise seat. Network

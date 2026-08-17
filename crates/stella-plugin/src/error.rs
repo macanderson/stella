@@ -5,7 +5,10 @@
 //! of these to a plugin author should be able to print it verbatim and have
 //! the fix be obvious.
 
+use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
+use crate::package::ContributionKind;
+use crate::wire::WrapperPoint;
 use crate::wrapper::{Signal, SignalKind, StageName};
 
 /// A manifest failed to parse or failed validation.
@@ -42,6 +45,98 @@ pub enum ManifestError {
         /// The declared grade, below the one the hooks need.
         participation: Participation,
     },
+
+    /// `[loop] points` listed the same wrapper point twice — the
+    /// [`ManifestError::DuplicateHook`] rule, for the socket's points.
+    #[error("[loop] points declares {point} more than once")]
+    DuplicatePoint {
+        /// The point that appeared twice.
+        point: WrapperPoint,
+    },
+
+    /// A grade below `steering` declared wrapper points. A point is where a
+    /// plugin *contributes to* a turn — context, scope, a role intent, the
+    /// evidence a verdict reads — and that is the `steering` power exactly.
+    /// An `observer` watches the event stream and answers nothing.
+    #[error(
+        "[loop] participation = \"{participation}\" may not declare points; \
+         answering at a wrapper point requires \"steering\" or above"
+    )]
+    PointsRequireSteering {
+        /// The declared grade, below the one the points need.
+        participation: Participation,
+    },
+
+    /// `[loop] calls` listed the same capability twice — the
+    /// [`ManifestError::DuplicateHook`] rule, for the host-call channel.
+    #[error("[loop] calls declares {call} more than once")]
+    DuplicateCall {
+        /// The capability that appeared twice.
+        call: HostCall,
+    },
+
+    /// A grade below `steering` declared host calls. Asking the host for a
+    /// capability is something a plugin does *while contributing to a turn*, and
+    /// contributing to a turn is the `steering` power exactly — an `observer`
+    /// watches the event stream and asks for nothing.
+    #[error(
+        "[loop] participation = \"{participation}\" may not declare calls; \
+         asking the host for a capability requires \"steering\" or above"
+    )]
+    CallsRequireSteering {
+        /// The declared grade, below the one the calls need.
+        participation: Participation,
+    },
+
+    /// `[loop] calls` was declared with no `[loop] points` to make them from.
+    /// A host call happens *during* a point, so a plugin that answers no point
+    /// can never make one — the manifest that quietly does nothing, again.
+    #[error(
+        "[loop] calls requires at least one entry in [loop] points: a host call \
+         is made while answering a point, and a plugin that answers none can \
+         never make one"
+    )]
+    CallsRequirePoints,
+
+    /// `[loop] max_calls` was declared with no `[loop] calls` to bound.
+    #[error(
+        "[loop] max_calls has nothing to bound: declare the capabilities in \
+         [loop] calls, or drop the allowance"
+    )]
+    MaxCallsRequiresCalls,
+
+    /// `[loop] max_calls = 0` — an allowance that forbids the calls the same
+    /// block declares. Asking for none is an empty `calls` list, not a zero.
+    #[error(
+        "[loop] max_calls = 0 contradicts the capabilities [loop] calls \
+         declares: drop the calls instead"
+    )]
+    ZeroMaxCalls,
+
+    /// `[oracle]` was declared without `after_turn` in `[loop] points`. The
+    /// oracle's evidence reaches the host in the `after_turn` response and
+    /// nowhere else, and an undeclared point is never dispatched — so the
+    /// host would judge every turn against
+    /// [`EvidenceSet::unobserved`](crate::EvidenceSet::unobserved) and abstain
+    /// forever (#3499). A verdict that can never be reached is the manifest
+    /// that quietly does nothing, wearing its most expensive costume.
+    #[error(
+        "[oracle] requires \"after_turn\" in [loop] points: the oracle's \
+         evidence arrives in the after_turn response, and an undeclared point \
+         is never dispatched"
+    )]
+    OracleRequiresAfterTurn,
+
+    /// `[oracle]` named no `command` and the manifest declares no `[runtime]`
+    /// for it to be. The oracle is a program the *plugin* runs and reports the
+    /// result of (#3511); with neither declaration the manifest promises
+    /// evidence and names nothing that could produce it, and the install
+    /// prompt shows a user no program at all.
+    #[error(
+        "[oracle] declares no command and this manifest declares no [runtime] \
+         to run as the oracle: declare one of the two"
+    )]
+    OracleCommandRequired,
 
     /// A grade below `arbiter` declared the `Stop` hook. `Stop` is the
     /// completion gate; touching completion is exactly what separates
@@ -139,6 +234,93 @@ pub enum ManifestError {
     #[error("[oracle] command.timeout_secs must be at least 1")]
     ZeroOracleTimeout,
 
+    /// An `[oracle] measurements` entry was blank. A measurement's name is
+    /// what a check reads and what a hold message prints; a blank one can be
+    /// neither.
+    #[error("[oracle] measurements contains a blank name")]
+    EmptyMeasurementName,
+
+    /// `[oracle] measurements` named the same measurement twice. Always an
+    /// editing mistake, and deduplicating silently would hide it — the
+    /// [`ManifestError::DuplicateHook`] rule, for evidence.
+    #[error("[oracle] measurements declares \"{measurement}\" more than once")]
+    DuplicateMeasurement {
+        /// The name that appeared twice.
+        measurement: String,
+    },
+
+    /// A `[[oracle.checks]]` entry's text is outside the closed comparison
+    /// grammar. The grammar is `<measurement> <op> <integer>` and nothing
+    /// else — a richer expression syntax is a second program with no gate on
+    /// it, which is the [`crate::Condition`] argument applied to evidence.
+    #[error("[[oracle.checks]] for \"{requirement}\": cannot parse \"{check}\" — {reason}")]
+    UnparsableCheck {
+        /// The requirement whose check failed to parse.
+        requirement: String,
+        /// The check text as written.
+        check: String,
+        /// What was wrong with it, in the words an author needs.
+        reason: String,
+    },
+
+    /// A check read a measurement the same `[oracle]` block did not declare.
+    /// A rule over a number nothing reports would decide nothing at run
+    /// time, which is exactly the manifest that quietly does nothing.
+    #[error(
+        "[[oracle.checks]] for \"{requirement}\" reads \"{measurement}\", \
+         which [oracle] measurements does not declare (declared: {declared})"
+    )]
+    UnknownMeasurement {
+        /// The requirement whose check reads the unknown measurement.
+        requirement: String,
+        /// The check text as written.
+        check: String,
+        /// The undeclared name.
+        measurement: String,
+        /// The declared measurements, for the "did you mean" half.
+        declared: String,
+    },
+
+    /// A check named a requirement no `[requirements]` entry declares. Every
+    /// hold cites a named requirement, so a check that decides an unnamed one
+    /// can never be attributed.
+    #[error(
+        "[[oracle.checks]] names requirement \"{requirement}\", which \
+         [requirements] does not declare"
+    )]
+    CheckWithoutRequirement {
+        /// The requirement name the check cited.
+        requirement: String,
+    },
+
+    /// `flip = "not-applicable"` with a requirement no check decides. Without
+    /// a flip, a check is the only thing that can establish a requirement, so
+    /// an unchecked one is a clause of the definition of done that nothing
+    /// could ever meet — a hold with no way out.
+    #[error(
+        "[oracle] flip = \"not-applicable\" leaves requirement \
+         \"{requirement}\" undecidable: with no flip, every requirement needs \
+         a [[oracle.checks]] entry"
+    )]
+    UndecidableRequirement {
+        /// The requirement nothing decides.
+        requirement: String,
+    },
+
+    /// The oracle ran but reported no value for a measurement a check reads.
+    /// A missing number is never read as a satisfied budget — the
+    /// [`ManifestError::SignalNotProduced`] discipline, for evidence.
+    #[error(
+        "the oracle reported no value for \"{measurement}\", which the check \
+         for requirement \"{requirement}\" reads"
+    )]
+    MeasurementNotReported {
+        /// The requirement whose check could not be decided.
+        requirement: String,
+        /// The measurement that was missing from the reported set.
+        measurement: String,
+    },
+
     /// `[subloop]` was declared below `steering`. Subloop stages run as
     /// bounded child turns inside the host's loop — that is participation,
     /// which `none` and `observer` have disclaimed.
@@ -183,10 +365,163 @@ pub enum ManifestError {
         name: String,
     },
 
+    /// `[runtime]` was declared at `none`. A content bundle is never invoked
+    /// at any point in the turn, so the host would never start the process —
+    /// and an unreachable process declaration reads to its author as a
+    /// running one.
+    #[error(
+        "[runtime] is only meaningful at participation = \"observer\" or above \
+         (declared grade: \"{participation}\"): a content bundle is never \
+         invoked, so its process would never start"
+    )]
+    RuntimeRequiresObserver {
+        /// The declared grade, below `observer`.
+        participation: Participation,
+    },
+
+    /// `[runtime] argv` was empty — there is no program to run. The
+    /// [`Self::EmptyOracleArgv`] rule, applied to the plugin's own process.
+    #[error("[runtime] argv must name a program: it is empty")]
+    EmptyRuntimeArgv,
+
+    /// A `[runtime] argv` element was blank. A blank program name spawns
+    /// nothing and a blank argument is one the author did not mean to pass.
+    #[error("[runtime] argv contains a blank entry")]
+    BlankRuntimeArg,
+
+    /// `[runtime] timeout_secs = 0` — the host would kill the process before
+    /// it ran.
+    #[error("[runtime] timeout_secs must be at least 1")]
+    ZeroRuntimeTimeout,
+
+    /// A `[runtime] env` entry was the empty string, which names no variable.
+    #[error("[runtime] env contains an empty variable name")]
+    EmptyRuntimeEnvName,
+
+    /// A `[runtime] env` entry could never match a variable — it carried an
+    /// `=`, a NUL, or surrounding whitespace. Dead in an allowlist is worse
+    /// than absent: it reads to its author as granted.
+    #[error(
+        "[runtime] env entry `{name}` is not an environment variable name, so \
+         it can never match one"
+    )]
+    InvalidRuntimeEnvName {
+        /// The entry that names no variable.
+        name: String,
+    },
+
+    /// `[runtime] env` named the same variable twice. Always an editing
+    /// mistake, and deduplicating silently would hide it — the
+    /// [`Self::DuplicateHook`] rule for the other allowlist in this manifest.
+    #[error("[runtime] env declares `{name}` more than once")]
+    DuplicateRuntimeEnv {
+        /// The variable named twice.
+        name: String,
+    },
+
     /// The manifest's `name` was empty. The name is the identity every
     /// grant, chip, and hold attribution hangs off.
     #[error("manifest name must not be empty")]
     EmptyName,
+
+    /// A `[[capabilities]]` entry named no tool. The tool name is what a gate
+    /// rule keys on and what the consent prompt shows; a blank one is a
+    /// request for nothing that still reads as a request.
+    #[error("[[capabilities]] entry must name a tool: `tool` is empty")]
+    EmptyCapabilityTool,
+
+    /// A `[[capabilities]]` entry stated no purpose. "This plugin asks for
+    /// `bash`" is not something a human can consent to; the reason is the
+    /// half that makes the grant reviewable, so it is required rather than
+    /// optional.
+    #[error(
+        "[[capabilities]] entry for \"{tool}\" has an empty purpose: a capability \
+         with no stated reason is not something a user can consent to"
+    )]
+    EmptyCapabilityPurpose {
+        /// The tool whose purpose was blank.
+        tool: String,
+    },
+
+    /// A `[[capabilities]]` entry declared a blank scope string. A blank
+    /// limit renders as a limit and bounds nothing — the shape of claim this
+    /// consent surface exists to prevent.
+    #[error("[[capabilities]] entry for \"{tool}\" declares an empty scope entry")]
+    EmptyCapabilityScope {
+        /// The tool whose scope list contained a blank.
+        tool: String,
+    },
+
+    /// The same tool was requested twice. One entry per tool, with its scope
+    /// list carrying the qualifiers: two entries make the effective grant the
+    /// union of two lines a user read separately, which is exactly how a wide
+    /// grant hides inside a consent prompt.
+    #[error(
+        "[[capabilities]] requests \"{tool}\" more than once: declare one entry per \
+         tool and list its qualifiers in `scope`"
+    )]
+    DuplicateCapability {
+        /// The tool requested twice.
+        tool: String,
+    },
+
+    /// A `[[tools]]`/`[[skills]]`/`[[records]]` entry named nothing. The name
+    /// is the identity the surface merges on and the string a consent document
+    /// shows; a blank one describes a contribution nobody can consent to.
+    #[error("{} declares a {kind} with an empty name", .kind.table())]
+    EmptyContributionName {
+        /// Which surface the nameless entry was declared for.
+        kind: ContributionKind,
+    },
+
+    /// A contributed entry stated nothing about itself.
+    ///
+    /// [`Self::EmptyCapabilityPurpose`]'s rule for the other half of the
+    /// consent document: "this package installs a tool called `deploy`" is not
+    /// something a human can consent to, and a count with no prose is what a
+    /// consent prompt degrades into when this is optional.
+    #[error(
+        "the {kind} \"{name}\" states nothing about itself: a contribution with \
+         no description is not something a user can consent to"
+    )]
+    EmptyContributionDescription {
+        /// Which surface it was declared for.
+        kind: ContributionKind,
+        /// The entry's declared name.
+        name: String,
+    },
+
+    /// The same contribution was declared twice. Always an editing mistake —
+    /// the [`Self::DuplicateCapability`] rule for the package tables — and
+    /// deduplicating silently would make the consent document's count wrong.
+    #[error("{kind} \"{name}\" is declared more than once")]
+    DuplicateContribution {
+        /// Which surface it was declared for.
+        kind: ContributionKind,
+        /// The name declared twice.
+        name: String,
+    },
+
+    /// A `[[records]]` entry asked for `enforcement = "blocking"`.
+    ///
+    /// The governance rule, refused at load. A blocking record can deny a tool
+    /// call, and that authority is granted only through the repository's own
+    /// hash-chained promotion ledger (`.stella/rules/promotions.jsonl`), where
+    /// each grant names an approver and a reason and is reviewed with the
+    /// record it arms. A package's records live outside that repository and
+    /// outside that chain, so a package may ship records that steer and never
+    /// one that denies. See [`crate::RecordEnforcement`].
+    #[error(
+        "the record \"{lineage}\" asks for enforcement = \"blocking\", which a \
+         plugin may not ship: a record gains the authority to deny a tool call \
+         only through this repository's own promotion ledger, which a package's \
+         files are not covered by. Ship it as advisory and let the workspace \
+         promote it."
+    )]
+    PluginRecordCannotEnforce {
+        /// The lineage that asked to enforce.
+        lineage: String,
+    },
 
     /// `[wrapper]` was declared below `steering`. A wrapper intercepts the
     /// turn loop — it adds context, gathers evidence, and asks for another
@@ -293,6 +628,56 @@ pub enum ManifestError {
         /// The signal read before it exists.
         signal: Signal,
         /// The stage that publishes it, declared later or not at all.
+        publisher: StageName,
+    },
+
+    /// A condition read a signal published by an earlier stage that is itself
+    /// **conditional**, so some resolutions skip the publisher and the read
+    /// has no value at all.
+    ///
+    /// The half of the stage-graph check that declaration order alone cannot
+    /// see, and it only became checkable once something resolved a manifest
+    /// (`crate::program`): "declared earlier" answers *whether the publisher
+    /// appears*, never *whether it ran*. The grammar has no conjunction, so a
+    /// reader cannot say "when the publisher ran, and…" — which makes this
+    /// shape unconditionally a hazard rather than a case an author could
+    /// guard. Rejecting it at load is what lets
+    /// [`Wrapper::resolve`](crate::Wrapper::resolve) be total for every
+    /// possible set of signal values.
+    #[error(
+        "[wrapper] stage \"{stage}\" reads \"{signal}\", which \"{publisher}\" \
+         publishes — but \"{publisher}\" is conditional, so a turn that skips \
+         it would leave \"{signal}\" with no value; make \"{publisher}\" \
+         unconditional or drop the condition that reads it"
+    )]
+    PublisherMayBeSkipped {
+        /// The stage whose condition could read a fact nothing produced.
+        stage: StageName,
+        /// The signal whose existence depends on a conditional stage.
+        signal: Signal,
+        /// The conditional stage that publishes it.
+        publisher: StageName,
+    },
+
+    /// Resolution reached a condition whose publishing stage did not run.
+    ///
+    /// Unreachable for a manifest that came from
+    /// [`PluginManifest::from_toml_str`](crate::PluginManifest::from_toml_str)
+    /// — [`PublisherMayBeSkipped`](Self::PublisherMayBeSkipped) rejects that
+    /// shape at load. It exists so a hand-built [`Wrapper`](crate::Wrapper)
+    /// that bypassed the constructor still cannot make the evaluator read an
+    /// unproduced fact as `false`: the silent answer is the one failure mode
+    /// this crate refuses.
+    #[error(
+        "[wrapper] stage \"{stage}\" reads \"{signal}\", but \"{publisher}\", \
+         which publishes it, did not run in this resolution"
+    )]
+    SignalNotProduced {
+        /// The stage whose condition could not be answered.
+        stage: StageName,
+        /// The signal nothing produced.
+        signal: Signal,
+        /// The stage that publishes it, skipped this turn.
         publisher: StageName,
     },
 }

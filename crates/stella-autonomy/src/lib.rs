@@ -9,20 +9,46 @@
 //! dry-streak oracle that advances the ladder, the digest normalization the
 //! dedup set rests on, and the folds that turn the ledger into evidence.
 //!
-//! No I/O (invariant 2): every function here is synchronous over owned data.
+//! No I/O: every function here is synchronous over owned data — the same
+//! discipline invariant 2 requires of `stella-core`, kept here by choice
+//! because it is what makes this crate property-testable and safe to share.
 //! The probes that read the machine, the files that hold the state, and the
 //! processes that run tools all live in `stella-cli` (`self_driving_cmd`), which
-//! feeds their results in and writes the decisions out. That split is what
-//! makes this module property-testable — and it is the same telemetry the
-//! observatory reads back read-only (`stella-observatory/src/self_driving.rs`).
+//! feeds their results in and writes the decisions out.
+//!
+//! **This is a shared leaf crate, not part of `stella-core`, on the
+//! `stella-diff` / `stella-home` pattern (#1139, #1511; moved out of
+//! `stella-core` per `doc:pipeline-as-plugins` §10, work item D1).**
+//! `stella-cli` (`self_driving_cmd`) and `stella-observatory`
+//! (`src/self_driving.rs`, read-only) both link it directly. The observatory
+//! used to carry its own private `fold_runs`, and the two implementations
+//! drifted: the dashboard and `stella self-driving metrics` disagreed about
+//! whether the loop was `NOISY` for every odd cycle count (#1613). One copy,
+//! two readers, is the fix — and the reason this lives in a leaf crate
+//! instead of a plugin binary: burying the fold inside a plugin executable
+//! would recreate the same drift the observatory cannot link `stella-core` to
+//! reach (an observer must not pull in the machinery it observes).
 //!
 //! Ported from `scripts/self-driving.sh` (#1548); the shell driver now delegates
 //! these decisions instead of carrying a second copy of them.
+//!
+//! [`HOST_SURFACE`] is the other half of that sentence: the loop is driven by a
+//! **host** outside the binary (`doc:pipeline-as-plugins` §10, D2), so the
+//! verbs that host calls are a contract with a caller this repository does
+//! not own. [`HOST_SURFACE`] declares them and [`HOST_SURFACE_VERSION`] lets
+//! a host refuse a build it was not written against, instead of meeting the
+//! skew as an `unrecognized subcommand` three cycles in.
+
+mod surface;
 
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+
+pub use surface::{
+    Emits, HOST_SURFACE, HOST_SURFACE_VERSION, HostVerb, SurfaceDrift, host_verb, surface_drift,
+};
 
 // ---------------------------------------------------------------------------
 // The dedup digest — the key the loop's termination story rests on

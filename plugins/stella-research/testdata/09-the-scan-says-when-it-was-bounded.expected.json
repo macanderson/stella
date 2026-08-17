@@ -1,0 +1,20 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "context": [
+      {
+        "label": "research:workspace",
+        "text": "## Research: workspace orientation\n\nThe candidate root holds these top-level entries (hidden entries omitted):\n- f0000.txt\n- f0001.txt\n- f0002.txt\n- f0003.txt\n- f0004.txt\n- f0005.txt\n- f0006.txt\n- f0007.txt\n- f0008.txt\n- f0009.txt\n- f0010.txt\n- f0011.txt\n- f0012.txt\n- f0013.txt\n- f0014.txt\n- f0015.txt\n- f0016.txt\n- f0017.txt\n- f0018.txt\n- f0019.txt\n- f0020.txt\n- f0021.txt\n- f0022.txt\n- f0023.txt\n- f0024.txt\n- f0025.txt\n- f0026.txt\n- f0027.txt\n- f0028.txt\n- f0029.txt\n- f0030.txt\n- f0031.txt\n- f0032.txt\n- f0033.txt\n- f0034.txt\n- f0035.txt\n- f0036.txt\n- f0037.txt\n- f0038.txt\n- f0039.txt\n- [… 1961 further entries not shown …]\n\nNot scanned, wherever they appear: hidden entries, symlinks, and __pycache__, build, dist, node_modules, target, vendor, venv."
+      },
+      {
+        "label": "research:unmatched",
+        "text": "## Research: nothing found\n\nNo occurrences under the candidate root of: `nothing_here`."
+      },
+      {
+        "label": "research:scan-bounded",
+        "text": "## Research: the scan was bounded\n\nThis stage read the first 2000 files under the candidate root and stopped. Anything reported above is present; nothing above is evidence that something is absent."
+      }
+    ]
+  }
+}

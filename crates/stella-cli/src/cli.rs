@@ -16,8 +16,8 @@ pub(crate) mod help;
 
 use crate::{
     OutputFormat, build_info, commands_cmd, context_cmd, dataset_cmd, fleet_verbs, ingest_cmd,
-    inspect, memory_cmd, proposals_cmd, query_format, self_driving_cmd, stats, storage_cmd,
-    tune_cmd, usage_cmd,
+    inspect, memory_cmd, plugin_cmd, proposals_cmd, query_format, self_driving_cmd, stats,
+    storage_cmd, tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -157,6 +157,28 @@ pub(crate) struct GlobalArgs {
         hide_short_help = true
     )]
     pub(crate) upstream_pin: Vec<String>,
+
+    /// Extra directory a write tool may touch, outside the workspace root
+    ///
+    /// Repeat the flag, or comma-separate, to name several:
+    /// `--allow-dir /srv/shared --allow-dir ../vendor`. A relative path
+    /// resolves against the workspace root, so it means the same directory
+    /// however the run was launched.
+    ///
+    /// ADDITIVE to `stella.toml`'s `[workspace] allowed_dirs` — this widens
+    /// the project's list for one invocation and never replaces it, so an
+    /// operator reaching for one directory cannot silently revoke the rest.
+    /// A flag as well as a settings key for the same reason as
+    /// `--upstream-pin`: a run under settings isolation
+    /// (`STELLA_NO_SETTINGS`) has no other way to be granted one.
+    #[arg(
+        long,
+        global = true,
+        env = "STELLA_ALLOW_DIR",
+        value_delimiter = ',',
+        hide_short_help = true
+    )]
+    pub(crate) allow_dir: Vec<String>,
 
     /// Hard USD spend limit for the whole session
     ///
@@ -511,6 +533,16 @@ pub(crate) enum Command {
         #[arg(long)]
         no_pipeline: bool,
 
+        /// Run this turn under an installed wrapper plugin, by the `[wrapper]
+        /// id` its manifest declares (`stella plugin list`). The plugin
+        /// contributes context before the turn, gathers evidence after it, and
+        /// its declared rule — evaluated by Stella, never by the plugin —
+        /// decides whether another turn runs. The id is recorded on the
+        /// execution row, so two variants can be compared. `classic` names the
+        /// built-in staged pipeline; omitted, nothing changes.
+        #[arg(long, value_name = "VARIANT", conflicts_with = "no_pipeline")]
+        pipeline: Option<String>,
+
         /// Test command the pipeline's verify stage runs deterministically
         /// (e.g. "cargo test -p my-crate"). Arms the fail→pass flip oracle:
         /// a change that flips a failing test to passing is proven done.
@@ -827,6 +859,19 @@ pub(crate) enum Command {
     Commands {
         #[command(subcommand)]
         cmd: commands_cmd::CommandsCmd,
+    },
+
+    /// Install, list, and remove plugins
+    ///
+    /// A plugin declares its say in the turn loop — a participation grade,
+    /// the hook points it may act at, the process it runs as, and the exact
+    /// environment slice that process inherits. `install` shows the whole
+    /// declaration and installs nothing until you accept it; `remove` deletes
+    /// it, and its hooks stop being routed immediately. Offline: reads and
+    /// writes local files, needs no API key.
+    Plugin {
+        #[command(subcommand)]
+        cmd: plugin_cmd::PluginCmd,
     },
 
     /// Inspect the storage map — layers, namespaces, relations

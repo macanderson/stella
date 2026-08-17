@@ -33,20 +33,23 @@ this page is where a user sees whether they are running one.
 ## Where it sits
 
 Nearly a leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,
-`sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and two
+`sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and four
 `stella-*` dependencies: [`stella-home`](../stella-home), which has no
-dependencies of its own, and [`stella-core`](../stella-core), for the
-`self_driving` fold and its signal thresholds. Everything heavier is excluded
-deliberately: `stella_store::Store::open` creates `.stella/` and runs schema
-migrations, and an observer that migrates what it observes is not an observer.
+dependencies of its own; [`stella-autonomy`](../stella-autonomy), a leaf crate
+with no workspace-crate dependencies, for the self-driving fold and its signal
+thresholds; [`stella-diff`](../stella-diff), another zero-dependency leaf, for
+the unified differ; and [`stella-core`](../stella-core), for
+`context_record`'s types alone. Everything heavier is excluded deliberately:
+`stella_store::Store::open` creates `.stella/` and runs schema migrations, and
+an observer that migrates what it observes is not an observer.
 
 **The rule is about the write path, not about the dependency count.** This
 crate re-reads artifacts instead of linking the crates that produce them, which
 is why it opens `store.db` with `rusqlite` rather than linking `stella-store`.
-Both crates above are the opposite shape and neither opens anything:
-`stella-home` is path arithmetic over environment variables, and
-`stella-core::self_driving` is pure decision logic over owned data (no I/O, by
-invariant 2) with the clock passed in as a parameter.
+`stella-home`, `stella-autonomy` and `stella-diff` are all the opposite shape
+and none of them opens anything: `stella-home` is path arithmetic over
+environment variables, and `stella-autonomy` is pure decision logic over owned
+data (no I/O) with the clock passed in as a parameter.
 
 The price used to be four acknowledged copies. `global::data_dir` was one of
 them — a hand-synced mirror of `../stella-store/src/usage.rs` with a comment
@@ -56,7 +59,10 @@ instead (#1139). `src/self_driving.rs` was another: a private `fold_runs` and
 the two had already drifted — the dashboard and `stella self-driving metrics`
 disagreed about whether the loop was NOISY for every odd cycle count, because
 one tested `2 * new < n` and the other `new < n / 2` in integer arithmetic
-(#1613). Both now come from `stella-core`. The unified differ took the same
+(#1613). Both now come from `stella-autonomy` — a leaf crate rather than
+`stella-core` itself, because this crate must not link `stella-core`'s engine
+machinery, and because `stella-cli`'s self-driving verbs need the identical
+fold (`doc:pipeline-as-plugins` §10, D1). The unified differ took the same
 exit before ever becoming a copy: `/api/execution-context-diff` links
 `stella-diff`, the zero-dependency leaf crate the CLI's `inspect::diff` was
 extracted into (#1511). Three copies remain: `project_id_for`

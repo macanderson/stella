@@ -81,6 +81,9 @@ mod paths;
 // that selects it (`--plain`, `STELLA_PLAIN`, `plain_fallback`); it was
 // `tui` until #2421, which was the one name it is not.
 mod plain;
+// The plugin loader (`doc:pipeline-as-plugins` §A4): install/list/remove, the
+// two-tier roster, and the hook routes a declared grant produces.
+mod plugin_cmd;
 mod scoreboard_cmd;
 mod self_driving_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
@@ -116,8 +119,15 @@ mod tool_switches;
 mod trace;
 mod tune_cmd;
 mod turn_diff;
+mod turn_facts;
 mod turn_files;
 mod usage_cmd;
+// The wrapper socket's first driver (#3494). Beside `agent.rs` rather than
+// inside it, because that file is a grandfathered god file closed to growth.
+mod wrapper_candidate;
+mod wrapper_plugin;
+mod wrapper_recall;
+mod write_dirs;
 
 /// Serializes tests that mutate process environment variables. `setenv` /
 /// `getenv` from concurrent threads is documented UB on POSIX, and the test
@@ -512,6 +522,11 @@ fn main() -> ExitCode {
     // under settings isolation.
     config::set_upstream_pin(cli.globals.upstream_pin.clone());
 
+    // The operator's extra write directories, recorded beside the pin and for
+    // the same reason: a run under settings isolation has no other way to be
+    // granted one, and every later `Config::load` reads it.
+    config::set_allow_dirs(cli.globals.allow_dir.clone());
+
     // The diagnostic plane, before anything that can fail interestingly. From
     // here on a record explains a decision instead of being discarded, and the
     // panic hook is armed — so a crash after this line leaves an artifact a
@@ -716,6 +731,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Some(Command::Commands { cmd }) => {
             // Reads (and, for convert, writes) definition files only.
             return commands_cmd::run_commands(cmd).map_err(failure::CliFailure::from);
+        }
+        Some(Command::Plugin { cmd }) => {
+            // Reads plugin manifests and copies/removes local directories. No
+            // plugin process is started here — install is a consent
+            // transaction, not an execution.
+            return plugin_cmd::run_plugin(cmd).map_err(failure::CliFailure::from);
         }
         // Reads context-record TOML and the tree, and appends to the local
         // lifecycle ledger on the review actions (Phase 3, #714). `propose
@@ -1013,6 +1034,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Command::Run {
             prompt,
             no_pipeline,
+            pipeline,
             test_command,
             keep_witness,
             require_verified,
@@ -1043,7 +1065,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &prompt,
                     cli.globals.spend_limit,
                     output_format,
-                    !no_pipeline,
+                    wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?,
                     test_command.as_deref(),
                     keep_witness,
                     require_verified,
@@ -1270,6 +1292,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         | Command::Search { .. }
         | Command::Storage { .. }
         | Command::Commands { .. }
+        | Command::Plugin { .. }
         | Command::Inspect { .. }
         | Command::Calibration { .. }
         // Phase 3 (#714)

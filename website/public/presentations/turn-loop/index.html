@@ -1978,7 +1978,7 @@ var STAGES=[
   d:["Run the oracle. Did the command flip from failing to passing? Was the witness file tampered with? What does the diff actually show?",
      "This spends <b>no model call</b>. The one verifier-tier call in the whole story was writing the test, and that survives because it creates the measuring stick rather than replacing it."]},
  {t:"Verdict",c:"#5fcf94",cond:"always · terminal",
-  d:["A deterministic ladder produces one of five outcomes: submit, revise, nothing was attempted, unverifiable, or unverified. Every one is terminal.",
+  d:["A deterministic ladder produces one outcome: submit, revise, an unsatisfiable witness, nothing was attempted, unverifiable, or unverified. Every one is terminal.",
      "The pipeline does not emit a separate verdict stage — it reads the ladder's answer directly. Which is why the stage order is an ordering, not a place the run passes through."]},
  {t:"Revise",c:"#f0a35f",cond:"bounded loop",
   d:["A verdict of “revise” sends the run back — and it lands on <b>execute</b>, not on plan.",

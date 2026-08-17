@@ -253,8 +253,8 @@ pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchRep
     // A fresh cache per call: this is the one-shot door (`stella search`), and
     // a process that answers one query has nothing to reuse. The `search`
     // TOOL calls `report_cached` instead and keeps its cache for the session.
-    let mut cache = crate::search::cache::GatherCache::default();
-    report_with(root, query, config, stella_embed::from_env(), &mut cache).await
+    let cache = std::sync::Mutex::new(crate::search::cache::GatherCache::default());
+    report_with(root, query, config, stella_embed::from_env(), &cache).await
 }
 
 /// [`report`] against a caller-owned cache — the door the session-lifetime
@@ -264,7 +264,7 @@ pub async fn report_cached(
     root: &Path,
     query: &str,
     config: SearchConfig,
-    cache: &mut crate::search::cache::GatherCache,
+    cache: &std::sync::Mutex<crate::search::cache::GatherCache>,
 ) -> SearchReport {
     report_with(root, query, config, stella_embed::from_env(), cache).await
 }
@@ -279,7 +279,7 @@ pub async fn report_with(
     query: &str,
     config: SearchConfig,
     resolution: Resolution,
-    cache: &mut crate::search::cache::GatherCache,
+    cache: &std::sync::Mutex<crate::search::cache::GatherCache>,
 ) -> SearchReport {
     let query = query.trim();
     if query.is_empty() {
@@ -977,9 +977,22 @@ pub fn render(
     query: &str,
     answer: &Answer,
     config: SearchConfig,
-    cache: &mut crate::search::cache::GatherCache,
+    cache: &std::sync::Mutex<crate::search::cache::GatherCache>,
 ) -> ToolOutput {
     let allocation: Allocation = allocate(answer.hits.len(), config.depth, config.budget);
+
+    // The lock is taken HERE, inside the synchronous render, and released when
+    // this function returns. It is deliberately not taken by the caller and
+    // held across the embedding round trip: `Tool::execute` runs inside
+    // `tokio::time::timeout` (`stella_core::driver`), which **drops** the
+    // future when the limit elapses, so a cache moved out of its mutex for the
+    // duration of the call would be dropped with it — leaving the session an
+    // empty cache forever and silently restoring the exact cost this exists to
+    // remove. Two concurrent searches now serialise only on rendering, which
+    // is microseconds of graph reads, never on the network.
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let mut content = String::new();
     if let Some(note) = &answer.note {
@@ -1010,7 +1023,7 @@ pub fn render(
 
     for (hit, depth) in answer.hits.iter().zip(&allocation.granted) {
         content.push('\n');
-        content.push_str(&enrich::render_hit(graph, root, hit, *depth, cache));
+        content.push_str(&enrich::render_hit(graph, root, hit, *depth, &mut guard));
     }
 
     if allocation.truncated() {

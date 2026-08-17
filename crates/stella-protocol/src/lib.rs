@@ -51,11 +51,13 @@
 
 pub mod attachment;
 pub mod cache;
+pub mod candidate;
 pub mod compaction_rewrite;
 pub mod completion;
 pub mod context_event;
 pub mod contract;
 pub mod delivery_event;
+pub mod denial;
 pub mod error;
 pub mod event;
 pub mod hook;
@@ -77,6 +79,11 @@ pub use attachment::{
     media_type_for_path,
 };
 pub use cache::CacheCause;
+// A candidate worktree, named so it can cross a process (#3380 A10). Here
+// rather than in `stella-plugin` because a handle is a value the *host* mints
+// at run time, not a manifest declaration parsed out of borrowed text — see
+// the module docs for the full argument.
+pub use candidate::{CandidateDenial, CandidateHandle, CandidateOp, PathDenial};
 pub use compaction_rewrite::CompactionRewrite;
 pub use completion::{
     CompletionMessage, CompletionRequest, CompletionRequestRef, CompletionResult, CompletionUsage,
@@ -86,6 +93,10 @@ pub use completion::{
 pub use context_event::{CompiledContextFrameBuilt, LifecycleEvent, LifecycleEventEnvelope};
 pub use contract::{ContractError, Provenance, RiskLevel, ToolContract};
 pub use delivery_event::{DeliveryDecline, DeliveryOutcome};
+// The payload of a gate's refusal (#3380). Lives here, not beside the decision
+// enum in `stella-core::bus`, because the trace fold and a future out-of-process
+// host both read it and that file is closed to growth.
+pub use denial::{Denial, DenialEvidence};
 pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,

@@ -494,7 +494,14 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "pipeline.verified_run",
-        engine_home: "stella-pipeline: the plan/witness/verify/verdict ladder behind `verified done, not claimed done`",
+        // Deliberately describes the mechanism rather than the slogan: the
+        // ladder's guarantee is that the HOST authors the witness, runs its
+        // command, and credits the flip it observed. Verification arriving as
+        // a plugin is plugin-reported instead (#3511), so "verified done, not
+        // claimed done" is true of this path and not of the binary.
+        engine_home: "stella-pipeline: the plan/witness/verify/verdict ladder — the host authors \
+                      the witness, runs its command, and credits only the fail→pass flip it \
+                      observed itself",
         engine_entries: &[],
         cli: SurfacePosture::Shipped {
             mechanism: "`stella run` (default pipeline path) with the scope-review approval gate",

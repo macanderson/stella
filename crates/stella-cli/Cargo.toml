@@ -44,6 +44,11 @@ contextgraph-host.workspace = true
 # see the exact-version note in the root manifest.
 contextgraph-trace.workspace = true
 stella-core = { path = "../stella-core" }
+# The self-driving loop's deterministic decision core (AIMD, the aperture
+# ladder, the dry-streak oracle, the dedup digest, the ledger folds), extracted
+# to a leaf crate (#1613) so `stella-observatory`'s dashboard shares the exact
+# same fold `stella self-driving` uses instead of drifting from a private copy.
+stella-autonomy = { path = "../stella-autonomy" }
 # The construction sequence (provider/registry/store/budget/calibration),
 # extracted so this bin-only crate is no longer its sole owner and
 # `stella-serve` can assemble the same stack without linking a binary (#971).
@@ -51,7 +56,13 @@ stella-runtime = { path = "../stella-runtime" }
 stella-model = { path = "../stella-model" }
 # The pure unified differ behind `stella inspect --diff`, extracted to a leaf
 # crate (#1511) so the Observatory's prompt-diff route shares it.
-stella-diff = { path = "../stella-diff" }
+stella-diff = { path = "../stella-diff", features = ["json"] }
+# The plugin manifest and its consent rendering (#3245, #3380). The loader
+# (`stella plugin install|list|remove`) is a client of this crate and nothing
+# more: parsing, validation and the words shown at install all live there, so
+# a second install surface — `stella-serve`, an embedded host — cannot
+# describe the same manifest differently.
+stella-plugin = { path = "../stella-plugin" }
 stella-tools = { path = "../stella-tools" }
 stella-store = { path = "../stella-store" }
 stella-observatory = { path = "../stella-observatory" }

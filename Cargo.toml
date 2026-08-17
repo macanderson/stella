@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "crates/stella-autonomy",
   "crates/stella-diag",
   "crates/stella-diff",
   "crates/stella-embed",
@@ -31,7 +32,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.77"
+version = "0.9.83"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"

@@ -1,0 +1,313 @@
+---
+title: Plugins
+description: The turn-loop plugin platform — participation grades, the wrapper socket, the plugin.toml manifest, and how to write one in Python, TypeScript, or Rust with no stella SDK.
+---
+
+A **plugin** is a directory with a `plugin.toml` manifest and, usually, a program. The manifest declares exactly how much say the plugin wants in your turn loop and what it wants to reach outside it; you read that declaration once, at install, and say yes or no. Nothing a plugin does is inferred from its code — the manifest is the whole contract, and it is designed so a non-Rust author never has to read this repository to write one.
+
+This page is that contract, end to end: what a plugin is, the manifest, how to install one, how to write one in Python (the worked example), briefly in TypeScript and Rust, the honest story about who verifies what, and what does not work yet.
+
+## What a plugin is
+
+A plugin answers up to four points in the turn loop. Two of them are messages you can send it; two of them it can never receive, in any language:
+
+| Point | Who runs it | Shape |
+| --- | --- | --- |
+| `before_turn` | **the plugin**, out of process | async — contribute context, narrow scope, name a role, publish a signal for a later stage |
+| `after_turn` | **the plugin**, out of process | async — gather evidence: run a test, read a diff, spend a declared model role and report the result |
+| `judge` | **the host**, in process | synchronous — evidence in, verdict out |
+| `again?` | **the host**, in process | synchronous — verdict in, continuation out: another turn with a correction, or stop |
+
+`judge` and `again?` are not messages a plugin can be sent — the wire has exactly two request/response pairs, `before_turn` and `after_turn`, and neither one is a verdict. That is the design, not an oversight: a plugin declares its verdict **rule** as data in `plugin.toml` — the requirements it wants met, the flip policy, the checks — and stella evaluates that rule against the evidence the plugin reported. There is no `.await` inside `judge`, no subprocess it can spawn, and no way to smuggle a model call through it.
+
+This is a feature, not a limitation, and it is worth being explicit about why. A verification plugin that could implement its own `judge` could quietly call a model to decide "done" — and a model asked to rule on its own prior work looks identical, in the output, to a model that never got the chance. Keeping `judge` a host function that a plugin cannot touch is what makes "a verification plugin grades its own work with a model" impossible **by construction**, in Rust, in Python, in anything — rather than a rule a reviewer has to keep re-checking by hand.
+
+<Callout type="info">
+Every capability a plugin needs arrives **in the request**. There is no ambient authority to reach for — no environment variable beyond what its manifest declared, no working directory, no terminal, no credential. That is what lets the identical plugin process run under the CLI, a headless server, or an application that embedded the loop, unchanged.
+</Callout>
+
+## The participation ladder
+
+`[loop].participation` is how much say a plugin has asked for, on a four-rung ladder. Each grade includes every grade below it, and the power that separates two rungs is rejected below the rung that grants it — a manifest cannot quietly hold more than its declared grade.
+
+<CardGrid size="md">
+  <OptionCard name="none">
+    Nothing — a content bundle of skills, commands, agents, or custom tools. Never invoked inside a turn at all. The default when a manifest has no `[loop]` block.
+  </OptionCard>
+  <OptionCard name="observer">
+    May subscribe to the turn event stream. Cannot influence anything.
+  </OptionCard>
+  <OptionCard name="steering">
+    May act at declared hook points and at `before_turn` / `after_turn` — inject context, rewrite tool input, decide permissions, gather evidence. May **not** touch completion.
+  </OptionCard>
+  <OptionCard name="arbiter">
+    Everything steering may do, plus it binds the `Stop` gate: at each would-be completion the host asks the plugin's declared rule for a verdict, and an unmet requirement re-enters the loop, bounded by `max_holds`. The strongest grant.
+  </OptionCard>
+</CardGrid>
+
+Three rules hold regardless of grade, and they are the ones worth internalizing before writing a manifest:
+
+- **An undeclared hook is never invoked.** Registering a process that listens for `PreToolUse` buys nothing if `[loop].hooks` does not name it — the manifest is the authority, not what the process does at runtime.
+- **An undeclared wrapper point is never dispatched.** `[loop].points` names which of `before_turn` / `after_turn` this plugin answers, exhaustively. A plugin that only gathers evidence declares `points = ["after_turn"]` and nothing else; the host never asks it for `before_turn`.
+- **Unknown keys are a load error, everywhere.** Every table in `plugin.toml` denies unknown fields. A typo'd grant fails loudly at install, rather than silently granting nothing.
+
+`[[capabilities]]` — what a plugin wants to reach *outside* the turn (a tool, at a named risk level, with the reason a human reads) — is orthogonal to this ladder on purpose. A `none`-grade content bundle that ships one custom tool running `git push` is asking for more of the world than an `observer` that only watches, so tying the two together would let the widest grant hide behind the weakest participation grade.
+
+## The manifest
+
+A complete, working manifest — an arbiter that holds a turn open until a test command it is handed goes from failing to passing:
+
+```toml title="plugin.toml"
+name = "verify"
+description = "Runs the test the candidate grant names and reports the fail->pass flip it observed."
+
+# How much say this plugin has in the loop. Arbiter binds the Stop gate, so a
+# turn whose tests did not flip is held open rather than completed.
+[loop]
+participation = "arbiter"
+hooks = ["Stop"]                # exhaustive — an undeclared hook is never invoked
+points = ["after_turn"]         # exhaustive — this plugin has nothing to say before a turn runs
+max_holds = 2                   # the plugin's ASK; the host clamps it against its own ceiling
+
+# The definition of done, enumerated. A hold cites these names, and the
+# install prompt shows this table to a human before any of it is true.
+[requirements]
+tests-flip = "the test the grant names failed before this turn and passes after it"
+tests-pass = "the test the grant names exits zero"
+
+# The plugin's own oracle: how it decides the requirements above, and what it
+# reports back. The plugin RUNS this; the host evaluates the RULE against
+# what comes back — see "The honest part" below.
+[oracle]
+flip = "required"                                  # this oracle's evidence is a fail->pass flip
+measurements = ["test-command-exit-code"]           # the names of the numbers this plugin reports
+[[oracle.checks]]
+requirement = "tests-pass"
+check = "test-command-exit-code <= 0"
+
+# How the host starts this plugin's process. A list, never a shell string.
+# ${plugin_dir} interpolation is the host's job. There is deliberately no
+# `language` field — argv already says which interpreter.
+[runtime]
+argv = ["python3", "${plugin_dir}/main.py"]
+timeout_secs = 300
+env = ["PATH"]                  # default-deny: the child sees exactly these names, nothing else
+
+# What the plugin asks to reach outside the turn. A request, never a grant —
+# a human reads this and says yes before any of it is true.
+[[capabilities]]
+tool = "process_spawn"
+risk = "high"
+purpose = "run the test invocation the request's candidate grant names"
+scope = ["the program and args in `candidate.test`, spawned in `candidate.root`"]
+```
+
+Every block, in the shape the manifest parser accepts:
+
+<CardGrid size="md">
+  <OptionCard name="[loop]">
+    `participation` (the ladder above), `hooks` (which lifecycle events — `SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`, `PreCompact` — this plugin acts at), `points` (which of `before_turn` / `after_turn` it answers), and `max_holds` (arbiter only — the most completion-vetoes it asks for per turn). Absent entirely, a manifest defaults to `none`: a content bundle with no say in the loop at all.
+  </OptionCard>
+  <OptionCard name="[requirements]">
+    Arbiter only. A table of `name = "human-readable statement"` — the enumerable definition of done. Keys are what an unmet hold cites; must be non-empty if declared, and every statement must be non-blank.
+  </OptionCard>
+  <OptionCard name="[oracle]">
+    Arbiter only, and it must declare `points = ["after_turn"]` alongside it — that is the one response its evidence rides on. `flip` is `"required"` (the plugin reports a fail→pass transition) or `"not-applicable"` (this oracle's evidence is a measurement, not a transition — every requirement must then be decided by a `[[oracle.checks]]` entry, or the manifest is refused). `measurements` names the numbers the plugin's process reports; `[[oracle.checks]]` states a rule over one of them (`<measurement> <op> <integer>`) that decides one named requirement. `command` is optional when `[runtime]` is declared — absent means "the oracle is this plugin's own process," which is the common case and keeps a manifest from writing the same argv out twice.
+  </OptionCard>
+  <OptionCard name="[runtime]">
+    Observer and above. `argv` — program and arguments, never a shell string, with `${plugin_dir}` interpolated by the host to the plugin's install directory. `timeout_secs` — at least 1. `env` — the **allowlist**, exact names and nothing else: the child process starts with an empty environment and receives only the variables named here. There is deliberately no `language` field; `["python3", "${plugin_dir}/main.py"]` already says everything the host needs to know.
+  </OptionCard>
+  <OptionCard name="[wrapper]">
+    Steering and above, optional. Declares this plugin as a turn-loop wrapper: an `id` (the variant name recorded on the run, for A/B comparison) and an ordered `[[wrapper.stages]]` list, each naming a `StageName` (`triage`, `recall`, `research`, `plan`, `scope`, `execute`, `witness`, `verify`, `verdict`, `reflect`, `contextwrite`, `complete`) and an optional `if` condition over a closed, published signal vocabulary (`questions > 0`, `no-conversational`, …). A condition naming a signal the host does not publish, or one only a later or conditionally-run stage produces, is a load error — a manifest that would quietly do nothing is refused instead.
+  </OptionCard>
+  <OptionCard name="[roles]">
+    Requires `[subloop]` (steering and above — a declared list of stages the host runs as bounded child turns, a separate block from `[wrapper]`). Each `[roles.<name>]` declares a routing **intent** for one subloop stage — `tier = "cheap"` — never a model id, provider, or credential. The host resolves the intent against your configured providers at run time and refuses an intent the manifest never declared.
+  </OptionCard>
+  <OptionCard name="[[capabilities]]">
+    Zero or more. `tool` (free text — the tool name, matched against the host's registry at install), `risk` (`low` / `medium` / `high` / `destructive`, the same grade the authorization gate refuses on), `purpose` (required — why the plugin needs it, shown at consent), and `scope` (the plugin's own claimed limit, shown verbatim and labeled as a claim the gate does not verify). Orthogonal to `[loop]` by design — see the ladder section above.
+  </OptionCard>
+</CardGrid>
+
+## Installing a plugin
+
+```bash
+stella plugin install <dir> [--scope project|user] [--yes]
+stella plugin list
+stella plugin remove <name>
+```
+
+`install` reads and validates `plugin.toml`, then prints the **whole** declared grant — the participation grade, every hook point, the process it runs as, the exact environment slice it inherits, every requirement it will hold a turn open for, and every capability it asks for outside the turn — and installs nothing until you accept it:
+
+```text
+Install `verify`?
+
+Say in your turn loop: arbiter, the strongest grant — everything steering may
+do, and it also decides whether your turn is finished
+  - runs at these hook points: Stop
+  - may refuse to let a finished turn end, up to 2 times per turn
+  - holds a turn open until it can say each of these is met:
+      tests-flip: the test the grant names failed before this turn and passes after it
+      tests-pass: the test the grant names exits zero
+          decided by: test-command-exit-code <= 0
+  - runs as a process on your machine: `python3 ${plugin_dir}/main.py` (killed after 300s)
+      it inherits these environment variables and no others: PATH
+
+`verify` decides when your turn is done, and it reports its own evidence for
+that. Stella does not run the oracle itself and does not check what comes
+back: whether a test went fail→pass, and every number a declared check
+compares against a budget, are what `verify`'s own process said happened.
+
+The widest thing it asks for is graded HIGH — it reaches outside your
+workspace, or costs something a `git checkout` cannot undo.
+
+Every tool call `verify` makes is attributed to it, not to you.
+Nothing above is granted until you accept.
+
+Install it? [y/N]
+```
+
+`stella plugin list` shows what is installed and — separately — the dispatches stella would actually make from that declaration; `stella plugin remove <name>` deletes it from every tier that holds the name. Full flag reference: [`stella plugin`](/docs/commands/plugin).
+
+### The project-tier trust gate
+
+Two tiers are read as one roster: `~/.stella/plugins/` (installed once, visible everywhere) and `<workspace>/.stella/plugins/` (this repository only). The second one is content a `git clone` can bring with it, and **a plugin is strictly more powerful than a hook or an MCP server** — it declares a `[runtime]` process the host spawns and, at `arbiter`, a grant that can hold your turn loop open indefinitely. So a cloned repository's plugins do **not** load until you trust the workspace:
+
+```bash
+export STELLA_TRUST_PROJECT=1
+```
+
+Without it, `<workspace>/.stella/plugins/` is skipped and a stderr notice names what was skipped, the same shape used for [project-scope hooks](/docs/agent-tools/hooks) and [`.stella/mcp.toml`](/docs/agent-tools/mcp). The user tier is not gated — nothing arrives there except through `stella plugin install`'s own consent prompt, which is already a transaction you approved.
+
+## Writing one in Python
+
+This is the point of the whole page: a plugin needs no SDK, in any language. The `verify` plugin above is real and shipped — [`plugins/verify-py/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-py) in `stella-examples` — and its [`main.py`](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/main.py) is about 320 lines of Python using only `json`, `subprocess`, `sys`, and `time` from the standard library. If you want to learn the protocol, that file is the shortest complete statement of it that exists.
+
+The wire is one exchange per call: the host spawns `[runtime].argv` directly — never through a shell — writes one JSON request on stdin, closes it, and reads one JSON response from stdout.
+
+```jsonc
+// stdin — an after_turn request
+{"point": "after_turn",
+ "body": {"protocol_version": 1,
+          "wrapper": "verify-v1",
+          "round": 0,
+          "goal": "make the failing test pass",
+          "candidate": {"handle": "candidate-1",
+                        "root": "/var/folders/.../candidate-1",
+                        "test": {"program": "pytest",
+                                 "args": ["-q", "tests/test_flip.py"],
+                                 "baseline": "failed"}},
+          "turn": {"completed": true, "changed_files": ["src/lib.rs"]}}}
+
+// stdout — the response
+{"point": "after_turn",
+ "body": {"protocol_version": 1,
+          "evidence": {"flip": "achieved",
+                       "measurements": {"test-command-exit-code": 0}}}}
+```
+
+Four properties of that exchange are worth internalizing, because each one is something a naive implementation gets wrong:
+
+1. **Every table denies unknown fields, the envelope included.** `protocol_version` rides on every message and the contract only ever grows additively, but a field the host does not know at a version it accepts is a typo — and a message that quietly does nothing is worse than one that refuses.
+2. **There is no error variant.** A response type cannot carry a failure. A plugin that cannot answer *fails*: non-zero exit, one line on stderr, nothing on stdout — and the host substitutes an "unobservable" evidence set on its behalf, which makes `judge` abstain rather than blame the worker for evidence nobody collected.
+3. **Every capability arrives in the request.** The `candidate` field is a grant: a handle, the canonical workspace `root`, and — when the host has one to give — the `test` to run there, as a program, its arguments, and what that same invocation reported *before* the turn (`baseline`). A wrapper never reaches for a terminal, a git checkout, a credential, an environment variable, or a working directory of its own.
+4. **A plugin cannot report a tamper finding.** The response type has no field for one, in any language. Snapshotting witness-artifact identity is the host's job, and the host merges its own finding in before `judge` ever runs — a plugin vouching for its own witness is exactly what that split exists to prevent.
+
+The whole shape, condensed to what `main.py` actually does:
+
+```python title="main.py — the shape, condensed"
+import json, subprocess, sys, time
+
+PROTOCOL_VERSION = 1
+
+def main():
+    envelope = json.loads(sys.stdin.read())
+    assert envelope["point"] == "after_turn"
+    body = envelope["body"]
+    assert body["protocol_version"] == PROTOCOL_VERSION
+
+    candidate = body.get("candidate")
+    plan = candidate.get("test") if candidate else None
+    if plan is None:
+        evidence = {"flip": "unobservable"}   # nothing to run — say so, don't guess
+    else:
+        started = time.monotonic()
+        result = subprocess.run(
+            [plan["program"], *plan.get("args", [])],
+            cwd=candidate["root"], timeout=240,
+        )
+        exit_code = result.returncode if result.returncode >= 0 else 1
+        flip = (
+            "achieved" if plan["baseline"] == "failed" and exit_code == 0 else
+            "not-achieved" if plan["baseline"] in ("failed", "passed") else
+            "unobservable"
+        )
+        evidence = {
+            "flip": flip,
+            "measurements": {"test-command-exit-code": exit_code},
+        }
+
+    response = {"point": "after_turn",
+                "body": {"protocol_version": PROTOCOL_VERSION, "evidence": evidence}}
+    sys.stdout.write(json.dumps(response) + "\n")
+
+if __name__ == "__main__":
+    main()
+```
+
+The real `main.py` is stricter than this — it denies unknown fields at every level, distinguishes a timed-out test from a signal-killed one, and never guesses at a command it was not given — but the shape above is the entire protocol. Read the [real file](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/main.py) and its [README](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/README.md) for the complete, defensive version, including how to run it by hand with a single `echo | python3 main.py` and how its test suite grades it against the same golden vectors the Rust and TypeScript versions use.
+
+Install it the same way as any plugin:
+
+```bash
+stella plugin install plugins/verify-py            # this workspace
+stella plugin install plugins/verify-py --scope user  # every workspace
+```
+
+## TypeScript and Rust, briefly
+
+The same plugin ships two more times in `stella-examples`, to prove the wire — not the SDK — is the platform. All three manifests are generated from one template and differ in exactly the `[runtime].argv` line naming the program; a script in CI (`check-manifests-identical.py`) fails the build if that ever stops being true.
+
+<CardGrid size="md">
+  <OptionCard name="verify-ts">
+    [`plugins/verify-ts/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-ts). Zero runtime dependencies — not even `@types/node`. The Node surface it touches is hand-declared in a 14-line `.d.ts` file. `npm run build` compiles `src/main.ts` to `dist/main.js`, and `[runtime].argv` is `["node", "${plugin_dir}/dist/main.js"]` — build before you install; the host never invokes a compiler.
+  </OptionCard>
+  <OptionCard name="verify-rs">
+    [`plugins/verify-rs/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-rs). The reference implementation, and the one CI still exercises over the *wire* rather than in-process — its own rule for itself, so the wire path never rots for lack of use. Depends only on `serde` / `serde_json`, deliberately not on any crate from this workspace: a third-party Rust author could not link `stella-plugin` either. `cargo build --release` produces the binary `[runtime].argv` names directly — the cheapest thing a host can spawn.
+  </OptionCard>
+</CardGrid>
+
+## The honest part: who verifies what
+
+Read this before installing a verification plugin, and match it to what the install prompt already tells you — this is architecture, not an apology.
+
+**Verification is delivered by an installed plugin.** A plugin's `[oracle]` runs in the plugin's own process. stella does not run that oracle, and it does not re-check what comes back: the fail→pass flip, and every number a declared check compares against a budget, are what the plugin's own process said it saw. stella applies the declared rule — `[requirements]`, the flip policy, the checks — to those reported claims, and it will not credit a requirement they leave undecided. What it cannot do is tell an earned result from a typed one.
+
+Two things stay true regardless, and they are the load-bearing half of the design:
+
+- **`judge` is still synchronous, I/O-free, and total**, over the evidence the plugin reported. A plugin cannot decide "done" for itself, in any language — see [What a plugin is](#what-a-plugin-is) above. What changed with this architecture is not that guarantee; it is where the *evidence* comes from.
+- **The tamper finding is the host's, never the plugin's.** Snapshotting witness-artifact identity happens host-side, and the response type a plugin sends has no field for a tamper finding in any language — a plugin cannot vouch for its own witness even if it wanted to.
+
+Installing a verification plugin means trusting it to report honestly about its own work. That is the same trust you already place in any third-party test runner or CI check you did not write yourself — stated here plainly, because a claim about verification is exactly the kind of claim that should never be softer than what actually happens.
+
+## What does not work yet
+
+Named plainly, because a platform whose documentation describes only the finished half is not documented.
+
+<Callout type="warn">
+**Dispatch into a live turn is not wired.** `stella plugin install`, `list`, and `remove` are complete: they parse and validate manifests, render the full consent text, write to `.stella/plugins/` or `~/.stella/plugins/`, and (for `list`) show you the hook and wrapper-socket dispatches that *would* happen. But nothing in a real `stella run` or Command Deck session reads that installed roster yet — no `PreToolUse`/`Stop`/etc. hook process is spawned, and no `before_turn` / `after_turn` request is sent, during an actual turn. The wrapper socket itself (the wire contract, the subprocess and in-process transports, `judge`, `again?`) is implemented and covered by its own integration tests, and the three reference plugins are graded against a shared conformance harness that replays the wire protocol directly — not against a live session. Verify this for yourself rather than taking it on faith: a plugin manifest today changes what `stella plugin list` prints, and nothing else.
+</Callout>
+
+Smaller, standing gaps in the wire contract itself, worth knowing before you rely on them:
+
+- **`unobservable` covers several different problems with one value.** A root that does not resolve, a program that is not there, a run that outlived its budget, and a baseline that never watched an assertion in the first place all report the same `FlipObservation::Unobservable` — the host cannot currently tell them apart.
+- **A `TestPlan` names no environment and no timeout.** The grant says which program to run and where, but not what environment it would have run in or how long it would have waited — so "the same invocation" is the same argv, not provably the same run, and each plugin author has to pick their own internal budget.
+- **The version check is the reader's job, not the wire type's.** A body claiming `protocol_version: 2` still decodes as a structurally valid request; a host (or a careful plugin) has to compare the number itself rather than have decoding fail for it.
+- **A plugin cannot declare a measurement as "absent on purpose."** A number a plugin's oracle simply did not compute this run and a number the author forgot to report both arrive the same way: missing.
+
+## See also
+
+- [`stella plugin`](/docs/commands/plugin) — the full command reference for `install` / `list` / `remove`, including scopes and shadowing.
+- [Hooks](/docs/agent-tools/hooks) — the config-driven, no-code lifecycle hooks a plugin's own hook grants are deliberately not merged into.
+- [Permissions](/docs/agent-tools/permissions) — the authorization gate that sees a plugin as a caller of its own, distinct from you.
+- [Inference Pipeline](/docs/inference-pipeline) — the built-in staged verification path this platform is designed to let an installed plugin eventually replace, stage by stage.
+- [`stella-examples`](https://github.com/macanderson/stella-examples/tree/main/plugins) — all three reference plugins, their shared conformance vectors, and the CI that runs them on every pull request.

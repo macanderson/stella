@@ -94,10 +94,12 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         trace_capture,
         ignore_gitignore,
         create_worktrees,
+        allowed_dirs,
         ui,
         reward,
         context,
         context_providers,
+        plugins,
         managed_authority,
         enterprise_telemetry,
         authority_policy,
@@ -133,6 +135,11 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
             Posture::Merged,
             create_worktrees != &d.create_worktrees,
         ),
+        keyed(
+            "allowed_dirs",
+            Posture::Merged,
+            allowed_dirs != &d.allowed_dirs,
+        ),
         keyed("ui", Posture::Merged, ui != &d.ui),
         keyed("reward", Posture::Merged, reward != &d.reward),
         keyed("context", Posture::Merged, context != &d.context),
@@ -141,6 +148,7 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
             Posture::Merged,
             context_providers != &d.context_providers,
         ),
+        keyed("plugins", Posture::Merged, plugins != &d.plugins),
         keyed(
             "authority",
             Posture::Merged,
@@ -278,12 +286,14 @@ const EVERY_KEY: &str = r#"{
   "trace_capture": "on",
   "ignore_gitignore": "off",
   "create_worktrees": "always",
+  "allowed_dirs": ["/srv/shared"],
   "ui": { "theme": "stella-light" },
   "reward": { "deterministic_weight": 2.0 },
   "context": { "lifecycle": { "enabled": false } },
   "context_providers": {
     "docs": { "transport": "stdio", "command": "docs-provider", "enabled": true }
   },
+  "plugins": { "vera": "off" },
   "authority": { "project_prompts": "on" },
   "enterprise_telemetry": { "source": "managed" }
 }"#;

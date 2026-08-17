@@ -1,0 +1,27 @@
+[package]
+name = "stella-autonomy"
+description = "The self-driving delivery loop's deterministic decision core: the AIMD controller, the aperture ladder, the dry-streak oracle, the dedup digest, and the ledger folds. Pure, synchronous, owned data — shared by stella-cli's self-driving verbs and the Observatory's dashboard so they cannot drift (#1613)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# A LEAF crate with NO workspace-crate dependencies — the `stella-diff` /
+# `stella-home` pattern (#1139, #1511). `stella-observatory` links this
+# deliberately: it must never link `stella-core` (an observer must not pull in
+# the machinery it observes), yet it needs the SAME fold `stella-cli`'s
+# self-driving verbs use. It used to carry its own private `fold_runs`, and
+# the two implementations drifted — the dashboard and
+# `stella self-driving metrics` disagreed about whether the loop was NOISY,
+# for every odd cycle count (#1613). One copy in a leaf both can link is the
+# fix; burying it inside a plugin executable instead would recreate the same
+# drift with an extra process boundary in the way.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

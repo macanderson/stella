@@ -22,14 +22,14 @@ Work through the steps in this order — each one surfaces the work of the next.
 
 ### 1. Registration — stop advertising it
 
-- `crates/stella-tools/src/registry.rs` (`with_backends_and_options`) — the
-  base entries vec and the conditional families (web, media, issues, graph).
-- `crates/stella-tools/src/registry/process_tools.rs` (`builtins`) — every
-  tool that spawns a process (shell, repo, process group, project runners,
-  verify).
-- Late registration in `crates/stella-cli` — tools attached after
-  construction (`ask_user`, skills, catalog search). `rg 'register_late|late_tools'`
-  finds the sites.
+- `crates/stella-tools/src/registry.rs` (`ToolRegistry::new`) — the single
+  registration site for every built-in. There is no second one: the
+  `registry/process_tools.rs` module this step used to name, and the
+  conditional web/media/issues/graph families it registered, went with the
+  tools themselves.
+- Anything layered *above* the registry by `crates/stella-cli` — custom
+  script tools and MCP tools are decorators around the executor, not entries
+  in this vec, so a name that survives removal may be coming from there.
 
 ### 2. Declaration — shrink the catalog
 

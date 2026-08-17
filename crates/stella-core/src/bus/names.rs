@@ -261,3 +261,210 @@ pub fn is_known(name: &str) -> bool {
 pub fn is_blocking(name: &str) -> bool {
     BLOCKING.contains(&name)
 }
+
+// ---- plugin namespace (A9, docs/spec/pipeline-as-plugins.md §4) ----
+//
+// `plugin.<id>.*` was not contemplated when this module's opening comment
+// was written — the string "plugin" appears nowhere above this line. What
+// the opening comment's "extensions may emit custom names" already granted
+// is the *permission*; this section is what makes that permission a
+// reserved, collision-free namespace instead of a convention a plugin could
+// accidentally (or adversarially) step outside of. Every name here lands in
+// the journal as [`stella_protocol::AgentEvent::Unknown`] — see
+// `stella-cli/src/trace.rs`'s fold arm — never as a new `AgentEvent`
+// variant, so it carries no row in the signal-consumer ledger
+// (`stella-protocol/src/event/consumers.rs`) and needs none: `Unknown` is
+// the vocabulary's designed extension point, not a gap in it.
+
+/// Prefix reserving the whole namespace for plugin-authored event names. No
+/// name in [`ALL`] may start with it (`plugin_names_never_collide_with_the_host_catalog`
+/// below enforces that on every host name this build declares), and the only
+/// sanctioned way to build a name that *does* start with it is
+/// [`plugin_event_name`], which validates the id and local segment first.
+pub const PLUGIN_NAMESPACE_PREFIX: &str = "plugin.";
+
+/// Why a candidate plugin id, or the local segment of a plugin event name,
+/// was rejected.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PluginNamespaceError {
+    /// A plugin id must name something.
+    #[error("plugin id must not be empty")]
+    EmptyId,
+    /// Ids are restricted to `[a-z0-9_-]` specifically so one cannot smuggle
+    /// an extra `.` (which would let `"a.b"` masquerade as owning the
+    /// sub-namespace `plugin.a.b.*` rather than the single segment
+    /// `plugin.a.b`) or a `*` (which would let an id collide with a
+    /// namespace-wildcard subscription like `plugin.a.*`).
+    #[error(
+        "plugin id {id:?} contains {ch:?} at byte {at}, which is not allowed — ids are \
+         restricted to lowercase ascii letters, digits, '-' and '_' so an id can never \
+         smuggle a namespace boundary ('.') or a wildcard ('*')"
+    )]
+    InvalidIdChar { id: String, ch: char, at: usize },
+    /// The segment after `plugin.<id>.` must name something too.
+    #[error("plugin event local name must not be empty")]
+    EmptyLocalName,
+    /// `*` is rejected in the local segment for the same reason as the id:
+    /// a fact name is not a subscription pattern.
+    #[error(
+        "plugin event local name {local:?} contains '*' at byte {at}, which is not allowed — \
+         a wildcard cannot appear in a concrete event name"
+    )]
+    WildcardInLocalName { local: String, at: usize },
+}
+
+fn is_valid_plugin_id_char(c: char) -> bool {
+    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
+}
+
+/// Validate a plugin id on its own — the check [`plugin_event_name`] runs
+/// before it will build a name from the id, and the check anything wanting
+/// to confirm ownership without building a name (e.g. a lookup keyed by id)
+/// should run first.
+pub fn validate_plugin_id(id: &str) -> Result<(), PluginNamespaceError> {
+    if id.is_empty() {
+        return Err(PluginNamespaceError::EmptyId);
+    }
+    match id
+        .char_indices()
+        .find(|(_, c)| !is_valid_plugin_id_char(*c))
+    {
+        Some((at, ch)) => Err(PluginNamespaceError::InvalidIdChar {
+            id: id.to_string(),
+            ch,
+            at,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Build the one name a plugin owns for a fact of its own: `plugin.<id>.<local>`.
+/// The sole constructor for a name in this namespace — go through it and the
+/// two collisions this namespace exists to prevent (an id smuggling a `.` or
+/// `*`, or an empty segment) cannot be represented in the string it returns.
+pub fn plugin_event_name(plugin_id: &str, local: &str) -> Result<String, PluginNamespaceError> {
+    validate_plugin_id(plugin_id)?;
+    if local.is_empty() {
+        return Err(PluginNamespaceError::EmptyLocalName);
+    }
+    if let Some(at) = local.find('*') {
+        return Err(PluginNamespaceError::WildcardInLocalName {
+            local: local.to_string(),
+            at,
+        });
+    }
+    Ok(format!("{PLUGIN_NAMESPACE_PREFIX}{plugin_id}.{local}"))
+}
+
+/// Whether `name` is owned by `plugin_id` — i.e. starts with exactly
+/// `plugin.<plugin_id>.`. Rejects a name owned by a *different* plugin whose
+/// id happens to share a prefix (`plugin_id` `"foo"` never matches
+/// `"plugin.foobar.x"`): the boundary check requires the character right
+/// after the id to be the separating dot, not just a shared prefix.
+pub fn is_plugin_owned(name: &str, plugin_id: &str) -> bool {
+    if validate_plugin_id(plugin_id).is_err() {
+        return false;
+    }
+    name.strip_prefix(PLUGIN_NAMESPACE_PREFIX)
+        .and_then(|rest| rest.strip_prefix(plugin_id))
+        .is_some_and(|rest| rest.starts_with('.'))
+}
+
+/// The plugin id owning `name`, when `name` is a well-formed
+/// `plugin.<id>.<local>` name. `None` for anything outside the namespace,
+/// and also for a malformed member of it (`"plugin."`, `"plugin..x"`, an id
+/// with an invalid character) — a fold reading the journal must not
+/// misattribute a malformed name to a guessed id.
+pub fn plugin_id_of(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix(PLUGIN_NAMESPACE_PREFIX)?;
+    let (id, local) = rest.split_once('.')?;
+    if local.is_empty() {
+        return None;
+    }
+    validate_plugin_id(id).ok()?;
+    Some(id)
+}
+
+#[cfg(test)]
+mod plugin_namespace_tests {
+    use super::*;
+
+    #[test]
+    fn plugin_names_never_collide_with_the_host_catalog() {
+        for name in ALL {
+            assert!(
+                !name.starts_with(PLUGIN_NAMESPACE_PREFIX),
+                "host-emitted name {name:?} must never start with {PLUGIN_NAMESPACE_PREFIX:?} — \
+                 the namespace is reserved for plugins"
+            );
+        }
+        for name in BLOCKING {
+            assert!(!name.starts_with(PLUGIN_NAMESPACE_PREFIX));
+        }
+    }
+
+    #[test]
+    fn builds_and_recovers_a_well_formed_name() {
+        let name = plugin_event_name("demo-reviewer_2", "finding.raised").unwrap();
+        assert_eq!(name, "plugin.demo-reviewer_2.finding.raised");
+        assert_eq!(plugin_id_of(&name), Some("demo-reviewer_2"));
+        assert!(is_plugin_owned(&name, "demo-reviewer_2"));
+    }
+
+    #[test]
+    fn rejects_a_dot_smuggled_into_the_id() {
+        let err = plugin_event_name("a.b", "fact").unwrap_err();
+        assert!(matches!(
+            err,
+            PluginNamespaceError::InvalidIdChar { ch: '.', .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_a_wildcard_smuggled_into_the_id() {
+        let err = plugin_event_name("a*", "fact").unwrap_err();
+        assert!(matches!(
+            err,
+            PluginNamespaceError::InvalidIdChar { ch: '*', .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_a_wildcard_in_the_local_segment() {
+        let err = plugin_event_name("demo", "fact.*").unwrap_err();
+        assert!(matches!(
+            err,
+            PluginNamespaceError::WildcardInLocalName { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_id_and_empty_local() {
+        assert_eq!(
+            plugin_event_name("", "fact").unwrap_err(),
+            PluginNamespaceError::EmptyId
+        );
+        assert_eq!(
+            plugin_event_name("demo", "").unwrap_err(),
+            PluginNamespaceError::EmptyLocalName
+        );
+    }
+
+    /// A name outside a plugin's own namespace is rejected: neither
+    /// ownership nor id recovery may be fooled by a shared string prefix
+    /// that is not a shared namespace segment.
+    #[test]
+    fn a_name_outside_a_plugins_own_namespace_is_rejected() {
+        let mine = plugin_event_name("foo", "fact").unwrap();
+        assert!(is_plugin_owned(&mine, "foo"));
+        assert!(!is_plugin_owned(&mine, "other"));
+        // "foobar" is not the owner of a name in "foo"'s namespace, even
+        // though the id string shares a prefix.
+        assert!(!is_plugin_owned("plugin.foobar.fact", "foo"));
+        assert_eq!(plugin_id_of("plugin.foobar.fact"), Some("foobar"));
+        assert_eq!(plugin_id_of("not.a.plugin.name"), None);
+        assert_eq!(plugin_id_of("plugin."), None);
+        assert_eq!(plugin_id_of("plugin.."), None);
+        assert_eq!(plugin_id_of("plugin.a.b"), Some("a"));
+    }
+}

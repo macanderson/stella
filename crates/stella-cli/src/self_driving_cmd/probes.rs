@@ -14,7 +14,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use stella_core::self_driving::Supply;
+use stella_autonomy::Supply;
 
 fn env_override(name: &str) -> Option<u64> {
     std::env::var(name).ok().and_then(|v| v.trim().parse().ok())

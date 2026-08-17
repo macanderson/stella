@@ -466,9 +466,7 @@ pub(crate) fn attach_rule_guards(registry: &ToolRegistry, rules: &ResolvedRules)
             };
             let check = evaluate_guards(&rules, &action);
             if let Some(violation) = check.primary() {
-                return HookDecision::Deny {
-                    reason: violation.reason.clone(),
-                };
+                return HookDecision::Deny(violation.reason.clone().into());
             }
         }
         HookDecision::Allow

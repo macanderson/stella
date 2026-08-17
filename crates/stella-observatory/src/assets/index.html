@@ -651,6 +651,12 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .dx-line.add .sg{color:var(--ok)}
 .dx-line.rem{background:rgba(255,92,122,.10);color:var(--text)}
 .dx-line.rem .sg{color:var(--bad)}
+/* The elision. A row, not a footnote: it sits between the hunks it replaces,
+   so its job is to be unmistakably NOT a line of the file — hence the raised
+   ground, the centring, and no gutter numbers beside it. */
+.dx-fold{font:var(--fs-micro)/2 var(--mono);color:var(--text-3);background:var(--raised);
+         text-align:center;padding:2px 12px;-webkit-user-select:none;user-select:none}
+.dx-hunk + .dx-fold,.dx-fold + .dx-hunk{border-top:1px solid var(--hairline)}
 .dx-tally{font:600 var(--fs-md)/1.4 var(--mono);margin:0 0 4px}
 .dx-tally .plus{color:var(--ok)}
 .dx-tally .minus{color:var(--bad)}
@@ -673,8 +679,9 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
   border-radius:var(--radius-sm);padding:1px 6px;font:var(--fs-micro)/1.4 var(--mono);cursor:pointer}
 .turn-diff:hover{color:var(--text);border-color:var(--accent)}
 .turn-diff-row > td{background:var(--ground)}
-.diff-body{font:var(--fs-sm)/1.5 var(--mono);color:var(--text-2);margin:4px 0 0;
-  white-space:pre-wrap;word-break:break-word}
+/* No `.diff-body` here any more: the per-turn diff used to be a `<pre>` of
+   coloured spans with its own type scale, and now renders through the same
+   `.dx` component as every other diff on this page. */
 
 /* ── Empty & structural bits ──────────────────────────────────────────── */
 .empty{padding:var(--sp4) var(--sp2);text-align:center;color:var(--text-2);
@@ -1126,7 +1133,7 @@ footer b{color:var(--identity);font-weight:600}
   </section>
   </main>
 
-  <footer><b>stella</b> · verified done, not claimed done · dashboard refreshes every 5s while visible</footer>
+  <footer><b>stella</b> · verified is a property of the path, not the binary · dashboard refreshes every 5s while visible</footer>
 </div>
 
 <div id="tip" aria-hidden="true"></div>
@@ -1835,6 +1842,25 @@ function journalEntryHtml(e) {
       esc(e.reason ?? "");
     return `<div class="jrnl err"><div class="kick">⊘ delivery declined · ${reason}</div></div>`;
   }
+  /* A file the turn changed, with its diff inline — the deck's transcript
+     row (#2421), which this page had no equivalent of: "Files touched" in the
+     side rail listed paths and counts, and the transcript itself said nothing
+     at all about what the run actually wrote. Same renderer, same cap, same
+     elision as every other diff here.
+
+     The counts come from the event (git's numstat), never from counting
+     sigils in the rendering: the diff is capped, so re-deriving would report
+     the size of the VIEW as the size of the change. */
+  if (e.type === "file_change") {
+    const verb = { created: "＋ created", modified: "± edited",
+                   deleted: "－ deleted", read: "→ read" }[e.kind] ?? "± changed";
+    const delta = (e.kind === "read") ? "" :
+      ` · <span style="color:var(--ok)">+${fmtInt(e.added ?? 0)}</span>` +
+      ` <span style="color:var(--bad)">−${fmtInt(e.removed ?? 0)}</span>`;
+    const head = `<div class="kick">${verb} ${esc(e.path ?? "")}${delta}</div>`;
+    const hunks = (e.hunks ?? []).length ? diffHunksHtml(e) : "";
+    return `<div class="jrnl">${head}${hunks}</div>`;
+  }
   /* The Command Deck's rails (`crates/stella-tui/src/render/row.rs::Rail`):
      `●` opens a call, `⎿` its result, `✗` a failed one — a distinct glyph for
      the failure so it is findable by margin-scan alone. `stella observe` and
@@ -2009,9 +2035,28 @@ async function loadSentContext(id, turn, step, callSeq, full = false, token) {
 }
 /* Git's hunk shape, drawn with both line-number gutters. The line numbers are
    walked from the hunk header rather than served: `@@ -old_start +new_start @@`
-   plus the ops is exactly the information git itself uses to print them. */
+   plus the ops is exactly the information git itself uses to print them.
+
+   Only ever the CHANGED lines and their context — a diff is never a file
+   listing — and never more of them than `stella_diff::view`'s cap. When that
+   cap bit, the payload says so in two fields: `elided` is how many lines it
+   dropped and `fold_before` is the hunk index they sat in front of
+   (`hunks.length` for a trailing drop, null for none). Drawing the marker
+   where the lines were is the point of carrying the index at all: appended
+   to the bottom it would read as "the change continues below" under a row
+   that is already the change's last.
+
+   Both diff surfaces on this page — the per-call context diff and the
+   per-turn on-disk diff — render through this one function, so one edit does
+   not read as two different edits depending on which panel it is opened in. */
 function diffHunksHtml(d) {
-  return `<div class="dx">${(d.hunks ?? []).map(h => {
+  const hunks = d.hunks ?? [];
+  const elided = num(d.elided);
+  const foldAt = (elided > 0 && d.fold_before !== null && d.fold_before !== undefined)
+    ? num(d.fold_before) : -1;
+  const fold = `<div class="dx-fold">⋯ ${fmtInt(elided)} ${
+    elided === 1 ? "line" : "lines"} not shown</div>`;
+  const body = hunks.map((h, i) => {
     let o = num(h.old_start), n = num(h.new_start);
     const lines = (h.lines ?? []).map(l => {
       const add = l.op === "add", rem = l.op === "remove";
@@ -2022,10 +2067,11 @@ function diffHunksHtml(d) {
         ><span class="sg">${add ? "+" : rem ? "−" : " "}</span
         ><span class="tx">${esc(l.text ?? "")}</span></div>`;
     }).join("");
-    return `<div class="dx-hunk"><div class="dx-at">${
+    return (i === foldAt ? fold : "") + `<div class="dx-hunk"><div class="dx-at">${
       esc(`@@ -${num(h.old_start)},${num(h.old_count)} +${num(h.new_start)},${num(h.new_count)} @@`)
       }</div>${lines}</div>`;
-  }).join("")}</div>`;
+  }).join("");
+  return `<div class="dx">${body}${foldAt >= hunks.length ? fold : ""}</div>`;
 }
 /* What changed since the previous call of this role (#1511): the served
    `stella inspect --diff`. The resolved base is reported, not the requested
@@ -3720,14 +3766,13 @@ function turnDiffHtml(d) {
       <span style="color:var(--ok)">+${fmtInt(f.added)}</span>
       <span style="color:var(--bad)">−${fmtInt(f.removed)}</span></div>`;
     if (f.skipped) return `${head}<div class="empty">Too large to diff — listed, not rendered.</div>`;
-    const hunks = (f.hunks ?? []).map(h => `<pre class="diff-body">${
-      esc(`@@ -${num(h.old_start)},${num(h.old_count)} +${num(h.new_start)},${num(h.new_count)} @@`)}
-${(h.lines ?? []).map(l => {
-        const sigil = l.op === "add" ? "+" : l.op === "remove" ? "−" : " ";
-        const color = l.op === "add" ? "var(--ok)" : l.op === "remove" ? "var(--bad)" : "inherit";
-        return `<span style="color:${color}">${esc(sigil + l.text)}</span>`;
-      }).join("\n")}</pre>`).join("");
-    return head + hunks;
+    /* Through `diffHunksHtml`, not a `<pre>` of coloured spans. This is the
+       same per-file diff the call inspector draws two panels away, and it had
+       no line-number gutters, no row tint, and no elision — so one edit read
+       as two different edits depending on which panel you opened it in.
+       Colour was also its only signal for add-vs-remove, which is the one
+       thing BRAND.md says a signal may never be. */
+    return head + diffHunksHtml(f);
   }).join("");
   return body + (d.files_truncated
     ? `<div class="empty">Listing truncated — this turn changed more files than one row records.</div>` : "");

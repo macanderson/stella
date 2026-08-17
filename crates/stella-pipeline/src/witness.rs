@@ -4,8 +4,25 @@
 //! "done" is authored by the same independent role that enforces it) to write
 //! a **witness test**: a test that FAILS on the current code and will pass
 //! once the goal is met. Its command becomes the flip oracle's tracked
-//! command, so the repo's defining contract — "verified done, not claimed
-//! done" — holds even when the user armed nothing.
+//! command, so a run down this path is verified rather than claimed even when
+//! the user armed nothing.
+//!
+//! # Whose guarantee that is
+//!
+//! The staged pipeline's, and it does not generalise to every way Stella can
+//! reach a verdict. Here the **host** runs the tracked command and watches the
+//! fail→pass flip itself, which is what makes the answer evidence. Through the
+//! plugin socket it is not: a plugin declaring an `[oracle]`
+//! (`stella_plugin::Oracle`) runs that oracle in its own process and
+//! *reports* the flip and its measurements, and the host neither executes the
+//! oracle nor re-checks what comes back — #3511, settled as Option 2 on
+//! 2026-08-17, which is why that type's doc comment and the install consent
+//! text now say so in the words a user reads before installing.
+//!
+//! So "verified done, not claimed done" is a property of a path rather than of
+//! the binary. It is true of the ladder below. It is not inherited by a Stella
+//! whose verification arrives as a plugin, and this module deliberately no
+//! longer cites it as the repository's contract on that plugin's behalf.
 //!
 //! # Visible, not hidden — integrity by tamper exclusion
 //!

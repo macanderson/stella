@@ -41,6 +41,7 @@ fn on_disk(root: &Path, name: &str, foundry: Option<FoundryProvenance>) -> Custo
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        contributed_by: None,
     }
 }
 

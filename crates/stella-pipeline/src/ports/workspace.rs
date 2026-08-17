@@ -16,6 +16,7 @@
 //! path still resolves.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use stella_protocol::FileChangeKind;
 
 use super::{DiagnosticRunner, RepoStatusPort, TestRunner};
@@ -33,7 +34,11 @@ use super::{DiagnosticRunner, RepoStatusPort, TestRunner};
 /// `added`/`removed` default to `0` and `diff` to `None` only for an
 /// implementation that cannot measure them — which reads in the Files tab as
 /// "changed, extent unknown", not as "nothing changed".
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serializable because [`stella_protocol::CandidateOp::Adopt`] answers with
+/// it across a process boundary (#3380 A10) — one shape for both callers,
+/// never a parallel wire copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdoptedChange {
     pub path: String,
     pub kind: FileChangeKind,
@@ -43,7 +48,13 @@ pub struct AdoptedChange {
 }
 
 /// A typed candidate-isolation failure.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+///
+/// Serializable for the same reason [`AdoptedChange`] is: a handle-addressed
+/// operation (#3380 A10) has to be able to tell an out-of-process caller
+/// *which* isolation failure it hit, and a consumer that has to branch cannot
+/// branch on a sentence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(rename_all = "snake_case")]
 pub enum WorkspaceError {
     /// The current tree state could not be snapshotted (not a git repository,
     /// no commits yet, git unavailable, worktree creation failed). The

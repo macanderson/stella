@@ -13,6 +13,13 @@ publish.workspace = true
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
+# The wrapper manifest (`src/variant.rs`, #3408): this crate is the HOST half —
+# it gathers the facts a manifest's conditions read and consults the resolved
+# stage order. The edge only goes this way. `stella-plugin` is a near-leaf that
+# must never depend on the engine, and `stella-core` must never depend on it
+# (invariant 1: the engine never learns plugins exist), so the orchestration
+# plane is the lowest crate that may hold this dependency.
+stella-plugin = { path = "../stella-plugin" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

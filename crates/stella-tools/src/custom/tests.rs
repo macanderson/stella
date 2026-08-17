@@ -323,6 +323,7 @@ fn script_tool(root: &Path, file: &str, body: &str, timeout_ms: u64) -> CustomTo
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        contributed_by: None,
     }
 }
 
@@ -622,6 +623,7 @@ async fn missing_script_names_the_path_tried() {
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        contributed_by: None,
     };
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
@@ -954,4 +956,168 @@ async fn a_declared_output_schema_holds_a_script_to_its_promise() {
         }
         other => panic!("a schema breach is a tool defect: {other:?}"),
     }
+}
+
+// Plugin-contributed tools (#3380)
+
+/// Write a `<name>.toml` script-tool manifest into `dir`.
+fn manifest_at(dir: &Path, name: &str) {
+    std::fs::create_dir_all(dir).expect("tools dir");
+    std::fs::write(
+        dir.join(format!("{name}.toml")),
+        format!("name = \"{name}\"\ndescription = \"d\"\ncommand = [\"./{name}.sh\"]\n"),
+    )
+    .expect("manifest");
+}
+
+/// **Witness: a plugin's tool reaches the surface, and it is attributed.**
+///
+/// Before #3380 a plugin could ship a `tools/` directory and nothing read
+/// it: the tool simply did not exist. The provenance is the half that has to
+/// hold as hard as the presence — an unattributed third-party tool cannot be
+/// authorized as its plugin and cannot be traced back to it.
+#[test]
+fn a_plugin_contributes_a_tool_and_it_carries_the_plugin_name() {
+    let root = tempfile::tempdir().expect("a temp dir");
+    let plugin_dir = root.path().join("plugins").join("vera").join("tools");
+    manifest_at(&plugin_dir, "vera_review");
+
+    let none = discover_in_scopes(root.path(), None, true);
+    assert!(
+        none.names().is_empty(),
+        "anti-vacuity: without the plugin tier the tool is nowhere"
+    );
+
+    let found = discover_with_plugins(
+        root.path(),
+        None,
+        true,
+        &[PluginToolDir {
+            plugin: "vera".into(),
+            dir: plugin_dir,
+        }],
+    );
+    assert_eq!(found.names(), vec!["vera_review"]);
+    let (tools, _) = found.into_parts();
+    assert_eq!(tools[0].contributed_by.as_deref(), Some("vera"));
+}
+
+/// **Witness: a contributed tool authorizes as its plugin, never as the
+/// human.** The rule the whole package surface rests on.
+#[test]
+fn a_contributed_tool_is_authorized_as_the_plugin_and_a_users_own_is_not() {
+    let root = tempfile::tempdir().expect("a temp dir");
+    manifest_at(&root.path().join(".stella").join("tools"), "mine");
+    let plugin_dir = root.path().join("pkg").join("tools");
+    manifest_at(&plugin_dir, "theirs");
+
+    let (tools, _) = discover_with_plugins(
+        root.path(),
+        None,
+        true,
+        &[PluginToolDir {
+            plugin: "vera".into(),
+            dir: plugin_dir,
+        }],
+    )
+    .into_parts();
+
+    let mine = tools.iter().find(|t| t.name == "mine").expect("mine");
+    let theirs = tools.iter().find(|t| t.name == "theirs").expect("theirs");
+    assert_eq!(mine.principal(&Principal::User), Principal::User);
+    assert_eq!(
+        theirs.principal(&Principal::User),
+        Principal::Plugin("vera".into()),
+        "a plugin's script never runs under the operator's identity"
+    );
+    // And it does not widen either: a lane's principal is not inherited.
+    assert_eq!(
+        theirs.principal(&Principal::Role("worker".into())),
+        Principal::Plugin("vera".into())
+    );
+    assert_eq!(
+        mine.principal(&Principal::Role("worker".into())),
+        Principal::Role("worker".into())
+    );
+}
+
+/// **Witness: precedence.** A package may not capture a name the user's own
+/// manifest already defines, and the collision is reported rather than
+/// silently resolved.
+#[test]
+fn a_plugin_never_takes_a_name_the_user_already_defined() {
+    let root = tempfile::tempdir().expect("a temp dir");
+    manifest_at(&root.path().join(".stella").join("tools"), "deploy");
+    let plugin_dir = root.path().join("pkg").join("tools");
+    manifest_at(&plugin_dir, "deploy");
+
+    let found = discover_with_plugins(
+        root.path(),
+        None,
+        true,
+        &[PluginToolDir {
+            plugin: "vera".into(),
+            dir: plugin_dir,
+        }],
+    );
+    let reasons: Vec<String> = found
+        .diagnostics()
+        .iter()
+        .map(|d| d.reason.clone())
+        .collect();
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("yours is the one that runs"),
+        "{reasons:?}"
+    );
+
+    let (tools, _) = found.into_parts();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(
+        tools[0].contributed_by, None,
+        "the surviving `deploy` is the user's own"
+    );
+}
+
+/// Plugin-versus-plugin resolves deterministically by the order the host
+/// supplies (roster order, i.e. plugin name), and the loser is reported.
+#[test]
+fn two_plugins_claiming_one_name_resolve_in_roster_order() {
+    let root = tempfile::tempdir().expect("a temp dir");
+    let first = root.path().join("alpha").join("tools");
+    let second = root.path().join("zeta").join("tools");
+    manifest_at(&first, "shared");
+    manifest_at(&second, "shared");
+
+    let found = discover_with_plugins(
+        root.path(),
+        None,
+        true,
+        &[
+            PluginToolDir {
+                plugin: "alpha".into(),
+                dir: first,
+            },
+            PluginToolDir {
+                plugin: "zeta".into(),
+                dir: second,
+            },
+        ],
+    );
+    assert_eq!(found.diagnostics().len(), 1);
+    let (tools, _) = found.into_parts();
+    assert_eq!(tools[0].contributed_by.as_deref(), Some("alpha"));
+}
+
+/// A manifest cannot claim a provenance it does not have: `contributed_by`
+/// comes from the directory discovery read, and `parse_manifest` — the only
+/// path a manifest's own bytes take — always leaves it `None`.
+#[test]
+fn a_manifest_cannot_claim_to_have_been_shipped_by_a_plugin() {
+    let tool = parse_manifest(
+        "name = \"xx\"\ndescription = \"d\"\ncommand = [\"./x.sh\"]\ncontributed_by = \"vera\"\n",
+        Path::new("/x/xx.toml"),
+    )
+    .expect("unknown fields are ignored, as they always have been");
+    assert_eq!(tool.contributed_by, None);
 }

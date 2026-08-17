@@ -3,7 +3,12 @@
 
 //! Reactive recovery from a provider refusing the requested output ceiling.
 //!
-//! The output-side mirror of [`super::overflow_recovery`], and it exists for
+//! This module is `pub` for exactly one item — [`SessionOutputCeilings`], the
+//! handle a host names to attach a session's learned ceilings to
+//! [`crate::EngineConfig`]. The ladder itself is `pub(crate)`: it is engine
+//! machinery, not a seam.
+//!
+//! The output-side mirror of `super::overflow_recovery`, and it exists for
 //! the same reason: a rejection the engine can repair was being surfaced as
 //! a terminal error that ended the turn.
 //!
@@ -30,7 +35,7 @@
 //! [`stella_protocol::ProviderError::OutputBudgetExceeded`], the engine
 //! clamps `max_output_tokens` for the rest of the turn and re-runs the step.
 //! The clamp is the provider's own stated affordable ceiling less
-//! [`SAFETY_MARGIN_PERCENT`] — a margin rather than the bare figure because
+//! `SAFETY_MARGIN_PERCENT` — a margin rather than the bare figure because
 //! the balance is falling as the turn spends, so the number that was exactly
 //! affordable when the provider computed it is not affordable by the time
 //! the retry lands. When the provider names no figure, the ask is halved:
@@ -40,17 +45,55 @@
 //! # Bounds and the death-spiral guard
 //!
 //! Identical in shape to the overflow ladder, deliberately: a **per-turn
-//! down-only latch**, at most [`MAX_RECOVERY_RUNGS`] rungs, the counter never
+//! down-only latch**, at most `MAX_RECOVERY_RUNGS` rungs, the counter never
 //! resetting within the turn, and each clamp monotonically tighter than the
 //! last. The clamp never loosens once set, even after a later call commits,
 //! so a configured ceiling above what the account can fund cannot oscillate
-//! ask → refuse → recover for the rest of the turn. [`FLOOR_TOKENS`] stops
+//! ask → refuse → recover for the rest of the turn. `FLOOR_TOKENS` stops
 //! the ladder before the ceiling gets too small to hold an answer: below
 //! that the account genuinely cannot fund the call, and the rejection
 //! surfaces exactly as an unrecovered terminal failure does.
 //!
 //! Like the overflow latch, this is not checkpointed: a resumed turn starts
 //! the allowance over, which only re-permits a bounded amount of work.
+//!
+//! # Why the clamp also outlives the turn
+//!
+//! The ladder above is per-turn because its *rungs* are: three refusals in one
+//! turn is a death spiral, and the counter has to reset or a long session
+//! eventually runs out of recoveries. But the fact the ladder learns — "this
+//! account cannot fund a ceiling this large" — is a property of the balance,
+//! not of the turn. Resetting it with the turn meant every turn re-sent the
+//! original ceiling, ate a 402, and only then retried reduced: on a bench
+//! trial with dozens of turns, dozens of wasted request/reject round-trips,
+//! each one pure latency (a 402 bills nothing) and each one more load against
+//! the gateway's rate limiter (#3307).
+//!
+//! [`SessionOutputCeilings`] is the carry that fixes it — the clamp survives
+//! the turn while the rung allowance still resets with it. It is keyed by
+//! provider id, because affordability is a fact about one account at one
+//! gateway: a clamp learned from a gateway that prices the ask must not
+//! shorten answers on a direct vendor that bills what is spent.
+//!
+//! It is **optimistically forgotten** every [`REPROBE_TURNS`] turns rather
+//! than held forever. Nothing observable tells the engine a balance was topped
+//! up — the only way to find out is to ask for the full ceiling again — so the
+//! carry decays into one re-probe, which either passes (the session is back to
+//! its configured ceiling for free) or is refused (the ladder re-learns, at
+//! the cost of the single round-trip this module exists to stop paying every
+//! turn).
+
+/// How many turns a learned ceiling survives before the session optimistically
+/// forgets it and re-asks for the caller's full ceiling.
+///
+/// This is a judgement between two costs, not a measured optimum. Too short
+/// and the carry stops paying for itself: at one it *is* the per-turn
+/// re-ask #3307 is about. Too long and a mid-session top-up leaves the session
+/// answering under a ceiling it could now afford — which binds for real, since
+/// a low balance yields a low clamp and every answer is cut to it. Eight
+/// removes seven of every eight wasted round-trips while honouring a top-up
+/// within a few minutes of ordinary work.
+pub const REPROBE_TURNS: u32 = 8;
 
 /// How many clamp rungs may fire per turn. Three, one more than the overflow
 /// ladder's two, because each rung here answers a *different* stated figure
@@ -140,6 +183,154 @@ impl OutputBudgetRecovery {
     }
 }
 
+/// The session-scoped carry for what the per-turn ladder above learned: one
+/// standing output ceiling per provider id, surviving the turn that learned it
+/// (module docs, #3307).
+///
+/// Shared by every engine a session builds — a handle cloned into each
+/// per-turn `EngineConfig`, the same shape `stella-cli`'s `SessionDurability`
+/// uses to reach a per-turn config from session-scoped state. Interior
+/// mutability rather than `&mut` for the same reason
+/// `stella_model::stream_recovery::StreamRecovery` uses it: the engine holds
+/// its config by shared reference, and this is read on the request path and
+/// written on the failure path of the same turn.
+///
+/// Pure data, no I/O (invariant 2). A session touches a handful of providers,
+/// so a `Vec` scanned linearly beats a map it would never fill.
+///
+/// # Byte-stability
+///
+/// Until a rung arms, every method is the identity: [`Self::narrow`] hands
+/// back the configured ceiling unchanged, so a session that never meets a 402
+/// sends byte-identical requests to one that has never heard of this type
+/// (invariant 7). `EngineConfig` leaves the handle unattached by default, so
+/// an unwired host is unchanged twice over.
+#[derive(Debug, Default)]
+pub struct SessionOutputCeilings {
+    entries: std::sync::Mutex<Vec<Entry>>,
+}
+
+/// One provider's standing ceiling and how long it has stood.
+#[derive(Debug)]
+struct Entry {
+    provider: String,
+    clamp: u32,
+    /// Turns elapsed since this ceiling was learned or re-learned. At
+    /// [`REPROBE_TURNS`] the entry is forgotten and the next call re-asks for
+    /// the caller's full ceiling.
+    turns_stood: u32,
+}
+
+impl SessionOutputCeilings {
+    /// A turn is starting: age every standing ceiling and forget the ones that
+    /// have stood [`REPROBE_TURNS`] turns.
+    ///
+    /// Called from `TurnState::new`/`from_checkpoint`, which is every path
+    /// that mints a turn — the borrowed-transcript driver, a resume, and a
+    /// durable host owning its own state — so no driver can opt out of the
+    /// decay and leave a session capped for good.
+    ///
+    /// Deliberately ages *every* entry rather than only the provider about to
+    /// run: lanes sharing one handle then age it faster than one lane would,
+    /// which spends re-probes sooner. That is the safe direction — a re-probe
+    /// costs at most the one round-trip, while a stale ceiling silently
+    /// shortens answers.
+    pub fn begin_turn(&self) {
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        entries.retain_mut(|entry| {
+            entry.turns_stood += 1;
+            entry.turns_stood < REPROBE_TURNS
+        });
+    }
+
+    /// Narrow a configured ceiling by `provider`'s standing one. The identity
+    /// when nothing is standing, and a `min` otherwise — never a raise, so a
+    /// caller already asking for less keeps its own smaller number, exactly as
+    /// `OutputBudgetRecovery::apply` does within the turn.
+    ///
+    /// `None` (no configured ceiling — let the provider decide) becomes the
+    /// standing ceiling: the provider's own default is what it refused.
+    #[must_use]
+    pub fn narrow(&self, provider: &str, configured: Option<u32>) -> Option<u32> {
+        let Some(standing) = self.standing(provider) else {
+            return configured;
+        };
+        Some(match configured {
+            Some(configured) => standing.min(configured),
+            None => standing,
+        })
+    }
+
+    /// Record what a rung just settled on for `provider`, and restart its
+    /// re-probe clock.
+    ///
+    /// Monotonically tighter within the standing entry, mirroring the ladder:
+    /// a later, larger figure describes a balance that has since changed, and
+    /// honouring it here is the oscillation the per-turn latch already
+    /// refuses. Raising happens only through [`Self::begin_turn`] forgetting
+    /// the entry outright, which is the one path that re-asks the provider
+    /// instead of guessing.
+    pub fn learn(&self, provider: &str, clamp: u32) {
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        match entries.iter_mut().find(|e| e.provider == provider) {
+            Some(entry) => {
+                entry.clamp = entry.clamp.min(clamp);
+                entry.turns_stood = 0;
+            }
+            None => entries.push(Entry {
+                provider: provider.to_string(),
+                clamp,
+                turns_stood: 0,
+            }),
+        }
+    }
+
+    /// `provider`'s standing ceiling, if one is.
+    #[must_use]
+    pub fn standing(&self, provider: &str) -> Option<u32> {
+        self.entries
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .find(|e| e.provider == provider)
+            .map(|e| e.clamp)
+    }
+}
+
+impl super::Engine<'_> {
+    /// The output ceiling this engine's next call may ask for *before* the
+    /// turn's own ladder narrows it further: the configured value, cut by
+    /// whatever this session already learned the active provider will fund
+    /// (#3307).
+    ///
+    /// This is what makes the carry pay: without it a turn's first call
+    /// re-sends the configured ceiling, is refused, and only the *retry* goes
+    /// out reduced — one wasted round-trip per turn for as long as the balance
+    /// stays low.
+    ///
+    /// Keyed on [`Engine::active_provider`] rather than the constructor-time
+    /// primary, so a turn that failed over mid-flight (`driver::model_fallback`)
+    /// is narrowed by what the *replacement* refused, not by what the dead
+    /// primary did.
+    ///
+    /// [`Engine::active_provider`]: super::Engine::active_provider
+    pub(crate) fn configured_output_ceiling(&self) -> Option<u32> {
+        let configured = self.config.max_output_tokens;
+        match self.config.session_output_ceilings.as_ref() {
+            Some(ceilings) => ceilings.narrow(self.active_provider().id(), configured),
+            None => configured,
+        }
+    }
+
+    /// Carry a rung's clamp into the session, so the next turn's first call
+    /// goes out already reduced instead of buying the same 402 again.
+    pub(crate) fn carry_output_ceiling(&self, clamp: u32) {
+        if let Some(ceilings) = self.config.session_output_ceilings.as_ref() {
+            ceilings.learn(self.active_provider().id(), clamp);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +404,89 @@ mod tests {
         recovery.arm(Some(100_000), Some(128_000)).unwrap();
         assert_eq!(recovery.apply(Some(4_096)), Some(4_096));
         assert_eq!(recovery.apply(None), Some(90_000));
+    }
+
+    /// Until something is learned the carry is the identity, on every
+    /// provider — the byte-stability contract (invariant 7).
+    #[test]
+    fn an_empty_carry_narrows_nothing() {
+        let ceilings = SessionOutputCeilings::default();
+        assert_eq!(ceilings.narrow("openrouter", Some(128_000)), Some(128_000));
+        assert_eq!(ceilings.narrow("openrouter", None), None);
+        ceilings.begin_turn();
+        assert_eq!(ceilings.narrow("openrouter", Some(128_000)), Some(128_000));
+    }
+
+    /// What one turn learned narrows the next, and — as with the per-turn
+    /// ladder — never raises a caller already asking for less.
+    #[test]
+    fn a_learned_ceiling_narrows_later_turns_but_never_raises_them() {
+        let ceilings = SessionOutputCeilings::default();
+        ceilings.learn("openrouter", 90_000);
+        assert_eq!(ceilings.narrow("openrouter", Some(128_000)), Some(90_000));
+        assert_eq!(ceilings.narrow("openrouter", Some(4_096)), Some(4_096));
+        // No configured ceiling means "let the provider decide", and the
+        // provider's own default is precisely what it refused to fund.
+        assert_eq!(ceilings.narrow("openrouter", None), Some(90_000));
+    }
+
+    /// Affordability is a fact about one account at one gateway. A clamp
+    /// learned from a gateway that prices the ask must not shorten answers on
+    /// a direct vendor that bills what is spent.
+    #[test]
+    fn a_ceiling_is_keyed_to_the_provider_that_refused_it() {
+        let ceilings = SessionOutputCeilings::default();
+        ceilings.learn("openrouter", 90_000);
+        assert_eq!(ceilings.narrow("openrouter", Some(128_000)), Some(90_000));
+        assert_eq!(ceilings.narrow("anthropic", Some(128_000)), Some(128_000));
+    }
+
+    /// Down-only while it stands, mirroring the ladder: a later, larger
+    /// figure describes a balance that has since changed, and honouring it
+    /// here is the oscillation the per-turn latch already refuses.
+    #[test]
+    fn learning_again_only_ever_tightens_a_standing_ceiling() {
+        let ceilings = SessionOutputCeilings::default();
+        ceilings.learn("openrouter", 90_000);
+        ceilings.learn("openrouter", 120_000);
+        assert_eq!(ceilings.standing("openrouter"), Some(90_000));
+        ceilings.learn("openrouter", 45_000);
+        assert_eq!(ceilings.standing("openrouter"), Some(45_000));
+    }
+
+    /// The decay. Nothing observable announces a top-up, so a standing
+    /// ceiling is optimistically forgotten after `REPROBE_TURNS` turns and
+    /// the next call re-asks the caller's full ceiling.
+    #[test]
+    fn a_standing_ceiling_is_forgotten_after_the_reprobe_period() {
+        let ceilings = SessionOutputCeilings::default();
+        ceilings.learn("openrouter", 90_000);
+        for turn in 1..REPROBE_TURNS {
+            ceilings.begin_turn();
+            assert_eq!(
+                ceilings.standing("openrouter"),
+                Some(90_000),
+                "turn {turn} is still inside the period"
+            );
+        }
+        ceilings.begin_turn();
+        assert_eq!(ceilings.standing("openrouter"), None, "the period is up");
+    }
+
+    /// Re-learning restarts the clock, so a balance that stays low keeps its
+    /// ceiling for a fresh period rather than re-probing on a fixed cadence
+    /// counted from the first refusal.
+    #[test]
+    fn re_learning_restarts_the_reprobe_clock() {
+        let ceilings = SessionOutputCeilings::default();
+        ceilings.learn("openrouter", 90_000);
+        for _ in 0..REPROBE_TURNS - 1 {
+            ceilings.begin_turn();
+        }
+        ceilings.learn("openrouter", 80_000);
+        for _ in 0..REPROBE_TURNS - 1 {
+            ceilings.begin_turn();
+        }
+        assert_eq!(ceilings.standing("openrouter"), Some(80_000));
     }
 }

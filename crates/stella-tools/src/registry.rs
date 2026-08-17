@@ -132,6 +132,15 @@ pub struct ToolRegistry {
     /// ([`ToolRegistry::events`]) so a child turn streams onto the channel of
     /// the turn that spawned it.
     events: std::sync::RwLock<Option<stella_core::EventSender>>,
+    /// Directories beyond the workspace root this session may write to, set by
+    /// the host from operator configuration ([`ToolRegistry::allow_write_dirs`]).
+    /// Empty by default: a session confines to its own tree until an operator
+    /// says otherwise.
+    extra_write_dirs: std::sync::RwLock<Vec<PathBuf>>,
+    /// The session scratch directory, when the scratch plane initialized —
+    /// canonicalized once at construction so `write_scope` can name it as a
+    /// writable root without a syscall per tool call.
+    scratch_dir: Option<PathBuf>,
 }
 
 impl ToolRegistry {
@@ -180,7 +189,7 @@ impl ToolRegistry {
                 sub_agent_dispatcher.clone(),
             )),
             Arc::new(crate::environment::GetEnvironment {
-                scratch_dir: scratch_path,
+                scratch_dir: scratch_path.clone(),
             }),
         ];
         match scratch {
@@ -213,7 +222,65 @@ impl ToolRegistry {
             approval: Default::default(),
             policy_bridge: std::sync::Mutex::new(None),
             events: std::sync::RwLock::new(None),
+            extra_write_dirs: std::sync::RwLock::new(Vec::new()),
+            scratch_dir: scratch_path
+                .as_ref()
+                .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone())),
         }
+    }
+
+    /// Widen where this session may write beyond the workspace root.
+    ///
+    /// The operator's directories, from `--allow-dir`, `stella.toml`'s
+    /// `[workspace] allowed_dirs`, or `/add-dir`. Set once at assembly time by
+    /// the host; **no tool can call this**, which is the point — widening the
+    /// boundary is an operator action, never something the model can ask for
+    /// mid-turn.
+    ///
+    /// Paths are canonicalized here, because a scope's roots must be canonical
+    /// for anything to be compared against them (see
+    /// [`crate::ctx::ToolCtx::resolve_for_write`]). One that cannot be
+    /// canonicalized — a directory that does not exist — is kept as given
+    /// rather than dropped: a typo should confine to a useless directory, not
+    /// silently widen to none.
+    pub fn allow_write_dirs(&self, dirs: impl IntoIterator<Item = PathBuf>) {
+        let canonical: Vec<PathBuf> = dirs
+            .into_iter()
+            .map(|dir| dir.canonicalize().unwrap_or(dir))
+            .collect();
+        *self
+            .extra_write_dirs
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = canonical;
+    }
+
+    /// This session's write scope: the workspace root, the session scratch
+    /// directory, and whatever [`Self::allow_write_dirs`] added.
+    ///
+    /// The scratch directory is in the scope because the prompt tells the
+    /// model to put working files there — "keep intermediate notes and working
+    /// data in the scratch state plane, never as files in the workspace" — and
+    /// `bash` is handed its path as `STELLA_SCRATCH`. Instructing a model to
+    /// write somewhere and then refusing the write is the worst of both: the
+    /// agent obeys, is refused, and has no way to tell a policy from a bug.
+    /// It lives outside the workspace by design (a `tempfile::TempDir`, so it
+    /// leaves nothing behind), which is exactly why it needs naming here.
+    #[must_use]
+    pub fn write_scope(&self) -> stella_core::workspace_scope::SessionScope {
+        let root = self
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.root.clone());
+        let scratch = self.scratch_dir.iter().cloned();
+        stella_core::workspace_scope::SessionScope::new(root).with_additional(
+            scratch.chain(
+                self.extra_write_dirs
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .iter()
+                    .cloned(),
+            ),
+        )
     }
 
     /// Attach the session's extension hook bus. From this point every tool
@@ -433,7 +500,8 @@ impl ToolRegistry {
                 // undeclared name, so the contract is the allowlist.
                 let contract = crate::contracts::contract_for(&tool.schema());
                 let ctx =
-                    crate::ctx::ToolCtx::new(self.root.clone(), name, bus.clone(), contract.events);
+                    crate::ctx::ToolCtx::new(self.root.clone(), name, bus.clone(), contract.events)
+                        .with_scope(self.write_scope());
                 tool.execute(input, &ctx).await
             }
             None => ToolOutput::classified_error(

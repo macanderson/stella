@@ -10,6 +10,21 @@ answer comes from measurements — a fail→pass flip of one command, a test run
 diff — and no model is ever asked to rule on whether the work is done. When the
 measurements do not settle it, the run says so.
 
+<Callout type="warn">
+**This guarantee is a property of the path, not of the binary.** Everything
+below is real and host-run in stella's built-in staged pipeline today — no
+plugin required. The [plugin platform](/docs/plugins) that will eventually
+carry this mechanism outside the built-in binary already exists, and a
+verification plugin can already be installed — but nothing in a live
+`stella run` dispatches an installed plugin into a turn yet, so the staged
+pipeline below remains the only path that actually decides a run today. Once
+dispatch lands, an installed plugin reports its own evidence instead of
+stella running the check, and this page's guarantee does not automatically
+carry over to that path — see [Plugins](/docs/plugins#the-honest-part-who-verifies-what)
+for what that split means. This page documents the built-in mechanism as it
+exists today.
+</Callout>
+
 ## The foundation: the step loop
 
 At the bottom of everything is a simple, single-threaded **step loop**:
@@ -497,6 +512,13 @@ stella --spend-limit 1.50 run --test-command "cargo test -p stella-core" \
     opt-in. See [fleets](/docs/agent-fleets).
   </OptionCard>
 </CardGrid>
+
+None of the stages above are owned by the step-loop engine itself — they are
+all `stella-pipeline`, a layer built on top of it, exactly as the diagram at
+the top of this page shows. That is what makes them extractable: the
+[plugin platform](/docs/plugins) is the mechanism by which a stage like
+`witness` or `verify` leaves this binary and becomes something you install
+and can replace, without the step loop underneath ever changing.
 
 Pipeline goal rounds mean **two checks at different altitudes**: the pipeline's
 deterministic ladder settles each round's work from measurements, and the outer

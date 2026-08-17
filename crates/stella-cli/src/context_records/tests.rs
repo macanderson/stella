@@ -426,3 +426,103 @@ fn appending_a_promotion_extends_the_chain_and_leaves_the_reviewed_dir_clean() {
         "the lock lives under the gitignored private dir instead"
     );
 }
+
+/// A record set file, as a plugin package or a repository ships one.
+fn record_set(set_id: &str, lineage: &str) -> String {
+    format!(
+        r#"
+schema = "context-record/v0.1"
+set_id = "{set_id}"
+
+[defaults]
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "{lineage}"
+kind = "constraint"
+statement = "Never force-push to a shared branch."
+
+[record.steering]
+force = "must"
+
+[record.enforcement]
+mode = "hard"
+guard_tool = "Bash"
+guard_deny_command = "git push --force*"
+"#
+    )
+}
+
+/// **The governance witness (#3565).** A promotion grant arms the
+/// **repository's own** record and nothing else.
+///
+/// A plugin's contributed records load into the project trust tier, and the
+/// ledger keys a grant on a *lineage*. So a package shipping a record whose
+/// `lineage_id` matches a live grant would, without the filter in
+/// `repo_owned_lineages`, inherit the authority to deny tool calls: no
+/// promotion entry names it, no reviewer saw it, and it sits outside the Git
+/// tree the hash chain is verified against. Merge order does not settle this —
+/// plugin records go first precisely so a workspace copy wins, but there is no
+/// workspace copy here, because a grant outlives the file it was written for.
+///
+/// The second half is the anti-vacuity half: the repository's *own* record of
+/// the very same lineage is armed by the very same grant, so this test cannot
+/// pass by the grant simply never working.
+#[test]
+fn a_promotion_grant_does_not_arm_a_record_a_plugin_shipped() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = tempfile::tempdir().unwrap();
+    let _paths = crate::paths::test_user_home(root.path().join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let lineage = "ctx.acme.web.no-force-push";
+    append_promotion(root.path(), grant(lineage, "measured over 30 days")).unwrap();
+
+    // A plugin ships that exact lineage, and the workspace ships none.
+    let plugin = stella_home::resolve_project_plugins_dir(root.path()).join("vera");
+    std::fs::create_dir_all(plugin.join("rules")).unwrap();
+    std::fs::write(
+        plugin.join(crate::plugin_cmd::roster::MANIFEST_FILE),
+        "name = \"vera\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        plugin.join("rules").join("set.toml"),
+        record_set("vera", lineage),
+    )
+    .unwrap();
+
+    let contributed = load_registry(root.path());
+    let entry = contributed
+        .entries
+        .iter()
+        .find(|entry| entry.record.record.lineage_id == lineage)
+        .expect("the plugin's record still loads and still steers");
+    assert!(
+        !entry.is_enforced(),
+        "a plugin's record must never inherit the repository's promotion grant"
+    );
+
+    // Anti-vacuity: the repository's own record of the same lineage, under the
+    // same grant, does arm.
+    std::fs::create_dir_all(root.path().join(RULES_DIR)).unwrap();
+    std::fs::write(
+        root.path().join(RULES_DIR).join(format!("{lineage}.toml")),
+        record_set("acme.web", lineage),
+    )
+    .unwrap();
+    let owned = load_registry(root.path());
+    assert!(
+        owned
+            .entries
+            .iter()
+            .find(|entry| entry.record.record.lineage_id == lineage)
+            .expect("the workspace's own record loads")
+            .is_enforced(),
+        "the same grant must still arm the repository's own record"
+    );
+}

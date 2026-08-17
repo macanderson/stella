@@ -214,6 +214,13 @@ pub(crate) async fn handle_session_turn(
         };
         config.max_steps = effective;
     }
+    // Share the session's learned output ceilings with this turn (#3568).
+    // Filled in here, and not left to the host, for the same reason
+    // `checkpoint` is: an embedder has no way to know it is expected to supply
+    // one, and a session without it is indistinguishable from a session that
+    // has simply never been refused — it just silently re-pays the
+    // affordability 402 on every turn.
+    config.session_output_ceilings = Some(sess.output_ceilings());
     let mut reverse_request_timeout = SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT;
     if let Some(requested_ms) = request.reverse_request_timeout_ms {
         let Some(effective) = validate_reverse_request_timeout(requested_ms) else {

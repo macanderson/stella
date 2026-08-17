@@ -17,12 +17,34 @@ stella-store = { path = "../stella-store" }
 stella-mcp = { path = "../stella-mcp" }
 stella-context = { path = "../stella-context" }
 stella-graph = { path = "../stella-graph" }
+# The wrapper socket's wire contract (#3380, `doc:wrapper-socket` §2). This is
+# the edge that ends "stella-plugin has zero consumers", and it is acyclic:
+# stella-plugin's only workspace dependency is stella-protocol, which this
+# crate already takes. The direction is forced — the socket's two async points
+# perform I/O (recall, a test run, a process spawn), which invariant 2 bans in
+# the engine, so the trait lives here and the plugin-facing types live there.
+stella-plugin = { path = "../stella-plugin" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+# `process`/`io-util`/`time` are the subprocess wrapper transport: spawn, write
+# the request on stdin, read the response on stdout, bounded by the same clamp
+# `stella-core`'s hook runner uses. `rt` is the host-call channel
+# (`doc:wrapper-socket` §6b): stdin belongs to one spawned task for the life of a
+# conversation, so a host answering a call cannot deadlock against a plugin
+# writing the next one. It is reachable through `process` today; declared here
+# because a feature this crate's own code calls is not one to inherit by
+# accident.
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt"] }
 async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
+# `judge` is a pure total function over a closed evidence vocabulary, which is
+# exactly the shape the rest of the workspace states as a property rather than
+# a table (stella-core's loop detection, stella-pipeline's witness
+# verification). #3510's invariant — a declared check narrows done and never
+# widens it — is quantified over every oracle a manifest can express, so it is
+# a property test, not a case.
+proptest = { workspace = true }

@@ -381,7 +381,7 @@ pub struct TurnState {
     /// allowance over, which only re-permits a bounded amount of work.
     pub(crate) length_continuations: u32,
     /// How many times this turn's `Stop` hooks have been consulted — the
-    /// bounded counter (`driver::user_hooks::MAX_STOP_CONSULTS`) that lets a
+    /// bounded counter (`EngineConfig::stop_holds`) that lets a
     /// verification hook deny, watch the revision, and re-check, while still
     /// capping the compact→error→stop-hook→retry spiral (#2684, #3246). Not
     /// checkpointed, like `length_continuations`.
@@ -409,6 +409,19 @@ pub struct TurnState {
     pub(crate) cancel: CancelToken,
 }
 
+/// Age the session's standing output ceilings by one turn, if the host
+/// attached any (`crate::driver::output_budget_recovery`, #3307).
+///
+/// Called from both constructors below because between them they are every
+/// path that mints a turn — the borrowed-transcript driver, a resume, and a
+/// durable host driving `run_step` itself — so no driver can skip the decay
+/// and leave a session capped for the rest of its life.
+fn age_session_output_ceilings(config: &EngineConfig) {
+    if let Some(ceilings) = config.session_output_ceilings.as_ref() {
+        ceilings.begin_turn();
+    }
+}
+
 impl TurnState {
     /// A fresh turn over `messages`, metered by `budget`. `config` supplies
     /// only the two receipt-keying settings (`turn_instance`,
@@ -420,6 +433,7 @@ impl TurnState {
         budget: BudgetGuard,
         config: &EngineConfig,
     ) -> Self {
+        age_session_output_ceilings(config);
         Self {
             messages,
             budget,
@@ -448,6 +462,7 @@ impl TurnState {
     /// module docs for exactly what resuming costs.
     #[must_use]
     pub fn from_checkpoint(checkpoint: Checkpoint, config: &EngineConfig) -> Self {
+        age_session_output_ceilings(config);
         Self {
             messages: checkpoint.messages,
             budget: checkpoint.budget.restore(),
@@ -668,13 +683,19 @@ impl TurnState {
         }
     }
 
-    /// The output ceiling this turn's next call may ask for: the configured
-    /// value narrowed by any standing clamp
+    /// The output ceiling this turn's next call may ask for: `configured`
+    /// narrowed by this turn's standing clamp
     /// (`crate::driver::output_budget_recovery`).
     ///
     /// The one seam the ceiling is read through, so a provider that has
     /// already refused to fund this turn's ask cannot be asked for it again
     /// by some future call site reading `EngineConfig` directly.
+    ///
+    /// `configured` is the engine's own `Engine::configured_output_ceiling`,
+    /// which has already cut the config value by whatever the *session* learned
+    /// the provider will fund (#3307). The two narrowings compose because both
+    /// are `min`: the turn can only tighten what the session already knows,
+    /// never loosen it.
     pub(crate) fn output_ceiling(&self, configured: Option<u32>) -> Option<u32> {
         self.output_budget_recovery.apply(configured)
     }

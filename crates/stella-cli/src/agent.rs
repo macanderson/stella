@@ -63,7 +63,7 @@ pub(crate) mod resume;
 mod skill_usage;
 mod summary;
 pub(crate) mod tool_stack;
-mod tools;
+pub(crate) mod tools;
 mod turn_close;
 pub(crate) use budget::{build_budget_guard, remaining_budget, settle_reflection_budget};
 
@@ -106,19 +106,19 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
     }
 }
 
-/// Run a one-shot prompt. `use_pipeline` selects the staged pipeline (the
-/// default) vs the raw step-loop (`--no-pipeline`). `test_command`, when
-/// given, arms the pipeline's deterministic verification ladder (the
-/// fail→pass flip oracle); without it, verification falls back to the model
-/// verifier on every iteration. `keep_witness` promotes an authored witness into
-/// the working tree instead of letting it die with the candidate workspace.
+/// Run a one-shot prompt. [`PipelineChoice`](crate::wrapper_plugin::PipelineChoice)
+/// selects which wrapper runs over the turn. `test_command`, when given, arms
+/// the pipeline's deterministic verification ladder (the fail→pass flip
+/// oracle); without it, verification falls back to the model verifier on every
+/// iteration. `keep_witness` promotes an authored witness into the working tree
+/// instead of letting it die with the candidate workspace.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_one_shot(
     cfg: &Config,
     prompt: &str,
     budget_limit: Option<f64>,
     format: OutputFormat,
-    use_pipeline: bool,
+    pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
     test_command: Option<&str>,
     keep_witness: bool,
     require_verified: bool,
@@ -126,8 +126,8 @@ pub async fn run_one_shot(
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
     preflight_durable_stream(format)?;
-    crate::enterprise_telemetry::authorize_one_shot(use_pipeline)?;
-    if use_pipeline {
+    crate::enterprise_telemetry::authorize_one_shot(!pipeline.is_raw())?;
+    if pipeline.is_classic() {
         run_pipeline_one_shot(
             cfg,
             prompt,
@@ -139,7 +139,7 @@ pub async fn run_one_shot(
         )
         .await
     } else {
-        run_raw_one_shot(cfg, prompt, budget_limit, format).await
+        run_raw_one_shot(cfg, prompt, budget_limit, format, pipeline, test_command).await
     }
 }
 
@@ -237,7 +237,7 @@ async fn run_pipeline_one_shot(
     };
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let registry: Arc<ToolRegistry> = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+    let registry: Arc<ToolRegistry> = Arc::new(crate::write_dirs::registry_for(cfg));
 
     crate::subagent::install_for_session(cfg, &registry)?;
     // The one derivation of "a human is here to answer" (approvals, rules).
@@ -680,7 +680,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     )?;
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+        std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
     let mcp = connect_mcp(
         cfg,
         registry.clone(),
@@ -1019,7 +1019,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             cfg,
             OutputFormat::Text,
             &store,
-            "chat",
+            persistence::TurnDoor::new("chat"),
             input,
             Some(presence.id()),
             recall_event,
@@ -1062,10 +1062,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
 /// gated the same way as reflection so trivial conversational turns write
 /// nothing. `pub(crate)`: the Command Deck's turn driver records through the
 /// same helper.
-pub(crate) async fn record_turn_episode<E>(
+pub(crate) async fn record_turn_episode<T, E>(
     memory: &Option<SessionMemory>,
     prompt: &str,
-    result: &Result<(), E>,
+    result: &Result<T, E>,
     started_unix: i64,
     turn_messages: &[CompletionMessage],
 ) {
@@ -1580,7 +1580,7 @@ pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>>
 /// execution's audit record); `base_tools` is the same registry as the
 /// engine's executor, possibly MCP-wrapped.
 #[allow(clippy::too_many_arguments)]
-async fn run_turn(
+pub(crate) async fn run_turn(
     provider: &dyn Provider,
     base_tools: &dyn ToolExecutor,
     custom_tools: &[CustomTool],
@@ -1593,7 +1593,7 @@ async fn run_turn(
     cfg: &Config,
     format: OutputFormat,
     store: &Option<Arc<Store>>,
-    kind: &str,
+    door: persistence::TurnDoor<'_>,
     prompt: &str,
     session: Option<&str>,
     // Phase 2 (#713): this turn's `ContextRecall`, if recall ran. Recall
@@ -1609,10 +1609,10 @@ async fn run_turn(
     // same memory afterwards, and a reflection that cannot name its execution
     // files an id-less row (NULL `self_rating`).
     mut session_memory: Option<&mut SessionMemory>,
-) -> Result<(), CliFailure> {
+) -> Result<TurnOutcome, CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
-    let execution = begin_execution(store, kind, prompt, cfg, session, None);
+    let execution = begin_execution(store, door.kind, prompt, cfg, session, door.variant);
     stamp_and_record_skill_usage(
         &execution,
         session_memory.as_deref_mut(),
@@ -1620,7 +1620,7 @@ async fn run_turn(
         &cfg.workspace_root,
     );
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let (tx, durable_pre_persisted) = output::raw_event_sender_for_run(raw_tx, format);
+    let (tx, durable_pre_persisted) = output::raw_event_sender_for_run(raw_tx, format, &door);
     // The proactive re-query (#3243 Phase 3): the engine consults this at
     // every step boundary; the adapter's hysteresis makes an undrifted turn
     // free. Seeded from `messages` so the turn-opening block is never
@@ -1655,7 +1655,7 @@ async fn run_turn(
         // be invoked here either.
         let bus = registry.hook_bus();
         let permitted = tool_stack::policy_stack(registry, cfg, Principal::User, bus);
-        let config = engine::engine_config_for_kind(cfg, kind);
+        let config = engine::engine_config_for_kind(cfg, door.kind);
         let mut engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
             .with_calibration(calibration)
             .with_provider_outcomes(router)
@@ -1675,7 +1675,7 @@ async fn run_turn(
         // flow (#2684). Snapshotted here, after assembly attached any
         // responder and bus, so the route asks the surface this run has.
         let hook_approvals = stella_tools::hook_bridge::BrokerApprovalRoute::for_registry(registry);
-        let config = engine::engine_config_for_kind(cfg, kind);
+        let config = engine::engine_config_for_kind(cfg, door.kind);
         let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
             .with_calibration(calibration)
             .with_provider_outcomes(router)
@@ -1737,19 +1737,19 @@ async fn run_turn(
         summary::print_json_summary(cfg, &outcome, collected);
     }
 
+    if let TurnOutcome::Completed { cost_usd, .. } = &outcome
+        && format == OutputFormat::Text
+    {
+        plain::cost_summary(
+            *cost_usd,
+            &format!("{}/{}", cfg.provider.id, cfg.model_id),
+            turn_start.elapsed(),
+        );
+        println!();
+    }
     match outcome {
-        TurnOutcome::Completed { cost_usd, .. } => {
-            if format == OutputFormat::Text {
-                plain::cost_summary(
-                    cost_usd,
-                    &format!("{}/{}", cfg.provider.id, cfg.model_id),
-                    turn_start.elapsed(),
-                );
-                println!();
-            }
-            Ok(())
-        }
         TurnOutcome::Aborted { reason, kind, .. } => Err(CliFailure::from_abort(reason, kind)),
+        completed => Ok(completed),
     }
 }
 

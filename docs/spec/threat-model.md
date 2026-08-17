@@ -123,13 +123,22 @@ is `managed_tool_denial_survives_explicit_project_trust`
 
 ### B3 — Model output → code execution
 
-The agent's tool surface is the blast radius of a successful A2. The built-in
-surface is the 12 task-board / sub-agent / scratch-state / environment tools,
-none of which runs a shell or spawns a workspace process. Two facts matter:
+The agent's tool surface is the blast radius of a successful A2, and that
+surface includes execution by design: the 18 built-ins are `bash`, file CRUD
+(`read_file` / `write_file` / `edit_file` / `delete_file`), `search`, and the
+task-board / sub-agent / scratch-state / environment tools. So a successful A2
+reaches a shell and the workspace's files directly — this section's job is to
+say what bounds that, not to claim it cannot happen. Three facts matter:
 
 - **Built-ins ship registered.** #710 moved every built-in to on-by-default
-  with a per-tool `tools.<name>: "off"` switch.
-- **The surface is nonetheless not execution-free.** Workspace custom tools
+  with a per-tool `tools.<name>: "off"` switch. A deployment that wants no
+  execution withholds `bash` (and the `file` group) explicitly; an org-managed
+  denial is a ceiling no project scope can lift (B2).
+- **File paths are confined, commands are not.** The file tools resolve every
+  component off a held root descriptor (`crates/stella-tools/src/rootfd.rs`),
+  which is what makes traversal and symlink-swap structural rather than a
+  string check — see B5. A command `bash` runs inherits no such bound.
+- **The surface is not the only execution path.** Workspace custom tools
   under `.stella/tools/` and hook actions execute code with the process's own
   privileges.
 
@@ -155,12 +164,30 @@ refuses to ever apply `LD_*`, `DYLD_*`, `PATH`, `NODE_OPTIONS`, `BASH_ENV`,
 
 ### B5 — Workspace root → filesystem
 
-No built-in tool opens workspace files. The built-ins' only filesystem writes
-are their own state under `.stella/` — the scratch state plane and the task
-board — through the store's private-state discipline (B6). The filesystem
-reach that remains belongs to the extension surfaces: a custom manifest tool
-or a hook action can write anywhere the user's account can, and isolating
-that is structural (a container), not a matter of path resolution. See
+Four built-ins open workspace files — `read_file`, `write_file`, `edit_file`,
+`delete_file` — so this boundary is enforced, not absent.
+
+`crates/stella-tools/src/rootfd.rs` confines them by *held directory
+descriptors* rather than by comparing resolved strings (#938). The workspace
+root is opened once and its descriptor kept; every component after it is
+opened `openat(dirfd, name, O_DIRECTORY | O_NOFOLLOW)` off the descriptor
+before it. Three properties do the work: `..` pops the descriptor stack
+instead of opening `".."` (a directory renamed out of the tree still answers
+`..` with its *new* parent); `O_NOFOLLOW` makes the kernel refuse an interior
+symlink rather than follow one planted behind us; and a symlink that is
+followed is expanded boundedly and re-walked from the root descriptor, with
+the intermediate string thrown away. That last point is the reason a string
+resolver is not sufficient here — `resolve_within_root` answers a question
+about a *name* and hands the name back, leaving a window in which a concurrent
+`bash` call or a `build.rs` in the repository under audit can re-point it.
+
+Beyond the file tools, the built-ins' other filesystem writes are their own
+state under `.stella/` — the scratch state plane and the task board — through
+the store's private-state discipline (B6). And the reach that no path
+resolution bounds at all belongs to the spawn paths: `bash`, a custom manifest
+tool, or a hook action can write anywhere the user's account can, and
+isolating that is structural (a container), not a matter of path resolution.
+See
 [R3](#r3--nothing-confines-a-spawned-command-in-process).
 
 ### B6 — Stella's private state → other local processes
@@ -225,9 +252,14 @@ mitigation today is that the *default* is untrusted and the drops are loud
 
 ### R2 — The extension surfaces execute code
 
-No built-in executes workspace code. The risk lives in the extension
-surfaces — workspace custom tools under `.stella/tools/` are auto-discovered,
-and hook actions run shell commands. Custom tools are gated on
+The `bash` built-in executes whatever the model asks it to, including the
+workspace's own code, and it ships registered. Withholding it is a policy
+decision (`tools.bash: "off"`, or `tools.shell: "off"` for the group), which
+is why the per-tool switch and the org-managed ceiling in B2 carry real weight
+here rather than being a convenience. The extension surfaces add to that risk
+rather than being the whole of it — workspace custom tools under
+`.stella/tools/` are auto-discovered, and hook actions run shell commands.
+Unlike `bash`, both are off unless enabled: custom tools are gated on
 `authority.project_custom_tools_allowed`, which defaults false; project hooks
 load only under `STELLA_PROJECT_HOOKS=1`.
 

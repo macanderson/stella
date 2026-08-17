@@ -41,7 +41,6 @@ pub mod router;
 pub mod rules;
 pub mod scoreboard;
 pub mod search;
-pub mod self_driving;
 pub mod self_tuning;
 pub mod skills;
 pub(crate) mod speculation;
@@ -53,6 +52,7 @@ mod summarize;
 pub mod tasks;
 pub mod tool_foundry;
 pub mod waiting;
+pub mod workspace_scope;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
 // `bus::HookEvent` (the extension-bus envelope) stays module-qualified: the

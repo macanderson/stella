@@ -80,6 +80,7 @@ use std::time::{Duration, Instant};
 
 use rand::Rng as _;
 use stella_core::BudgetGuard;
+use stella_core::driver::output_budget_recovery::SessionOutputCeilings;
 use stella_protocol::CompletionMessage;
 
 use crate::observe::SharedObserver;
@@ -147,6 +148,7 @@ impl SessionRegistry {
                     idle_since: Mutex::new(Instant::now()),
                     live: Mutex::new(None),
                     next_token: AtomicU64::new(0),
+                    output_ceilings: Arc::new(SessionOutputCeilings::default()),
                     core: Mutex::new(SessionCore {
                         history,
                         budget,
@@ -244,6 +246,17 @@ pub(crate) struct SessionEntry {
     /// The live-turn reservation — see the module docs for why a token.
     live: Mutex<Option<LiveTurn>>,
     next_token: AtomicU64,
+    /// What this session has already learned its providers will fund (#3307),
+    /// minted **once per session** and cloned into every turn's
+    /// `EngineConfig`.
+    ///
+    /// It lives here rather than beside the `checkpoint_sink` fill-in in
+    /// `crate::session::run_session` because that site runs once per *turn*: a
+    /// handle minted there would be a fresh empty cell every turn, which reads
+    /// as wired and carries nothing (#3568). The session is the shortest-lived
+    /// thing that outlives a turn, and a balance is a fact about the account
+    /// behind the session, not about one turn of it.
+    output_ceilings: Arc<SessionOutputCeilings>,
     core: Mutex<SessionCore>,
 }
 
@@ -273,6 +286,14 @@ pub(crate) struct SessionView {
 }
 
 impl SessionEntry {
+    /// The session's learned output ceilings, for this turn's `EngineConfig`
+    /// to share (#3568). One handle for the session's whole life, so a turn
+    /// refused a ceiling it cannot fund spares every later turn the same
+    /// wasted 402 round-trip.
+    pub(crate) fn output_ceilings(&self) -> Arc<SessionOutputCeilings> {
+        Arc::clone(&self.output_ceilings)
+    }
+
     /// How long this session has been idle beyond `ttl`, or `None` when it is
     /// live, recently used, or momentarily contended.
     fn idle_for(&self, now: Instant, ttl: Duration) -> Option<Duration> {

@@ -1,0 +1,6 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1
+  }
+}

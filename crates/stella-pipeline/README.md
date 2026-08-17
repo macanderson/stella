@@ -44,20 +44,29 @@ The three moves, in dependency order:
    `run_turn` a private channel, no longer filters the engine's events, and no longer
    emits the engine's `Complete` on its behalf. The journal now carries one engine
    completion per turn plus one run-level ending owned by the run's owner.
-2. **One wrapper contract** (#3380, open): `before_turn` / `after_turn` / `judge` /
-   `again?`, defined in [`stella-runtime`](../stella-runtime) rather than in
-   `stella-core`, because two of those four points do I/O. This crate's stages map onto
-   it — triage/recall/research/plan/scope are `before_turn`, witness is `after_turn`,
-   verify is `judge`, revise is `again?`. `judge` may not call a model, which
-   [`src/verify.rs`](src/verify.rs)'s `ladder_decision` already satisfies: it is
-   terminal at all five outcomes and #2584 removed the model verdict structurally.
-3. **Stages become a manifest** (#3381, open): the ordered stage list moves into the
-   `[wrapper]` block [`stella-plugin`](../stella-plugin) already parses, keyed by a
-   variant id the store's `pipeline_variant` column records (#3388, landed) so two
-   pipeline designs can be compared with a `GROUP BY` instead of a rebuild. The
-   manifest is parsed and **nothing here reads it yet** — that wiring is #3408. The
-   last step of the same issue inverts the flag: the raw loop becomes the default and
-   `--pipeline <variant>` opts in, with `--no-pipeline` kept as an inert alias.
+2. **One wrapper contract** (#3380, **landed** #3479): `before_turn` / `after_turn` /
+   `judge` / `again?`, defined in [`stella-runtime`](../stella-runtime) rather than in
+   `stella-core`, because two of those four points do I/O. The trait, both transports
+   and `judge`/`again` are proven end-to-end against a real subprocess plugin
+   (`stella-runtime`'s `tests/wrapper_socket.rs`) — what has **not** landed is a host
+   sequence that calls all four for a live turn, or this crate being ported onto one.
+   This crate's stages *map* onto the socket — triage/recall/research/plan/scope are
+   `before_turn`, witness is `after_turn`, verify is `judge`, revise is `again?` — but
+   `pipeline.rs` still calls its own Rust functions for all five. `judge` may not call
+   a model, which [`src/verify.rs`](src/verify.rs)'s `ladder_decision` already
+   satisfies: it is terminal at every arm and #2584 removed the model verdict
+   structurally.
+3. **Stages become a manifest** (#3381, **landed**; #3408, **landed**): the ordered stage
+   list lives in the `[wrapper]` block [`stella-plugin`](../stella-plugin) parses, keyed
+   by a variant id the store's `pipeline_variant` column records (#3388, landed) so two
+   pipeline designs can be compared with a `GROUP BY` instead of a rebuild.
+   [`src/variant.rs`](src/variant.rs) reads the shipped `classic.toml` and resolves it
+   into the ordered `StageProgram` a turn would run — that reading is real, not a stub.
+   What is still open: `pipeline.rs` does not yet take that `StageProgram` as its
+   instruction, so today the resolved answer and the branches `pipeline.rs` actually
+   executes are two things asserted to agree rather than one thing driving the other.
+   The last step of the same issue inverts the flag: the raw loop becomes the default
+   and `--pipeline <variant>` opts in, with `--no-pipeline` kept as an inert alias.
 
 Two planning consequences right now. Anything that would grow
 [`src/pipeline.rs`](src/pipeline.rs) — already a god file closed to growth — is
@@ -132,6 +141,7 @@ as a planning assumption.
 | [`src/pipeline/witness_stage.rs`](src/pipeline/witness_stage.rs) | The one stage that runs against the candidate's `witness_tools()` rather than the worker's executor: author → one bounded repair → artifact/invocation/identity acceptance. |
 | [`src/pipeline/raw_usage.rs`](src/pipeline/raw_usage.rs), [`src/pipeline/run_error.rs`](src/pipeline/run_error.rs), [`src/pipeline/stage_budget.rs`](src/pipeline/stage_budget.rs) | The metered direct-completion path for roles that bypass the engine (triage, plan, the conversational reply) so their spend still lands in accounting; `PipelineError`/`PipelineRunError`; the budget-abort translation. |
 | [`src/ports.rs`](src/ports.rs) | Every trait the pipeline orchestrates over, plus the no-op defaults (`NoContextRecall`, `NoRepoStructure`, `NoRepoStatus`, `AlwaysAbortGate`). |
+| [`src/ports/handle.rs`](src/ports/handle.rs) | `CandidateHandles` — A10's serializable candidate-worktree handle (#3380, `doc:pipeline-as-plugins` §4 A10): a lookup table over the existing `CandidateWorkspacePort`, answering the six operations `stella_protocol::CandidateOp` declares (create, root, run-test, seal, adopt, remove) and minting the `CandidateGrant` an out-of-process `after_turn` actually receives. No isolation logic of its own — the fence and the snapshot stay host-side. Landed with a stated gap: nothing on the shipping path constructs one yet (#3485) — `stella-runtime` has no `after_turn` dispatcher for it to plug into either, consistent with the socket having a trait but not yet a host sequence (see `stella-runtime`'s own README). |
 | [`src/triage.rs`](src/triage.rs) | `TaskClass`, `TaskAssessment`, the response parser, and the deterministic pattern floor. |
 | [`src/plan.rs`](src/plan.rs) | The planner's split context (`build_planner_prompt`) and the JSON-then-numbered-list `parse_plan`. |
 | [`src/scope.rs`](src/scope.rs) | `ScopeThresholds` and the pure `needs_scope_review` / `apply_trim` / `build_proposal`. |
@@ -143,6 +153,7 @@ as a planning assumption.
 | [`src/candidate_fanout.rs`](src/candidate_fanout.rs) | `fan_out_width` and `FanOutBudget` — how wide a fan-out runs and how one turn's money is split between candidates spending at the same time. Pure; the normative statement of the overshoot window. |
 | [`src/pipeline/fanout_stage.rs`](src/pipeline/fanout_stage.rs) | The concurrent dispatch itself: workspace creation (serialized), `buffer_unordered` over the candidates, results re-ordered by index. |
 | [`src/pipeline/attachments.rs`](src/pipeline/attachments.rs), [`src/pipeline/fallback.rs`](src/pipeline/fallback.rs) | The single funnel every engine this pipeline builds goes through (gate, calibration, breaker feedback, mid-turn fallback), and the router-backed `FallbackResolver` it attaches. Every engine site states a `FallbackPosture` — re-resolve this role, or a named reason for withholding. |
+| [`src/variant.rs`](src/variant.rs) + [`variants/classic.toml`](variants/classic.toml) | The stage order as a manifest instead of branches (#3381/#3408). `classic.toml` is shipped, not a fixture: `variant::classic_program` resolves it through `stella-plugin` into the ordered stage program a turn runs, and `variant::signals` is the host's half — the facts the manifest's conditions read. Consulted, not yet *driving*: `pipeline.rs` still takes its own branches until the wrapper interception points land (#3380). |
 | [`src/mcp_prefetch.rs`](src/mcp_prefetch.rs) | `fold`: shared MCP context gathered once at the top of a fan-out instead of N times. |
 | [`src/replay.rs`](src/replay.rs), [`src/replay/golden.rs`](src/replay/golden.rs) | `validate_stream` / `structural_diff` / `parse_jsonl`, and the golden fixture format with its provenance manifest. |
 
@@ -192,8 +203,12 @@ loop). A mismatch aborts the candidate *before* the ladder runs. It is
 an authority boundary, not evidence for a model to weigh, and no verifier can override it.
 
 **The evidence ladder is the whole decision, and every rung is terminal.**
-`ladder_decision` is a pure function over `LadderInputs` returning one of five outcomes, in
-order: touched tests red → `Revise` (already deterministic; nothing is spent confirming it);
+`ladder_decision` is a pure function over `LadderInputs` returning one arm of `LadderDecision`
+— that enum is the enumeration, and this list is an ordering rather than a second copy of it
+(#3473). In order: an authored witness that failed *the same way* on both trees →
+`WitnessUnsatisfiable` (#2540 — its red says nothing about the change, and the worker cannot
+repair an instrument, so this outranks `Revise`); touched tests red → `Revise` (already
+deterministic; nothing is spent confirming it);
 a turn that dispatched nothing that could mutate → `NothingAttempted`; every channel dark →
 `Unverifiable` (abstain); flip + green + within budget + no fresh diagnostics + a
 non-tautological witness that covered the diff → `SubmitFast`; anything else →
@@ -372,7 +387,7 @@ contract.
   this crate enforces at runtime; "Architecture: ports, not concretions" for the inherited
   no-I/O and byte-stable-prompt rules.
 - [`../../website/content/docs/inference-pipeline.mdx`](../../website/content/docs/inference-pipeline.mdx)
-  — the full stage flow, the five terminal ladder outcomes, and the `/pipeline` deck toggle.
+  — the full stage flow, the terminal ladder outcomes, and the `/pipeline` deck toggle.
 - [`../../docs/spec/replay-golden-trajectories.md`](../../docs/spec/replay-golden-trajectories.md) — the
   recording procedure and the reference-engine adapter contract.
 - [`../stella-core`](../stella-core) — `Engine::run_turn`, the loop this crate composes.

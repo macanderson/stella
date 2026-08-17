@@ -10,6 +10,18 @@ and a focused study of
 This page is the distilled version: the principles, and why they were chosen.
 Every claim is grounded in the shipping implementation.
 
+<Callout type="info">
+**"Witnessed, not asserted" is a property of the path, not of the binary.**
+The witness-test / flip-oracle machinery below (invariant 3, and the "Is the
+work done?" and "What proves the change?" mechanisms) is real and host-run in
+stella's built-in staged pipeline — no plugin required. It is also being
+extracted into an installable verification plugin (Oxagen's Vera is the
+reference one); once that lands, a plugin reports its own evidence instead of
+stella running the check, and this guarantee does not automatically carry
+over to that path. See [the inference pipeline](/docs/inference-pipeline) for
+the mechanism and `doc:pipeline-as-plugins` for the plugin architecture.
+</Callout>
+
 ## The master rule: given a choice, prefer determinism over intelligence
 
 Wherever stella can decide something with a deterministic mechanism *or* a
@@ -91,7 +103,9 @@ stella stats
    over owned data, property-testable with no network and no filesystem.
 3. **The witness-test contract.** An agent must *prove* its change is the
    change that fixed the problem: fail on `HEAD`, pass on the diff,
-   tamper-excluded. "The suite is green" is not a proof.
+   tamper-excluded — "the suite is green" is not a proof. The built-in staged
+   pipeline runs this check itself; an installed verification plugin (Vera is
+   the reference one) runs its own instead and reports the result.
 4. **BYOK + zero telemetry egress by default.** Your keys call your provider
    directly, and Community/default telemetry remains in local SQLite. Two
    explicit configurations, and only these two, send telemetry anywhere:
@@ -115,7 +129,8 @@ witness verification onto an engine that can't replay deterministically.
 
 ## What this buys you, concretely
 
-- **Trust:** "done" means *witnessed*, not *asserted*.
+- **Trust:** "done" means *witnessed*, not *asserted* — host-run in the
+  built-in pipeline, or self-reported by an installed verification plugin.
 - **Reasoning:** one single-threaded loop you can read top to bottom — no
   coordinator, no hidden control plane, no swarm state to desynchronize.
 - **Cost:** the cache discipline and the evidence ladder mean you pay for

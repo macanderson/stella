@@ -111,6 +111,13 @@ pub(crate) fn payload(
 
     let baseline = resolve_baseline(conn, &target, base, only)?;
     let diff = stella_diff::unified_diff(&baseline.document, &target_doc, DEFAULT_CONTEXT);
+    // A system prompt is the widest text this product produces, and the diff
+    // between two calls of a long-running turn can be thousands of lines that
+    // a dashboard poll then ships to the browser in full. `elide` bounds it on
+    // the same policy every other diff surface uses, showing the change's
+    // beginning and end — `added`/`removed` above stay the *real* delta, so
+    // the tally never quietly shrinks to what the view happened to draw.
+    let view = stella_diff::view::elide(&diff.hunks, stella_diff::view::VIEW_CAP);
     Ok(json!({
         "execution_id": id,
         "found": true,
@@ -122,16 +129,9 @@ pub(crate) fn payload(
         "added": diff.added,
         "removed": diff.removed,
         "minimal": diff.minimal,
-        "hunks": diff.hunks.iter().map(|h| json!({
-            "old_start": h.old_start,
-            "old_count": h.old_count,
-            "new_start": h.new_start,
-            "new_count": h.new_count,
-            "lines": h.lines.iter().map(|l| json!({
-                "op": l.op.tag(),
-                "text": l.text,
-            })).collect::<Vec<_>>(),
-        })).collect::<Vec<_>>(),
+        "hunks": stella_diff::json::hunks(&view.hunks),
+        "elided": view.hidden,
+        "fold_before": view.fold_before,
     }))
 }
 

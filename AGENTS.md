@@ -6,11 +6,16 @@ that aren't immediately apparent from reading a single file. The authoritative
 sources for the details behind each section are `README.md` and `CONTRIBUTING.md`.
 
 Stella is a fast, BYOK ("bring your own key"), model-agnostic terminal coding
-agent, written in Rust. Its defining contract: a task is **done** only when a
-**witness test** (a test that fails on the old code and passes on the new code)
-proves it — "verified done, not claimed done." It is the open-source reference
-implementation of Oxagen's *Engineering Deterministic AI Coding Agents* field
-manual.
+agent, written in Rust. Proving a task **done** with a **witness test** — one
+that fails on the old code and passes on the new — is what "verified done,
+not claimed done" means here, and that guarantee is **a property of the path
+that produced the evidence, not of the binary**: the built-in staged pipeline
+runs the check itself and watches the fail→pass flip, but verification
+supplied by an installed plugin is the plugin's own self-reported evidence,
+which Stella evaluates against a declared rule and does not re-run or
+re-check (#3511; `doc:pipeline-as-plugins` is the extraction plan moving the
+former into the latter). It is the open-source reference implementation of
+Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---
 
@@ -405,8 +410,10 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
 
 ## The definition of done: witness tests
 
-Stella refuses to call a task done until a test **fails on the old code and
-passes on the new** — and contributions are held to the same contract.
+This repository holds every contribution to its own gate: a PR ships a test
+that **fails on the old code and passes on the new**. That is
+`CONTRIBUTING.md`'s contract for a change to *this* repo, and it holds
+regardless of anything below — it is not what base Stella promises a user.
 
 For a behavior change or feature, a PR should include a **witness test**:
 
@@ -418,7 +425,15 @@ refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
-The staged pipeline enforces the same contract at runtime: when no
+**What follows is the staged pipeline's own witness/verify machinery, which is
+a different thing from the contract above.** It ships in-tree today and
+genuinely runs the check itself — this is the host-run half of the guarantee
+(see AGENTS.md's opening). Per the product decision recorded in
+`doc:pipeline-as-plugins` (#3511) it is being extracted into an installable
+verification plugin (Oxagen's Vera is the reference one); once it lands, a
+plugin reports its own evidence instead of Stella running the check, and this
+section's guarantee does not automatically transfer to that path. Until then,
+this section documents the mechanism as it exists: when no
 `--test-command` is configured, its **witness stage** has an independent model
 (the verifier's resolution, never the worker) author the failing witness test,
 tracks its fail→pass flip in the flip oracle, and refuses to credit the flip if
@@ -439,13 +454,15 @@ creates the oracle rather than substituting for one — its test either goes
 fail→pass or does not, and that is decided by running it. Everything downstream
 is deterministic: `ladder_decision`
 (`crates/stella-pipeline/src/verify.rs`) is terminal at **every** one of its
-outcomes — the `LadderDecision` enum beside it is the enumeration, and today
-that is `SubmitFast`, `Revise`, `WitnessUnsatisfiable`, `NothingAttempted`,
-`Unverifiable` and `Unverified`. The count is deliberately not the load-bearing
-half of that sentence: what matters is that no arm escalates to a model, which
-the enum's own doc comments each state. (This paragraph said "all five" and
-omitted `WitnessUnsatisfiable` for as long as that variant existed — #3473,
-the shared-cell drift this file warns about, in this file.) The verify stage
+outcomes, and **no arm escalates to a model** — which is the load-bearing half
+and is *not* implied by terminality, since a terminal arm could spend a verifier
+call and then stop. That guarantee is stated once, in the `LadderDecision`
+enum's own doc comment, quantified over the variants beside it; this file
+deliberately does not restate the list or its count, because a number copied
+into a second file drifts. It did: this paragraph said "all five" and omitted
+`WitnessUnsatisfiable` for as long as that variant existed, and so did five
+other copies including the enum doc it now cites (#3473) — the shared-cell
+failure this file warns about, in this file. The verify stage
 emits the `Verdict` event from that answer directly — the
 pipeline never emits `StageKind::Verdict` itself, which is why the rank above is
 an ordering, not a stage the run passes through. The model verdict and the
@@ -521,12 +538,14 @@ the files you must plan around (see below).
 |---|---|---|
 | Change the agent loop (plan / retry / compact / budget / loop-detect / hooks / skills / rules) | [`stella-core`](crates/stella-core/README.md) | **No I/O allowed.** Decision logic only. |
 | Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](crates/stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
-| Add/fix a built-in tool (`task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`. |
+| Add/fix a built-in tool (`bash`, `read_file`, `edit_file`, `search`, `task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`, declare one line in `catalog.rs`. |
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](crates/stella-cli/README.md) | This is the shipping binary. |
 | Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](crates/stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
 | Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store`, `stella-observatory`, `stella-cli`, `stella-model` and `stella-tools` all share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
-| Parse/validate a plugin's manifest — its declared say in the turn loop (participation grades, hook grants, `[oracle]`, `[subloop]`) | [`stella-plugin`](crates/stella-plugin/README.md) | **Near-leaf: `stella-protocol` is its only workspace dependency** (#3245 slice A; #3310) — pure parsing/validation over borrowed text. The engine never learns plugins exist: the host binds these grants to the engine's gates, and `stella-core` must never depend on it. The one edge it does take is what lets it share `HookEvent` with the engine instead of mirroring it by hand. |
+| Parse/validate a plugin's manifest, or change the wrapper socket's **wire contract** — the request/response types a non-Rust plugin speaks (`before_turn`/`after_turn`, `EvidenceSet`, `VerdictRule`) | [`stella-plugin`](crates/stella-plugin/README.md) | **Near-leaf: `stella-protocol` is its only workspace dependency** (#3245 slice A; #3310) — pure parsing/validation over borrowed text, plus `src/wire.rs`'s serialized shapes (#3380, `doc:wrapper-socket` §2). The engine never learns plugins exist: the host binds these grants to the engine's gates, and `stella-core` must never depend on it. The one edge it does take is what lets it share `HookEvent` with the engine instead of mirroring it by hand. |
+| Change the wrapper socket's **trait** — `TurnWrapper`, `admissible`, `judge`/`again`, the in-process/subprocess transports | [`stella-runtime`](crates/stella-runtime/README.md) | `src/wrapper/` (#3380, landed #3479, `doc:wrapper-socket`). Lives one layer above `stella-core` because `before_turn`/`after_turn` do I/O, which invariant 2 bans in the engine; consumes `stella-plugin`'s wire types rather than redefining them. No live turn dispatches through it yet — see the crate's own README. |
+| Change how a plugin is **installed, listed, removed, or trusted** — `.stella/plugins/` and `~/.stella/plugins/` resolution, install consent, the project-tier trust gate | [`stella-cli`](crates/stella-cli/README.md) | `src/plugin_cmd.rs` + `src/plugin_cmd/{roster,process}.rs` — renders `stella_plugin::consent_text` before anything executes, gates a cloned repository's plugins on `project_code_execution_trusted()` (#3509), and is the one place `LoopGrant::permits_hook`/`permits_point` get consulted against an installed manifest. |
 | Decide whether a human is present to see/answer a mid-run prompt | [`stella-tty`](crates/stella-tty/README.md) | **A leaf with NO dependencies at all** (#3036) — one pure `human_can_answer(interactive_output, stdin_is_terminal, prompt_is_visible)`, which is what lets `stella-cli`'s approval prompts and `stella-model`'s credential prompt share one derivation without `stella-model` depending on `stella-cli` (invariant 1). |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
@@ -542,7 +561,7 @@ the files you must plan around (see below).
 | The Observatory telemetry dashboard (`stella observe`) | [`stella-observatory`](crates/stella-observatory/README.md) | Loopback-only, read-only, embedded HTML. |
 | The headless engine server a host process drives over the wire | [`stella-serve`](crates/stella-serve/README.md) | Its **own binary**, not linked into [`stella-cli`](crates/stella-cli/README.md). Every model/tool call is remoted back to the host; the engine holds no ambient authority. Design: [`docs/spec/serve-surface.md`](docs/spec/serve-surface.md). |
 | Drive the engine one step at a time from a durable host (checkpoint/resume) | [`stella-engine`](crates/stella-engine/README.md) | Re-export-only facade over `stella-core`'s step loop (#971); no logic, no I/O. Consumed by [`stella-serve`](crates/stella-serve/README.md) and external hosts — `stella-cli` does not link it. |
-| Share the engine-assembly bottom half (provider, registry, store, budget) | [`stella-runtime`](crates/stella-runtime/README.md) | `RuntimeSpec` → `RuntimeBuilder` → `SessionRuntime`, construction only. Reads no ambient environment by contract (`tests/no_ambient_reads.rs`). |
+| Share the engine-assembly bottom half (provider, registry, store, budget), or the wrapper socket built on top of it | [`stella-runtime`](crates/stella-runtime/README.md) | `RuntimeSpec` → `RuntimeBuilder` → `SessionRuntime`, construction only. Reads no ambient environment by contract (`tests/no_ambient_reads.rs`). Also owns the wrapper socket — see the dedicated row above. |
 | Declare CLI-vs-API capability parity (witnessed, ratcheted) | [`stella-parity`](crates/stella-parity/README.md) | The cross-surface capability matrix: every engine capability carries a posture + named witness test per surface, so a feature cannot ship on one surface and silently miss the other. |
 | Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) | Split out of this workspace; Stella depends on it as registry crates (`contextgraph-*`) pinned with exact `=` version requirements in the root `[workspace.dependencies]`. Stays dependency-light by contract. |
 

@@ -823,12 +823,13 @@ pub enum AgentEvent {
     /// It once emitted from the tools, and for a while after that from nowhere:
     /// the 12-tool purge (#3244) deleted every file-writing built-in and the
     /// file-CRUD ledger that emitted these, and this doc went on naming a
-    /// `ToolRegistry::record_touch` that no longer existed. Restoring a tool
-    /// hook is not available and would not be right if it were. Nothing left
-    /// names a path — the twelve built-ins are the task board, the scratch
-    /// state plane, sub-agents and `get_environment`, and a turn that mutates
-    /// the tree does it through an MCP server or a custom script tool, neither
-    /// of which describes its paths in any schema the engine reads. And
+    /// `ToolRegistry::record_touch` that no longer existed. The file built-ins
+    /// have since been restored, so a tool hook is now available — and it is
+    /// still not right. A hook on `write_file` / `edit_file` / `delete_file`
+    /// would report a *subset* of the turn while looking exhaustive: `bash`
+    /// mutates the tree without naming a path, and so do MCP servers and
+    /// custom script tools, none of which describes its paths in any schema
+    /// the engine reads. And
     /// synthesizing these from tool *inputs* is the known defect, not the
     /// design: a wrapper that did exactly that, knowing four hard-coded tool
     /// names and sitting on one of three tool stacks, is what reported files

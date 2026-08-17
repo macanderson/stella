@@ -14,8 +14,9 @@ fn scratch() -> (tempfile::TempDir, PathBuf, PathBuf) {
 }
 
 /// The witness for #3413(a): a turn that mutates a file through *no
-/// path-naming tool at all* — the only kind of turn the 12-tool surface can
-/// produce — is measurable, with git's own counts rather than `0/0`.
+/// path-naming tool at all* — what `bash`, an MCP server or a custom script
+/// tool produces, and what the file built-ins' arguments therefore cannot
+/// account for — is measurable, with git's own counts rather than `0/0`.
 #[test]
 fn a_turn_that_named_no_paths_still_reports_what_it_changed_with_real_counts() {
     let (_guard, ws, store) = scratch();

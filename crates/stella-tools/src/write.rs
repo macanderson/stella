@@ -61,12 +61,21 @@ impl Tool for WriteFile {
             }
         };
 
+        // Which directory this write is allowed to land in, and where inside
+        // it. Decided before anything is opened: a refusal that arrives after
+        // the bytes are on disk is a report, not a boundary.
+        let (scope_root, path) = match ctx.resolve_for_write(path) {
+            Ok(resolved) => resolved,
+            Err(refusal) => return ToolOutput::error(refusal.to_string()),
+        };
+        let path = path.as_str();
+
         // The root is opened once and held; every component of `path` is then
         // opened relative to the one above it, and the parent directories are
         // created *during* that walk. There is no `create_dir_all` here any
         // more, because a `create_dir_all` re-resolves the whole prefix from a
         // string — the window #938 is about.
-        let handle = match crate::rootfd::RootHandle::open(root) {
+        let handle = match crate::rootfd::RootHandle::open(&scope_root) {
             Ok(handle) => Arc::new(handle),
             Err(e) => {
                 return ToolOutput::error(format!("cannot open workspace root: {e}"));

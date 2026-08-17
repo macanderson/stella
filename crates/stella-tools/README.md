@@ -7,8 +7,21 @@ tool — built-in, custom, or MCP — runs through. Every tool implements the
 `ToolRegistry` is the crate's public face and the adapter behind
 `stella-core`'s `ToolExecutor` port.
 
-The dispatchable surface is twelve tools, in three families plus one report:
+The dispatchable surface is eighteen tools, in six groups. The first three are
+the **working surface** — the rows that touch the world outside the process,
+and the reason the risk column in [`src/catalog.rs`](src/catalog.rs) earns its
+keep; the rest are coordination state that dies with the session:
 
+- **The shell** — `bash` ([`src/bash.rs`](src/bash.rs)), the one built-in that
+  runs a command nobody bounded, and the only non-delegation row graded `High`.
+- **File CRUD** — `read_file` ([`src/read.rs`](src/read.rs)), `write_file`
+  ([`src/write.rs`](src/write.rs)), `edit_file` ([`src/edit.rs`](src/edit.rs)),
+  `delete_file` ([`src/delete.rs`](src/delete.rs)), every path confined by the
+  held root descriptor in [`src/rootfd.rs`](src/rootfd.rs) rather than by a
+  `starts_with` on a resolved string.
+- **Code search** — `search` ([`src/search.rs`](src/search.rs)), read-only but
+  deliberately *not* speculation-safe: its semantic rung writes embeddings
+  through while it ranks, so it is not free to run twice.
 - **Sub-agent delegation** — `task` ([`src/subagent.rs`](src/subagent.rs)),
   which spawns read-only child turns through a host-attached dispatcher.
 - **The session task board** — `task_create` / `task_list` / `task_start` /
@@ -21,12 +34,14 @@ The dispatchable surface is twelve tools, in three families plus one report:
 - **The environment report** — `get_environment`
   ([`src/environment.rs`](src/environment.rs)).
 
-## Direction — twelve built-ins is the whole surface, forever
+## Direction — this surface is closed
 
 Stella's product goal is an extensible turn loop whose extension happens *outside*
 the binary: capabilities arrive as MCP servers, workspace custom tools, or plugins
-(`doc:turn-loop-wrappers`, #3246), never as a thirteenth built-in. That is why the
-list above is closed rather than merely short — a built-in is a thing every
+(`doc:turn-loop-wrappers`, #3246), never as a nineteenth built-in. The list above
+is the set of verbs an agent needs to do work in a repository — run a command,
+read and change files, find code, coordinate itself — and nothing beyond it. It
+is closed rather than merely short: a built-in is a thing every
 embedding host pays for whether it wanted it or not, and the mechanisms in this
 crate (the registry, the sandbox, the read-only contract, the subprocess-env
 scrub) are what a third-party tool inherits by going through the same door.
@@ -39,7 +54,7 @@ concurrency model relies on** — a read tool with a mutating arm cannot declare
 honestly, and the speculation pump will happily run that tool several times in one
 step.
 
-Everything else the model can call reaches it as a **custom script tool**
+Any capability *beyond* those verbs reaches the model as a **custom script tool**
 ([`src/custom.rs`](src/custom.rs) — a TOML manifest beside a script, no
 registry edit), an **MCP tool** (`stella-mcp`, merged above this registry by
 the CLI), or a CLI session-layer tool. This crate is also where the tool
@@ -108,6 +123,11 @@ landing in `registry.rs`.
 | [`src/catalog.rs`](src/catalog.rs) | The canonical tool table. Open it to add a tool or to answer "is this name taken / is it read-only / how is it graded". |
 | [`src/contracts.rs`](src/contracts.rs) | The trust boundary in one function (#2716): a name in the catalog resolves to a **reviewed** `ToolContract` carrying its declared risk; every other name — MCP, a customer's manifest, one this build never heard of — resolves to an untrusted contract graded `High`, whose `read_only` claim buys it nothing. Sound only because `RESERVED_NAMES` is aliased to `ALL_NAMES`, which its tests assert rather than assume. |
 | [`src/gated.rs`](src/gated.rs) | `GatedToolSet` — where an `AuthzGate` is actually called. A decorator rather than registry-internal logic, because the registry sees only the built-ins while custom and MCP tools (the ones most worth governing) are layered above it. Enforces at `execute()` and deliberately not at `schemas()`: an authorization decision can depend on the input, which does not exist while building the advertised list. |
+| [`src/bash.rs`](src/bash.rs) | The `bash` tool: one shell command in the workspace root, with the timeout backstop, the scratch-dir export, and the same subprocess hygiene every other spawn path here goes through. |
+| [`src/read.rs`](src/read.rs), [`src/write.rs`](src/write.rs), [`src/edit.rs`](src/edit.rs), [`src/delete.rs`](src/delete.rs) | The four file tools. Split one-per-verb rather than one `file` tool with a `mode`, because invariant #9 requires a policy to withhold `delete_file` without withholding `read_file`. |
+| [`src/rootfd.rs`](src/rootfd.rs) | Path confinement by *held directory descriptors* (#938) — `openat(… O_DIRECTORY \| O_NOFOLLOW)` per component, `..` popping the descriptor stack, bounded symlink expansion re-walked from the root. The reason a rename or a planted symlink cannot re-point a path between the check and the open; `resolve_within_root` in `lib.rs` answers about a *name* and is not sufficient on its own. |
+| [`src/durable_write.rs`](src/durable_write.rs) | Durable in-place replacement for `write_file` and `edit_file`. A plain `O_TRUNC` write destroys the old bytes before the new ones land, so a crash in that window left the *user's own source file* truncated with the replacement nowhere on disk. Deliberately not the temp+rename helper Stella uses for its own state: rename replaces the inode, and #617 ruled that out for files the user owns. |
+| [`src/search.rs`](src/search.rs), [`src/search/`](src/search) | The `search` tool and its strategy rungs, including the semantic rung whose embedding write-through is why the tool is read-only without being speculation-safe. |
 | [`src/subagent.rs`](src/subagent.rs) | The `task` tool: sub-agent delegation over a host-attached dispatcher (#922), with turn controls and a spend ledger the engine drains at step boundaries. |
 | [`src/tasks.rs`](src/tasks.rs) | The six `task_*` tools over the session board, plus `task_assign`'s spawn queue. |
 | [`src/scratch.rs`](src/scratch.rs) | The scratch state plane: `ScratchDir` and the four state tools. |
@@ -116,7 +136,7 @@ landing in `registry.rs`.
 | [`src/skill_grant.rs`](src/skill_grant.rs) | A skill's `allowed-tools` grant as `ToolPolicy` algebra (#2682): the grant policy, per-name `operator ∧ grant` intersection, and resolution against an advertised surface. |
 | [`src/custom.rs`](src/custom.rs), [`src/validate.rs`](src/validate.rs) | Developer-defined TOML script tools — lenient discovery for a session, strict validation for `stella tools --validate` — and `CustomToolSet`, the decorator that layers them over an inner executor. |
 | [`src/foundry_author.rs`](src/foundry_author.rs), [`src/foundry_gate.rs`](src/foundry_gate.rs), [`src/foundry_witness.rs`](src/foundry_witness.rs) | The tool foundry: authoring a custom-tool manifest from observed shell invocations, the adoption gate that keeps self-authored tools withheld until a human adopts them (re-checked at launch), and the witness run that proves an authored tool works. |
-| [`src/exec.rs`](src/exec.rs) | Shared subprocess plumbing for the two spawn paths this crate owns (custom tools, shell hooks): the capped two-stream capture, the process-group cancellation backstop (`GroupKillGuard`), and the one model-facing middle-out elision. |
+| [`src/exec.rs`](src/exec.rs) | Shared subprocess plumbing for the three spawn paths this crate owns (`bash`, custom tools, shell hooks): the capped two-stream capture, the process-group cancellation backstop (`GroupKillGuard`), and the one model-facing middle-out elision. |
 | [`src/subprocess_env.rs`](src/subprocess_env.rs) | The credential deny-list and env hygiene applied as the last env mutation before any model- or repo-controlled spawn. Downstream crates use this, never a copy. |
 | [`src/hook_runner.rs`](src/hook_runner.rs) | The real-I/O half of the hooks framework (`stella-core` owns matching and blocking). |
 | [`src/hook_bridge.rs`](src/hook_bridge.rs) | The shell-hook → approval-flow bridge (#2684): implements the engine's `ApprovalRoute` port over the #2676 `ApprovalBroker`. |
@@ -154,6 +174,21 @@ manifests pass through untouched; self-authored (foundry-provenance)
 manifests register only if the workspace adopted them, a human enabled them,
 and their bytes still match what their witness ran against — re-checked at
 the moment of launch, not just at scan time.
+
+**A plugin's tool is the plugin's, not the user's (#3380).** An installed
+plugin may ship script tools in `<plugin_dir>/tools/*.toml`, and
+`custom::discover_with_plugins` scans those directories **last**, so a
+package can never take a name the user's own `.stella/tools` or
+`~/.stella/tools` already defines — the collision is reported and the user's
+copy is the one that runs. Everything found there is stamped
+`CustomTool::contributed_by` **from the directory it was read out of**, never
+from anything the manifest says, and `CustomTool::principal` turns that into
+`Principal::Plugin(name)`: `GatedToolSet::with_tool_principals` carries the
+map, so an authorization gate is asked about the *package* for a call into a
+package's script and about the session's own caller for everything else. The
+host (`stella-cli`'s `plugin_cmd::package`) decides which directories exist
+at all — which is where the install consent and the untrusted-checkout trust
+gate live.
 
 **A manifest's claims are claims, never facts (#3287).** A
 `.stella/tools/*.toml` may declare `read_only`, `risk`, `idempotent` and an
@@ -195,10 +230,14 @@ tool's own `Internal` defect.
   `setsid` child is in its own session, so Ctrl-C's SIGINT never reaches
   it; the guard is the only thing that reaps the tree when the driving
   future is dropped.
-- **The scratch directory is no longer exported as `STELLA_SCRATCH`.** That
-  export rode the retired built-in shell spawns. The state tools and
-  `get_environment` still own and report the directory; a host that spawns
-  its own subprocesses passes the path itself.
+- **`STELLA_SCRATCH` is injected *after* the scrub, never before.** `bash`
+  exports the session scratch directory to its child
+  ([`subprocess_env::inject_scratch_env`](src/subprocess_env.rs)) so a working
+  file has somewhere to live that is neither the workspace — where it would
+  land in the turn's diff — nor `/tmp`, where it would outlive the session.
+  The scrub is a deny-list pass over the inherited environment, so a value set
+  before it is a value it can remove. An absent scratch directory injects
+  nothing rather than an empty string a child would read as a valid path.
 
 ## Testing
 

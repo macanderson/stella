@@ -1,0 +1,141 @@
+# stella-research — the pipeline's research stage, extracted (#3380, Track B.1).
+#
+# `doc:pipeline-as-plugins` §7 orders the extractions and puts this one first
+# for a reason it states in one line: "before_turn only, read-only, no
+# worktree. The safest possible first real plugin." Everything below is that
+# sentence written as a declaration a human reads before installing.
+#
+# What it does, at two stages of whatever turn the host is about to run. At
+# `research` it reads the candidate workspace the request grants it, searches
+# that tree for the terms the goal names, and contributes what it found. At
+# `recall` it reads nothing at all: it asks the host for the context plane over
+# the host-call channel and contributes the frames that come back. Both ride as
+# volatile context. It runs no loop, spawns no worktree, makes no model call,
+# and reaches for nothing — every capability is either handed to it in the
+# request or asked for under the grant below.
+#
+# What it deliberately does NOT declare, each for a reason stated in the
+# README beside this file:
+#
+#   - no `[oracle]`, no `[requirements]`, no `Stop` hook. Those are arbiter
+#     powers. Research contributes grounding and decides nothing, so it asks
+#     for nothing that could hold a turn open.
+#   - no `after_turn`. An undeclared point is never dispatched (#3501), which
+#     is how a host learns this from the manifest instead of from a refusal at
+#     run time.
+#   - no `[subloop]` and no `[roles]`. The socket hands a plugin no engine, no
+#     provider and no credential (`doc:wrapper-socket` §7), so this plugin
+#     makes no model call at all — see the README on what that costs against
+#     the built-in stage it extracts.
+
+name = "stella-research"
+description = "Reads the candidate workspace the request grants and contributes what the goal's terms actually match, as volatile context. Makes no model call and decides nothing."
+
+# Steering: this plugin contributes context to a turn and never touches
+# completion. It is the lowest grade on the ladder that may answer a wrapper
+# socket point at all (`points` requires steering), and it asks for nothing
+# above it.
+[loop]
+participation = "steering"
+# The socket points this plugin answers, exhaustively. `before_turn` only:
+# there is no evidence to gather after a turn that a read-only grounding pass
+# could honestly report.
+points = ["before_turn"]
+# The host capabilities it may ask for mid-point, exhaustively
+# (`doc:wrapper-socket` §6b). `recall` only, and it is what makes the `recall`
+# stage below more than a slot in an order: the context plane is memories,
+# episodes, facts and code-graph symbols, none of which is under a filesystem
+# root, so a plugin that may not ask for it can only decline (#3540). It asks
+# for neither of the other two — `child_turn` is a model call this stage has no
+# use for, and `run_test` runs something, which a read-only grounding pass does
+# not do.
+calls = ["recall"]
+# One per point is the honest ask: this plugin makes exactly one `recall` call
+# at the one stage that recalls. Declared rather than left to the host's
+# ceiling (8) so the consent text a human reads states the real number, and so
+# a future version that asks twice has to change a line someone consented to.
+max_calls = 1
+
+# The stage order this variant runs, and the id the executions row records
+# (#3388) — the join key of the A/B comparison §7 requires before any built-in
+# is deleted: `--pipeline research-v1` against `--pipeline classic`.
+#
+# The order is the built-in classic one, transcribed from
+# `stage_rank` in `crates/stella-pipeline/src/replay.rs`. Read the conditions
+# exactly as written, because the honest half is what is missing from them:
+#
+#   - `research` carries its real gate. The built-in stage returns from its
+#     first line with no events and no spend when triage named no questions
+#     (`Pipeline::research_stage`), and `questions > 0` is that branch exactly.
+#   - **Every other stage is declared unconditional, and the built-in's own
+#     gates are not.** The conversational fast path returns before plan,
+#     execute, witness and verify; the authored-witness decision is a
+#     five-term conjunction. The closed condition grammar has no conjunction —
+#     one signal, one comparison — so those gates cannot be written here at
+#     all, and writing one conjunct would declare a weaker rule as if it were
+#     the rule. The gap is #3538, not a shrug.
+#
+# What that costs today: nothing, and the reason is worth stating rather than
+# assuming. `WrapperDispatch::open_round` uses this list to decide **where this
+# plugin is asked to contribute** — it does not run stages; the host runs the
+# turn. A host that later drives its stage order *from* a resolved
+# `StageProgram` must close #3538 first, or a chat turn would plan.
+[wrapper]
+id = "research-v1"
+
+[[wrapper.stages]]
+name = "triage"
+
+[[wrapper.stages]]
+name = "recall"
+
+[[wrapper.stages]]
+name = "research"
+if = "questions > 0"
+
+[[wrapper.stages]]
+name = "plan"
+
+[[wrapper.stages]]
+name = "scope"
+
+[[wrapper.stages]]
+name = "execute"
+
+[[wrapper.stages]]
+name = "witness"
+
+[[wrapper.stages]]
+name = "verify"
+
+# How the host starts this plugin's process. A list, never a shell string;
+# `${plugin_dir}` interpolation is the host's job. There is deliberately no
+# `language` field — argv already says which interpreter, which is the
+# property that makes the plugin surface language-neutral.
+[runtime]
+argv = ["python3", "${plugin_dir}/main.py"]
+# The scan is bounded by construction (see main.py's caps), so this ceiling is
+# a backstop for a pathological tree rather than the thing that bounds the
+# stage. Well under the host's own MAX_WRAPPER_TIMEOUT clamp.
+timeout_secs = 60
+# The env allowlist is default-deny: the child sees exactly these names and
+# nothing else, and they appear in the install consent text beside the argv.
+# `PATH` is the whole list, and it is here only so the host can find `python3`
+# — every path this plugin reads arrives in the request as the candidate
+# grant's root. There is nothing left for the environment to smuggle in.
+env = ["PATH"]
+
+# What the plugin asks to reach outside the turn. A request, never a grant:
+# the consent prompt shows this and a human says yes before any of it is true.
+# Both are `low` — this plugin observes and writes nothing, anywhere.
+[[capabilities]]
+tool = "read_file"
+risk = "low"
+purpose = "read source files under the candidate root so the context it contributes cites lines that exist rather than lines a model guessed"
+scope = ["regular files under `candidate.root`, hidden entries and symlinks excluded"]
+
+[[capabilities]]
+tool = "search"
+risk = "low"
+purpose = "find which files mention the terms the goal names, so the turn starts from where the work actually is"
+scope = ["a literal case-insensitive scan of the files above; no index is built and nothing is written"]

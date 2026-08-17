@@ -1143,8 +1143,11 @@ pub struct EngineConfigState {
     /// precedence chain and the auto-modes have run. The `/models` dialog
     /// renders these; the overlay's editors never touch them.
     ///
-    /// One row per role in [`EngineRole::ALL`] order, or empty on a driver
-    /// that sent no wiring — the dialog says so rather than inventing rows.
+    /// **An open vocabulary** (#3472), unlike `agents` above: the roles the
+    /// deck knows, then any role the host contributed, in the order it sent
+    /// them — see [`roles`] for the fold and what stays closed. Empty on a
+    /// driver that sent no wiring; the dialog says so rather than inventing
+    /// rows.
     pub roles: Vec<RoleWiringRow>,
 }
 
@@ -1354,6 +1357,9 @@ pub enum SkillOp {
     },
 }
 
+/// The `/models` role table: the open role vocabulary and its render order.
+pub mod roles;
+
 mod mcp;
 /// The MCP tab's read models (rows, search results, inspector detail).
 /// Why Esc steers rather than cancels — doc-only.
@@ -1362,6 +1368,7 @@ pub use mcp::{
     McpLiveIdentity, McpLookupState, McpSearchItem, McpSearchOutcome, McpServerDetail,
     McpServerInfo, McpToolRow,
 };
+pub use roles::{RoleTableEntry, role_table};
 
 /// A secret string whose `Debug` is redacted, so it can ride the deck's input
 /// channel (and any debug log of it) without leaking. The value is readable

@@ -20,19 +20,23 @@
 //!
 //! # Why the answer is a measurement and not a tool hook
 //!
-//! The obvious repair — have the tools emit — is unavailable, and would be
-//! wrong if it were available:
+//! The file built-ins are back — `ToolRegistry::new` registers `write_file`,
+//! `edit_file` and `delete_file` alongside `bash` — so the obvious repair,
+//! having the tools emit, is now *available*. It is still the wrong answer,
+//! for the reason it was always the wrong answer rather than merely an
+//! impossible one:
 //!
-//! - **Nothing left names a path.** `ToolRegistry::new` registers the
-//!   task-board, scratch-state, sub-agent and `get_environment` tools. A turn
-//!   that mutates the tree does it through an MCP server or a custom script
-//!   tool, and neither describes the paths it writes in any schema the engine
-//!   reads.
 //! - **Inferring from tool inputs is the known defect.** A wrapper that
 //!   synthesized these events from the arguments of four hard-coded tool names
 //!   is exactly what #2290 was: files edited in bulk, or by a worker lane,
 //!   rendered as `+0 -0`. The counts contract exists because of it — `added`
-//!   and `removed` come from a real measurement or they are not sent.
+//!   and `removed` come from a real measurement or they are not sent, and a
+//!   tool's arguments are a request, not a measurement of what landed.
+//! - **A tool hook could never be complete anyway.** `bash` mutates the tree
+//!   without naming a path in any schema the engine reads, and so do MCP
+//!   servers and custom script tools. A hook on the four file tools would
+//!   report a *subset* of the turn's changes while looking exhaustive, which
+//!   is worse than the empty ledger this module replaced.
 //!
 //! So the producer is the work journal's turn-boundary tree snapshot, which
 //! measures with git's own `--numstat`. One reading, at the turn boundary,

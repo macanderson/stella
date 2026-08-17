@@ -696,7 +696,10 @@ async fn run_task(
     let provider = agent::build_provider(&cfg)?;
     // `Arc` because the worker's sub-agent dispatcher holds a `Weak` back to
     // it (`crate::subagent`) — the registry is the child's tool set.
-    let registry = Arc::new(stella_tools::ToolRegistry::new(root.to_path_buf()));
+    let registry = Arc::new(crate::write_dirs::registry_rooted_at(
+        &cfg,
+        root.to_path_buf(),
+    ));
     // As in a deck lane: without a dispatcher the `task` tool is advertised
     // and always refuses, and the pause gate published below has nothing to
     // reach. A worker's children inherit its headless posture through the

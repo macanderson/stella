@@ -33,6 +33,16 @@
 //! fields closes it. The rule is enforced executably by
 //! `tests/no_ambient_reads.rs`, not just asserted here.
 //!
+//! # The other thing that lives here: the wrapper socket
+//!
+//! [`wrapper`] is the turn-loop wrapper contract (#3380, `doc:wrapper-socket`).
+//! It is here for the same reason the construction sequence is: `before_turn`
+//! performs recall and `after_turn` spawns processes, which invariant 2 forbids
+//! in `stella-core`, and this crate already owns the layer above the engine
+//! while reading no ambient environment. `judge` and `again` are free functions
+//! beside the trait — synchronous, total and I/O-free — so no plugin, in any
+//! language, can make a verdict a model call.
+//!
 //! # Usage
 //!
 //! ```no_run
@@ -49,8 +59,14 @@ pub mod error;
 pub mod parts;
 pub mod session;
 pub mod spec;
+pub mod wrapper;
 
 pub use error::RuntimeError;
 pub use parts::{budget_guard, build_provider, open_store, seed_calibration};
 pub use session::{RuntimeBuilder, SessionRuntime};
 pub use spec::{Notice, NoticeSubject, Persistence, ProviderParts, RuntimeSpec};
+pub use wrapper::{
+    AdmittedContribution, AdmittedWrapper, DispatchReport, DrivenTurn, InProcessWrapper,
+    RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, TurnWrapper, WrapperDispatch,
+    WrapperError, WrapperHandler, admissible, again, judge, refuses_env_name,
+};

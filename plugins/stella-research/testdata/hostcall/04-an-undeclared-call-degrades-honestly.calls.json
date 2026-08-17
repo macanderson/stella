@@ -1,0 +1,19 @@
+[
+  {
+    "expect": {
+      "call": "recall",
+      "id": 1,
+      "args": {
+        "goal": "the retry budget is exhausted before the second attempt",
+        "limit": 8
+      }
+    },
+    "answer": {
+      "result": 1,
+      "err": {
+        "refusal": "undeclared",
+        "detail": "this plugin's manifest does not declare \"recall\" in [loop] calls, so the host did not perform it"
+      }
+    }
+  }
+]

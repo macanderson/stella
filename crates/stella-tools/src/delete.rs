@@ -58,14 +58,20 @@ impl Tool for DeleteFile {
     }
 
     async fn execute(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
-        let root = ctx.root();
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
                 return ToolOutput::from(err);
             }
         };
-        let handle = match RootHandle::open(root) {
+        // A delete is the one built-in effect the agent cannot undo, so the
+        // scope is consulted before the descriptor walk starts.
+        let (scope_root, path) = match ctx.resolve_for_write(path) {
+            Ok(resolved) => resolved,
+            Err(refusal) => return ToolOutput::error(refusal.to_string()),
+        };
+        let path = path.as_str();
+        let handle = match RootHandle::open(&scope_root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
                 return ToolOutput::error(format!("cannot open workspace root: {e}"));

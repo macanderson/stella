@@ -27,7 +27,15 @@ use tokio::process::Command;
 /// usually won. 8 MiB per stream sits far above any real build or test log,
 /// so nothing observable changes, while turning an unbounded allocation into
 /// a bounded one.
-pub(crate) const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
+///
+/// It is `pub` for the same reason [`GroupKillGuard`] is: the plugin
+/// transport (`stella_runtime::wrapper::subprocess`) reads a child's stdio
+/// under the same hazard and a lower trust — a plugin is third-party code a
+/// user installed, where a hook is at least operator-authored — so it shares
+/// this ceiling rather than growing a second number. One subprocess plane,
+/// one capture ceiling, exactly as that transport already shares the hook
+/// plane's two timeout constants.
+pub const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
 
 /// Ceiling on any model-supplied `timeout_secs`. The timeout is the hang
 /// backstop for commands the model itself launches — accepting an arbitrary
@@ -126,14 +134,19 @@ impl CappedStream {
         }
     }
 
-    fn push(&mut self, mut chunk: &[u8]) {
+    /// Ingest `chunk`, answering whether the stream has now crossed the cap.
+    ///
+    /// The answer is what [`Overflow::Refuse`] acts on. Under
+    /// [`Overflow::Elide`] it is ignored: the bytes above the cap are simply
+    /// the ones this accumulator drops.
+    fn push(&mut self, mut chunk: &[u8]) -> bool {
         if self.head.len() < self.half {
             let take = (self.half - self.head.len()).min(chunk.len());
             self.head.extend_from_slice(&chunk[..take]);
             chunk = &chunk[take..];
         }
         if chunk.is_empty() {
-            return;
+            return self.dropped > 0;
         }
         self.tail.extend(chunk.iter().copied());
         if self.tail.len() > self.half {
@@ -141,6 +154,7 @@ impl CappedStream {
             self.tail.drain(..excess);
             self.dropped += excess as u64;
         }
+        self.dropped > 0
     }
 
     /// Head, a loud marker when anything was dropped, then tail. The marker
@@ -183,9 +197,8 @@ where
     }
 }
 
-/// After the direct child has exited, how much longer
-/// [`wait_with_capped_output`] keeps reading its stdout/stderr pipes before
-/// giving up on true EOF. A process that properly detaches (`setsid` with
+/// After the direct child has exited, how much longer [`capture`] keeps
+/// reading its stdout/stderr pipes before giving up on true EOF. A process that properly detaches (`setsid` with
 /// its streams redirected away) never touches this window: its own copy of
 /// the pipe's write end is already gone by the time we get here.
 ///
@@ -196,12 +209,49 @@ where
 /// though the command the model actually asked for finished instantly
 /// (#2666). A short bounded drain gets the common case — output flushed
 /// before backgrounding — without paying that price for the uncommon one.
-const BACKGROUND_DRAIN_GRACE: Duration = Duration::from_millis(300);
+///
+/// `pub` because [`capture`] is: this window is part of that function's
+/// contract — how long a call can outlast the child it waited for — not an
+/// implementation detail a caller can reason without.
+pub const BACKGROUND_DRAIN_GRACE: Duration = Duration::from_millis(300);
+
+/// What a capped capture does with the bytes above its ceiling.
+///
+/// The two spawn planes want opposite answers, and each is right for its own
+/// payload — which is why this is a parameter rather than a policy baked into
+/// the loop below.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Overflow {
+    /// Keep reading and elide the middle of the stream. The hook and custom-
+    /// tool planes: the output *is* the product, a log with its middle cut is
+    /// still readable, and the command must still be allowed to finish.
+    Elide,
+    /// Stop the read and hand the caller a refusal. The plugin transport: the
+    /// output is one JSON document, which a truncated copy cannot represent,
+    /// so reading further only spends memory on a call that is already lost.
+    Refuse,
+}
+
+/// How a capped capture ended.
+#[derive(Debug)]
+pub enum Capture {
+    /// The direct child exited; here is what it wrote, with the middle elided
+    /// under [`Overflow::Elide`] if it crossed the ceiling.
+    Exited(std::process::Output),
+    /// A stream crossed the ceiling under [`Overflow::Refuse`] and the read
+    /// stopped there. **The child is still running** — killing it, and the
+    /// process group it leads, is the caller's job.
+    Refused {
+        /// Which stream crossed the ceiling: `"stdout"` or `"stderr"`.
+        stream: &'static str,
+    },
+}
 
 /// [`tokio::process::Child::wait_with_output`] with a per-stream memory
-/// ceiling (see [`MAX_CAPTURE_BYTES`]) and a bounded tolerance for a
-/// grandchild that outlives the direct child while still holding its
-/// inherited copy of the pipe (see [`BACKGROUND_DRAIN_GRACE`] and #2666).
+/// ceiling (see [`MAX_CAPTURE_BYTES`]), a caller-chosen [`Overflow`] policy
+/// for what crossing it means, and a bounded tolerance for a grandchild that
+/// outlives the direct child while still holding its inherited copy of the
+/// pipe (see [`BACKGROUND_DRAIN_GRACE`] and #2666).
 ///
 /// Phase 1 races the exit wait against both pipes exactly as
 /// `wait_with_output` does, so a child that fills one pipe while the other
@@ -209,10 +259,14 @@ const BACKGROUND_DRAIN_GRACE: Duration = Duration::from_millis(300);
 /// exited and only for streams still open: it drains whatever is already
 /// sitting in the pipe, capped at [`BACKGROUND_DRAIN_GRACE`] rather than
 /// waiting for a holder that may never let go.
-pub(crate) async fn wait_with_capped_output(
-    mut child: tokio::process::Child,
+///
+/// Takes `&mut Child` rather than owning it so a caller refusing at the
+/// ceiling still has the child — and its pid — to kill.
+pub async fn capture(
+    child: &mut tokio::process::Child,
     cap: usize,
-) -> std::io::Result<std::process::Output> {
+    overflow: Overflow,
+) -> std::io::Result<Capture> {
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
     let mut out = CappedStream::new(cap);
@@ -227,13 +281,17 @@ pub(crate) async fn wait_with_capped_output(
             res = read_into(&mut stdout, &mut out_buf), if stdout.is_some() => {
                 match res? {
                     0 => stdout = None,
-                    n => out.push(&out_buf[..n]),
+                    n => if out.push(&out_buf[..n]) && overflow == Overflow::Refuse {
+                        return Ok(Capture::Refused { stream: "stdout" });
+                    },
                 }
             }
             res = read_into(&mut stderr, &mut err_buf), if stderr.is_some() => {
                 match res? {
                     0 => stderr = None,
-                    n => err.push(&err_buf[..n]),
+                    n => if err.push(&err_buf[..n]) && overflow == Overflow::Refuse {
+                        return Ok(Capture::Refused { stream: "stderr" });
+                    },
                 }
             }
         }
@@ -248,23 +306,74 @@ pub(crate) async fn wait_with_capped_output(
             res = read_into(&mut stdout, &mut out_buf), if stdout.is_some() => {
                 match res {
                     Ok(0) | Err(_) => stdout = None,
-                    Ok(n) => out.push(&out_buf[..n]),
+                    Ok(n) => if out.push(&out_buf[..n]) && overflow == Overflow::Refuse {
+                        return Ok(Capture::Refused { stream: "stdout" });
+                    },
                 }
             }
             res = read_into(&mut stderr, &mut err_buf), if stderr.is_some() => {
                 match res {
                     Ok(0) | Err(_) => stderr = None,
-                    Ok(n) => err.push(&err_buf[..n]),
+                    Ok(n) => if err.push(&err_buf[..n]) && overflow == Overflow::Refuse {
+                        return Ok(Capture::Refused { stream: "stderr" });
+                    },
                 }
             }
         }
     }
 
-    Ok(std::process::Output {
+    Ok(Capture::Exited(std::process::Output {
         status,
         stdout: out.into_bytes(),
         stderr: err.into_bytes(),
-    })
+    }))
+}
+
+/// [`capture`] under [`Overflow::Elide`], owning the child as
+/// `wait_with_output` does — the shape the hook and custom-tool planes want,
+/// where the elided output is the answer and there is nothing to refuse.
+pub(crate) async fn wait_with_capped_output(
+    mut child: tokio::process::Child,
+    cap: usize,
+) -> std::io::Result<std::process::Output> {
+    match capture(&mut child, cap, Overflow::Elide).await? {
+        Capture::Exited(output) => Ok(output),
+        // Dead by construction: `Elide` never stops a read. Reported as an
+        // error rather than an `unreachable!` because a library must not
+        // abort its host over its own refactor (invariant 5).
+        Capture::Refused { stream } => Err(std::io::Error::other(format!(
+            "the eliding capture refused {stream}, which that policy cannot do"
+        ))),
+    }
+}
+
+/// Start the child in its own session, so it leads a process group
+/// [`GroupKillGuard`] can reach everything inside.
+///
+/// The `unsafe` half of that policy, written once. A `pre_exec` closure runs
+/// in the forked child between `fork` and `exec`, where only
+/// async-signal-safe calls are legal; `setsid(2)` is one, and this closure
+/// allocates nothing and touches no lock, which is the whole requirement.
+///
+/// It exists so a spawn site outside this crate can take the policy without
+/// taking a `libc` dependency and a fifth copy of the block — the plugin
+/// transport (`stella_runtime::wrapper::subprocess`) is the first such caller.
+/// The three remaining copies ([`crate::bash`], [`crate::custom`], and
+/// `stella-cli`'s session tools) predate it and are tracked for conversion in
+/// #3549; nothing about them differs. `stella-cli`'s daemon and the TUI's pty
+/// harness are deliberately not in that set — their `pre_exec` closures do
+/// more than this one and check what this one ignores.
+#[cfg(unix)]
+pub fn detach_into_own_process_group(cmd: &mut Command) {
+    // SAFETY: the closure calls one async-signal-safe libc function and
+    // returns; it allocates nothing and acquires no lock, so it is safe to run
+    // between `fork` and `exec`.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
 }
 
 /// SIGKILLs `pid`'s process group on drop unless disarmed — the
@@ -437,6 +546,35 @@ mod tests {
             "the capped stream must say so"
         );
         assert!(output.status.success());
+    }
+
+    /// [`Overflow::Refuse`]'s half of the same hazard: the read *stops* at the
+    /// ceiling instead of eliding past it, and the child is handed back still
+    /// running so the caller can kill the group it leads. The plugin transport
+    /// needs this shape because its payload is one JSON document — a copy with
+    /// its middle cut cannot be decoded, so every byte read after the ceiling
+    /// is spent on a call already lost.
+    #[tokio::test]
+    async fn a_refusing_capture_stops_the_read_and_leaves_the_child_to_kill() {
+        let mut cmd = Command::new("bash");
+        // Unbounded on purpose: only a refusal can end this read.
+        cmd.arg("-c").arg("yes stella");
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd.kill_on_drop(true);
+        let mut child = cmd.spawn().expect("spawn");
+        let outcome = capture(&mut child, 64 * 1024, Overflow::Refuse)
+            .await
+            .expect("refusing wait");
+        let Capture::Refused { stream } = outcome else {
+            panic!("an endless stream can only end in a refusal, got {outcome:?}");
+        };
+        assert_eq!(stream, "stdout");
+        assert!(
+            child.id().is_some(),
+            "the refusal hands back a live child, because killing its group is the caller's call"
+        );
     }
 
     /// The marker must account for every byte: it names the true elided count
