@@ -142,7 +142,7 @@ that the deck's own layout decides, so a layout change can move content out of
 shot — or into a frame that shows a rendering defect — without failing anything.
 Nothing in the pipeline can check composition for you.
 
-## Re-cutting it
+## Changing what it shows
 
 The shot list is data, in `shots()`. A shot is a scene, a duration, a camera
 track, a cursor range, and how much of the scripted session has streamed in by
