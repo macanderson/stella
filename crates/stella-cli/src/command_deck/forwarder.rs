@@ -185,7 +185,8 @@ pub(crate) fn spawn_forwarder(
 ///
 /// `drop(tx)` on its own never closes the channel: the turn handed the
 /// registry an `EventSender` clone (`ToolRegistry::attach_events`) so
-/// `record_touch` could announce `FileChange`s, and the registry outlives the
+/// registry-born events — the task board, sub-agent lifecycle — ride the
+/// turn's own stream, and the registry outlives the
 /// turn — the deck's session registry by design, a worker lane's because the
 /// closing future itself still holds the `Arc`. With that clone alive, the
 /// forwarder's `recv()` loop stayed pending forever and awaiting it wedged

@@ -307,15 +307,23 @@ claim gets tested before any protocol exists.
 
 ### 4.2 Receipts carry what the registry used to `stat` for
 
-`ToolRegistry::classify_file_op` decides create-vs-update by asking the
-filesystem whether the path existed *before* the write. Naively remoted,
-that is a second round trip per write, and worse, a race.
+**Both names in this section are prospective**: neither
+`ToolRegistry::classify_file_op` nor `ToolRegistry::record_touch` exists in
+the tree today, and no built-in tool writes files at all — the one live
+`FileChange` producer is `Pipeline::deliver_winner`, from the rows adoption
+measured (#3366). They are what a file-writing remote tool would need, named
+here so the design is reviewable, and a PR that builds them owes this section
+a rewrite in the past tense.
+
+A path-writing tool must decide create-vs-update by asking the filesystem
+whether the path existed *before* the write. Naively remoted, that is a
+second round trip per write, and worse, a race.
 
 So `WriteReceipt` carries it: `existed_before`, `bytes_written`,
 `line_delta`, and the post-write digest. The registry reads the receipt
 instead of the disk. One round trip, no race, and — critically for the
 single-emitter invariant — **the `FileChange` event is still emitted
-host-side by `ToolRegistry::record_touch`**, from the receipt. The
+host-side by the registry**, from the receipt. The
 sandbox reports facts; the host is the only thing that ever writes an
 event. Nothing else in the codebase may start counting file changes from
 diff text.
