@@ -35,6 +35,23 @@
 //! `evidence.rs` for the falsifier that established the need and
 //! [`Oracle::unmet`] for the pure evaluator that decides it.
 //!
+//! `[runtime]` (`doc:pipeline-as-plugins` §A5) is the process half: the argv
+//! the host starts, the timeout it enforces, and the **exact** environment
+//! slice the child inherits. See [`Runtime`] for why there is deliberately no
+//! `language` field — `argv` already distinguishes a Python plugin from a
+//! Node one without Stella learning what a language is — and why the
+//! environment is an allowlist rather than a scrub.
+//!
+//! `wire.rs` (#3380, `doc:wrapper-socket` §2) is the socket itself, and it is
+//! the reason every block above is worth declaring: the two points a plugin
+//! answers ([`WrapperRequest`] / [`WrapperResponse`]), the closed
+//! [`EvidenceSet`] it may report, and the [`VerdictRule`] read off this
+//! manifest that the **host** — never the plugin — evaluates. `judge` and
+//! `again` are deliberately absent from that vocabulary: they are free
+//! functions in `stella-runtime`, so a plugin cannot implement either one in
+//! any language, and "a verification plugin quietly calls a model to decide
+//! done" stays impossible by construction rather than by policy.
+//!
 //! The one function a host must not bypass is [`LoopGrant::permits_hook`]:
 //! it is the authoritative filter behind the epic's rule that an undeclared
 //! hook is never invoked, even if the plugin's process registers for it.
@@ -44,6 +61,8 @@ mod error;
 mod evidence;
 mod manifest;
 mod program;
+mod runtime;
+mod wire;
 mod wrapper;
 
 pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
@@ -54,4 +73,12 @@ pub use manifest::{
     Subloop, TamperPolicy,
 };
 pub use program::{SignalValues, StageProgram};
+pub use runtime::Runtime;
+pub use wire::{
+    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, Continuation,
+    Correction, EvidenceSet, FlipObservation, Outcome, PROTOCOL_VERSION, PublishedSignal,
+    RoundState, SignalValue, StopReason, TamperFinding, TurnOutcome, UndecidedReason, UnmetBecause,
+    UnmetRequirement, Verdict, VerdictRule, VolatileContext, WrapperPoint, WrapperRequest,
+    WrapperResponse,
+};
 pub use wrapper::{CompareOp, Condition, Signal, SignalKind, StageName, Wrapper, WrapperStage};

@@ -1,0 +1,294 @@
+//! `judge` and `again` — the two points a plugin **cannot** implement.
+//!
+//! `doc:wrapper-socket` §4 and `doc:pipeline-as-plugins` §6 settle this and
+//! this module does not re-argue it: plugins declare the verdict rule as data,
+//! and the host evaluates it. What that resolution implies for the socket is a
+//! shape, and the shape is here —
+//!
+//! ```text
+//! judge(rule: &VerdictRule, evidence: &EvidenceSet)          -> Verdict
+//! again(verdict: &Verdict, round: &RoundState, grant: &LoopGrant) -> Continuation
+//! ```
+//!
+//! — two free functions, synchronous, total, I/O-free, over owned data. They
+//! are not trait methods and there is no wire message that addresses them
+//! (`stella_plugin::WrapperPoint` has two variants), so a plugin cannot
+//! implement either one in Rust, in Python, or in anything else. That is the
+//! property that keeps "a verification plugin quietly calls a model to decide
+//! done" impossible **by construction** rather than by policy: the failure it
+//! forecloses is the worker grading its own work, and a passing verdict looks
+//! identical either way.
+//!
+//! Being synchronous is what enforces it. There is no `.await` to hang a model
+//! call on, no `Command` to spawn one with, and no `Result` to smuggle an
+//! escalation through — [`judge`] is total, so every shape of evidence already
+//! has an answer and none of them is "ask someone".
+//!
+//! # What totality costs, and why it is paid here
+//!
+//! Total means every arm is decided, including the ones a `Result` would let a
+//! caller ignore: a measurement the oracle failed to report, a check that does
+//! not parse, a tamper policy with nothing to compare against. Each of those
+//! is a [`UndecidedReason`], not a panic and not a `false`. A missing number
+//! is never read as a satisfied budget — the discipline
+//! `stella_plugin::Oracle::unmet` already holds, restated where the verdict is
+//! actually made.
+//!
+//! [`ladder_decision`](https://github.com/oxagen/stella) in
+//! `crates/stella-pipeline/src/verify.rs` is the same shape and the reason
+//! porting the staged pipeline onto this socket is a re-home rather than a
+//! rewrite: every arm of that ladder is terminal, and so is every arm here.
+
+use std::fmt::Write as _;
+
+use stella_plugin::{
+    Continuation, Correction, EvidenceSet, FlipObservation, FlipPolicy, LoopGrant, Oracle, Outcome,
+    Participation, RoundState, StopReason, TamperFinding, TamperPolicy, UndecidedReason,
+    UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext,
+};
+
+/// Turn evidence into a verdict, by the rule the plugin declared.
+///
+/// # The order of the three answers
+///
+/// A determinate failure outranks an abstention: if any requirement is
+/// **unmet** by evidence that actually decided it, the verdict is
+/// [`Verdict::Unmet`] even when some *other* requirement could not be decided.
+/// A failure is actionable and an abstention is not, and reporting
+/// [`Verdict::Met`] because one clause went unmeasured is the false claim this
+/// whole apparatus exists to prevent. Only when nothing is determinately unmet
+/// does an undecidable clause become [`Verdict::Undecided`] — the ladder's
+/// "not a pass, and explicitly not a failure".
+///
+/// A rule with no requirements is [`Verdict::Met`]: a steering-grade wrapper
+/// that contributes context and gathers nothing has nothing to hold open, and
+/// inventing a requirement for it would be the host deciding done.
+#[must_use]
+pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
+    if rule.requirements.is_empty() {
+        return Verdict::Met;
+    }
+    let Some(oracle) = &rule.oracle else {
+        return Verdict::Undecided {
+            reason: UndecidedReason::NoOracle,
+        };
+    };
+
+    let flip = flip_credit(oracle, evidence);
+    let mut unmet: Vec<UnmetRequirement> = Vec::new();
+    // The first undecidable clause in requirement order. `requirements` is a
+    // `BTreeMap`, so "first" is a fact about the manifest rather than about a
+    // hash seed — two runs over the same evidence report the same reason.
+    let mut undecided: Option<UndecidedReason> = None;
+    let mut abstain = |reason: UndecidedReason| {
+        if undecided.is_none() {
+            undecided = Some(reason);
+        }
+    };
+
+    for (name, statement) in &rule.requirements {
+        let mut decided_by_check = false;
+        for check in oracle.checks.iter().filter(|c| &c.requirement == name) {
+            decided_by_check = true;
+            let parsed = match check.rule() {
+                Ok(parsed) => parsed,
+                // Rejected at load (`ManifestError::UnparsableCheck`), so this
+                // is reachable only for a rule that did not come from a
+                // validated manifest — which must still not read as "the
+                // budget held".
+                Err(error) => {
+                    abstain(UndecidedReason::UnreadableCheck {
+                        requirement: name.clone(),
+                        reason: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            match evidence.measurements.get(&parsed.measurement) {
+                None => abstain(UndecidedReason::MeasurementMissing {
+                    requirement: name.clone(),
+                    measurement: parsed.measurement.clone(),
+                }),
+                Some(&reported) if !parsed.holds(reported) => unmet.push(UnmetRequirement {
+                    requirement: name.clone(),
+                    statement: statement.clone(),
+                    because: UnmetBecause::Budget {
+                        check: check.rule.clone(),
+                        reported,
+                    },
+                }),
+                Some(_) => {}
+            }
+        }
+
+        if decided_by_check {
+            continue;
+        }
+        match &flip {
+            FlipCredit::Credited => {}
+            FlipCredit::Denied(because) => unmet.push(UnmetRequirement {
+                requirement: name.clone(),
+                statement: statement.clone(),
+                because: because.clone(),
+            }),
+            FlipCredit::Undecided(reason) => abstain(reason.clone()),
+            // `flip = "not-applicable"` with a requirement no check decides is
+            // `ManifestError::UndecidableRequirement` at load; a hand-built
+            // rule reaches it here and abstains rather than crediting.
+            FlipCredit::NoFlipPolicy => abstain(UndecidedReason::Undecidable {
+                requirement: name.clone(),
+            }),
+        }
+    }
+
+    if !unmet.is_empty() {
+        return Verdict::Unmet { unmet };
+    }
+    match undecided {
+        Some(reason) => Verdict::Undecided { reason },
+        None => Verdict::Met,
+    }
+}
+
+/// What the declared flip policy says about the evidence, for every
+/// requirement no check decides.
+enum FlipCredit {
+    /// The flip was observed and the artifacts are the ones that were
+    /// authored.
+    Credited,
+    /// The evidence determinately refuses the flip.
+    Denied(UnmetBecause),
+    /// Nothing available settles it.
+    Undecided(UndecidedReason),
+    /// This oracle has no flip to decide anything with.
+    NoFlipPolicy,
+}
+
+/// Classify the flip half of the evidence.
+///
+/// The flip is read **first** and the tamper finding only qualifies a flip
+/// that would otherwise be credited. That ordering is deliberate: a witness
+/// that could not run leaves nothing to tamper with, and reporting "no tamper
+/// snapshot" for a run whose witness never executed names the wrong problem.
+fn flip_credit(oracle: &Oracle, evidence: &EvidenceSet) -> FlipCredit {
+    match oracle.flip {
+        FlipPolicy::NotApplicable => FlipCredit::NoFlipPolicy,
+        FlipPolicy::Required => match evidence.flip {
+            FlipObservation::Achieved => tamper_credit(oracle.tamper, &evidence.tamper),
+            FlipObservation::NotAchieved => FlipCredit::Denied(UnmetBecause::NoFlip {
+                observed: FlipObservation::NotAchieved,
+            }),
+            FlipObservation::Unsatisfiable => {
+                FlipCredit::Undecided(UndecidedReason::WitnessUnsatisfiable)
+            }
+            FlipObservation::NotAttempted | FlipObservation::Unobservable => {
+                FlipCredit::Undecided(UndecidedReason::FlipUnobservable)
+            }
+        },
+    }
+}
+
+/// Whether an observed flip may be credited under the declared tamper policy.
+///
+/// `NotChecked` is deliberately **not** a pass: the policy asks the host to
+/// snapshot artifact identity at authoring time, and a flip whose artifacts
+/// were never compared is one whose "before" half is unverified. Crediting it
+/// would let a worker that rewrote the witness win the flip — the exact
+/// exclusion `TamperPolicy::ArtifactIdentity` exists to make.
+fn tamper_credit(policy: TamperPolicy, finding: &TamperFinding) -> FlipCredit {
+    match policy {
+        TamperPolicy::ArtifactIdentity => match finding {
+            TamperFinding::Clean => FlipCredit::Credited,
+            TamperFinding::Tampered { artifact } => FlipCredit::Denied(UnmetBecause::Tampered {
+                artifact: artifact.clone(),
+            }),
+            TamperFinding::NotChecked => FlipCredit::Undecided(UndecidedReason::TamperUnchecked),
+        },
+    }
+}
+
+/// Decide whether the loop asks for another turn, and on whose authority.
+///
+/// Three rules, all of them the host's:
+///
+/// 1. **Only an `arbiter` may hold a completion open.** The grade is the
+///    grant; a `steering` wrapper that returns unmet requirements gets them
+///    *reported*, not re-run.
+/// 2. **The allowance is the plugin's ask clamped to the host's ceiling.**
+///    `LoopGrant::max_holds` is a request (`doc:wrapper-socket` §5); a
+///    manifest cannot buy an unbounded loop, and a manifest that asks for
+///    nothing inherits the ceiling rather than zero.
+/// 3. **A spent allowance completes with the unmet requirements reported** —
+///    never silently dropped, which is the failure mode #2661 paid for four
+///    times on one certification panel.
+///
+/// An abstention is terminal. There is no correction to author from evidence
+/// that decided nothing, and re-running a turn against a broken instrument
+/// spends a model call to learn the same non-answer.
+#[must_use]
+pub fn again(verdict: &Verdict, round: &RoundState, grant: &LoopGrant) -> Continuation {
+    let unmet = match verdict {
+        Verdict::Met => {
+            return Continuation::Stop {
+                outcome: Outcome::Met,
+            };
+        }
+        Verdict::Undecided { reason } => {
+            return Continuation::Stop {
+                outcome: Outcome::Undecided {
+                    reason: reason.clone(),
+                },
+            };
+        }
+        Verdict::Unmet { unmet } => unmet.clone(),
+    };
+
+    if !grant.participation.includes(Participation::Arbiter) {
+        return Continuation::Stop {
+            outcome: Outcome::Unmet {
+                unmet,
+                stopped: StopReason::NotAnArbiter,
+            },
+        };
+    }
+
+    let allowed = grant
+        .max_holds
+        .unwrap_or(round.host_max_holds)
+        .min(round.host_max_holds);
+    if round.holds_spent >= allowed {
+        return Continuation::Stop {
+            outcome: Outcome::Unmet {
+                unmet,
+                stopped: StopReason::AllowanceSpent {
+                    spent: round.holds_spent,
+                    allowed,
+                },
+            },
+        };
+    }
+
+    Continuation::Again {
+        correction: Correction {
+            guidance: VolatileContext::new("wrapper-verdict", correction_text(&unmet)),
+            unmet,
+        },
+    }
+}
+
+/// The correction a held-open turn is told, rendered deterministically from
+/// the unmet clauses.
+///
+/// Byte-stable for the same input (invariant 7's discipline): the clauses
+/// arrive in `[requirements]` order because [`judge`] walks a `BTreeMap`, so
+/// two runs over the same evidence produce the same bytes.
+fn correction_text(unmet: &[UnmetRequirement]) -> String {
+    let mut text = String::from(
+        "The turn completed, but these declared requirements are not met yet. \
+         Address them and stop:\n",
+    );
+    for clause in unmet {
+        let _ = writeln!(text, "- {clause}");
+    }
+    text
+}

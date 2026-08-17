@@ -17,10 +17,20 @@ stella-store = { path = "../stella-store" }
 stella-mcp = { path = "../stella-mcp" }
 stella-context = { path = "../stella-context" }
 stella-graph = { path = "../stella-graph" }
+# The wrapper socket's wire contract (#3380, `doc:wrapper-socket` §2). This is
+# the edge that ends "stella-plugin has zero consumers", and it is acyclic:
+# stella-plugin's only workspace dependency is stella-protocol, which this
+# crate already takes. The direction is forced — the socket's two async points
+# perform I/O (recall, a test run, a process spawn), which invariant 2 bans in
+# the engine, so the trait lives here and the plugin-facing types live there.
+stella-plugin = { path = "../stella-plugin" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+# `process`/`io-util`/`time` are the subprocess wrapper transport: spawn, write
+# the request on stdin, read the response on stdout, bounded by the same clamp
+# `stella-core`'s hook runner uses.
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time"] }
 async-trait = { workspace = true }
 
 [dev-dependencies]
