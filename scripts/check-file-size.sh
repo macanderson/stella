@@ -152,36 +152,15 @@ current_sizes() {
   done
 }
 
-# ── What --update may write: a ceiling, never a new exemption (#3441) ────────
-#
-# The checker above names two remedies and they are NOT interchangeable: a
-# grandfathered file whose ceiling drifted is cleared by regenerating the
-# baseline, while a file crossing the limit for the first time must be split
-# and is never given an entry. `--update` regenerated from the tree alone, so
-# it could not tell those apart and simply recorded every file currently over
-# the line — writing exactly the entry the checker forbids.
-#
-# The two are needed at the same moment, which is what made this dangerous
-# rather than theoretical: both failures are triggered by the same shared cell
-# going stale, so the run of `--update` that clears a +4 ceiling bump is the
-# run most likely to find an unrelated first-time crossing sitting in the tree
-# waiting to be absorbed. It lands as an extra hunk in a diff whose stated
-# purpose was the bump, permanently grandfathers a god file, and turns the gate
-# green so nothing downstream ever objects again. On `main` at 1016925c9 that
-# file was crates/stella-protocol/src/event.rs at 1533 lines.
-#
-# So `--update` now judges its own write the way the checker judges a change:
-# an existing entry is rewritten to the current size (the down-ratchet must
-# keep working, and a deliberate ceiling raise is still allowed and still
-# visible in review), and a path with no entry is REFUSED. The escape hatch is
-# `--grandfather <path>`, deliberately explicit, repeatable, and required to
-# name a path that actually needs it — a hatch that can be passed pointlessly
-# is a hatch that gets pasted into a command line and stops meaning anything.
-#
-# A baseline that does not exist yet is the one case where every file is new by
-# definition, and the checker itself tells a fresh tree to run `--update` to
-# create one. That bootstrap writes whatever it finds; there is no prior
-# decision for it to contradict.
+# See `resolve_base_commit` for what this changes and why only the canary wants
+# it. Read before the `--update` arm below so the two flags cannot be confused:
+# `--update` rewrites the baseline, `--absolute` only judges against it.
+ABSOLUTE_MODE=""
+if [ "${1:-}" = "--absolute" ]; then
+  ABSOLUTE_MODE=1
+  shift
+fi
+
 if [ "${1:-}" = "--update" ]; then
   shift
   grandfathered_arg="$(mktemp)"
@@ -300,6 +279,21 @@ fi
 # reader should not have to know that rule to see it.
 resolve_base_commit() {
   local candidate mb
+  # `--absolute` asks the other question: not "did this change grow a file?"
+  # but "is this tree within its ceilings at all?" Returning no base collapses
+  # `max(ceiling, base)` to the ceiling, which is the strict read.
+  #
+  # It exists for the post-merge canary (#3447). Every rung below is
+  # base-relative on purpose — inherited drift must not fail an author who did
+  # not cause it (#2004, #2397) — but that same mercy makes drift already
+  # sitting on `main` invisible to every branch in flight, and on a push to
+  # `main` the last rung compares against `HEAD^1`, so a violation introduced
+  # two commits ago goes unseen forever. Somebody has to ask the absolute
+  # question once the merge has happened, and this is the flag that asks it.
+  if [ -n "${ABSOLUTE_MODE:-}" ]; then
+    printf ''
+    return 0
+  fi
   # An explicit override wins, for hand runs and for the hermetic tests in
   # scripts/test-file-size.sh, which have no origin to infer one from.
   if [ -n "${FILE_SIZE_BASE_REF:-}" ]; then
