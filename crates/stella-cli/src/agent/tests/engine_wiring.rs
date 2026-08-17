@@ -125,6 +125,69 @@ fn a_bound_session_checkpoints_from_every_role() {
     assert_eq!(record.checkpoint().as_deref(), Some("{\"version\":1}"));
 }
 
+/// Every role of a session shares ONE view of what its providers will fund
+/// (#3307), and it is the same cell — not merely an equal one.
+///
+/// The same argument as the checkpoint sink above: the handle is attached at
+/// one place (`tuned_engine_config`) precisely so no role can be left out, and
+/// "left out" is invisible from inside the engine crate — a role with its own
+/// empty handle behaves exactly like a session that has simply never been
+/// refused. The damage is silent and only shows up as latency: each role that
+/// misses the handle re-learns a refused ceiling by paying its own 402
+/// round-trip, every turn, for as long as the balance stays low.
+#[test]
+fn every_role_shares_one_session_view_of_affordable_output_ceilings() {
+    let cfg = cfg_for("zai");
+    let worker = ModelRef::new("zai", "glm-5.2".to_string());
+    let roles = [
+        ("default", crate::agent::engine_config_for(&cfg)),
+        ("verifier", crate::agent::verifier_engine_config_for(&cfg)),
+        (
+            "worker",
+            crate::agent::pipeline_engine_config_for(&cfg, &worker),
+        ),
+        (
+            "sub-session",
+            crate::agent::subsession_engine_config_for(&cfg),
+        ),
+    ];
+
+    // Empty until something is refused, so a session that never meets a 402
+    // asks for exactly what it configured (AGENTS.md invariant 7).
+    for (role, engine) in &roles {
+        let ceilings = engine
+            .session_output_ceilings
+            .as_ref()
+            .unwrap_or_else(|| panic!("the {role} engine must carry the session's handle"));
+        assert_eq!(
+            ceilings.narrow("zai", Some(128_000)),
+            Some(128_000),
+            "the {role} engine must start with nothing standing",
+        );
+    }
+
+    // One cell, not four: what any role learns, every role sees. Written
+    // through the default role's handle and read back through the others,
+    // which is the property a per-role `Default` would silently fail.
+    roles[0]
+        .1
+        .session_output_ceilings
+        .as_ref()
+        .expect("attached")
+        .learn("zai", 90_000);
+    for (role, engine) in &roles {
+        assert_eq!(
+            engine
+                .session_output_ceilings
+                .as_ref()
+                .expect("attached")
+                .narrow("zai", Some(128_000)),
+            Some(90_000),
+            "the {role} engine must see what another role already paid to learn",
+        );
+    }
+}
+
 #[test]
 fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
     // Issue #276: `pipeline_worker_model` (and `agents.worker.*`) must

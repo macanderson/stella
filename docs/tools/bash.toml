@@ -27,7 +27,7 @@ available_for_speculation = false
 risk_level = "high"
 
 description = '''
-Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop.
+Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop. You can READ anything on this machine — system headers, the toolchain, a dependency's source. You can only CHANGE things inside this session's directories (get_environment reports the workspace root), so a command that creates, edits, deletes or moves a file elsewhere is refused before it runs. Prefer write_file/edit_file/delete_file over shell equivalents for files in the workspace: their changes are what this turn's diff and verification are computed from.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.

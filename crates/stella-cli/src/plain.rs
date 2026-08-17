@@ -495,15 +495,19 @@ fn file_change_lines(
     let Some(diff) = diff.filter(|d| !d.trim().is_empty()) else {
         return out;
     };
-    let (body, hidden) =
-        stella_tui::diff::body_lines_inline_ansi(diff, Some(path), INLINE_DIFF_CAP, &palette());
+    // No affordance hint: a scrollback line cannot be revisited, so the fold
+    // row this surface gets is the final answer and offers nothing to press.
+    // It is the renderer's row either way — the elision is a *middle* now, and
+    // a marker appended after the body would claim the change trails off past
+    // the bottom when the row above it is the file's last line.
+    let (body, _) = stella_tui::diff::body_lines_inline_ansi(
+        diff,
+        Some(path),
+        INLINE_DIFF_CAP,
+        None,
+        &palette(),
+    );
     out.extend(body.into_iter().map(|row| format!("    {row}")));
-    if hidden > 0 {
-        out.push(format!(
-            "    {}",
-            format!("⋯ {hidden} more line{}", if hidden == 1 { "" } else { "s" }).dimmed()
-        ));
-    }
     out
 }
 
@@ -893,9 +897,22 @@ mod tests {
             "diff flooded the transcript: {} lines",
             visible.len()
         );
+        // The scrollback cannot be revisited, so the truncation has to be
+        // stated — and stated *where it happened*. This surface shows the
+        // beginning and the end of a long change with the elision marked
+        // between them, so the fold row is no longer the last row: the
+        // change's own last line is.
+        let fold = visible
+            .iter()
+            .position(|l| l.contains('⋯'))
+            .unwrap_or_else(|| panic!("truncated silently: {visible:?}"));
         assert!(
-            visible.last().unwrap().contains("more line"),
-            "truncated silently: {:?}",
+            fold > 0 && fold < visible.len() - 1,
+            "the fold marks the elided middle rather than trailing the body: {visible:?}"
+        );
+        assert!(
+            visible.last().unwrap().contains("+new 79"),
+            "the last row is the change's last line: {:?}",
             visible.last()
         );
     }

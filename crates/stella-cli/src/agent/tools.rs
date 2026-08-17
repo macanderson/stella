@@ -475,7 +475,12 @@ pub(crate) fn workspace_ports(
         session_tool_policy(cfg),
         custom_tools,
         active_rules,
-    );
+    )
+    // Best-of-N runs the session's task, so it inherits the session's grants:
+    // a directory the operator allowed is one a candidate needs, and dropping
+    // it here made `--allow-dir` succeed on the direct path and fail under
+    // fan-out for no reason the trace explains.
+    .with_allowed_write_dirs(cfg.allowed_write_dirs.clone());
     if let Some(mcp) = &mcp {
         candidate_workspaces = candidate_workspaces.with_candidate_mcp(Arc::clone(mcp));
     }

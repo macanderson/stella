@@ -333,14 +333,13 @@ impl<'a> Fold<'a> {
             } => {
                 let kind = wire_token(kind);
                 let path = self.clean(path);
-                let diff = diff.as_deref().unwrap_or_default();
-                let diff = self.clean(diff);
+                let diff = self.clean(diff.as_deref().unwrap_or_default());
                 self.row(format!(
-                    r#"<details class="ev file"><summary>{t}<span class="lbl">FILE</span><b>{kind} {path} (+{added}/-{removed})</b></summary><pre class="diff">{diff}</pre></details>"#,
+                    r#"<details class="ev file"><summary>{t}<span class="lbl">FILE</span><b>{kind} {path} (+{added}/-{removed})</b></summary>{body}</details>"#,
                     t = self.stamp(),
                     kind = escape(&kind),
                     path = escape(&path),
-                    diff = escape(&clip(&diff)),
+                    body = diff_html(&diff),
                 ));
             }
 
@@ -634,6 +633,93 @@ fn clip(text: &str) -> String {
 /// one-line alias so every interpolation in this module reads the same.
 fn escape(raw: &str) -> String {
     super::escape_html(raw)
+}
+
+/// One file change's diff as the archive's `.dx` block: both line-number
+/// gutters, a sigil column, and a tinted row per change — the same shape the
+/// Observatory draws and the deck draws, because this archive is read side by
+/// side with them as evidence on a pull request.
+///
+/// Only the changed lines and their context, never a file listing, and never
+/// more than [`stella_diff::view::VIEW_CAP`] of them: the elided middle is
+/// stated in place as a `⋯ n lines not shown` row. That cap replaces a byte
+/// clip that cut mid-hunk, so a rewritten file no longer contributes 64 KiB
+/// of `+` lines to a file someone is expected to open in a browser.
+///
+/// Diff text that parses to no hunks at all — a headerless pseudo-diff, or
+/// something that is not a diff — falls back to preformatted text rather than
+/// rendering nothing: an unrecognised shape must still be readable.
+fn diff_html(diff: &str) -> String {
+    if diff.trim().is_empty() {
+        return String::new();
+    }
+    let view = stella_diff::view::elide(
+        &stella_diff::parse::hunks(diff),
+        stella_diff::view::VIEW_CAP,
+    );
+    if view.hunks.is_empty() {
+        return format!(r#"<pre class="diff">{}</pre>"#, escape(&clip(diff)));
+    }
+    let fold = format!(
+        r#"<div class="dx-fold">⋯ {} line{} not shown</div>"#,
+        view.hidden,
+        if view.hidden == 1 { "" } else { "s" }
+    );
+    let mut out = String::from(r#"<div class="dx">"#);
+    for (i, hunk) in view.hunks.iter().enumerate() {
+        if view.fold_before == Some(i) {
+            out.push_str(&fold);
+        }
+        let _ = write!(
+            out,
+            r#"<div class="dx-hunk"><div class="dx-at">{}</div>"#,
+            escape(&hunk.header())
+        );
+        // Line numbers are walked from this hunk's own header, which is why
+        // `elide` re-headers a hunk it splits: the tail's gutter has to name
+        // the file's real lines, not restart from the head's.
+        let (mut old_no, mut new_no) = (hunk.old_start, hunk.new_start);
+        for line in &hunk.lines {
+            let (class, sigil) = match line.op {
+                stella_diff::Op::Add => (" add", "+"),
+                stella_diff::Op::Remove => (" rem", "−"),
+                stella_diff::Op::Equal => ("", " "),
+            };
+            let old_cell = if line.op == stella_diff::Op::Add {
+                String::new()
+            } else {
+                let n = old_no;
+                old_no += 1;
+                n.to_string()
+            };
+            let new_cell = if line.op == stella_diff::Op::Remove {
+                String::new()
+            } else {
+                let n = new_no;
+                new_no += 1;
+                n.to_string()
+            };
+            let _ = write!(
+                out,
+                r#"<div class="dx-line{class}"><span class="no">{old_cell}</span>"#,
+            );
+            let _ = write!(
+                out,
+                r#"<span class="nn">{new_cell}</span><span class="sg">{sigil}</span>"#,
+            );
+            let _ = write!(
+                out,
+                r#"<span class="tx">{}</span></div>"#,
+                escape(&line.text)
+            );
+        }
+        out.push_str("</div>");
+    }
+    if view.fold_before == Some(view.hunks.len()) {
+        out.push_str(&fold);
+    }
+    out.push_str("</div>");
+    out
 }
 
 /// Parse `events.ts` (`YYYY-MM-DD HH:MM:SS`) to Unix seconds.

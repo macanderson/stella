@@ -232,12 +232,16 @@ impl<'a> Engine<'a> {
                     bus::names::MODEL_REQUEST_FAILED,
                     || serde_json::json!({ "step": state.step, "reason": message }),
                 );
-                let asked = state.output_ceiling(self.config.max_output_tokens);
+                let asked = state.output_ceiling(self.configured_output_ceiling());
                 return match state
                     .output_budget_recovery
                     .arm(affordable_output_tokens, asked)
                 {
                     Some(clamp) => {
+                        // Outlives the turn when the host attached a carry, so
+                        // a balance that stays low is not re-discovered by a
+                        // wasted 402 on every subsequent turn (#3307).
+                        self.carry_output_ceiling(clamp);
                         let _ = events.send(AgentEvent::Error {
                             message: format!(
                                 "{message} — asking for at most {clamp} output tokens and \

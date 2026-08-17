@@ -503,3 +503,103 @@ fn an_unreplayable_event_is_counted_rather_than_hidden() {
         out.provenance()
     );
 }
+
+// ── File diffs ──────────────────────────────────────────────────────────
+
+/// A `FileChange` carrying a unified diff of `adds` single-line additions.
+fn a_rewrite(adds: usize) -> AgentEvent {
+    let body: String = (1..=adds).map(|i| format!("+line {i}\n")).collect();
+    AgentEvent::FileChange {
+        path: "src/big.rs".into(),
+        kind: stella_protocol::FileChangeKind::Modified,
+        added: adds as u32,
+        removed: 0,
+        diff: Some(format!(
+            "--- a/src/big.rs\n+++ b/src/big.rs\n@@ -0,0 +1,{adds} @@\n{body}"
+        )),
+    }
+}
+
+#[test]
+fn a_file_diff_renders_as_a_gutter_diff_rather_than_a_wall_of_text() {
+    // The archive is attached to a pull request as evidence and read beside
+    // the Observatory. This row used to be a `<pre>` of raw diff text — no
+    // line numbers, no row tint, nothing a reviewer could scan — so the same
+    // edit read two different ways in two artifacts of one run.
+    let out = render(&at(vec![a_rewrite(4)]), &no_prompts());
+    assert!(out.body.contains(r#"<div class="dx">"#), "{}", out.body);
+    assert!(
+        out.body.contains(r#"<span class="nn">1</span>"#),
+        "the new-side gutter numbers the added lines:\n{}",
+        out.body
+    );
+    assert!(
+        count(&out.body, r#"class="dx-line add"#) == 4,
+        "one tinted row per addition:\n{}",
+        out.body
+    );
+    assert!(
+        !out.body.contains(r#"<pre class="diff">"#),
+        "the raw-text fallback is for unparseable diffs only:\n{}",
+        out.body
+    );
+}
+
+#[test]
+fn a_long_file_diff_shows_its_beginning_and_its_end_and_marks_the_middle() {
+    // Only the changed lines, never the whole file, and never more of them
+    // than the shared cap — with the elision stated where it happened. A
+    // rewrite used to contribute up to 64 KiB of `+` lines to a file someone
+    // opens in a browser, cut at a byte boundary that could land mid-hunk.
+    let adds = stella_diff::view::VIEW_CAP * 3;
+    let out = render(&at(vec![a_rewrite(adds)]), &no_prompts());
+    // The sigil lives in its own gutter column, so the text cell is the bare
+    // line — which is exactly what makes the rendering copy-pasteable.
+    assert!(
+        out.body.contains(r#"<span class="tx">line 1</span>"#),
+        "the change's first line survives"
+    );
+    assert!(
+        out.body
+            .contains(&format!(r#"<span class="tx">line {adds}</span>"#)),
+        "and so does its last — the point of showing both ends"
+    );
+    assert!(
+        out.body.contains(r#"class="dx-fold""#) && out.body.contains("not shown"),
+        "with the elision stated rather than silent"
+    );
+    let drawn = count(&out.body, r#"class="dx-line"#);
+    assert!(
+        drawn <= stella_diff::view::VIEW_CAP,
+        "{drawn} rows drawn against a cap of {}",
+        stella_diff::view::VIEW_CAP
+    );
+    // The gutter on the far side of the elision names the file's real lines.
+    assert!(
+        out.body
+            .contains(&format!(r#"<span class="nn">{adds}</span>"#)),
+        "the tail's line numbers are not restarted from 1"
+    );
+}
+
+#[test]
+fn a_diff_that_parses_to_no_hunks_still_renders_as_readable_text() {
+    // A headerless pseudo-diff carries no coordinates, so it has no hunks to
+    // draw. Rendering nothing at all would be the worst outcome: the row
+    // would claim a file changed and then show nothing of the change.
+    let out = render(
+        &at(vec![AgentEvent::FileChange {
+            path: "notes.txt".into(),
+            kind: stella_protocol::FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
+            diff: Some("+just a bare line".into()),
+        }]),
+        &no_prompts(),
+    );
+    assert!(
+        out.body.contains("just a bare line"),
+        "the change is still shown:\n{}",
+        out.body
+    );
+}

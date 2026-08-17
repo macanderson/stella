@@ -141,7 +141,7 @@ pub(crate) async fn run_raw_one_shot(
     // registry's ledgers are reachable after the turn — the trait object
     // hides them. It still coerces to `&dyn ToolExecutor` for the engine.
     let registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+        std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
     crate::subagent::install_for_session(cfg, &registry)?;
     // The one derivation of "a human is here to answer" — the #2676 approval
@@ -380,7 +380,7 @@ pub async fn run_goal_cmd(
     )?;
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+        std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
     crate::subagent::install_for_session(cfg, &registry)?;
     // Goal mode always renders human-readable output, so its half of the

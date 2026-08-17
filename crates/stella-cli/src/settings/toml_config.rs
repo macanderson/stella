@@ -253,6 +253,21 @@ pub struct McpSection {
     pub servers: BTreeMap<String, McpServerEntry>,
 }
 
+/// `[workspace]` — facts about the tree this config belongs to.
+///
+/// Its own section rather than a key under `[run]`: `allowed_dirs` states what
+/// the *workspace* is, not how one run behaves, and the distinction is what
+/// keeps a future `[workspace]` key from having to justify itself against a
+/// section named for something else.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct WorkspaceSection {
+    /// Directories outside the root that write tools may touch. Relative
+    /// entries resolve against the project root; see
+    /// [`Settings::allowed_write_dirs`].
+    #[serde(default)]
+    pub allowed_dirs: Option<Vec<String>>,
+}
+
 /// A whole `stella.toml` document.
 ///
 /// Every field optional so an empty file is exactly the defaults, and unknown
@@ -264,6 +279,8 @@ pub struct TomlConfig {
     pub meta: Meta,
     #[serde(default)]
     pub run: RunSection,
+    #[serde(default)]
+    pub workspace: WorkspaceSection,
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderSettings>,
     #[serde(default)]
@@ -383,6 +400,7 @@ impl TomlConfig {
         let TomlConfig {
             meta: _,
             run,
+            workspace,
             providers,
             models,
             agents,
@@ -423,6 +441,7 @@ impl TomlConfig {
             trace_capture: run.trace_capture,
             ignore_gitignore: run.ignore_gitignore,
             create_worktrees: run.create_worktrees,
+            allowed_dirs: workspace.allowed_dirs,
             ui,
             reward,
             context,

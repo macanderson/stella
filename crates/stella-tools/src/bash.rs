@@ -24,25 +24,37 @@
 //! running interpreter as well. An operator who needs shell execution actually
 //! contained wants that chain plus a boundary the whole process sits inside.
 //!
-//! # This tool carries no confinement of its own, and says so
+//! # Read the machine; change only what this session owns
 //!
-//! **There is no session-wide OS sandbox here, and no text audit of the
-//! command either.** Both existed once and both were tied to a caller that no
-//! longer does: `STELLA_BASH_SANDBOX`, the opt-in Seatbelt/`bwrap` wrapper,
-//! was removed in #1300 for claiming a session-wide bound it never had (it
-//! wrapped this one tool while every other spawn path ran around it); the
-//! `confine`/`contain` pair that replaced it audited the command text and put
-//! an OS write ban on a *graded tree*, armed only inside an isolated
-//! best-of-N candidate workspace — a registry configuration this crate no
-//! longer builds.
+//! The policy is [`stella_core::workspace_scope`]'s and the reasoning is
+//! there. In short: reads reach the whole filesystem, because an agent fixing
+//! a build needs system headers, the toolchain and a dependency's source, and
+//! a read cannot damage the user's tree. Writes are confined to the session's
+//! workspace plus operator-granted directories. The one thing hidden from
+//! *both* is the origin project's tree — a worktree session cannot see the
+//! project it was cut from, and no session can see its own worktrees, because
+//! a parallel checkout answers questions about the wrong copy of the file
+//! being edited.
 //!
-//! Restoring either as it stood would be unwired code with no caller, so this
-//! module ships without them and names the gap rather than implying a
-//! boundary. Session isolation belongs to the container the whole Stella
-//! process runs in (`docs/spec/remote-sandboxes.md` §2), and what bounds an
-//! individual call is the registry's `tool.call.requested` policy chain and
-//! the operator's `"tools": {"bash": "off"}` switch. Re-arming a real
-//! per-command boundary is tracked work, not a silence.
+//! `shell_write_audit` (crate-private) applies that to the command text
+//! **before the spawn**, and its own header is the honest account of what a
+//! text audit can and cannot do. The short version: it is a fence against the
+//! mistake that actually happens (a copied absolute path, an `rm` aimed at the
+//! wrong tree, a redirect into a sibling checkout), it is **not** a sandbox,
+//! and it is biased hard toward permitting — a false refusal breaks a build
+//! for a reason the agent cannot diagnose, which costs more than the rare
+//! escape it would have caught. Confinement is *enforced* in the file tools,
+//! which resolve a path and hold a descriptor.
+//!
+//! **There is still no session-wide OS sandbox here.** `STELLA_BASH_SANDBOX`,
+//! the opt-in Seatbelt/`bwrap` wrapper, was removed in #1300 for claiming a
+//! session-wide bound it never had — it wrapped this one tool while every
+//! other spawn path ran around it. The `confine`/`contain` pair that replaced
+//! it put a kernel-level write ban on a graded tree, but was armed only by the
+//! candidate-workspace registry this crate no longer builds; restoring it
+//! without a caller would be unwired code, so it is tracked in #3468 rather
+//! than shipped dark. Session isolation belongs to the container the whole
+//! Stella process runs in (`docs/spec/remote-sandboxes.md` §2).
 
 use std::path::Path;
 use std::time::Duration;
@@ -70,9 +82,11 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// Still 2.2x `exec::MAX_OUTPUT_BYTES` (30k), preserving #616's ratio
 /// argument: the shell is the agent's primary sensory channel — one `bash`
 /// call renders a whole build or test run whose first error and final summary
-/// sit far apart — while the `exec` budget bounds each incremental
-/// `read_output` page of a *managed* process the agent polls repeatedly.
-/// Aligning them would either starve the shell or inflate every page read.
+/// sit far apart — while the `exec` budget bounds one incremental page of a
+/// long-running capture. (That budget's original consumer was the managed
+/// process family's `read_output`, deleted in #3244; the ratio argument is
+/// about the two *shapes* of output, so it survives its example.) Aligning
+/// them would either starve the shell or inflate every page read.
 pub(crate) const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// grep-family commands whose first positional arg is a search pattern.
@@ -297,6 +311,228 @@ fn is_identifier_or_path(s: &str) -> bool {
     }) && s.chars().any(|c| c.is_ascii_alphabetic())
 }
 
+/// Commands whose positional arguments name things they **change**.
+///
+/// Deliberately short, and deliberately only commands whose argument shape is
+/// unambiguous. A longer list is not a safer one: every entry is a chance to
+/// misread a flag as a path and refuse a legitimate build step, and a shell
+/// audit that cries wolf gets switched off, at which point it protects
+/// nothing. The commands here cover what actually destroys work in practice.
+const MUTATING_COMMANDS: &[&str] = &[
+    "rm", "rmdir", "touch", "mkdir", "truncate", "chmod", "chown", "shred",
+];
+
+/// Commands whose **last** positional is the thing they change, and whose
+/// earlier positionals are sources they only read.
+///
+/// Split out from [`MUTATING_COMMANDS`] because scanning every argument of
+/// these refuses the read half: `cp /usr/share/doc/example.toml ./config.toml`
+/// copies *from* a system path *into* the workspace, which is exactly the
+/// read the tool's own schema promises is unrestricted. Refusing it would be
+/// a false positive on one of the most ordinary commands there is.
+///
+/// `dd` is deliberately absent from both lists: its target is `of=…` rather
+/// than a positional, so neither shape describes it and pretending otherwise
+/// would be a rule that reads the wrong argument. It is covered by
+/// [`ASSIGNMENT_TARGET_COMMANDS`] instead.
+const LAST_ARG_MUTATING_COMMANDS: &[&str] = &["mv", "cp", "install", "ln"];
+
+/// Commands that name their write target with a `key=value` argument rather
+/// than a positional — `dd of=/etc/passwd` being the one that matters.
+const ASSIGNMENT_TARGET_COMMANDS: &[&str] = &["dd"];
+
+/// What the shell audit concluded about one command.
+///
+/// `None` means "nothing resolvable pointed outside the scope" — which is the
+/// answer for the overwhelming majority of commands, including every one whose
+/// paths this scanner cannot resolve. That is the deliberate bias: see
+/// [`shell_write_audit`].
+///
+/// # What this is, and what it is not
+///
+/// It is a **text audit of the command the model wrote**, performed before the
+/// spawn. It catches the copied absolute path, the `rm -rf /some/other/tree`,
+/// the redirect into a sibling checkout — the mistakes that actually happen.
+///
+/// It is **not a sandbox**, and nothing here should be described as one. A
+/// shell can compute a path (`$(printf '\057etc')`), read one from a file, or
+/// run a script that does either, and no amount of scanning the command text
+/// survives that. The file tools are where confinement is *enforced*, because
+/// they resolve a path and hold a descriptor; this is a fence that stops
+/// honest mistakes and says so.
+///
+/// The bias is toward permitting, and that is a benchmarking decision as much
+/// as a correctness one: a false refusal breaks a build for a reason the agent
+/// cannot diagnose, and one of those costs more than the rare escape this
+/// would have caught.
+fn shell_write_audit(command: &str, ctx: &crate::ctx::ToolCtx) -> Option<String> {
+    let words = shell_words(command);
+    let mut index = 0usize;
+
+    // The denied tree is refused for READING too, which is the one place this
+    // audit checks a non-write. `stella_core::workspace_scope` hides the origin
+    // project from a worktree session, and hides worktrees from everyone else,
+    // because a parallel checkout answers questions about the wrong tree. That
+    // reason applies just as much to `cat ../../src/main.rs` as it does to
+    // `read_file` — so any argument naming a hidden path stops the command,
+    // whatever the command is.
+    //
+    // Unlike the write half this cannot be complete: a shell can compute the
+    // path, or `cd` and use a relative one. It closes the accidental case,
+    // which is the one that actually happens.
+    for word in &words {
+        if word.starts_with('-') || word.contains('$') || word.contains('*') {
+            continue;
+        }
+        if let Some(refusal) = ctx.refuse_read(word) {
+            return Some(refusal);
+        }
+    }
+
+    while index < words.len() {
+        let word = words[index].as_str();
+
+        // A redirect names a file the shell itself will create or truncate,
+        // whatever the command around it is. `2>`, `&>` and `>|` are the same
+        // operator wearing a file descriptor or a clobber flag, so the leading
+        // digits and the trailing `|` come off before the target is read —
+        // without that, `make 2>/etc/x` reads as an ordinary word and is never
+        // checked at all.
+        if let Some(target) = redirect_target(word) {
+            let target = if target.is_empty() {
+                words.get(index + 1).map(String::as_str).unwrap_or("")
+            } else {
+                target
+            };
+            if let Some(refusal) = refuse_if_outside(target, ctx) {
+                return Some(refusal);
+            }
+        }
+
+        // Every positional is a target.
+        if MUTATING_COMMANDS.contains(&word)
+            // `sed -i` and `tee` edit their positionals in place; for `sed`
+            // the in-place flag is what separates a write from a read. Both
+            // spellings, because `--in-place` is not `-i`.
+            || (word == "sed"
+                && segment_args(&words, index)
+                    .iter()
+                    .any(|w| w.starts_with("-i") || *w == "--in-place"))
+            || word == "tee"
+        {
+            for argument in segment_args(&words, index) {
+                if argument.starts_with('-') {
+                    continue;
+                }
+                if let Some(refusal) = refuse_if_outside(argument, ctx) {
+                    return Some(refusal);
+                }
+            }
+        }
+
+        // Only the LAST positional is a target; the rest are sources this
+        // command merely reads, and reads are unrestricted.
+        if LAST_ARG_MUTATING_COMMANDS.contains(&word)
+            && let Some(target) = segment_args(&words, index)
+                .into_iter()
+                .rfind(|argument| !argument.starts_with('-'))
+            && let Some(refusal) = refuse_if_outside(target, ctx)
+        {
+            return Some(refusal);
+        }
+
+        // The target rides an assignment rather than a positional (`dd of=…`).
+        if ASSIGNMENT_TARGET_COMMANDS.contains(&word) {
+            for argument in segment_args(&words, index) {
+                if let Some(target) = argument.strip_prefix("of=")
+                    && let Some(refusal) = refuse_if_outside(target, ctx)
+                {
+                    return Some(refusal);
+                }
+            }
+        }
+
+        index += 1;
+    }
+    None
+}
+
+/// The file a redirect writes to, if `word` is one.
+///
+/// Handles the spellings a naive `strip_prefix('>')` misses, each of which is
+/// an ordinary thing to write and would otherwise sail past the audit
+/// unchecked: a file-descriptor prefix (`2>`, `1>>`), the `&>` both-streams
+/// form, and the `>|` clobber override. `>&` is deliberately NOT a redirect to
+/// a file — `2>&1` duplicates a descriptor and names no path.
+fn redirect_target(word: &str) -> Option<&str> {
+    let after_fd = word.trim_start_matches(|c: char| c.is_ascii_digit());
+    let after_fd = after_fd.strip_prefix('&').unwrap_or(after_fd);
+    let rest = after_fd
+        .strip_prefix(">>")
+        .or_else(|| after_fd.strip_prefix('>'))?;
+    // `2>&1` and `>&2` duplicate a descriptor; there is no file here.
+    if rest.starts_with('&') {
+        return None;
+    }
+    Some(rest.strip_prefix('|').unwrap_or(rest))
+}
+
+/// This command's own arguments: everything up to the next operator.
+///
+/// A pipeline or `&&` ends a command's reach — without that bound,
+/// `rm x && cd /tmp` would read `/tmp` as something `rm` was about to delete.
+fn segment_args(words: &[String], command_index: usize) -> Vec<&str> {
+    words[command_index + 1..]
+        .iter()
+        .map(String::as_str)
+        .take_while(|word| !matches!(*word, ";" | "&" | "&&" | "|" | "||"))
+        .collect()
+}
+
+/// Redirect targets that **discard or re-emit** output rather than writing a
+/// file, and are therefore never the loss this boundary exists to prevent.
+///
+/// This is the whole exemption list, and it is deliberately four character
+/// devices rather than a directory. `command -v jq >/dev/null 2>&1` is the
+/// single most common idiom in shell scripting; refusing it makes the shell
+/// unusable for capability probing while protecting nothing, because nothing
+/// is stored. `/dev/stdout` and `/dev/stderr` write to the pipes Stella is
+/// already capturing.
+///
+/// The system temp directory is deliberately **not** here. It was, briefly,
+/// on the argument that `/tmp` is not the user's work — but the rule this
+/// module enforces is that a session writes inside its own directories, and
+/// `/tmp` is outside them. A session that needs scratch space has a scratch
+/// directory of its own (`STELLA_SCRATCH`, granted as a scope root by
+/// `ToolRegistry::write_scope`), which is where that work belongs and which
+/// is cleaned up with the session. An operator who genuinely wants `/tmp`
+/// writable says so with `--allow-dir /tmp`.
+const ALWAYS_WRITABLE: &[&str] = &["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"];
+
+/// The refusal for one argument, when it resolves to something outside the
+/// session's writable directories.
+///
+/// Anything the scanner cannot resolve to a concrete path — a variable, a
+/// glob, a home-relative `~`, an option-looking token — is **skipped**, not
+/// guessed at. A wrong refusal is worse than a missed one here (see
+/// [`shell_write_audit`]).
+fn refuse_if_outside(argument: &str, ctx: &crate::ctx::ToolCtx) -> Option<String> {
+    if argument.is_empty()
+        || argument.starts_with('$')
+        || argument.starts_with('~')
+        || argument.starts_with('-')
+        || argument.contains('*')
+        || argument.contains('?')
+        || argument.contains('$')
+    {
+        return None;
+    }
+    if ALWAYS_WRITABLE.contains(&argument) {
+        return None;
+    }
+    ctx.refuse_write(argument)
+}
+
 /// The tip a symbol-shaped grep earns: [`crate::search`] answers the same
 /// question by meaning and returns the symbol's neighborhood already attached,
 /// so the usual `grep -rn` → `read_file` → `grep` again round trip collapses
@@ -342,9 +578,11 @@ fn drift_advisory(command: &str, root: &Path) -> Option<String> {
 }
 
 /// A bare `sleep` blocking the whole trial budget goes undetected today:
-/// loop detection sees polls (`read_output`) between the sleeps so the
+/// loop detection sees other calls between the sleeps, so the
 /// interleaved-repeat rung reads the window as progressing, and the budget
-/// guard is spend-based, so idling costs $0. #2022's first step is honest
+/// guard is spend-based, so idling costs $0. (The shape #2022 observed
+/// interleaved `read_output` polls; that tool is gone, but any interleaved
+/// call produces the same blind spot, so the reasoning is unchanged.) #2022's first step is honest
 /// visibility, not a refusal — a static text-shape check on the command, not
 /// a measured elapsed time, so it stays deterministic for the loop detector
 /// (never embed a timing here; see `stella-tool-timings-must-not-ride-tooloutput`).
@@ -388,9 +626,21 @@ fn bare_sleep_seconds(command: &str) -> Option<u64> {
     saw_sleep.then_some(total_secs)
 }
 
-/// A footer naming a bare `sleep` that crossed the advisory threshold, and
-/// the instrument (`read_output`/`wait_for`) that returns as soon as there is
-/// something to see instead of blocking the whole interval.
+/// A footer naming a bare `sleep` that crossed the advisory threshold, and a
+/// remedy the agent can actually perform.
+///
+/// **The remedy has to name a tool that exists.** This advisory shipped for a
+/// while pointing at `read_output`/`wait_for` — the managed-process family,
+/// which #3244 deleted and the tool restore did not bring back. Every long
+/// bare `sleep` therefore handed the model a directive with no tool behind it,
+/// which is worse than the silence it replaced: an instruction that cannot be
+/// followed teaches the model to discount the next one too. The text was
+/// restored verbatim along with the rest of `bash`, and the stale half was
+/// only caught by an issue sweep afterwards.
+///
+/// So the wording now stays inside what the surface offers: a short poll in a
+/// loop, which `bash` can do on its own, and which returns as soon as the
+/// condition holds instead of blocking the whole interval.
 fn sleep_advisory(command: &str) -> Option<String> {
     let secs = bare_sleep_seconds(command)?;
     if secs < SLEEP_ADVISORY_THRESHOLD_SECS {
@@ -398,9 +648,11 @@ fn sleep_advisory(command: &str) -> Option<String> {
     }
     Some(format!(
         "\n\nnote: this call blocked for {secs}s inside a bare `sleep` with no other work in \
-         it. If you are waiting on a background process, poll with `read_output`/`wait_for` \
-         instead — they return as soon as there is something to see, so a short poll costs less \
-         of the trial's budget than sleeping through the whole interval."
+         it, and the whole interval was charged to the turn whether or not the thing you are \
+         waiting for finished early. If you are waiting on something, poll for the condition \
+         instead of sleeping through it — a bounded retry loop that checks and exits as soon \
+         as the check passes (for example `for i in $(seq 30); do <check> && break; sleep 1; \
+         done`) costs a fraction of a blind wait."
     ))
 }
 
@@ -428,7 +680,15 @@ impl Tool for Bash {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "bash".into(),
-            description: "Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop.".into(),
+            description: "Run a shell command in the workspace root. Returns stdout+stderr with a \
+                timeout backstop. You can READ anything on this machine — system headers, the \
+                toolchain, a dependency's source. You can only CHANGE things inside this \
+                session's directories (get_environment reports the workspace root), so a \
+                command that creates, edits, deletes or moves a file elsewhere is refused \
+                before it runs. Prefer write_file/edit_file/delete_file over shell equivalents \
+                for files in the workspace: their changes are what this turn's diff and \
+                verification are computed from."
+                .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -451,6 +711,14 @@ impl Tool for Bash {
                 return ToolOutput::from(err);
             }
         };
+        // Audited before the spawn, on the text the model wrote: a refusal
+        // that arrives after the process has run is a report, not a fence.
+        // Read `shell_write_audit` on why this permits far more than it
+        // refuses, and on why it is not a sandbox.
+        if let Some(refusal) = shell_write_audit(command, ctx) {
+            return ToolOutput::error(refusal);
+        }
+
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         // trace: true prefixes `set -x` so every executed line echoes to
         // stderr — an execution trace a verifier can demand as evidence.
@@ -1013,7 +1281,18 @@ mod tests {
         );
         let note = sleep_advisory("sleep 300; echo done").expect("over threshold");
         assert!(note.contains("300s"));
-        assert!(note.contains("read_output"));
+        // The remedy must be one the agent can actually perform. This
+        // assertion used to require the string `read_output` — a tool #3244
+        // deleted — so it kept a directive with no tool behind it green for
+        // as long as it existed. Now it pins that the note names polling,
+        // and that it names NO tool the catalog does not carry.
+        assert!(note.contains("poll"), "{note}");
+        for gone in ["read_output", "wait_for", "start_process"] {
+            assert!(
+                !note.contains(gone),
+                "the advisory names `{gone}`, which is not on the tool surface: {note}"
+            );
+        }
     }
 
     #[tokio::test]

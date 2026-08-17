@@ -301,7 +301,16 @@ fn render_diff_pane(
     let (added, removed) = record.map(|r| (r.added, r.removed)).unwrap_or((0, 0));
     match diff_text {
         Some((text, current)) if !text.is_empty() => {
-            let mut lines = diff::body_lines(text, record.map(|r| r.path.as_str()));
+            // A viewer scrolls, so its budget is the generous one — but it is
+            // still a budget: a generated file arrives as one hunk of
+            // thousands of `+` lines, and this pane re-renders on every frame.
+            let mut lines = diff::body_lines_capped(
+                text,
+                record.map(|r| r.path.as_str()),
+                stella_diff::view::VIEW_CAP,
+                None,
+            )
+            .0;
             // Say so when this is an EARLIER mutation's diff. The most recent
             // mutation can legitimately arrive without one (the adoption
             // re-emit attaches numstat and diff text in separate calls, either

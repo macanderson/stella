@@ -467,18 +467,16 @@ fn entry_body(
                 } else {
                     INLINE_DIFF_CAP
                 };
-                let (body, hidden) = diff::body_lines_inline(d, Some(&dref.path), cap);
+                // The fold row is the renderer's, not this call site's: a
+                // head-and-tail rendering elides the *middle*, so the marker
+                // has to sit where the missing lines were. Appending it after
+                // the body — which is what happened here until the shared
+                // policy landed — would put "and there is more" under a
+                // rendering whose last row is already the file's last row.
+                let (body, _) =
+                    diff::body_lines_inline(d, Some(&dref.path), cap, Some(" · ctrl+o"));
                 for line in body {
                     push_diff_line(line, out);
-                }
-                if hidden > 0 {
-                    push_diff_line(
-                        Line::from(Span::styled(
-                            format!("⋯ {} · ctrl+o", plural_lines(hidden)),
-                            Style::new().fg(theme::MUTED),
-                        )),
-                        out,
-                    );
                 }
             }
         }

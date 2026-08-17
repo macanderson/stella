@@ -47,7 +47,8 @@ Anything below that would weaken these is out of scope by construction.
 **Update (#2584): the ladder took the principle to its end.** This document was
 written when the ladder's inconclusive arm escalated to a model verifier, and
 several sections below reason about *when that call is bought*. It is no longer
-bought at any rung — `ladder_decision` is terminal at all five outcomes, and
+bought at any rung — `ladder_decision` is terminal at every arm of
+`LadderDecision`, that enum being the enumeration (#3473), and
 inconclusive evidence resolves to `LadderRung::Unverified` with no model
 consulted. Read every "buys/spares the verifier call" below as **"buys/spares
 the escalation"**: the decisions still happen and the guards still run, but what

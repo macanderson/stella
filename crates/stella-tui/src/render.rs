@@ -540,7 +540,12 @@ pub(crate) fn render_slash_popup(
 /// Public because the plain surface renders the same capped diff (#2421) and
 /// a second number would be a second policy: "how much diff is glanceable" is
 /// one judgement about reading, not about ratatui.
-pub const INLINE_DIFF_CAP: usize = 20;
+///
+/// It is not about *terminals* either, which is why the number itself now
+/// lives in [`stella_diff::view`] beside the policy that spends it: the
+/// Observatory and an exported dashboard render the same edit, and a cap that
+/// disagreed across them would make one change look like three.
+pub const INLINE_DIFF_CAP: usize = stella_diff::view::INLINE_CAP;
 
 /// Re-exported for the same reason as [`INLINE_DIFF_CAP`]: the plain surface
 /// previews a chain of thought to the same depth the deck does, and the depth

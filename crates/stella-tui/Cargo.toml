@@ -15,6 +15,10 @@ stella-tools = { path = "../stella-tools" }
 # plane's stderr sink must not write to it (see `term::TerminalGuard`).
 # stella-diag is a leaf crate by construction, so this adds no cycle.
 stella-diag = { path = "../stella-diag" }
+# Only for `view` — the shared "how much of a diff is shown, and which part"
+# policy, so the deck, the plain surface, the Observatory and an export all
+# elide one edit identically. Also a dependency-free leaf, so no cycle.
+stella-diff = { path = "../stella-diff" }
 arboard.workspace = true
 png.workspace = true
 serde_json.workspace = true

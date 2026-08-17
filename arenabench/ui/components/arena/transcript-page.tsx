@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { api } from "@/lib/api";
+import { INLINE_DIFF_CAP, selectDiffLines } from "@/lib/diff-view";
 import type { Cell, Snapshot, TranscriptEntry } from "@/lib/types";
 import { fmtClock, fmtDuration, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
@@ -376,10 +377,6 @@ function salientLine(text: string): number {
   return firstNonBlank;
 }
 
-/** Collapsed inline-diff line budget, matching the deck's
- * `crates/stella-tui/src/render.rs::INLINE_DIFF_CAP` exactly. */
-const INLINE_DIFF_CAP = 20;
-
 type DiffTone = "add" | "remove" | "hunk" | "meta" | "context";
 
 type DiffRow = {
@@ -444,60 +441,6 @@ function parseDiff(diff: string): DiffRow[] {
     // interleaves: rendered plain and unnumbered.
     return { text, tone: "context", no: null };
   });
-}
-
-/**
- * Which diff lines a cap-limited render keeps — the deck's hunk-aware cap
- * (`crates/stella-tui/src/diff.rs::select_lines`). Whole hunks are emitted
- * while they fit and the rest dropped, rather than slicing at line `cap`: a
- * flat cut lands wherever it lands — routinely between a `-` line and the
- * `+` line replacing it — leaving a change that reads as a pure deletion.
- * Only when the first hunk alone overruns the budget does this fall back to
- * a window: the `@@` header (the line that says *where* in the file this
- * is), then the body from two context lines above the first real change.
- */
-function selectDiffLines(raw: string[], cap: number): boolean[] {
-  const n = raw.length;
-  if (n <= cap) return raw.map(() => true);
-  const keep = raw.map(() => false);
-  const bounds: number[] = [];
-  raw.forEach((line, i) => {
-    if (line.startsWith("@@")) bounds.push(i);
-  });
-  if ((bounds[0] ?? 1) !== 0) bounds.unshift(0);
-  bounds.push(n);
-
-  let used = 0;
-  for (let w = 0; w + 1 < bounds.length; w++) {
-    const [start, end] = [bounds[w], bounds[w + 1]];
-    if (used + (end - start) > cap) break;
-    keep.fill(true, start, end);
-    used += end - start;
-  }
-  if (used > 0) return keep;
-
-  const end = bounds[1];
-  let firstChange = 0;
-  for (let i = 0; i < end; i++) {
-    if ((raw[i].startsWith("+") || raw[i].startsWith("-")) && !isDiffMeta(raw[i])) {
-      firstChange = i;
-      break;
-    }
-  }
-  const header = raw.slice(0, end).findIndex((line) => line.startsWith("@@"));
-  let budget = cap;
-  if (header !== -1) {
-    keep[header] = true;
-    budget -= 1;
-  }
-  const start = Math.max(firstChange - 2, header === -1 ? 0 : header + 1);
-  for (let i = start; i < end && budget > 0; i++) {
-    if (!keep[i]) {
-      keep[i] = true;
-      budget -= 1;
-    }
-  }
-  return keep;
 }
 
 const DIFF_TONE_TEXT: Record<DiffTone, string> = {
@@ -865,22 +808,42 @@ function Entry({
     const diffText = typeof meta.diff === "string" ? meta.diff : "";
     const hasDiff = diffText.length > 0;
     const diffAll = hasDiff ? parseDiff(diffText) : [];
-    const diffKeep = resultOpen
-      ? diffAll.map(() => true)
+    const diffPlan = resultOpen
+      ? { keep: diffAll.map(() => true), hidden: 0, foldBefore: -1 }
       : selectDiffLines(
           diffAll.map((row) => row.text),
           INLINE_DIFF_CAP,
         );
+    const diffKeep = diffPlan.keep;
     // A lone hunk header is dropped (`diff.rs::body_lines_inline`): inline
     // under a call row it restates what the gutter beside it already says,
     // and a two-line change should not cost three rows. With several hunks
     // the headers stay — there they are the boundary between two disjoint
     // regions of the file.
     const multiHunk = diffAll.filter((row) => row.tone === "hunk").length > 1;
-    const diffShown = diffAll.filter(
-      (row, i) => diffKeep[i] && (multiHunk || row.tone !== "hunk"),
-    );
-    const diffHidden = diffKeep.filter((kept) => !kept).length;
+    const diffHidden = diffPlan.hidden;
+    // The elision is drawn WHERE the lines were, as a row of its own. Stated
+    // only in the fold summary below, a head-and-tail rendering would read as
+    // "the change continues past the bottom" under a row that is already the
+    // change's last line.
+    const diffShown: DiffRow[] = [];
+    diffAll.forEach((row, i) => {
+      if (i === diffPlan.foldBefore && diffHidden > 0) {
+        diffShown.push({
+          text: `⋯ ${diffHidden} ${diffHidden === 1 ? "line" : "lines"} not shown`,
+          tone: "meta",
+          no: null,
+        });
+      }
+      if (diffKeep[i] && (multiHunk || row.tone !== "hunk")) diffShown.push(row);
+    });
+    if (diffPlan.foldBefore === diffAll.length && diffHidden > 0) {
+      diffShown.push({
+        text: `⋯ ${diffHidden} ${diffHidden === 1 ? "line" : "lines"} not shown`,
+        tone: "meta",
+        no: null,
+      });
+    }
     // The collapsed window anchors on the SALIENT line, not line 1 — see
     // `salientLine`'s doc comment — and its size is the deck's own budget: a
     // success shows a single line, a failure shows six.
@@ -903,9 +866,9 @@ function Entry({
       meta.unrecognized ? "unrecognized output shape" : null,
     ].filter(Boolean);
     const foldParts = [
-      diffHidden > 0
-        ? `${diffHidden} more diff ${diffHidden === 1 ? "line" : "lines"}`
-        : null,
+      // Not the diff's own hidden count: the `⋯ n lines not shown` row inside
+      // the diff already carries it, in the place it happened.
+      null,
       hidden > 0
         ? hasDiff
           ? `${hidden} output ${hidden === 1 ? "line" : "lines"}`

@@ -88,6 +88,10 @@ pub(super) const DECK_BUILTINS: &[(&str, &str)] = &[
         "open the SETTINGS tab — the home of all config (models included)",
     ),
     ("/donate", "support stella — become a GitHub Sponsor"),
+    (
+        "/add-dir",
+        "let this session write inside another directory",
+    ),
     ("/reload", "refresh your stella configurations"),
 ];
 

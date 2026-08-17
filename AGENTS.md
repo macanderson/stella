@@ -454,13 +454,15 @@ creates the oracle rather than substituting for one — its test either goes
 fail→pass or does not, and that is decided by running it. Everything downstream
 is deterministic: `ladder_decision`
 (`crates/stella-pipeline/src/verify.rs`) is terminal at **every** one of its
-outcomes — the `LadderDecision` enum beside it is the enumeration, and today
-that is `SubmitFast`, `Revise`, `WitnessUnsatisfiable`, `NothingAttempted`,
-`Unverifiable` and `Unverified`. The count is deliberately not the load-bearing
-half of that sentence: what matters is that no arm escalates to a model, which
-the enum's own doc comments each state. (This paragraph said "all five" and
-omitted `WitnessUnsatisfiable` for as long as that variant existed — #3473,
-the shared-cell drift this file warns about, in this file.) The verify stage
+outcomes, and **no arm escalates to a model** — which is the load-bearing half
+and is *not* implied by terminality, since a terminal arm could spend a verifier
+call and then stop. That guarantee is stated once, in the `LadderDecision`
+enum's own doc comment, quantified over the variants beside it; this file
+deliberately does not restate the list or its count, because a number copied
+into a second file drifts. It did: this paragraph said "all five" and omitted
+`WitnessUnsatisfiable` for as long as that variant existed, and so did five
+other copies including the enum doc it now cites (#3473) — the shared-cell
+failure this file warns about, in this file. The verify stage
 emits the `Verdict` event from that answer directly — the
 pipeline never emits `StageKind::Verdict` itself, which is why the rank above is
 an ordering, not a stage the run passes through. The model verdict and the
@@ -546,7 +548,7 @@ the files you must plan around (see below).
 | Change how a plugin is **installed, listed, removed, or trusted** — `.stella/plugins/` and `~/.stella/plugins/` resolution, install consent, the project-tier trust gate | [`stella-cli`](crates/stella-cli/README.md) | `src/plugin_cmd.rs` + `src/plugin_cmd/{roster,process}.rs` — renders `stella_plugin::consent_text` before anything executes, gates a cloned repository's plugins on `project_code_execution_trusted()` (#3509), and is the one place `LoopGrant::permits_hook`/`permits_point` get consulted against an installed manifest. |
 | Decide whether a human is present to see/answer a mid-run prompt | [`stella-tty`](crates/stella-tty/README.md) | **A leaf with NO dependencies at all** (#3036) — one pure `human_can_answer(interactive_output, stdin_is_terminal, prompt_is_visible)`, which is what lets `stella-cli`'s approval prompts and `stella-model`'s credential prompt share one derivation without `stella-model` depending on `stella-cli` (invariant 1). |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
-| Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
+| Compute, parse, or bound the display of a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies by default** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md), [`stella-cli`](crates/stella-cli/README.md) and [`stella-tui`](crates/stella-tui/README.md) share one differ without costing the observatory its isolation. Its `view` module is also the one answer to *how much* of a diff a surface draws and which part, so the deck, the plain surface, the dashboard and an export cannot elide one edit three different ways. The single dependency is `serde_json`, behind an **off-by-default `json` feature**: a caller wanting only the differ still links nothing, and the alternative was three crates hand-writing one hunk serializer. |
 | Change the self-driving loop's decision logic — the AIMD controller, the aperture ladder, the dry-streak oracle, the finding-dedup digest, the governor, the `runs.jsonl` fold | [`stella-autonomy`](crates/stella-autonomy/README.md) | **A leaf with NO workspace-crate dependencies** (moved out of `stella-core`, `doc:pipeline-as-plugins` §10 D1) — which is what lets [`stella-observatory`](crates/stella-observatory/README.md) share the exact same fold `stella self-driving` uses instead of drifting from a private copy, the bug #1613 was filed for. |
 | Turn text into a vector, or compare two vectors honestly | [`stella-embed`](crates/stella-embed/README.md) | **A leaf with NO workspace-crate dependencies** — the `Embedder` seam, the fingerprint every stored vector is stamped with, the `SimilarityPosture` a backend must declare, and a pure deterministic ranker. Shared by [`stella-context`](crates/stella-context/README.md) (retrieval) and [`stella-graph`](crates/stella-graph/README.md) (semantic code search) so neither has to depend on the other. |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |

@@ -56,7 +56,7 @@ stella-runtime = { path = "../stella-runtime" }
 stella-model = { path = "../stella-model" }
 # The pure unified differ behind `stella inspect --diff`, extracted to a leaf
 # crate (#1511) so the Observatory's prompt-diff route shares it.
-stella-diff = { path = "../stella-diff" }
+stella-diff = { path = "../stella-diff", features = ["json"] }
 # The plugin manifest and its consent rendering (#3245, #3380). The loader
 # (`stella plugin install|list|remove`) is a client of this crate and nothing
 # more: parsing, validation and the words shown at install all live there, so
