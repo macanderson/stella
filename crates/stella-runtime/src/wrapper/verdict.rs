@@ -63,6 +63,29 @@ use stella_plugin::{
 /// A rule with no requirements is [`Verdict::Met`]: a steering-grade wrapper
 /// that contributes context and gathers nothing has nothing to hold open, and
 /// inventing a requirement for it would be the host deciding done.
+///
+/// # A check narrows done; it never widens it
+///
+/// The flip policy and the `[[oracle.checks]]` entries on a requirement are
+/// **conjuncts**, never alternatives. Under [`FlipPolicy::Required`] every
+/// requirement must clear the flip *and* the tamper exclusion *and* every
+/// check that names it — so declaring a check can only ever remove a
+/// requirement from the met set, never add one.
+///
+/// This is not a stylistic preference. Treating a check as a *replacement* for
+/// the flip is the whole failure this socket exists to foreclose, reached
+/// without a model call: a plugin declares one trivial budget, rewrites the
+/// witness, never goes red→green, and is credited done — the worker grading
+/// its own work, which `doc:pipeline-as-plugins` §6 names and #3510 witnessed.
+/// [`judge`] being synchronous and I/O-free guarantees no model is asked; it
+/// is this conjunction that keeps the oracle *binding*.
+///
+/// [`FlipPolicy::NotApplicable`] contributes no conjunct, because it is the
+/// declaration that this oracle's evidence is not a flip at all. It is
+/// strictly more demanding rather than an escape: with nothing else to decide
+/// a requirement, a manifest whose requirement no check decides is refused at
+/// load (`ManifestError::UndecidableRequirement`), and a hand-built rule that
+/// skipped validation abstains here.
 #[must_use]
 pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
     if rule.requirements.is_empty() {
@@ -87,6 +110,10 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
     };
 
     for (name, statement) in &rule.requirements {
+        // Every check naming this requirement conjoins with every other one
+        // (`stella_plugin::OracleCheck`), and that whole conjunction then
+        // conjoins with the flip below — the loop deliberately falls through
+        // to it rather than `continue`ing past it (#3510).
         let mut decided_by_check = false;
         for check in oracle.checks.iter().filter(|c| &c.requirement == name) {
             decided_by_check = true;
@@ -121,9 +148,6 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
             }
         }
 
-        if decided_by_check {
-            continue;
-        }
         match &flip {
             FlipCredit::Credited => {}
             FlipCredit::Denied(because) => unmet.push(UnmetRequirement {
@@ -132,12 +156,18 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
                 because: because.clone(),
             }),
             FlipCredit::Undecided(reason) => abstain(reason.clone()),
-            // `flip = "not-applicable"` with a requirement no check decides is
-            // `ManifestError::UndecidableRequirement` at load; a hand-built
-            // rule reaches it here and abstains rather than crediting.
-            FlipCredit::NoFlipPolicy => abstain(UndecidedReason::Undecidable {
-                requirement: name.clone(),
-            }),
+            // `flip = "not-applicable"` contributes no conjunct at all — it is
+            // the declaration that this oracle's evidence is not a flip, so a
+            // check is the only thing that can decide. A requirement no check
+            // decides is then `ManifestError::UndecidableRequirement` at load;
+            // a hand-built rule reaches it here and abstains rather than
+            // crediting.
+            FlipCredit::NoFlipPolicy if !decided_by_check => {
+                abstain(UndecidedReason::Undecidable {
+                    requirement: name.clone(),
+                });
+            }
+            FlipCredit::NoFlipPolicy => {}
         }
     }
 
@@ -150,8 +180,11 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
     }
 }
 
-/// What the declared flip policy says about the evidence, for every
-/// requirement no check decides.
+/// What the declared flip policy says about the evidence.
+///
+/// It is a fact about the *run*, not about one requirement, so it is computed
+/// once and conjoined with every requirement's checks — a check cannot excuse
+/// a requirement from it (#3510).
 enum FlipCredit {
     /// The flip was observed and the artifacts are the ones that were
     /// authored.

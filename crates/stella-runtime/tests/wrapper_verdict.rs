@@ -15,8 +15,9 @@
 //! can read against `doc:wrapper-socket` §5 rather than a second copy of the
 //! same `match`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use proptest::prelude::*;
 use stella_plugin::{
     Continuation, EvidenceSet, FlipObservation, FlipPolicy, LoopGrant, Oracle, OracleCheck,
     OracleCommand, Outcome, Participation, RoundState, StopReason, TamperFinding, TamperPolicy,
@@ -29,10 +30,10 @@ const STATEMENT: &str = "the change is proven by the witness";
 
 fn oracle(flip: FlipPolicy, checks: Vec<OracleCheck>, measurements: Vec<String>) -> Oracle {
     Oracle {
-        command: OracleCommand {
+        command: Some(OracleCommand {
             argv: vec!["oracle".into()],
             timeout_secs: 60,
-        },
+        }),
         flip,
         tamper: TamperPolicy::ArtifactIdentity,
         measurements,
@@ -48,12 +49,14 @@ fn flip_rule(flip: FlipPolicy) -> VerdictRule {
     }
 }
 
-/// A rule whose single requirement is decided by a budget.
-fn budget_rule() -> VerdictRule {
+/// A rule whose single requirement is decided by a budget under the declared
+/// `flip` policy — `not-applicable` for the falsifier's performance-budget
+/// shape, `required` for the conjunction #3510 is about.
+fn budget_rule_under(flip: FlipPolicy) -> VerdictRule {
     VerdictRule {
         requirements: BTreeMap::from([(REQUIREMENT.to_string(), STATEMENT.to_string())]),
         oracle: Some(oracle(
-            FlipPolicy::NotApplicable,
+            flip,
             vec![OracleCheck {
                 requirement: REQUIREMENT.into(),
                 rule: "p50 <= 105".into(),
@@ -61,6 +64,11 @@ fn budget_rule() -> VerdictRule {
             vec!["p50".into()],
         )),
     }
+}
+
+/// A rule whose single requirement is decided by a budget alone.
+fn budget_rule() -> VerdictRule {
+    budget_rule_under(FlipPolicy::NotApplicable)
 }
 
 fn evidence(flip: FlipObservation, tamper: TamperFinding) -> EvidenceSet {
@@ -98,6 +106,10 @@ fn judge_is_total_over_the_evidence_vocabulary() {
         ("flip required", flip_rule(FlipPolicy::Required)),
         ("flip not applicable", flip_rule(FlipPolicy::NotApplicable)),
         ("budget", budget_rule()),
+        (
+            "flip required + budget",
+            budget_rule_under(FlipPolicy::Required),
+        ),
     ];
     let measurement_sets = [
         ("absent", BTreeMap::new()),
@@ -119,19 +131,24 @@ fn judge_is_total_over_the_evidence_vocabulary() {
                     let case = format!("{rule_name} / {flip:?} / {tamper:?} / {set_name}");
 
                     if verdict == Verdict::Met {
-                        let credited_by_flip = flip == FlipObservation::Achieved
-                            && tamper == TamperFinding::Clean
-                            && rule
-                                .oracle
-                                .as_ref()
-                                .is_some_and(|o| o.flip == FlipPolicy::Required);
-                        let credited_by_budget =
-                            rule.oracle.as_ref().is_some_and(|o| o.decides(REQUIREMENT))
-                                && measurements.get("p50").is_some_and(|&v| v <= 105);
-                        assert!(
-                            credited_by_flip || credited_by_budget,
-                            "Met without evidence that earns it: {case}"
-                        );
+                        // The two halves **conjoin** (#3510). A rule that
+                        // declares both must satisfy both; declaring a check
+                        // does not excuse the requirement from the flip.
+                        let flip_required = rule
+                            .oracle
+                            .as_ref()
+                            .is_some_and(|o| o.flip == FlipPolicy::Required);
+                        let checked = rule.oracle.as_ref().is_some_and(|o| o.decides(REQUIREMENT));
+                        let flip_earned =
+                            flip == FlipObservation::Achieved && tamper == TamperFinding::Clean;
+                        let budget_earned = measurements.get("p50").is_some_and(|&v| v <= 105);
+                        let earned = match (flip_required, checked) {
+                            (true, true) => flip_earned && budget_earned,
+                            (true, false) => flip_earned,
+                            (false, true) => budget_earned,
+                            (false, false) => false,
+                        };
+                        assert!(earned, "Met without evidence that earns it: {case}");
                     }
 
                     // Whatever the answer, it must round-trip: a verdict is
@@ -417,6 +434,7 @@ fn the_hold_allowance_is_the_ask_clamped_to_the_hosts_ceiling() {
     let arbiter = |ask: Option<u32>| LoopGrant {
         participation: Participation::Arbiter,
         hooks: vec![stella_plugin::HookEvent::Stop],
+        points: vec![stella_plugin::WrapperPoint::AfterTurn],
         max_holds: ask,
     };
     let round = |spent: u32, ceiling: u32| RoundState {
@@ -492,6 +510,7 @@ fn an_abstention_does_not_buy_another_turn() {
         &LoopGrant {
             participation: Participation::Arbiter,
             hooks: vec![stella_plugin::HookEvent::Stop],
+            points: vec![stella_plugin::WrapperPoint::AfterTurn],
             max_holds: Some(8),
         },
     );
@@ -503,4 +522,255 @@ fn an_abstention_does_not_buy_another_turn() {
             }
         }
     );
+}
+
+/// #3510's witness. A manifest declaring `flip = "required"`, `tamper =
+/// "artifact-identity"` **and** a `[[oracle.checks]]` entry on the same
+/// requirement conjoins all three; the check does not stand in for the other
+/// two.
+///
+/// Before the fix, `judge` treated any requirement a check named as decided by
+/// that check alone, so this rule answered [`Verdict::Met`] for a run that
+/// never went red→green and whose witness file had been rewritten — a plugin
+/// declaring one trivial budget could buy itself a completion. That is the
+/// worker grading its own work (`doc:pipeline-as-plugins` §6), reached without
+/// a model call, which is why `judge`'s purity did not catch it.
+#[test]
+fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion() {
+    let rule = budget_rule_under(FlipPolicy::Required);
+    let within_budget = BTreeMap::from([("p50".to_string(), 100)]);
+    let unmet = |because: UnmetBecause| Verdict::Unmet {
+        unmet: vec![stella_plugin::UnmetRequirement {
+            requirement: REQUIREMENT.into(),
+            statement: STATEMENT.into(),
+            because,
+        }],
+    };
+
+    // The exact repro: a passing budget, no flip, and a rewritten witness.
+    assert_eq!(
+        judge(
+            &rule,
+            &EvidenceSet {
+                flip: FlipObservation::NotAchieved,
+                tamper: TamperFinding::Tampered {
+                    artifact: "tests/witness.rs".into()
+                },
+                measurements: within_budget.clone(),
+            }
+        ),
+        unmet(UnmetBecause::NoFlip {
+            observed: FlipObservation::NotAchieved
+        }),
+        "a declared check must not void the flip requirement"
+    );
+
+    // Tampering alone, with the flip observed and the budget held.
+    assert_eq!(
+        judge(
+            &rule,
+            &EvidenceSet {
+                flip: FlipObservation::Achieved,
+                tamper: TamperFinding::Tampered {
+                    artifact: "tests/witness.rs".into()
+                },
+                measurements: within_budget.clone(),
+            }
+        ),
+        unmet(UnmetBecause::Tampered {
+            artifact: "tests/witness.rs".into()
+        }),
+        "a declared check must not void the tamper exclusion"
+    );
+
+    // A tamper snapshot nobody took still abstains rather than crediting.
+    assert_eq!(
+        judge(
+            &rule,
+            &EvidenceSet {
+                flip: FlipObservation::Achieved,
+                tamper: TamperFinding::NotChecked,
+                measurements: within_budget.clone(),
+            }
+        ),
+        Verdict::Undecided {
+            reason: UndecidedReason::TamperUnchecked
+        }
+    );
+
+    // The conjunction narrows, it does not forbid: both halves satisfied is
+    // still `Met`, so a plugin declaring a budget alongside a flip stays
+    // expressible.
+    assert_eq!(
+        judge(
+            &rule,
+            &EvidenceSet {
+                flip: FlipObservation::Achieved,
+                tamper: TamperFinding::Clean,
+                measurements: within_budget,
+            }
+        ),
+        Verdict::Met
+    );
+
+    // ...and the check keeps its own force under a credited flip.
+    assert_eq!(
+        judge(
+            &rule,
+            &EvidenceSet {
+                flip: FlipObservation::Achieved,
+                tamper: TamperFinding::Clean,
+                measurements: BTreeMap::from([("p50".to_string(), 118)]),
+            }
+        ),
+        unmet(UnmetBecause::Budget {
+            check: "p50 <= 105".into(),
+            reported: 118
+        })
+    );
+}
+
+/// The requirements `judge` credits, read one at a time.
+///
+/// [`judge`] answers for a whole rule and folds the clauses together (a
+/// determinate failure outranks an abstention), so there is no met *set* in
+/// its return type. Asking the same question against a one-requirement rule
+/// carrying the same oracle and the same evidence recovers it, and is faithful
+/// because every clause is decided from the oracle and the evidence alone —
+/// nothing about one requirement can change the answer for another.
+fn met_requirements(rule: &VerdictRule, evidence: &EvidenceSet) -> BTreeSet<String> {
+    rule.requirements
+        .iter()
+        .filter(|(name, statement)| {
+            let one = VerdictRule {
+                requirements: BTreeMap::from([((*name).clone(), (*statement).clone())]),
+                oracle: rule.oracle.clone(),
+            };
+            judge(&one, evidence) == Verdict::Met
+        })
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+const NAMES: [&str; 3] = ["proven", "fast", "small"];
+const MEASUREMENTS: [&str; 3] = ["p50", "p99", "ghost"];
+const OPS: [&str; 6] = [">", ">=", "<", "<=", "==", "!="];
+
+fn any_requirements() -> impl Strategy<Value = BTreeMap<String, String>> {
+    prop::collection::btree_set(prop::sample::select(NAMES.as_slice()), 1..=NAMES.len()).prop_map(
+        |names| {
+            names
+                .into_iter()
+                .map(|n| (n.to_string(), format!("{n} is established")))
+                .collect()
+        },
+    )
+}
+
+/// One check, occasionally written outside the closed grammar — an unreadable
+/// rule is an arm of the input space too, and it must abstain rather than
+/// credit.
+fn any_check() -> impl Strategy<Value = OracleCheck> {
+    (
+        prop::sample::select(NAMES.as_slice()),
+        prop::sample::select(MEASUREMENTS.as_slice()),
+        prop::sample::select(OPS.as_slice()),
+        0u64..200,
+        prop::bool::weighted(0.1),
+    )
+        .prop_map(
+            |(requirement, measurement, op, value, unreadable)| OracleCheck {
+                requirement: requirement.to_string(),
+                rule: if unreadable {
+                    format!("{measurement}{op}{value}")
+                } else {
+                    format!("{measurement} {op} {value}")
+                },
+            },
+        )
+}
+
+fn any_evidence() -> impl Strategy<Value = EvidenceSet> {
+    let tamper = prop_oneof![
+        Just(TamperFinding::Clean),
+        Just(TamperFinding::NotChecked),
+        Just(TamperFinding::Tampered {
+            artifact: "tests/witness.rs".into()
+        }),
+    ];
+    let measurements = prop::collection::btree_map(
+        prop::sample::select(MEASUREMENTS.as_slice()).prop_map(str::to_string),
+        0u64..200,
+        0..MEASUREMENTS.len(),
+    );
+    (prop::sample::select(FLIPS.as_slice()), tamper, measurements).prop_map(
+        |(flip, tamper, measurements)| EvidenceSet {
+            flip,
+            tamper,
+            measurements,
+        },
+    )
+}
+
+proptest! {
+    /// **A check narrows done; it never widens it.** This is the durable
+    /// statement of #3510's invariant, and the reason it is a property rather
+    /// than a case: it is quantified over every oracle a manifest can express,
+    /// not over the one shape that happened to be reported.
+    ///
+    /// Adding an `[[oracle.checks]]` entry to any oracle, against any
+    /// evidence, may only *remove* requirements from the met set. The single
+    /// exemption is named and bounded: an oracle declaring
+    /// `flip = "not-applicable"` contributes no conjunct at all, so a check is
+    /// the sole decider of the requirement it names — and a manifest that
+    /// leaves one undecided is refused at load
+    /// (`ManifestError::UndecidableRequirement`), so that exemption cannot be
+    /// reached through a validated manifest either. Under
+    /// [`FlipPolicy::Required`] the exemption is empty, which is the defect
+    /// exactly.
+    #[test]
+    fn a_check_can_only_narrow_the_met_set(
+        requirements in any_requirements(),
+        base in prop::collection::vec(any_check(), 0..3),
+        extra in any_check(),
+        evidence in any_evidence(),
+        policy in prop::sample::select(vec![FlipPolicy::Required, FlipPolicy::NotApplicable]),
+    ) {
+        let declared: Vec<String> = MEASUREMENTS.iter().map(|m| (*m).to_string()).collect();
+        let narrow = VerdictRule {
+            requirements: requirements.clone(),
+            oracle: Some(oracle(policy, base.clone(), declared.clone())),
+        };
+        let widened = VerdictRule {
+            requirements,
+            oracle: Some(oracle(
+                policy,
+                base.iter().cloned().chain(std::iter::once(extra)).collect(),
+                declared,
+            )),
+        };
+
+        let before = met_requirements(&narrow, &evidence);
+        let after = met_requirements(&widened, &evidence);
+
+        let exempt: BTreeSet<String> = if policy == FlipPolicy::NotApplicable {
+            narrow
+                .requirements
+                .keys()
+                .filter(|name| {
+                    !narrow.oracle.as_ref().is_some_and(|o| o.decides(name))
+                })
+                .cloned()
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
+
+        let added: BTreeSet<&String> = after.difference(&before).collect();
+        prop_assert!(
+            added.iter().all(|name| exempt.contains(*name)),
+            "a check widened done: {added:?} became met only once it was added \
+             (policy {policy:?}, evidence {evidence:?})"
+        );
+    }
 }
