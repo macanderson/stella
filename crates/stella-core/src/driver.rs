@@ -127,6 +127,7 @@ use loop_evidence::{ResultIdentities, snapshot_result_identities};
 use stella_protocol::ToolResult;
 use tokio::sync::mpsc::UnboundedSender;
 
+pub mod capabilities;
 mod completion;
 pub(crate) mod deadline_notice;
 mod dispatch;

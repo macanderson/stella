@@ -58,10 +58,15 @@
 //! and `truncated` says so rather than hiding it.
 //!
 //! **Every seam the parent has, the child has** — except the one it must
-//! not. [`Engine::with_sleeper`] cannot carry `gate`/`steering`/`hooks`
-//! (they are builder-set private fields), which is precisely why
-//! `goal.rs::assess` silently dropped all three when it hand-rolled a verifier
-//! engine. Constructing the child here, in the same crate, carries them:
+//! not. [`Engine::with_sleeper`] leaves `gate`/`steering`/`hooks` unset, and
+//! each is turned on by its own further builder call, so a caller that means
+//! to carry them and forgets one gets an engine that quietly does less —
+//! which is how `goal.rs::assess` silently dropped all three when it
+//! hand-rolled a verifier engine. (The builders are public and work; the
+//! defect was that nothing *required* them. #3387 is the fix: this fork is
+//! built through [`Engine::assemble`], whose [`TurnCapabilities`] has no
+//! `Default`, so a seam added later cannot reach a child as an unexamined
+//! `None`.) What the child carries:
 //!
 //! - The pause gate propagates. A child that ignored it would keep spending
 //!   through a pause.
@@ -113,7 +118,8 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::budget::BudgetGuard;
 use crate::bus::HookBus;
-use crate::driver::{Engine, EngineConfig, TurnOutcome};
+use crate::driver::capabilities::TurnCapabilities;
+use crate::driver::{Engine, EngineConfig, HooksHandle, TurnOutcome};
 use crate::event_sender::EventSender;
 use crate::ports::{ReadOnlyTools, ToolExecutor, TurnControls, TurnSteering};
 
@@ -669,11 +675,10 @@ impl Engine<'_> {
             .as_ref()
             .map(|steering| steering as &dyn TurnSteering);
 
-        let child = Engine {
-            provider: host.provider,
+        let child = Engine::assemble(
+            host.provider,
             tools,
-            sleeper: self.sleeper,
-            config: EngineConfig {
+            EngineConfig {
                 max_output_tokens: spec.max_output_tokens,
                 temperature: spec.temperature,
                 // A forked skill's `effort:` override (#2682); absent, the
@@ -705,50 +710,57 @@ impl Engine<'_> {
                 checkpoint_sink: None,
                 ..self.config.clone()
             },
-            call_role: spec.role,
-            // Every seam the parent has, the child has — this is the whole
-            // reason the child is built here rather than through
-            // `Engine::with_sleeper`, which cannot carry these three.
-            hooks: self.hooks,
-            // The child's hooks route approvals the same way the parent's
-            // do: a hook asking for a human is asking about the session's
-            // workspace, whichever agent's call tripped it (#2684).
-            hook_approvals: self.hook_approvals,
-            // The drift map is keyed per model, so a cross-family child
-            // learns its own model's drift without blending into the
-            // parent's — and starts warm instead of cold.
-            calibration: self.calibration,
-            gate: self.gate,
-            steering,
-            // Not inherited: the re-query plane belongs to the session's own
-            // turn. A child queries against ITS goal at dispatch (its prompt
-            // is fresh by construction), and a parent-scoped plane answering
-            // a child's signal would inject the parent's context into a
-            // delegated transcript. Wiring children is its own decision.
-            requery: None,
-            // The child rides the parent's bus. A sub-agent's steps and model
-            // calls are work the session really did — billed to it, visible
-            // in its spend — so hiding them from an observer would make the
-            // lifecycle stream disagree with the cost. `HookEvent` carries
-            // `agent_id`, which is what lets a consumer tell parent work from
-            // child work without a second bus.
-            bus: self.bus,
-            // A child's model calls are real observed outcomes for the same
-            // provider — the breaker they feed is session state, like the
-            // calibration map above (#2673).
-            outcomes: self.outcomes,
-            // Deliberately NOT inherited: the child's provider is the spec's
-            // explicit choice (possibly a pinned cross-family adapter), so a
-            // mid-turn re-route is not the engine's call to make here — a
-            // child that exhausts its ladder surfaces the failure into the
-            // parent's tool result instead (#2679).
-            fallback: None,
-            // A FRESH cell, deliberately not shared with the parent: the
-            // child's provider is the spec's explicit choice (see `fallback`
-            // above), so the parent's latched replacement is not the child's
-            // to inherit any more than the parent's resolver is.
-            provider_override: std::sync::Arc::new(std::sync::OnceLock::new()),
-        };
+            self.sleeper,
+            // Every seam the parent has, the child has — and since #3387 that
+            // is a claim the compiler checks. `TurnCapabilities` has no
+            // `Default`, so a seam added to the engine later cannot reach this
+            // fork as a silent `None`: this literal stops compiling until
+            // somebody decides what a child does with it. That is the
+            // difference between the decision below and the ones that used to
+            // read identically to an oversight.
+            TurnCapabilities {
+                call_role: spec.role,
+                hooks: self.hooks.map(HooksHandle::parts),
+                // The child's hooks route approvals the same way the parent's
+                // do: a hook asking for a human is asking about the session's
+                // workspace, whichever agent's call tripped it (#2684).
+                hook_approvals: self.hook_approvals,
+                // The drift map is keyed per model, so a cross-family child
+                // learns its own model's drift without blending into the
+                // parent's — and starts warm instead of cold.
+                calibration: self.calibration,
+                gate: self.gate,
+                steering,
+                // Not inherited: the re-query plane belongs to the session's own
+                // turn. A child queries against ITS goal at dispatch (its prompt
+                // is fresh by construction), and a parent-scoped plane answering
+                // a child's signal would inject the parent's context into a
+                // delegated transcript. Wiring children is its own decision.
+                requery: None,
+                // The child rides the parent's bus. A sub-agent's steps and model
+                // calls are work the session really did — billed to it, visible
+                // in its spend — so hiding them from an observer would make the
+                // lifecycle stream disagree with the cost. `HookEvent` carries
+                // `agent_id`, which is what lets a consumer tell parent work from
+                // child work without a second bus.
+                bus: self.bus,
+                // A child's model calls are real observed outcomes for the same
+                // provider — the breaker they feed is session state, like the
+                // calibration map above (#2673).
+                outcomes: self.outcomes,
+                // Deliberately NOT inherited: the child's provider is the spec's
+                // explicit choice (possibly a pinned cross-family adapter), so a
+                // mid-turn re-route is not the engine's call to make here — a
+                // child that exhausts its ladder surfaces the failure into the
+                // parent's tool result instead (#2679).
+                fallback: None,
+            },
+        );
+        // The provider-override cell is FRESH, and `assemble` is what makes it
+        // so: it mints a new `OnceLock` per engine. Deliberately not shared
+        // with the parent — the child's provider is the spec's explicit choice
+        // (see `fallback` above), so the parent's latched replacement is not
+        // the child's to inherit any more than the parent's resolver is.
 
         // The child's private transcript. It is a local: nothing outside
         // this function can observe it, and it is dropped on return. That
@@ -979,4 +991,4 @@ fn last_assistant_text(messages: &[CompletionMessage]) -> Option<&str> {
 #[cfg(test)]
 mod fork_scope_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
