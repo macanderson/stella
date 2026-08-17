@@ -1,12 +1,16 @@
 # The strongest grant — #3245 §2's own example, completed: an arbiter binds
-# the Stop gate, names its definition of done, and declares the host-run
-# oracle whose fail→pass flip decides it.
+# the Stop gate, names its definition of done, and declares the oracle it runs
+# itself, whose reported fail→pass flip the host's rule decides on (#3511).
 name = "verified-done"
 description = "Holds the turn open until the declared oracle observes a fail→pass flip."
 
 [loop]
 participation = "arbiter"
 hooks = ["Stop", "PreToolUse"]
+# The socket points this plugin answers. An undeclared point is never
+# dispatched, and an [oracle] must declare after_turn: its evidence rides on
+# that response and nowhere else (#3501).
+points = ["after_turn"]
 max_holds = 3
 
 [requirements]
@@ -16,7 +20,9 @@ no-tamper = "witness artifact identity unchanged at verify time"
 [oracle]
 command = { argv = ["${plugin_dir}/bin/oracle", "verify"], timeout_secs = 120 }
 flip = "required"
-tamper = "artifact-identity"
+# No `tamper` line: the host snapshots artifact identity and reports what it
+# found, so a manifest restating the only policy a host has said nothing
+# (#3499). Declaring it explicitly is still legal — see perf-budget.toml.
 
 [subloop]
 stages = ["triage", "plan", "execute", "witness", "verify"]

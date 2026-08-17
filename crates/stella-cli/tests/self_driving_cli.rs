@@ -4,7 +4,7 @@
 //! digest bytes, the shell-evalable output shapes, the aperture advance, and
 //! the run lifecycle.
 //!
-//! The decision logic itself is covered in `stella-core::self_driving`; what only
+//! The decision logic itself is covered in `stella-autonomy`; what only
 //! a process can prove is that the command is reachable without a provider or
 //! API key, that the state files land where the observatory reads them, and
 //! that exit codes carry the verdicts (`watch` SLEEP is exit 1, not an
@@ -32,7 +32,7 @@ fn stdout(out: &Output) -> String {
 
 /// The digest is a cross-implementation contract: the same bytes the shell
 /// pipeline (`tr | sed | shasum -a 256 | cut -c1-16`) wrote into every
-/// existing `seen.txt`. See the goldens in `stella-core::self_driving::tests`.
+/// existing `seen.txt`. See the goldens in `stella-autonomy::tests`.
 #[test]
 fn seen_digest_prints_the_shell_pipelines_bytes() {
     let tmp = tempfile::tempdir().expect("tempdir");

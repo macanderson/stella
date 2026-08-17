@@ -2,7 +2,7 @@
 //! as a first-class subcommand (#1548).
 //!
 //! The decision logic (AIMD, the aperture ladder, the dry-streak oracle, the
-//! digest, the governor, the folds) lives in `stella_core::self_driving`, pure
+//! digest, the governor, the folds) lives in `stella_autonomy`, pure
 //! and property-tested. This module owns everything invariant 2 keeps out of
 //! the engine: the probes that read this machine, the state directory under
 //! `~/.stella/self-driving/<slug>/`, the `gh` calls that read the defect queue,
@@ -21,7 +21,7 @@ use std::process::Command;
 
 use clap::Subcommand;
 use serde_json::Value;
-use stella_core::self_driving::{self, CycleOutcome, CycleRecord, Demand, Tooling};
+use stella_autonomy::{CycleOutcome, CycleRecord, Demand, Tooling};
 
 use crate::query_format::{QueryFormat, Rows};
 use crate::timefmt::{now_unix, rfc3339_utc_now};
@@ -213,7 +213,7 @@ impl OutcomeArg {
             OutcomeArg::ResourceFail => "resource-fail",
         }
     }
-    fn to_core(self) -> CycleOutcome {
+    fn to_cycle_outcome(self) -> CycleOutcome {
         match self {
             OutcomeArg::Ok => CycleOutcome::Ok,
             OutcomeArg::ResourceFail => CycleOutcome::ResourceFail,
@@ -393,7 +393,7 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
     let supply = probes::supply(&st.repo_root);
     let demand = demand();
     let cal = st.calibration();
-    let plan = self_driving::plan_cycle(supply, demand, &cal, state::floors());
+    let plan = stella_autonomy::plan_cycle(supply, demand, &cal, state::floors());
     let aperture = st.aperture();
 
     if explain {
@@ -455,7 +455,7 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
 
 fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<(), String> {
     if dry_streak {
-        let streak = self_driving::dry_streak(&st.cycles(), &st.aperture());
+        let streak = stella_autonomy::dry_streak(&st.cycles(), &st.aperture());
         println!("{streak}");
         return Ok(());
     }
@@ -472,7 +472,7 @@ fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<()
     println!("  cycle           {}", st.cycle_counter());
     println!(
         "  dry streak      {} / {}",
-        self_driving::dry_streak(&cycles, &st.aperture()),
+        stella_autonomy::dry_streak(&cycles, &st.aperture()),
         state::dry_streak_target()
     );
     println!("  findings seen   {}", st.seen_count());
@@ -494,7 +494,7 @@ fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<()
 /// The declared tool backing for a lens name (#1549): what the cycle should
 /// run, or an explicit statement that it works unaided.
 fn declared_tool(lens_name: &str) -> String {
-    match self_driving::lens(lens_name).map(|l| l.tooling) {
+    match stella_autonomy::lens(lens_name).map(|l| l.tooling) {
         Some(Tooling::Command { run, .. }) => collapse_ws(run),
         Some(Tooling::ModelOnly { .. }) => "model-only".to_string(),
         None => "none".to_string(),
@@ -517,7 +517,7 @@ fn cycle_begin(st: &LoopState) -> Result<(), String> {
     st.run_write("starting", Some(n), None);
 
     let aperture = st.aperture();
-    let streak = self_driving::dry_streak(&st.cycles(), &aperture);
+    let streak = stella_autonomy::dry_streak(&st.cycles(), &aperture);
     println!("SELF_DRIVING_CYCLE={n}");
     println!("SELF_DRIVING_DRY_STREAK_SO_FAR={streak}");
     println!(
@@ -591,13 +591,13 @@ fn cycle_end(
     // Close the control loop: the controller learns what this box survives,
     // and the aperture widens the moment a lens stops producing.
     let mut cal = st.calibration();
-    self_driving::calibrate(&mut cal, outcome.to_core(), &state::aimd_limits());
+    stella_autonomy::calibrate(&mut cal, outcome.to_cycle_outcome(), &state::aimd_limits());
     st.write_calibration(&cal)?;
 
     // The CYCLE ended, not the run — only `run end`/`run cancel` closes one.
     st.run_write("idle", None, Some(tier));
 
-    let streak = self_driving::dry_streak(&st.cycles(), &aperture);
+    let streak = stella_autonomy::dry_streak(&st.cycles(), &aperture);
     if streak >= state::dry_streak_target() {
         say(&format!("aperture {aperture} is dry after {streak} cycles"));
         advance_aperture(st, &aperture)?;
@@ -614,9 +614,9 @@ fn cycle_end(
 }
 
 fn advance_aperture(st: &LoopState, current: &str) -> Result<(), String> {
-    let next = self_driving::advance(current);
+    let next = stella_autonomy::advance(current);
     st.set_aperture(next)?;
-    if next == self_driving::WATCH {
+    if next == stella_autonomy::WATCH {
         println!("aperture {current} -> watch (every lens dry; the loop sleeps, it does not stop)");
     } else {
         println!("aperture {current} -> {next}");
@@ -700,7 +700,7 @@ fn metrics(st: &LoopState) -> Result<(), String> {
         return Ok(());
     }
     let cal = st.calibration();
-    let m = self_driving::metrics(&rows);
+    let m = stella_autonomy::metrics(&rows);
     let n = m.cycles;
 
     println!("cycles            {n}");
@@ -734,7 +734,7 @@ fn metrics(st: &LoopState) -> Result<(), String> {
     );
 
     let mut signals = m.signals;
-    if let Some(s) = self_driving::starved(&cal) {
+    if let Some(s) = stella_autonomy::starved(&cal) {
         // Keep the shell driver's order: STARVED reported right after STUCK.
         let at = usize::from(signals.first().is_some_and(|s| s.code == "STUCK"));
         signals.insert(at, s);
@@ -768,7 +768,7 @@ fn aperture(
         st.set_aperture("rubric")?;
         println!("aperture reset to rubric");
     } else if list {
-        for l in self_driving::LENSES {
+        for l in stella_autonomy::LENSES {
             let marker = if l.name == open { "*" } else { " " };
             let heavy = if l.heavy_only { " [heavy tier]" } else { "" };
             let backing = match l.tooling {
@@ -777,14 +777,14 @@ fn aperture(
             };
             println!("  {marker} {:<13} {backing}{heavy}", l.name);
         }
-        let marker = if open == self_driving::WATCH {
+        let marker = if open == stella_autonomy::WATCH {
             "*"
         } else {
             " "
         };
         println!(
             "  {marker} {:<13} cheap sentinels; any trigger reopens rubric",
-            self_driving::WATCH
+            stella_autonomy::WATCH
         );
     }
     Ok(())
@@ -798,7 +798,7 @@ fn seen(
     count: bool,
 ) -> Result<(), String> {
     if !digest.is_empty() {
-        println!("{}", self_driving::finding_digest(&digest.join(" ")));
+        println!("{}", stella_autonomy::finding_digest(&digest.join(" ")));
     } else if !new.is_empty() {
         let known = st.seen();
         for d in new {
@@ -840,7 +840,7 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
         _ => CycleOutcome::Ok,
     };
     let mut cal = st.calibration();
-    self_driving::calibrate(&mut cal, outcome, &state::aimd_limits());
+    stella_autonomy::calibrate(&mut cal, outcome, &state::aimd_limits());
     st.write_calibration(&cal)?;
     println!(
         "{}",
@@ -861,11 +861,11 @@ fn queue(_st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), Strin
         "number,title,labels,createdAt,url",
     ])
     .ok_or_else(|| "gh issue list failed (is gh installed and authenticated?)".to_string())?;
-    let issues: Vec<self_driving::QueueIssue> =
+    let issues: Vec<stella_autonomy::QueueIssue> =
         serde_json::from_str(&raw).map_err(|e| format!("gh issue list payload: {e}"))?;
     let total_issues = issues.len();
 
-    let defects = self_driving::rank_defects(issues);
+    let defects = stella_autonomy::rank_defects(issues);
     let picked = &defects[..limit.min(defects.len())];
 
     if format == QueryFormat::Json {
@@ -954,7 +954,7 @@ fn run_end_as(st: &LoopState, status: &str, reason: &str) -> Result<(), String> 
 }
 
 fn runs_report(st: &LoopState) -> Result<(), String> {
-    let rows = self_driving::fold_runs(
+    let rows = stella_autonomy::fold_runs(
         &st.run_records(),
         &st.cycles(),
         st.run_doc().as_ref(),

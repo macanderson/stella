@@ -6,11 +6,16 @@ that aren't immediately apparent from reading a single file. The authoritative
 sources for the details behind each section are `README.md` and `CONTRIBUTING.md`.
 
 Stella is a fast, BYOK ("bring your own key"), model-agnostic terminal coding
-agent, written in Rust. Its defining contract: a task is **done** only when a
-**witness test** (a test that fails on the old code and passes on the new code)
-proves it — "verified done, not claimed done." It is the open-source reference
-implementation of Oxagen's *Engineering Deterministic AI Coding Agents* field
-manual.
+agent, written in Rust. Proving a task **done** with a **witness test** — one
+that fails on the old code and passes on the new — is what "verified done,
+not claimed done" means here, and that guarantee is **a property of the path
+that produced the evidence, not of the binary**: the built-in staged pipeline
+runs the check itself and watches the fail→pass flip, but verification
+supplied by an installed plugin is the plugin's own self-reported evidence,
+which Stella evaluates against a declared rule and does not re-run or
+re-check (#3511; `doc:pipeline-as-plugins` is the extraction plan moving the
+former into the latter). It is the open-source reference implementation of
+Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---
 
@@ -405,8 +410,10 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
 
 ## The definition of done: witness tests
 
-Stella refuses to call a task done until a test **fails on the old code and
-passes on the new** — and contributions are held to the same contract.
+This repository holds every contribution to its own gate: a PR ships a test
+that **fails on the old code and passes on the new**. That is
+`CONTRIBUTING.md`'s contract for a change to *this* repo, and it holds
+regardless of anything below — it is not what base Stella promises a user.
 
 For a behavior change or feature, a PR should include a **witness test**:
 
@@ -418,7 +425,15 @@ refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
-The staged pipeline enforces the same contract at runtime: when no
+**What follows is the staged pipeline's own witness/verify machinery, which is
+a different thing from the contract above.** It ships in-tree today and
+genuinely runs the check itself — this is the host-run half of the guarantee
+(see AGENTS.md's opening). Per the product decision recorded in
+`doc:pipeline-as-plugins` (#3511) it is being extracted into an installable
+verification plugin (Oxagen's Vera is the reference one); once it lands, a
+plugin reports its own evidence instead of Stella running the check, and this
+section's guarantee does not automatically transfer to that path. Until then,
+this section documents the mechanism as it exists: when no
 `--test-command` is configured, its **witness stage** has an independent model
 (the verifier's resolution, never the worker) author the failing witness test,
 tracks its fail→pass flip in the flip oracle, and refuses to credit the flip if
@@ -508,7 +523,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-four crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-five crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -530,6 +545,7 @@ the files you must plan around (see below).
 | Decide whether a human is present to see/answer a mid-run prompt | [`stella-tty`](crates/stella-tty/README.md) | **A leaf with NO dependencies at all** (#3036) — one pure `human_can_answer(interactive_output, stdin_is_terminal, prompt_is_visible)`, which is what lets `stella-cli`'s approval prompts and `stella-model`'s credential prompt share one derivation without `stella-model` depending on `stella-cli` (invariant 1). |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
+| Change the self-driving loop's decision logic — the AIMD controller, the aperture ladder, the dry-streak oracle, the finding-dedup digest, the governor, the `runs.jsonl` fold | [`stella-autonomy`](crates/stella-autonomy/README.md) | **A leaf with NO workspace-crate dependencies** (moved out of `stella-core`, `doc:pipeline-as-plugins` §10 D1) — which is what lets [`stella-observatory`](crates/stella-observatory/README.md) share the exact same fold `stella self-driving` uses instead of drifting from a private copy, the bug #1613 was filed for. |
 | Turn text into a vector, or compare two vectors honestly | [`stella-embed`](crates/stella-embed/README.md) | **A leaf with NO workspace-crate dependencies** — the `Embedder` seam, the fingerprint every stored vector is stamped with, the `SimilarityPosture` a backend must declare, and a pure deterministic ranker. Shared by [`stella-context`](crates/stella-context/README.md) (retrieval) and [`stella-graph`](crates/stella-graph/README.md) (semantic code search) so neither has to depend on the other. |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
@@ -608,7 +624,7 @@ a plan needs and the part that rarely changes:
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
-The other eighteen crates carry no god files — keep it that way. Each crate's
+The other nineteen crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 

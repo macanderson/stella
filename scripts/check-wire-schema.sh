@@ -57,10 +57,24 @@ if ! build_log="$(cargo run --quiet -p stella-serve --features schema \
   printf '%s\n' "$build_log" >&2
   exit 1
 fi
+# The wrapper socket. `doc:wrapper-socket` §3 commitment 2 promised this join
+# and it went unhonoured: until it landed, renaming a field in
+# `stella_plugin::wire` left `make gate` green while every out-of-process
+# plugin's parser broke. The crate's own round-trip tests cannot see it — they
+# re-serialize with the same code that deserialized, so a rename is invisible
+# to them — and the wire form is the *primary* one for this socket, which makes
+# it the contract that most needs a committed fixed point.
+if ! build_log="$(cargo run --quiet -p stella-plugin --features schema \
+  --bin export-wrapper-wire -- "$tmp" 2>&1)"; then
+  echo "check-wire-schema: FAIL — the wrapper-socket exporter did not run." >&2
+  printf '%s\n' "$build_log" >&2
+  exit 1
+fi
 
 status=0
 for artifact in agentevent.schema.json agentevent.d.ts \
-                serveframe.schema.json serveinbound.schema.json serveframe.d.ts; do
+                serveframe.schema.json serveinbound.schema.json serveframe.d.ts \
+                wrapper.wire.json; do
   if [ ! -f "$committed/$artifact" ]; then
     echo "check-wire-schema: FAIL — $committed/$artifact is missing." >&2
     status=1
@@ -83,8 +97,9 @@ done
 if [ "$status" -ne 0 ]; then
   cat >&2 <<'EOF'
 
-The committed wire contract no longer matches what `AgentEvent` and its payload
-types would emit. That means one of two things, and only you know which:
+The committed wire contract no longer matches what `AgentEvent`, the serve
+transport, or the wrapper socket would emit. That means one of two things, and
+only you know which:
 
   * You changed the wire format. Regenerate and commit the artifacts with the
     change, so the diff is reviewable:
@@ -94,7 +109,9 @@ types would emit. That means one of two things, and only you know which:
     Then read the diff as a wire change, not as noise. Removing a field,
     renaming one, re-tagging a variant, or making an optional field required
     all BREAK every consumer of `--output-format stream-json`, of the SSE
-    stream, and of docs/wire/agentevent.d.ts. The contract is additive-only.
+    stream, of docs/wire/agentevent.d.ts, and — for wrapper.wire.json — every
+    out-of-process plugin's parser, in whatever language it was written. The
+    contract is additive-only.
 
   * You did not mean to. Then the diff above is the bug report: something in
     the event graph changed shape without anyone deciding it should.

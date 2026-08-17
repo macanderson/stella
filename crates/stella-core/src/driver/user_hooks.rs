@@ -36,8 +36,8 @@
 //! [`STOP_HOOK_MARKER_PREFIX`] (registered in
 //! [`crate::engine_markers::ENGINE_MARKERS`]) and the model gets another
 //! chance to act on it. The bound — [`crate::step::TurnState`]'s
-//! `stop_hook_consults` against [`MAX_STOP_CONSULTS`], counted BEFORE the
-//! hooks run — caps how many rounds. Without it, a hook that always denies
+//! `stop_hook_consults` against [`EngineConfig::stop_holds`], counted BEFORE
+//! the hooks run — caps how many rounds. Without it, a hook that always denies
 //! chains completion-attempt → feedback → completion-attempt forever (the
 //! compact→error→stop-hook→retry death spiral: every held-open round can
 //! grow the transcript, force compaction, and error its way back to
@@ -49,7 +49,7 @@
 //! and *re-check*, and a fail→pass observation is by definition two
 //! consultations. So the latch became a counter, with two properties the
 //! boolean version already taught: the spiral stays capped (at
-//! [`MAX_STOP_CONSULTS`] held-open rounds now, not one), and the last
+//! [`EngineConfig::stop_holds`] held-open rounds now, not one), and the last
 //! permitted round says it is the last ([`STOP_FINAL_ROUND_NOTE`]) — the
 //! #2810 lesson that a bound nobody announces reads as an infinite
 //! allowance from inside the loop. A Stop hook that *fails* (non-zero
@@ -57,6 +57,23 @@
 //! PreToolUse posture, because failing closed HERE means never completing,
 //! which is the spiral, not safety; the failure surfaces as a diagnostic
 //! instead.
+//!
+//! The bound was a hardcoded 3 until #3380, which is the same shape one layer
+//! up: an extension that genuinely needs a fourth round could not ask for one.
+//! It is now [`EngineConfig::stop_hold_allowance`] — a host's number, clamped
+//! by the engine to [`STOP_HOLD_CEILING`] every time it is read, because the
+//! declaration a plugin manifest makes (`LoopGrant::max_holds`) is an *ask*
+//! and a manifest must never be able to buy an unbounded loop.
+//!
+//! # A denial is structured (#3380)
+//!
+//! [`crate::bus::HookDecision::Deny`] carries a [`Denial`], so a verifying
+//! extension names the witness, the argv it ran, the tri-state flip and the
+//! digest it judged. Both consumers here branch on those fields rather than
+//! on prose: the tail message the model reads renders them as a checklist it
+//! can act on, and the `hook.stop.blocked` lifecycle payload carries the
+//! evidence object whole for the trace fold. `None` evidence is "this hook
+//! does not verify" and renders exactly as it always did.
 //!
 //! # The PreCompact gate
 //!
@@ -70,9 +87,14 @@
 //! not starve compaction and wedge the turn into a hard overflow.
 
 use serde_json::Value;
-use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+use stella_protocol::{AgentEvent, Denial, DenialEvidence, ToolCall, ToolOutput};
 
 use super::{Engine, HooksHandle};
+// Named only by this module's doc comments. Importing them keeps those
+// intra-doc links resolving instead of degrading the prose to plain text —
+// the same arrangement `driver/config.rs` makes for `Engine`.
+#[allow(unused_imports)]
+use super::config::{EngineConfig, STOP_HOLD_CEILING};
 use crate::bus::names as bus_names;
 use crate::event_sender::EventSender;
 use crate::hooks::decision::{
@@ -87,23 +109,55 @@ use crate::hooks::{HookEvent, HookPayload, run_hooks};
 /// `receipts::user_block_kind` — never attributed to the person.
 pub(crate) const STOP_HOOK_MARKER_PREFIX: &str = "[stop-hook feedback";
 
-/// How many times one turn's `Stop` hooks may be consulted — the bound on
-/// the deny → revise → re-check loop (module docs).
-///
-/// Three, not one, because the gate's primary tenant is verification
-/// (#3246): a verifier needs at least two consultations to observe a
-/// fail→pass flip, and the third admits one more revision round — the
-/// empirically common case of a model landing the fix within three
-/// attempts. Not configurable yet on purpose: a knob here is an invitation
-/// to uncap the spiral, and no caller has demonstrated a need.
-pub(crate) const MAX_STOP_CONSULTS: u32 = 3;
-
 /// Appended to the last permitted round's `deny` reason, so the model and
 /// the transcript both know the next completion stands unchecked. #2810's
 /// lesson, restated for this gate: a bound nobody announces reads as an
 /// infinite allowance from inside the loop.
 pub(crate) const STOP_FINAL_ROUND_NOTE: &str =
     "\n\n[final verification round — the next completion will stand without another check]";
+
+/// The model-visible text for one `Stop` denial: the hook's prose, plus a
+/// checklist of whatever structured evidence it attached (#3380).
+///
+/// Rendering happens here rather than in `stella-protocol` because how a
+/// denial reads to a model is the engine's presentation choice, and the types
+/// crate holds no view (invariant #1: zero logic there). The lines are
+/// deliberately terse and field-per-line so the model can act on each one;
+/// the same evidence rides the `hook.stop.blocked` payload structurally for
+/// anything that needs to branch instead of read.
+///
+/// `command` renders as a JSON array, not as a joined string, because that is
+/// what it is: argv, where an argument containing a space must stay
+/// distinguishable from two arguments.
+fn render_denial(denial: &Denial) -> String {
+    let mut text = denial.reason.clone();
+    let Some(evidence) = &denial.evidence else {
+        return text;
+    };
+    let DenialEvidence {
+        witness,
+        command,
+        flip,
+        digest,
+    } = evidence;
+    text.push_str("\n\nverification evidence:");
+    if let Some(witness) = witness {
+        text.push_str(&format!("\n- witness: {witness}"));
+    }
+    if !command.is_empty() {
+        let argv = serde_json::to_string(command).unwrap_or_else(|_| command.join(" "));
+        text.push_str(&format!("\n- command: {argv}"));
+    }
+    // Always stated, including `unobserved`: "nothing was measured" and
+    // "measured and came back short" are different findings, and a reader
+    // who has to infer the difference from an absent line is the exact
+    // conflation `FlipOutcome` exists to prevent.
+    text.push_str(&format!("\n- flip: {}", flip.as_str()));
+    if let Some(digest) = digest {
+        text.push_str(&format!("\n- digest: {digest}"));
+    }
+    text
+}
 
 /// What a `PreCompact` hook run decided about the imminent summarization
 /// round.
@@ -285,9 +339,10 @@ impl<'a> Engine<'a> {
     ///
     /// `stop_consults` is the turn's bounded consultation counter (module
     /// docs), spent BEFORE the hooks run so a hook that fails mid-flight
-    /// has still consumed its round. The last permitted `deny` carries
-    /// [`STOP_FINAL_ROUND_NOTE`] so the model knows the next completion
-    /// stands unchecked.
+    /// has still consumed its round. The allowance is
+    /// [`EngineConfig::stop_holds`] — the host's ask, already clamped — and
+    /// the last permitted `deny` carries [`STOP_FINAL_ROUND_NOTE`] so the
+    /// model knows the next completion stands unchecked.
     pub(super) async fn stop_hook_feedback(
         &self,
         final_text: &str,
@@ -295,9 +350,8 @@ impl<'a> Engine<'a> {
         events: &EventSender,
     ) -> Option<String> {
         let handle = self.hooks?;
-        if handle.hooks.matchers_for(HookEvent::Stop).is_empty()
-            || *stop_consults >= MAX_STOP_CONSULTS
-        {
+        let allowance = self.config.stop_holds();
+        if handle.hooks.matchers_for(HookEvent::Stop).is_empty() || *stop_consults >= allowance {
             return None;
         }
         *stop_consults += 1;
@@ -309,24 +363,37 @@ impl<'a> Engine<'a> {
         .await;
         self.surface_hook_diagnostics("Stop", &run.diagnostics, events);
         match run.evaluation {
-            Ok(crate::bus::HookDecision::Deny { reason }) => {
+            Ok(crate::bus::HookDecision::Deny(denial)) => {
                 // The last permitted round announces itself (#2810's lesson):
                 // composed here rather than at the injection site so the
                 // lifecycle event below and the tail message carry one text.
-                let reason = if *stop_consults >= MAX_STOP_CONSULTS {
-                    format!("{reason}{STOP_FINAL_ROUND_NOTE}")
-                } else {
-                    reason
-                };
-                self.emit_lifecycle(
-                    bus_names::HOOK_STOP_BLOCKED,
-                    || serde_json::json!({ "reason": reason }),
-                );
+                let mut reason = render_denial(&denial);
+                if *stop_consults >= allowance {
+                    reason.push_str(STOP_FINAL_ROUND_NOTE);
+                }
+                self.emit_lifecycle(bus_names::HOOK_STOP_BLOCKED, || {
+                    // The evidence rides structurally as well as in the prose:
+                    // a trace fold reading this payload must be able to answer
+                    // "did the flip happen?" without parsing the message the
+                    // model was shown.
+                    serde_json::json!({ "reason": reason, "evidence": denial.evidence })
+                });
                 Some(reason)
             }
             Ok(crate::bus::HookDecision::RequireApproval { .. }) => {
-                // No call exists to approve at a turn boundary; surfaced so
-                // the hook author learns the verb is inapplicable here.
+                // Deliberately unanswered, and the reason is structural, not
+                // an oversight: the only route the engine has to a human is
+                // `ApprovalRoute`, whose request is keyed on a tool name and
+                // its `read_only` bit (`hooks::decision::ApprovalRouteRequest`)
+                // and whose broker audit trail is keyed the same way. There is
+                // no tool at a turn boundary, so asking through it would mean
+                // inventing a fake one. Answering "verification budget
+                // exhausted, continue?" properly needs a subject-shaped
+                // request the broker and every asking surface also understand
+                // — bigger than this change, tracked in #3380. Until then the
+                // verb is reported as inapplicable rather than silently
+                // treated as a deny, which would hold the turn open on a
+                // question nobody was asked.
                 self.surface_hook_diagnostics(
                     "Stop",
                     &[
@@ -365,7 +432,13 @@ impl<'a> Engine<'a> {
         .await;
         self.surface_hook_diagnostics("PreCompact", &run.diagnostics, events);
         match run.evaluation {
-            Ok(crate::bus::HookDecision::Deny { reason }) => {
+            // Prose only: a compaction veto is a scheduling decision about
+            // this turn's transcript, so a witness/flip/digest has nothing to
+            // say about it. A hook that attaches evidence here is answering a
+            // question that was not asked, and it is dropped rather than
+            // rendered into a summarizer's ear.
+            Ok(crate::bus::HookDecision::Deny(denial)) => {
+                let reason = denial.reason;
                 self.emit_lifecycle(
                     bus_names::HOOK_PRE_COMPACT_VETOED,
                     || serde_json::json!({ "reason": reason }),

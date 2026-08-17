@@ -45,12 +45,12 @@ const MAX_JSONL_LINES: usize = 20_000;
 
 /// Seconds without a heartbeat after which a `running` run is reported crashed.
 ///
-/// Read from `stella-core` rather than restated, so this page and
+/// Read from `stella-autonomy` rather than restated, so this page and
 /// `stella self-driving` cannot disagree about when a run is dead. It used to
 /// be a local `900` "deliberately equal to" the loop's own default — a comment
 /// asking a future reader to keep two numbers in step by hand, which is the
 /// same arrangement that let the NOISY threshold drift (#1613).
-const STALE_AFTER_SECS: i64 = stella_core::self_driving::DEFAULT_STALE_AFTER_SECS;
+const STALE_AFTER_SECS: i64 = stella_autonomy::DEFAULT_STALE_AFTER_SECS;
 
 /// Every root a loop's state directory can sit under, current first.
 ///
@@ -245,24 +245,19 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
         let mut live_block = Value::Null;
 
         if status == "running" {
-            // The two corrections above are `stella_core::self_driving::liveness`,
+            // The two corrections above are `stella_autonomy::liveness`,
             // not a second copy of the rule: a dashboard that decided
             // "crashed" on its own terms would eventually disagree with the
             // terminal about whether a run is alive, which is the exact drift
             // #1613 was filed for.
             let live = l.live.clone().unwrap_or_else(|| json!({}));
             let heartbeat = i64_at(&live, "heartbeat_unix");
-            let verdict = stella_core::self_driving::liveness(
-                &id,
-                &live_id,
-                heartbeat,
-                now,
-                STALE_AFTER_SECS,
-            );
+            let verdict =
+                stella_autonomy::liveness(&id, &live_id, heartbeat, now, STALE_AFTER_SECS);
             if verdict.is_crashed() {
                 status = "crashed".into();
             }
-            if verdict != stella_core::self_driving::Liveness::Orphaned {
+            if verdict != stella_autonomy::Liveness::Orphaned {
                 let age = now - heartbeat;
                 live_block = json!({
                     "phase": str_at(&live, "phase"),
@@ -323,10 +318,10 @@ fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
         return json!({ "signals": Vec::<Value>::new(), "cycles": 0 });
     }
 
-    let records: Vec<stella_core::self_driving::CycleRecord> =
+    let records: Vec<stella_autonomy::CycleRecord> =
         cycles.iter().filter_map(|c| as_cycle_record(c)).collect();
-    let m = stella_core::self_driving::metrics(&records);
-    let starved = stella_core::self_driving::starved(&as_calibration(calibration));
+    let m = stella_autonomy::metrics(&records);
+    let starved = stella_autonomy::starved(&as_calibration(calibration));
 
     // Named in this order rather than in whatever order the fold emits them,
     // because the page has always listed them this way and the order is what a
@@ -367,7 +362,7 @@ fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
 /// written by an older build would be worse than useless. Every field but
 /// `cycle` already carries a serde default, so seeding that one is the whole
 /// of the tolerance — the thresholds applied to the result are core's.
-fn as_cycle_record(v: &Value) -> Option<stella_core::self_driving::CycleRecord> {
+fn as_cycle_record(v: &Value) -> Option<stella_autonomy::CycleRecord> {
     let mut obj = v.as_object()?.clone();
     obj.entry("cycle").or_insert(json!(0));
     serde_json::from_value(Value::Object(obj)).ok()
@@ -380,11 +375,11 @@ fn as_cycle_record(v: &Value) -> Option<stella_core::self_driving::CycleRecord> 
 /// write from the process that has to act on it. A *reader* wants the opposite,
 /// so the fallbacks live here: the same values this function used before it
 /// shared the threshold.
-fn as_calibration(v: &Value) -> stella_core::self_driving::Calibration {
+fn as_calibration(v: &Value) -> stella_autonomy::Calibration {
     let mut obj = v.as_object().cloned().unwrap_or_default();
     obj.entry("batch_ceiling").or_insert(json!(20));
     obj.entry("parallel_ceiling").or_insert(json!(2));
-    serde_json::from_value(Value::Object(obj)).unwrap_or(stella_core::self_driving::Calibration {
+    serde_json::from_value(Value::Object(obj)).unwrap_or(stella_autonomy::Calibration {
         batch_ceiling: 20,
         parallel_ceiling: 2,
         clean_run: 0,
@@ -778,7 +773,7 @@ mod tests {
     /// `4 < 5` — true. Every ODD cycle count on the boundary disagreed, and
     /// the two surfaces reported different health for the same loop.
     ///
-    /// Asserting equality against `stella_core::self_driving::metrics` rather than
+    /// Asserting equality against `stella_autonomy::metrics` rather than
     /// against the literal "NOISY" is the point: a future threshold change has
     /// to move both surfaces or fail here, which is the property the duplicate
     /// implementation could never have.
@@ -806,9 +801,9 @@ mod tests {
             .map(|s| str_at(s, "code"))
             .collect();
 
-        let records: Vec<stella_core::self_driving::CycleRecord> =
+        let records: Vec<stella_autonomy::CycleRecord> =
             refs.iter().filter_map(|c| as_cycle_record(c)).collect();
-        let terminal: Vec<String> = stella_core::self_driving::metrics(&records)
+        let terminal: Vec<String> = stella_autonomy::metrics(&records)
             .signals
             .iter()
             .map(|s| s.code.to_string())

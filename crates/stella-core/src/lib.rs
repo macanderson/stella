@@ -41,7 +41,6 @@ pub mod router;
 pub mod rules;
 pub mod scoreboard;
 pub mod search;
-pub mod self_driving;
 pub mod self_tuning;
 pub mod skills;
 pub(crate) mod speculation;

@@ -8,7 +8,7 @@
 //! host boundary as JSON when install consent and `stella app list` render
 //! them).
 
-use stella_plugin::{HookEvent, Participation, PluginManifest};
+use stella_plugin::{HookEvent, OracleProcessSource, Participation, PluginManifest, WrapperPoint};
 
 const FIXTURES: [(&str, Participation); 4] = [
     (include_str!("fixtures/none.toml"), Participation::None),
@@ -97,8 +97,18 @@ fn the_arbiter_fixture_carries_the_full_grant() {
     assert!(requirements.contains_key("tests-flip"));
     assert!(requirements.contains_key("no-tamper"));
 
-    let oracle = arbiter.oracle.as_ref().unwrap();
-    assert_eq!(oracle.command.timeout_secs, 120);
+    // Resolved rather than read off the block: the oracle may be the plugin's
+    // own `[runtime]` process, and a caller that only wants "what does the host
+    // run" must not have to know which of the two named it (#3501).
+    let oracle = arbiter
+        .oracle_process()
+        .expect("the arbiter fixture declares an oracle");
+    assert_eq!(oracle.timeout_secs, 120);
+    assert_eq!(oracle.source, OracleProcessSource::OracleCommand);
+    assert!(
+        arbiter.loop_grant.permits_point(WrapperPoint::AfterTurn),
+        "an oracle's evidence arrives at after_turn, so the fixture declares it"
+    );
 
     let subloop = arbiter.subloop.as_ref().unwrap();
     assert_eq!(

@@ -93,8 +93,12 @@ The starting position is better than "nothing" and worse than "nearly there".
   `Engine::stop_hook_feedback` (`crates/stella-core/src/driver/user_hooks.rs:291`)
   runs at completion; a `Deny` holds the turn open and the engine keeps
   stepping (`crates/stella-core/src/driver/completion.rs:183`). It is bounded by
-  `MAX_STOP_CONSULTS = 3` (`user_hooks.rs:99`), spent *before* the hooks run, and
-  the final round announces itself (`STOP_FINAL_ROUND_NOTE`, `:105`). It is
+  a host-supplied `stop_hold_allowance`, clamped to `STOP_HOLD_CEILING` (8) and
+  defaulting to `DEFAULT_STOP_HOLDS` (3) when no host asks
+  (`crates/stella-core/src/driver/config.rs:241`, `:250`, `:258`) — this is A7,
+  **landed** (aabb8d4; §4 below), which retired the `MAX_STOP_CONSULTS`
+  constant this bullet used to cite — spent *before* the hooks run, and
+  the final round announces itself (`STOP_FINAL_ROUND_NOTE`). It is
   fail-open by design (`:55-59`) — a hook that fails never blocks, because
   failing closed here means never completing.
 - Subprocess hooks: JSON on stdin, a `HookDecision` on stdout, 60s default and a
@@ -147,16 +151,43 @@ Ordered by dependency. Each item names the files it touches.
 
 ### A1. A plugin is not the user
 
-**Today Stella cannot tell a plugin apart from the human.** The authority
-vocabulary landed — `Principal` (`crates/stella-core/src/ports/authz.rs:62`),
-`AuthzGate` (`:244`), `RiskLevel` and `ToolContract`
-(`crates/stella-protocol/src/contract.rs:68`, `:197`) — but every call site
-passes the constant `Principal::User`
-(`crates/stella-cli/src/agent.rs:362`, `:1657`, `:1672`).
+**LANDED (ce9c7cd).** `Principal` gained a fifth variant,
+`Plugin(String)` — "an installed plugin, named by its manifest `name`"
+(`crates/stella-core/src/ports/authz.rs:76-77`) — distinct in shape and
+meaning from `Host(String)` exactly as this section required, plus a
+render of its grant for install consent. What follows is the reasoning that
+produced that addition, kept for the record.
 
-`Principal::Host(String)` (`authz.rs:74-76`) is already the right shape and is
-deliberately opaque so core grows no opinion about who hosts are. Thread a real
-principal through dispatch and make plugin identity one.
+**Before this landed, Stella had no name for a plugin.** The authority vocabulary landed —
+`Principal` (`crates/stella-core/src/ports/authz.rs:62`), `AuthzGate` (`:244`),
+`RiskLevel` and `ToolContract` (`crates/stella-protocol/src/contract.rs:68`,
+`:197`) — and `Principal` has four variants: `User`, `Role`, `SubAgent`, `Host`.
+
+**Correction, 2026-08-17.** An earlier draft of this section said "every call
+site passes the constant `Principal::User`" and concluded that Stella "cannot
+tell a plugin apart from the human". The narrow claim holds — the three
+`crates/stella-cli/src/agent.rs` sites (`:362`, `:1657`, `:1672`) do pass the
+constant — but the conclusion drawn from it does not, and the difference changes
+what A1 has to build. Read out of the tree:
+
+- `Principal::SubAgent` is constructed from a real dispatch id at
+  `crates/stella-cli/src/subsession.rs:732` and `crates/stella-cli/src/fleet_cmd.rs:729`;
+- `Principal::Role` is constructed at `crates/stella-cli/src/candidate_ws.rs:498`;
+- `Principal::Host` is constructed from the serve wire at
+  `crates/stella-serve/src/routes.rs:118`.
+
+So the principal **is** threaded through dispatch already, and the gate already
+sees a caller that is not the human. What is missing is narrower and sharper:
+**there is no `Principal` variant that means "an installed plugin", so a loader
+would have nothing honest to construct.** A1 is therefore an addition to the
+vocabulary plus its consent surface, not the threading exercise the earlier
+draft described — which makes it smaller than stated and no less blocking.
+
+`Principal::Host(String)` (`authz.rs:74-76`) is the right *shape* to copy —
+opaque, so core grows no opinion — but it is the wrong *meaning* to reuse: a
+host is the process embedding Stella, and a plugin is something that process
+installed. Collapsing them would make "the embedder" and "a thing the embedder
+installed" indistinguishable to a gate, which is the same defect one level up.
 
 This is **first** and not negotiable: a marketplace shipped on top of a
 system that cannot distinguish an installed plugin from its operator grants
@@ -193,12 +224,32 @@ Two halves, and they are separable:
 `.stella/plugins/` and `~/.stella/plugins/` resolvers (`crates/stella-home/`),
 `stella plugin install|list|remove` (`crates/stella-cli/`), a consent prompt on
 install that shows the declared participation grade and hook grants, and
-`LoopGrant::permits_hook` (`manifest.rs:134-139`) as the routing filter.
+`LoopGrant::permits_hook` (`manifest.rs:137-140`) as the routing filter.
 
 **Uninstall must actually uninstall.** Hook settings currently *concatenate*
 across scopes and no scope can remove another's entries
 (`crates/stella-cli/src/settings/merge.rs:47`, `:171-172`). Correct for operator
 hooks, wrong for plugins.
+
+**The manifest file is `plugin.toml`, exactly** — one file, that name, at the
+root of the plugin's directory; a directory without one is not a plugin and is
+skipped rather than reported as broken. This was unwritten until #3501 while the
+loader and every published example happened to agree on it, which is not
+agreement: a third party's plugin discovers a disagreement here by silently not
+loading, and "I installed it and nothing happened" is the failure this whole
+crate exists to prevent. The loader's constant is
+`crates/stella-cli/src/plugin_cmd/roster.rs::MANIFEST_FILE`, pinned by
+`the_manifest_filename_is_the_specified_one`, and this paragraph is the
+normative half — if the two ever disagree, this one is right and the loader is
+the bug.
+
+**An undeclared point is never dispatched**, the same way an undeclared hook is
+never invoked. `[loop] points` names the wrapper socket points a plugin answers
+and `LoopGrant::permits_point` is the filter (#3501 item 2); before it, a host
+learned that a wrapper answers `after_turn` and refuses `before_turn` by getting
+the refusal at run time. An `[oracle]` must declare `after_turn`, because that
+is the one response its evidence rides on — a manifest that omits it buys the
+most expensive grant in the ladder and can never reach a verdict.
 
 ### A5. A process declaration in the manifest
 
@@ -214,23 +265,52 @@ env allowlist. Deliberately **not** a `language` field — `argv` already
 expresses `["python3", "${plugin_dir}/main.py"]` and
 `["node", "${plugin_dir}/main.js"]` without Stella learning what a language is.
 
+**And `[oracle] command` is optional once `[runtime]` exists** (#3501 item 1).
+A plugin whose evidence comes from `after_turn` is its own oracle, and while
+`command` was mandatory every one of Track C's three reference plugins wrote its
+runtime argv out a second time, byte for byte — the sole reason their manifests
+differ in four lines rather than two. `PluginManifest::oracle_process()` resolves
+the two declarations into one answer, so a host never learns which shape an
+author chose.
+
 ### A6. Structured verdicts
 
-`HookDecision::Deny` carries only a `String` (`crates/stella-core/src/bus.rs:144`).
-A verification plugin must return which witness, which command, whether the flip
-was achieved, and the digest. This is invariant 5's own test — the driver and the
-trace fold both branch on it (#3246 §O1.2).
+**LANDED (aabb8d4, eb1fe9e).** `HookDecision::Deny` used to carry only a
+`String`. It now carries `Denial` (`crates/stella-protocol/src/denial.rs`):
+`reason` plus an optional `DenialEvidence` naming the witness, the command,
+`FlipOutcome`, and the artifact digest — exactly the four facts this item
+asked for. The driver reads it structurally rather than by parsing prose
+(`crates/stella-core/src/driver/user_hooks.rs:134-137`, `:379` emits the
+evidence into the `HOOK_STOP_BLOCKED` journal payload rather than only the
+rendered string). **Not independently verified here:** whether a trace fold
+in `stella-cli` already consumes that structured evidence, or only the
+journal payload exists so far — check before citing that half as done.
 
-While here: `RequireApproval` is surfaced as inapplicable at a turn boundary
-(`user_hooks.rs:~322`). A paid plugin that must ask "verification budget
-exhausted, continue?" needs a real answer.
+While here: `RequireApproval` is **still** surfaced as inapplicable at a turn
+boundary (`user_hooks.rs:382-395`, renumbered from `:327-329`) — that half of
+this item did not land. A paid plugin that must ask "verification budget
+exhausted, continue?" still has no real answer; the code's own comment defers
+it to the wrapper socket (#3380).
 
 ### A7. `max_holds` becomes real
 
-`LoopGrant::max_holds` is declared and read by nothing
-(`manifest.rs:120-124`); the live bound is the constant `MAX_STOP_CONSULTS`
-(`user_hooks.rs:99`). Clamp the declared value to a host ceiling. A verification
-plugin needing four rounds cannot currently ask for them.
+**LANDED, engine side (aabb8d4).** The constant `MAX_STOP_CONSULTS` this
+section named is gone from the tree entirely — `grep` for it now returns
+nothing. In its place, `EngineConfig::stop_hold_allowance` is a host-supplied
+`Option<u32>` read through `EngineConfig::stop_holds()`
+(`crates/stella-core/src/driver/config.rs:241`, `:273-279`) and clamped to
+`STOP_HOLD_CEILING` (8) by `clamp_stop_holds`, defaulting to
+`DEFAULT_STOP_HOLDS` (3) when a host asks for nothing — `user_hooks.rs:353`
+consults it directly. A verification plugin's four-round ask is representable
+and consulted, exactly as this item asked.
+
+**Not landed: the wiring from a manifest to that field.** Nothing in
+`stella-cli` yet reads a `LoopGrant::max_holds` off an installed plugin's
+manifest and sets `stop_hold_allowance` from it — because A4 (the loader) has
+not landed, there is no installed manifest to read from. `config.rs`'s own doc
+comment states the intended caller ("the *host* reads `LoopGrant::max_holds`
+off a manifest, clamps it … and sets this field"); that caller does not exist
+in the tree yet.
 
 ### A8. Signals and stages grow to cover the pipeline
 
@@ -247,8 +327,20 @@ manifest is a second program with no gate on it."
 
 ### A9. Plugin events and the trace fold
 
-A `plugin.<id>.*` namespace in the bus catalog — already contemplated at
-`crates/stella-core/src/bus/names.rs:3-4` — plus the fold arm that reads it.
+**LANDED (ed18283).** `PLUGIN_NAMESPACE_PREFIX = "plugin."` is reserved in the
+bus catalog (`crates/stella-core/src/bus/names.rs:284`, with
+`plugin_event_name`/`plugin_id_of` validating and parsing it), and
+`crates/stella-cli/src/trace.rs` gained the fold arm: `TraceRecord::plugin_facts:
+Vec<PluginFact>` (`trace.rs:130-136`, `:195-207`), folded from `plugin.<id>.*`
+journal events (`trace.rs:351-354`) — present and empty, never omitted, when
+no plugin ran. Both halves this item asked for exist.
+
+(Correction, 2026-08-17: an earlier draft said this namespace was "already
+contemplated at `crates/stella-core/src/bus/names.rs:3-4`". It is not — the
+string `plugin` does not appear in that file at all. What lines 3-4 actually
+say is the weaker, general "Extensions may emit custom names — the catalog is
+the contract for what the host emits, not a closed set", which permits the
+namespace without contemplating it. The namespace is entirely net-new.)
 
 **Plugins do not write traces.** They emit journal events; the trace is a fold
 (`crates/stella-cli/src/trace.rs:8-18`). Contributed facts then inherit
@@ -258,8 +350,9 @@ directly routes around all four.
 
 ### A10. A worktree handle that crosses a process
 
-`CandidateWorkspacePort` + `CandidateWorkspace` are 21 methods returning
-borrowed trait objects (`crates/stella-pipeline/src/ports/workspace.rs:94-334`).
+`CandidateWorkspacePort` + `CandidateWorkspace` are 19 methods returning
+borrowed trait objects (`crates/stella-pipeline/src/ports/workspace.rs:94-335`
+— 18 on `CandidateWorkspace`, one `create` on the port).
 `after_turn` is defined as "author a witness, run the oracle, read the flip" —
 all of which need the candidate worktree, and none of which has a serializable
 handle. Custom tools currently pin a child's cwd to the workspace root
@@ -269,6 +362,29 @@ Define the minimum serializable subset: create, root path, run-test, seal,
 adopt, remove. The host fences filesystem access; tamper snapshotting stays
 host-side, which `TamperPolicy::ArtifactIdentity` (`manifest.rs:187-192`)
 already assumes.
+
+**LANDED (9672787).** `CandidateOp::ALL` (`crates/stella-protocol/src/candidate.rs:121-141`)
+is exactly the six operations named above — `Create`, `Root`, `RunTest`,
+`Seal`, `Adopt`, `Remove` — and `crates/stella-pipeline/src/ports/handle.rs`'s
+`CandidateHandles` is the registry that mints a handle and answers each one by
+delegating to the existing `CandidateWorkspacePort`, fenced both lexically and
+on disk as this item required, with tamper snapshotting staying host-side.
+**Landed with a stated gap, not a silent one:** the module's own doc says
+"nothing on the shipping path constructs a `CandidateHandles` today" — the
+consumer is the wrapper socket's `after_turn` dispatch (A3), which does not
+exist yet — and names the seam that will wire it up as #3485.
+
+**Host-side now means the plugin cannot even say it (#3499).** "Snapshotting
+stays host-side" was true of the *work* and false of the *wire*: the evidence a
+plugin returned carried a `tamper` field, so an honest plugin declared a policy
+it could not execute, answered `not-checked` because that was the only true
+thing it could say, and every verdict abstained — which all three of Track C's
+reference plugins hit identically, in three languages. The field is now split:
+`ObservedEvidence` (`crates/stella-plugin/src/observed.rs`) is what a plugin
+returns and has no tamper field in any language, and the host merges its own
+finding through `EvidenceSet::from_observed` before `judge` runs. A plugin that
+sends one anyway is refused by name rather than believed. Witness:
+`crates/stella-runtime/tests/host_owned_tamper.rs`.
 
 ---
 
@@ -343,6 +459,101 @@ different definition of done — not Vera's — as declarative data. What will n
 fit is the evidence for widening the grammar, and it is far cheaper to find
 before the socket exists than after.
 
+### 6.1 The falsifier, run
+
+Run on 2026-08-17, before A3. **The decision held; the grammar did not, in two
+places, and both were widened rather than reopened.**
+
+**What was expressed: a performance budget.** Done means a named benchmark's
+p50 did not regress past a recorded baseline — the check a team reaches for the
+week after an all-green test suite shipped a 3x regression. It was picked over
+the coverage-floor and schema-compatibility candidates because it is the one
+whose verdict is a *relation between two measurements* rather than a property
+of the post-state, so it stresses the grammar in three independent places at
+once instead of one. The manifest is
+`crates/stella-plugin/tests/fixtures/perf-budget.toml` and the exercise is
+executable, not a memo: `crates/stella-plugin/tests/non_witness_done.rs`.
+
+**What fit, unchanged.** The `[loop]` ladder carried it exactly: this is an
+`arbiter`, it binds the Stop gate, it declares `max_holds = 2`.
+`[requirements]` carried the definition of done as two named, enumerable
+clauses. `[oracle]`'s command/timeout carried the evidence-gathering process —
+a benchmark run is precisely the workload the in-process bus cannot host, which
+is §6's own argument arriving intact from a completely different plugin. And
+`tamper = "artifact-identity"` transferred with no change of meaning and turned
+out to be load-bearing for a reason nobody designed it for: the recorded
+baseline is the "before" half of every comparison, so a worker that rewrites
+`benches/baseline.json` wins the budget without touching the code.
+
+**What did not fit — the unflattering half.**
+
+1. **Every oracle in the grammar was a witness oracle.** `flip` is a required
+   field with a single variant, `"required"`, so the manifest could state
+   exactly one definition of done: a red test went green. A benchmark passes
+   before *and* after; what changes is a number. A performance plugin could
+   only load by writing `flip = "required"` about a flip that does not exist.
+2. **A threshold had nowhere to live.** `[requirements]` values are human
+   prose, so "at most 5% slower" could only exist as a constant inside the
+   oracle binary. That is precisely the arrangement §6 rejects, arriving by a
+   side door: the plugin would be deciding done, the budget would be invisible
+   at install, and a change to it would be invisible in review.
+
+**What was widened** (both closed, both load-validated, both with tests):
+
+- **`flip = "not-applicable"`** — this oracle's evidence is not a transition.
+  It is *stricter*, not an escape hatch: with no flip to decide anything, every
+  requirement must be decided by a declared check, or the manifest is refused
+  (`UndecidableRequirement`). Vera's manifest is untouched and still says
+  `required`.
+- **`[oracle] measurements` + `[[oracle.checks]]`** — the oracle declares the
+  names of the numbers it reports, and each check states one rule over one of
+  them in the same closed comparison grammar `[wrapper]` conditions already
+  use (`<measurement> <op> <integer>`). A check reading an undeclared
+  measurement is a load error, and a number the oracle failed to report is an
+  error at evaluation, never a satisfied budget. `Oracle::unmet` is the pure
+  evaluator, and `consent_text` prints the budget under the requirement it
+  decides — a rule a user cannot read before installing is not meaningfully
+  declared.
+
+The measurement namespace is the **plugin's**, not the host's, which is the one
+deliberate asymmetry with `Signal`: the host cannot enumerate every benchmark
+anyone will ever budget. What stays closed is what matters — the comparison
+vocabulary, the shape of a rule, and the requirement that every name a rule
+reads was declared in the same manifest a human consented to.
+
+**Left as friction, not widened.** The literals are non-negative integers, so a
+fractional or signed budget must be declared in an integer unit (the fixture
+reports *percent of baseline*, which costs sub-percent resolution). A float in
+a completion gate brings `NaN` — under which every comparison is false and a
+broken oracle silently *passes* a `<=` budget — so the widening was not made on
+the falsifier's say-so; #3488 carries the decision. Also unstated: the
+provenance of a baseline (that it is the one from the merge base, not merely
+unmodified since), and any quantifier over a set the host does not know, such
+as "no changed file is at zero coverage". The general shape of that second
+limit is worth naming, because it bounds what this grammar will ever do: **it
+carries a verdict over an aggregate the oracle computes, not a quantifier the
+host evaluates.** That is a real constraint and it is also the reason the
+decision survives — the plugin chooses what to measure, and the manifest, which
+a human reads and a reviewer diffs, decides what counts as done.
+
+**What #3511 changes here, and what it does not.** The 2026-08-17 product
+decision (#3511, settled as Option 2) settles that Vera — the paid,
+Oxagen-owned verification plugin this document plans for — reports its own
+evidence rather than being host-verified, and says so plainly in the manifest
+and install consent text instead of leaving it implied. That is a distribution
+and messaging correction, not a reopening of this section's argument: `judge`
+still stays synchronous, I/O-free, and total, and a plugin still cannot grade
+its own work by calling a model inside the verdict check, because that is a
+property of the type signature this section fixes, not a promise the plugin
+keeps. What was already true here — "a plugin supplies evidence
+out-of-process" — is exactly what #3511 makes explicit: the oracle's evidence
+was always plugin-produced, and a host that let a manifest suggest otherwise
+(that the oracle's finding was host-run) was the gap #3511 closes, not
+`judge`'s purity. This is the plugin path specifically — it does not withdraw
+the guarantee from the built-in staged pipeline (§7, §8), which still runs its
+own check and watches the flip; see `AGENTS.md`'s opening description for the
+corrected, path-scoped wording.
+
 ---
 
 ## 7. Track B — extraction order
@@ -352,7 +563,7 @@ replacing `--no-pipeline`), with the wrapper id recorded on the executions row
 so two variants can be compared. That column and migration already shipped
 (`crates/stella-store/src/ddl.rs:115`, `migrations.rs:29`) but the only writer
 passes the constant `PIPELINE_VARIANT_CLASSIC`
-(`crates/stella-cli/src/agent/persistence.rs:22`, `:45`) — wiring `Wrapper::id`
+(`crates/stella-cli/src/agent/persistence.rs:22`, passed at `:83`) — wiring `Wrapper::id`
 to it is a Track A tail item, because without it the A/B comparison this whole
 plan is justified by cannot distinguish two variants.
 
@@ -369,7 +580,7 @@ Order, easiest and least risky first:
 
 **The bar for each:** a side-by-side benchmark holds before the built-in path is
 deleted. The dependency cut — `stella-cli` no longer declaring
-`stella-pipeline`, today 166 references across 41 files — is the **last** slice,
+`stella-pipeline`, today 166 references across 42 files — is the **last** slice,
 never the first.
 
 ---
@@ -467,21 +678,27 @@ Track A actually delivered a platform.
 
 ## 10. Track D — self-driving leaves core
 
-Self-driving differs from the pipeline in one respect that matters: **it is
-genuinely in `stella-core` today.** The pipeline left core long ago (core
-declares no `stella-pipeline` and holds no witness, ladder or flip code); this
-does not. `crates/stella-core/src/self_driving.rs` is 945 lines inside the
-engine crate.
+Self-driving used to differ from the pipeline in one respect that mattered: it
+was genuinely in `stella-core`. That is no longer true. D1 below — moving the
+deterministic decision core to a new leaf crate, `stella-autonomy` — **landed
+in 5c5c325**: `stella-core/src/lib.rs` no longer declares a `self_driving`
+module, `crates/stella-core/src/self_driving.rs` is gone, and the pure logic
+now lives at `crates/stella-autonomy/src/lib.rs` (958 lines) with its property
+tests in `crates/stella-autonomy/src/tests.rs`. The pipeline left core long ago
+in the same way (core declares no `stella-pipeline` and holds no witness,
+ladder or flip code); self-driving's decision core has now joined it. The rest
+of this section — D2 through D6 — is the plan as written; only D1 and the
+framing above it are updated to match the tree.
 
 ### What is there now
 
-The feature is already split three ways, and the split is good:
+The feature is split three ways, and the split is good:
 
 | Layer | Where | What |
 |---|---|---|
-| Decision | `crates/stella-core/src/self_driving.rs` | The AIMD controller sizing a cycle to its machine, the aperture ladder, the dry-streak oracle, digest normalization for the dedup set, the ledger folds. Pure, synchronous, owned data, property-tested. |
-| I/O | `crates/stella-cli/src/self_driving_cmd.rs` (+ `probes.rs`, `state.rs`) | Machine probes, state files, process spawning. Feeds results in, writes decisions out. |
-| Observation | `crates/stella-observatory/src/self_driving.rs` | Read-only fold over `~/.stella/self-driving/<slug>/` JSONL. Never writes. |
+| Decision | `crates/stella-autonomy/src/lib.rs` (leaf crate, no workspace-crate dependencies) | The AIMD controller sizing a cycle to its machine, the aperture ladder, the dry-streak oracle, digest normalization for the dedup set, the ledger folds. Pure, synchronous, owned data, property-tested. |
+| I/O | `crates/stella-cli/src/self_driving_cmd.rs` (+ `self_driving_cmd/probes.rs`, `self_driving_cmd/state.rs`) | Machine probes, state files, process spawning. Feeds results in, writes decisions out. Now depends on `stella-autonomy` rather than on `stella-core` for this logic. |
+| Observation | `crates/stella-observatory/src/self_driving.rs` | Read-only fold over `~/.stella/self-driving/<slug>/` JSONL, now also sourced from `stella-autonomy` instead of a private copy. Never writes. |
 
 There is also a shell driver (`scripts/self-driving.sh`) that delegates its
 decisions to the CLI verbs rather than carrying a second copy (#1548), a gate
@@ -490,18 +707,20 @@ logic hermetically, and a daemon path (`crates/stella-cli/src/daemon/`).
 Two specs already exist: `doc:self-driving-missions` and
 `doc:self-driving-foundry`.
 
-### Why it is in core, and why that is now wrong
+### Why it was in core, and why that premise stopped holding
 
-The module doc gives the reason plainly: the deterministic half lives in core so
+The module doc gave the reason plainly: the deterministic half lived in core so
 "the model never has to re-derive it and cannot get it subtly wrong", and
-keeping it free of I/O is what makes it property-testable.
+keeping it free of I/O is what made it property-testable.
 
-That reasoning is sound and the code is good. What has changed is the premise —
+That reasoning was sound and the code was good. What changed was the premise —
 core is meant to be a bare loop with minimal tools and one model, and an
 opinionated perpetual-delivery policy is not part of a bare loop. The AIMD
 controller and the aperture ladder are exactly the kind of policy Vera is
-leaving for. The purity that justified its placement is a property of the code,
-not of the crate it sits in: it stays property-testable in a plugin.
+leaving for. The purity that justified its original placement was a property
+of the code, not of the crate it sat in: it stays property-testable in
+`stella-autonomy`, a leaf on the `stella-diff` / `stella-home` pattern, exactly
+as D1 below specified.
 
 ### The honest problem: granularity
 
@@ -543,21 +762,24 @@ the plugin depends only on A1 (identity), not on #3380.
 
 ### The work
 
-- **D1. Move the pure core to a leaf crate — not into the plugin.** The module
-  imports only `std`, `serde` and `sha2`, nothing in `stella-core` calls it, and
-  `lib.rs:44` is the sole reference. Mechanically it is one `mod` line and three
-  `use` lines.
+- **D1. Move the pure core to a leaf crate — not into the plugin. DONE
+  (5c5c325).** The module imported only `std`, `serde` and `sha2`, nothing in
+  `stella-core` called it, and `lib.rs:44` was the sole reference — exactly as
+  predicted, the move was mechanical: one `mod` line removed from
+  `stella-core/src/lib.rs`, the file relocated to
+  `crates/stella-autonomy/src/lib.rs` with no behaviour change and no renamed
+  public items (verified: 25 `stella-autonomy` tests pass, and
+  `scripts/test-self-driving.sh` reports 60/60 checks with every assertion
+  intact — the behavioural golden D5 below names).
 
-  **It must land in a shared leaf crate, not inside the plugin binary**, because
-  `stella-observatory` links it deliberately — `Cargo.toml` carries the reason,
-  and it is a scar: the observatory previously carried its own `fold_runs` and
-  the two implementations drifted, so the dashboard and
-  `stella self-driving metrics` disagreed about whether the loop was `NOISY`
-  for every odd cycle count (#1613). Burying the fold in a plugin executable
-  re-creates that bug. A leaf crate on the `stella-diff` / `stella-home` pattern
-  keeps one copy for both readers.
-
-  Depends on nothing. Can land immediately, independent of every other track.
+  It landed in a shared leaf crate, not inside a plugin binary, as required:
+  `crates/stella-autonomy/Cargo.toml` declares zero workspace-crate
+  dependencies, and its header comment carries the reason —
+  `stella-observatory` links it deliberately because the observatory
+  previously carried its own `fold_runs` and the two implementations drifted,
+  so the dashboard and `stella self-driving metrics` disagreed about whether
+  the loop was `NOISY` for every odd cycle count (#1613). A leaf crate on the
+  `stella-diff` / `stella-home` pattern keeps one copy for both readers.
 
 - **D2. The plugin is a host, not a wrapper.** Settled by §10's granularity
   argument and by the fact that the shell driver already works this way. It
@@ -639,6 +861,18 @@ be finished first, not approximated.
   fine-tuning export can join trace to oracle flip.
 - `make gate` green throughout; no baseline entry added to
   `scripts/file-size-baseline.txt` to accommodate this work.
+
+**Note on #3511 (2026-08-17).** The product decision that a plugin's
+verification (Vera's) is its own self-reported evidence, not host-verified,
+does not change this list — it is what the list has been describing all
+along: `judge` stays pure because a plugin supplies evidence, not a verdict,
+and that evidence was never host-verified in the first place. What #3511
+changes is upstream of this section, in the claims Stella makes about itself:
+the manifest and consent text stop implying the oracle's finding is host-run,
+and orientation docs (`AGENTS.md`, `README.md`) stop stating "verified done,
+not claimed done" as something true of every path uniformly — it now reads as
+a property of the path (host-run in the built-in pipeline, self-reported by an
+installed plugin), not of the binary.
 
 ---
 

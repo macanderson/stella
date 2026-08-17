@@ -1,0 +1,389 @@
+{
+  "note": "GENERATED FILE — DO NOT EDIT. Every message the wrapper socket carries, serialized by the same impls stella_runtime's subprocess transport uses. Regenerate with `bash scripts/export-agentevent-schema.sh`; guarded by `scripts/check-wire-schema.sh` (`make wire-schema`). Source of truth: crates/stella-plugin/src/wire.rs. Each message appears twice — `full` populates every optional field, `minimal` omits every one that may be omitted — so a field changing between required and optional is a diff here. This is a corpus, not a JSON Schema: see crates/stella-plugin/src/wire_corpus.rs for what that does and does not catch (#3532).",
+  "parts": [
+    {
+      "case": "candidate_grant/full",
+      "message": {
+        "handle": "candidate-1",
+        "root": "/var/folders/stella-candidate-1",
+        "test": {
+          "args": [
+            "test",
+            "-p",
+            "stella-plugin"
+          ],
+          "baseline": "failed",
+          "program": "cargo"
+        }
+      }
+    },
+    {
+      "case": "candidate_grant/minimal",
+      "message": {
+        "handle": "candidate-1",
+        "root": "/var/folders/stella-candidate-1"
+      }
+    },
+    {
+      "case": "test_plan/full",
+      "message": {
+        "args": [
+          "test",
+          "-p",
+          "stella-plugin"
+        ],
+        "baseline": "failed",
+        "program": "cargo"
+      }
+    },
+    {
+      "case": "test_plan/minimal",
+      "message": {
+        "baseline": "not-run",
+        "program": "cargo"
+      }
+    },
+    {
+      "case": "turn_outcome/full",
+      "message": {
+        "answer": "the witness now passes",
+        "changed_files": [
+          "crates/stella-plugin/src/wire.rs"
+        ],
+        "completed": true,
+        "tools": [
+          "read_file",
+          "edit_file"
+        ]
+      }
+    },
+    {
+      "case": "turn_outcome/minimal",
+      "message": {
+        "completed": false
+      }
+    },
+    {
+      "case": "observed_evidence/full",
+      "message": {
+        "flip": "achieved",
+        "measurements": {
+          "p50_ms": 103
+        }
+      }
+    },
+    {
+      "case": "observed_evidence/minimal",
+      "message": {
+        "flip": "unobservable"
+      }
+    },
+    {
+      "case": "volatile_context",
+      "message": {
+        "label": "witness",
+        "text": "the authored test fails on the pre-turn tree"
+      }
+    }
+  ],
+  "protocol_version": 1,
+  "requests": [
+    {
+      "case": "before_turn/full",
+      "message": {
+        "body": {
+          "candidate": {
+            "handle": "candidate-1",
+            "root": "/var/folders/stella-candidate-1",
+            "test": {
+              "args": [
+                "test",
+                "-p",
+                "stella-plugin"
+              ],
+              "baseline": "failed",
+              "program": "cargo"
+            }
+          },
+          "goal": "make the failing test pass",
+          "protocol_version": 1,
+          "published": [
+            {
+              "signal": "witness-authored",
+              "value": {
+                "boolean": true
+              }
+            }
+          ],
+          "round": 1,
+          "stage": "execute",
+          "wrapper": "witness"
+        },
+        "point": "before_turn"
+      }
+    },
+    {
+      "case": "before_turn/minimal",
+      "message": {
+        "body": {
+          "goal": "make the failing test pass",
+          "protocol_version": 1,
+          "round": 0,
+          "stage": "triage",
+          "wrapper": "witness"
+        },
+        "point": "before_turn"
+      }
+    },
+    {
+      "case": "after_turn/full",
+      "message": {
+        "body": {
+          "candidate": {
+            "handle": "candidate-1",
+            "root": "/var/folders/stella-candidate-1",
+            "test": {
+              "args": [
+                "test",
+                "-p",
+                "stella-plugin"
+              ],
+              "baseline": "failed",
+              "program": "cargo"
+            }
+          },
+          "goal": "make the failing test pass",
+          "protocol_version": 1,
+          "round": 1,
+          "stage": "execute",
+          "turn": {
+            "answer": "the witness now passes",
+            "changed_files": [
+              "crates/stella-plugin/src/wire.rs"
+            ],
+            "completed": true,
+            "tools": [
+              "read_file",
+              "edit_file"
+            ]
+          },
+          "wrapper": "witness"
+        },
+        "point": "after_turn"
+      }
+    },
+    {
+      "case": "after_turn/minimal",
+      "message": {
+        "body": {
+          "goal": "make the failing test pass",
+          "protocol_version": 1,
+          "round": 0,
+          "turn": {
+            "completed": false
+          },
+          "wrapper": "witness"
+        },
+        "point": "after_turn"
+      }
+    }
+  ],
+  "responses": [
+    {
+      "case": "before_turn/full",
+      "message": {
+        "body": {
+          "context": [
+            {
+              "label": "witness",
+              "text": "the authored test fails on the pre-turn tree"
+            }
+          ],
+          "protocol_version": 1,
+          "publish": [
+            {
+              "signal": "flip-achieved",
+              "value": {
+                "boolean": true
+              }
+            }
+          ],
+          "role": "verifier",
+          "scope": [
+            "crates/stella-plugin/src/wire.rs"
+          ]
+        },
+        "point": "before_turn"
+      }
+    },
+    {
+      "case": "before_turn/minimal",
+      "message": {
+        "body": {
+          "protocol_version": 1
+        },
+        "point": "before_turn"
+      }
+    },
+    {
+      "case": "after_turn/full",
+      "message": {
+        "body": {
+          "evidence": {
+            "flip": "achieved",
+            "measurements": {
+              "p50_ms": 103
+            }
+          },
+          "protocol_version": 1
+        },
+        "point": "after_turn"
+      }
+    },
+    {
+      "case": "after_turn/minimal",
+      "message": {
+        "body": {
+          "evidence": {
+            "flip": "unobservable"
+          },
+          "protocol_version": 1
+        },
+        "point": "after_turn"
+      }
+    }
+  ],
+  "vocabulary": {
+    "flip_observation": [
+      "not-attempted",
+      "achieved",
+      "not-achieved",
+      "unsatisfiable",
+      "unobservable"
+    ],
+    "published_signal": [
+      {
+        "signal": "test-command",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "candidates",
+        "value": {
+          "count": 3
+        }
+      },
+      {
+        "signal": "budget-metered",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "conversational",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "questions",
+        "value": {
+          "count": 3
+        }
+      },
+      {
+        "signal": "plans",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "verifies",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "wants-witness",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "wants-verifier",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "mutating-actions",
+        "value": {
+          "count": 3
+        }
+      },
+      {
+        "signal": "diff-lines",
+        "value": {
+          "count": 3
+        }
+      },
+      {
+        "signal": "witness-authored",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "flip-achieved",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "tests-red",
+        "value": {
+          "boolean": true
+        }
+      },
+      {
+        "signal": "tests-green",
+        "value": {
+          "boolean": true
+        }
+      }
+    ],
+    "signal_value": [
+      {
+        "boolean": true
+      },
+      {
+        "count": 3
+      }
+    ],
+    "stage": [
+      "triage",
+      "recall",
+      "research",
+      "plan",
+      "scope",
+      "execute",
+      "witness",
+      "verify",
+      "verdict",
+      "reflect",
+      "contextwrite",
+      "complete"
+    ],
+    "test_baseline": [
+      "not-run",
+      "passed",
+      "failed",
+      "unobserved"
+    ],
+    "wrapper_point": [
+      "before_turn",
+      "after_turn"
+    ]
+  }
+}

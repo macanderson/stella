@@ -25,10 +25,12 @@ piece of systems engineering, built and maintained by one person:
   graph, a bi-temporal context store, a multi-tab terminal UI, fleet
   orchestration over git worktrees, and native wire adapters for nine hosted
   providers plus any local OpenAI-compatible server.
-- **Verification you can trust** — witness tests replayed against the previous
+- **Verification engineering** — witness tests replayed against the previous
   code in a shadow worktree, fail→pass flip oracles, and cross-family judges
-  are much harder to build than "the model said it's done." They are also what
-  makes an agent worth using unattended.
+  are much harder to build than "the model said it's done." This machinery
+  ships in the built-in staged pipeline today and is also becoming Vera,
+  stella's installable verification plugin — either way it's what makes an
+  agent worth using unattended.
 - **Real, ongoing costs.** Developing, benchmarking, and regression-testing an
   agent against frontier models is paid for in real API bills — every
   self-improvement benchmark run, every provider-adapter conformance pass,

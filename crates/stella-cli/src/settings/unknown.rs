@@ -58,6 +58,7 @@ pub(super) const ROOT_FIELDS: &[&str] = &[
     "reward",
     "context",
     "context_providers",
+    "plugins",
     "authority",
     "enterprise_telemetry",
 ];

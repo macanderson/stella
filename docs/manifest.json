@@ -385,6 +385,18 @@
       "status": "living",
       "title": "The journey of a prompt \u2014 full pipeline mode, in plain language"
     },
+    "plugin-transport-spike": {
+      "path": "docs/spec/plugin-transport-spike.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "status": "living",
+      "title": "D-2 transport spike: subprocess hook vs. MCP + lifecycle extension"
+    },
     "prompt-agent-author": {
       "path": "docs/prompts/agent-author.md",
       "status": "living",
@@ -743,6 +755,21 @@
       ],
       "status": "living",
       "title": "The Witness Protocol, adapted"
+    },
+    "wrapper-socket": {
+      "path": "docs/spec/wrapper-socket.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "status": "proposed",
+      "title": "The wrapper socket: four points, one wire, no host assumed"
     }
   },
   "version": 1

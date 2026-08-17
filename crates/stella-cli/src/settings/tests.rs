@@ -186,6 +186,38 @@ fn hooks_concatenate_across_scopes_instead_of_replacing() {
     assert_eq!(hooks.session_start.expect("session hooks").len(), 1);
 }
 
+/// **Witness for the plugin half of `doc:pipeline-as-plugins` §A4.** A later
+/// scope can retract a plugin an earlier scope installed — the thing
+/// `hooks_concatenate_across_scopes_instead_of_replacing` proves no scope can
+/// do to another's hook matchers.
+///
+/// The asymmetry is deliberate, and both halves are pinned here so neither
+/// can be "tidied" into the other: an operator gate must survive a
+/// lower-precedence file, and a third party's process must not.
+#[test]
+fn a_later_scope_retracts_a_plugin_an_earlier_scope_installed() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = write(dir.path(), "user.json", r#"{"plugins": {"vera": "on"}}"#);
+    let project = write(
+        dir.path(),
+        "project.json",
+        r#"{"plugins": {"vera": "off", "lint-gate": "off"}}"#,
+    );
+    let merged = Settings::load_from(&[user.clone(), project.clone()]).unwrap();
+    assert_eq!(merged.plugins.get("vera"), Some(&Toggle::Off));
+    assert_eq!(merged.plugins.get("lint-gate"), Some(&Toggle::Off));
+
+    // And `off` is sticky in the other direction: a scope may narrow what
+    // runs on this machine, never widen it. Without this, a cloned repository
+    // could re-enable a plugin its operator had switched off.
+    let restored = Settings::load_from(&[project, user]).unwrap();
+    assert_eq!(
+        restored.plugins.get("vera"),
+        Some(&Toggle::Off),
+        "a retraction is not undone by a later scope saying \"on\""
+    );
+}
+
 #[test]
 fn settings_without_hooks_stay_hook_free() {
     let dir = tempfile::tempdir().unwrap();

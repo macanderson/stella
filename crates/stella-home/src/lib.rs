@@ -58,6 +58,10 @@ const DOT_STELLA: &str = ".stella";
 /// The self-driving loop's state directory under the stella home.
 const SELF_DRIVING_DIR: &str = "self-driving";
 
+/// Installed plugins, in both tiers: `~/.stella/plugins` and
+/// `<workspace>/.stella/plugins`.
+const PLUGINS_DIR: &str = "plugins";
+
 /// What [`SELF_DRIVING_DIR`] was called before #1757 renamed the loop. A
 /// spelling on disk, not a name — see [`legacy_self_driving_roots`].
 const LEGACY_SELF_DRIVING_DIR: &str = "fullauto";
@@ -197,6 +201,47 @@ pub fn self_driving_root() -> Option<PathBuf> {
 #[must_use]
 pub fn resolve_self_driving_root(stella_home: Option<PathBuf>) -> Option<PathBuf> {
     stella_home.map(|home| home.join(SELF_DRIVING_DIR))
+}
+
+/// Where user-scope plugins are installed: `<stella home>/plugins`, one
+/// directory per plugin beneath it. `None` only when no home is discoverable,
+/// which a caller must read as "there is no user tier here" — never as a
+/// reason to fall back to the working directory, because that would install
+/// third-party code into whatever repository happened to be open.
+///
+/// **One consumer today, and that is stated rather than glossed** (see the
+/// crate README's bar for a new resolver). `stella-cli`'s loader is the only
+/// caller as of #3380; the second is the wrapper socket's other drivers —
+/// `stella-serve` and an embedded host linking `stella-engine` — which
+/// `doc:wrapper-socket` §6 makes an acceptance criterion rather than an
+/// aspiration, and which must find the same roster the CLI does without
+/// depending on the CLI to spell it. That is the `self_driving_root` shape
+/// (two parties that must not know each other, one answer), arriving one
+/// consumer early; if that second driver never lands, this belongs back in
+/// `stella-cli`.
+#[must_use]
+pub fn user_plugins_dir() -> Option<PathBuf> {
+    resolve_user_plugins_dir(stella_home())
+}
+
+/// [`user_plugins_dir`] over the anchor the caller supplies.
+#[must_use]
+pub fn resolve_user_plugins_dir(stella_home: Option<PathBuf>) -> Option<PathBuf> {
+    stella_home.map(|home| home.join(PLUGINS_DIR))
+}
+
+/// Where project-scope plugins are installed:
+/// `<workspace root>/.stella/plugins`.
+///
+/// Total, and env-free even in the wrapper sense — a workspace root is an
+/// argument, never something this crate discovers — so there is no
+/// `project_plugins_dir()` half to pair with it. It lives here anyway, beside
+/// the user tier, because the two directories are read as one roster and a
+/// loader that spelled `.stella/plugins` itself is exactly the second
+/// implementation this crate exists to prevent (#1139).
+#[must_use]
+pub fn resolve_project_plugins_dir(workspace_root: &std::path::Path) -> PathBuf {
+    workspace_root.join(DOT_STELLA).join(PLUGINS_DIR)
 }
 
 /// Roots earlier builds wrote this state to, newest first.
@@ -383,6 +428,31 @@ mod tests {
             Some(PathBuf::from("/home/dev/.stella/self-driving"))
         );
         assert_eq!(resolve_self_driving_root(None), None);
+    }
+
+    /// The two plugin tiers a loader unions. The project tier is spelled from
+    /// the same `.stella` constant every other project path uses, so a
+    /// workspace whose directory name changed cannot leave one resolver
+    /// pointing at the old spelling.
+    #[test]
+    fn the_plugin_tiers_are_the_stella_home_and_the_workspace_dot_stella() {
+        assert_eq!(
+            resolve_user_plugins_dir(Some(PathBuf::from("/home/dev/.stella"))),
+            Some(PathBuf::from("/home/dev/.stella/plugins"))
+        );
+        assert_eq!(
+            resolve_user_plugins_dir(None),
+            None,
+            "no home means there is no user tier — never a fallback into the \
+             working directory, which would install third-party code into \
+             whatever repository happened to be open"
+        );
+        assert_eq!(
+            resolve_project_plugins_dir(std::path::Path::new("/ws")),
+            PathBuf::from("/ws/.stella/plugins"),
+            "the project tier is under the same .stella every other \
+             per-workspace path lives in"
+        );
     }
 
     #[test]

@@ -111,7 +111,7 @@ fn every_default_binding_resolves_to_a_role() {
             continue;
         };
         assert!(
-            agent.role().is_some(),
+            RoleTable::default().resolve(&agent).is_some(),
             "{responsibility:?} defaults to `{agent}`, which resolves to no role"
         );
     }
@@ -382,7 +382,7 @@ fn an_absent_field_keeps_the_built_in_binding() {
 fn media_roles_are_not_bindable_agents() {
     for name in ["embed", "vision", "image", "video"] {
         assert_eq!(
-            AgentId::new(name).role(),
+            RoleTable::default().resolve(&AgentId::new(name)),
             None,
             "`{name}` must not resolve as a pipeline agent"
         );
@@ -466,6 +466,177 @@ fn a_block_naming_only_some_rows_leaves_the_rest_at_their_defaults() {
             restored.assignment(untouched),
             Roster::default().assignment(untouched),
             "{untouched:?} was not named, so it must keep the built-in binding"
+        );
+    }
+}
+
+/// **The #3472 witness, first half.** A role a host contributed resolves, and
+/// stops resolving when whatever contributed it is removed.
+///
+/// Both directions in one test on purpose. That a name can be added is the
+/// easy half and proves nothing on its own — a table that only ever grew would
+/// let a binding survive the uninstall of the thing it named. The second half
+/// is the one that has to hold: the binding is refused, by name, listing what
+/// *is* installed, before the run spends anything.
+#[test]
+fn a_contributed_role_resolves_and_stops_resolving_when_it_is_withdrawn() {
+    let mut table = RoleTable::default();
+    table
+        .contribute("vera-witness", Role::Verifier)
+        .expect("a fresh name on a pipeline tier is contributable");
+
+    let mut roster = Roster::default().with_roles(table.clone());
+    assert!(
+        roster
+            .apply([(
+                "witness_author".to_string(),
+                override_of(None, Some("vera-witness")),
+            )])
+            .is_empty(),
+        "a contributed role must be bindable exactly like a built-in one"
+    );
+    assert_eq!(
+        roster.role(ModelCallRole::WitnessAuthor),
+        Some(Role::Verifier)
+    );
+    assert!(
+        roster.roles().names().contains(&"vera-witness"),
+        "the role table is what the `/models` row list is drawn from"
+    );
+
+    // The contributor is removed. The binding it left behind must not survive
+    // it — and must not survive it *loudly*, not by resolving somewhere else.
+    assert!(table.withdraw("vera-witness"));
+    let orphaned = roster.with_roles(table);
+    assert!(!orphaned.roles().names().contains(&"vera-witness"));
+    assert_eq!(
+        orphaned.role(ModelCallRole::WitnessAuthor),
+        None,
+        "an unresolvable binding must never fall back to another agent"
+    );
+    let problems = orphaned.validate();
+    assert_eq!(
+        problems,
+        vec![RosterError::UnknownAgent {
+            responsibility: "witness_author".to_string(),
+            agent: "vera-witness".to_string(),
+            known: AgentId::BUILTIN.join(", "),
+        }],
+        "the refusal must name the role and list the ones that would work"
+    );
+}
+
+/// **The #3472 witness, second half — the security one.** A contributed role
+/// cannot smuggle the worker back in as its own independent verifier.
+///
+/// The bypass this closes: independence used to be a comparison of agent
+/// *names*, which was the same question as tiers only because every name was
+/// built-in. A contributor that could name the worker's tier `vera-judge`
+/// would author its own witness, and the roster — the one place that reports
+/// self-grading before any spend — would have said nothing at all.
+#[test]
+fn a_contributed_role_cannot_launder_the_worker_into_the_verifier_seat() {
+    let table = RoleTable::default()
+        .with("vera-judge", Role::Worker)
+        .expect("riding the worker's tier is a legal contribution");
+    let mut roster = Roster::default().with_roles(table);
+    let problems = roster.apply([(
+        "witness_author".to_string(),
+        override_of(None, Some("vera-judge")),
+    )]);
+
+    assert!(
+        problems.is_empty(),
+        "the binding resolves — the point is that it is *reported*, not refused: {problems:?}"
+    );
+    assert_eq!(
+        roster.independence_losses(),
+        vec![IndependenceLoss {
+            responsibility: ModelCallRole::WitnessAuthor,
+            agent: AgentId::new("vera-judge"),
+        }],
+        "a role riding the worker's tier is the worker, whatever it is called"
+    );
+}
+
+/// A contribution that keeps its distance from the worker is not reported.
+///
+/// The other side of the test above, and the reason it is not simply "warn on
+/// every contributed role": a notice per row would train operators to skip the
+/// one that matters.
+#[test]
+fn a_contributed_role_on_an_independent_tier_reports_no_loss() {
+    let table = RoleTable::default()
+        .with("vera-witness", Role::Verifier)
+        .expect("contributable");
+    let mut roster = Roster::default().with_roles(table);
+    roster.apply([(
+        "witness_author".to_string(),
+        override_of(None, Some("vera-witness")),
+    )]);
+
+    assert!(roster.independence_losses().is_empty());
+}
+
+/// A contribution may never redefine a built-in name.
+///
+/// This is the quietest of the attacks and the worst: repointing `verifier` at
+/// the worker's tier turns every binding already written — including the
+/// default roster's own `witness_author` — into self-grading, with no
+/// configuration changing and nothing to notice.
+#[test]
+fn a_contribution_cannot_redefine_a_built_in_role() {
+    for name in AgentId::BUILTIN {
+        assert_eq!(
+            RoleTable::default().contribute(*name, Role::Worker),
+            Err(RoleTableError::ShadowsBuiltin {
+                name: (*name).to_string()
+            }),
+            "`{name}` is built in and must not be redefinable"
+        );
+    }
+    assert_eq!(
+        Roster::default().role(ModelCallRole::WitnessAuthor),
+        Some(Role::Verifier),
+        "the default roster's own independence rests on that refusal"
+    );
+}
+
+/// The remaining contribution refusals, each typed so a host can tell a
+/// manifest to fix from a load-order collision to report.
+#[test]
+fn a_contribution_is_refused_by_name_rather_than_ignored() {
+    let mut table = RoleTable::default();
+    table
+        .contribute("vera-witness", Role::Verifier)
+        .expect("ok");
+    assert_eq!(
+        table.contribute("vera-witness", Role::Triage),
+        Err(RoleTableError::Duplicate {
+            name: "vera-witness".to_string()
+        }),
+        "which of two contributors won would otherwise depend on load order"
+    );
+
+    for name in ["", " ", "vera judge", "vera,judge"] {
+        assert_eq!(
+            RoleTable::default().contribute(name, Role::Verifier),
+            Err(RoleTableError::NotAToken {
+                name: name.to_string()
+            }),
+            "`{name}` cannot survive a round trip through a diagnostic"
+        );
+    }
+
+    // Media tiers are excluded from `AgentId::BUILTIN` deliberately;
+    // contribution must not be the back door adjacency was denied.
+    for tier in [Role::Embed, Role::Vision, Role::Image, Role::Video] {
+        assert!(
+            matches!(
+                RoleTable::default().contribute("vera-embed", tier),
+                Err(RoleTableError::NotAPipelineTier { .. })
+            ),
+            "{tier:?} staffs no pipeline responsibility"
         );
     }
 }

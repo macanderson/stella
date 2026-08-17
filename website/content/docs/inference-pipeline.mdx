@@ -10,6 +10,16 @@ answer comes from measurements — a fail→pass flip of one command, a test run
 diff — and no model is ever asked to rule on whether the work is done. When the
 measurements do not settle it, the run says so.
 
+<Callout type="warn">
+**This guarantee is a property of the path, not of the binary.** Everything
+below is real and host-run in stella's built-in staged pipeline today — no
+plugin required. It is also being extracted into an installable verification
+plugin (Oxagen's Vera is the reference one, see `doc:pipeline-as-plugins`);
+once that lands, a plugin reports its own evidence instead of stella running
+the check, and this page's guarantee does not automatically carry over to
+that path. This page documents the built-in mechanism as it exists today.
+</Callout>
+
 ## The foundation: the step loop
 
 At the bottom of everything is a simple, single-threaded **step loop**:

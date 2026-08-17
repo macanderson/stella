@@ -85,9 +85,9 @@ use stella_core::bus::HookBus;
 ///     fn install(&self, bus: &HookBus) {
 ///         bus.on_blocking(names::TOOL_CALL_REQUESTED, |event| {
 ///             match event.payload["tool"].as_str() {
-///                 Some("deploy") => HookDecision::Deny {
-///                     reason: "deploys are not served from this sidecar".to_string(),
-///                 },
+///                 Some("deploy") => {
+///                     HookDecision::Deny("deploys are not served from this sidecar".into())
+///                 }
 ///                 _ => HookDecision::Allow,
 ///             }
 ///         })

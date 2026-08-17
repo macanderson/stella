@@ -460,8 +460,8 @@ impl RemoteToolExecutor {
             serde_json::json!({ "tool": name, "input": input }),
         ));
         match outcome.decision {
-            HookDecision::Deny { reason } => Err(ToolOutput::error(format!(
-                "`{name}` was denied by an extension policy: {reason}"
+            HookDecision::Deny(denial) => Err(ToolOutput::error(format!(
+                "`{name}` was denied by an extension policy: {denial}"
             ))),
             HookDecision::RequireApproval { reason } => Err(ToolOutput::error(format!(
                 "`{name}` requires approval before it can run: {reason}"

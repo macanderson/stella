@@ -15,19 +15,90 @@
 //! hardcoded. See [`Condition`] for the closed condition grammar and the
 //! load-time stage-graph check that make "a condition naming a signal the
 //! host does not publish is a load error" mechanical rather than
-//! aspirational.
+//! aspirational, and [`Wrapper::resolve`] for the reader that turns a
+//! declaration into an answer: the host fills in [`SignalValues`] — total by
+//! construction, so an unpublished signal is not representable, let alone
+//! silently `false` — and gets back the ordered [`StageProgram`] this turn
+//! will run.
 //!
-//! The one function a host must not bypass is [`LoopGrant::permits_hook`]:
-//! it is the authoritative filter behind the epic's rule that an undeclared
-//! hook is never invoked, even if the plugin's process registers for it.
+//! `[[capabilities]]` (`doc:pipeline-as-plugins` §A1) is the other half of a
+//! consent document: what the plugin asks to reach *outside* the turn,
+//! graded in [`stella_protocol::RiskLevel`] — the gate's own vocabulary, so
+//! the grade a user is shown at install and the grade an `AuthzGate` refuses
+//! on cannot disagree. [`consent_text`] renders both halves into the words an
+//! install prompt shows, purely and deterministically.
+//!
+//! `[oracle]`'s evidence half — `measurements` and `[[oracle.checks]]` — is
+//! what lets a definition of done that is **not** a witness test be stated as
+//! data: the oracle declares the numbers it reports, and each check compares
+//! one of them against a budget in the same closed grammar. See
+//! `evidence.rs` for the falsifier that established the need and
+//! [`Oracle::unmet`] for the pure evaluator that decides it.
+//!
+//! `[runtime]` (`doc:pipeline-as-plugins` §A5) is the process half: the argv
+//! the host starts, the timeout it enforces, and the **exact** environment
+//! slice the child inherits. See [`Runtime`] for why there is deliberately no
+//! `language` field — `argv` already distinguishes a Python plugin from a
+//! Node one without Stella learning what a language is — and why the
+//! environment is an allowlist rather than a scrub.
+//!
+//! `wire.rs` (#3380, `doc:wrapper-socket` §2) is the socket itself, and it is
+//! the reason every block above is worth declaring: the two points a plugin
+//! answers ([`WrapperRequest`] / [`WrapperResponse`]), the closed
+//! [`EvidenceSet`] it may report, and the [`VerdictRule`] read off this
+//! manifest that the **host** — never the plugin — evaluates. `judge` and
+//! `again` are deliberately absent from that vocabulary: they are free
+//! functions in `stella-runtime`, so a plugin cannot implement either one in
+//! any language, and "a verification plugin quietly calls a model to decide
+//! done" stays impossible by construction rather than by policy.
+//!
+//! `observed.rs` (#3499) is the line between the two halves of that evidence:
+//! [`ObservedEvidence`] is what a plugin returns, and it has **no tamper
+//! field** — snapshotting artifact identity is host-side, so a plugin asked to
+//! report it could only ever answer "not checked" and leave every verdict
+//! undecided. The host merges its own finding through
+//! [`EvidenceSet::from_observed`], which makes "the host owns tamper" a fact of
+//! the types rather than a rule someone has to remember.
+//!
+//! The two functions a host must not bypass are [`LoopGrant::permits_hook`]
+//! and [`LoopGrant::permits_point`]: they are the authoritative filters behind
+//! the epic's rule that an undeclared hook is never invoked and an undeclared
+//! wrapper point is never dispatched, however eagerly the plugin's own process
+//! would answer either one.
 
+mod consent;
 mod error;
+mod evidence;
 mod manifest;
+mod observed;
+mod program;
+mod runtime;
+mod wire;
+/// The generated description of the wrapper socket's wire contract, published
+/// under `docs/wire/` and gate-checked by `scripts/check-wire-schema.sh`.
+///
+/// Behind the `schema` feature for the reason `stella-protocol`'s
+/// `schema_export` is: describing the wire format must cost the shipping binary
+/// nothing, so a default build never compiles it.
+#[cfg(feature = "schema")]
+pub mod wire_corpus;
 mod wrapper;
 
+pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
 pub use error::ManifestError;
+pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
 pub use manifest::{
-    FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, Participation, PluginManifest, Role,
-    Subloop, TamperPolicy,
+    FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, OracleProcess, OracleProcessSource,
+    Participation, PluginManifest, Role, Subloop, TamperPolicy,
+};
+pub use observed::ObservedEvidence;
+pub use program::{SignalValues, StageProgram};
+pub use runtime::Runtime;
+pub use wire::{
+    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
+    Continuation, Correction, EvidenceSet, FlipObservation, Outcome, PROTOCOL_VERSION,
+    PublishedSignal, RoundState, SignalValue, StopReason, TamperFinding, TestBaseline, TestPlan,
+    TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule,
+    VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
 };
 pub use wrapper::{CompareOp, Condition, Signal, SignalKind, StageName, Wrapper, WrapperStage};

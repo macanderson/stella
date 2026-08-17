@@ -65,6 +65,25 @@
 //! planning are distinct responsibilities that happen to share the worker's
 //! tier by default, and their costs are not alike.
 //!
+//! # The agent vocabulary is open; resolving it is not (#3472)
+//!
+//! The responsibilities are code (above). The *agents* are not: [`RoleTable`]
+//! is an open set of names, seeded with the five built-ins and extended by
+//! whatever a host contributed for this process, so a role can appear because
+//! something was installed and disappear when it is removed. What stays closed
+//! is **resolution**: a name outside the table is a named
+//! [`RosterError::UnknownAgent`] before any spend, never a quiet fallback to
+//! the session default, and a contributed row can carry only a routing intent
+//! — a tier the host resolves against the operator's own providers — never a
+//! model, an endpoint or a credential.
+//!
+//! The one property that had to be re-derived rather than inherited is
+//! independence. While every agent name was built-in, comparing names *was*
+//! comparing tiers; with the table open it is not, so
+//! [`Roster::independence_losses`] resolves both sides. Otherwise a
+//! contributor could nominate itself as its own independent verifier by
+//! spelling the worker's tier under another name.
+//!
 //! # What a new responsibility costs
 //!
 //! Adding a [`ModelCallRole`] variant fails [`default_agent`]'s exhaustive
@@ -82,10 +101,11 @@ use stella_protocol::{ModelCallRole, Role};
 ///
 /// A **string** rather than an enum, and open at the configuration layer on
 /// purpose: the vocabulary of agents is a deployment property, whereas the
-/// vocabulary of responsibilities is a protocol property. Today four names
-/// resolve ([`Self::BUILTIN`]); a fifth is a [`RosterError::UnknownAgent`] at
-/// validation time — named, listed, and before any spend — never a silent
-/// fallback to the worker.
+/// vocabulary of responsibilities is a protocol property. The names that
+/// resolve are [`RoleTable`]'s — the five built-ins ([`Self::BUILTIN`]) plus
+/// whatever a host contributed for this process. A name outside that table is
+/// a [`RosterError::UnknownAgent`] at validation time — named, listed, and
+/// before any spend — never a silent fallback to the worker.
 ///
 /// The names are [`Role`]'s own serde tokens, so an operator who has already
 /// written `pipeline_verifier_model` reads `actor = "verifier"` without
@@ -108,9 +128,8 @@ impl AgentId {
     pub const BUILTIN: &'static [&'static str] =
         &["worker", "triage", "plan", "research", "verifier"];
 
-    /// Name an agent. Accepts anything; resolution is
-    /// [`Self::role`]'s job and unresolvable names are reported by
-    /// [`Roster::validate`].
+    /// Name an agent. Accepts anything; resolution is [`RoleTable::resolve`]'s
+    /// job and unresolvable names are reported by [`Roster::validate`].
     #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
@@ -127,11 +146,11 @@ impl AgentId {
                 Role::Research => "research",
                 Role::Verifier => "verifier",
                 // Unreachable through this module — `default_agent` never
-                // yields one and `role()` never resolves to one — but stated
-                // rather than `unreachable!`d, because a panic in library code
-                // on a value the type system permits is invariant 5's exact
-                // prohibition. A media role named here resolves to a name
-                // `role()` will refuse, which is the reportable outcome.
+                // yields one and the role table never resolves one — but
+                // stated rather than `unreachable!`d, because a panic in
+                // library code on a value the type system permits is invariant
+                // 5's exact prohibition. A media role named here resolves to a
+                // name the table will refuse, which is the reportable outcome.
                 Role::Embed => "embed",
                 Role::Vision => "vision",
                 Role::Image => "image",
@@ -141,15 +160,15 @@ impl AgentId {
         )
     }
 
-    /// The engine role that serves this agent, or `None` when nothing does.
+    /// The built-in engine role that serves this agent, if one does.
     ///
-    /// `None` is not a failure here — it is the answer [`Roster::validate`]
-    /// turns into a named error listing [`Self::BUILTIN`]. Returning it rather
-    /// than defaulting is the whole safety property: an operator who typos
-    /// `actor = "verifer"` must not silently get the worker grading its own
-    /// work.
-    #[must_use]
-    pub fn role(&self) -> Option<Role> {
+    /// Deliberately **private**, and deliberately only half the answer: the
+    /// whole answer is [`RoleTable::resolve`], which asks this first and then
+    /// the contributed rows. Two public resolvers is how a caller comes to
+    /// hold the closed answer while the run holds the open one, and the
+    /// direction that would fail is the dangerous one — a contributed role
+    /// judged "unknown" by one and "the worker's tier" by the other.
+    fn builtin_role(&self) -> Option<Role> {
         match self.0.as_str() {
             "worker" => Some(Role::Worker),
             "triage" => Some(Role::Triage),
@@ -165,6 +184,192 @@ impl AgentId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// Which names resolve, and to which engine tier — the role table.
+///
+/// **Open at the table, closed at resolution.** [`AgentId`] is a bare string
+/// precisely so that a host can add a name here without a protocol change;
+/// what a name may never do is resolve to *something arbitrary*. A name this
+/// table does not hold is [`RosterError::UnknownAgent`] at
+/// [`Roster::validate`] — named, listed, and before any spend. That is what
+/// makes removal safe as well as addition: a binding written while a
+/// contributor was installed refuses the next run once it is gone, instead of
+/// quietly falling back to the session default and grading the work with
+/// whatever happened to be there.
+///
+/// A contributed row carries a **routing intent and nothing else** — a name
+/// and the [`Role`] tier it rides. No credential, no endpoint, no model slug:
+/// the host resolves that tier against the operator's own providers exactly as
+/// it does for a built-in name, so contributing a role can never contribute a
+/// destination.
+///
+/// The built-in names ([`AgentId::BUILTIN`]) are always present and cannot be
+/// redefined ([`RoleTableError::ShadowsBuiltin`]). A contributor able to
+/// repoint `verifier` at the worker's tier would turn every existing binding
+/// into self-grading without one line of configuration changing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoleTable {
+    /// Contributed name → the tier it rides, ordered so diagnostics and
+    /// [`Self::names`] read the same on every run (invariant 7's discipline:
+    /// a list whose order varies between runs is a diff nobody can read).
+    contributed: BTreeMap<String, Role>,
+}
+
+impl RoleTable {
+    /// Add a contributed role.
+    ///
+    /// Every refusal is typed and none of them is a warning: a contribution
+    /// that cannot be honoured must not half-apply, because the half that
+    /// applied would be a name that resolves somewhere its contributor did not
+    /// ask for.
+    ///
+    /// # Errors
+    ///
+    /// [`RoleTableError::ShadowsBuiltin`] for a built-in name,
+    /// [`RoleTableError::Duplicate`] for a name already contributed,
+    /// [`RoleTableError::NotAToken`] for a name that cannot be printed in a
+    /// diagnostic and typed back, and [`RoleTableError::NotAPipelineTier`] for
+    /// a media tier — which is [`AgentId::BUILTIN`]'s own exclusion, and would
+    /// otherwise be reachable by contribution rather than by adjacency.
+    pub fn contribute(
+        &mut self,
+        name: impl Into<String>,
+        tier: Role,
+    ) -> Result<(), RoleTableError> {
+        let name = name.into();
+        if !is_role_token(&name) {
+            return Err(RoleTableError::NotAToken { name });
+        }
+        if AgentId::BUILTIN.contains(&name.as_str()) {
+            return Err(RoleTableError::ShadowsBuiltin { name });
+        }
+        if self.contributed.contains_key(&name) {
+            return Err(RoleTableError::Duplicate { name });
+        }
+        if !is_pipeline_tier(tier) {
+            return Err(RoleTableError::NotAPipelineTier {
+                name,
+                tier: AgentId::from_role(tier).to_string(),
+            });
+        }
+        self.contributed.insert(name, tier);
+        Ok(())
+    }
+
+    /// [`Self::contribute`] by value, for a table built inside a struct
+    /// literal — the shape [`Roster::with_roles`] is usually written in.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::contribute`].
+    pub fn with(mut self, name: impl Into<String>, tier: Role) -> Result<Self, RoleTableError> {
+        self.contribute(name, tier)?;
+        Ok(self)
+    }
+
+    /// Remove a contributed role, answering whether it was there.
+    ///
+    /// The other half of contribution, and the half that has to work for the
+    /// table to be honest: a role is *contributed*, not installed, so it
+    /// leaves with whatever contributed it. A built-in name is never removed —
+    /// `false` says so rather than pretending to have taken one away.
+    pub fn withdraw(&mut self, name: &str) -> bool {
+        self.contributed.remove(name).is_some()
+    }
+
+    /// The engine tier serving this agent, or `None` when nothing does.
+    ///
+    /// `None` is not a failure here — it is the answer [`Roster::validate`]
+    /// turns into a named error listing [`Self::names`]. Returning it rather
+    /// than defaulting is the whole safety property: an operator who typos
+    /// `actor = "verifer"`, and a binding whose contributor has been removed,
+    /// must not silently get the worker grading its own work.
+    #[must_use]
+    pub fn resolve(&self, agent: &AgentId) -> Option<Role> {
+        agent
+            .builtin_role()
+            .or_else(|| self.contributed.get(agent.as_str()).copied())
+    }
+
+    /// Every name that resolves, built-ins first in [`AgentId::BUILTIN`] order
+    /// and contributed names after, in name order.
+    ///
+    /// This is the list a diagnostic prints, so it is also the list that makes
+    /// removal visible: a name absent from it is a name no binding can use.
+    #[must_use]
+    pub fn names(&self) -> Vec<&str> {
+        AgentId::BUILTIN
+            .iter()
+            .copied()
+            .chain(self.contributed.keys().map(String::as_str))
+            .collect()
+    }
+}
+
+/// A contribution to the [`RoleTable`] that cannot be honoured.
+///
+/// Typed rather than a `String` for [`RosterError`]'s reason: a host branches
+/// on these — a shadowed built-in is a contribution to refuse outright, a
+/// duplicate is two contributors claiming one name, and a malformed name is a
+/// manifest to fix (invariant 5).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RoleTableError {
+    /// A contribution named a built-in role. Built-ins are never redefinable:
+    /// see [`RoleTable`]'s own docs for what that would cost.
+    #[error(
+        "`{name}` is a built-in role and cannot be redefined by a contribution — contribute a distinct name and bind it explicitly"
+    )]
+    ShadowsBuiltin {
+        /// The name exactly as contributed.
+        name: String,
+    },
+    /// Two contributions claimed one name. Refused rather than last-wins,
+    /// because which of the two won would depend on load order.
+    #[error("role `{name}` is already contributed — two contributors cannot share one role name")]
+    Duplicate {
+        /// The name exactly as contributed.
+        name: String,
+    },
+    /// A name that cannot survive a round trip through a diagnostic: empty, or
+    /// carrying whitespace or the comma the known-names list is joined with.
+    #[error(
+        "`{name}` is not a usable role name — a role name is one word, without whitespace or `,`, because it is printed in diagnostics and typed back into configuration"
+    )]
+    NotAToken {
+        /// The name exactly as contributed.
+        name: String,
+    },
+    /// A contribution asked for a tier the pipeline does not staff.
+    #[error(
+        "role `{name}` asks for the `{tier}` tier, which serves no pipeline responsibility — contributable tiers are worker, triage, plan, research, verifier"
+    )]
+    NotAPipelineTier {
+        /// The name exactly as contributed.
+        name: String,
+        /// The tier asked for, as the name it is configured by.
+        tier: String,
+    },
+}
+
+/// Whether a [`Role`] staffs a pipeline responsibility.
+///
+/// Exhaustive on purpose: a [`Role`] variant added upstream fails to compile
+/// here until someone decides whether a contributed role may ride it. The
+/// media tiers are excluded for [`AgentId::BUILTIN`]'s reason — they serve no
+/// pipeline responsibility, and contribution must not be the back door that
+/// adjacency was already denied.
+fn is_pipeline_tier(tier: Role) -> bool {
+    match tier {
+        Role::Worker | Role::Triage | Role::Plan | Role::Research | Role::Verifier => true,
+        Role::Embed | Role::Vision | Role::Image | Role::Video => false,
+    }
+}
+
+/// Whether a contributed name is one word a human can read out of an error and
+/// type back into a settings file.
+fn is_role_token(name: &str) -> bool {
+    !name.is_empty() && !name.chars().any(|c| c.is_whitespace() || c == ',')
 }
 
 impl fmt::Display for AgentId {
@@ -401,12 +606,27 @@ pub struct Roster {
     /// instead of in whichever host remembered to check the return of
     /// `apply`.
     rejected: Vec<RosterError>,
+    /// Which agent names resolve, and to which tier.
+    ///
+    /// Held on the roster rather than passed to each query so that a roster is
+    /// answerable on its own: `role()`, `validate()` and
+    /// `independence_losses()` must all resolve through the *same* table, and
+    /// a table threaded through arguments is a table one of the three
+    /// eventually gets called without.
+    ///
+    /// Deliberately not part of [`Self::overrides`]: the table is the host's
+    /// statement about this process, not the operator's about this run, so a
+    /// restored binding is re-resolved against whatever is installed now. That
+    /// is the point — a binding whose contributor is gone must be refused, not
+    /// carried along with a private copy of the table that once resolved it.
+    roles: RoleTable,
 }
 
 impl Default for Roster {
     fn default() -> Self {
         Self {
             rejected: Vec::new(),
+            roles: RoleTable::default(),
             rows: ModelCallRole::ALL
                 .iter()
                 .filter_map(|&responsibility| {
@@ -426,6 +646,27 @@ impl Roster {
     #[must_use]
     pub fn is_assignable(responsibility: ModelCallRole) -> bool {
         default_agent(responsibility).is_some()
+    }
+
+    /// Resolve this roster's bindings against `roles` instead of the built-ins
+    /// alone — how a host hands the run the roles its installed contributors
+    /// added.
+    ///
+    /// Takes the whole table rather than adding one role at a time, because a
+    /// half-built table is a roster that would refuse a binding it is about to
+    /// be able to honour. The bindings themselves are untouched: contributing
+    /// a role makes a name *resolvable*, never *assigned* — an assignment is
+    /// still the operator's, through [`Self::apply`].
+    #[must_use]
+    pub fn with_roles(mut self, roles: RoleTable) -> Self {
+        self.roles = roles;
+        self
+    }
+
+    /// The table this roster resolves agent names against.
+    #[must_use]
+    pub fn roles(&self) -> &RoleTable {
+        &self.roles
     }
 
     /// This responsibility's binding, or `None` when the pipeline does not own
@@ -468,7 +709,9 @@ impl Roster {
     #[must_use]
     pub fn role(&self, responsibility: ModelCallRole) -> Option<Role> {
         let row = self.assignment(responsibility)?;
-        row.enabled.then(|| row.agent.role()).flatten()
+        row.enabled
+            .then(|| self.roles.resolve(&row.agent))
+            .flatten()
     }
 
     /// Disable a responsibility (the #2381 ablation switch).
@@ -626,11 +869,15 @@ impl Roster {
             if row.responsibility == ModelCallRole::Worker && !row.enabled {
                 errors.push(RosterError::WorkerDisabled);
             }
-            if row.agent.role().is_none() {
+            if self.roles.resolve(&row.agent).is_none() {
                 errors.push(RosterError::UnknownAgent {
                     responsibility: responsibility_token(row.responsibility),
                     agent: row.agent.to_string(),
-                    known: AgentId::BUILTIN.join(", "),
+                    // The table as it stands *now*, not `AgentId::BUILTIN`:
+                    // an operator whose binding named a contributed role has
+                    // to be able to see, from this one line, whether the role
+                    // is gone or the name is misspelled.
+                    known: self.roles.names().join(", "),
                 });
             }
         }
@@ -647,21 +894,45 @@ impl Roster {
     /// broken proof — so it is deliberately absent, and a witness repair
     /// follows its author's binding rather than carrying one.
     ///
-    /// Compares assigned agents, not resolved models: two distinct agents that
-    /// happen to resolve to one model is the *other* independence question,
-    /// and `Pipeline::witness_author_independence` already answers it against
-    /// the router. This one catches the case that answer cannot see — a
+    /// Compares assigned agents **and the tiers they resolve to**, not
+    /// resolved models: two distinct tiers that happen to resolve to one model
+    /// is the *other* independence question, and
+    /// `Pipeline::witness_author_independence` already answers it against the
+    /// router. This one catches the case that answer cannot see — a
     /// configuration that asked for self-grading outright.
+    ///
+    /// The tier half is what a name comparison alone cannot do once
+    /// [`RoleTable`] is open, and it is the reason this is not merely a
+    /// cosmetic generalisation. While every name was built-in, name equality
+    /// *was* tier equality — the two were the same table read twice. A
+    /// contributed role breaks that: `vera-verifier` riding [`Role::Worker`]
+    /// is a different name from `worker` and the very same seat, so a
+    /// contributor could otherwise nominate itself as its own independent
+    /// verifier and the roster would report nothing. Resolving both sides
+    /// closes it, and closes it for a contribution nobody audited as much as
+    /// for one somebody did.
+    ///
+    /// Reporting, not refusal — the posture [`IndependenceLoss`] documents is
+    /// unchanged. What changes is that a loss can no longer be *hidden* by
+    /// spelling it differently.
     #[must_use]
     pub fn independence_losses(&self) -> Vec<IndependenceLoss> {
         let Some(worker) = self.assignment(ModelCallRole::Worker) else {
             return Vec::new();
         };
+        let worker_tier = self.roles.resolve(&worker.agent);
         [ModelCallRole::WitnessAuthor, ModelCallRole::Verdict]
             .into_iter()
             .filter_map(|responsibility| {
                 let row = self.assignment(responsibility)?;
-                (row.enabled && row.agent == worker.agent).then(|| IndependenceLoss {
+                // Names first so an unresolvable pair — two bindings on one
+                // typo — is still reported as the self-grading it asks for.
+                // Then tiers, which only ever *adds* losses: `worker_tier` is
+                // `None` exactly when the worker's own binding is unresolvable,
+                // and that run is refused before spend either way.
+                let shared = row.agent == worker.agent
+                    || (worker_tier.is_some() && self.roles.resolve(&row.agent) == worker_tier);
+                (row.enabled && shared).then(|| IndependenceLoss {
                     responsibility,
                     agent: row.agent.clone(),
                 })

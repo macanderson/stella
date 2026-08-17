@@ -17,6 +17,10 @@ name: wire-schema
 # invalidate the artifacts. A prose PR starts nothing here; a hand-edit to a
 # generated schema starts this and reddens.
 #
+# `crates/stella-plugin/**` joined for the wrapper socket: its wire form is the
+# *primary* one (`doc:wrapper-socket` §3), so a rename there breaks every
+# out-of-process plugin's parser rather than one Rust caller.
+#
 # The same path list appears in `.githooks/pre-push`, which uses it to decide
 # between `make guards-fast` and `make guards` for a push that reaches no crate.
 # Both answer the same question -- "could this diff have moved the wire
@@ -28,6 +32,7 @@ on:
       - "docs/wire/**"
       - "crates/stella-protocol/**"
       - "crates/stella-serve/**"
+      - "crates/stella-plugin/**"
       - "scripts/export-agentevent-schema.sh"
       - "scripts/check-wire-schema.sh"
       - ".github/workflows/wire-schema.yml"
@@ -37,6 +42,7 @@ on:
       - "docs/wire/**"
       - "crates/stella-protocol/**"
       - "crates/stella-serve/**"
+      - "crates/stella-plugin/**"
       - "scripts/export-agentevent-schema.sh"
       - "scripts/check-wire-schema.sh"
       - ".github/workflows/wire-schema.yml"
@@ -69,7 +75,7 @@ jobs:
       - if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
 
-      # Runs the two exporters under `--features schema` and diffs the result
+      # Runs the three exporters under `--features schema` and diffs the result
       # against the committed tree. Regeneration is one command, named in the
       # failure output: `make wire-schema-update`.
       - name: docs/wire/ still matches the types

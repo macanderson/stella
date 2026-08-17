@@ -282,6 +282,13 @@ pub struct TomlConfig {
     pub context_providers: ContextProviderSettings,
     #[serde(default)]
     pub ui: Option<UiSettings>,
+    /// `[plugins]` — the per-plugin retraction switches. Same shape in JSON
+    /// and TOML (a table of `name = "on"|"off"`), so no lowering beyond the
+    /// move. Carried here rather than left out because a TOML-migrated scope
+    /// that silently ignored `plugins.<name> = "off"` would keep running a
+    /// plugin its operator switched off.
+    #[serde(default)]
+    pub plugins: BTreeMap<String, super::Toggle>,
     /// `[reward]` — what a turn's verdict is worth as a training label (#1043).
     /// Same shape in JSON and TOML, so no lowering beyond the move.
     #[serde(default)]
@@ -385,6 +392,7 @@ impl TomlConfig {
             context,
             context_providers,
             ui,
+            plugins,
             reward,
             authority,
             enterprise_telemetry,
@@ -419,6 +427,7 @@ impl TomlConfig {
             reward,
             context,
             context_providers,
+            plugins,
             managed_authority: authority,
             // Round-trip through JSON: the field is stored untyped and
             // validated fail-open by its own adapter, which speaks
