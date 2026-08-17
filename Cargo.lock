@@ -3247,6 +3247,7 @@ name = "stella-tools"
 version = "0.9.65"
 dependencies = [
  "async-trait",
+ "futures-util",
  "libc",
  "proptest",
  "serde",
