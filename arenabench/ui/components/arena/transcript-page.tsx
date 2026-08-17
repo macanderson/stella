@@ -447,57 +447,105 @@ function parseDiff(diff: string): DiffRow[] {
 }
 
 /**
- * Which diff lines a cap-limited render keeps — the deck's hunk-aware cap
- * (`crates/stella-tui/src/diff.rs::select_lines`). Whole hunks are emitted
- * while they fit and the rest dropped, rather than slicing at line `cap`: a
- * flat cut lands wherever it lands — routinely between a `-` line and the
- * `+` line replacing it — leaving a change that reads as a pure deletion.
- * Only when the first hunk alone overruns the budget does this fall back to
- * a window: the `@@` header (the line that says *where* in the file this
- * is), then the body from two context lines above the first real change.
+ * Which diff lines a cap-limited render keeps, and where it elided the rest —
+ * a port of `crates/stella-diff/src/view.rs::plan`, which is the ONE policy
+ * every Stella surface spends its diff budget by (the deck, the plain
+ * `stella run` scrollback, the Observatory, an exported dashboard, and this
+ * page). An arena transcript is read beside those artifacts when arguing about
+ * a run; if this drifted, one edit would look like two different edits
+ * depending on which artifact you opened.
+ *
+ * The policy fills from **both ends** and elides the middle. Filling only from
+ * the front — what this function did until the shared policy landed — is
+ * silent about the shape of what it hides: a long edit rendered as its first
+ * twenty lines reads as one that starts here and trails off, when the reader's
+ * actual question is usually answered at the other end.
+ *
+ * Two levels, because a diff has two natural units. **Whole hunks**, taken
+ * alternately front and back while they fit: a cut inside a hunk lands
+ * routinely between a `-` line and the `+` line replacing it, leaving a change
+ * that reads as a pure deletion. **A line window at each end**, when no whole
+ * hunk fits at all — one enormous hunk, which is exactly what a created file
+ * looks like.
+ *
+ * `foldBefore` is the index the `⋯ n lines` marker belongs in FRONT of — the
+ * first hidden line, which is `raw.length` when the elided lines are the tail
+ * and `0` when the view kept only a tail. There is at most one elision by
+ * construction, so there is at most one marker to draw.
+ *
+ * **Re-verify this port when either side changes.** It is a hand-port across
+ * two languages with no shared test runner, so the parity is checked by
+ * running both over the same matrix and diffing:
+ *
+ * ```
+ * cargo run -q -p stella-diff --example plan_matrix
+ * ```
+ *
+ * That is not ceremony — the diff found a real bug the first time it was run,
+ * and the bug was in the Rust: `Plan::fold_before` put the marker *after* the
+ * only surviving hunk whenever the budget kept a tail and no head.
  */
-function selectDiffLines(raw: string[], cap: number): boolean[] {
+function selectDiffLines(
+  raw: string[],
+  cap: number,
+): { keep: boolean[]; hidden: number; foldBefore: number } {
   const n = raw.length;
-  if (n <= cap) return raw.map(() => true);
-  const keep = raw.map(() => false);
-  const bounds: number[] = [];
+  if (n <= cap) return { keep: raw.map(() => true), hidden: 0, foldBefore: -1 };
+  if (cap <= 0) return { keep: raw.map(() => false), hidden: n, foldBefore: 0 };
+
+  // Hunk boundaries as a strictly ascending fence `[0, …, n]`, so hunk `k` is
+  // `bounds[k]..bounds[k + 1]`. Anything above the first `@@` is metadata
+  // naming the file that hunk is in, so it joins that hunk rather than
+  // spending two lines of the budget as a hunk of its own.
+  const bounds: number[] = [0];
   raw.forEach((line, i) => {
-    if (line.startsWith("@@")) bounds.push(i);
+    if (i > 0 && line.startsWith("@@") && i > bounds[bounds.length - 1]) {
+      bounds.push(i);
+    }
   });
-  if ((bounds[0] ?? 1) !== 0) bounds.unshift(0);
+  const firstHunk = raw.findIndex((line) => line.startsWith("@@"));
+  if (firstHunk > 0 && bounds[1] === firstHunk) bounds.splice(1, 1);
   bounds.push(n);
+  const hunks = bounds.length - 1;
 
+  let head = 0;
+  let tail = 0;
   let used = 0;
-  for (let w = 0; w + 1 < bounds.length; w++) {
-    const [start, end] = [bounds[w], bounds[w + 1]];
-    if (used + (end - start) > cap) break;
-    keep.fill(true, start, end);
-    used += end - start;
+  for (;;) {
+    let progressed = false;
+    if (head + tail < hunks) {
+      const len = bounds[head + 1] - bounds[head];
+      if (used + len <= cap) {
+        used += len;
+        head += 1;
+        progressed = true;
+      }
+    }
+    if (head + tail < hunks) {
+      const k = hunks - tail - 1;
+      const len = bounds[k + 1] - bounds[k];
+      if (used + len <= cap) {
+        used += len;
+        tail += 1;
+        progressed = true;
+      }
+    }
+    if (!progressed) break;
   }
-  if (used > 0) return keep;
 
-  const end = bounds[1];
-  let firstChange = 0;
-  for (let i = 0; i < end; i++) {
-    if ((raw[i].startsWith("+") || raw[i].startsWith("-")) && !isDiffMeta(raw[i])) {
-      firstChange = i;
-      break;
-    }
+  const keep = raw.map(() => false);
+  if (head > 0 || tail > 0) {
+    keep.fill(true, 0, bounds[head]);
+    if (tail > 0) keep.fill(true, bounds[hunks - tail], n);
+    return { keep, hidden: n - used, foldBefore: bounds[head] };
   }
-  const header = raw.slice(0, end).findIndex((line) => line.startsWith("@@"));
-  let budget = cap;
-  if (header !== -1) {
-    keep[header] = true;
-    budget -= 1;
-  }
-  const start = Math.max(firstChange - 2, header === -1 ? 0 : header + 1);
-  for (let i = start; i < end && budget > 0; i++) {
-    if (!keep[i]) {
-      keep[i] = true;
-      budget -= 1;
-    }
-  }
-  return keep;
+
+  // No whole hunk fits: split the budget across the sole hunk's two ends.
+  const headLines = Math.ceil(cap / 2);
+  const tailLines = cap - headLines;
+  keep.fill(true, 0, headLines);
+  if (tailLines > 0) keep.fill(true, n - tailLines, n);
+  return { keep, hidden: n - cap, foldBefore: headLines };
 }
 
 const DIFF_TONE_TEXT: Record<DiffTone, string> = {
@@ -865,22 +913,42 @@ function Entry({
     const diffText = typeof meta.diff === "string" ? meta.diff : "";
     const hasDiff = diffText.length > 0;
     const diffAll = hasDiff ? parseDiff(diffText) : [];
-    const diffKeep = resultOpen
-      ? diffAll.map(() => true)
+    const diffPlan = resultOpen
+      ? { keep: diffAll.map(() => true), hidden: 0, foldBefore: -1 }
       : selectDiffLines(
           diffAll.map((row) => row.text),
           INLINE_DIFF_CAP,
         );
+    const diffKeep = diffPlan.keep;
     // A lone hunk header is dropped (`diff.rs::body_lines_inline`): inline
     // under a call row it restates what the gutter beside it already says,
     // and a two-line change should not cost three rows. With several hunks
     // the headers stay — there they are the boundary between two disjoint
     // regions of the file.
     const multiHunk = diffAll.filter((row) => row.tone === "hunk").length > 1;
-    const diffShown = diffAll.filter(
-      (row, i) => diffKeep[i] && (multiHunk || row.tone !== "hunk"),
-    );
-    const diffHidden = diffKeep.filter((kept) => !kept).length;
+    const diffHidden = diffPlan.hidden;
+    // The elision is drawn WHERE the lines were, as a row of its own. Stated
+    // only in the fold summary below, a head-and-tail rendering would read as
+    // "the change continues past the bottom" under a row that is already the
+    // change's last line.
+    const diffShown: DiffRow[] = [];
+    diffAll.forEach((row, i) => {
+      if (i === diffPlan.foldBefore && diffHidden > 0) {
+        diffShown.push({
+          text: `⋯ ${diffHidden} ${diffHidden === 1 ? "line" : "lines"} not shown`,
+          tone: "meta",
+          no: null,
+        });
+      }
+      if (diffKeep[i] && (multiHunk || row.tone !== "hunk")) diffShown.push(row);
+    });
+    if (diffPlan.foldBefore === diffAll.length && diffHidden > 0) {
+      diffShown.push({
+        text: `⋯ ${diffHidden} ${diffHidden === 1 ? "line" : "lines"} not shown`,
+        tone: "meta",
+        no: null,
+      });
+    }
     // The collapsed window anchors on the SALIENT line, not line 1 — see
     // `salientLine`'s doc comment — and its size is the deck's own budget: a
     // success shows a single line, a failure shows six.
@@ -903,9 +971,9 @@ function Entry({
       meta.unrecognized ? "unrecognized output shape" : null,
     ].filter(Boolean);
     const foldParts = [
-      diffHidden > 0
-        ? `${diffHidden} more diff ${diffHidden === 1 ? "line" : "lines"}`
-        : null,
+      // Not the diff's own hidden count: the `⋯ n lines not shown` row inside
+      // the diff already carries it, in the place it happened.
+      null,
       hidden > 0
         ? hasDiff
           ? `${hidden} output ${hidden === 1 ? "line" : "lines"}`

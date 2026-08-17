@@ -92,17 +92,28 @@ impl Plan {
     /// The line index the elision marker sits in front of, or `None` when
     /// nothing was elided.
     ///
-    /// For a head-and-tail plan this is the first hidden line; for a
-    /// head-only plan it is one past the last shown line, which is where a
-    /// caller walking `0..total` naturally arrives. Because [`Plan::shown`]
-    /// holds at most two ranges there is at most one such index — a caller
-    /// may draw one marker and stop looking.
+    /// Always the **first hidden line**. For a head-and-tail plan that is the
+    /// start of the elided middle; for a head-only plan it is one past the
+    /// last shown line, which is where a caller walking `0..total` naturally
+    /// arrives; and for a plan that kept only a *tail* it is `0`, because the
+    /// elision precedes everything shown. Because [`Plan::shown`] holds at
+    /// most two ranges there is at most one such index — a caller may draw one
+    /// marker and stop looking.
     #[must_use]
     pub fn fold_before(&self) -> Option<usize> {
         if self.hidden == 0 {
             return None;
         }
-        Some(self.shown.first().map_or(0, |r| r.end))
+        match self.shown.first() {
+            // Nothing shown at all, or a leading run hidden: the marker goes
+            // in front. Reading `r.end` here — which is what this did until a
+            // cross-check against the arenabench port disagreed — puts the
+            // marker AFTER the only thing on screen and reads as "and there
+            // was more below" when every hidden line was above.
+            None => Some(0),
+            Some(r) if r.start > 0 => Some(0),
+            Some(r) => Some(r.end),
+        }
     }
 }
 
@@ -282,8 +293,12 @@ pub fn elide(hunks: &[Hunk], cap: usize) -> Elided {
                     out.push(reheader(done));
                 }
                 // The plan hides one contiguous run, so this fires once — at
-                // the boundary the caller draws its marker on.
-                if shown_content > 0 && fold_before.is_none() {
+                // the boundary the caller draws its marker on. Deliberately
+                // NOT gated on having shown something first: a view that kept
+                // only a tail hides its leading run, and the marker belongs in
+                // front of the surviving hunk (`out.len()` is 0 there), not
+                // after it.
+                if fold_before.is_none() {
                     fold_before = Some(out.len());
                 }
                 continue;
@@ -482,6 +497,39 @@ mod tests {
         assert!(plan.shown.is_empty());
         assert_eq!(plan.hidden, 6);
         assert_eq!(plan.fold_before(), Some(0));
+    }
+
+    #[test]
+    fn a_view_that_keeps_only_a_tail_folds_in_front_of_it_not_behind_it() {
+        // Found by diffing this policy against its arenabench TypeScript port
+        // over a matrix of budgets, which is the only reason it was found at
+        // all: every hand-written case happened to keep a head.
+        //
+        // Hunks of 7 lines with a 2-line last one, under a budget that fits
+        // only that last one. Every hidden line is ABOVE what survives, so a
+        // marker drawn after it says "and there was more below" about a
+        // rendering whose last row is the file's last row — the exact defect
+        // the head-and-tail policy exists to remove.
+        let starts: Vec<usize> = (0..100).step_by(7).collect();
+        let plan = plan(&starts, 100, 4);
+        assert_eq!(spans(&plan), vec![(98, 100)], "only the last hunk fits");
+        assert_eq!(plan.hidden, 98);
+        assert_eq!(plan.fold_before(), Some(0), "in front of the tail");
+    }
+
+    #[test]
+    fn elide_folds_in_front_when_it_keeps_only_a_tail_hunk() {
+        // The structured half of the case above.
+        let mut hunks: Vec<Hunk> = vec![adds(1, 40)];
+        hunks.push(adds(500, 1));
+        let view = elide(&hunks, 3);
+        assert_eq!(view.hunks.len(), 1, "only the small trailing hunk fits");
+        assert_eq!(view.hunks[0].new_start, 500);
+        assert_eq!(
+            view.fold_before,
+            Some(0),
+            "the marker precedes the one surviving hunk: {view:?}"
+        );
     }
 
     #[test]
