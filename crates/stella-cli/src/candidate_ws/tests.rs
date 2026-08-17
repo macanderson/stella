@@ -805,3 +805,81 @@ async fn a_repo_without_commits_is_a_clean_snapshot_error() {
     assert_no_candidate_worktrees(&root);
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// The witness for #3419: an adoption reaches the durable ledger, not just
+/// the event stream.
+///
+/// `Store::record_files_touched` had no production caller anywhere in the
+/// workspace and `CandidateWorkspace::attribute_adopted`'s trait default is a
+/// no-op that this port never overrode, so `files_touched` was empty for every
+/// run that ever adopted a candidate — while the `FileChange` events
+/// describing the very same rows rode the session's stream. #2907 asked for
+/// "the stream and the durable record are two projections of one adoption";
+/// #3413 landed the stream half and this is the other one.
+///
+/// Asserted through `export_all_json`, deliberately: that is the surface the
+/// issue names as operating on a table nothing writes, so a pass here is a
+/// pass for `stella export`'s files dump rather than for a private helper.
+///
+/// The `attribute_adopted` call is made here rather than by a driven
+/// pipeline, because that is precisely the contract the trait states — "called
+/// by the pipeline immediately after every successful delivery, with exactly
+/// the rows that delivery returned". The pipeline's three call sites
+/// (`pipeline/delivery.rs`, `pipeline/execute_stage.rs` twice) already exist
+/// and are not what was missing; the override they call was. So this feeds it
+/// exactly what `adopt` returned, which is what those sites pass.
+#[tokio::test]
+async fn an_adoption_lands_in_files_touched_keyed_to_the_run_execution() {
+    let root = scaffold("adoption-ledger");
+    let store = std::sync::Arc::new(stella_store::Store::open(&root).expect("store"));
+    let execution_id = store
+        .begin_execution("run", "attribute an adoption", "test", "test-model")
+        .expect("execution");
+
+    let port = GitCandidateWorkspaces::new(
+        root.clone(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    )
+    .with_adoption_ledger(store.clone(), execution_id);
+
+    let ws = port.create_workspace().await.unwrap();
+    std::fs::write(ws.dir().join("adopted.rs"), "fn adopted() {}\n").unwrap();
+    ws.seal().await.unwrap();
+    let adopted = ws.adopt(&[]).await.unwrap();
+    assert_eq!(adopted.len(), 1, "the fixture adopts exactly one file");
+    // What the pipeline does with the rows delivery returned.
+    ws.attribute_adopted(&adopted);
+
+    let dumps = store.export_all_json().expect("export");
+    let files = dumps
+        .iter()
+        .find(|(table, _)| *table == "files_touched")
+        .map(|(_, json)| json.clone())
+        .expect("files_touched is an exported table");
+    let rows: serde_json::Value = serde_json::from_str(&files).expect("json");
+    let rows = rows.as_array().expect("an array of rows");
+
+    assert_eq!(
+        rows.len(),
+        1,
+        "the adoption must leave exactly one row, not zero (#3419) and not a \
+         duplicate per delivery: got {files}"
+    );
+    assert_eq!(rows[0]["path"], "adopted.rs");
+    assert_eq!(
+        rows[0]["execution_id"],
+        serde_json::json!(execution_id),
+        "the row is keyed to the run's execution, which is what makes it \
+         joinable to everything else that run recorded"
+    );
+    assert_eq!(
+        rows[0]["ops"], "C",
+        "a newly created file is a `C`, the letter `Store::execution_rollup` \
+         greps for — spelling it `Created` or `M` makes files_written blind"
+    );
+
+    ws.remove().await;
+    std::fs::remove_dir_all(&root).ok();
+}

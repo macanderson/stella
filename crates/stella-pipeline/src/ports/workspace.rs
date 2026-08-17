@@ -274,6 +274,28 @@ pub trait CandidateWorkspace: Send + Sync {
     /// changes no decision — not the verdict, not the ladder, not delivery. It
     /// is a report of what git already did.
     ///
+    /// # The durable ledger is adoption-only, deliberately (#3419)
+    ///
+    /// This is the sole writer of `files_touched`. A shared-tree run — where
+    /// the shared-tree `FileChange` producer (`turn_files` /
+    /// `WorkJournal::snapshot_worktree`, #3413) measures the turn — writes no
+    /// row, and that is the decision rather than a gap.
+    ///
+    /// The two are not the same claim. Adoption knows *who* changed the file:
+    /// a candidate's edits became the user's tree's, at one instant, by one
+    /// `git apply`. The shared-tree producer measures the turn, not the actor,
+    /// and says so — anything that ran during the turn, the user's own editor
+    /// included, is inside its diff. Folding that into a per-execution ledger
+    /// would attribute a teammate's concurrent save to the agent's execution
+    /// id, permanently and with no way to tell the two apart afterwards. The
+    /// event stream can carry a measurement that honest consumers read as one;
+    /// a row in a table keyed by `execution_id` reads as attribution.
+    ///
+    /// So the two projections #2907 asked for are equal for the isolated case
+    /// and deliberately unequal for the shared one. A shared-tree run's file
+    /// activity is observable in its `FileChange` events, and is absent from
+    /// `files_touched` on purpose.
+    ///
     /// Default: no-op — a substrate whose edits are already the session's has
     /// nothing to attribute, and neither has one that keeps no such record.
     fn attribute_adopted(&self, _adopted: &[AdoptedChange]) {}

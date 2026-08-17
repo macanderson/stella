@@ -351,6 +351,10 @@ pub(crate) struct SessionPlane {
     /// as unavailable — which, with no command-executing built-in, leaves a
     /// worker there unable to act at all.
     sub_agents: Option<Arc<dyn stella_core::subagent::SubAgentDispatcher>>,
+    /// The execution adopted changes are attributed to (#3419), and the store
+    /// holding it. `None` when the session opened no store — the only case in
+    /// which an empty `files_touched` is the right answer.
+    adoption: Option<(Arc<stella_store::Store>, i64)>,
 }
 
 impl SessionPlane {
@@ -360,7 +364,36 @@ impl SessionPlane {
         Self {
             events: Some(events),
             sub_agents: None,
+            adoption: None,
         }
+    }
+
+    /// Attribute this session's adoptions to the run's `executions` row
+    /// (#3419). Pass the pair `persistence::begin_pipeline_execution` returned
+    /// — a driver that opened no store passes nothing and keeps the no-op.
+    pub(crate) fn with_adoption(
+        mut self,
+        execution: Option<(Arc<stella_store::Store>, i64)>,
+    ) -> Self {
+        self.adoption = execution;
+        self
+    }
+
+    /// The complete plane a pipeline run needs: its event sink, the session's
+    /// sub-agent runner, and the execution its adoptions are attributed to.
+    ///
+    /// Composed here rather than at the call site because that call site is in
+    /// `agent.rs`, a grandfathered god file closed to growth — the builder
+    /// chain spelled out there costs it lines it does not have, and this is
+    /// the sibling module the plane already lives in.
+    pub(crate) fn for_run(
+        events: stella_core::EventSender,
+        registry: &stella_tools::ToolRegistry,
+        execution: Option<(Arc<stella_store::Store>, i64)>,
+    ) -> Self {
+        Self::new(events)
+            .with_sub_agents(registry.sub_agent_dispatcher())
+            .with_adoption(execution)
     }
 
     /// Share the session's sub-agent runner with every candidate workspace
@@ -388,7 +421,11 @@ pub(crate) fn workspace_ports(
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
     session: SessionPlane,
 ) -> Result<WorkspacePorts, String> {
-    let SessionPlane { events, sub_agents } = session;
+    let SessionPlane {
+        events,
+        sub_agents,
+        adoption,
+    } = session;
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::WorkspacePorts,
     )?;
@@ -425,6 +462,9 @@ pub(crate) fn workspace_ports(
     }
     if let Some(dispatcher) = sub_agents {
         candidate_workspaces = candidate_workspaces.with_sub_agents(dispatcher);
+    }
+    if let Some((store, execution_id)) = adoption {
+        candidate_workspaces = candidate_workspaces.with_adoption_ledger(store, execution_id);
     }
     Ok(WorkspacePorts {
         repo_structure: GitRepoStructure { root: root.clone() },
