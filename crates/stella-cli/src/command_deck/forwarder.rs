@@ -83,6 +83,30 @@ pub(crate) fn spawn_forwarder(
             crate::diag_boot::dx(),
             Some(crate::diag_boot::workspace_root()),
         );
+        // The lane's own stage boundaries (#3416). Synthesized on the
+        // receiving side because the deck's send side lives in
+        // `command_deck.rs`, a god file closed to growth — and threaded
+        // through this one seam so the lead's turns and every sub-session
+        // worker cannot drift. Both go through the whole body below (persist,
+        // bridge, forward) exactly as the engine's copies used to.
+        //
+        // `held` is how the closing boundary keeps its place *ahead* of the
+        // terminal `TurnComplete` it annotates: the boundary is delivered in
+        // the arriving event's slot and the `TurnComplete` rides the next
+        // iteration. Latched, so the re-delivered event cannot match again.
+        let mut held: Option<AgentEvent> = None;
+        // The opening `Stage(Execute)` is emitted *lazily*, not pre-seeded,
+        // so a leading `ContextRecall` rides ahead of it — the same
+        // recall-before-stage order `agent/output.rs::open_raw_turn`
+        // documents as an invariant. Recall was assembled before the turn
+        // began, so a receipt that ordered the first stage ahead of it would
+        // misdescribe when the context entered. The lead lane sends that
+        // recall onto this channel *after* spawning the forwarder, so
+        // pre-seeding `Execute` in `held` delivered it before recall could be
+        // drained; deferring the open until the first non-recall event keeps
+        // recall first.
+        let mut owes_stage_execute = scope.opens_execute_stage;
+        let mut owes_stage_complete = scope.opens_execute_stage;
         // The lane's run ending, as a backstop (#3379/#3398). The engine ends
         // each turn with `TurnComplete` and deliberately says nothing about
         // the run, so the run-terminal `RunComplete` is the owner's to emit.
@@ -103,15 +127,39 @@ pub(crate) fn spawn_forwarder(
         let mut turn_end: Option<(String, f64)> = None;
         let mut run_ended = false;
         loop {
-            let event = match rx.recv().await {
-                Some(event) => event,
-                None => match turn_end.take().filter(|_| !run_ended) {
-                    Some((model, cost_usd)) => AgentEvent::RunComplete { model, cost_usd },
-                    // The run's owner already ended it, the stream sealed on a
-                    // previous pass, or no turn of it ever succeeded — a
-                    // failed run ends on `Error`, never on `RunComplete`.
-                    None => break,
+            let event = match held.take() {
+                Some(held) => held,
+                None => match rx.recv().await {
+                    Some(event) => event,
+                    None => match turn_end.take().filter(|_| !run_ended) {
+                        Some((model, cost_usd)) => AgentEvent::RunComplete { model, cost_usd },
+                        // The run's owner already ended it, the stream sealed
+                        // on a previous pass, or no turn of it ever succeeded
+                        // — a failed run ends on `Error`, never `RunComplete`.
+                        None => break,
+                    },
                 },
+            };
+            let event = if owes_stage_execute
+                && !matches!(event, AgentEvent::ContextRecall { .. })
+            {
+                // First event that is not the turn's recall: open the stage
+                // ahead of it, and let it ride the next iteration.
+                owes_stage_execute = false;
+                held = Some(event);
+                AgentEvent::Stage {
+                    name: stella_protocol::StageKind::Execute,
+                    scope: stella_protocol::StageScope::Run,
+                }
+            } else if owes_stage_complete && matches!(event, AgentEvent::TurnComplete { .. }) {
+                owes_stage_complete = false;
+                held = Some(event);
+                AgentEvent::Stage {
+                    name: stella_protocol::StageKind::Complete,
+                    scope: stella_protocol::StageScope::Run,
+                }
+            } else {
+                event
             };
             match &event {
                 AgentEvent::TurnComplete { model, cost_usd } => {
@@ -271,6 +319,7 @@ mod tests {
             InsightScope {
                 provider_id: "anthropic".into(),
                 cache_ttl: stella_model::CacheTtl::default(),
+                opens_execute_stage: true,
             },
             in_tx,
             "lead".to_string(),
@@ -297,5 +346,200 @@ mod tests {
         );
         // The forwarded event reached the deck lane before the stream closed.
         assert!(matches!(in_rx.try_recv(), Ok(Inbound::Event { .. })));
+    }
+
+    /// Drain a finished lane's forwarded `AgentEvent`s in order.
+    async fn lane_events(
+        registry: &stella_tools::ToolRegistry,
+        tx: UnboundedSender<AgentEvent>,
+        forwarder: tokio::task::JoinHandle<bool>,
+        in_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Inbound>,
+    ) -> Vec<AgentEvent> {
+        close_turn_stream(registry, tx, forwarder).await;
+        let mut events = Vec::new();
+        while let Ok(inbound) = in_rx.try_recv() {
+            if let Inbound::Event { event, .. } = inbound {
+                events.push(event);
+            }
+        }
+        events
+    }
+
+    fn stages(events: &[AgentEvent]) -> Vec<stella_protocol::StageKind> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::Stage { name, .. } => Some(*name),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A raw deck lane owns its own stage boundaries (#3416).
+    ///
+    /// The engine used to open every turn with `Stage(Execute)` and close a
+    /// completed one with `Stage(Complete)`. It no longer emits either —
+    /// `StageKind` is the run owner's vocabulary, and the engine cannot know
+    /// which stage of which run its caller is in. The deck's HUD still reads
+    /// both, and the deck's send side is in a god file, so this seam
+    /// synthesizes them: the opener ahead of everything, the closer ahead of
+    /// the `TurnComplete` it annotates — never behind it, which is where a
+    /// post-turn emit would land and where the consumers that stop at the
+    /// terminal event would never see it.
+    #[tokio::test]
+    async fn a_raw_lane_frames_its_turn_with_its_own_stage_boundaries() {
+        let root = tempfile::tempdir().expect("root");
+        let registry = stella_tools::ToolRegistry::new(root.path().to_path_buf());
+        let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder(
+            rx,
+            None,
+            InsightScope {
+                provider_id: "anthropic".into(),
+                cache_ttl: stella_model::CacheTtl::default(),
+                opens_execute_stage: true,
+            },
+            in_tx,
+            "lead".to_string(),
+            None,
+        );
+        tx.send(AgentEvent::Text { text: "hi".into() }).unwrap();
+        tx.send(AgentEvent::TurnComplete {
+            model: "m".into(),
+            cost_usd: 0.0,
+        })
+        .unwrap();
+
+        let events = lane_events(&registry, tx, forwarder, &mut in_rx).await;
+        assert_eq!(
+            stages(&events),
+            vec![
+                stella_protocol::StageKind::Execute,
+                stella_protocol::StageKind::Complete
+            ],
+            "a raw lane frames its turn: {events:?}"
+        );
+        let complete = events
+            .iter()
+            .position(|event| matches!(event, AgentEvent::TurnComplete { .. }))
+            .expect("the terminal event survives");
+        let stage_complete = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    AgentEvent::Stage {
+                        name: stella_protocol::StageKind::Complete,
+                        ..
+                    }
+                )
+            })
+            .expect("the closing boundary is emitted");
+        assert!(
+            stage_complete < complete,
+            "the closing boundary rides AHEAD of the terminal event: {events:?}"
+        );
+    }
+
+    /// The turn's `ContextRecall` rides AHEAD of the synthesized opening
+    /// `Stage(Execute)` (#3416). Recall was assembled before the turn began,
+    /// so a receipt that ordered the first stage ahead of it would
+    /// misdescribe when the context entered — the same invariant
+    /// `agent/output.rs::open_raw_turn` documents for the one-shot path. The
+    /// lead lane sends recall onto the channel *after* spawning the
+    /// forwarder, so the opener must be deferred until the first non-recall
+    /// event rather than pre-seeded ahead of everything.
+    #[tokio::test]
+    async fn recall_precedes_the_synthesized_execute_boundary() {
+        let root = tempfile::tempdir().expect("root");
+        let registry = stella_tools::ToolRegistry::new(root.path().to_path_buf());
+        let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder(
+            rx,
+            None,
+            InsightScope {
+                provider_id: "anthropic".into(),
+                cache_ttl: stella_model::CacheTtl::default(),
+                opens_execute_stage: true,
+            },
+            in_tx,
+            "lead".to_string(),
+            None,
+        );
+        // Recall is the first event of the turn, queued after the forwarder
+        // was spawned — exactly as `run_lead_turn` does it.
+        tx.send(AgentEvent::ContextRecall {
+            frames: Vec::new(),
+            provider_mix: Vec::new(),
+            tokens: 0,
+            usage: None,
+            latency_ms: 0,
+            used_ann_index: None,
+        })
+        .unwrap();
+        tx.send(AgentEvent::Text { text: "hi".into() }).unwrap();
+        tx.send(AgentEvent::TurnComplete {
+            model: "m".into(),
+            cost_usd: 0.0,
+        })
+        .unwrap();
+
+        let events = lane_events(&registry, tx, forwarder, &mut in_rx).await;
+        let recall = events
+            .iter()
+            .position(|event| matches!(event, AgentEvent::ContextRecall { .. }))
+            .expect("the recall event survives");
+        let stage_execute = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    AgentEvent::Stage {
+                        name: stella_protocol::StageKind::Execute,
+                        ..
+                    }
+                )
+            })
+            .expect("the opening boundary is emitted");
+        assert!(
+            recall < stage_execute,
+            "recall rides AHEAD of the opening stage boundary: {events:?}"
+        );
+    }
+
+    /// A staged lane must get none of it: the pipeline emits every boundary
+    /// itself, starting at `Triage`, and an `Execute` ahead of that is a
+    /// backwards transition `replay::validate_stage_ordering` rejects.
+    #[tokio::test]
+    async fn a_staged_lane_synthesizes_no_boundary_of_its_own() {
+        let root = tempfile::tempdir().expect("root");
+        let registry = stella_tools::ToolRegistry::new(root.path().to_path_buf());
+        let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder(
+            rx,
+            None,
+            InsightScope {
+                provider_id: "anthropic".into(),
+                cache_ttl: stella_model::CacheTtl::default(),
+                opens_execute_stage: false,
+            },
+            in_tx,
+            "lead".to_string(),
+            None,
+        );
+        tx.send(AgentEvent::TurnComplete {
+            model: "m".into(),
+            cost_usd: 0.0,
+        })
+        .unwrap();
+
+        let events = lane_events(&registry, tx, forwarder, &mut in_rx).await;
+        assert!(
+            stages(&events).is_empty(),
+            "a staged lane's boundaries are the pipeline's alone: {events:?}"
+        );
     }
 }

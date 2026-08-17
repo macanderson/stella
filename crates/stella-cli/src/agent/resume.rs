@@ -500,7 +500,15 @@ pub(crate) async fn drive_resumed_turn(
     mut state: stella_core::step::TurnState,
     events: &stella_core::EventSender,
 ) -> TurnOutcome {
-    engine.drive(&mut state, events).await
+    // The run owner emits its own stage boundaries — the engine emits none
+    // (#3416). A resumed turn is still an execute turn, and the consumers that
+    // render `hud.stage` cannot tell one from a fresh one.
+    let events = events.pairing_stage_complete();
+    let _ = events.send(stella_protocol::AgentEvent::Stage {
+        name: stella_protocol::StageKind::Execute,
+        scope: stella_protocol::StageScope::Run,
+    });
+    engine.drive(&mut state, &events).await
 }
 
 #[cfg(test)]
@@ -694,14 +702,16 @@ mod tests {
         );
 
         // The renderer's contract: the resumed turn frames itself as an
-        // execute stage before its first event. TURN-scoped: the engine emits
-        // it about its own turn, not a wrapper about the run (#3398).
+        // execute stage before its first event. RUN-scoped: the engine emits
+        // no `Stage` at all any more (#3416), so this boundary is
+        // `drive_resumed_turn`'s — the run owner's — statement about its run,
+        // which is the scope `StageScope::Run` names (#3398).
         let first = rx.recv().await.expect("at least the stage event");
         assert!(matches!(
             first,
             AgentEvent::Stage {
                 name: stella_protocol::StageKind::Execute,
-                scope: stella_protocol::StageScope::Turn
+                scope: stella_protocol::StageScope::Run
             }
         ));
     }
