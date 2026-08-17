@@ -239,6 +239,11 @@
       "status": "vendored",
       "title": "Context reuse: identity, accounting, consent, and verification"
     },
+    "deck-film": {
+      "path": "docs/demo/README.md",
+      "status": "living",
+      "title": "Demo recordings \u2014 the deck film pipeline"
+    },
     "deterministic-engine": {
       "path": "docs/papers/deterministic-engine.md",
       "sections": [
