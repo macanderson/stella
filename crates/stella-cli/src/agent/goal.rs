@@ -973,8 +973,22 @@ async fn run_goal_pipeline_turn(
 /// The tools the goal verifier may call: the catalog's read-only built-ins,
 /// and nothing else. Pinned against the catalog by a test below so the two
 /// cannot drift.
-const VERIFIER_TOOL_ALLOWLIST: &[&str] =
-    &["task_list", "get_state", "list_state", "get_environment"];
+///
+/// `read_file` and `search` lead the list, and they are the reason the list is
+/// worth having: a verifier restricted to the task board, the scratch plane
+/// and an environment report can inspect no evidence at all, so it could only
+/// ever re-assert what the worker told it. Both are read-only rows, so they
+/// enter by the same rule as the rest rather than as an exemption — the
+/// narrowing this constant performs is against *mutation*, never against
+/// looking.
+const VERIFIER_TOOL_ALLOWLIST: &[&str] = &[
+    "read_file",
+    "search",
+    "task_list",
+    "get_state",
+    "list_state",
+    "get_environment",
+];
 
 /// The goal verifier's tool surface (#1783): the session stack narrowed to
 /// [`VERIFIER_TOOL_ALLOWLIST`] BEFORE the read-only view applies. A bare

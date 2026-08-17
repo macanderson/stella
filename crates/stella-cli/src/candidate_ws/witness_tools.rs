@@ -1356,11 +1356,25 @@ mod tests {
     ///
     /// - a new out-of-catalog name on this surface fails here until it is
     ///   cataloged or added to `EXEMPT` with its own issue;
-    /// - an exempt name joining the catalog fails here too, so the exemption
-    ///   is retired instead of going stale.
+    /// - an exempt name that joins the catalog moves to `SHADOWED` — a
+    ///   *narrower* declaration, because a shared name is not automatically a
+    ///   shared implementation.
+    ///
+    /// `read_file` is the first of those. Restoring the built-in file tools
+    /// put that name in the catalog while this mount kept its own bespoke
+    /// reader — a tighter one, with its own payload ceiling and a credential
+    /// denylist the catalog tool does not carry. Retiring the exemption by
+    /// simply deleting the name would assert a sameness that is false; the
+    /// honest statement is "this surface serves a DIFFERENT tool under a
+    /// catalog name", which is what `SHADOWED` records and what the
+    /// reconciliation issue is filed against.
     #[test]
     fn the_out_of_catalog_surface_is_exactly_the_declared_exemption() {
-        const EXEMPT: &[&str] = &["glob", "read_file", "create_witness_test"];
+        /// Names this mount serves that the catalog has never heard of.
+        const EXEMPT: &[&str] = &["glob", "create_witness_test"];
+        /// Catalog names this mount deliberately serves with its own,
+        /// differently-behaved implementation.
+        const SHADOWED: &[&str] = &["read_file"];
 
         let root = tempfile::tempdir().unwrap();
         let tools = witness_executor(root.path());
@@ -1385,6 +1399,18 @@ mod tests {
                 !stella_tools::catalog::ALL_NAMES.contains(name),
                 "{name} joined the catalog — retire its exemption here \
                  and give it the standard docs/policy surface (#3148)"
+            );
+        }
+        for name in SHADOWED {
+            assert!(
+                stella_tools::catalog::ALL_NAMES.contains(name),
+                "{name} left the catalog — it is no longer shadowing \
+                 anything, so move it back to EXEMPT"
+            );
+            assert!(
+                advertised.iter().any(|advertised| advertised == name),
+                "{name} is declared as shadowed but this mount no longer \
+                 serves it — drop the declaration"
             );
         }
     }

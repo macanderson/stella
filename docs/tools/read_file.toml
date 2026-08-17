@@ -1,0 +1,124 @@
+# read_file — GENERATED FILE, DO NOT EDIT.
+#
+# Regenerate:   make tool-docs-update
+# Guarded by:   make tool-docs (a `make gate` step)
+#
+# Where each field comes from:
+#   name / description / input_schema      the tool's own ToolSchema
+#   read_only / available_for_speculation / category / availability
+#   risk_level                             crates/stella-tools/src/catalog.rs
+#   output_schema                          stella_protocol::ToolOutput
+
+name = "read_file"
+category = "file"
+availability = "always"
+read_only = true
+available_for_speculation = true
+
+# risk_level: how bad one honest call is — a reviewed judgement, declared in
+# crates/stella-tools/src/catalog.rs beside the flags above and graded against
+# the rubric on `ToolEntry::risk` (#2716, #3060). A DIFFERENT axis from
+# `read_only`: `task` mutates no file and spends real money, while
+# `task_create` mutates a board that dies with the session. Deliberately not
+# derived from the two booleans above — that would be a relabelling, not
+# information. A policy grant is expressed as a ceiling over this grade, and
+# every non-built-in tool (MCP, custom manifest) is graded `high` for being
+# unreviewed.
+risk_level = "low"
+
+description = '''
+Read a file from the workspace. Returns content with 1-based line numbers. Use offset and limit for ranges.
+'''
+
+# The JSON Schema the model is handed for this tool's arguments, verbatim.
+input_schema = '''
+{
+  "properties": {
+    "limit": {
+      "description": "Max lines to return (optional; default and ceiling 2000)",
+      "type": "integer"
+    },
+    "offset": {
+      "description": "1-based start line (optional)",
+      "type": "integer"
+    },
+    "path": {
+      "description": "File path relative to workspace root",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why you are reading this file — recorded in the session's file-touch audit log",
+      "type": "string"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}
+'''
+
+# The envelope every tool answers in. Declared; what rides inside
+# `ok.content` is a per-tool text convention with no schema behind it.
+output_schema = '''
+{
+  "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    }
+  ]
+}
+'''
+
+# ── example ───────────────────────────────────────────────────────────────
+# OBSERVED EXAMPLE: none.
+# `read_file` has 653 calls in the wider census, but none in the 2829-row
+# capture the examples are drawn from. No payload is shown, because an
+# invented one would teach the reader what the author imagined this tool is
+# for.
+
+# ── usage ─────────────────────────────────────────────────────────────────
+# Measured 2026-08-11 across 408 trials / 15304 model calls:
+# calls 653 · trials that used it 194/408 · calls per model call 0.0427 · mean
+# position of first use 9.8 · failures 101 (15.5%).
+# A measurement, not a contract: it ages, the schema above does not.
