@@ -5,5 +5,5 @@
     "kind": "rust_stack",
     "recorded_by": "stella-pipeline::pipeline::tests::golden::unproven_without_a_test_command"
   },
-  "event_count": 44
+  "event_count": 49
 }

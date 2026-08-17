@@ -1138,6 +1138,12 @@ mod tests {
     use stella_protocol::event::BudgetMode;
     use stella_protocol::{ToolCall, ToolOutput, VerdictEvidence};
 
+    fn run_complete() -> AgentEvent {
+        AgentEvent::RunComplete {
+            model: "m".into(),
+            cost_usd: 0.0,
+        }
+    }
     fn stage(name: StageKind) -> AgentEvent {
         // These fixtures are a wrapper's stream, so its own vocabulary.
         AgentEvent::Stage {
@@ -1284,20 +1290,35 @@ mod tests {
 
     // terminal
 
+    /// The "exactly once" rule belongs to the RUN's ending (#3379). Several
+    /// `turn_complete`s in one stream are the expected shape of a wrapped run,
+    /// so this must be written against `run_complete` or it flags correct
+    /// streams as violations.
     #[test]
-    fn two_completes_are_flagged() {
-        let events = [complete(), complete()];
+    fn two_run_completes_are_flagged() {
+        let events = [run_complete(), run_complete()];
         let v = validate_stream(&events);
-        // one for "more than one Complete", one for "not the last"
         assert!(
             v.iter()
-                .any(|x| x.reason.contains("more than one Complete"))
+                .any(|x| x.reason.contains("more than one run_complete"))
+        );
+    }
+
+    /// The companion, and the behaviour change worth pinning: several turns
+    /// ending inside one run is not a violation at all.
+    #[test]
+    fn several_turn_completes_are_not_flagged() {
+        let events = [complete(), complete(), run_complete()];
+        let v = validate_stream(&events);
+        assert!(
+            !v.iter().any(|x| x.reason.contains("terminates once")),
+            "a wrapped run ends several turns before the run ends: {v:?}"
         );
     }
 
     #[test]
-    fn complete_not_last_is_flagged() {
-        let events = [complete(), stage(StageKind::Execute)];
+    fn run_complete_not_last_is_flagged() {
+        let events = [run_complete(), stage(StageKind::Execute)];
         let v = validate_stream(&events);
         assert!(v.iter().any(|x| x.reason.contains("not the last event")));
     }
@@ -1363,7 +1384,7 @@ mod tests {
         assert_eq!(diff.len(), 1);
         assert_eq!(diff[0].index, 1);
         assert_eq!(diff[0].left, None);
-        assert_eq!(diff[0].right.as_deref(), Some("complete"));
+        assert_eq!(diff[0].right.as_deref(), Some("turn_complete"));
     }
 
     // JSONL round-trip + torn tail

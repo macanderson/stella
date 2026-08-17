@@ -167,10 +167,12 @@ async fn an_unmeasured_budget_grants_no_repair_past_the_allowance() {
         outcome.revisions, 1,
         "exactly the configured allowance — no round is granted on optimism"
     );
+    // The RUN's terminator, not a turn's: the turns themselves completed, and
+    // the pipeline no longer claims the run succeeded (#3379).
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, AgentEvent::TurnComplete { .. })),
+            .any(|event| matches!(event, AgentEvent::RunComplete { .. })),
         "a refuted run must never emit the success terminal event: {events:?}"
     );
 }
