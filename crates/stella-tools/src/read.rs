@@ -474,6 +474,13 @@ impl Tool for ReadFile {
 mod tests {
     use super::*;
 
+    /// A bare execution context rooted at `root` — every file-tool test
+    /// drives the tool through one, since `Tool::execute` takes the
+    /// context rather than the bare root path it used to (#3284).
+    fn cx(root: impl AsRef<std::path::Path>) -> crate::ctx::ToolCtx {
+        crate::ctx::ToolCtx::bare(root.as_ref().to_path_buf())
+    }
+
     /// #3145: an input the tool could not read is classified
     /// [`stella_protocol::ErrorClass::InvalidInput`] — the model's mistake,
     /// excluded from the tool's own error rate — with the message bytes
@@ -482,7 +489,7 @@ mod tests {
     async fn missing_path_is_classified_invalid_input() {
         use stella_protocol::ErrorClass;
         let result = ReadFile::default()
-            .execute(&serde_json::json!({}), &std::env::temp_dir())
+            .execute(&serde_json::json!({}), &cx(std::env::temp_dir()))
             .await;
         let ToolOutput::Error { message, class } = result else {
             panic!("expected an error for a missing required field");
@@ -501,7 +508,7 @@ mod tests {
             .unwrap();
 
         let result = ReadFile::default()
-            .execute(&serde_json::json!({"path": path}), &dir)
+            .execute(&serde_json::json!({"path": path}), &cx(&dir))
             .await;
         match result {
             ToolOutput::Ok { content, .. } => {
@@ -524,7 +531,7 @@ mod tests {
         let result = ReadFile::default()
             .execute(
                 &serde_json::json!({"path": path, "offset": 2, "limit": 2}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         match result {
@@ -551,7 +558,7 @@ mod tests {
         let out = tool
             .execute(
                 &serde_json::json!({"path": "f.txt", "limit": "200"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         let ToolOutput::Error { message, .. } = out else {
@@ -565,7 +572,7 @@ mod tests {
         let out = tool
             .execute(
                 &serde_json::json!({"path": "f.txt", "offset": true}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         let ToolOutput::Error { message, .. } = out else {
@@ -578,7 +585,7 @@ mod tests {
 
         // Absent still defaults — the fix refuses wrong types, not absence.
         let out = tool
-            .execute(&serde_json::json!({"path": "f.txt"}), dir.path())
+            .execute(&serde_json::json!({"path": "f.txt"}), &cx(dir.path()))
             .await;
         assert!(!out.is_error(), "{out:?}");
     }
@@ -594,12 +601,12 @@ mod tests {
         // Two reads of the same file under different spellings aggregate.
         for spelling in ["src/a.rs", "src/./a.rs"] {
             let out = tool
-                .execute(&serde_json::json!({"path": spelling}), dir.path())
+                .execute(&serde_json::json!({"path": spelling}), &cx(dir.path()))
                 .await;
             assert!(!out.is_error(), "{out:?}");
         }
         let third = tool
-            .execute(&serde_json::json!({"path": "src/a.rs"}), dir.path())
+            .execute(&serde_json::json!({"path": "src/a.rs"}), &cx(dir.path()))
             .await;
         match third {
             ToolOutput::Ok { content, .. } => {
@@ -615,12 +622,12 @@ mod tests {
 
         // Other files and failed reads don't inflate the tally.
         let other = tool
-            .execute(&serde_json::json!({"path": "b.rs"}), dir.path())
+            .execute(&serde_json::json!({"path": "b.rs"}), &cx(dir.path()))
             .await;
         assert!(!other.is_error());
         assert_eq!(tool.read_count(dir.path(), "b.rs"), 1);
         let missing = tool
-            .execute(&serde_json::json!({"path": "ghost.rs"}), dir.path())
+            .execute(&serde_json::json!({"path": "ghost.rs"}), &cx(dir.path()))
             .await;
         assert!(missing.is_error());
         assert_eq!(tool.read_count(dir.path(), "ghost.rs"), 0);
@@ -637,7 +644,7 @@ mod tests {
         let out = tool
             .execute(
                 &serde_json::json!({"path": "a.rs", "offset": 2, "limit": 1}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         assert!(!out.is_error(), "{out:?}");
@@ -656,7 +663,7 @@ mod tests {
         );
         // …until the next read refreshes the baseline.
         let again = tool
-            .execute(&serde_json::json!({"path": "a.rs"}), dir.path())
+            .execute(&serde_json::json!({"path": "a.rs"}), &cx(dir.path()))
             .await;
         assert!(!again.is_error());
         assert_eq!(
@@ -676,7 +683,7 @@ mod tests {
         std::fs::write(dir.path().join("bundle.min.js"), &huge).unwrap();
 
         let out = ReadFile::default()
-            .execute(&serde_json::json!({"path": "bundle.min.js"}), dir.path())
+            .execute(&serde_json::json!({"path": "bundle.min.js"}), &cx(dir.path()))
             .await;
         let ToolOutput::Ok { content, .. } = out else {
             panic!("expected ok, got: {out:?}");
@@ -710,7 +717,7 @@ mod tests {
         std::fs::write(dir.path().join("dump.sql"), &body).unwrap();
 
         let out = ReadFile::default()
-            .execute(&serde_json::json!({"path": "dump.sql"}), dir.path())
+            .execute(&serde_json::json!({"path": "dump.sql"}), &cx(dir.path()))
             .await;
         let ToolOutput::Ok { content, .. } = out else {
             panic!("expected ok, got: {out:?}");
@@ -762,10 +769,10 @@ mod tests {
         let next = ReadFile::default()
             .execute(
                 &serde_json::json!({"path": "dump.sql", "offset": resume}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
-        let ToolOutput::Ok { content: next } = next else {
+        let ToolOutput::Ok { content: next, .. } = next else {
             panic!("expected ok, got: {next:?}");
         };
         assert!(
@@ -781,7 +788,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.rs"), "fn main() {}\nlet x = 1;\n").unwrap();
         let out = ReadFile::default()
-            .execute(&serde_json::json!({"path": "a.rs"}), dir.path())
+            .execute(&serde_json::json!({"path": "a.rs"}), &cx(dir.path()))
             .await;
         let ToolOutput::Ok { content, .. } = out else {
             panic!("expected ok, got: {out:?}");
@@ -826,9 +833,9 @@ mod tests {
         let tool = ReadFile::default();
         for name in ["plain.rs", "wide.min.js", "dump.sql"] {
             let input = serde_json::json!({ "path": name });
-            let first = tool.execute(&input, dir.path()).await;
-            let second = tool.execute(&input, dir.path()).await;
-            let (ToolOutput::Ok { content: raw }, ToolOutput::Ok { content: raw_again }) =
+            let first = tool.execute(&input, &cx(dir.path())).await;
+            let second = tool.execute(&input, &cx(dir.path())).await;
+            let (ToolOutput::Ok { content: raw, .. }, ToolOutput::Ok { content: raw_again, .. }) =
                 (&first, &second)
             else {
                 panic!("expected ok for {name}, got: {first:?} / {second:?}");
@@ -858,25 +865,32 @@ mod tests {
         }
     }
 
-    /// The engine's working-set restoration (#2685) replays this tool by the
-    /// name and path parameter `stella_core::restore` spells, and refuses the
-    /// replay unless the schema declares `read_only` — the same one-definition
-    /// tie as the footer test above. A drift on either side is not cosmetic:
-    /// it is restoration silently ceasing to restore files.
+    /// The half of the engine tie that still exists to pin.
+    ///
+    /// `stella_core::restore`'s working-set restoration (#2685) used to
+    /// *replay* this tool by name, and a sibling test asserted the two
+    /// spellings against `restore::READ_TOOL` / `READ_PATH_PARAM`. Those
+    /// constants went away with the tool in #3244, and restoration now tells
+    /// the model to re-read through the session's tools rather than replaying
+    /// anything — so re-adding them here would pin this schema to a consumer
+    /// that no longer reads it. Re-arming the replay is tracked follow-up
+    /// work, not a silence.
+    ///
+    /// What is still load-bearing and cheap to assert: the schema shape that
+    /// replay (and the parked-wait probe) requires — a `read_only` claim and
+    /// a `path` parameter.
     #[test]
-    fn the_read_tool_is_the_one_the_engines_restoration_replays() {
+    fn the_read_tool_keeps_the_schema_shape_a_replay_requires() {
         let schema = ReadFile::default().schema();
-        assert_eq!(schema.name, stella_core::restore::READ_TOOL);
+        assert_eq!(schema.name, "read_file");
         assert!(
             schema.read_only,
             "restoration (and the parked-wait probe) replay only schema-declared \
              read-only tools; dropping the claim silently disables both"
         );
         assert!(
-            schema.input_schema["properties"]
-                .get(stella_core::restore::READ_PATH_PARAM)
-                .is_some(),
-            "the path parameter must keep the spelling the engine replays"
+            schema.input_schema["properties"].get("path").is_some(),
+            "the path parameter must keep the spelling a replay would use"
         );
     }
 
@@ -888,7 +902,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("blob.bin"), [0x00u8, 0xff, 0xfe, 0x41]).unwrap();
         let out = ReadFile::default()
-            .execute(&serde_json::json!({"path": "blob.bin"}), dir.path())
+            .execute(&serde_json::json!({"path": "blob.bin"}), &cx(dir.path()))
             .await;
         match out {
             ToolOutput::Error { message, .. } => {
@@ -906,7 +920,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("src")).unwrap();
         let out = ReadFile::default()
-            .execute(&serde_json::json!({"path": "src"}), dir.path())
+            .execute(&serde_json::json!({"path": "src"}), &cx(dir.path()))
             .await;
         match out {
             ToolOutput::Error { message, .. } => {
@@ -933,7 +947,7 @@ mod tests {
         let out = ReadFile::default()
             .execute(
                 &serde_json::json!({"path": "dump.sql", "offset": 1, "limit": 1}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         match out {
@@ -953,7 +967,7 @@ mod tests {
         let result = ReadFile::default()
             .execute(
                 &serde_json::json!({"path": "nonexistent_xyz_123.txt"}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         assert!(result.is_error());
@@ -963,7 +977,7 @@ mod tests {
     async fn path_escape_returns_error() {
         let dir = std::env::temp_dir();
         let result = ReadFile::default()
-            .execute(&serde_json::json!({"path": "../../etc/passwd"}), &dir)
+            .execute(&serde_json::json!({"path": "../../etc/passwd"}), &cx(&dir))
             .await;
         assert!(result.is_error());
     }
@@ -972,7 +986,7 @@ mod tests {
     async fn missing_path_field_returns_error() {
         let dir = std::env::temp_dir();
         let result = ReadFile::default()
-            .execute(&serde_json::json!({}), &dir)
+            .execute(&serde_json::json!({}), &cx(&dir))
             .await;
         assert!(result.is_error());
     }

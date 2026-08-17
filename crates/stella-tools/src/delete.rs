@@ -124,6 +124,13 @@ impl Tool for DeleteFile {
 mod tests {
     use super::*;
 
+    /// A bare execution context rooted at `root` — every file-tool test
+    /// drives the tool through one, since `Tool::execute` takes the
+    /// context rather than the bare root path it used to (#3284).
+    fn cx(root: impl AsRef<std::path::Path>) -> crate::ctx::ToolCtx {
+        crate::ctx::ToolCtx::bare(root.as_ref().to_path_buf())
+    }
+
     #[tokio::test]
     async fn deletes_a_file_and_rejects_escapes_dirs_and_ghosts() {
         let root = std::env::temp_dir().join(format!("stella_delete_{}", std::process::id()));
@@ -131,7 +138,7 @@ mod tests {
         std::fs::write(root.join("kill-me.txt"), "bye").unwrap();
 
         let ok = DeleteFile
-            .execute(&serde_json::json!({"path": "kill-me.txt"}), &root)
+            .execute(&serde_json::json!({"path": "kill-me.txt"}), &cx(&root))
             .await;
         assert!(!ok.is_error(), "{ok:?}");
         assert!(!root.join("kill-me.txt").exists());
@@ -142,7 +149,7 @@ mod tests {
             (serde_json::json!({"path": "ghost.txt"}), "missing"),
             (serde_json::json!({}), "no path"),
         ] {
-            let out = DeleteFile.execute(&input, &root).await;
+            let out = DeleteFile.execute(&input, &cx(&root)).await;
             assert!(out.is_error(), "{why} must be rejected: {out:?}");
         }
         std::fs::remove_dir_all(&root).ok();
@@ -163,7 +170,7 @@ mod tests {
         let out = DeleteFile
             .execute(
                 &serde_json::json!({"path": "vendor/config.toml"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         match out {
@@ -196,7 +203,7 @@ mod tests {
         std::os::unix::fs::symlink("nowhere.txt", dir.path().join("ghost-link")).unwrap();
 
         let out = DeleteFile
-            .execute(&serde_json::json!({"path": "ghost-link"}), dir.path())
+            .execute(&serde_json::json!({"path": "ghost-link"}), &cx(dir.path()))
             .await;
         assert!(!out.is_error(), "{out:?}");
         assert!(dir.path().join("ghost-link").symlink_metadata().is_err());
@@ -216,7 +223,7 @@ mod tests {
         let out = DeleteFile
             .execute(
                 &serde_json::json!({"path": "escape/secret.txt"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         assert!(out.is_error(), "{out:?}");
@@ -231,7 +238,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("sub")).unwrap();
         for tail in ["sub/.", "sub/..", "."] {
             let out = DeleteFile
-                .execute(&serde_json::json!({"path": tail}), dir.path())
+                .execute(&serde_json::json!({"path": tail}), &cx(dir.path()))
                 .await;
             assert!(out.is_error(), "`{tail}` must be rejected: {out:?}");
         }

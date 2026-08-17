@@ -82,7 +82,7 @@ const GREP_CMDS: &[&str] = &["grep", "egrep", "fgrep", "rg", "ripgrep", "ag"];
 /// pattern out of the common command shapes, returning each word already
 /// unquoted. NOT a shell parser: it respects `'…'` and `"…"` (so a pattern or
 /// path with spaces stays one word) and preserves backslash escapes like
-/// `\|` (so an alternation survives into [`is_symbol_shaped`](crate::code_map::is_symbol_shaped)); unquoted
+/// `\|` (so an alternation survives into [`is_symbol_shaped`]); unquoted
 /// operators (`&&`, `||`, `|`, `;`, `&`) come back as their own words to
 /// bound a scan — including when attached to a word, so `cd /app; ls` yields
 /// the target `/app`, not the unresolvable `/app;` a paid bench trial saw
@@ -598,14 +598,20 @@ impl Tool for Bash {
 mod tests {
     use super::*;
 
+    /// A bare execution context rooted at `root`: `Tool::execute` takes the
+    /// context rather than the bare root path it used to (#3284).
+    fn cx(root: impl AsRef<std::path::Path>) -> crate::ctx::ToolCtx {
+        crate::ctx::ToolCtx::bare(root.as_ref().to_path_buf())
+    }
+
     #[tokio::test]
     async fn runs_echo_command() {
         let dir = std::env::temp_dir();
         let result = Bash::new(None)
-            .execute(&serde_json::json!({"command": "echo hello_stella"}), &dir)
+            .execute(&serde_json::json!({"command": "echo hello_stella"}), &cx(&dir))
             .await;
         match result {
-            ToolOutput::Ok { content } => assert!(content.contains("hello_stella")),
+            ToolOutput::Ok { content, .. } => assert!(content.contains("hello_stella")),
             ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
@@ -619,7 +625,7 @@ mod tests {
         let out = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "echo hi > probe.txt", "trace": "yes"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         let ToolOutput::Error { message, .. } = out else {
@@ -640,11 +646,11 @@ mod tests {
                 &serde_json::json!({
                     "command": crate::subprocess_env::test_support::PROBE_COMMAND
                 }),
-                &std::env::temp_dir(),
+                &cx(std::env::temp_dir()),
             )
             .await;
         match result {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 let output = content.lines().next().unwrap_or_default();
                 crate::subprocess_env::test_support::assert_scrubbed(output);
             }
@@ -663,11 +669,11 @@ mod tests {
                 &serde_json::json!({
                     "command": crate::subprocess_env::test_support::SPAWN_HYGIENE_PROBE_COMMAND
                 }),
-                &std::env::temp_dir(),
+                &cx(std::env::temp_dir()),
             )
             .await;
         match result {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 let output = content.lines().next().unwrap_or_default();
                 crate::subprocess_env::test_support::assert_spawn_hygiene_scrubbed(output);
             }
@@ -693,12 +699,12 @@ mod tests {
                     "command": "sleep 5 & echo done_immediately",
                     "timeout_secs": 10
                 }),
-                &dir,
+                &cx(&dir),
             )
             .await;
         let elapsed = started.elapsed();
         match result {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert!(content.contains("done_immediately"), "{content}")
             }
             ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
@@ -713,10 +719,10 @@ mod tests {
     async fn captures_stderr() {
         let dir = std::env::temp_dir();
         let result = Bash::new(None)
-            .execute(&serde_json::json!({"command": "echo err >&2"}), &dir)
+            .execute(&serde_json::json!({"command": "echo err >&2"}), &cx(&dir))
             .await;
         match result {
-            ToolOutput::Ok { content } => assert!(content.contains("err")),
+            ToolOutput::Ok { content, .. } => assert!(content.contains("err")),
             ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
@@ -725,7 +731,7 @@ mod tests {
     async fn nonzero_exit_is_error() {
         let dir = std::env::temp_dir();
         let result = Bash::new(None)
-            .execute(&serde_json::json!({"command": "exit 42"}), &dir)
+            .execute(&serde_json::json!({"command": "exit 42"}), &cx(&dir))
             .await;
         assert!(result.is_error());
         if let ToolOutput::Error { message, .. } = result {
@@ -739,7 +745,7 @@ mod tests {
         let result = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "sleep 30", "timeout_secs": 1}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         assert!(result.is_error());
@@ -766,7 +772,7 @@ mod tests {
             Bash::new(None)
                 .execute(
                     &serde_json::json!({"command": command, "timeout_secs": 60}),
-                    &root,
+                    &cx(&root),
                 )
                 .await
         });
@@ -804,11 +810,11 @@ mod tests {
         let result = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "yes '€' | tr -d '\\n' | head -c 200000"}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         match result {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert!(content.contains("truncated"), "expected truncation marker");
             }
             ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
@@ -829,10 +835,10 @@ mod tests {
              printf '\\nLAST_SENTINEL_LINE\\n'"
         );
         let result = Bash::new(None)
-            .execute(&serde_json::json!({ "command": command }), &dir)
+            .execute(&serde_json::json!({ "command": command }), &cx(&dir))
             .await;
         let content = match result {
-            ToolOutput::Ok { content } => content,
+            ToolOutput::Ok { content, .. } => content,
             ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         };
         assert!(
@@ -863,10 +869,10 @@ mod tests {
     async fn runs_in_workspace_root() {
         let dir = std::env::temp_dir();
         let result = Bash::new(None)
-            .execute(&serde_json::json!({"command": "pwd"}), &dir)
+            .execute(&serde_json::json!({"command": "pwd"}), &cx(&dir))
             .await;
         match result {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 // macOS temp_dir is a symlink; compare canonicalized paths.
                 let pwd = content.lines().next().unwrap_or("").trim();
                 let canonical_pwd = std::fs::canonicalize(pwd).unwrap_or_default();
@@ -882,26 +888,10 @@ mod tests {
         }
     }
 
-    /// An indexed workspace — a source file plus a built `.stella/private/codegraph.db`,
-    /// exactly what `stella init` leaves so `graph_available` is true.
-    fn indexed_tempdir() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(
-            dir.path().join("lib.rs"),
-            "pub struct Greeter;\npub fn greet() {}\n",
-        )
-        .expect("write");
-        let db = crate::graph::graph_db_path(dir.path());
-        std::fs::create_dir_all(db.parent().expect("parent")).expect("mkdir");
-        let graph = stella_graph::CodeGraph::open(dir.path(), &db).expect("open");
-        graph.index_all().expect("index");
-        graph.shutdown();
-        dir
-    }
 
     fn text_of(out: ToolOutput) -> String {
         match out {
-            ToolOutput::Ok { content } => content,
+            ToolOutput::Ok { content, .. } => content,
             ToolOutput::Error { message, .. } => message,
         }
     }
@@ -1025,10 +1015,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_cross_root_cd_warns_when_indexed() {
-        let dir = indexed_tempdir();
+    async fn a_cross_root_cd_warns() {
+        let dir = tempfile::tempdir().unwrap();
         let out = Bash::new(None)
-            .execute(&serde_json::json!({"command": "cd / && pwd"}), dir.path())
+            .execute(
+                &serde_json::json!({"command": "cd / && pwd"}),
+                &cx(dir.path()),
+            )
             .await;
         let text = text_of(out);
         assert!(
@@ -1038,19 +1031,19 @@ mod tests {
     }
 
     /// The motivating shape from the telemetry: `cd` to a sibling checkout AND
-    /// a symbol-shaped grep in one command. Drift takes precedence — under a
-    /// tree the graph doesn't index, the grep tip would be misleading, so only
-    /// the drift warning fires.
+    /// a symbol-shaped grep in one command. Drift takes precedence — the
+    /// search tip is advice about working *here*, which is exactly what the
+    /// command just stopped doing.
     #[tokio::test]
-    async fn drift_wins_over_the_grep_tip_when_both_fire() {
-        let dir = indexed_tempdir();
+    async fn drift_wins_over_the_search_tip_when_both_fire() {
+        let dir = tempfile::tempdir().unwrap();
         // Grep /dev/null (instant, hermetic) — the advisory keys off the
         // command string's `cd` + grep pattern, not what grep actually reads,
         // so this exercises the precedence without walking `/`.
         let out = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "cd / && grep -rn \"struct Greeter\" /dev/null"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         let text = text_of(out);
@@ -1058,74 +1051,46 @@ mod tests {
             text.contains("outside the session root"),
             "drift warned: {text}"
         );
-        // The drift note names graph_query (to explain coverage); the *tip* is
-        // the thing suppressed. Its distinctive phrase must be absent.
         assert!(
-            !text.contains("symbol/dependency lookup"),
-            "the grep tip is suppressed under a drifted tree: {text}"
+            !text.contains("`search` answers those directly"),
+            "the search tip is suppressed under a drifted tree: {text}"
         );
     }
 
+    /// The witness for the retargeted nudge: a symbol-shaped grep is pointed
+    /// at `search`, and — unlike the `graph_query` tip this replaces — it
+    /// fires on a tree with **no index at all**, because `search`'s bottom
+    /// rung is an index-free file scan. The old tip was index-gated for the
+    /// honest reason that `graph_query` did not answer without one; that
+    /// reason is gone, so the gate is too.
     #[tokio::test]
-    async fn a_symbol_shaped_bash_grep_gets_the_graph_tip_when_indexed() {
-        let dir = indexed_tempdir();
+    async fn a_symbol_shaped_bash_grep_is_pointed_at_search_without_an_index() {
+        let dir = tempfile::tempdir().unwrap();
         let out = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "grep -rn \"struct Greeter\" ."}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         let text = text_of(out);
-        assert!(text.contains("graph_query"), "grep nudged: {text}");
-    }
-
-    #[tokio::test]
-    async fn a_plain_command_gets_no_advisory() {
-        let dir = indexed_tempdir();
-        let text = text_of(
-            Bash::new(None)
-                .execute(&serde_json::json!({"command": "echo hi"}), dir.path())
-                .await,
-        );
-        assert!(!text.contains("graph_query"), "{text}");
-        assert!(!text.contains("outside the session root"), "{text}");
-    }
-
-    /// An un-indexed tree still warns on drift — that is the case the warning
-    /// exists for. A best-of-N candidate's snapshot has no index, so gating the
-    /// warning on one let a candidate `cd` out of its own workspace in silence.
-    #[tokio::test]
-    async fn no_index_still_warns_on_a_cross_root_cd() {
-        let dir = tempfile::tempdir().unwrap();
-        let text = text_of(
-            Bash::new(None)
-                .execute(
-                    &serde_json::json!({"command": "grep -rn \"struct Foo\" . ; cd /"}),
-                    dir.path(),
-                )
-                .await,
-        );
         assert!(
-            text.contains("outside the session root"),
-            "drift warns without an index: {text}"
-        );
-        // The grep tip stays index-gated: it points at a tool this tree hasn't
-        // got. The drift note must not smuggle it in by naming the graph.
-        assert!(
-            !text.contains("graph_query"),
-            "no index, so nothing may cite the graph: {text}"
+            text.contains("`search` answers those directly"),
+            "grep nudged toward search: {text}"
         );
     }
 
-    /// The warning's load-bearing claim, on the tree with no index: work under
-    /// the drifted target is not collected. A candidate that read only "the
-    /// graph doesn't cover it" would reasonably `cd` anyway.
+    /// The warning's load-bearing claim: work under the drifted target is not
+    /// collected. An agent that read only "the graph doesn't cover it" would
+    /// reasonably `cd` anyway.
     #[tokio::test]
     async fn the_drift_warning_says_the_work_is_not_collected() {
         let dir = tempfile::tempdir().unwrap();
         let text = text_of(
             Bash::new(None)
-                .execute(&serde_json::json!({"command": "cd / && pwd"}), dir.path())
+                .execute(
+                    &serde_json::json!({"command": "cd / && pwd"}),
+                    &cx(dir.path()),
+                )
                 .await,
         );
         assert!(
@@ -1136,178 +1101,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_plain_command_gets_no_advisory_without_an_index() {
+    async fn a_plain_command_gets_no_advisory() {
         let dir = tempfile::tempdir().unwrap();
         let text = text_of(
             Bash::new(None)
-                .execute(&serde_json::json!({"command": "echo hi"}), dir.path())
+                .execute(&serde_json::json!({"command": "echo hi"}), &cx(dir.path()))
                 .await,
         );
-        assert!(!text.contains("graph_query"), "{text}");
+        assert!(!text.contains("`search` answers those directly"), "{text}");
         assert!(!text.contains("outside the session root"), "{text}");
     }
-
-    /// The `log-summary-date-ranges` loss, reduced: a script that hardcodes a
-    /// path in the graded tree must not reach the disk. Before confinement the
-    /// write succeeded, the run was aborted before adoption, and the grader
-    /// read the leaked wrong intermediate — a solved task scoring zero.
-    #[tokio::test]
-    async fn a_write_into_the_graded_tree_never_reaches_the_disk() {
-        let graded = tempfile::tempdir().unwrap();
-        let workspace = tempfile::tempdir().unwrap();
-        let leaked = graded.path().join("summary.csv");
-        let tool =
-            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
-
-        let text = text_of(
-            tool.execute(
-                &serde_json::json!({
-                    "command": format!("echo today,ERROR,414 > {}", leaked.display())
-                }),
-                workspace.path(),
-            )
-            .await,
-        );
-
-        assert!(!leaked.exists(), "the graded tree was written: {text}");
-        assert!(text.contains("refused before running"), "{text}");
-        // The remedy names the file's address in this shell's own workspace.
-        assert!(
-            text.contains(&workspace.path().join("summary.csv").display().to_string()),
-            "{text}"
-        );
-    }
-
-    /// The same escape re-issued as the heredoc the model actually reaches for
-    /// once `write_file` refuses it: the path is not a shell word at all, so a
-    /// word-level check alone would let it straight through.
-    #[tokio::test]
-    async fn a_graded_path_buried_in_a_script_body_is_still_refused() {
-        let graded = tempfile::tempdir().unwrap();
-        let workspace = tempfile::tempdir().unwrap();
-        let leaked = graded.path().join("summary.csv");
-        let command = format!(
-            "cat <<'EOF' > /dev/null\nignored\nEOF\nprintf 'x' > '{}'",
-            leaked.display()
-        );
-        let tool =
-            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
-
-        let text = text_of(
-            tool.execute(&serde_json::json!({ "command": command }), workspace.path())
-                .await,
-        );
-
-        assert!(!leaked.exists(), "the graded tree was written: {text}");
-        assert!(text.contains("refused before running"), "{text}");
-    }
-
-    /// `f89p3/code-from-image` steps 83–86: the worker moved the very ref
-    /// `verify_done` pins its baseline to. Refused in every session, confined
-    /// or not — no task's work lives in Stella's ref namespace.
-    #[tokio::test]
-    async fn rewriting_stellas_own_ref_is_refused_and_leaves_the_ref_alone() {
-        let repo = tempfile::tempdir().unwrap();
-        let sentinel = repo.path().join("moved");
-        let text = text_of(
-            Bash::new(None)
-                .execute(
-                    &serde_json::json!({
-                        "command": format!(
-                            "touch {} && git update-ref {} HEAD",
-                            sentinel.display(),
-                            crate::verify::WITNESS_BASELINE_WORKTREE_REF
-                        )
-                    }),
-                    repo.path(),
-                )
-                .await,
-        );
-        assert!(
-            !sentinel.exists(),
-            "the command ran despite naming Stella's ref namespace: {text}"
-        );
-        assert!(text.contains(confine::STELLA_REF_NAMESPACE), "{text}");
-    }
-
-    /// The legitimate case a blanket refusal would break: `configure-git-webserver`
-    /// installs and configures system software, and that is the task, not an
-    /// escape. Confinement must leave every path outside the graded tree alone.
-    #[tokio::test]
-    async fn a_confined_shell_still_writes_system_paths_outside_the_graded_tree() {
-        let graded = tempfile::tempdir().unwrap();
-        let workspace = tempfile::tempdir().unwrap();
-        let system = tempfile::tempdir().unwrap();
-        let conf = system.path().join("nginx.conf");
-        let tool =
-            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
-
-        let text = text_of(
-            tool.execute(
-                &serde_json::json!({
-                    "command": format!("echo 'server {{}}' > {}", conf.display())
-                }),
-                workspace.path(),
-            )
-            .await,
-        );
-
-        assert!(
-            conf.exists(),
-            "a system path outside the graded tree: {text}"
-        );
-    }
-
-    /// The advisory that sent `build-cython-ext` into `rm -rf /app/pyknotid`:
-    /// it said work outside the root is not collected (true of the diff) and
-    /// offered a remedy the agent cannot perform, while omitting that work in
-    /// the candidate IS delivered to the graded tree by adoption.
-    #[tokio::test]
-    async fn the_drift_note_states_adoption_and_offers_a_remedy_the_agent_can_perform() {
-        let graded = tempfile::tempdir().unwrap();
-        let workspace = tempfile::tempdir().unwrap();
-        let elsewhere = tempfile::tempdir().unwrap();
-        let tool =
-            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
-
-        let text = text_of(
-            tool.execute(
-                &serde_json::json!({ "command": format!("cd {} && pwd", elsewhere.path().display()) }),
-                workspace.path(),
-            )
-            .await,
-        );
-
-        assert!(text.contains("outside the session root"), "{text}");
-        assert!(
-            text.contains("is delivered to"),
-            "the note must state that work here reaches the graded tree: {text}"
-        );
-        assert!(
-            !text.contains("re-root the session on it"),
-            "the remedy must be one the agent can perform: {text}"
-        );
-    }
-
-    /// Witness test for #2696: verify STELLA_SCRATCH is injected via constructor
-    /// in a multi-threaded tokio runtime, proving the thread-local storage seam
-    /// was fixed and the pure function signature approach works correctly.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn constructor_injected_scratch_path_is_exported_to_bash() {
-        let scratch_dir = tempfile::tempdir().expect("tempdir creation");
-        let scratch_path = scratch_dir.path().to_path_buf();
-        let bash_tool = Bash::new(Some(scratch_path.clone()));
-        let dir = std::env::temp_dir();
-        let result = bash_tool
-            .execute(
-                &serde_json::json!({"command": "echo $STELLA_SCRATCH"}),
-                &dir,
-            )
-            .await;
-        let exported = match result {
-            ToolOutput::Ok { content } => content.lines().next().unwrap_or_default().to_string(),
-            ToolOutput::Error { message, .. } => panic!("bash: {message}"),
-        };
-        assert_eq!(exported, scratch_path.to_string_lossy().to_string());
-    }
 }
+

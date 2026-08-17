@@ -318,6 +318,13 @@ impl Tool for EditFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bare execution context rooted at `root` — every file-tool test
+    /// drives the tool through one, since `Tool::execute` takes the
+    /// context rather than the bare root path it used to (#3284).
+    fn cx(root: impl AsRef<std::path::Path>) -> crate::ctx::ToolCtx {
+        crate::ctx::ToolCtx::bare(root.as_ref().to_path_buf())
+    }
     use crate::read::ReadFile;
 
     #[tokio::test]
@@ -330,7 +337,7 @@ mod tests {
         let result = EditFile::default()
             .execute(
                 &serde_json::json!({"path": path, "old_string": "old", "new_string": "new"}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         match result {
@@ -356,7 +363,7 @@ mod tests {
         let first = edit
             .execute(
                 &serde_json::json!({"path": "input.tex", "old_string": "big", "new_string": "huge"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         let ToolOutput::Ok { content: first, .. } = first else {
@@ -365,7 +372,7 @@ mod tests {
         let second = edit
             .execute(
                 &serde_json::json!({"path": "input.tex", "old_string": "large", "new_string": "vast"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         let ToolOutput::Ok { content: second, .. } = second else {
@@ -399,7 +406,7 @@ mod tests {
         let result = EditFile::default()
             .execute(
                 &serde_json::json!({"path": path, "old_string": "a", "new_string": "b"}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         assert!(result.is_error());
@@ -416,7 +423,7 @@ mod tests {
         let result = EditFile::default()
             .execute(
                 &serde_json::json!({"path": path, "old_string": "a", "new_string": "b", "replace_all": true}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         match result {
@@ -438,7 +445,7 @@ mod tests {
         let result = EditFile::default()
             .execute(
                 &serde_json::json!({"path": path, "old_string": "xyz", "new_string": "abc"}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         match result {
@@ -467,7 +474,7 @@ mod tests {
         let edit = EditFile::with_ledger(ledger.clone());
 
         let seen = read
-            .execute(&serde_json::json!({"path": "a.rs"}), dir.path())
+            .execute(&serde_json::json!({"path": "a.rs"}), &cx(dir.path()))
             .await;
         assert!(!seen.is_error(), "{seen:?}");
 
@@ -477,7 +484,7 @@ mod tests {
         let result = edit
             .execute(
                 &serde_json::json!({"path": "a.rs", "old_string": "original", "new_string": "x"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         match result {
@@ -499,7 +506,7 @@ mod tests {
         let repeat = edit
             .execute(
                 &serde_json::json!({"path": "a.rs", "old_string": "original", "new_string": "x"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         match repeat {
@@ -516,7 +523,7 @@ mod tests {
         let recovered = edit
             .execute(
                 &serde_json::json!({"path": "a.rs", "old_string": "rewritten", "new_string": "fixed"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         assert!(!recovered.is_error(), "{recovered:?}");
@@ -531,14 +538,14 @@ mod tests {
         let edit = EditFile::with_ledger(ledger.clone());
 
         let seen = read
-            .execute(&serde_json::json!({"path": "a.rs"}), dir.path())
+            .execute(&serde_json::json!({"path": "a.rs"}), &cx(dir.path()))
             .await;
         assert!(!seen.is_error());
 
         let result = edit
             .execute(
                 &serde_json::json!({"path": "a.rs", "old_string": "helo world", "new_string": "x"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         match result {
@@ -565,7 +572,7 @@ mod tests {
         let edit = EditFile::with_ledger(ledger.clone());
 
         let seen = read
-            .execute(&serde_json::json!({"path": "a.rs"}), dir.path())
+            .execute(&serde_json::json!({"path": "a.rs"}), &cx(dir.path()))
             .await;
         assert!(!seen.is_error());
 
@@ -573,7 +580,7 @@ mod tests {
         let first = edit
             .execute(
                 &serde_json::json!({"path": "a.rs", "old_string": "two", "new_string": "2"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         assert!(!first.is_error(), "{first:?}");
@@ -582,7 +589,7 @@ mod tests {
         let second = edit
             .execute(
                 &serde_json::json!({"path": "a.rs", "old_string": "bogus", "new_string": "x"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         match second {
@@ -612,7 +619,7 @@ mod tests {
         let edit = EditFile::with_ledger(ledger.clone());
 
         let seen = read
-            .execute(&serde_json::json!({"path": "win.rs"}), dir.path())
+            .execute(&serde_json::json!({"path": "win.rs"}), &cx(dir.path()))
             .await;
         let ToolOutput::Ok { content, .. } = seen else {
             panic!("expected ok, got: {seen:?}");
@@ -630,7 +637,7 @@ mod tests {
                     "old_string": "fn a() {\n    old();",
                     "new_string": "fn a() {\n    new();",
                 }),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         assert!(!out.is_error(), "{out:?}");
@@ -701,7 +708,7 @@ mod tests {
         let edit = EditFile::with_ledger(ledger.clone());
 
         let seen = read
-            .execute(&serde_json::json!({"path": "big.txt"}), dir.path())
+            .execute(&serde_json::json!({"path": "big.txt"}), &cx(dir.path()))
             .await;
         assert!(!seen.is_error());
 
@@ -711,7 +718,7 @@ mod tests {
         let result = edit
             .execute(
                 &serde_json::json!({"path": "big.txt", "old_string": "seed", "new_string": "x"}),
-                dir.path(),
+                &cx(dir.path()),
             )
             .await;
         match result {

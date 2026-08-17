@@ -98,6 +98,13 @@ impl Tool for WriteFile {
 mod tests {
     use super::*;
 
+    /// A bare execution context rooted at `root` — every file-tool test
+    /// drives the tool through one, since `Tool::execute` takes the
+    /// context rather than the bare root path it used to (#3284).
+    fn cx(root: impl AsRef<std::path::Path>) -> crate::ctx::ToolCtx {
+        crate::ctx::ToolCtx::bare(root.as_ref().to_path_buf())
+    }
+
     #[tokio::test]
     async fn writes_file_and_creates_parent_dirs() {
         let dir = std::env::temp_dir();
@@ -105,7 +112,7 @@ mod tests {
         let result = WriteFile::default()
             .execute(
                 &serde_json::json!({"path": path, "content": "hello stella"}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         match result {
@@ -126,7 +133,7 @@ mod tests {
         let result = WriteFile::default()
             .execute(
                 &serde_json::json!({"path": "../../etc/bad", "content": "x"}),
-                &dir,
+                &cx(&dir),
             )
             .await;
         assert!(result.is_error());
@@ -136,7 +143,7 @@ mod tests {
     async fn missing_content_returns_error() {
         let dir = std::env::temp_dir();
         let result = WriteFile::default()
-            .execute(&serde_json::json!({"path": "ok.txt"}), &dir)
+            .execute(&serde_json::json!({"path": "ok.txt"}), &cx(&dir))
             .await;
         assert!(result.is_error());
     }

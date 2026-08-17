@@ -21,7 +21,7 @@ use crate::query_format::{QueryFormat, Versioned};
 // answer the same question differently — they run the same ladder over the
 // same index. The re-exports keep every existing `crate::search_cmd::…` call
 // site in this crate pointing at the moved modules.
-pub(crate) use stella_tools::search::{codegraph, engine, enrich, scan, semantic};
+pub(crate) use stella_tools::search::{codegraph, engine, semantic};
 
 /// One `stella search` answer, machine-readable — the `--format json`
 /// envelope. `content` carries the exact text the agent would read; `error`
