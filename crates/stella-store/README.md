@@ -25,6 +25,29 @@ registry, notifications, the journal); `stella-fleet` uses `Store` for its file
 claims; `stella-tools` reads only the tool-foundry adoption ledger
 (`AdoptedTool`).
 
+## Direction — the measurement surface for one loop and many wrappers
+
+Stella is becoming one turn loop with a plugin architecture around it
+(`doc:turn-loop-wrappers`), and this crate is where that becomes measurable: the
+`executions` row is how two designs get compared without a rebuild. The split it
+now enforces (#3388) is the part to keep straight when adding a column:
+
+- **`kind` is the door and only the door** — `run`, `deck`, `deck-sub`, `goal`,
+  `fleet`: where the turn came in.
+- **`pipeline_variant` is the wrapper that ran**, NULL for an unwrapped turn.
+  Historical rows written as `kind='pipeline'` migrate to `kind='run',
+  pipeline_variant='classic'` (v25 → v26), so any query spanning that boundary
+  must say so — CLAUDE.md's confounding rule applies to a `GROUP BY` exactly as it
+  applies to a bench table.
+
+Before the split, `kind` carried both facts and a deck turn wrote a different
+*door* depending on whether a wrapper ran — one question answered by two columns
+that disagree, which silently double-counts. A variant id is written only when the
+manifest that names it actually ran; a default path writes the default's id, never
+a blank. And since verification is on its way out of the workspace into a plugin
+(#3246), this column is how anyone will answer "did the wrapper help?" once
+installing it is a choice rather than the default.
+
 ## Boundary — does this change belong here?
 
 If a change persists or reads back a **fact a session produced** — a row, a
