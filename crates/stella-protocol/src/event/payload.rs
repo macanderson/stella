@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ladder::LadderSnapshot;
 
-/// What happened to a file in a [`AgentEvent::FileChange`] event.
+/// What happened to a file in a [`AgentEvent::FileChange`](super::AgentEvent::FileChange) event.
 ///
 /// Both live producers measure a tree against a tree, so every kind emitted
 /// today is a mutation — see [`Self::Read`] for the one that is not, and why
@@ -36,7 +36,7 @@ pub enum FileChangeKind {
     /// again. Neither surviving producer can: both diff a tree against a tree,
     /// and a read leaves no trace in a tree to diff. Re-acquiring one would
     /// mean going back to declaring file operations from tool inputs, which is
-    /// the defect [`AgentEvent::FileChange`] documents rather than a capability
+    /// the defect [`AgentEvent::FileChange`](super::AgentEvent::FileChange) documents rather than a capability
     /// worth restoring.
     ///
     /// It stays in the kind space because journals recorded before the purge
@@ -59,7 +59,7 @@ impl FileChangeKind {
     ///
     /// A `true` here is not a licence to claim the *agent* changed the file:
     /// the shared-tree producer measures the turn, not the actor (see
-    /// [`AgentEvent::FileChange`]).
+    /// [`AgentEvent::FileChange`](super::AgentEvent::FileChange)).
     #[must_use]
     pub fn is_mutation(self) -> bool {
         !matches!(self, FileChangeKind::Read)
@@ -194,7 +194,7 @@ pub enum MediaJobState {
     Queued,
     /// Generation is under way.
     Running,
-    /// The artifact landed; a [`AgentEvent::MediaComplete`] follows.
+    /// The artifact landed; a [`AgentEvent::MediaComplete`](super::AgentEvent::MediaComplete) follows.
     Succeeded,
     /// Generation failed terminally.
     Failed {
@@ -209,7 +209,7 @@ pub enum MediaJobState {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MediaArtifactRef {
     /// The artifact id, matching the `artifact_id` its
-    /// [`AgentEvent::MediaProgress`] events carried.
+    /// [`AgentEvent::MediaProgress`](super::AgentEvent::MediaProgress) events carried.
     pub id: String,
     /// What was produced.
     pub kind: MediaKind,
