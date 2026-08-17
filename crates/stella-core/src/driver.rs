@@ -71,6 +71,9 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+// Only the `tests` submodule below names this; the non-test build of the
+// driver stopped doing so when the timeout config moved to `driver::config`.
+#[cfg(test)]
 use std::time::Duration;
 
 use futures_util::StreamExt;
