@@ -435,6 +435,8 @@ fn the_hold_allowance_is_the_ask_clamped_to_the_hosts_ceiling() {
         participation: Participation::Arbiter,
         hooks: vec![stella_plugin::HookEvent::Stop],
         points: vec![stella_plugin::WrapperPoint::AfterTurn],
+        calls: Vec::new(),
+        max_calls: None,
         max_holds: ask,
     };
     let round = |spent: u32, ceiling: u32| RoundState {
@@ -511,6 +513,8 @@ fn an_abstention_does_not_buy_another_turn() {
             participation: Participation::Arbiter,
             hooks: vec![stella_plugin::HookEvent::Stop],
             points: vec![stella_plugin::WrapperPoint::AfterTurn],
+            calls: Vec::new(),
+            max_calls: None,
             max_holds: Some(8),
         },
     );

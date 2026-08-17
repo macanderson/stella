@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use crate::consent::{Capability, validate_capabilities};
 use crate::error::ManifestError;
 use crate::evidence::OracleCheck;
+use crate::host_call::HostCall;
 use crate::runtime::Runtime;
 use crate::wire::WrapperPoint;
 use crate::wrapper::Wrapper;
@@ -138,6 +139,27 @@ pub struct LoopGrant {
     /// may *not* do is leave the host to find out by refusal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub points: Vec<WrapperPoint>,
+    /// The host capabilities the plugin may ask for mid-point, exhaustively —
+    /// an undeclared call is refused, even if the plugin's process asks for it
+    /// (`doc:wrapper-socket` §6b, #3540).
+    ///
+    /// Empty is a complete answer and the default: a plugin that only ever
+    /// answers out of what the request handed it declares nothing here. What it
+    /// may not do is ask for a capability a human never read at install — which
+    /// is [`LoopGrant::permits_call`], the same authoritative filter
+    /// [`LoopGrant::permits_hook`] is for hooks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calls: Vec<HostCall>,
+    /// The most host calls per point the plugin asks for.
+    ///
+    /// **An ask, never an authority** — the [`LoopGrant::max_holds`] discipline,
+    /// one layer down. A conversation can hang where a single exchange could
+    /// not, so the host clamps this against its own ceiling
+    /// (`stella_runtime::wrapper::DEFAULT_HOST_MAX_CALLS`) and a spent allowance
+    /// refuses further calls *to the plugin* rather than killing it. Absent
+    /// means "the host's ceiling", never "unbounded".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_calls: Option<u32>,
     /// Arbiter only: the most completion-vetoes per turn the plugin asks
     /// for. The host clamps it; a spent allowance completes the turn with
     /// the unmet requirements reported, not silently dropped.
@@ -170,6 +192,23 @@ impl LoopGrant {
     #[must_use]
     pub fn permits_point(&self, point: WrapperPoint) -> bool {
         self.participation.includes(Participation::Steering) && self.points.contains(&point)
+    }
+
+    /// Whether the host may perform `call` when this plugin asks for it —
+    /// the same authoritative filter again, for the host-call channel
+    /// (`doc:wrapper-socket` §6b).
+    ///
+    /// A plugin **asks**; it never reaches. This is the function that makes the
+    /// difference real: the host retrieves only what the grant a human consented
+    /// to permits, and an undeclared ask is refused with a typed reason the
+    /// plugin is told, exactly as an undeclared hook is simply never invoked.
+    ///
+    /// Both conditions are checked here too — a grant assembled by hand rather
+    /// than through [`PluginManifest::from_toml_str`] must still never leak a
+    /// capability.
+    #[must_use]
+    pub fn permits_call(&self, call: HostCall) -> bool {
+        self.participation.includes(Participation::Steering) && self.calls.contains(&call)
     }
 }
 
@@ -532,6 +571,38 @@ impl PluginManifest {
         }
         if !grant.points.is_empty() && !participation.includes(Participation::Steering) {
             return Err(ManifestError::PointsRequireSteering { participation });
+        }
+
+        // And the calls get it a third time, because "declared, deduplicated,
+        // and above the grade that grants it" is the same rule for every
+        // dispatch surface — the host-call channel included.
+        let mut seen_calls = HashSet::with_capacity(grant.calls.len());
+        for call in &grant.calls {
+            if !seen_calls.insert(*call) {
+                return Err(ManifestError::DuplicateCall { call: *call });
+            }
+        }
+        if !grant.calls.is_empty() {
+            if !participation.includes(Participation::Steering) {
+                return Err(ManifestError::CallsRequireSteering { participation });
+            }
+            // A call happens *during* a point. Declaring one with no point to
+            // make it from is a manifest that quietly does nothing, which this
+            // crate refuses on principle rather than leaving to be discovered
+            // as a silence at run time.
+            if grant.points.is_empty() {
+                return Err(ManifestError::CallsRequirePoints);
+            }
+        }
+        match grant.max_calls {
+            Some(_) if grant.calls.is_empty() => {
+                return Err(ManifestError::MaxCallsRequiresCalls);
+            }
+            // Zero is not "ask for none" — that is an empty `calls` list. It is
+            // a declaration that contradicts itself, and the `max_holds` rule
+            // for the same shape one rung up.
+            Some(0) => return Err(ManifestError::ZeroMaxCalls),
+            _ => {}
         }
 
         if grant.hooks.contains(&HookEvent::Stop) && !participation.includes(Participation::Arbiter)
@@ -986,10 +1057,13 @@ mod tests {
             participation: Participation::Observer,
             hooks: vec![HookEvent::PreToolUse],
             points: vec![WrapperPoint::BeforeTurn],
+            calls: vec![HostCall::Recall],
+            max_calls: None,
             max_holds: None,
         };
         assert!(!smuggled.permits_hook(HookEvent::PreToolUse));
         assert!(!smuggled.permits_point(WrapperPoint::BeforeTurn));
+        assert!(!smuggled.permits_call(HostCall::Recall));
     }
 
     /// **Witness for #3501 item 2.** A manifest declares the socket points it
@@ -1042,6 +1116,93 @@ mod tests {
             matches!(unknown, ManifestError::Parse(_)),
             "`judge` is a host function, not a point a plugin can answer; got {unknown:?}"
         );
+    }
+
+    /// **Witness for #3540.** A manifest declares the host capabilities it may
+    /// ask for, and one it did not declare is refused — the filter
+    /// [`LoopGrant::permits_hook`] already is for hooks and
+    /// [`LoopGrant::permits_point`] is for points. Before this the `[loop]`
+    /// block could not express the answer at all, because there was nothing on
+    /// the wire to ask with.
+    #[test]
+    fn an_undeclared_host_call_is_never_performed() {
+        let m = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\ncalls = [\"recall\"]",
+        )
+        .expect("a declared call set must load");
+        assert_eq!(m.loop_grant.calls, vec![HostCall::Recall]);
+        assert!(m.loop_grant.permits_call(HostCall::Recall));
+        assert!(
+            !m.loop_grant.permits_call(HostCall::ChildTurn),
+            "child_turn was never declared, so the host never performs it"
+        );
+
+        // Undeclared entirely: a plugin that asks for nothing.
+        let silent =
+            parse("name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]")
+                .unwrap();
+        assert!(silent.loop_grant.calls.is_empty());
+        for call in [HostCall::Recall, HostCall::ChildTurn, HostCall::RunTest] {
+            assert!(!silent.loop_grant.permits_call(call));
+        }
+    }
+
+    #[test]
+    fn call_declarations_are_graded_and_deduplicated_like_hooks() {
+        let below =
+            parse("name = \"x\"\n[loop]\nparticipation = \"observer\"\ncalls = [\"recall\"]")
+                .unwrap_err();
+        assert!(matches!(below, ManifestError::CallsRequireSteering { .. }));
+
+        let dupe = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\ncalls = [\"recall\", \"recall\"]",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            dupe,
+            ManifestError::DuplicateCall {
+                call: HostCall::Recall
+            }
+        ));
+
+        let unknown = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\ncalls = [\"read_file\"]",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(unknown, ManifestError::Parse(_)),
+            "the capability set is closed, not an RPC surface; got {unknown:?}"
+        );
+    }
+
+    /// The allowance is an ask with a shape: it needs calls to bound, and zero
+    /// contradicts the calls it is declared beside. And a call with no point to
+    /// make it from is the manifest that quietly does nothing.
+    #[test]
+    fn the_host_call_allowance_must_be_a_coherent_ask() {
+        let orphan_calls =
+            parse("name = \"x\"\n[loop]\nparticipation = \"steering\"\ncalls = [\"recall\"]")
+                .unwrap_err();
+        assert!(matches!(orphan_calls, ManifestError::CallsRequirePoints));
+
+        let orphan_allowance =
+            parse("name = \"x\"\n[loop]\nparticipation = \"steering\"\nmax_calls = 4").unwrap_err();
+        assert!(matches!(
+            orphan_allowance,
+            ManifestError::MaxCallsRequiresCalls
+        ));
+
+        let zero = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\ncalls = [\"recall\"]\nmax_calls = 0",
+        )
+        .unwrap_err();
+        assert!(matches!(zero, ManifestError::ZeroMaxCalls));
+
+        let asked = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\ncalls = [\"recall\"]\nmax_calls = 4",
+        )
+        .expect("a coherent ask loads");
+        assert_eq!(asked.loop_grant.max_calls, Some(4));
     }
 
     /// **Witness for #3501 item 1.** The oracle may be the plugin's own

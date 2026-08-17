@@ -54,13 +54,33 @@
 //!
 //! # Who calls the four points
 //!
-//! [`dispatch`] — the host sequence, and the reason it is here rather than in
+//! [`WrapperDispatch`] — the host sequence, and the reason it is here rather than in
 //! `stella-cli`: `doc:wrapper-socket` §6 requires the same plugin to run under
 //! three drivers, and a sequence living in the binary is one the other two
 //! cannot reach.
+//!
+//! # The conversation inside a point
+//!
+//! Every point above is the host asking and the plugin answering, and that was
+//! the whole socket until #3540: strictly one-directional, which forecloses any
+//! plugin that needs something only the host has. `doc:wrapper-socket` §6b
+//! corrects it — **a plugin may ask the host for a capability; it may never
+//! reach for one** — and [`HostCallGate`] is the host half. A point becomes a
+//! bounded conversation that *ends* in the point response, and both transports
+//! drive the identical [`HostCallChannel`], so a Rust plugin can ask for exactly
+//! what a Python plugin can ask for.
+//!
+//! Nothing about the four points changes. [`judge`] and [`again`] gain nothing:
+//! a host call is available during `before_turn` and `after_turn` only, so both
+//! stay synchronous, I/O-free and total, and a plugin still cannot grade its own
+//! work with a model. The host performs every call itself, behind
+//! [`LoopGrant::permits_call`](stella_plugin::LoopGrant::permits_call) and a
+//! clamped per-point allowance, so what the plugin gets is what a human
+//! consented to at install and nothing more.
 
 mod dispatch;
 mod error;
+mod host_call;
 mod in_process;
 mod subprocess;
 mod verdict;
@@ -77,6 +97,10 @@ pub use dispatch::{
     WrapperDispatch,
 };
 pub use error::WrapperError;
+pub use host_call::{
+    DEFAULT_HOST_MAX_CALLS, DEFAULT_RECALL_FRAMES, HostCallChannel, HostCallGate, HostCapabilities,
+    NoHostCalls, PointChannel, RecallHost, RecallOnly, RefusedCall,
+};
 pub use in_process::{InProcessWrapper, WrapperHandler};
 pub use subprocess::{
     AdmittedWrapper, DEFAULT_WRAPPER_TIMEOUT, MAX_WRAPPER_TIMEOUT, SubprocessWrapper,

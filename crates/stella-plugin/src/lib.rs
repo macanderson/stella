@@ -60,15 +60,27 @@
 //! [`EvidenceSet::from_observed`], which makes "the host owns tamper" a fact of
 //! the types rather than a rule someone has to remember.
 //!
-//! The two functions a host must not bypass are [`LoopGrant::permits_hook`]
-//! and [`LoopGrant::permits_point`]: they are the authoritative filters behind
-//! the epic's rule that an undeclared hook is never invoked and an undeclared
-//! wrapper point is never dispatched, however eagerly the plugin's own process
-//! would answer either one.
+//! `host_call.rs` (#3540, `doc:wrapper-socket` §6b) corrects a design error in
+//! the socket above: every point there is the host asking and the plugin
+//! answering, which forecloses a plugin that needs something only the host has
+//! — recall, a bounded child turn, a test re-run. A plugin may now **ask**
+//! ([`PluginMessage::Call`]) and read the answer before returning the response
+//! that ends the point. It still may never *reach*: the host performs the call,
+//! applies [`LoopGrant::permits_call`], and returns only what the declared grant
+//! permits, so an ask is the handing of a capability made explicit rather than
+//! ambient authority.
+//!
+//! The three functions a host must not bypass are [`LoopGrant::permits_hook`],
+//! [`LoopGrant::permits_point`] and [`LoopGrant::permits_call`]: they are the
+//! authoritative filters behind the epic's rule that an undeclared hook is never
+//! invoked, an undeclared wrapper point is never dispatched, and an undeclared
+//! capability is never performed — however eagerly the plugin's own process
+//! would answer or ask for one.
 
 mod consent;
 mod error;
 mod evidence;
+mod host_call;
 mod manifest;
 mod observed;
 mod program;
@@ -87,6 +99,11 @@ mod wrapper;
 pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
 pub use error::ManifestError;
 pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
+pub use host_call::{
+    ChildTurnArgs, HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallOutcome,
+    HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage, RecallArgs, RecallFrame,
+    RecallResult, RunTestArgs,
+};
 pub use manifest::{
     FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, OracleProcess, OracleProcessSource,
     Participation, PluginManifest, Role, Subloop, TamperPolicy,

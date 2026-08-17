@@ -140,7 +140,7 @@ struct Envelope {
 /// author sees one failure vocabulary rather than "a serde_json error appeared
 /// inside your serde error". The named field survives that trip — an unknown
 /// key in the body still reads as `unknown field \`…\``.
-fn decode_body<T, E>(body: serde_json::Value) -> Result<T, E>
+pub(crate) fn decode_body<T, E>(body: serde_json::Value) -> Result<T, E>
 where
     T: serde::de::DeserializeOwned,
     E: serde::de::Error,
@@ -216,14 +216,30 @@ impl<'de> Deserialize<'de> for WrapperResponse {
         D: Deserializer<'de>,
     {
         let Envelope { point, body } = Envelope::deserialize(deserializer)?;
+        Self::from_parts(point, body)
+    }
+}
+
+impl WrapperResponse {
+    /// Decode an already-split envelope into the response its point names.
+    ///
+    /// Split out of [`Deserialize`] because the host-call channel classifies a
+    /// plugin's message before it knows which shape it has
+    /// ([`PluginMessage`](crate::PluginMessage)): a message carrying both a
+    /// `point` and a `call` is a contradiction rather than a response, and that
+    /// judgement has to be made over the whole envelope. Both readers then reach
+    /// the identical body decoder, so a point response means one thing whether
+    /// it arrived alone or ended a conversation.
+    pub(crate) fn from_parts<E: serde::de::Error>(
+        point: WrapperPoint,
+        body: serde_json::Value,
+    ) -> Result<Self, E> {
         match point {
             WrapperPoint::BeforeTurn => decode_body(body).map(Self::BeforeTurn),
             WrapperPoint::AfterTurn => decode_body(body).map(Self::AfterTurn),
         }
     }
-}
 
-impl WrapperResponse {
     /// Which point this response answers — compared against the request's, so
     /// a plugin answering the wrong question is a named error rather than a
     /// verdict decided from the wrong evidence.

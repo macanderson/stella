@@ -36,8 +36,8 @@ use stella_plugin::{
 use stella_protocol::CandidateHandle;
 use stella_protocol::completion::MessageRole;
 use stella_runtime::wrapper::{
-    DEFAULT_WRAPPER_TIMEOUT, InProcessWrapper, SubprocessWrapper, TurnWrapper, WrapperError,
-    WrapperHandler, admissible, again, judge,
+    DEFAULT_WRAPPER_TIMEOUT, HostCallChannel, InProcessWrapper, SubprocessWrapper, TurnWrapper,
+    WrapperError, WrapperHandler, admissible, again, judge,
 };
 
 /// The reference wrapper's manifest: an arbiter whose definition of done is a
@@ -377,10 +377,12 @@ printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"n
 #[tokio::test]
 async fn an_in_process_handler_reports_its_own_failure_as_a_wrapper_failure() {
     struct Broken;
+    #[async_trait::async_trait]
     impl WrapperHandler for Broken {
-        fn before_turn(
+        async fn before_turn(
             &self,
             _request: BeforeTurnRequest,
+            _host: &dyn HostCallChannel,
         ) -> Result<stella_plugin::BeforeTurnResponse, WrapperError> {
             Err(WrapperError::Handler {
                 wrapper: "reference-v1".into(),
@@ -389,9 +391,10 @@ async fn an_in_process_handler_reports_its_own_failure_as_a_wrapper_failure() {
             })
         }
 
-        fn after_turn(
+        async fn after_turn(
             &self,
             _request: AfterTurnRequest,
+            _host: &dyn HostCallChannel,
         ) -> Result<stella_plugin::AfterTurnResponse, WrapperError> {
             Err(WrapperError::Handler {
                 wrapper: "reference-v1".into(),
@@ -439,10 +442,12 @@ async fn an_in_process_handler_reports_its_own_failure_as_a_wrapper_failure() {
 #[tokio::test]
 async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
     struct Native;
+    #[async_trait::async_trait]
     impl WrapperHandler for Native {
-        fn before_turn(
+        async fn before_turn(
             &self,
             _request: BeforeTurnRequest,
+            _host: &dyn HostCallChannel,
         ) -> Result<stella_plugin::BeforeTurnResponse, WrapperError> {
             Ok(stella_plugin::BeforeTurnResponse {
                 role: Some("triage".into()),
@@ -458,9 +463,10 @@ async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
             })
         }
 
-        fn after_turn(
+        async fn after_turn(
             &self,
             request: AfterTurnRequest,
+            _host: &dyn HostCallChannel,
         ) -> Result<stella_plugin::AfterTurnResponse, WrapperError> {
             let p50 = if request.goal.contains("slower") {
                 118

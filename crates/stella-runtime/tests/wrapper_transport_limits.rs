@@ -113,6 +113,15 @@ fn recorded_pid(path: &std::path::Path) -> i32 {
 /// fail as a `Timeout` ten seconds later. The trickle is what makes this test
 /// safe to run against the old binary: an unbounded writer would have proven
 /// the same thing by exhausting the machine's memory instead.
+///
+/// **What the overflow is made of matters since the host-call channel landed**
+/// (#3540). The transport reads messages incrementally now, so it can tell an
+/// *incomplete* document from a malformed one: bytes that are not even a JSON
+/// prefix are refused by the parser on the first read
+/// ([`WrapperError::Decode`], the case below), and it is the still-incomplete
+/// document that accumulates. So the flood here is one enormous string inside a
+/// well-formed answer that never closes — which is exactly the shape a host
+/// must bound, since it is the only one it cannot refuse on sight.
 #[tokio::test]
 async fn a_plugin_that_writes_past_the_ceiling_is_refused_and_the_read_stops() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -121,8 +130,9 @@ async fn a_plugin_that_writes_past_the_ceiling_is_refused_and_the_read_stops() {
     let over_the_line = MAX_CAPTURE_BYTES + 1024 * 1024;
     let script = format!(
         "echo $$ > {pid}\n\
-         yes stella | head -c {over_the_line}\n\
-         while : ; do echo tick ; sleep 0.05 ; done\n",
+         printf '%s' '{{\"point\":\"before_turn\",\"body\":{{\"context\":[{{\"label\":\"x\",\"text\":\"'\n\
+         yes stella | tr -d '\\n' | head -c {over_the_line}\n\
+         while : ; do printf tick ; sleep 0.05 ; done\n",
         pid = pid_file.display(),
     );
 

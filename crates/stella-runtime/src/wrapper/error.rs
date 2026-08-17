@@ -103,6 +103,69 @@ pub enum WrapperError {
     #[error("cannot encode a wrapper request: {0}")]
     Encode(#[source] serde_json::Error),
 
+    /// The plugin's stdout ended without the response that ends the point.
+    ///
+    /// Distinct from [`WrapperError::Exit`] because the child exited *cleanly*:
+    /// it said nothing and reported success, which is the one shape that would
+    /// otherwise read as "the wrapper had nothing to contribute". A plugin that
+    /// has nothing to say returns an empty response and says so
+    /// (`BeforeTurnResponse::empty`); saying nothing at all is a bug in the
+    /// plugin, and one its author cannot see without being told.
+    #[error("wrapper `{program}` exited without answering the point it was asked: {stderr}")]
+    NoResponse {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// What it wrote to stderr, bounded — usually where the reason is.
+        stderr: String,
+    },
+
+    /// The plugin made a host call at a host that closed its stdin, because no
+    /// callable capability was declared to this transport
+    /// (`doc:wrapper-socket` §6b).
+    ///
+    /// The refusal a declared-but-ungranted call gets is delivered *to the
+    /// plugin*, which is the fail-open direction the channel is built around.
+    /// This variant is the one case where that is impossible: with no gate
+    /// offering a call there is no conversation, so stdin was closed after the
+    /// request and there is no way back to the plugin. Reported to the host
+    /// instead of waiting for the deadline, because "my plugin hangs" is a much
+    /// worse diagnosis than the two this names.
+    ///
+    /// **Two causes, and the second is a host's bug rather than a plugin's.**
+    /// Either the manifest declares no `[loop] calls` — the plugin author's
+    /// one-line fix — or the host never attached a
+    /// [`HostCallGate`](super::HostCallGate) for a plugin that did. Stdin's
+    /// lifetime is decided from the gate, because a plugin that declares no call
+    /// reads its request with `cat` and would hang on a pipe held open for a
+    /// conversation it can never have. #3561 is the shipping instance.
+    #[error(
+        "wrapper `{program}` asked the host for \"{call}\", but no channel was open to answer on: \
+         its manifest declares no [loop] calls, or this host attached no gate"
+    )]
+    UnannouncedCall {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The capability it asked for.
+        call: stella_plugin::HostCall,
+    },
+
+    /// The plugin's last message was a host call and then its stdout ended, so
+    /// it could not have read the answer it asked for.
+    ///
+    /// A plugin that asks and stops listening has abandoned the point, and
+    /// crediting the round to it would mean judging a turn on evidence it never
+    /// finished gathering.
+    #[error(
+        "wrapper `{program}` asked the host for \"{call}\" and then closed its output without \
+         reading the answer"
+    )]
+    UnansweredCall {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The capability it asked for and abandoned.
+        call: stella_plugin::HostCall,
+    },
+
     /// The plugin's answer was not a readable response.
     #[error("wrapper `{program}` answered unreadably: {source} (in: {answer})")]
     Decode {

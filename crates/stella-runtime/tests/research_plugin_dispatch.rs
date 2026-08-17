@@ -27,12 +27,14 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use stella_plugin::{
-    CandidateGrant, PluginManifest, SignalValues, StageName, TamperFinding, TurnOutcome,
+    CandidateGrant, PluginManifest, RecallFrame, SignalValues, StageName, TamperFinding,
+    TurnOutcome,
 };
 use stella_protocol::CandidateHandle;
 use stella_protocol::completion::MessageRole;
 use stella_runtime::wrapper::{
-    DrivenTurn, RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
+    DEFAULT_HOST_MAX_CALLS, DrivenTurn, HostCallGate, RecallHost, RecallOnly, RoundInput,
+    SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
 };
 use tempfile::TempDir;
 
@@ -142,8 +144,31 @@ fn signals(questions: u64) -> SignalValues {
     }
 }
 
+/// A context plane with nothing to recall.
+///
+/// The plugin asks for `recall` mid-`before_turn` (`doc:wrapper-socket` §6b), so
+/// a host driving it must serve the channel or the ask has nowhere to go. What
+/// this host answers is the ordinary empty case — nothing was relevant — which
+/// is what keeps these two tests about the thing they were written to grade:
+/// the *research* findings the plugin reads out of the granted workspace. That
+/// a real plane's frames reach the plugin and become contributed context is
+/// `wrapper_host_call.rs`'s witness, not this file's.
+struct NothingToRecall;
+
+#[async_trait]
+impl RecallHost for NothingToRecall {
+    async fn recall(&self, _goal: &str) -> Vec<RecallFrame> {
+        Vec::new()
+    }
+}
+
 fn dispatch(manifest: PluginManifest) -> WrapperDispatch {
-    let transport = transport(&manifest);
+    let gate = Arc::new(HostCallGate::declare(
+        manifest.loop_grant.clone(),
+        DEFAULT_HOST_MAX_CALLS,
+        Box::new(RecallOnly::new(NothingToRecall)),
+    ));
+    let transport = transport(&manifest).serving(gate);
     WrapperDispatch::bind(manifest, Arc::new(transport))
         .expect("the shipped manifest binds to the host sequence that dispatches it")
 }

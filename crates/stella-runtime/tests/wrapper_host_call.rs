@@ -1,0 +1,314 @@
+//! **The witness for the host-call channel** (#3540, `doc:wrapper-socket` §6b):
+//! a plugin asks the host for a capability mid-point, is handed real frames,
+//! and contributes context built from them.
+//!
+//! Every test here fails before the change for the plainest possible reason:
+//! **there was no channel.** The socket was strictly one-directional — one host
+//! request, one plugin response — so a plugin could not ask for anything, the
+//! manifest could not declare a capability to ask for, and the transport closed
+//! stdin the moment the request was written. `stella-research` shipped its
+//! research half and declined recall because there was nothing on the wire it
+//! could use.
+//!
+//! The plugins below are `sh` scripts. That is the point rather than a
+//! convenience: the channel has to be usable by a program with a JSON parser and
+//! nothing else, or the wire contract is a Rust API with extra steps
+//! (`doc:pipeline-as-plugins` §5). None of them uses a JSON library at all.
+//!
+//! `cfg(unix)` is the same declared gap the rest of this suite carries, tracked
+//! in #3497.
+
+#![cfg(unix)]
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use async_trait::async_trait;
+use stella_plugin::{
+    BeforeTurnRequest, HostCall, HostCallRefusal, LoopGrant, PROTOCOL_VERSION, Participation,
+    PluginManifest, RecallFrame, StageName, WrapperPoint,
+};
+use stella_runtime::wrapper::{
+    DEFAULT_HOST_MAX_CALLS, HostCallGate, RecallHost, RecallOnly, SubprocessWrapper, TurnWrapper,
+    WrapperError, admissible,
+};
+
+/// A plugin that asks for recall and contributes what it was given.
+///
+/// The manifest is what a human consents to at install: it answers
+/// `before_turn`, it may ask for `recall`, and it may ask **once**.
+const RECALLING_MANIFEST: &str = r#"
+name = "recalling-wrapper"
+description = "asks the host what it already knows before the turn runs"
+
+[loop]
+participation = "steering"
+points = ["before_turn"]
+calls = ["recall"]
+max_calls = 1
+
+[wrapper]
+id = "recalling-v1"
+
+[[wrapper.stages]]
+name = "recall"
+"#;
+
+/// The context plane behind the host, with something worth recalling.
+struct Remembers;
+
+#[async_trait]
+impl RecallHost for Remembers {
+    async fn recall(&self, goal: &str) -> Vec<RecallFrame> {
+        vec![
+            RecallFrame {
+                label: "lesson: retries".to_string(),
+                kind: "memory".to_string(),
+                source: "context.db".to_string(),
+                uri: None,
+                content: format!("the retry budget is 3, and {goal} hit it last run"),
+            },
+            RecallFrame {
+                label: "symbol: retry_budget".to_string(),
+                kind: "symbol".to_string(),
+                source: "codegraph.db".to_string(),
+                uri: Some("src/retry.rs".to_string()),
+                content: "pub const RETRY_BUDGET: u32 = 3;".to_string(),
+            },
+        ]
+    }
+}
+
+fn manifest(text: &str) -> PluginManifest {
+    PluginManifest::from_toml_str(text).expect("the manifest loads")
+}
+
+fn gate(grant: LoopGrant, ceiling: u32) -> Arc<HostCallGate> {
+    Arc::new(HostCallGate::declare(
+        grant,
+        ceiling,
+        Box::new(RecallOnly::new(Remembers)),
+    ))
+}
+
+fn plugin(script: &str, gate: Arc<HostCallGate>, timeout: Duration) -> SubprocessWrapper {
+    SubprocessWrapper::declare(
+        vec!["/bin/sh".into(), "-c".into(), script.into()],
+        Vec::new(),
+        timeout,
+    )
+    .expect("the transport is declared with a program and a budget")
+    .wrapper
+    .serving(gate)
+}
+
+fn before() -> BeforeTurnRequest {
+    BeforeTurnRequest {
+        protocol_version: PROTOCOL_VERSION,
+        wrapper: "recalling-v1".into(),
+        stage: StageName::Recall,
+        round: 0,
+        goal: "retry_budget is not honoured".into(),
+        candidate: None,
+        published: Vec::new(),
+    }
+}
+
+/// **The witness.** A plugin asks for recall while `before_turn` is open, reads
+/// the frames the host retrieved, and contributes context built out of them.
+///
+/// The script is the whole proof that this is a *wire* capability: it reads one
+/// line, writes a call, reads the answer, and answers the point — with `read`,
+/// `case` and `printf`, and no JSON parser anywhere.
+#[tokio::test]
+async fn a_plugin_asks_for_recall_mid_point_and_contributes_what_it_was_given() {
+    let manifest = manifest(RECALLING_MANIFEST);
+    let gate = gate(manifest.loop_grant.clone(), DEFAULT_HOST_MAX_CALLS);
+    // The goal is read back out of the request, so the frames the host returns
+    // are genuinely a function of what the plugin asked about.
+    let script = r#"
+read -r request
+printf '%s\n' '{"call":"recall","id":7,"args":{"goal":"retry_budget is not honoured","limit":2}}'
+read -r answer
+case "$answer" in
+  *'"result":7'*) ;;
+  *) printf 'the answer did not carry the id this plugin chose\n' >&2 ; exit 1 ;;
+esac
+case "$answer" in
+  *'the retry budget is 3'*) known="the retry budget is 3 (recalled)" ;;
+  *) known="nothing was recalled" ;;
+esac
+case "$answer" in
+  *'RETRY_BUDGET'*) known="$known, and src/retry.rs defines it" ;;
+esac
+printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"recall","text":"%s"}]}}\n' "$known"
+"#;
+
+    let response = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
+        .before_turn(before())
+        .await
+        .expect("the plugin asked, was answered, and answered the point");
+
+    let messages = admissible(&manifest, response)
+        .expect("the contribution is within what the manifest declared")
+        .into_messages();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].content, "the retry budget is 3 (recalled), and src/retry.rs defines it",
+        "the frames the host retrieved reached the plugin and became the turn's context"
+    );
+    assert!(
+        gate.refusals().is_empty(),
+        "a declared call inside the allowance is performed, not refused: {:?}",
+        gate.refusals()
+    );
+}
+
+/// An undeclared call is refused the way an undeclared hook is never invoked —
+/// and the refusal reaches **both** sides: the plugin, which degrades honestly
+/// rather than dying, and the host's report, because a capability quietly not
+/// performed is a bug its author cannot diagnose.
+#[tokio::test]
+async fn an_undeclared_call_is_refused_to_the_plugin_and_reported_to_the_host() {
+    let manifest = manifest(RECALLING_MANIFEST);
+    let gate = gate(manifest.loop_grant.clone(), DEFAULT_HOST_MAX_CALLS);
+    assert!(
+        !manifest.loop_grant.permits_call(HostCall::ChildTurn),
+        "this manifest declares recall and nothing else"
+    );
+
+    let script = r#"
+read -r request
+printf '%s\n' '{"call":"child_turn","id":1,"args":{"role":"verifier","instruction":"grade it"}}'
+read -r answer
+case "$answer" in
+  *'"refusal":"undeclared"'*) note="the host refused child_turn; degrading" ;;
+  *) note="unexpected answer" ;;
+esac
+printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"note","text":"%s"}]}}\n' "$note"
+"#;
+
+    let response = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
+        .before_turn(before())
+        .await
+        .expect("a refused call is a value the plugin reads, never a death");
+
+    let messages = admissible(&manifest, response)
+        .expect("the contribution is admissible")
+        .into_messages();
+    assert_eq!(
+        messages[0].content,
+        "the host refused child_turn; degrading"
+    );
+
+    let refusals = gate.refusals();
+    assert_eq!(refusals.len(), 1, "the refusal is reported, never silent");
+    assert_eq!(refusals[0].call, HostCall::ChildTurn);
+    assert_eq!(refusals[0].refusal, HostCallRefusal::Undeclared);
+}
+
+/// The plugin's `max_calls` is an ask. This host's ceiling is one, whatever the
+/// manifest wanted, and the call past it is answered `allowance-spent` — so a
+/// plugin learns to stop asking rather than being killed for it.
+#[tokio::test]
+async fn the_call_allowance_is_the_hosts_and_a_spent_one_is_answered() {
+    let manifest = manifest(RECALLING_MANIFEST);
+    let generous = LoopGrant {
+        max_calls: Some(64),
+        ..manifest.loop_grant.clone()
+    };
+    let gate = gate(generous, 1);
+    assert_eq!(gate.max_calls(), 1, "the ask is clamped to the ceiling");
+
+    let script = r#"
+read -r request
+printf '%s\n' '{"call":"recall","id":1,"args":{"goal":"first"}}'
+read -r first
+printf '%s\n' '{"call":"recall","id":2,"args":{"goal":"second"}}'
+read -r second
+case "$second" in
+  *'"refusal":"allowance-spent"'*) note="the second ask was refused" ;;
+  *) note="the allowance was not enforced" ;;
+esac
+printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"note","text":"%s"}]}}\n' "$note"
+"#;
+
+    let response = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
+        .before_turn(before())
+        .await
+        .expect("a spent allowance is answered, not fatal");
+    let messages = admissible(&manifest, response)
+        .expect("admissible")
+        .into_messages();
+    assert_eq!(messages[0].content, "the second ask was refused");
+    assert_eq!(
+        gate.refusals()[0].refusal,
+        HostCallRefusal::AllowanceSpent,
+        "and the host was told which ask it turned down"
+    );
+}
+
+/// **A plugin cannot buy time by talking.** The point timeout covers the whole
+/// conversation, not each turn of it: this plugin asks forever, is answered
+/// every time inside its allowance and refused after it, and is still killed at
+/// the same deadline a silent plugin would be.
+#[tokio::test]
+async fn the_conversation_cannot_outlive_the_point_timeout() {
+    let manifest = manifest(RECALLING_MANIFEST);
+    let gate = gate(manifest.loop_grant.clone(), DEFAULT_HOST_MAX_CALLS);
+    let budget = Duration::from_millis(700);
+
+    // Never answers the point; just keeps asking.
+    let script = r#"
+read -r request
+n=0
+while : ; do
+  n=$((n+1))
+  printf '%s\n' "{\"call\":\"recall\",\"id\":$n,\"args\":{\"goal\":\"again\"}}"
+  read -r answer || exit 0
+done
+"#;
+
+    let started = Instant::now();
+    let error = plugin(script, Arc::clone(&gate), budget)
+        .before_turn(before())
+        .await
+        .expect_err("a conversation that never ends is killed at the deadline");
+    let elapsed = started.elapsed();
+
+    assert!(
+        matches!(error, WrapperError::Timeout { .. }),
+        "the deadline is the deadline, whatever was said inside it: {error}"
+    );
+    assert!(
+        elapsed < budget * 4,
+        "killed after {elapsed:?} of a {budget:?} budget — talking bought time"
+    );
+    assert!(
+        gate.refusals()
+            .iter()
+            .all(|refused| refused.refusal == HostCallRefusal::AllowanceSpent),
+        "everything past the allowance was refused rather than performed: {:?}",
+        gate.refusals()
+    );
+}
+
+/// A grade below `steering` may not ask, however its `calls` list reads — the
+/// filter is the same authoritative one `permits_hook` and `permits_point` are,
+/// and it grades participation rather than trusting the list.
+#[tokio::test]
+async fn a_grant_below_steering_leaks_no_capability() {
+    let smuggled = LoopGrant {
+        participation: Participation::Observer,
+        hooks: Vec::new(),
+        points: vec![WrapperPoint::BeforeTurn],
+        calls: vec![HostCall::Recall],
+        max_calls: None,
+        max_holds: None,
+    };
+    let gate = gate(smuggled, DEFAULT_HOST_MAX_CALLS);
+    assert!(
+        !gate.offers_calls(),
+        "an observer's declared call is not a call this host will answer"
+    );
+}

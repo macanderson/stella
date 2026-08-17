@@ -5,6 +5,7 @@
 //! of these to a plugin author should be able to print it verbatim and have
 //! the fix be obvious.
 
+use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
 use crate::wire::WrapperPoint;
 use crate::wrapper::{Signal, SignalKind, StageName};
@@ -64,6 +65,52 @@ pub enum ManifestError {
         /// The declared grade, below the one the points need.
         participation: Participation,
     },
+
+    /// `[loop] calls` listed the same capability twice — the
+    /// [`ManifestError::DuplicateHook`] rule, for the host-call channel.
+    #[error("[loop] calls declares {call} more than once")]
+    DuplicateCall {
+        /// The capability that appeared twice.
+        call: HostCall,
+    },
+
+    /// A grade below `steering` declared host calls. Asking the host for a
+    /// capability is something a plugin does *while contributing to a turn*, and
+    /// contributing to a turn is the `steering` power exactly — an `observer`
+    /// watches the event stream and asks for nothing.
+    #[error(
+        "[loop] participation = \"{participation}\" may not declare calls; \
+         asking the host for a capability requires \"steering\" or above"
+    )]
+    CallsRequireSteering {
+        /// The declared grade, below the one the calls need.
+        participation: Participation,
+    },
+
+    /// `[loop] calls` was declared with no `[loop] points` to make them from.
+    /// A host call happens *during* a point, so a plugin that answers no point
+    /// can never make one — the manifest that quietly does nothing, again.
+    #[error(
+        "[loop] calls requires at least one entry in [loop] points: a host call \
+         is made while answering a point, and a plugin that answers none can \
+         never make one"
+    )]
+    CallsRequirePoints,
+
+    /// `[loop] max_calls` was declared with no `[loop] calls` to bound.
+    #[error(
+        "[loop] max_calls has nothing to bound: declare the capabilities in \
+         [loop] calls, or drop the allowance"
+    )]
+    MaxCallsRequiresCalls,
+
+    /// `[loop] max_calls = 0` — an allowance that forbids the calls the same
+    /// block declares. Asking for none is an empty `calls` list, not a zero.
+    #[error(
+        "[loop] max_calls = 0 contradicts the capabilities [loop] calls \
+         declares: drop the calls instead"
+    )]
+    ZeroMaxCalls,
 
     /// `[oracle]` was declared without `after_turn` in `[loop] points`. The
     /// oracle's evidence reaches the host in the `after_turn` response and
