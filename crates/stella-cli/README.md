@@ -25,6 +25,38 @@ repo at a pinned rev. **Nothing depends on stella-cli** — no other `Cargo.toml
 names it, and there is no `lib.rs`, only the binary. A change here reaches users
 immediately and reaches no other crate at all.
 
+## Direction — the CLI is one door, not the product
+
+Stella the *product* is an embeddable turn loop with a plugin architecture around
+it (`doc:turn-loop-wrappers`, `doc:engine-embedding`). This binary is one door into
+that loop; [`stella-serve`](../stella-serve) is another, and a host embedding the
+Rust ports directly is a third. So the standing question for a change here is
+whether it is a *door* feature or an *engine* feature — a flag, a prompt, a
+rendering choice belongs here, and anything a host over HTTP would also want does
+not. [`stella-parity`](../stella-parity) is the enforcement of that instinct: a
+capability that ships on this surface and silently misses the API surface fails a
+test rather than a review.
+
+Three specific changes in flight that this crate is the far end of:
+
+- **Verification is becoming opt-in.** [`stella-pipeline`](../stella-pipeline) is
+  still the default `stella run` path and `--no-pipeline` still opts out, but the
+  planned inversion (#3381) makes the raw loop the default with `--pipeline
+  <variant>` opting in, and `--no-pipeline` an inert alias so no script breaks. The
+  crate the flag drives is itself leaving the workspace to become a plugin (#3246).
+  Once both land, a plain `stella run` does not verify its own work — which is a
+  claim on the user-facing surface, so the flip is gated on a side-by-side bench
+  reported even when the raw loop looks worse (`doc:turn-loop-wrappers` §9.6).
+- **The pipeline dependency is the extraction's last mile.** 169 references across
+  41 files in this crate name `stella-pipeline` (#3280), and cutting them is gated
+  on the authority vocabulary for a plugin lane (#2716). Do not add a 170th without
+  asking whether it belongs behind a port.
+- **`kind` is the door, not the wrapper.** `executions.kind` now records where the
+  turn came in (`run`, `deck`, `deck-sub`, `goal`, `fleet`) and
+  `executions.pipeline_variant` records which wrapper ran, NULL for an unwrapped
+  turn (#3388). Writing `"pipeline"` or `"deck-pipeline"` into `kind` is the bug
+  that migration fixed; the measurement surface double-counts if it grows back.
+
 ## Boundary — does this change belong here?
 
 The intro's rule — wiring, not decisions — applied as a test to a planned

@@ -33,6 +33,30 @@ change to *what the engine does* with those resources belongs in
 things* belongs in that host's crate. Construction only — no decision logic,
 no rendering, no routes.
 
+## Direction — the wrapper socket lands here
+
+Stella is becoming an embeddable turn loop with a plugin architecture around it:
+one loop, several doors, and everything wrapped around it a plugin
+(`doc:turn-loop-wrappers`). The socket those plugins plug into — the four-point
+wrapper contract `before_turn` / `after_turn` / `judge` / `again?` (#3380) — is
+slated for **this crate**, and the reason is the boundary above: `before_turn`
+recalls and researches, `after_turn` runs a test command or an oracle process,
+and invariant #2 forbids that I/O inside [`stella-core`](../stella-core). A socket
+defined in core would either be a trait core never calls, or a trait core awaits
+— which puts a process spawn inside the engine (`doc:turn-loop-wrappers` §9.1).
+This crate already owns assembly and reads no ambient environment by contract,
+which is the same property a plugin host needs.
+
+Two consequences worth knowing before extending it. A wrapper will be handed a
+child-turn **port** that names a role intent (`triage`, `planner`,
+`witness_author`) — never a provider, an `Engine`, or a credential; the host
+resolves the intent against the user's BYOK providers, carves the budget,
+attaches gate/steering/hooks, and settles once. And "one blessed constructor"
+only becomes enforceable when `TurnCapabilities` exists (#3274 slice 2): today
+`Engine::with_sleeper` cannot carry `gate`/`steering`/`hooks`, so a hand-rolled
+child engine silently drops all three. Until then, assembly here is the mitigation
+rather than the guarantee.
+
 ## The invariant: no ambient reads
 
 **Nothing in this crate reads the process environment or the current

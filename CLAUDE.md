@@ -99,13 +99,28 @@
   invariants, workspace routing, testing approach, and gotchas all live there
   (imported above). When this file and AGENTS.md disagree, AGENTS.md wins —
   and the disagreement is itself a bug: fix it in the same PR you noticed it.
-- **The built-in tool surface is exactly twelve tools** — sub-agent
-  delegation, the task board, the scratch state plane, and the environment
-  probe. New capabilities ship as MCP servers or workspace custom tools, never
-  as new built-ins. The single-purpose rule (AGENTS.md invariant #9) governs
-  every tool regardless of origin: a parameter may scope an operation, never
-  select one — a mode flag like `update_task(delete=true)` is two tools and
-  gets split.
+- **The built-in tool surface is a working surface plus a coordination
+  surface, and nothing else.** The working half is one shell (`bash`), the
+  file CRUD quartet (`read_file` / `write_file` / `edit_file` /
+  `delete_file`), and one unified `search`; the coordination half is
+  sub-agent delegation, the task board, the scratch state plane, and the
+  environment probe. Eighteen tools in six groups, declared once in
+  `crates/stella-tools/src/catalog.rs` — that table is the count, never a
+  number written in prose here.
+
+  The rule is **one tool per job, not a fixed total**: one shell rather than a
+  family of structured runners, one search rather than a `grep`/`glob`/
+  `graph_query` triple the model has to choose between. A capability that is
+  not something an agent fundamentally cannot work without ships as an MCP
+  server or a workspace custom tool, never as a new built-in. The
+  single-purpose rule (AGENTS.md invariant #9) governs every tool regardless
+  of origin: a parameter may scope an operation, never select one — a mode
+  flag like `update_task(delete=true)` is two tools and gets split.
+
+  The twelve-tool surface this replaces (#3244) cut the working half
+  entirely. It was restored because an agent that cannot read a file, search,
+  or run a command is not an agent; the lesson kept is the single-purpose
+  discipline, not the count.
 - **Nothing left behind.** Every bug, defect, idea, missing test, piece of
   unwired code, or logical next step you notice and do not fix inside your
   current change MUST be filed as a GitHub issue before you finish — written

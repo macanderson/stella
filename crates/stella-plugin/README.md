@@ -1,8 +1,8 @@
 # stella-plugin
 
 The plugin manifest: parsing and validation of a plugin's declared say in the
-turn loop — slice A of #3245 (plugins as turn-loop participants). One
-constructor vouches for a manifest:
+turn loop — slice A of the plugins-as-turn-loop-participants epic (#3245, whose
+sequencing now lives in #3246). One constructor vouches for a manifest:
 
 ```rust
 let manifest = stella_plugin::PluginManifest::from_toml_str(text)?;
@@ -106,6 +106,29 @@ gate enforces the tool and the grade, and a prompt that showed a
 self-declared scope as an enforced one would have the user consent to a
 narrower grant than they are giving.
 
+## Direction — this crate is the front of the product
+
+Stella's shape is one turn loop with a plugin architecture around it, embeddable
+in any application through the Rust ports or the HTTP surface. This crate holds
+the contract that makes "plugin" mean something enforceable rather than
+aspirational: a declaration a host can check *before* anything runs, written by
+someone who does not get to see the engine. Two things follow from that.
+
+**The first plugin is Stella's own verification.** The staged pipeline
+([`stella-pipeline`](../stella-pipeline)) is the wrapper the `[wrapper]` block
+was designed for, and it is leaving the workspace to become a plugin (#3246,
+`doc:turn-loop-wrappers`). When it does, Stella no longer verifies its own work
+unless that plugin is installed — which is exactly why the manifest's rules are
+load errors rather than warnings: an opt-in verifier that silently declined to
+participate would be worse than none.
+
+**Declared, then dispatched, in that order.** The manifest is deliberately ahead
+of the socket it describes. The four wrapper interception points are #3380 and do
+not exist yet; the `[wrapper]` stage list parses and load-checks but nothing
+reads it yet (#3408). That gap is tracked, not incidental — the crate takes no
+engine dependency, which is what lets the load-time contract be complete before
+the runtime half exists.
+
 The one function a host must never bypass is
 `LoopGrant::permits_hook(event)` — the authoritative filter behind the
 epic's rule that **an undeclared hook is never invoked**, even if the
@@ -199,18 +222,31 @@ before it crosses.
 
 ## Consumers
 
-`stella-pipeline` is the first, and only for the `[wrapper]` half: its
-`src/variant.rs` embeds `variants/classic.toml`, fills in `SignalValues` from
-one turn's facts, and resolves the built-in stage order through
-`Wrapper::resolve` (#3408). It consults the answer; it is not yet *driven* by
-it, because the four wrapper interception points are #3380.
+Three, and the count is the point — this crate's own README said "None
+shipping yet, deliberately" for as long as that was true, and it is not any
+more:
 
-The rest is still deliberately unconsumed: this is the first slice of #3245,
-and the host for the other blocks (manifest loading, the install prompt that
-shows `consent_text`, Stop-gate binding via the bounded verification loop, the
-subloop runner) arrives with slices B–E of that epic and with
-`doc:pipeline-as-plugins` §A4. The crate exists first because every one of
-those slices needs the same validated answer to "what did this plugin
-declare?" — and because A1's requirement is that the authority a plugin will
-be granted is expressible and showable *before* the loader that grants it
-exists, not after.
+- **`stella-runtime`** consumes the wire contract and the verdict rule. It
+  defines the `TurnWrapper` trait and the two host functions `judge` and
+  `again` over the types in `wire.rs`, and the subprocess transport that
+  speaks them to an out-of-process plugin (`doc:wrapper-socket`).
+- **`stella-cli`** consumes the manifest and the consent surface. `stella
+  plugin install|list|remove` resolves `.stella/plugins/` and
+  `~/.stella/plugins/`, renders `consent_text` before anything executes, and
+  routes hooks through `LoopGrant::permits_hook`. The project tier is gated on
+  `project_code_execution_trusted()` — a cloned repository's plugins do not
+  load until the workspace is trusted (#3509).
+- **`stella-pipeline`** consumes the `[wrapper]` half: `src/variant.rs`
+  embeds `variants/classic.toml`, fills in `SignalValues` from one turn's
+  facts, and resolves the built-in stage order through `Wrapper::resolve`
+  (#3408). It consults the answer; it is not yet *driven* by it, because
+  binding a stage to the loop is still open.
+
+What is still unconsumed is narrower than it was: the subloop runner, and the
+Stop-gate binding of a plugin's declared hold allowance. Both arrive with the
+remaining slices of #3245.
+
+The crate exists ahead of all three because each needs the same validated
+answer to "what did this plugin declare?" — and because A1's requirement is
+that the authority a plugin will be granted is expressible and showable
+*before* the loader that grants it exists, not after.

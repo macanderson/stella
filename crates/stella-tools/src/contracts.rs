@@ -152,15 +152,27 @@ mod tests {
     /// Anti-vacuity for the row above: the column carries information rather
     /// than one repeated value, so a ceiling can actually discriminate.
     ///
-    /// Deliberately **not** asserting that all four grades appear. The twelve
-    /// built-ins are the task board, the scratch plane and one environment
-    /// report — nothing among them writes a file or leaves the machine, so
-    /// `Medium` and `Destructive` are honestly unused here, and demanding
-    /// them would only invite someone to inflate a grade to satisfy a test.
-    /// What must hold is that `task` is separated from the rest: it is the
-    /// one built-in that spends money.
+    /// This asserts the *shape* of the grading rather than a fixed set of
+    /// grades, because the surface changes and a test pinned to "these exact
+    /// four names are `Low`" is a changelog. What must hold is that the
+    /// grades separate the three things an operator writes a ceiling against:
+    ///
+    /// - something that only observes is `Low` (`read_file`, `search`, the
+    ///   board reads);
+    /// - something that writes the workspace is above it but bounded and
+    ///   locally undoable (`write_file`, `edit_file` at `Medium`);
+    /// - something the agent cannot undo, or that runs unbounded code, sits
+    ///   at the top (`delete_file`, `bash`, `task`).
+    ///
+    /// The one previously-enforced claim that must NOT survive unchanged is
+    /// "`task` outranks everything": it did while delegation was the only
+    /// built-in that reached the world, and restoring the shell and the file
+    /// writers is precisely the change that ends it.
+    ///
+    /// This test replaces `the_catalog_grades_delegation_above_the_rest`,
+    /// which asserted exactly that now-false claim.
     #[test]
-    fn the_catalog_grades_delegation_above_the_rest() {
+    fn the_catalog_grades_separate_observation_from_mutation_from_the_unbounded() {
         let grades: std::collections::BTreeSet<RiskLevel> =
             catalog::CATALOG.iter().map(|entry| entry.risk).collect();
         assert!(
@@ -168,18 +180,48 @@ mod tests {
             "one grade for every tool makes the column decorative"
         );
 
-        let task = catalog::get("task").expect("the delegation tool is declared");
+        let risk = |name: &str| {
+            catalog::get(name)
+                .unwrap_or_else(|| panic!("`{name}` is declared"))
+                .risk
+        };
+
+        // Every read-only row observes, and nothing that observes is graded
+        // above a workspace write.
         for entry in catalog::CATALOG {
-            if entry.name == "task" {
-                continue;
+            if entry.read_only {
+                assert!(
+                    entry.risk <= RiskLevel::Medium,
+                    "`{}` only observes but is graded {:?}",
+                    entry.name,
+                    entry.risk
+                );
             }
-            assert!(
-                entry.risk < task.risk,
-                "`{}` is graded at or above `task`, which is the one built-in \
-                 that spends real money",
-                entry.name
-            );
         }
+
+        assert!(
+            risk("read_file") < risk("write_file"),
+            "reading a file must grade below writing one"
+        );
+        assert!(
+            risk("write_file") < risk("delete_file"),
+            "an overwrite is recoverable from the turn's diff; an unlink is not"
+        );
+        assert_eq!(
+            risk("delete_file"),
+            RiskLevel::Destructive,
+            "an unlinked file is the one built-in effect the agent cannot undo"
+        );
+        assert_eq!(
+            risk("bash"),
+            RiskLevel::High,
+            "a shell runs code nobody bounded"
+        );
+        assert_eq!(
+            risk("task"),
+            RiskLevel::High,
+            "delegation spends real money and hands a child a whole tool surface"
+        );
     }
 
     #[test]

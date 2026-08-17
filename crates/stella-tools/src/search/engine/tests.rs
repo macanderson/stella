@@ -16,13 +16,24 @@ use stella_graph::CodeGraph;
 use stella_protocol::tool::ToolOutput;
 
 use super::{
-    Answer, ChunkWarmOutcome, Hit, SearchConfig, SearchReport, Strategy, dispatch, render,
+    Answer, ChunkWarmOutcome, Hit, SearchConfig, SearchReport, Strategy, dispatch,
     warm_chunk_vectors,
 };
-use crate::search_cmd::semantic::{
+use crate::search::semantic::{
     MAX_FILES_PER_EAGER_PASS, WarmOutcome, warm_file_vectors, warm_file_vectors_with_progress,
 };
-use crate::search_cmd::{codegraph, enrich, scan};
+use crate::search::{codegraph, scan};
+
+mod shims;
+
+use shims as uncached;
+use shims::render;
+
+/// `enrich`, with the fresh-cache wrapping [`shims`] explains.
+mod enrich {
+    pub(super) use super::shims::render_hit;
+    pub(super) use crate::search::enrich::doc_comment;
+}
 
 /// The question the witness asks. Every word of it is checked against the
 /// answer's path and body before the search runs — see the witness itself.
@@ -610,7 +621,7 @@ async fn a_misconfigured_embedder_note_joins_the_cut_list_note_instead_of_replac
     }
     let root = workspace.path().canonicalize().expect("canonicalize");
 
-    let report = super::report_with(
+    let report = uncached::report_with(
         &root,
         "widget",
         SearchConfig::default(),
@@ -1130,7 +1141,7 @@ async fn a_fully_embedded_workspace_stops_calling_itself_partial() {
     );
 
     let opened = codegraph::open_or_build(&root).expect("open_or_build");
-    crate::search_cmd::semantic::catch_up_embeddings(&opened.graph, &ConceptEmbedder, &fingerprint)
+    crate::search::semantic::catch_up_embeddings(&opened.graph, &ConceptEmbedder, &fingerprint)
         .await
         .expect("whole-file vectors");
 

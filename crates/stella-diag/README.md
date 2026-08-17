@@ -32,9 +32,24 @@ stream:
 ## Where it sits
 
 A **leaf**. It depends on `serde`/`serde_json` and **nothing else in the
-workspace**, which is the property that lets all seventeen other crates depend
+workspace**, which is the property that lets all twenty-three other crates depend
 on it without a cycle. Adding a `stella-*` path dependency here forecloses that
 for whichever crate it names — so don't.
+
+## Direction — an embedded engine has no stdout to explain itself on
+
+Stella is becoming an engine other applications embed, in process through the Rust
+ports or over HTTP (`doc:engine-embedding`). A host driving turns has no terminal
+to read and no interest in Stella's `println!`s, so "why did it do that?" has to be
+a structured record it can route — which is what makes this plane the embedding
+story's, not just the CLI's. The same holds in the other direction once wrappers
+are plugins (`doc:turn-loop-wrappers`, #3246): a plugin's decision to hold a turn,
+or a host's decision to deny one, is a diagnostic, and the content-free field
+vocabulary is what makes it safe to hand to somebody else's log pipeline.
+
+The routing rule above is the load-bearing part. A wrapper's verdict is *domain* —
+it replays, so it is an `AgentEvent` in [`stella-protocol`](../stella-protocol),
+declared in the consumer ledger. Only the reasoning behind it comes here.
 
 ## Boundary — does this change belong here?
 

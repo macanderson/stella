@@ -21,17 +21,43 @@ a re-exported `CompactionReport`.
 ## Where it sits
 
 The bottom of the workspace. Its only dependencies are `serde`, `serde_json`,
-`thiserror`, and `async-trait`; eleven of the other fourteen crates depend on
-it (every crate except `stella-context`, `stella-graph`, and
-`stella-observatory`). It builds no binary. The `Provider` port lives here
+`thiserror`, and `async-trait`; fifteen of the other twenty-three crates depend
+on it — including [`stella-plugin`](../stella-plugin), whose *only* workspace
+edge this is, taken so the plugin manifest and the engine share one `HookEvent`
+vocabulary instead of mirroring it by hand (#3310). It builds no binary. The
+`Provider` port lives here
 rather than in `stella-model` precisely so `stella-core` can drive every model
 call through `&dyn Provider` without linking a single vendor adapter.
 
 ```
 stella-protocol ← stella-core ← stella-cli / stella-pipeline / stella-tui …
        ↑ also: stella-model (implements Provider), stella-tools, stella-store,
-         stella-mcp, stella-media, stella-fleet, stella-serve
+         stella-mcp, stella-media, stella-fleet, stella-runtime, stella-engine,
+         stella-serve, stella-observatory, stella-plugin (HookEvent only)
 ```
+
+## Direction — the contract a host and a plugin both read
+
+Stella is becoming an embeddable turn loop with a plugin architecture around it,
+driven either through the Rust ports or over HTTP (`doc:engine-embedding`,
+`doc:turn-loop-wrappers`). That makes this crate the thing both new audiences
+read: a host embedding the engine speaks these types over the wire, and a plugin
+declaring its say in the loop names this crate's `HookEvent` in its manifest.
+Neither of them can read Rust doc comments in `stella-core`, so a vocabulary this
+crate does not carry is a vocabulary they cannot use.
+
+Two consequences already visible in the tree:
+
+- **One ending per turn, plus one per run.** Since #3379 the engine always emits
+  its own terminal completion and no wrapper may filter or forge it; a wrapper's
+  "the whole job is over" is a *different*, separately named signal, and the
+  journal carries both. A consumer that assumed one completion per run was
+  reading a wrapper's edit of the engine's words.
+- **Every emitted signal names its consumer** (invariant #10). The ledger is
+  [`src/event/consumers.rs`](src/event/consumers.rs), generated from the same
+  table as `KNOWN_TYPE_TAGS`, so a new variant without a declared consumer is a
+  build error rather than a silence — which matters more, not less, once wrappers
+  are out-of-tree plugins whose only view of the loop is this event stream.
 
 ## Boundary — does this change belong here?
 

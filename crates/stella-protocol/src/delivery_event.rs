@@ -49,6 +49,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "outcome", rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "What the pipeline did with the winning candidate's workspace, and why. Internally tagged on `outcome`, so a reader selects an arm by that field rather than by the presence or absence of a sibling key."
+    )
+)]
 pub enum DeliveryOutcome {
     /// The candidate's work was adopted into the real tree. The counts are
     /// what adoption itself measured (git's `numstat` plus the applied patch),

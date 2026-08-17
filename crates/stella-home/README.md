@@ -23,11 +23,23 @@ on it alongside [`stella-store`](../stella-store),
 [`stella-cli`](../stella-cli) — a dependency-free leaf is depend-able from
 anywhere, which is the property that makes "one answer" achievable at all.
 
+`STELLA_HOME` earns a second job as Stella becomes an engine embedded in other
+applications (`doc:engine-embedding`): a host running several sessions with
+different roots and different trust postures in one process needs each one's home
+to be a *value it passed in*, not a process-wide read. That is why
+[`stella-runtime`](../stella-runtime) reads no ambient environment by contract and
+takes `HOME` as a `RuntimeSpec` field — this crate's pure `resolve_*` halves are
+what let it. A new resolver that only has an env-reading form quietly forecloses
+that, so both halves are the rule and not a courtesy.
+
 ## Boundary — does this change belong here?
 
 This crate owns one decision: what path a process should treat as the stella
 home, the user-tier data dir, and the config dir, given `$HOME` /
-`%USERPROFILE%` and the three `STELLA_*` overrides. If a planned change alters
+`%USERPROFILE%` and the `STELLA_*` overrides — exactly two of them today,
+`STELLA_HOME` and `STELLA_DATA_DIR` (`OVERRIDE_ENV_VARS` is the exact list in both
+directions; `STELLA_CONFIG_DIR` was retired in #2442 because a name on that list
+that resolves nothing declines a migration for a process sitting on the defaults). If a planned change alters
 that answer — a new override variable, a new tier, a change to precedence — it
 belongs here, and it arrives as a pure `resolve_*` half plus a thin
 environment-reading wrapper, like every resolver already present.

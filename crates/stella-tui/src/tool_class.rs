@@ -127,6 +127,22 @@ pub fn classify(name: &str) -> ToolClass {
                 ToolClass::Mutate
             }
         }
+        // The file family mixes exactly as `scratch` does, and for the same
+        // reason the split matters more here: `read_file` beside `write_file`
+        // in one colour would make a turn that only looked indistinguishable
+        // from one that rewrote the tree.
+        "file" => {
+            if read_only {
+                ToolClass::Inspect
+            } else {
+                ToolClass::Mutate
+            }
+        }
+        // A shell command is the one built-in whose effect the renderer
+        // genuinely cannot predict — `Execute` is the class that promises the
+        // least, which is the honest promise for `bash -c`.
+        "shell" => ToolClass::Execute,
+        "search" => ToolClass::Inspect,
         "environment" => ToolClass::Inspect,
         "task" => ToolClass::Delegate,
         // `mcp`, `custom`, and any group added to the catalog without a class
@@ -190,7 +206,10 @@ mod tests {
                 .first()
                 .copied()
                 .unwrap_or_else(|| panic!("group `{group}` is empty"));
-            let explicit = matches!(group, "scratch" | "environment" | "task");
+            let explicit = matches!(
+                group,
+                "scratch" | "environment" | "task" | "file" | "shell" | "search"
+            );
             assert!(
                 explicit,
                 "catalog group `{group}` (e.g. `{name}`) has no tool class — add an \

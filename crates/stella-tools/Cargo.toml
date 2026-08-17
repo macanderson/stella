@@ -1,6 +1,6 @@
 [package]
 name = "stella-tools"
-description = "Built-in agent tools — the sub-agent spawn tool, the session task board, the session scratch state plane, and the environment report — plus the tool mechanisms: the registry and its dispatch gates, the custom script-tool loader, the tool foundry, tool policy, skill grants, and the extension hook runner."
+description = "Built-in agent tools — one shell, file CRUD, one unified code search, the sub-agent spawn tool, the session task board, the session scratch state plane, and the environment report — plus the tool mechanisms: the registry and its dispatch gates, the custom script-tool loader, the tool foundry, tool policy, skill grants, and the extension hook runner."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,6 +18,13 @@ stella-store = { path = "../stella-store" }
 # custom-tool directory moves with `STELLA_HOME` like every other user-tier
 # file (#2178).
 stella-home = { path = "../stella-home" }
+# The code-graph index the `search` tool ranks over: symbols, callers,
+# imports, and the stored file/chunk vectors.
+stella-graph = { path = "../stella-graph" }
+# The embedding seam plus its HTTP backend — `search`'s semantic rung. This
+# crate is where the network is allowed to live: `stella-graph` stores vectors
+# and ranks them, and never learns what produced them (invariant 1).
+stella-embed = { path = "../stella-embed", features = ["http"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

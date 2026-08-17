@@ -71,8 +71,15 @@ fn both_prompts_keep_the_steering_the_schemas_cannot_carry() {
         for claim in [
             // The schemas stay the per-tool reference; this block is policy.
             "The schemas are the reference",
-            // The shape of the surface: built-ins are coordination/state...
-            "Your built-in tools are coordination and session state",
+            // Which tool to reach for first. No schema can say "prefer the
+            // other one", and reaching for grep when `search` would answer
+            // is the round trip the steering exists to prevent.
+            "To find code, call search first",
+            // The file tools are not interchangeable with shell equivalents:
+            // their edits are what the diff and verification are computed from.
+            "use the file tools rather than the shell",
+            // The shape of the rest of the surface: coordination and state...
+            "Your coordination tools are the task board",
             // ...and everything else is advertised, never assumed.
             "never assume a capability no schema names",
         ] {

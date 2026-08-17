@@ -425,6 +425,12 @@ impl CompletionUsage {
 /// out of the settled-accounting path no matter how complete it looks.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "The accounting an adapter had already observed when an attempt died before its terminal usage frame arrived. A mid-stream disconnect is not a total loss of accounting: dialects that report the prompt's cost up front have already delivered exact input, cache-read and cache-write counts by the time generation is cut. Every field is a LOWER BOUND on real spend and never a substitute for a provider-attested total, which is why such a record can never be mistaken for settled accounting."
+    )
+)]
 pub struct PartialUsage {
     /// Counts observed before the failure. Input-side figures are the
     /// provider's own when the dialect front-loads them; `output_tokens` is

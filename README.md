@@ -510,11 +510,12 @@ per-field merge — project wins). Everything beyond the built-ins reaches the
 registry from outside: MCP servers (`.stella/mcp.toml`) and developer-defined
 custom script tools (`.stella/tools/*.toml`).
 
-**Containment is the process boundary, not a per-tool sandbox.** None of the
-twelve built-ins runs a shell, but custom manifest tools and hook actions
-still spawn processes. For real containment, run the whole Stella process
-inside a container: that boundary sits outside every spawn path, so nothing
-can step around it. See
+**Containment is the process boundary, not a per-tool sandbox.** The `bash`
+built-in runs a shell, and custom manifest tools and hook actions spawn
+processes around it — so no per-tool boundary covers them all, and one that
+covered only `bash` would claim a session-wide bound it does not have. For
+real containment, run the whole Stella process inside a container: that
+boundary sits outside every spawn path, so nothing can step around it. See
 [`docs/spec/remote-sandboxes.md`](docs/spec/remote-sandboxes.md).
 
 ## Memory and context

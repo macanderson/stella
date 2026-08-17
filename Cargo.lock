@@ -2670,9 +2670,9 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "serde"
-version = "1.0.228"
+version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
+checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
@@ -2680,22 +2680,22 @@ dependencies = [
 
 [[package]]
 name = "serde_core"
-version = "1.0.228"
+version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad"
+checksum = "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.228"
+version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
+checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.118",
+ "syn 3.0.0",
 ]
 
 [[package]]
@@ -2874,7 +2874,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-autonomy"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "proptest",
  "serde",
@@ -2884,7 +2884,7 @@ dependencies = [
 
 [[package]]
 name = "stella-cli"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "clap",
@@ -2936,7 +2936,7 @@ dependencies = [
 
 [[package]]
 name = "stella-context"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "stella-core"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2971,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "stella-diag"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "proptest",
  "serde",
@@ -2982,11 +2982,11 @@ dependencies = [
 
 [[package]]
 name = "stella-diff"
-version = "0.9.65"
+version = "0.9.78"
 
 [[package]]
 name = "stella-embed"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3000,7 +3000,7 @@ dependencies = [
 
 [[package]]
 name = "stella-engine"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "serde",
@@ -3013,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "stella-fleet"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3032,7 +3032,7 @@ dependencies = [
 
 [[package]]
 name = "stella-graph"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3061,11 +3061,11 @@ dependencies = [
 
 [[package]]
 name = "stella-home"
-version = "0.9.65"
+version = "0.9.78"
 
 [[package]]
 name = "stella-mcp"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3087,7 +3087,7 @@ dependencies = [
 
 [[package]]
 name = "stella-media"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3109,7 +3109,7 @@ dependencies = [
 
 [[package]]
 name = "stella-model"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3133,7 +3133,7 @@ dependencies = [
 
 [[package]]
 name = "stella-observatory"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "libc",
  "rusqlite",
@@ -3154,14 +3154,14 @@ dependencies = [
 
 [[package]]
 name = "stella-parity"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "stella-serve",
 ]
 
 [[package]]
 name = "stella-pipeline"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3179,7 +3179,7 @@ dependencies = [
 
 [[package]]
 name = "stella-plugin"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "proptest",
  "serde",
@@ -3191,7 +3191,7 @@ dependencies = [
 
 [[package]]
 name = "stella-protocol"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "schemars",
@@ -3203,7 +3203,7 @@ dependencies = [
 
 [[package]]
 name = "stella-runtime"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3225,7 +3225,7 @@ dependencies = [
 
 [[package]]
 name = "stella-serve"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3244,7 +3244,7 @@ dependencies = [
 
 [[package]]
 name = "stella-store"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "base64 0.23.1",
  "libc",
@@ -3261,7 +3261,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tools"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "async-trait",
  "libc",
@@ -3270,6 +3270,8 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "stella-core",
+ "stella-embed",
+ "stella-graph",
  "stella-home",
  "stella-protocol",
  "stella-store",
@@ -3281,11 +3283,11 @@ dependencies = [
 
 [[package]]
 name = "stella-tty"
-version = "0.9.65"
+version = "0.9.78"
 
 [[package]]
 name = "stella-tui"
-version = "0.9.65"
+version = "0.9.78"
 dependencies = [
  "arboard",
  "crossterm",

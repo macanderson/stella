@@ -131,13 +131,29 @@ macro_rules! catalog {
 }
 
 use Availability::Always;
-use RiskLevel::{High, Low};
+use RiskLevel::{Destructive, High, Low, Medium};
 
 // Column order: (read_only, speculation_safe, risk, availability, group). The
 // second column only ever narrows the first: `true` means the read is pure
 // enough to run twice per step (speculation + a stream retry — #923). The
 // third is the governance grade — see `ToolEntry::risk` for the rubric.
 catalog! {
+    // The working surface: one shell, file CRUD, one search. These are the
+    // rows that touch the world outside the process, and they are where the
+    // risk column earns its keep — `read_file` and `search` observe, the
+    // three writers are bounded and locally undoable, and `bash` runs a
+    // command nobody bounded at all.
+    "bash"                => (false, false, High, Always, "shell"),
+    "read_file"           => (true, true, Low, Always, "file"),
+    "write_file"          => (false, false, Medium, Always, "file"),
+    "edit_file"           => (false, false, Medium, Always, "file"),
+    // `Destructive` is the honest grade and the only one in the table: an
+    // unlinked file is the one thing on this surface the agent cannot undo
+    // from inside the turn.
+    "delete_file"         => (false, false, Destructive, Always, "file"),
+    // Read-only, but NOT speculation-safe: the semantic rung writes
+    // embeddings through into `codegraph.db` while it ranks.
+    "search"              => (true, false, Low, Always, "search"),
     // The session task board. In-memory and session-scoped: every row here is
     // `Low` because what it mutates cannot outlive the process, which is the
     // clearest demonstration that `risk` is not `read_only` spelled twice.

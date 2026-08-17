@@ -32,17 +32,28 @@ use super::*;
 // `PIPELINE_SYSTEM_PROMPT` (#2231).
 
 /// The cross-tool steering shared by both static prompts — what the generated
-/// schemas cannot say: where each capability comes from, batching (#2985),
-/// and where scratch belongs. The built-ins are coordination and session
-/// state; everything that reaches the workspace or the network arrives as an
-/// MCP or custom script tool, so the steering teaches the shape of the
-/// surface rather than a fixed tool list. No trailing newline: each prompt
-/// continues with its own blank line.
+/// schemas cannot say: which tool to reach for first, where each capability
+/// comes from, batching (#2985), and where scratch belongs.
+///
+/// The built-ins are a **working surface** (one shell, file CRUD, one search)
+/// plus coordination and session state. The paragraph leads with `search`
+/// deliberately: the failure mode the telemetry keeps showing is not a model
+/// that cannot find a tool, it is one that reaches for `bash` + `grep` and
+/// then pays for a read/grep/read round trip that a single `search` call
+/// answers. Naming the cheaper path first is the only place a prompt can fix
+/// that, because the schemas are read one at a time and none of them can say
+/// "prefer the other one".
+///
+/// No trailing newline: each prompt continues with its own blank line.
 macro_rules! tool_steering {
     () => {
         r#"The schemas are the reference for your tools; this is how they fit together.
 
-Your built-in tools are coordination and session state: the task board (task_create, task_list, task_start, task_complete, task_cancel, task_assign) tracks multi-step work, task delegates a subtask to a sub-agent, the scratch state plane (save_state, get_state, list_state, delete_state) holds intermediate notes and data between steps, and get_environment reports the platform facts. Every other capability — reading and editing files, running commands, reaching the network — arrives as an MCP or custom tool in your schema list; use exactly what is advertised and never assume a capability no schema names.
+To find code, call search first: it takes a description or a name and returns the files that answer it with their symbols, callers and imports attached, so one call usually replaces a run of grep and read_file round trips. Use read_file when you already know the exact path, and bash with grep only when you need every occurrence of one exact literal string.
+
+To change the workspace, use the file tools rather than the shell: write_file creates or overwrites, edit_file replaces an exact substring, delete_file removes a file. Prefer them over shell equivalents like cat > file, sed -i or rm — they are confined to the workspace root, they report what actually changed, and their edits are what the turn's diff and verification are computed from. bash is for running things: builds, tests, linters, git, anything the task needs executed.
+
+Your coordination tools are the task board (task_create, task_list, task_start, task_complete, task_cancel, task_assign) for multi-step work, task to delegate a subtask to a sub-agent, the scratch state plane (save_state, get_state, list_state, delete_state) for intermediate notes and data between steps, and get_environment for the platform facts. Anything beyond these — reaching the network, a service API — arrives as an MCP or custom tool in your schema list; use exactly what is advertised and never assume a capability no schema names.
 
 Read a file before you edit it. Send independent tool calls together in one response; sequence calls only when one needs another's result. Within one response, put reads first and mutations last: the engine runs consecutive read-only calls concurrently and can start leading reads while the response is still streaming, while a mutating call runs alone, in call order, and nothing after it starts early. Ordering changes speed, never meaning. Keep intermediate notes and working data in the scratch state plane, never as files in the workspace: leave no backups, copies, or debug artifacts behind. A file the task asked for is a deliverable, not scratch."#
     };

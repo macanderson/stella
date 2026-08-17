@@ -27,7 +27,36 @@ use std::path::Path;
 use stella_core::search::{Depth, Facet, facets_at};
 use stella_graph::{CodeGraph, NeighborhoodSymbol};
 
+use super::cache::{self, GatherCache};
 use super::engine::Hit;
+
+/// The file's neighborhood, from the session cache when the file's bytes are
+/// unchanged since it was gathered, and from the graph otherwise.
+///
+/// `source` doubles as the cache key: `None` (an unreadable or non-UTF-8
+/// file) has no identity to validate against, so it bypasses the cache
+/// entirely and is gathered fresh — the conservative direction. A graph the
+/// path is unknown to degrades to `None` exactly as the un-cached gather did,
+/// and is not cached either: a miss is not a fact worth retaining.
+fn gathered_neighborhood(
+    cache: &mut GatherCache,
+    graph: &CodeGraph,
+    path: &str,
+    source: Option<&str>,
+) -> Option<stella_graph::FileNeighborhood> {
+    let identity = source.map(cache::content_identity);
+    if let Some(identity) = identity
+        && let Some(neighborhood) = cache.lookup(path, &identity)
+    {
+        return Some(neighborhood);
+    }
+    let neighborhood = graph.file_neighborhood(Path::new(path)).ok()?;
+    cache.gathered += 1;
+    if let Some(identity) = identity {
+        cache.store(path.to_string(), identity, neighborhood.clone());
+    }
+    Some(neighborhood)
+}
 
 /// Symbols named per hit. Past this the list stops being a summary.
 const MAX_SYMBOLS: usize = 8;
@@ -45,11 +74,12 @@ const MAX_BODY_LINES: usize = 40;
 /// know all degrade to fewer lines, never to an error. A search that failed
 /// to enrich a hit still found the hit, and losing the whole answer over a
 /// detail line would be the worst possible trade.
-pub(crate) fn render_hit(
+pub fn render_hit(
     graph: Option<&CodeGraph>,
     root: &Path,
     hit: &Hit,
     depth: Depth,
+    cache: &mut GatherCache,
 ) -> String {
     let facets = facets_at(depth);
     // `Facet::Path` is the header and is present at every depth by
@@ -60,7 +90,8 @@ pub(crate) fn render_hit(
         return block;
     };
     let source = std::fs::read_to_string(root.join(&hit.path)).ok();
-    let Ok(neighborhood) = graph.file_neighborhood(Path::new(&hit.path)) else {
+    let Some(neighborhood) = gathered_neighborhood(cache, graph, &hit.path, source.as_deref())
+    else {
         return block;
     };
     // The matched symbol leads the detailed facets when the ranking named
@@ -217,7 +248,7 @@ fn declaration_line(source: Option<&str>, symbol: &NeighborhoodSymbol) -> Option
 /// openers, which covers every language the indexer parses without a
 /// per-language table — a doc comment recognised loosely is a doc comment
 /// recognised, and the cost of a false positive here is one quoted line.
-pub(crate) fn doc_comment(source: Option<&str>, symbol: &NeighborhoodSymbol) -> Option<String> {
+pub fn doc_comment(source: Option<&str>, symbol: &NeighborhoodSymbol) -> Option<String> {
     let lines: Vec<&str> = source?.lines().collect();
     // `start_line` is 1-based, so the declaration sits at index
     // `start_line - 1` and the line above it at `start_line - 2`.
@@ -319,7 +350,7 @@ fn line_at(source: &str, number: u32) -> Option<&str> {
 /// The matched symbol rides as the hit's focus, so the detailed facets the
 /// renderer pays for describe the definition itself rather than whatever
 /// happens to sit first in the file.
-pub(crate) fn exact_symbol_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit> {
+pub fn exact_symbol_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit> {
     let name = query.trim();
     if name.is_empty() || name.split_whitespace().count() != 1 {
         return Vec::new();
@@ -364,7 +395,7 @@ pub(crate) fn exact_symbol_hits(graph: &CodeGraph, query: &str, limit: usize) ->
 /// Returns the ranked hits **and how many files matched at all**, so the
 /// caller can disclose a cut list — `limit` files shown out of a larger match
 /// set must never read as "only `limit` files matched".
-pub(crate) fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> (Vec<Hit>, usize) {
+pub fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> (Vec<Hit>, usize) {
     let terms = terms_of(query);
     if terms.is_empty() {
         return (Vec::new(), 0);
@@ -425,8 +456,8 @@ const STOPWORDS: &[&str] = &[
 ];
 
 /// Words worth matching on: lowercase, alphanumeric, at least three
-/// characters, and not a [`STOPWORDS`] entry.
-pub(crate) fn terms_of(query: &str) -> Vec<String> {
+/// characters, and not a stopword.
+pub fn terms_of(query: &str) -> Vec<String> {
     let mut terms: Vec<String> = query
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| word.chars().count() >= 3)

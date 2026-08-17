@@ -13,6 +13,23 @@ opens an outbound connection, writes a file, or answers a method other than
 it sits* for the two pure ones it does link, and why that is a different rule
 than a dependency count.
 
+## Direction — the door and the wrapper are two columns now
+
+Stella is becoming one turn loop with a plugin architecture around it, and
+comparing wrapper designs is meant to be a `GROUP BY` rather than a rebuild
+(`doc:turn-loop-wrappers`). The schema change that enables it reaches this crate's
+queries directly: `executions.kind` is now the **door** a turn came in by (`run`,
+`deck`, `deck-sub`, `goal`, `fleet`) and `executions.pipeline_variant` is the
+**wrapper** that ran, NULL for an unwrapped turn (#3388). This crate selects
+`e.kind` in three places ([`src/db.rs`](src/db.rs)); a view that wants to answer
+"did verification help?" reads the variant, and one that groups only by `kind`
+across the v25 → v26 migration boundary is comparing pre- and post-split rows and
+must say so.
+
+Nothing about the read-only, loopback-only, no-egress posture changes — if
+anything it matters more, since once verification is an installable plugin (#3246)
+this page is where a user sees whether they are running one.
+
 ## Where it sits
 
 Nearly a leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,

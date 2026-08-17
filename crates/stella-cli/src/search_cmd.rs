@@ -15,11 +15,13 @@ use serde::Serialize;
 
 use crate::query_format::{QueryFormat, Versioned};
 
-pub(crate) mod codegraph;
-pub(crate) mod engine;
-pub(crate) mod enrich;
-pub(crate) mod scan;
-pub(crate) mod semantic;
+// The engine itself lives in `stella-tools`, beside the `search` tool that is
+// its other caller (`stella_tools::search`). This command is a facade over it
+// so the operator's `stella search` and the agent's `search` call can never
+// answer the same question differently — they run the same ladder over the
+// same index. The re-exports keep every existing `crate::search_cmd::…` call
+// site in this crate pointing at the moved modules.
+pub(crate) use stella_tools::search::{codegraph, engine, semantic};
 
 /// One `stella search` answer, machine-readable — the `--format json`
 /// envelope. `content` carries the exact text the agent would read; `error`
