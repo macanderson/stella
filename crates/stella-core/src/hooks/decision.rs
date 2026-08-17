@@ -349,8 +349,13 @@ pub fn resolve_precedence(
         Err(error) => GateVerdict::Deny {
             reason: format!("policy evaluation failed ({error}); failing closed"),
         },
-        Ok(HookDecision::Deny { reason }) => GateVerdict::Deny {
-            reason: reason.clone(),
+        // The tool-dispatch ladder keeps a flat reason on purpose: a blocked
+        // tool call has no witness, no flip and no digest, so widening
+        // `GateVerdict` would add a field every producer here must leave
+        // empty. A verifying gate's evidence is read where it is produced —
+        // `driver::user_hooks`' `Stop` branch, off the `HookDecision` itself.
+        Ok(HookDecision::Deny(denial)) => GateVerdict::Deny {
+            reason: denial.reason.clone(),
         },
         Ok(HookDecision::RequireApproval { reason }) => GateVerdict::RequireApproval {
             reason: reason.clone(),
@@ -504,9 +509,7 @@ mod tests {
         );
         assert_eq!(
             parse_decision(r#"{"action":"deny","reason":"nope"}"#),
-            DecisionParse::Decision(HookDecision::Deny {
-                reason: "nope".into()
-            })
+            DecisionParse::Decision(HookDecision::Deny("nope".into()))
         );
         assert_eq!(
             parse_decision(r#"{"action":"require_approval","reason":"ask"}"#),
@@ -527,9 +530,7 @@ mod tests {
         let parsed = parse_decision("checking policy…\n{\"action\":\"deny\",\"reason\":\"no\"}");
         assert_eq!(
             parsed,
-            DecisionParse::Decision(HookDecision::Deny {
-                reason: "no".into()
-            })
+            DecisionParse::Decision(HookDecision::Deny("no".into()))
         );
     }
 
@@ -614,9 +615,7 @@ mod tests {
         .await;
         assert_eq!(
             run.evaluation,
-            Ok(HookDecision::Deny {
-                reason: "blocked path".into()
-            })
+            Ok(HookDecision::Deny("blocked path".into()))
         );
         assert_eq!(
             runner.payloads.lock().unwrap().len(),

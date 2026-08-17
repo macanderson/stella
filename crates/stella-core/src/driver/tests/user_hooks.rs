@@ -7,6 +7,11 @@
 
 use super::*;
 
+// The #3380 witnesses (structured denials, host-chosen hold allowance) live in
+// a sibling file: this one is close enough to the 1500-line ratchet that the
+// rule is to split rather than grow up to it.
+mod verdicts;
+
 /// A no-I/O [`HookRunner`] test double: returns a fixed exit code +
 /// stdout/stderr for every command and records the JSON payload of each
 /// call, so a test can assert which lifecycle event fired and what it
@@ -806,7 +811,7 @@ impl HookRunner for ScriptedHookRunner {
 
 /// **Witness (d), #2684, re-pinned for #3246's bounded loop.** A `Stop`
 /// hook that always denies holds the completing turn open
-/// [`MAX_STOP_CONSULTS`](crate::driver::user_hooks::MAX_STOP_CONSULTS)
+/// [`DEFAULT_STOP_HOLDS`](crate::driver::DEFAULT_STOP_HOLDS)
 /// times — each reason a marked tail user message, the LAST one announcing
 /// itself as final — and then the next completion stands: the death-spiral
 /// guard, now a counter. On the once-per-turn boolean this fails: the turn

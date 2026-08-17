@@ -722,9 +722,7 @@ mod tests {
     fn precedence_hook_deny_denies_without_asking() {
         let verdict = resolve_precedence(
             &OperatorPosture::NoOpinion,
-            Ok(&HookDecision::Deny {
-                reason: "blocked path".into(),
-            }),
+            Ok(&HookDecision::Deny("blocked path".into())),
             false,
         );
         assert_eq!(
@@ -757,7 +755,7 @@ mod tests {
     fn hook_decision_strategy() -> impl Strategy<Value = HookDecision> {
         prop_oneof![
             Just(HookDecision::Allow),
-            ".*".prop_map(|reason| HookDecision::Deny { reason }),
+            ".*".prop_map(|reason: String| HookDecision::Deny(reason.into())),
             ".*".prop_map(|reason| HookDecision::RequireApproval { reason }),
             Just(HookDecision::Modify {
                 payload: serde_json::json!({ "input": {} }),

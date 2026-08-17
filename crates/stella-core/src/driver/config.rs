@@ -218,6 +218,67 @@ pub struct EngineConfig {
     /// and was not yet challenged is nudged once to prove its work
     /// before the declaration is accepted (`confident_zero::check`, rung 4).
     pub completion_gate: bool,
+    /// How many times one turn's `Stop` hooks may hold the completion open —
+    /// the host's answer to a verifying extension's *ask* (#3380).
+    ///
+    /// `None` is [`DEFAULT_STOP_HOLDS`], the bound every caller had before a
+    /// host could say otherwise. Read through [`Self::stop_holds`], never
+    /// directly, because the value is **clamped to [`STOP_HOLD_CEILING`]**:
+    /// the engine spends this allowance, so the engine is the last line, and
+    /// an ask is never an authority. A manifest that declares `max_holds =
+    /// 1000` must not be able to buy an unbounded deny → revise → re-check
+    /// loop, which is the compact→error→stop-hook→retry spiral the bound
+    /// exists to cap (`driver::user_hooks` module docs).
+    ///
+    /// Zero is not expressible: [`clamp_stop_holds`] floors at one, because
+    /// "consult this gate zero times" is how you disable a gate you
+    /// configured, silently. Withhold the hook instead.
+    ///
+    /// `stella-core` never learns plugins exist (invariant #1), so this is a
+    /// plain number: the *host* reads `LoopGrant::max_holds` off a manifest,
+    /// clamps it with [`clamp_stop_holds`] so it can report the clamp, and
+    /// sets this field.
+    pub stop_hold_allowance: Option<u32>,
+}
+
+/// The `Stop`-hold allowance a turn gets when no host asks for one.
+///
+/// Three, not one, because the gate's primary tenant is verification (#3246):
+/// a verifier needs at least two consultations to observe a fail→pass flip,
+/// and the third admits one more revision round — the empirically common case
+/// of a model landing the fix within three attempts.
+pub const DEFAULT_STOP_HOLDS: u32 = 3;
+
+/// The most `Stop` holds any host may buy, however large its ask.
+///
+/// Eight is a bound, not a target: it is comfortably above the four rounds a
+/// verification extension has actually been observed to want, and low enough
+/// that a held-open turn cannot grow the transcript indefinitely. It moves
+/// only as a reviewed edit here, never as a value some manifest supplies.
+pub const STOP_HOLD_CEILING: u32 = 8;
+
+/// Clamp a declared `Stop`-hold ask into `1..=`[`STOP_HOLD_CEILING`].
+///
+/// Public so a host can clamp a plugin's `max_holds` at load time and *tell
+/// the user* it narrowed the ask, rather than discovering the ceiling by
+/// watching a turn end early. The engine applies the identical clamp again
+/// when it spends the allowance ([`EngineConfig::stop_holds`]) — one
+/// implementation, two callers, and the engine-side call is what makes the
+/// bound a property of the engine rather than of every host's diligence.
+#[must_use]
+pub fn clamp_stop_holds(requested: u32) -> u32 {
+    requested.clamp(1, STOP_HOLD_CEILING)
+}
+
+impl EngineConfig {
+    /// This turn's effective `Stop`-hold allowance: the configured ask
+    /// clamped to [`STOP_HOLD_CEILING`], or [`DEFAULT_STOP_HOLDS`] when no
+    /// host asked.
+    #[must_use]
+    pub fn stop_holds(&self) -> u32 {
+        self.stop_hold_allowance
+            .map_or(DEFAULT_STOP_HOLDS, clamp_stop_holds)
+    }
 }
 
 /// A caller's answer to "is the goal already met?", asked once per step
@@ -283,6 +344,35 @@ impl Default for EngineConfig {
             // had more to do.
             turn_halt: None,
             completion_gate: false,
+            // No host has asked, so the turn gets `DEFAULT_STOP_HOLDS`.
+            stop_hold_allowance: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_stop_hold_allowance_is_clamped_not_honoured() {
+        assert_eq!(EngineConfig::default().stop_holds(), DEFAULT_STOP_HOLDS);
+        for (asked, granted) in [(1, 1), (5, 5), (STOP_HOLD_CEILING, STOP_HOLD_CEILING)] {
+            let config = EngineConfig {
+                stop_hold_allowance: Some(asked),
+                ..EngineConfig::default()
+            };
+            assert_eq!(config.stop_holds(), granted, "asked for {asked}");
+        }
+        // An ask is never an authority: above the ceiling, and below the
+        // floor, the host gets the bound rather than the number it named.
+        for asked in [STOP_HOLD_CEILING + 1, 1000, u32::MAX] {
+            let config = EngineConfig {
+                stop_hold_allowance: Some(asked),
+                ..EngineConfig::default()
+            };
+            assert_eq!(config.stop_holds(), STOP_HOLD_CEILING, "asked for {asked}");
+        }
+        assert_eq!(clamp_stop_holds(0), 1, "zero disables a configured gate");
     }
 }

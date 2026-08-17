@@ -381,7 +381,7 @@ pub struct TurnState {
     /// allowance over, which only re-permits a bounded amount of work.
     pub(crate) length_continuations: u32,
     /// How many times this turn's `Stop` hooks have been consulted — the
-    /// bounded counter (`driver::user_hooks::MAX_STOP_CONSULTS`) that lets a
+    /// bounded counter (`EngineConfig::stop_holds`) that lets a
     /// verification hook deny, watch the revision, and re-check, while still
     /// capping the compact→error→stop-hook→retry spiral (#2684, #3246). Not
     /// checkpointed, like `length_continuations`.

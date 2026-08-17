@@ -71,7 +71,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use stella_protocol::AgentEvent;
+use stella_protocol::{AgentEvent, Denial};
 
 // The event-name catalog, split to a sibling file (the `driver/settlement.rs`
 // pattern) so this file stays under its file-size ceiling (#1857).
@@ -137,11 +137,16 @@ impl HookEventDraft {
 /// `{"action":"allow"}`, `{"action":"deny","reason":...}`,
 /// `{"action":"require_approval","reason":...}`,
 /// `{"action":"modify","payload":...}`.
+///
+/// `Deny` carries a [`Denial`] (#3380) so a verifying gate can name the
+/// witness, command, flip and digest it decided from — a consumer that must
+/// branch cannot branch on a sentence. The wire shape is unchanged for a
+/// prose-only denier and `"…".into()` still builds one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum HookDecision {
     Allow,
-    Deny { reason: String },
+    Deny(Denial),
     RequireApproval { reason: String },
     Modify { payload: Value },
 }
@@ -508,9 +513,9 @@ impl HookBus {
                         &event,
                         format!("policy handler panicked: {message}"),
                     );
-                    decision = HookDecision::Deny {
-                        reason: format!("policy handler for `{pattern}` failed: {message}"),
-                    };
+                    decision = HookDecision::Deny(
+                        format!("policy handler for `{pattern}` failed: {message}").into(),
+                    );
                     break;
                 }
             }
@@ -534,7 +539,7 @@ impl HookBus {
             HookDecision::Allow | HookDecision::Modify { .. } => {
                 self.emit(stamp(names::POLICY_ALLOWED));
             }
-            HookDecision::Deny { .. } => {
+            HookDecision::Deny(_) => {
                 self.emit(stamp(names::POLICY_BLOCKED));
             }
             HookDecision::RequireApproval { .. } => {
@@ -1093,8 +1098,8 @@ mod tests {
     fn bridge_maps_the_audit_plane_onto_policy_decision_events() {
         use stella_protocol::PolicyKind;
         let bus = HookBus::new("bridge-test");
-        bus.on_blocking(names::TOOL_CALL_REQUESTED, |_| HookDecision::Deny {
-            reason: "not on my watch".into(),
+        bus.on_blocking(names::TOOL_CALL_REQUESTED, |_| {
+            HookDecision::Deny("not on my watch".into())
         })
         .detach();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1308,9 +1313,7 @@ mod tests {
         let cases = [
             (HookDecision::Allow, r#"{"action":"allow"}"#),
             (
-                HookDecision::Deny {
-                    reason: "nope".into(),
-                },
+                HookDecision::Deny("nope".into()),
                 r#"{"action":"deny","reason":"nope"}"#,
             ),
             (
@@ -1473,8 +1476,8 @@ mod tests {
     fn blocking_deny_short_circuits_and_records_the_reason() {
         let (bus, seen) = observed_bus("s");
         let later = Arc::new(AtomicUsize::new(0));
-        let _a = bus.on_blocking(names::TOOL_CALL_REQUESTED, |_| HookDecision::Deny {
-            reason: "workspace is read-only".into(),
+        let _a = bus.on_blocking(names::TOOL_CALL_REQUESTED, |_| {
+            HookDecision::Deny("workspace is read-only".into())
         });
         let count = later.clone();
         let _b = bus.on_blocking(names::TOOL_CALL_REQUESTED, move |_| {
@@ -1489,9 +1492,7 @@ mod tests {
 
         assert_eq!(
             outcome.decision,
-            HookDecision::Deny {
-                reason: "workspace is read-only".into()
-            }
+            HookDecision::Deny("workspace is read-only".into())
         );
         assert_eq!(
             later.load(Ordering::SeqCst),
@@ -1591,8 +1592,8 @@ mod tests {
             serde_json::json!({"path": "a"}),
         ));
         match &outcome.decision {
-            HookDecision::Deny { reason } => {
-                assert!(reason.contains("broken extension"), "{reason}");
+            HookDecision::Deny(denial) => {
+                assert!(denial.reason.contains("broken extension"), "{denial}");
             }
             other => panic!("a panicking policy handler must deny, got {other:?}"),
         }
@@ -1662,9 +1663,7 @@ mod tests {
     #[test]
     fn off_removes_blocking_handlers_and_outlives_the_bus_safely() {
         let bus = HookBus::new("s");
-        let sub = bus.on_blocking(names::FILE_CREATED, |_| HookDecision::Deny {
-            reason: "no".into(),
-        });
+        let sub = bus.on_blocking(names::FILE_CREATED, |_| HookDecision::Deny("no".into()));
         assert!(
             !bus.emit_blocking(HookEventDraft::new(names::FILE_CREATED, Value::Null))
                 .allowed()

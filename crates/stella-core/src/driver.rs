@@ -86,7 +86,7 @@ use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
 use crate::bus;
 use crate::compaction::compact_measured;
 use crate::receipts::TranscriptRevision;
-pub use config::{EngineConfig, TurnHalt};
+pub use config::{DEFAULT_STOP_HOLDS, EngineConfig, STOP_HOLD_CEILING, TurnHalt, clamp_stop_holds};
 // These moved to `config` with the fields that use them; the test modules
 // below reach them through `use super::*`, so keep them nameable here rather
 // than editing four test files to import what they always saw.

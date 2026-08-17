@@ -57,6 +57,7 @@ pub mod completion;
 pub mod context_event;
 pub mod contract;
 pub mod delivery_event;
+pub mod denial;
 pub mod error;
 pub mod event;
 pub mod hook;
@@ -92,6 +93,10 @@ pub use completion::{
 pub use context_event::{CompiledContextFrameBuilt, LifecycleEvent, LifecycleEventEnvelope};
 pub use contract::{ContractError, Provenance, RiskLevel, ToolContract};
 pub use delivery_event::{DeliveryDecline, DeliveryOutcome};
+// The payload of a gate's refusal (#3380). Lives here, not beside the decision
+// enum in `stella-core::bus`, because the trace fold and a future out-of-process
+// host both read it and that file is closed to growth.
+pub use denial::{Denial, DenialEvidence};
 pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,

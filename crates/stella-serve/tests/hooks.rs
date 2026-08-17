@@ -118,9 +118,9 @@ impl ServeExtension for RefuseTool {
         let refused = self.0;
         bus.on_blocking(names::TOOL_CALL_REQUESTED, move |event| {
             if event.payload["tool"].as_str() == Some(refused) {
-                return HookDecision::Deny {
-                    reason: format!("`{refused}` is not permitted on this deployment"),
-                };
+                return HookDecision::Deny(
+                    format!("`{refused}` is not permitted on this deployment").into(),
+                );
             }
             HookDecision::Allow
         })
