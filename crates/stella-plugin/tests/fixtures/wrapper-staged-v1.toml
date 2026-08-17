@@ -1,0 +1,47 @@
+# The stage order the staged pipeline runs today, as a manifest.
+#
+# Every condition here transcribes a branch that lives in
+# `crates/stella-pipeline/src/pipeline.rs::run` — a file at its file-size
+# ceiling and closed to growth, which is why the order has to leave Rust
+# before another variant can exist (#3381).
+name = "staged"
+description = "The stage order Stella has shipped since the staged pipeline landed."
+
+[loop]
+participation = "steering"
+
+[wrapper]
+id = "classic"
+
+# Triage first: it publishes the signals every later condition reads.
+[[wrapper.stages]]
+name = "triage"
+
+[[wrapper.stages]]
+name = "recall"
+
+# "Empty questions skip the stage byte-for-byte" — pipeline.rs's own words.
+[[wrapper.stages]]
+name = "research"
+if = "questions > 0"
+
+[[wrapper.stages]]
+name = "plan"
+if = "plans"
+
+[[wrapper.stages]]
+name = "scope"
+if = "plans"
+
+[[wrapper.stages]]
+name = "execute"
+
+# The authored-witness decision: no configured --test-command, so the run
+# must build its own measuring stick.
+[[wrapper.stages]]
+name = "witness"
+if = "no-test-command"
+
+[[wrapper.stages]]
+name = "verify"
+if = "verifies"

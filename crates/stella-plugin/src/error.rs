@@ -6,6 +6,7 @@
 //! the fix be obvious.
 
 use crate::manifest::{HookEvent, Participation};
+use crate::wrapper::{Signal, SignalKind, StageName};
 
 /// A manifest failed to parse or failed validation.
 ///
@@ -186,4 +187,112 @@ pub enum ManifestError {
     /// grant, chip, and hold attribution hangs off.
     #[error("manifest name must not be empty")]
     EmptyName,
+
+    /// `[wrapper]` was declared below `steering`. A wrapper intercepts the
+    /// turn loop — it adds context, gathers evidence, and asks for another
+    /// turn. That is participation, which `none` and `observer` have
+    /// disclaimed.
+    #[error(
+        "[wrapper] is only meaningful at participation = \"steering\" or \
+         above (declared grade: \"{participation}\")"
+    )]
+    WrapperRequiresSteering {
+        /// The declared grade, below `steering`.
+        participation: Participation,
+    },
+
+    /// `[wrapper] id` was empty. The id is what the store's
+    /// `pipeline_variant` column records (#3388), so it is the join key of
+    /// every per-variant comparison; a blank one makes a measured run
+    /// indistinguishable from an unmeasured one.
+    #[error("[wrapper] id must not be empty: it is the variant id every execution row records")]
+    EmptyWrapperId,
+
+    /// `[[wrapper.stages]]` declared no stages. A wrapper that runs no
+    /// stages is the raw loop with extra ceremony; omit the block instead.
+    #[error("[wrapper] must declare at least one [[wrapper.stages]] entry")]
+    EmptyWrapperStages,
+
+    /// The same stage was declared twice. Order is the whole point of the
+    /// list, and a repeated stage makes both its position and its condition
+    /// ambiguous.
+    #[error("[wrapper] declares stage \"{stage}\" more than once")]
+    DuplicateWrapperStage {
+        /// The stage that appeared twice.
+        stage: StageName,
+    },
+
+    /// A stage's `if` text is outside the closed condition grammar.
+    ///
+    /// Deliberately not a parser suggestion box: the grammar is two shapes
+    /// and stays that way, because a Turing-complete condition in a manifest
+    /// is a second program with no gate on it
+    /// (`doc:turn-loop-wrappers` §9.4).
+    #[error("[wrapper] stage \"{stage}\" has an unreadable condition \"{condition}\": {reason}")]
+    UnparsableCondition {
+        /// The stage carrying the condition.
+        stage: StageName,
+        /// The condition text as written.
+        condition: String,
+        /// Which grammar rule it failed, phrased as the fix.
+        reason: String,
+    },
+
+    /// A condition named a signal the host does not publish.
+    ///
+    /// The rule #3381 carries from #3245 slice A, made mechanical: a
+    /// manifest that quietly does nothing is worse than one that refuses to
+    /// load, so an unpublished signal is a load error rather than a
+    /// condition that silently never fires.
+    #[error(
+        "[wrapper] stage \"{stage}\" reads \"{signal}\" in condition \
+         \"{condition}\", which the host does not publish; published \
+         signals are: {published}"
+    )]
+    UnknownSignal {
+        /// The stage carrying the condition.
+        stage: StageName,
+        /// The condition text as written.
+        condition: String,
+        /// The unpublished name.
+        signal: String,
+        /// The published set, comma-joined, so the fix needs no doc lookup.
+        published: String,
+    },
+
+    /// A count signal was read as a boolean, or a boolean compared against a
+    /// number. The typed half of "each stage has a typed input and a typed
+    /// output": a mismatch is a load error, never a coercion.
+    #[error(
+        "[wrapper] stage \"{stage}\" reads \"{signal}\" as a {declared} \
+         signal, but it is a {actual} signal"
+    )]
+    ConditionTypeMismatch {
+        /// The stage carrying the condition.
+        stage: StageName,
+        /// The signal read at the wrong type.
+        signal: Signal,
+        /// The type the condition's shape implied.
+        declared: SignalKind,
+        /// The type the signal actually has.
+        actual: SignalKind,
+    },
+
+    /// A condition read a signal that only a **later** stage publishes.
+    ///
+    /// The stage-graph check. Without it, a hand-written variant's failure
+    /// mode is a wedged run at round three; with it, the same manifest is a
+    /// rejection with a reason at load.
+    #[error(
+        "[wrapper] stage \"{stage}\" reads \"{signal}\", which \"{publisher}\" \
+         publishes — but \"{publisher}\" is not declared before it"
+    )]
+    SignalNotYetPublished {
+        /// The stage whose condition reads too early.
+        stage: StageName,
+        /// The signal read before it exists.
+        signal: Signal,
+        /// The stage that publishes it, declared later or not at all.
+        publisher: StageName,
+    },
 }
