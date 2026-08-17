@@ -140,10 +140,19 @@ as before this workflow existed.
 
 ## Cut a release
 
-1. Bump the version if needed — `version` in `[workspace.package]` of the root
+1. **Re-cut the demo video if the command deck moved** — `make record-demo-video`,
+   then watch it and commit `docs/demo/`. The film is a picture of the deck
+   (`doc:deck-film`), so it goes stale exactly when the deck changes: a tab
+   added, a panel moved, a status field renamed. Shipping a demo of a UI the
+   download no longer has is a claim this project does not make. It needs no API
+   key and takes about fifteen minutes. Watching it is the part that matters —
+   the shot list frames rows the deck's own layout decides, so a layout change
+   can move content out of shot without failing any check.
+
+2. Bump the version if needed — `version` in `[workspace.package]` of the root
    `Cargo.toml` (all crates inherit it) — and commit.
 
-2. Tag and push. The tag must be `v<major>.<minor>.<patch>` matching the
+3. Tag and push. The tag must be `v<major>.<minor>.<patch>` matching the
    workspace version:
 
    ```bash

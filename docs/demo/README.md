@@ -11,7 +11,7 @@ exists to prevent.
 
 | Artifact | What it is | How it is made |
 | --- | --- | --- |
-| `stella-deck.mp4` | The **hero film**: 1080p60, silent, loopable, 50.1s — the command deck touring every tab, with a camera that pushes in and pulls back. | `make deck-film` |
+| `stella-deck.mp4` | The **hero film**: 1080p60, silent, loopable, 49.7s — the command deck touring every tab, with a camera that pushes in and pulls back. | `make record-demo-video` |
 | `stella-demo.mp4` | An old **recorder stress-test**: a timelapse of this repository compiling. Not demo content, and never was. | `make record-demo` |
 
 `AGENTS.md`'s companion rule in `CLAUDE.md` states the standard: *footage of
@@ -41,7 +41,7 @@ stage below except the source of the events.
 ## The pipeline
 
 ```sh
-make deck-film                     # both stages, into docs/demo/
+make record-demo-video             # both stages, into docs/demo/
 ```
 
 Two stages, deliberately separate:
@@ -56,7 +56,7 @@ scripts/render-deck-film.py film.jsonl -o docs/demo/stella-deck.mp4 \
 ```
 
 `--release` is not a suggestion: the driver rebuilds the session model from
-scratch for every one of the 3,006 frames — which is what makes frame *n*
+scratch for every one of the 2,982 frames — which is what makes frame *n*
 depend on nothing but *n* — and a debug build spends about twenty minutes on
 it.
 
@@ -82,8 +82,8 @@ is not deterministic *by construction*.
 
 ### Stage 2 — `scripts/render-deck-film.py`
 
-Rasterises each distinct grid **once** at 2.5x the width it occupies at zoom
-1.0 (4800x1500, 30x50 px cells) and cuts every output frame as a sub-pixel crop
+Rasterises each distinct grid **once** at 2.5x the output resolution
+(4788x2697, 42x93 px cells) and cuts every output frame as a sub-pixel crop
 resized down to 1080p. That is the whole trick behind the zoom: at every point
 in the camera track the frame is a *downscale* of a raster with more detail
 than it needs, so text is supersampled rather than magnified. Scaling the
@@ -93,11 +93,19 @@ terminal demos go soft the moment the camera moves.
 The peak zoom in the film is checked against `--supersample` up front, and the
 run refuses rather than quietly rendering one blurry shot.
 
-The raster is shaped by the **font**, not by the frame: cell height is the cell
-width over the advance ratio. Deriving it from `1080/rows` instead makes the
-face taller than the cell is wide, and every run of text overlaps the one beside
-it — a guard in `Rasteriser.__init__` now refuses that outright, because the
-frames it produces look like a corrupt render rather than a misconfiguration.
+**The cell is solved from the font, in this order: rows → cell height → font
+size → cell width.** A monospace face pins two metrics that both have to fit —
+an advance (0.600 em) and a line box (ascent + descent, 1.32 em) — and only one
+of them can be chosen. Fixing the row count fixes the cell height; the largest
+size whose *line box* fits gives the font; its advance gives the cell width.
+
+Doing it the other way round is what shipped in the first cut: sizing the font
+from the cell's width picks `S = cell_w / 0.6`, whose line box is then 32%
+taller than the cell. Rows drew into each other, the baseline landed *below* the
+cell floor so the bottom row was clipped by the frame edge, and the grid came
+out 3.2:1 — a squeezed band inside a 16:9 frame. `Rasteriser.__init__` now
+measures both metrics and refuses either failure by name, rather than rendering
+something that reads as a corrupt terminal.
 
 Fonts fall back per glyph the way a terminal does: JetBrains Mono (the brand
 face, `docs/brand/fonts/`, OFL-1.1) → DejaVu Sans Mono → FreeMono. The deck's
@@ -121,6 +129,19 @@ visitor to download — so the default is CRF 24. If you raise it further, judge
 the result on a **zoomed** shot: the wide shots carry the least detail per pixel
 and will look fine long after the close ones have started ringing.
 
+## Re-cut it every release
+
+The film is a picture of the deck, so it goes stale exactly when the deck
+changes — a tab added, a panel moved, a status field renamed. A demo showing a
+UI the download no longer has is the kind of claim this repository does not
+make, so `make record-demo-video` runs as part of cutting a release. It needs no
+API key and costs about fifteen minutes.
+
+**Watch the result before committing it.** The shot list frames rows and columns
+that the deck's own layout decides, so a layout change can move content out of
+shot — or into a frame that shows a rendering defect — without failing anything.
+Nothing in the pipeline can check composition for you.
+
 ## Re-cutting it
 
 The shot list is data, in `shots()`. A shot is a scene, a duration, a camera
@@ -132,11 +153,11 @@ Two constraints the table cannot break on its own:
 
 - **Peak zoom must stay at or below `--supersample`** (2.5 by default), or the
   renderer refuses.
-- **The grid is 160x30 and both numbers are load-bearing.** 160 columns keeps
-  the AGENTS dashboard above its compact threshold. 30 rows is what
-  `--extents` — the row-density profile — reports as the height this fixture
-  actually fills. The obvious 54 (which makes 160 columns exactly 16:9) leaves
-  nine of the fourteen shots drawing nothing below row 9, a void no camera move
-  can hide; 26 goes too far the other way and squeezes the transcript. Re-run
-  `--extents` before changing it, and re-frame the shots that sit on the rows
-  you moved.
+- **The grid is 114x29, and it is a solution rather than a preference.** A grid
+  that fills a 16:9 frame is one with roughly four columns per row — that falls
+  straight out of the font's two ratios, and `COLS`' doc comment carries the
+  derivation. Within that family the width is bounded on both sides: below ~108
+  columns the deck's own composer footer collides with its counter (#3591), and
+  wide is what produced the video this replaced. Re-run `--extents` (the
+  row-density profile) after changing either number, and re-frame the shots that
+  sit on rows you moved.

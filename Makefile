@@ -7,7 +7,7 @@ BUMP ?= patch
 LIMIT ?= 0
 TARGET ?= 60
 
-# Where `make deck-film` parks the intermediate frame film. Under /tmp by
+# Where `make record-demo-video` parks the intermediate frame film. Under /tmp by
 # default because it is a build artifact, not a source: it re-renders from the
 # deck in a couple of minutes and is regenerated whenever the deck moves. Point
 # FILM at a real path to keep one for inspection or a re-render.
@@ -164,11 +164,20 @@ record-demo: ## Record a terminal timelapse (LIMIT=mins TARGET=secs CMD="..."; d
 # and diffs like source), and the renderer turns it into pixels. `--release` is
 # not optional — a debug build spends about twenty minutes folding the session
 # once per frame.
-.PHONY: deck-film
-deck-film: ## Render docs/demo/stella-deck.mp4 from the command deck (FILM=path to keep the intermediate)
+#
+# Re-cut this on every release. The film is a picture of the deck, so it goes
+# stale exactly when the deck changes — a tab added, a panel moved, a status
+# field renamed — and a demo that shows a UI the download no longer has is the
+# kind of claim this repository does not make. It costs about fifteen minutes
+# and needs no API key. RELEASING.md carries the step.
+.PHONY: record-demo-video
+record-demo-video: ## Re-cut docs/demo/stella-deck.mp4 from the command deck (FILM=path to keep the intermediate)
 	cargo run -q --release -p stella-tui --example deck_film > $(FILM)
 	./scripts/render-deck-film.py $(FILM) -o docs/demo/stella-deck.mp4 \
 		--poster docs/demo/stella-deck-poster.png --poster-frame 1100
+	@echo "Re-cut. Watch it before committing — the shot list frames rows the"
+	@echo "deck's own layout decides, so a layout change can move content out"
+	@echo "of shot without failing anything."
 
 .PHONY: bench-test
 bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer + trace triage)
