@@ -106,10 +106,11 @@ impl Plan {
         }
         match self.shown.first() {
             // Nothing shown at all, or a leading run hidden: the marker goes
-            // in front. Reading `r.end` here — which is what this did until a
-            // cross-check against the arenabench port disagreed — puts the
-            // marker AFTER the only thing on screen and reads as "and there
-            // was more below" when every hidden line was above.
+            // in front. Reading `r.end` here — which is what this did until
+            // the cross-language parity check disagreed with it (see
+            // `tests/view_plan_matrix.rs`) — puts the marker AFTER the only
+            // thing on screen and reads as "and there was more below" when
+            // every hidden line was above.
             None => Some(0),
             Some(r) if r.start > 0 => Some(0),
             Some(r) => Some(r.end),
@@ -501,9 +502,10 @@ mod tests {
 
     #[test]
     fn a_view_that_keeps_only_a_tail_folds_in_front_of_it_not_behind_it() {
-        // Found by diffing this policy against its arenabench TypeScript port
-        // over a matrix of budgets, which is the only reason it was found at
-        // all: every hand-written case happened to keep a head.
+        // Found by diffing this policy against its arenabench TypeScript
+        // port over a matrix of budgets — the check now automated in
+        // `tests/view_plan_matrix.rs` — which is the only reason it was found
+        // at all: every hand-written case happened to keep a head.
         //
         // Hunks of 7 lines with a 2-line last one, under a budget that fits
         // only that last one. Every hidden line is ABOVE what survives, so a

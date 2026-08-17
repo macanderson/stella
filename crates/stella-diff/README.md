@@ -83,7 +83,23 @@ a pure deletion), and **a line window at each end** when no whole hunk fits at
 all — one enormous hunk, which is exactly the created-file shape.
 
 Either way there is **at most one elision**, so a caller has exactly one place
-to draw the marker and one number to put in it. `view::elide` expresses that
+to draw the marker and one number to put in it.
+
+**The policy has a second implementation, and it is checked.** The arena
+transcript is a Next.js client with no way to call into the workspace, so it
+reimplements `plan` in TypeScript (`arenabench/ui/lib/diff-view.ts`). The two
+share a file rather than a test runner:
+`tests/fixtures/view-plan-matrix.txt` is generated from the Rust and pinned by
+`cargo test -p stella-diff --test view_plan_matrix` (re-bless with `BLESS=1`,
+then read the diff); `arenabench/ui/scripts/check-diff-view-parity.mjs` asserts
+the TypeScript reproduces the same file, and runs in CI on both path sets. A
+policy change must therefore re-bless the golden, and a re-blessed golden fails
+the port until it catches up.
+
+That check found a bug the first time it ran, in the Rust: `Plan::fold_before`
+drew the elision marker *after* the only surviving hunk whenever the budget
+kept a tail and no head. Thirty-eight unit tests passed over it, because every
+hand-written case happened to keep a head. `view::elide` expresses that
 for structured hunks by returning the split pieces as **separate hunks with
 recomputed `@@` headers**, so the result stays a valid diff: a renderer walking
 line numbers from each header cannot be misled by a gap it does not know about.
