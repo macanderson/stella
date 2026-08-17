@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use stella_protocol::tool::ToolOutput;
 
 /// The index location `stella init` writes and every graph reader resolves.
-pub(crate) fn graph_db_path(root: &Path) -> PathBuf {
+pub fn graph_db_path(root: &Path) -> PathBuf {
     root.join(".stella").join("private").join("codegraph.db")
 }
 
@@ -19,7 +19,7 @@ pub(crate) fn graph_db_path(root: &Path) -> PathBuf {
 /// crate's lower loader remains format-focused and best-effort; this boundary
 /// performs private-state migration and rejects unsafe legacy layouts before
 /// delegating.
-pub(crate) fn load_storage_snapshot(root: &Path) -> Result<stella_graph::StorageSnapshot, String> {
+pub fn load_storage_snapshot(root: &Path) -> Result<stella_graph::StorageSnapshot, String> {
     stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
         .map_err(|error| format!("cannot resolve private code graph state: {error}"))?;
     Ok(stella_graph::load_storage_snapshot(root))
@@ -28,7 +28,7 @@ pub(crate) fn load_storage_snapshot(root: &Path) -> Result<stella_graph::Storage
 /// The single phrasing of the non-fatal index-pass diagnostic, shared by
 /// every surface that reports it so the operator always reads the same words
 /// (and a test can assert on it without pinning the store's error text).
-pub(crate) const INDEX_PASS_WARNING: &str = "warning: the code graph index pass \
+pub const INDEX_PASS_WARNING: &str = "warning: the code graph index pass \
      failed — answering from what the index already holds, which may be stale";
 
 /// An open graph handle **plus** whatever non-fatal diagnostic its opening
@@ -39,11 +39,11 @@ pub(crate) const INDEX_PASS_WARNING: &str = "warning: the code graph index pass 
 /// (issue #643). So the warning travels back to the caller as data instead,
 /// and every caller has somewhere to put it. It is never dropped on the
 /// floor.
-pub(crate) struct OpenedGraph {
-    pub(crate) graph: stella_graph::CodeGraph,
+pub struct OpenedGraph {
+    pub graph: stella_graph::CodeGraph,
     /// `Some(message)` when the `index_all` catch-up pass failed and the
     /// answer therefore comes from whatever the index already held.
-    pub(crate) index_warning: Option<String>,
+    pub index_warning: Option<String>,
 }
 
 /// Attach a non-fatal index warning to a rendered answer.
@@ -52,7 +52,7 @@ pub(crate) struct OpenedGraph {
 /// caveat before the possibly-stale frames it qualifies — and below a
 /// failure, where the named error is the headline and the failed index pass
 /// is context for it.
-pub(crate) fn with_index_warning(output: ToolOutput, warning: Option<String>) -> ToolOutput {
+pub fn with_index_warning(output: ToolOutput, warning: Option<String>) -> ToolOutput {
     let Some(warning) = warning else {
         return output;
     };
@@ -82,7 +82,7 @@ pub(crate) fn with_index_warning(output: ToolOutput, warning: Option<String>) ->
 ///
 /// **Synchronous — an async caller must wrap it in `spawn_blocking`**, the
 /// same contract `stella_graph::CodeGraph::index_all` states.
-pub(crate) fn open_or_build(root: &Path) -> Result<OpenedGraph, String> {
+pub fn open_or_build(root: &Path) -> Result<OpenedGraph, String> {
     // The WRITABLE path (creates `.stella/private/`), not the read-only
     // `existing_...` probe — this is the one place a query is allowed to
     // create the index it needs.

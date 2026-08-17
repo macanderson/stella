@@ -19,7 +19,7 @@ use stella_graph::FileVector;
 /// Files embedded per request to the backend. Every provider accepts a
 /// batch; 32 keeps a single request well inside every documented body limit
 /// while still amortising the round trip across a warm-up pass.
-pub(crate) const EMBED_BATCH: usize = 32;
+pub const EMBED_BATCH: usize = 32;
 
 /// The most files one eager (`stella init`) pass will embed.
 ///
@@ -30,7 +30,7 @@ pub(crate) const EMBED_BATCH: usize = 32;
 /// gets a **stated** partial index — the emitted line names how many files
 /// were left — because a partial index that silently ranks a subset is worse
 /// than one that says which subset it ranked.
-pub(crate) const MAX_FILES_PER_EAGER_PASS: usize = 2_000;
+pub const MAX_FILES_PER_EAGER_PASS: usize = 2_000;
 
 /// What an eager pass did, as data the caller renders.
 ///
@@ -40,7 +40,7 @@ pub(crate) const MAX_FILES_PER_EAGER_PASS: usize = 2_000;
 /// and the difference between those is something a human reads, not something
 /// a caller branches on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum WarmOutcome {
+pub enum WarmOutcome {
     /// The pass ran. `remaining` is what the cap left for the lazy path to
     /// pick up on the first semantic query.
     Warmed {
@@ -79,7 +79,7 @@ pub(crate) enum WarmOutcome {
 /// between awaits and a pass killed halfway has committed every batch before
 /// it.
 #[cfg(test)]
-pub(crate) async fn warm_file_vectors(
+pub async fn warm_file_vectors(
     root: &Path,
     embedder: &dyn Embedder,
     limit: usize,
@@ -91,7 +91,7 @@ pub(crate) async fn warm_file_vectors(
 /// receives the cumulative embedded-file count after each batch commits, so
 /// a long pass can be narrated while it happens instead of summarised after.
 /// Display-only — the callback cannot affect the pass.
-pub(crate) async fn warm_file_vectors_with_progress(
+pub async fn warm_file_vectors_with_progress(
     root: &Path,
     embedder: &dyn Embedder,
     limit: usize,
@@ -172,7 +172,7 @@ async fn warm_opened(
 /// cap. The search ladder's lazy catch-up, sharing `stella-graph`'s
 /// pending-scan cursor with the eager pass above so the two warm one index
 /// rather than two.
-pub(crate) async fn catch_up_embeddings(
+pub async fn catch_up_embeddings(
     graph: &stella_graph::CodeGraph,
     embedder: &dyn Embedder,
     fingerprint: &str,

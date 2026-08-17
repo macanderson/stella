@@ -29,6 +29,46 @@ use tokio::process::Command;
 /// a bounded one.
 pub(crate) const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
 
+/// Ceiling on any model-supplied `timeout_secs`. The timeout is the hang
+/// backstop for commands the model itself launches — accepting an arbitrary
+/// u64 lets one tool call disable the backstop entirely (`u64::MAX` ≈ never).
+pub(crate) const MAX_TIMEOUT_SECS: u64 = 600;
+
+/// The effective timeout for a model-supplied `timeout_secs`, clamped to
+/// [`MAX_TIMEOUT_SECS`].
+///
+/// `0` and a missing field both mean "use the tool's default" rather than
+/// "no timeout": a caller that wants longer says so with a number, and one
+/// that says nothing gets the backstop. A non-integer is treated the same
+/// way — this field only ever narrows a backstop, so a malformed value that
+/// silently kept the default is the safe reading, unlike `trace` (#3144)
+/// where the caller believes it armed evidence.
+pub(crate) fn timeout_from(input: &serde_json::Value, default: u64) -> u64 {
+    input
+        .get("timeout_secs")
+        .and_then(|v| v.as_u64())
+        .filter(|&t| t > 0)
+        .unwrap_or(default)
+        .min(MAX_TIMEOUT_SECS)
+}
+
+/// Clip `text` to at most `max_bytes`, never splitting a UTF-8 character.
+///
+/// For previews and echoes inside a larger message (a drifted line, a long
+/// source line), where the point is to show the shape rather than the whole
+/// content — unlike [`truncate_middle_capped`], which keeps both ends because
+/// the tail of a build log is where the summary lives.
+pub(crate) fn truncate_preview(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut cut = max_bytes;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text[..cut].to_string()
+}
+
 // The canonical spawn-env policy (git-repo retargeting, forced color, and
 // the credential scrub) lives in `subprocess_env` so every spawn path shares
 // one helper; these re-exports keep the historical `exec::` paths valid for

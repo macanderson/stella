@@ -66,10 +66,10 @@ const MAX_NAME_HITS: usize = 10;
 /// Configuration rather than an argument keeps one invocation's answer shape
 /// comparable to the next: a depth that changed per call would make two
 /// searches in one session incomparable.
-pub(crate) const DEPTH_ENV: &str = "STELLA_SEARCH_DEPTH";
+pub const DEPTH_ENV: &str = "STELLA_SEARCH_DEPTH";
 
 /// The context allowance one answer may spend, in characters.
-pub(crate) const BUDGET_ENV: &str = "STELLA_SEARCH_BUDGET";
+pub const BUDGET_ENV: &str = "STELLA_SEARCH_BUDGET";
 
 /// Roughly 2,250 tokens at four characters each: large enough that the top
 /// hit can carry a body excerpt, small enough that a search is still cheaper
@@ -79,7 +79,7 @@ const DEFAULT_BUDGET_CHARS: usize = 9_000;
 /// How the ranked hits were produced. Reported in every answer, because a
 /// name match wearing a semantic answer's clothes is worse than no answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Strategy {
+pub enum Strategy {
     /// The query named an indexed symbol exactly, and the graph knows where it
     /// is defined. Not a ranking — a lookup that either hit or did not.
     ///
@@ -97,7 +97,7 @@ pub(crate) enum Strategy {
 
 impl Strategy {
     /// The word that appears in the answer's `via:` line.
-    pub(crate) const fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Strategy::ExactSymbol => "exact symbol name (code-graph definition sites)",
             Strategy::Semantic => "semantic (embedding rank over the code-graph index)",
@@ -109,43 +109,43 @@ impl Strategy {
 
 /// One ranked file on its way to the renderer.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Hit {
+pub struct Hit {
     /// Workspace-relative, forward-slash.
-    pub(crate) path: String,
+    pub path: String,
     /// **Why this file ranked**, as a phrase — not a score column.
     ///
     /// A bare number invites the reader to compare it against the next
     /// strategy's number, and the three strategies do not share a scale.
-    pub(crate) why: String,
+    pub why: String,
     /// The symbol that matched, when the ranking knows one — a chunk hit
     /// does, a file hit does not. The renderer leads its detailed facets
     /// (signature, doc, callers, body) with this symbol instead of whatever
     /// happens to sit first in the file: quoting the body of a one-line
     /// struct because it appears above the function the query is actually
     /// about wastes the answer's most expensive facet.
-    pub(crate) focus: Option<String>,
+    pub focus: Option<String>,
 }
 
 /// Everything one search decided, before it is rendered.
 #[derive(Debug, Clone)]
-pub(crate) struct Answer {
-    pub(crate) hits: Vec<Hit>,
+pub struct Answer {
+    pub hits: Vec<Hit>,
     /// In the order they ran. [`Strategy::ExactSymbol`] contributes alongside
     /// the rung that ranked; between the ranking rungs, more than one means
     /// an earlier one came back empty or unavailable and the next was tried.
-    pub(crate) strategies: Vec<Strategy>,
+    pub strategies: Vec<Strategy>,
     /// Why the semantic strategy did not run, or ran degraded — shown
     /// verbatim, never summarised away.
-    pub(crate) note: Option<String>,
+    pub note: Option<String>,
 }
 
 /// The depth and budget one search runs at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SearchConfig {
+pub struct SearchConfig {
     /// How much to say about the top hit; the tail decays from here.
-    pub(crate) depth: stella_core::search::Depth,
+    pub depth: stella_core::search::Depth,
     /// The hard stop, in characters.
-    pub(crate) budget: usize,
+    pub budget: usize,
 }
 
 impl Default for SearchConfig {
@@ -160,7 +160,7 @@ impl Default for SearchConfig {
 impl SearchConfig {
     /// Read the dial from the environment, falling back to the defaults.
     #[must_use]
-    pub(crate) fn from_env() -> Self {
+    pub fn from_env() -> Self {
         let default = Self::default();
         Self {
             depth: std::env::var(DEPTH_ENV)
@@ -184,12 +184,12 @@ const QUERY_REQUIRED: &str = "`query` is required: what you are looking for, as 
 /// One ranked hit, as data — [`Hit`] with the renderer-only focus dropped,
 /// for the `--format json` envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SearchHit {
+pub struct SearchHit {
     /// Workspace-relative, forward-slash.
-    pub(crate) path: String,
+    pub path: String,
     /// Why this file ranked, as a phrase — see [`Hit::why`] for why it is
     /// words rather than a score column.
-    pub(crate) why: String,
+    pub why: String,
 }
 
 /// One search, as data plus the rendered answer — the seam
@@ -199,16 +199,16 @@ pub(crate) struct SearchHit {
 /// opposite readers: a human reads [`Self::rendered`], and a script asserting
 /// on ranking quality must read hit *order* without parsing prose.
 #[derive(Debug, Clone)]
-pub(crate) struct SearchReport {
+pub struct SearchReport {
     /// The ranked hits, best first — empty when the search failed.
-    pub(crate) hits: Vec<SearchHit>,
+    pub hits: Vec<SearchHit>,
     /// The strategies that ran, in order, as the labels the answer's `via:`
     /// line prints. More than one means an earlier rung came back empty.
-    pub(crate) strategies: Vec<&'static str>,
+    pub strategies: Vec<&'static str>,
     /// Why the semantic strategy did not run, or ran degraded — verbatim.
-    pub(crate) note: Option<String>,
+    pub note: Option<String>,
     /// Exactly what the text door prints.
-    pub(crate) rendered: ToolOutput,
+    pub rendered: ToolOutput,
 }
 
 impl SearchReport {
@@ -249,7 +249,7 @@ impl SearchReport {
 /// across the embedding awaits — the remaining graph calls are single SQLite
 /// reads against a local file, so paying a thread hop for each would cost more
 /// than it saves.
-pub(crate) async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchReport {
+pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchReport {
     report_with(root, query, config, stella_embed::from_env()).await
 }
 
@@ -258,7 +258,7 @@ pub(crate) async fn report(root: &Path, query: &str, config: SearchConfig) -> Se
 /// `stella_embed` itself uses, and the seam that lets a test drive the
 /// misconfigured-embedder path without mutating the environment under a
 /// parallel suite.
-pub(crate) async fn report_with(
+pub async fn report_with(
     root: &Path,
     query: &str,
     config: SearchConfig,
@@ -372,7 +372,7 @@ fn worker_failure(what: &str, error: tokio::task::JoinError) -> String {
 /// the paragraph above forbids — no score from one rung is ever compared
 /// against a score from another, and each hit still says in its own `why:`
 /// which kind of answer it is.
-pub(crate) async fn dispatch(
+pub async fn dispatch(
     graph: Option<&CodeGraph>,
     root: &Path,
     query: &str,
@@ -781,7 +781,7 @@ async fn embed_and_store_chunk_file(
 /// its reasoning: this pass runs before any turn starts, so its budget is
 /// the user's money and patience rather than a round trip, and a workspace
 /// larger than this gets a **stated** partial index rather than a silent one.
-pub(crate) const MAX_FILES_PER_CHUNK_EAGER_PASS: usize = 2_000;
+pub const MAX_FILES_PER_CHUNK_EAGER_PASS: usize = 2_000;
 
 /// What an eager chunk-embedding pass did, as data the caller renders. Total
 /// by construction and never a `Result` — `stella init` must succeed with no
@@ -792,7 +792,7 @@ pub(crate) const MAX_FILES_PER_CHUNK_EAGER_PASS: usize = 2_000;
 /// work, not files-with-no-vector — the two are not interchangeable once a
 /// file can be partially chunked).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ChunkWarmOutcome {
+pub enum ChunkWarmOutcome {
     /// The pass ran. `files_remaining` is what the cap left for the lazy
     /// per-query pass to pick up on the first search.
     Warmed {
@@ -836,7 +836,7 @@ pub(crate) enum ChunkWarmOutcome {
 /// `index_all`, and a second catch-up pass would re-walk and re-hash a tree
 /// nothing has touched since.
 #[cfg(test)]
-pub(crate) async fn warm_chunk_vectors(
+pub async fn warm_chunk_vectors(
     root: &Path,
     embedder: &dyn Embedder,
     limit: usize,
@@ -848,7 +848,7 @@ pub(crate) async fn warm_chunk_vectors(
 /// receives the cumulative embedded-file count as files commit, so a long
 /// pass can be narrated while it happens instead of summarised after.
 /// Display-only — the callback cannot affect the pass.
-pub(crate) async fn warm_chunk_vectors_with_progress(
+pub async fn warm_chunk_vectors_with_progress(
     root: &Path,
     embedder: &dyn Embedder,
     limit: usize,
@@ -952,7 +952,7 @@ async fn warm_chunks_opened(
 /// truncation line — the first because the reader must be able to tell a
 /// meaning match from a name match, the second because a reader who cannot
 /// tell a complete answer from a truncated one stops looking.
-pub(crate) fn render(
+pub fn render(
     graph: Option<&CodeGraph>,
     root: &Path,
     query: &str,

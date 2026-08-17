@@ -26,7 +26,7 @@ use super::engine::Hit;
 /// to exceed this has an index worth building instead. Reaching it is
 /// disclosed in the answer's note — a capped scan whose miss reads as
 /// absence is the failure the whole module argues against.
-pub(crate) const MAX_FILES_SCANNED: usize = 4_000;
+pub const MAX_FILES_SCANNED: usize = 4_000;
 
 /// Bytes read from each file. Enough to cover the imports, the type
 /// declarations and the head of a typical module.
@@ -65,14 +65,14 @@ const PATH_TERM_WEIGHT: usize = 3;
 
 /// What one scan produced, and what it could not see.
 #[derive(Debug)]
-pub(crate) struct ScanOutcome {
+pub struct ScanOutcome {
     /// The ranked hits, best first, at most the caller's limit.
-    pub(crate) hits: Vec<Hit>,
+    pub hits: Vec<Hit>,
     /// How many files matched at all — the caller must disclose a cut list.
-    pub(crate) matched: usize,
+    pub matched: usize,
     /// The walk stopped at [`MAX_FILES_SCANNED`] with the tree unfinished,
     /// so a miss is inconclusive and the caller must say so.
-    pub(crate) exhausted: bool,
+    pub exhausted: bool,
 }
 
 /// Rank files under `root` against `query`, best first.
@@ -81,13 +81,13 @@ pub(crate) struct ScanOutcome {
 /// sorts each directory's entries — a filesystem's readdir order is not
 /// stable across machines, and two runs of one query must rank identically
 /// (invariant 7).
-pub(crate) fn scan_hits(root: &Path, query: &str, limit: usize) -> ScanOutcome {
+pub fn scan_hits(root: &Path, query: &str, limit: usize) -> ScanOutcome {
     scan_hits_bounded(root, query, limit, MAX_FILES_SCANNED)
 }
 
 /// [`scan_hits`] with the file cap injected, so a test can prove the
 /// exhaustion disclosure without writing four thousand files.
-pub(crate) fn scan_hits_bounded(
+pub fn scan_hits_bounded(
     root: &Path,
     query: &str,
     limit: usize,
