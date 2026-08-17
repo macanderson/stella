@@ -9,7 +9,7 @@
 //! own list would revoke a permission nobody asked to revoke — the failure
 //! would look like a tool refusing a path the committed config plainly allows.
 //!
-//! The decision itself lives in `stella_core::workspace_scope::WriteScope`;
+//! The decision itself lives in `stella_core::workspace_scope::SessionScope`;
 //! this module only answers *which directories the host hands it*, which is
 //! why the whole resolution is one pure function over borrowed data
 //! (invariant 2).

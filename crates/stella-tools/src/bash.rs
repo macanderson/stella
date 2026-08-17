@@ -24,23 +24,27 @@
 //! running interpreter as well. An operator who needs shell execution actually
 //! contained wants that chain plus a boundary the whole process sits inside.
 //!
-//! # Read anything; change only what this session owns
+//! # Read the machine; change only what this session owns
 //!
-//! The asymmetry is [`stella_core::workspace_scope`]'s and the reasoning is
-//! there: an agent fixing a build legitimately needs to read system headers,
-//! the toolchain and a dependency's source, and a read cannot damage the
-//! user's tree — while creating, editing or deleting outside the session's own
-//! directories is never something a correct turn needs.
+//! The policy is [`stella_core::workspace_scope`]'s and the reasoning is
+//! there. In short: reads reach the whole filesystem, because an agent fixing
+//! a build needs system headers, the toolchain and a dependency's source, and
+//! a read cannot damage the user's tree. Writes are confined to the session's
+//! workspace plus operator-granted directories. The one thing hidden from
+//! *both* is the origin project's tree — a worktree session cannot see the
+//! project it was cut from, and no session can see its own worktrees, because
+//! a parallel checkout answers questions about the wrong copy of the file
+//! being edited.
 //!
 //! `shell_write_audit` (crate-private) applies that to the command text
-//! **before the spawn**, and its own header is the honest account of what a text audit can and
-//! cannot do. The short version: it is a fence against the mistake that
-//! actually happens (a copied absolute path, an `rm` aimed at the wrong tree,
-//! a redirect into a sibling checkout), it is **not** a sandbox, and it is
-//! biased hard toward permitting — a false refusal breaks a build for a reason
-//! the agent cannot diagnose, which costs more than the rare escape it would
-//! have caught. Confinement is *enforced* in the file tools, which resolve a
-//! path and hold a descriptor.
+//! **before the spawn**, and its own header is the honest account of what a
+//! text audit can and cannot do. The short version: it is a fence against the
+//! mistake that actually happens (a copied absolute path, an `rm` aimed at the
+//! wrong tree, a redirect into a sibling checkout), it is **not** a sandbox,
+//! and it is biased hard toward permitting — a false refusal breaks a build
+//! for a reason the agent cannot diagnose, which costs more than the rare
+//! escape it would have caught. Confinement is *enforced* in the file tools,
+//! which resolve a path and hold a descriptor.
 //!
 //! **There is still no session-wide OS sandbox here.** `STELLA_BASH_SANDBOX`,
 //! the opt-in Seatbelt/`bwrap` wrapper, was removed in #1300 for claiming a
@@ -313,9 +317,27 @@ fn is_identifier_or_path(s: &str) -> bool {
 /// audit that cries wolf gets switched off, at which point it protects
 /// nothing. The commands here cover what actually destroys work in practice.
 const MUTATING_COMMANDS: &[&str] = &[
-    "rm", "rmdir", "mv", "cp", "touch", "mkdir", "truncate", "install", "chmod", "chown", "ln",
-    "dd", "shred",
+    "rm", "rmdir", "touch", "mkdir", "truncate", "chmod", "chown", "shred",
 ];
+
+/// Commands whose **last** positional is the thing they change, and whose
+/// earlier positionals are sources they only read.
+///
+/// Split out from [`MUTATING_COMMANDS`] because scanning every argument of
+/// these refuses the read half: `cp /usr/share/doc/example.toml ./config.toml`
+/// copies *from* a system path *into* the workspace, which is exactly the
+/// read the tool's own schema promises is unrestricted. Refusing it would be
+/// a false positive on one of the most ordinary commands there is.
+///
+/// `dd` is deliberately absent from both lists: its target is `of=…` rather
+/// than a positional, so neither shape describes it and pretending otherwise
+/// would be a rule that reads the wrong argument. It is covered by
+/// [`ASSIGNMENT_TARGET_COMMANDS`] instead.
+const LAST_ARG_MUTATING_COMMANDS: &[&str] = &["mv", "cp", "install", "ln"];
+
+/// Commands that name their write target with a `key=value` argument rather
+/// than a positional — `dd of=/etc/passwd` being the one that matters.
+const ASSIGNMENT_TARGET_COMMANDS: &[&str] = &["dd"];
 
 /// What the shell audit concluded about one command.
 ///
@@ -345,12 +367,36 @@ fn shell_write_audit(command: &str, ctx: &crate::ctx::ToolCtx) -> Option<String>
     let words = shell_words(command);
     let mut index = 0usize;
 
+    // The denied tree is refused for READING too, which is the one place this
+    // audit checks a non-write. `stella_core::workspace_scope` hides the origin
+    // project from a worktree session, and hides worktrees from everyone else,
+    // because a parallel checkout answers questions about the wrong tree. That
+    // reason applies just as much to `cat ../../src/main.rs` as it does to
+    // `read_file` — so any argument naming a hidden path stops the command,
+    // whatever the command is.
+    //
+    // Unlike the write half this cannot be complete: a shell can compute the
+    // path, or `cd` and use a relative one. It closes the accidental case,
+    // which is the one that actually happens.
+    for word in &words {
+        if word.starts_with('-') || word.contains('$') || word.contains('*') {
+            continue;
+        }
+        if let Some(refusal) = ctx.refuse_read(word) {
+            return Some(refusal);
+        }
+    }
+
     while index < words.len() {
         let word = words[index].as_str();
 
         // A redirect names a file the shell itself will create or truncate,
-        // whatever the command around it is.
-        if let Some(target) = word.strip_prefix(">>").or_else(|| word.strip_prefix('>')) {
+        // whatever the command around it is. `2>`, `&>` and `>|` are the same
+        // operator wearing a file descriptor or a clobber flag, so the leading
+        // digits and the trailing `|` come off before the target is read —
+        // without that, `make 2>/etc/x` reads as an ordinary word and is never
+        // checked at all.
+        if let Some(target) = redirect_target(word) {
             let target = if target.is_empty() {
                 words.get(index + 1).map(String::as_str).unwrap_or("")
             } else {
@@ -361,14 +407,18 @@ fn shell_write_audit(command: &str, ctx: &crate::ctx::ToolCtx) -> Option<String>
             }
         }
 
-        if MUTATING_COMMANDS.contains(&word) {
-            // Scan this command's own arguments only: a pipeline or operator
-            // ends its reach, or `rm x && cd /tmp` would have `/tmp` read as
-            // something `rm` was about to delete.
-            for argument in &words[index + 1..] {
-                if matches!(argument.as_str(), ";" | "&" | "&&" | "|" | "||") {
-                    break;
-                }
+        // Every positional is a target.
+        if MUTATING_COMMANDS.contains(&word)
+            // `sed -i` and `tee` edit their positionals in place; for `sed`
+            // the in-place flag is what separates a write from a read. Both
+            // spellings, because `--in-place` is not `-i`.
+            || (word == "sed"
+                && segment_args(&words, index)
+                    .iter()
+                    .any(|w| w.starts_with("-i") || *w == "--in-place"))
+            || word == "tee"
+        {
+            for argument in segment_args(&words, index) {
                 if argument.starts_with('-') {
                     continue;
                 }
@@ -378,18 +428,23 @@ fn shell_write_audit(command: &str, ctx: &crate::ctx::ToolCtx) -> Option<String>
             }
         }
 
-        // `sed -i` and `tee` edit in place; their targets are ordinary
-        // positionals, so the same argument walk covers them once the
-        // in-place flag is what distinguishes them from a read.
-        if (word == "sed" && words[index..].iter().any(|w| w.starts_with("-i"))) || word == "tee" {
-            for argument in &words[index + 1..] {
-                if matches!(argument.as_str(), ";" | "&" | "&&" | "|" | "||") {
-                    break;
-                }
-                if argument.starts_with('-') {
-                    continue;
-                }
-                if let Some(refusal) = refuse_if_outside(argument, ctx) {
+        // Only the LAST positional is a target; the rest are sources this
+        // command merely reads, and reads are unrestricted.
+        if LAST_ARG_MUTATING_COMMANDS.contains(&word)
+            && let Some(target) = segment_args(&words, index)
+                .into_iter()
+                .rfind(|argument| !argument.starts_with('-'))
+            && let Some(refusal) = refuse_if_outside(target, ctx)
+        {
+            return Some(refusal);
+        }
+
+        // The target rides an assignment rather than a positional (`dd of=…`).
+        if ASSIGNMENT_TARGET_COMMANDS.contains(&word) {
+            for argument in segment_args(&words, index) {
+                if let Some(target) = argument.strip_prefix("of=")
+                    && let Some(refusal) = refuse_if_outside(target, ctx)
+                {
                     return Some(refusal);
                 }
             }
@@ -399,6 +454,58 @@ fn shell_write_audit(command: &str, ctx: &crate::ctx::ToolCtx) -> Option<String>
     }
     None
 }
+
+/// The file a redirect writes to, if `word` is one.
+///
+/// Handles the spellings a naive `strip_prefix('>')` misses, each of which is
+/// an ordinary thing to write and would otherwise sail past the audit
+/// unchecked: a file-descriptor prefix (`2>`, `1>>`), the `&>` both-streams
+/// form, and the `>|` clobber override. `>&` is deliberately NOT a redirect to
+/// a file — `2>&1` duplicates a descriptor and names no path.
+fn redirect_target(word: &str) -> Option<&str> {
+    let after_fd = word.trim_start_matches(|c: char| c.is_ascii_digit());
+    let after_fd = after_fd.strip_prefix('&').unwrap_or(after_fd);
+    let rest = after_fd
+        .strip_prefix(">>")
+        .or_else(|| after_fd.strip_prefix('>'))?;
+    // `2>&1` and `>&2` duplicate a descriptor; there is no file here.
+    if rest.starts_with('&') {
+        return None;
+    }
+    Some(rest.strip_prefix('|').unwrap_or(rest))
+}
+
+/// This command's own arguments: everything up to the next operator.
+///
+/// A pipeline or `&&` ends a command's reach — without that bound,
+/// `rm x && cd /tmp` would read `/tmp` as something `rm` was about to delete.
+fn segment_args(words: &[String], command_index: usize) -> Vec<&str> {
+    words[command_index + 1..]
+        .iter()
+        .map(String::as_str)
+        .take_while(|word| !matches!(*word, ";" | "&" | "&&" | "|" | "||"))
+        .collect()
+}
+
+/// Redirect targets that **discard or re-emit** output rather than writing a
+/// file, and are therefore never the loss this boundary exists to prevent.
+///
+/// This is the whole exemption list, and it is deliberately four character
+/// devices rather than a directory. `command -v jq >/dev/null 2>&1` is the
+/// single most common idiom in shell scripting; refusing it makes the shell
+/// unusable for capability probing while protecting nothing, because nothing
+/// is stored. `/dev/stdout` and `/dev/stderr` write to the pipes Stella is
+/// already capturing.
+///
+/// The system temp directory is deliberately **not** here. It was, briefly,
+/// on the argument that `/tmp` is not the user's work — but the rule this
+/// module enforces is that a session writes inside its own directories, and
+/// `/tmp` is outside them. A session that needs scratch space has a scratch
+/// directory of its own (`STELLA_SCRATCH`, granted as a scope root by
+/// `ToolRegistry::write_scope`), which is where that work belongs and which
+/// is cleaned up with the session. An operator who genuinely wants `/tmp`
+/// writable says so with `--allow-dir /tmp`.
+const ALWAYS_WRITABLE: &[&str] = &["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"];
 
 /// The refusal for one argument, when it resolves to something outside the
 /// session's writable directories.
@@ -416,6 +523,9 @@ fn refuse_if_outside(argument: &str, ctx: &crate::ctx::ToolCtx) -> Option<String
         || argument.contains('?')
         || argument.contains('$')
     {
+        return None;
+    }
+    if ALWAYS_WRITABLE.contains(&argument) {
         return None;
     }
     ctx.refuse_write(argument)

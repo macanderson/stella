@@ -295,7 +295,27 @@ impl Tool for ReadFile {
             return ToolOutput::error(refusal);
         }
 
-        let handle = match crate::rootfd::RootHandle::open(root) {
+        // Read from whichever allowed root holds this path, not from the
+        // session root alone.
+        //
+        // Without this, a directory granted by `--allow-dir` was **writable
+        // but not readable**: `write_file` opened the scope root that
+        // `resolve_for_write` chose, while this tool opened `ctx.root()` and
+        // `rootfd` then refused the absolute path as an escape. An agent
+        // could create a file and be told the file it had just written did
+        // not exist — the worst shape a boundary bug can take, because
+        // nothing about the message points at the boundary.
+        let (root, path) = match ctx.resolve_for_read(path) {
+            Some(resolved) => resolved,
+            // Outside every root: fall back to the session root and let
+            // `rootfd` answer. Reads are not scope-confined (see
+            // `stella_core::workspace_scope`), so this preserves the previous
+            // behaviour exactly rather than inventing a new refusal.
+            None => (root.to_path_buf(), path.to_string()),
+        };
+        let path = path.as_str();
+
+        let handle = match crate::rootfd::RootHandle::open(&root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
                 return ToolOutput::error(format!("cannot open workspace root: {e}"));
@@ -380,7 +400,7 @@ impl Tool for ReadFile {
                 // of the FULL content (even for a ranged read): drift asks
                 // "has the file changed since the model looked", and the
                 // whole file was current at that moment.
-                let reads = self.ledger.record_read(root, path, &content);
+                let reads = self.ledger.record_read(&root, path, &content);
                 let lines: Vec<&str> = content.lines().collect();
                 let start = offset.unwrap_or(1).saturating_sub(1);
                 let end = start.saturating_add(limit).min(lines.len());
@@ -467,7 +487,7 @@ impl Tool for ReadFile {
                 // lines or stop at the payload cap, and in both cases there are
                 // bytes on disk the model was never shown.
                 self.ledger.record_coverage(
-                    root,
+                    &root,
                     path,
                     shown == total && clipped_lines == 0 && !payload_capped,
                 );

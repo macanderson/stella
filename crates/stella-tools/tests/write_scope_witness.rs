@@ -12,7 +12,7 @@ use stella_tools::ctx::ToolCtx;
 use stella_tools::registry::Tool;
 use stella_tools::{delete::DeleteFile, edit::EditFile, read::ReadFile, write::WriteFile};
 
-use stella_core::workspace_scope::WriteScope;
+use stella_core::workspace_scope::SessionScope;
 
 /// A session root with a worktree directory already in it, as
 /// `.stella/worktrees/<name>` — the shape every worktree Stella creates takes.
@@ -153,6 +153,107 @@ async fn a_session_rooted_at_a_worktree_may_write_its_own_tree() {
     assert!(!read.is_error(), "its own files are readable: {read:?}");
 }
 
+/// The worked example, end to end: a session that entered a worktree can read
+/// the machine but never the project the worktree came from.
+///
+/// Given `<project>` and `<project>/.stella/worktrees/feature-x`, a session
+/// rooted at the worktree must be able to read an unrelated directory
+/// elsewhere on disk, and must be refused every path under `<project>` — the
+/// parent's source, its config, and a sibling worktree alike — while its own
+/// tree stays fully readable and writable.
+#[tokio::test]
+async fn a_worktree_session_reads_the_machine_but_never_its_origin_project() {
+    let project = tempfile::tempdir().expect("project");
+    let elsewhere = tempfile::tempdir().expect("elsewhere");
+
+    let worktree = project.path().join(".stella/worktrees/feature-x");
+    std::fs::create_dir_all(&worktree).expect("mkdir worktree");
+    std::fs::write(worktree.join("mine.rs"), "pub fn mine() {}\n").expect("write");
+    std::fs::write(project.path().join("parent.rs"), "pub fn parent() {}\n").expect("write");
+    std::fs::write(elsewhere.path().join("other.rs"), "pub fn other() {}\n").expect("write");
+
+    let ctx = ToolCtx::bare(worktree.clone());
+
+    // Its own tree: readable and writable.
+    let own = ReadFile::default()
+        .execute(&serde_json::json!({ "path": "mine.rs" }), &ctx)
+        .await;
+    assert!(!own.is_error(), "its own file must be readable: {own:?}");
+
+    // Somewhere unrelated on the machine: readable.
+    let outside = elsewhere.path().join("other.rs");
+    let out = ReadFile::default()
+        .execute(
+            &serde_json::json!({ "path": outside.to_string_lossy() }),
+            &ctx,
+        )
+        .await;
+    assert!(
+        !out.is_error(),
+        "an unrelated directory stays readable from inside a worktree: {out:?}"
+    );
+
+    // The origin project: invisible, however it is spelled.
+    for spelling in [
+        project
+            .path()
+            .join("parent.rs")
+            .to_string_lossy()
+            .to_string(),
+        "../../../parent.rs".to_string(),
+    ] {
+        let out = ReadFile::default()
+            .execute(&serde_json::json!({ "path": spelling.clone() }), &ctx)
+            .await;
+        let message = message(&out);
+        assert!(
+            message.contains("worktree was cut from"),
+            "`{spelling}` must be refused as the origin project: {message}"
+        );
+    }
+
+    // And writing into it is refused too.
+    let out = WriteFile::default()
+        .execute(
+            &serde_json::json!({
+                "path": project.path().join("planted.rs").to_string_lossy(),
+                "content": "fn planted() {}\n"
+            }),
+            &ctx,
+        )
+        .await;
+    assert!(out.is_error(), "{out:?}");
+    assert!(!project.path().join("planted.rs").exists());
+}
+
+/// `--allow-dir` can never hand a worktree session its origin project back —
+/// the rule stated explicitly, enforced at the tool boundary.
+#[tokio::test]
+async fn a_grant_cannot_re_admit_the_origin_project() {
+    let project = tempfile::tempdir().expect("project");
+    let worktree = project.path().join(".stella/worktrees/feature-x");
+    std::fs::create_dir_all(&worktree).expect("mkdir worktree");
+    std::fs::write(project.path().join("parent.rs"), "pub fn parent() {}\n").expect("write");
+
+    let scope = SessionScope::new(worktree.canonicalize().expect("canonicalize"))
+        .with_additional([project.path().canonicalize().expect("canonicalize")]);
+    let ctx = ToolCtx::bare(worktree.clone()).with_scope(scope);
+
+    let out = ReadFile::default()
+        .execute(
+            &serde_json::json!({
+                "path": project.path().join("parent.rs").to_string_lossy()
+            }),
+            &ctx,
+        )
+        .await;
+    let message = message(&out);
+    assert!(
+        message.contains("worktree was cut from"),
+        "granting the origin must not make it visible: {message}"
+    );
+}
+
 /// An operator-added directory becomes writable — the `--allow-dir` /
 /// `stella.toml` / `/add-dir` capability, at the layer that enforces it.
 #[tokio::test]
@@ -161,7 +262,7 @@ async fn an_operator_added_directory_is_writable_and_others_are_not() {
     let shared = tempfile::tempdir().expect("shared tempdir");
     let forbidden = tempfile::tempdir().expect("forbidden tempdir");
 
-    let scope = WriteScope::new(session.path().canonicalize().expect("canonicalize"))
+    let scope = SessionScope::new(session.path().canonicalize().expect("canonicalize"))
         .with_additional([shared.path().canonicalize().expect("canonicalize")]);
     let ctx = ToolCtx::bare(session.path().to_path_buf()).with_scope(scope);
 
@@ -254,6 +355,24 @@ async fn the_shell_audit_permits_ordinary_build_and_test_commands() {
         "rm -rf $BUILD_DIR",
         "rm -f build/*.o",
         "cp config ~/backup",
+        // The idioms an audit like this most easily breaks. Every one of
+        // these appears in ordinary build and test work, and refusing any of
+        // them would regress benchmarking for no safety gain:
+        //
+        // `/dev/null` discards output rather than writing a file, so refusing
+        // it protects nothing and breaks capability probing; a `cp`/`mv`
+        // SOURCE outside the tree is a read, and reads are unrestricted; and
+        // `2>` is a redirect the scanner must not mistake for a plain word.
+        //
+        // Writing INTO `/tmp` is deliberately absent — it is outside the
+        // workspace and is refused, with the session's own scratch directory
+        // (`STELLA_SCRATCH`, a scope root) as the place that work belongs.
+        "command -v jq >/dev/null 2>&1 && echo yes",
+        "make 2>/dev/null",
+        "cargo test 2>&1 >/dev/null",
+        "cp /usr/share/doc/example/config.toml ./config.toml",
+        "mv /tmp/downloaded.tar.gz ./vendor.tar.gz",
+        "tar xzf /tmp/vendor.tar.gz -C ./vendor",
     ] {
         let out = stella_tools::bash::Bash::new(None)
             .execute(&serde_json::json!({ "command": command }), &ctx)

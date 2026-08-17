@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use stella_core::bus::HookBus;
-use stella_core::workspace_scope::{ScopeDecision, WriteScope};
+use stella_core::workspace_scope::{ScopeDecision, SessionScope};
 
 /// What a tool may touch while it runs: the workspace root for path
 /// resolution, and the session's event channel scoped to this call's
@@ -54,7 +54,7 @@ pub struct ToolCtx {
     /// boundary would be worse than either alone. Defaults to the session
     /// root, so a context built before an operator widened anything confines
     /// to the workspace — the safe direction.
-    scope: WriteScope,
+    scope: SessionScope,
 }
 
 impl ToolCtx {
@@ -68,7 +68,7 @@ impl ToolCtx {
         bus: Option<HookBus>,
         allowed: Vec<String>,
     ) -> Self {
-        let scope = WriteScope::new(canonical_or_given(&root));
+        let scope = SessionScope::new(canonical_or_given(&root));
         Self {
             root,
             tool: tool.into(),
@@ -82,7 +82,7 @@ impl ToolCtx {
     /// alone — how an operator's `--allow-dir` / `stella.toml` widening
     /// reaches the tools.
     #[must_use]
-    pub fn with_scope(mut self, scope: WriteScope) -> Self {
+    pub fn with_scope(mut self, scope: SessionScope) -> Self {
         self.scope = scope;
         self
     }
@@ -92,7 +92,7 @@ impl ToolCtx {
     /// reports the drop.
     #[must_use]
     pub fn bare(root: PathBuf) -> Self {
-        let scope = WriteScope::new(canonical_or_given(&root));
+        let scope = SessionScope::new(canonical_or_given(&root));
         Self {
             root,
             tool: String::new(),
@@ -112,7 +112,7 @@ impl ToolCtx {
 
     /// Where this session may write, and what it may not read.
     #[must_use]
-    pub fn scope(&self) -> &WriteScope {
+    pub fn scope(&self) -> &SessionScope {
         &self.scope
     }
 
@@ -158,6 +158,49 @@ impl ToolCtx {
             .strip_prefix(root)
             .map_err(|_| self.refusal(&absolute, ScopeDecision::OutsideScope))?;
         Ok((root.clone(), relative.to_string_lossy().into_owned()))
+    }
+
+    /// Resolve a path for a **read**, returning the allowed root that holds it
+    /// and its path relative to that root.
+    ///
+    /// **Reads are not confined to the scope** — the machine is readable, and
+    /// this function's job is only to pick a root that lets `rootfd` open the
+    /// path safely. Three cases, in order:
+    ///
+    /// 1. inside a writable root — open that root, so a `--allow-dir`
+    ///    directory is readable as well as writable (without this the two
+    ///    disagreed, and an agent could write a file it was then told did not
+    ///    exist);
+    /// 2. inside the session root — open the session root, exactly as before;
+    /// 3. anywhere else on the machine — open the file's own parent
+    ///    directory. `rootfd` still walks with `O_NOFOLLOW` from a held
+    ///    descriptor, so the leaf cannot be swapped mid-open; the root is
+    ///    simply narrower than a whole tree because there is no tree to
+    ///    confine to.
+    ///
+    /// `None` only for a path with no parent at all — a bare filesystem
+    /// root, which is a directory and not readable as a file anyway.
+    pub fn resolve_for_read(&self, path: &str) -> Option<(PathBuf, String)> {
+        let absolute = self.absolutize(path);
+        let normalized = lexically_normalize(&absolute);
+        let mut best: Option<&PathBuf> = None;
+        for root in self.scope.roots() {
+            if normalized.starts_with(root)
+                && best
+                    .is_none_or(|current| root.components().count() > current.components().count())
+            {
+                best = Some(root);
+            }
+        }
+        if let Some(root) = best
+            && let Ok(relative) = normalized.strip_prefix(root)
+            && !relative.as_os_str().is_empty()
+        {
+            return Some((root.clone(), relative.to_string_lossy().into_owned()));
+        }
+        let parent = normalized.parent()?;
+        let leaf = normalized.file_name()?;
+        Some((parent.to_path_buf(), leaf.to_string_lossy().into_owned()))
     }
 
     /// Whether a model-supplied path may be written, as a refusal string when
@@ -262,14 +305,28 @@ impl ToolCtx {
     pub fn scope_refusal(&self, path: &Path, decision: ScopeDecision) -> String {
         match decision {
             ScopeDecision::Allowed => String::new(),
-            ScopeDecision::DeniedWorktree => format!(
+            // The two shapes the same denial takes, phrased for whichever
+            // session hit it. Both name the remedy the AGENT can perform;
+            // "ask the user to widen it" is a dead end mid-turn.
+            ScopeDecision::DeniedOrigin if self.scope.in_worktree() => format!(
+                "`{}` is inside `{}`, the project this worktree was cut from. \
+                 A worktree is a separate checkout of that project at another \
+                 revision, so reading the original tree would answer your question \
+                 about the wrong copy of the file you are editing. Everything else on \
+                 this machine is readable; that one tree is not, until the session \
+                 leaves this worktree. Work inside `{}`.",
+                path.display(),
+                self.scope.origin().display(),
+                self.scope.workspace().display()
+            ),
+            ScopeDecision::DeniedOrigin => format!(
                 "`{}` is inside `{}`, which holds other sessions' git worktrees. \
                  Those are separate checkouts of this repository at other revisions: \
                  reading one returns a different branch's version of the file you are \
                  working on, and writing one changes work this session does not own. \
                  Work in the session root instead.",
                 path.display(),
-                stella_core::workspace_scope::DENIED_SUBPATH
+                stella_core::workspace_scope::WORKTREES_SUBPATH
             ),
             ScopeDecision::OutsideScope => {
                 let roots = self

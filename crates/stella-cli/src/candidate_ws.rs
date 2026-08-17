@@ -135,7 +135,7 @@ use oracle_writes::{ObservedTestRunner, OracleWrites};
 use witness_tools::WitnessToolExecutor;
 
 /// Where every worktree Stella creates lives, relative to the repository
-/// toplevel — the same path `stella_core::workspace_scope::DENIED_SUBPATH`
+/// toplevel — the same path `stella_core::workspace_scope::WORKTREES_SUBPATH`
 /// denies to every session but the one that entered it, and the same one
 /// `stella_fleet::git` already used for worker worktrees.
 ///
@@ -143,7 +143,7 @@ use witness_tools::WitnessToolExecutor;
 /// `denied_dir`, because this module needs it in both forms: joined onto the
 /// toplevel to place a worktree, and compared against `git ls-files` output to
 /// keep one out of a snapshot.
-const WORKTREES_REL: &str = stella_core::workspace_scope::DENIED_SUBPATH;
+const WORKTREES_REL: &str = stella_core::workspace_scope::WORKTREES_SUBPATH;
 
 /// Create the worktrees directory and make it **invisible to git**.
 ///

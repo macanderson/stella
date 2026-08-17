@@ -137,6 +137,10 @@ pub struct ToolRegistry {
     /// Empty by default: a session confines to its own tree until an operator
     /// says otherwise.
     extra_write_dirs: std::sync::RwLock<Vec<PathBuf>>,
+    /// The session scratch directory, when the scratch plane initialized —
+    /// canonicalized once at construction so `write_scope` can name it as a
+    /// writable root without a syscall per tool call.
+    scratch_dir: Option<PathBuf>,
 }
 
 impl ToolRegistry {
@@ -185,7 +189,7 @@ impl ToolRegistry {
                 sub_agent_dispatcher.clone(),
             )),
             Arc::new(crate::environment::GetEnvironment {
-                scratch_dir: scratch_path,
+                scratch_dir: scratch_path.clone(),
             }),
         ];
         match scratch {
@@ -219,6 +223,9 @@ impl ToolRegistry {
             policy_bridge: std::sync::Mutex::new(None),
             events: std::sync::RwLock::new(None),
             extra_write_dirs: std::sync::RwLock::new(Vec::new()),
+            scratch_dir: scratch_path
+                .as_ref()
+                .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone())),
         }
     }
 
@@ -247,20 +254,32 @@ impl ToolRegistry {
             .unwrap_or_else(|p| p.into_inner()) = canonical;
     }
 
-    /// This session's write scope: the workspace root plus whatever
-    /// [`Self::allow_write_dirs`] added.
+    /// This session's write scope: the workspace root, the session scratch
+    /// directory, and whatever [`Self::allow_write_dirs`] added.
+    ///
+    /// The scratch directory is in the scope because the prompt tells the
+    /// model to put working files there — "keep intermediate notes and working
+    /// data in the scratch state plane, never as files in the workspace" — and
+    /// `bash` is handed its path as `STELLA_SCRATCH`. Instructing a model to
+    /// write somewhere and then refusing the write is the worst of both: the
+    /// agent obeys, is refused, and has no way to tell a policy from a bug.
+    /// It lives outside the workspace by design (a `tempfile::TempDir`, so it
+    /// leaves nothing behind), which is exactly why it needs naming here.
     #[must_use]
-    pub fn write_scope(&self) -> stella_core::workspace_scope::WriteScope {
+    pub fn write_scope(&self) -> stella_core::workspace_scope::SessionScope {
         let root = self
             .root
             .canonicalize()
             .unwrap_or_else(|_| self.root.clone());
-        stella_core::workspace_scope::WriteScope::new(root).with_additional(
-            self.extra_write_dirs
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .iter()
-                .cloned(),
+        let scratch = self.scratch_dir.iter().cloned();
+        stella_core::workspace_scope::SessionScope::new(root).with_additional(
+            scratch.chain(
+                self.extra_write_dirs
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .iter()
+                    .cloned(),
+            ),
         )
     }
 
