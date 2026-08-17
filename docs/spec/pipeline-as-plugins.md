@@ -427,7 +427,104 @@ Track A actually delivered a platform.
 
 ---
 
-## 10. Definition of done for the whole plan
+## 10. Track D — self-driving leaves core
+
+Self-driving differs from the pipeline in one respect that matters: **it is
+genuinely in `stella-core` today.** The pipeline left core long ago (core
+declares no `stella-pipeline` and holds no witness, ladder or flip code); this
+does not. `crates/stella-core/src/self_driving.rs` is 945 lines inside the
+engine crate.
+
+### What is there now
+
+The feature is already split three ways, and the split is good:
+
+| Layer | Where | What |
+|---|---|---|
+| Decision | `crates/stella-core/src/self_driving.rs` | The AIMD controller sizing a cycle to its machine, the aperture ladder, the dry-streak oracle, digest normalization for the dedup set, the ledger folds. Pure, synchronous, owned data, property-tested. |
+| I/O | `crates/stella-cli/src/self_driving_cmd.rs` (+ `probes.rs`, `state.rs`) | Machine probes, state files, process spawning. Feeds results in, writes decisions out. |
+| Observation | `crates/stella-observatory/src/self_driving.rs` | Read-only fold over `~/.stella/self-driving/<slug>/` JSONL. Never writes. |
+
+There is also a shell driver (`scripts/self-driving.sh`) that delegates its
+decisions to the CLI verbs rather than carrying a second copy (#1548), a gate
+step `self-driving-test` (`scripts/test-self-driving.sh`) covering the control
+logic hermetically, and a daemon path (`crates/stella-cli/src/daemon/`).
+Two specs already exist: `doc:self-driving-missions` and
+`doc:self-driving-foundry`.
+
+### Why it is in core, and why that is now wrong
+
+The module doc gives the reason plainly: the deterministic half lives in core so
+"the model never has to re-derive it and cannot get it subtly wrong", and
+keeping it free of I/O is what makes it property-testable.
+
+That reasoning is sound and the code is good. What has changed is the premise —
+core is meant to be a bare loop with minimal tools and one model, and an
+opinionated perpetual-delivery policy is not part of a bare loop. The AIMD
+controller and the aperture ladder are exactly the kind of policy Vera is
+leaving for. The purity that justified its placement is a property of the code,
+not of the crate it sits in: it stays property-testable in a plugin.
+
+### The honest problem: granularity
+
+The wrapper contract is defined **per turn** — `before_turn`, `after_turn`,
+`judge`, `again?`. Self-driving is an **outer** loop over whole runs: a cycle is
+fix-a-batch → audit → file → benchmark → ship, and each of those is many turns.
+
+So self-driving does not simply drop onto the four points, and this plan should
+not pretend otherwise. Three options, and this needs a decision rather than a
+default:
+
+1. **`again?` at run granularity.** Treat a self-driving cycle as the unit and
+   let the plugin request another one. Requires the socket to admit a second
+   granularity, which is a real addition to #3380 rather than a use of it.
+2. **A host-verb plugin.** Self-driving does not participate in a turn at all —
+   it *drives* Stella from outside, the way `scripts/self-driving.sh` already
+   does. Then it needs a plugin-callable command surface, not the wrapper
+   socket, and it is closer to `stella-serve`'s shape than to Vera's.
+3. **Both.** The cycle controller is option 2; anything it wants to enforce
+   inside a single turn is a separate wrapper plugin.
+
+**Recommendation: option 2, with the pure core moved as-is.** Self-driving's
+relationship to the engine is that of a host, and the tree already has a proven
+out-of-process host seam. Forcing it through a turn-granularity socket would
+widen that socket for a single caller — the kind of generalisation that is
+cheaper to add later, when a second caller exists to shape it.
+
+### The work
+
+- **D1.** Move `self_driving.rs` and its tests out of `stella-core` unchanged.
+  Pure functions over owned data port without edits; the property tests come
+  with them. Core's `lib.rs` loses the module.
+- **D2.** Decide the granularity question above. Blocking on D3.
+- **D3.** Give the plugin a command surface — whatever `scripts/self-driving.sh`
+  needs to drive a cycle, expressed so an out-of-process plugin can call it.
+  Reuse `stella-serve`'s framing if the spike in §5.3 selects a compatible
+  transport.
+- **D4.** Keep the observatory view working. It reads JSONL from a fixed path
+  and never writes; if the plugin keeps writing the same shapes, the view needs
+  no change. Verify this rather than assume it — a broken dashboard is how a
+  monitor gets muted.
+- **D5.** Keep `make self-driving-test` green. The control logic it covers is
+  moving, not changing, so the harness should follow it with its assertions
+  intact. If an assertion has to be relaxed to make the move pass, the move
+  changed behaviour and that is a bug in D1.
+
+### Capabilities self-driving needs that the pipeline does not
+
+Concretely, from the current implementation: machine probing (disk, memory,
+compute — `self_driving_cmd/probes.rs`), durable cross-run state under
+`~/.stella/self-driving/` (`state.rs`), process spawning for tools and
+benchmarks, a daemon/scheduling path (`crates/stella-cli/src/daemon/`), and —
+per the fullauto phases — GitHub issue filing and release installation.
+
+None of these belong in the wrapper socket. All of them argue for option 2: they
+are host powers, and a plugin holding them needs the authority story of §A1 to
+be finished first, not approximated.
+
+---
+
+## 11. Definition of done for the whole plan
 
 - `stella-cli/Cargo.toml` does not declare `stella-pipeline`.
 - Core ships zero built-in wrappers and one role (`default`); every other role
@@ -446,7 +543,7 @@ Track A actually delivered a platform.
 
 ---
 
-## 11. Risks
+## 12. Risks
 
 - **The socket ships Rust-shaped.** Mitigated by §5's three commitments. This is
   the risk most likely to be discovered too late.
