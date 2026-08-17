@@ -28,14 +28,25 @@ it a gate rather than documentation:
   signal set, evaluated by a pure function. A condition naming a signal the
   host does not publish is a load error — a manifest that quietly does nothing
   is worse than one that refuses to load.
-- **The stage graph is load-checked.** A condition reading a signal that only
-  a *later* stage publishes is rejected at load, so a hand-written variant
-  fails with a reason instead of wedging mid-run.
+- **The stage graph is load-checked, on both axes.** A condition reading a
+  signal that only a *later* stage publishes is rejected at load — and so is
+  one reading a signal whose publisher is declared earlier but **conditional**,
+  because that stage produces nothing on the turns it is skipped. A
+  hand-written variant fails with a reason instead of wedging mid-run.
+
+`Wrapper::resolve` is the reader that makes those rules load-bearing: the host
+fills in `SignalValues` — one field per published signal, no `Default`, so an
+unpublished signal is not representable, let alone silently `false` — and gets
+back the ordered `StageProgram` that turn runs. The pair of graph rules above
+is exactly what makes resolution **total**: a manifest that loads resolves for
+every possible set of signal values, which `tests/wrapper_program.rs` asserts
+as a proptest property rather than a promise.
 
 Nothing here dispatches a stage: the four wrapper interception points are
 #3380 and do not exist yet, so a stage name is a declared name that
-load-checks. The crate takes no engine dependency by contract, which is what
-lets the load-time contract be complete ahead of the socket it describes.
+load-checks and resolves. The crate takes no engine dependency by contract,
+which is what lets the load-time contract be complete ahead of the socket it
+describes.
 
 `[[capabilities]]` (`doc:pipeline-as-plugins` §A1) is the other half of a
 consent document. `[loop]` says what a plugin may do *inside* a turn; this
@@ -125,6 +136,9 @@ before it crosses.
 - `src/wrapper.rs` — the `[wrapper]` block: `Wrapper`, `WrapperStage`, the
   closed `StageName` and `Signal` vocabularies, the `Condition` grammar and
   its parser, and the load-time stage-graph check.
+- `src/program.rs` — the reader: `SignalValues` (the host's answer for every
+  published signal, total by construction), `Condition::evaluate`,
+  `Wrapper::resolve`, and the resolved `StageProgram`.
 - `src/consent.rs` — the install-consent surface: `Capability` (the
   `[[capabilities]]` entry and its validation), `highest_risk`, and
   `consent_text`, the pure renderer of the whole consent document.
@@ -136,16 +150,26 @@ before it crosses.
 - `tests/wrapper_stages.rs` + `tests/fixtures/wrapper-*.toml` — #3381's
   acceptance: the shipped stage order and a cheaper second variant, differing
   in nothing but their text, plus one rejection test per load rule.
+- `tests/wrapper_program.rs` — #3408's acceptance for the reader: a manifest
+  resolves into a stage order, and the proptest property that the two graph
+  rules make that resolution total, deterministic and order-preserving for
+  every set of signal values.
 - `tests/install_consent.rs` + `tests/fixtures/self-driving.toml` — A1's
   acceptance: the widest grant anyone will ask for, written out, and the
   proof that it is both expressible here and fully shown before install.
 
 ## Consumers
 
-No crate depends on this one yet, deliberately: this is the first slice of
-#3245, and the host that consumes it (manifest loading, the install prompt
-that shows `consent_text`, Stop-gate binding via the bounded verification
-loop, the subloop runner) arrives with slices B–E of that epic and with
+`stella-pipeline` is the first, and only for the `[wrapper]` half: its
+`src/variant.rs` embeds `variants/classic.toml`, fills in `SignalValues` from
+one turn's facts, and resolves the built-in stage order through
+`Wrapper::resolve` (#3408). It consults the answer; it is not yet *driven* by
+it, because the four wrapper interception points are #3380.
+
+The rest is still deliberately unconsumed: this is the first slice of #3245,
+and the host for the other blocks (manifest loading, the install prompt that
+shows `consent_text`, Stop-gate binding via the bounded verification loop, the
+subloop runner) arrives with slices B–E of that epic and with
 `doc:pipeline-as-plugins` §A4. The crate exists first because every one of
 those slices needs the same validated answer to "what did this plugin
 declare?" — and because A1's requirement is that the authority a plugin will

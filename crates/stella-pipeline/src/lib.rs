@@ -56,6 +56,13 @@
 //!   `docs/spec/witness-protocol.md` §7.
 //! - **L-M4** — triage runs with `max_retries = 0` under a latency ceiling.
 //!   [`pipeline::Pipeline::run`].
+//! - **The stage order is a manifest, not a set of branches** (#3381/#3408).
+//!   `variants/classic.toml` declares the order this crate has run since the
+//!   staged pipeline landed, and [`variant`] resolves it against one turn's
+//!   facts into an ordered stage program. [`pipeline`] still takes its own
+//!   branches: binding the resolved program to them needs the four wrapper
+//!   interception points (#3380), so today the manifest is the readable,
+//!   testable statement of the order rather than its driver.
 //!
 //! # The port surface the CLI glue implements
 //!
@@ -108,6 +115,7 @@ pub mod roster;
 pub mod scope;
 pub mod scratch;
 pub mod triage;
+pub mod variant;
 pub mod verify;
 pub mod witness;
 
@@ -134,6 +142,7 @@ pub use roster::{
     AgentId, Assignment, AssignmentOverride, IndependenceLoss, Roster, RosterError, default_agent,
 };
 pub use triage::TaskClass;
+pub use variant::{CLASSIC_MANIFEST, CLASSIC_VARIANT_ID, VariantError, classic, classic_program};
 pub use verify::{FlipOracle, FlipState, LadderDecision, LadderInputs};
 pub use witness::airlock::{
     DisclosureGrain, FailureBrief, FailureFingerprint, LeakKind, SealedFailure, SymptomClass,

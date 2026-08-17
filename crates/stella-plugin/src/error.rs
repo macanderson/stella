@@ -336,4 +336,54 @@ pub enum ManifestError {
         /// The stage that publishes it, declared later or not at all.
         publisher: StageName,
     },
+
+    /// A condition read a signal published by an earlier stage that is itself
+    /// **conditional**, so some resolutions skip the publisher and the read
+    /// has no value at all.
+    ///
+    /// The half of the stage-graph check that declaration order alone cannot
+    /// see, and it only became checkable once something resolved a manifest
+    /// (`crate::program`): "declared earlier" answers *whether the publisher
+    /// appears*, never *whether it ran*. The grammar has no conjunction, so a
+    /// reader cannot say "when the publisher ran, and…" — which makes this
+    /// shape unconditionally a hazard rather than a case an author could
+    /// guard. Rejecting it at load is what lets
+    /// [`Wrapper::resolve`](crate::Wrapper::resolve) be total for every
+    /// possible set of signal values.
+    #[error(
+        "[wrapper] stage \"{stage}\" reads \"{signal}\", which \"{publisher}\" \
+         publishes — but \"{publisher}\" is conditional, so a turn that skips \
+         it would leave \"{signal}\" with no value; make \"{publisher}\" \
+         unconditional or drop the condition that reads it"
+    )]
+    PublisherMayBeSkipped {
+        /// The stage whose condition could read a fact nothing produced.
+        stage: StageName,
+        /// The signal whose existence depends on a conditional stage.
+        signal: Signal,
+        /// The conditional stage that publishes it.
+        publisher: StageName,
+    },
+
+    /// Resolution reached a condition whose publishing stage did not run.
+    ///
+    /// Unreachable for a manifest that came from
+    /// [`PluginManifest::from_toml_str`](crate::PluginManifest::from_toml_str)
+    /// — [`PublisherMayBeSkipped`](Self::PublisherMayBeSkipped) rejects that
+    /// shape at load. It exists so a hand-built [`Wrapper`](crate::Wrapper)
+    /// that bypassed the constructor still cannot make the evaluator read an
+    /// unproduced fact as `false`: the silent answer is the one failure mode
+    /// this crate refuses.
+    #[error(
+        "[wrapper] stage \"{stage}\" reads \"{signal}\", but \"{publisher}\", \
+         which publishes it, did not run in this resolution"
+    )]
+    SignalNotProduced {
+        /// The stage whose condition could not be answered.
+        stage: StageName,
+        /// The signal nothing produced.
+        signal: Signal,
+        /// The stage that publishes it, skipped this turn.
+        publisher: StageName,
+    },
 }

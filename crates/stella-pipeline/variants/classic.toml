@@ -1,0 +1,73 @@
+# The built-in default wrapper variant: the stage order this pipeline has run
+# since the staged pipeline landed, declared instead of hardcoded (#3381).
+#
+# This file is SHIPPED, not a fixture: `src/variant.rs` embeds it with
+# `include_str!` and resolves it through `stella_plugin`'s loader, so the order
+# below is the one the code reads. `id` is what the store's `pipeline_variant`
+# column records (#3388) — the join key of every per-variant comparison — and
+# `classic` is the id a run of today's order writes.
+#
+# ## What this declares, exactly
+#
+# The stage ORDER, and the ceremony conditions the closed grammar can express.
+# It is deliberately not more than that. Three of today's gates are conjunctions
+# of facts the manifest cannot yet name, and the honest thing is to say so here
+# rather than let a reader believe the file is the whole decision:
+#
+#   * the conversational fast path is an early RETURN, not a skipped stage — a
+#     chat turn leaves the pipeline after triage, which a stage list has no way
+#     to say;
+#   * `witness` additionally requires the witness-author role to be enabled,
+#     triage's `wants_witness()`, and an independent author to be resolvable
+#     (`Pipeline::can_author_independent_witness`);
+#   * `verify` additionally honours the zero-diff guard for a simple lookup.
+#
+# The grammar has no conjunction on purpose (`doc:turn-loop-wrappers` §9.4: a
+# Turing-complete condition in a manifest is a second program with no gate on
+# it), so closing that gap means publishing more host signals — a reviewable
+# addition, one at a time — never a richer `if`. Tracked in #3408.
+name = "classic"
+description = "Stella's built-in staged pipeline: the stage order it has shipped since the staged pipeline landed."
+
+[loop]
+participation = "steering"
+
+[wrapper]
+id = "classic"
+
+# Triage first: it publishes the signals every later condition reads.
+[[wrapper.stages]]
+name = "triage"
+
+[[wrapper.stages]]
+name = "recall"
+
+# "Empty questions skip the stage byte-for-byte" — pipeline.rs's own words
+# (L-E2, #1778).
+[[wrapper.stages]]
+name = "research"
+if = "questions > 0"
+
+[[wrapper.stages]]
+name = "plan"
+if = "plans"
+
+# The scope-review gate rides with the planner: a reviewer who asks for a
+# different scope sends us back to it, so the two share one condition (L-E5).
+[[wrapper.stages]]
+name = "scope"
+if = "plans"
+
+[[wrapper.stages]]
+name = "execute"
+
+# Witness authoring is demand-driven and runs AFTER execution (L-E11 front
+# half): with no `--test-command` configured, the run must build its own
+# measuring stick.
+[[wrapper.stages]]
+name = "witness"
+if = "no-test-command"
+
+[[wrapper.stages]]
+name = "verify"
+if = "verifies"

@@ -28,4 +28,10 @@ thiserror.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+# The wrapper resolver's claim is universal — "a manifest that loads resolves
+# for every set of signal values" — so it is asserted over generated manifests
+# rather than a handful of examples, matching how the rest of the workspace
+# tests pure engine logic (AGENTS.md § Testing approach). Dev-only: it is not
+# a workspace dependency of this near-leaf crate.
+proptest.workspace = true
 serde_json.workspace = true

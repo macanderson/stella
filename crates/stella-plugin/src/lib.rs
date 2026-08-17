@@ -15,7 +15,11 @@
 //! hardcoded. See [`Condition`] for the closed condition grammar and the
 //! load-time stage-graph check that make "a condition naming a signal the
 //! host does not publish is a load error" mechanical rather than
-//! aspirational.
+//! aspirational, and [`Wrapper::resolve`] for the reader that turns a
+//! declaration into an answer: the host fills in [`SignalValues`] — total by
+//! construction, so an unpublished signal is not representable, let alone
+//! silently `false` — and gets back the ordered [`StageProgram`] this turn
+//! will run.
 //!
 //! `[[capabilities]]` (`doc:pipeline-as-plugins` §A1) is the other half of a
 //! consent document: what the plugin asks to reach *outside* the turn,
@@ -31,6 +35,7 @@
 mod consent;
 mod error;
 mod manifest;
+mod program;
 mod wrapper;
 
 pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
@@ -39,4 +44,5 @@ pub use manifest::{
     FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, Participation, PluginManifest, Role,
     Subloop, TamperPolicy,
 };
+pub use program::{SignalValues, StageProgram};
 pub use wrapper::{CompareOp, Condition, Signal, SignalKind, StageName, Wrapper, WrapperStage};

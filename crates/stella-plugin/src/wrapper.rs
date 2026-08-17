@@ -21,9 +21,13 @@
 //! it.
 //!
 //! It also load-checks the stage graph: a condition reading a signal that some
-//! *later* stage publishes is rejected at load, so the failure mode of a
+//! *later* stage publishes is rejected at load, and so is one reading a signal
+//! whose publisher is declared earlier but **conditional** — that stage
+//! produces nothing on the turns it is skipped. So the failure mode of a
 //! hand-written variant is a rejection with a reason instead of a wedged run at
-//! round three.
+//! round three. [`crate::program`] is what makes the second rule necessary and
+//! what proves the pair sufficient: a manifest that loads resolves for every
+//! possible set of signal values.
 //!
 //! # Scope — what this module deliberately does not do
 //!
@@ -490,7 +494,8 @@ impl Wrapper {
     /// Three checks, in the order a reader meets a problem: the block itself
     /// is well-formed, each condition parses against the closed grammar, and
     /// the stage graph is satisfiable — no condition reads a signal that only
-    /// a later stage publishes.
+    /// a later stage publishes, or that an earlier but *conditional* stage
+    /// might not publish at all.
     pub(crate) fn validate(&self) -> Result<(), ManifestError> {
         if self.id.trim().is_empty() {
             return Err(ManifestError::EmptyWrapperId);
@@ -505,7 +510,14 @@ impl Wrapper {
         // against "is the publisher anywhere in the list" — is what makes an
         // out-of-order manifest a load error instead of a run that reads a
         // fact nothing has produced yet.
+        //
+        // `at_risk` is the second half of the same question, and it is the
+        // half declaration order cannot answer: a *conditional* publisher is
+        // declared earlier and still produces nothing on the turns its own
+        // condition is false. Kept as its own set so the rejection can say
+        // which of the two mistakes was made — the fixes differ.
         let mut published: Vec<Signal> = Vec::new();
+        let mut at_risk: Vec<Signal> = Vec::new();
         let mut seen: Vec<StageName> = Vec::with_capacity(self.stages.len());
         for stage in &self.stages {
             if seen.contains(&stage.name) {
@@ -513,20 +525,32 @@ impl Wrapper {
             }
             seen.push(stage.name);
 
-            if let Some(condition) = stage.condition()? {
+            let condition = stage.condition()?;
+            if let Some(condition) = condition {
                 let signal = condition.signal();
-                if let Some(publisher) = signal.publisher()
-                    && !published.contains(&signal)
-                {
-                    return Err(ManifestError::SignalNotYetPublished {
-                        stage: stage.name,
-                        signal,
-                        publisher,
-                    });
+                if let Some(publisher) = signal.publisher() {
+                    if at_risk.contains(&signal) {
+                        return Err(ManifestError::PublisherMayBeSkipped {
+                            stage: stage.name,
+                            signal,
+                            publisher,
+                        });
+                    }
+                    if !published.contains(&signal) {
+                        return Err(ManifestError::SignalNotYetPublished {
+                            stage: stage.name,
+                            signal,
+                            publisher,
+                        });
+                    }
                 }
             }
 
-            published.extend_from_slice(stage.name.publishes());
+            if condition.is_some() {
+                at_risk.extend_from_slice(stage.name.publishes());
+            } else {
+                published.extend_from_slice(stage.name.publishes());
+            }
         }
 
         Ok(())
