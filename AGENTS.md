@@ -438,9 +438,15 @@ one verifier-tier call the pipeline still spends, and it survives because it
 creates the oracle rather than substituting for one — its test either goes
 fail→pass or does not, and that is decided by running it. Everything downstream
 is deterministic: `ladder_decision`
-(`crates/stella-pipeline/src/verify.rs`) is terminal at all five of its outcomes
-(`SubmitFast`, `Revise`, `NothingAttempted`, `Unverifiable`, `Unverified`), and
-the verify stage emits the `Verdict` event from that answer directly — the
+(`crates/stella-pipeline/src/verify.rs`) is terminal at **every** one of its
+outcomes — the `LadderDecision` enum beside it is the enumeration, and today
+that is `SubmitFast`, `Revise`, `WitnessUnsatisfiable`, `NothingAttempted`,
+`Unverifiable` and `Unverified`. The count is deliberately not the load-bearing
+half of that sentence: what matters is that no arm escalates to a model, which
+the enum's own doc comments each state. (This paragraph said "all five" and
+omitted `WitnessUnsatisfiable` for as long as that variant existed — #3473,
+the shared-cell drift this file warns about, in this file.) The verify stage
+emits the `Verdict` event from that answer directly — the
 pipeline never emits `StageKind::Verdict` itself, which is why the rank above is
 an ordering, not a stage the run passes through. The model verdict and the
 distress-guidance call are gone (#2584), structurally rather than by default —
