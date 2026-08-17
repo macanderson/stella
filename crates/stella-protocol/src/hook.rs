@@ -106,19 +106,22 @@ mod tests {
         "PreCompact",
     ];
 
+    /// Its position in [`HookEvent::ALL`], derived by a match so the compiler
+    /// forces a sixth variant to be placed rather than silently omitted.
+    fn declared_index(event: HookEvent) -> usize {
+        match event {
+            HookEvent::SessionStart => 0,
+            HookEvent::PreToolUse => 1,
+            HookEvent::PostToolUse => 2,
+            HookEvent::Stop => 3,
+            HookEvent::PreCompact => 4,
+        }
+    }
+
     #[test]
     fn every_variant_is_listed() {
-        // Exhaustive by construction: adding a variant makes this match fail
-        // to compile until `ALL` grows with it.
-        for event in HookEvent::ALL {
-            let listed = match event {
-                HookEvent::SessionStart => HookEvent::SessionStart,
-                HookEvent::PreToolUse => HookEvent::PreToolUse,
-                HookEvent::PostToolUse => HookEvent::PostToolUse,
-                HookEvent::Stop => HookEvent::Stop,
-                HookEvent::PreCompact => HookEvent::PreCompact,
-            };
-            assert_eq!(event, listed);
+        for (index, event) in HookEvent::ALL.into_iter().enumerate() {
+            assert_eq!(declared_index(event), index, "{event} is out of place");
         }
         assert_eq!(HookEvent::ALL.len(), WIRE_STRINGS.len());
     }
