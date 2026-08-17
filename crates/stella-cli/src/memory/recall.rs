@@ -521,8 +521,8 @@ impl SessionMemory {
             .recall
     }
 
-    /// [`Self::recalled_frames_reporting`] with the anchor set chosen by the
-    /// caller — the seam the proactive re-query (#3243 Phase 3) queries
+    /// Recall with an injectable diagnostic sink AND the anchor set chosen by
+    /// the caller — the seam the proactive re-query (#3243 Phase 3) queries
     /// through, because a drifted turn's best anchors are the paths it has
     /// TOUCHED, which the goal string cannot name.
     pub(super) async fn recalled_frames_anchored(
