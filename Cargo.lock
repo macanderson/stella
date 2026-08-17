@@ -3265,6 +3265,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-transcript"
+version = "0.9.77"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "stella-diff",
+]
+
+[[package]]
 name = "stella-tty"
 version = "0.9.77"
 
