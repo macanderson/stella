@@ -111,109 +111,7 @@ pub struct ExecutionRollupRow {
     pub tool_histogram: Vec<ToolBucket>,
 }
 
-const USAGE_SCHEMA: &str = "\
-CREATE TABLE IF NOT EXISTS projects (
-    project_id    TEXT PRIMARY KEY,
-    name          TEXT NOT NULL,
-    root_path     TEXT NOT NULL,
-    first_seen_at TEXT NOT NULL,
-    last_seen_at  TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS execution_rollup (
-    project_id      TEXT NOT NULL,
-    execution_id    INTEGER NOT NULL,
-    kind            TEXT NOT NULL,
-    prompt_digest   TEXT NOT NULL,
-    prompt_preview  TEXT NOT NULL DEFAULT '',
-    model           TEXT NOT NULL,
-    provider        TEXT NOT NULL,
-    outcome         TEXT NOT NULL,
-    cost_usd        REAL NOT NULL,
-    input_tokens    INTEGER NOT NULL,
-    output_tokens   INTEGER NOT NULL,
-    duration_ms     INTEGER NOT NULL,
-    tool_calls      INTEGER NOT NULL,
-    files_written   INTEGER NOT NULL,
-    produced_output INTEGER NOT NULL,
-    self_rating     INTEGER,
-    started_at      TEXT NOT NULL,
-    PRIMARY KEY (project_id, execution_id)
-);
--- Convergence works for removals too: the batch replays on every open, so a
--- DROP here reaches existing hubs the same way a new table would. The
--- by-model index served no query (every execution_rollup reader keys on
--- project_id, which the primary key already covers).
-DROP INDEX IF EXISTS execution_rollup_by_model;
-CREATE TABLE IF NOT EXISTS tool_usage_rollup (
-    project_id TEXT NOT NULL,
-    tool       TEXT NOT NULL,
-    surface    TEXT NOT NULL,
-    day        TEXT NOT NULL,
-    calls      INTEGER NOT NULL DEFAULT 0,
-    errors     INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (project_id, tool, surface, day)
-);
-CREATE TABLE IF NOT EXISTS telemetry (
-    project_id     TEXT NOT NULL,
-    source_rowid   INTEGER NOT NULL,
-    org_id         TEXT,
-    workspace_id   TEXT,
-    repo_id        TEXT NOT NULL DEFAULT '',
-    execution_id   INTEGER NOT NULL,
-    step           INTEGER NOT NULL,
-    recorded_at    TEXT NOT NULL DEFAULT '',
-    provider       TEXT NOT NULL,
-    call_role      TEXT NOT NULL,
-    model          TEXT NOT NULL,
-    input_tokens   INTEGER NOT NULL,
-    estimated_input_tokens INTEGER NOT NULL,
-    output_tokens  INTEGER NOT NULL,
-    cache_read_tokens  INTEGER NOT NULL,
-    cache_miss_tokens  INTEGER NOT NULL,
-    cache_write_tokens INTEGER NOT NULL,
-    cost_usd       REAL NOT NULL,
-    duration_ms    INTEGER NOT NULL,
-    retries        INTEGER NOT NULL,
-    tool_calls     INTEGER NOT NULL,
-    usage_complete INTEGER NOT NULL,
-    PRIMARY KEY (project_id, source_rowid)
-);
-CREATE INDEX IF NOT EXISTS telemetry_by_org
-    ON telemetry(org_id, recorded_at);
--- The observatory's per-(provider, model) hub rollup groups this table by
--- exactly these columns; the index is what lets that GROUP BY scan in index
--- order instead of sorting the whole hub.
-CREATE INDEX IF NOT EXISTS telemetry_by_model
-    ON telemetry(provider, model);
-CREATE TABLE IF NOT EXISTS telemetry_sync_cursors (
-    project_id        TEXT PRIMARY KEY,
-    last_source_rowid INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS cloud_sync_cursors (
-    org_id         TEXT PRIMARY KEY,
-    last_hub_rowid INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS cloud_quarantine (
-    org_id         TEXT NOT NULL,
-    project_id     TEXT NOT NULL,
-    source_rowid   INTEGER NOT NULL,
-    workspace_id   TEXT,
-    repo_id        TEXT NOT NULL DEFAULT '',
-    hub_rowid      INTEGER NOT NULL,
-    recorded_at    TEXT NOT NULL DEFAULT '',
-    provider       TEXT NOT NULL DEFAULT '',
-    model          TEXT NOT NULL DEFAULT '',
-    input_tokens   INTEGER NOT NULL DEFAULT 0,
-    output_tokens  INTEGER NOT NULL DEFAULT 0,
-    cost_usd       REAL NOT NULL DEFAULT 0,
-    reason         TEXT NOT NULL,
-    http_status    INTEGER,
-    quarantined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (org_id, project_id, source_rowid)
-);
-CREATE INDEX IF NOT EXISTS cloud_quarantine_by_org
-    ON cloud_quarantine(org_id, quarantined_at);
-";
+mod schema;
 
 /// The user-tier aggregate store. Read/write, loopback-local, no server.
 pub struct UsageStore {
@@ -243,13 +141,13 @@ impl UsageStore {
         Self::init(Connection::open_in_memory()?)
     }
 
-    fn init(conn: Connection) -> Result<Self> {
+    fn init(mut conn: Connection) -> Result<Self> {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA busy_timeout=5000;",
         )?;
-        conn.execute_batch(USAGE_SCHEMA)?;
+        schema::apply(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
