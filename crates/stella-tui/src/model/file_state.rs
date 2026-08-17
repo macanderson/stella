@@ -24,7 +24,7 @@ pub struct FileState {
     pub kind: FileChangeKind,
     pub latest_diff: Option<String>,
     /// Cumulative lines added / removed across this path's mutations, summed
-    /// from the counts the emitter measured (`ToolRegistry::record_touch`).
+    /// from the counts the emitter measured (`Pipeline::deliver_winner`).
     /// Never re-derived from `latest_diff`: the diff is a bounded rendering of
     /// the changed region, so counting it is a different — and smaller —
     /// number than the delta actually applied.

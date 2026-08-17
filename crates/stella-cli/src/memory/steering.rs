@@ -90,9 +90,17 @@ pub(super) struct GatheredSteering {
 ///   `inject_recall_block`'s any-prior-marker rule: whatever this returns
 ///   WILL be injected verbatim by the engine, so a byte-identical block must
 ///   die here.
+/// - **Telemetry** — a re-query is a full recall fan-out with provider spend
+///   behind it, so it reports the same `ContextRecall` event the pre-turn
+///   block does (#3366). The pre-turn recall runs before the turn's channel
+///   exists and is carried forward by the caller; this one runs *inside* the
+///   step loop, so the adapter holds the sender and emits as it spends.
 pub(crate) struct SessionRequery<'m> {
     memory: &'m super::SessionMemory,
     state: std::sync::Mutex<RequeryState>,
+    /// The turn's event stream, when the driver has one — absent only in
+    /// tests, which construct the adapter without a channel.
+    events: Option<stella_core::EventSender>,
 }
 
 struct RequeryState {
@@ -128,8 +136,35 @@ impl<'m> SessionRequery<'m> {
                 produced,
                 answered_fingerprint: fingerprint(&[], &[]),
             }),
+            events: None,
         }
     }
+
+    /// Report every answered re-query's recall into this turn's event stream
+    /// (#3366). Separate from [`Self::new`] because the sender does not exist
+    /// until the driver has opened the channel.
+    #[must_use]
+    pub(crate) fn with_events(mut self, events: stella_core::EventSender) -> Self {
+        self.events = Some(events);
+        self
+    }
+}
+
+/// The turn's re-query adapter, wired to report into the turn's own stream —
+/// the whole seam a driver needs, in one call.
+///
+/// A free function rather than two call sites assembling the same two steps,
+/// because the second step is the one that is silently optional: a driver
+/// that constructs a [`SessionRequery`] and forgets [`SessionRequery::with_events`]
+/// still compiles and still re-queries, and the only symptom is the missing
+/// telemetry #3366 was filed for. Both drivers (`agent::run_turn` and the
+/// deck's `run_lead_turn`) take it from here, so there is one place to forget.
+pub(crate) fn requery_for_turn<'m>(
+    memory: Option<&'m super::SessionMemory>,
+    messages: &[stella_protocol::CompletionMessage],
+    events: stella_core::EventSender,
+) -> Option<SessionRequery<'m>> {
+    memory.map(|memory| SessionRequery::new(memory, messages).with_events(events))
 }
 
 /// Order-free digest of the drift markers. `BTreeSet` so two signals that
@@ -159,12 +194,19 @@ impl stella_core::ports::SteeringRequery for SessionRequery<'_> {
         {
             return None;
         }
-        let block = self.memory.signal_recall_block(signal).await;
+        let recalled = self.memory.signal_recall_block(signal).await;
+        // The spend happened here, so it is reported here — before the dedup
+        // and the empty-block gate below, both of which can discard the text
+        // while the provider round trip is already paid for. That discard is
+        // exactly the unmeterable cost the event exists to surface (#3366).
+        if let (Some(events), Some(event)) = (&self.events, recalled.telemetry_event()) {
+            let _ = events.send(event);
+        }
         let mut state = self.state.lock().expect("requery state");
         // The signal is answered either way: a drift that surfaced nothing
         // new must not be re-asked every step until it drifts again.
         state.answered_fingerprint = current;
-        let block = block?;
+        let block = recalled.text?;
         state.produced.insert(block.clone()).then_some(block)
     }
 }

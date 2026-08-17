@@ -287,19 +287,21 @@ impl SessionMemory {
     /// `applies_to` path facts. The prompt still carries the lexical query —
     /// drift changes *where* the turn is, not what it was asked to do.
     ///
-    /// Two deliberate omissions against the pre-turn block: no date section
+    /// One deliberate omission against the pre-turn block: no date section
     /// (the turn-opening block already carries today, and repeating it
-    /// mid-turn buys nothing), and no `ContextRecall` telemetry — the
-    /// mid-turn event channel this would report into is a declared gap,
-    /// tracked as #3366. `None` when
-    /// nothing surfaced, when the turn is an A/B control, or when steering
-    /// is off — the same gates, for the same reasons.
+    /// mid-turn buys nothing). The `Recall` travels back with the text for
+    /// the same reason it does in [`Self::recall_block_reported`] — a
+    /// re-query is a full fan-out with provider spend behind it, and the
+    /// adapter that called it reports that spend into the turn's event
+    /// stream (#3366). `RecalledBlock::text` is `None` when nothing
+    /// surfaced, when the turn is an A/B control, or when steering is off —
+    /// the same gates, for the same reasons.
     pub async fn signal_recall_block(
         &self,
         signal: &stella_core::steering::TurnSignal<'_>,
-    ) -> Option<String> {
+    ) -> RecalledBlock {
         if self.ab_suppressed || !self.steering_enabled {
-            return None;
+            return RecalledBlock::default();
         }
         let prompt = signal.prompt;
 
@@ -354,7 +356,11 @@ impl SessionMemory {
         if let Some(section) = record.and_then(|(_, rendered)| record_section_text(rendered)) {
             sections.push(section);
         }
-        (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
+        RecalledBlock {
+            text: (!sections.is_empty())
+                .then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n"))),
+            recall,
+        }
     }
 
     /// The domains **this turn** is working in, derived from the workspace

@@ -6,9 +6,16 @@
 //! [`Pipeline::execute_plan`] walks a plan one engine turn per step,
 //! [`Pipeline::run_engine_turn`] drives one fresh turn, and
 //! [`Pipeline::resume_engine_turn`] drives a checkpoint-restored one. All
-//! three share [`Pipeline::filtered_turn_events`], the event filter that
+//! three share [`Pipeline::filtered_turn_events`], the wrapping sender that
 //! keeps the signal tallies and the flip-halt observation identical no matter
 //! which driver a turn came through.
+//!
+//! It is named for what it once did. Since #3379 it is overwhelmingly an
+//! *observer*: it counts file changes, mutating and opaque calls, errored
+//! commands, tool dispatches and turn endings as they stream past, and feeds
+//! the flip halt. It drops exactly two things — the best-effort previews of a
+//! concurrent fan-out, and the engine's `Stage` boundary — and the engine's
+//! ending is no longer one of them.
 
 use super::*;
 
@@ -442,10 +449,19 @@ impl<'a> Pipeline<'a> {
         let shared_lane = self.shared_event_lane.load(Ordering::Relaxed);
         let filtered = EventSender::from_fn(move |event| {
             match &event {
-                // The pipeline is the sole authority for stage boundaries and
-                // the terminal event of an outcome-producing run — drop the
-                // engine's per-turn copies.
-                AgentEvent::Stage { .. } | AgentEvent::Complete { .. } => Ok(()),
+                // The pipeline owns the run's stage vocabulary, and the engine
+                // still emits one stage boundary of its own (`Execute`, at
+                // `drive`'s entry). Forwarding it would put an `Execute` inside
+                // the witness stage, which `replay::validate_stage_ordering`
+                // correctly rejects as an illegal Witness -> Execute move. It
+                // is dropped here until stage ownership moves the same way the
+                // ending just did (#3416).
+                //
+                // The engine's *ending* is no longer dropped: `TurnComplete`
+                // goes straight through to the consumer, counted on the way
+                // past and never edited. That is the whole point — this
+                // wrapper observes the engine, it does not rewrite it.
+                AgentEvent::Stage { .. } => Ok(()),
                 // Concurrent candidates share this stream, and these two are
                 // the only events whose meaning depends on arriving
                 // uninterrupted: `TextDelta` is a preview its own `Text` event

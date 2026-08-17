@@ -619,6 +619,10 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 proven: false,
             },
         },
+        AgentEvent::TurnComplete {
+            model: "opus".into(),
+            cost_usd: 0.21,
+        },
         AgentEvent::Complete {
             model: "opus".into(),
             cost_usd: 0.42,

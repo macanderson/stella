@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use stella_core::event_sender::RunEnding;
 use stella_protocol::AgentEvent;
 use stella_store::Store;
 use stella_tui::Inbound;
@@ -11,6 +12,21 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent;
 use crate::cache_insight::{InsightScope, cache_insight_for};
+
+/// The event sender a deck lane hands the engine for one turn (#3379).
+///
+/// A deck lane owns its run — one user prompt is one run of one turn — and
+/// since the engine stopped claiming the run-terminal `Complete`, the lane has
+/// to emit it. [`RunEnding`] does so when the returned sender drops, which for
+/// a caller that passes this straight into `run_turn_with_sender` is the
+/// statement's end: the turn is over, so the run is, and `complete` lands last
+/// on the lane's stream exactly as the deck's terminal settle expects.
+///
+/// It lives here rather than beside its one call site because `command_deck.rs`
+/// is closed to growth, and because the deck's lanes are what this file is for.
+pub(crate) fn owned_events(tx: &UnboundedSender<AgentEvent>) -> stella_core::EventSender {
+    RunEnding::sealing(stella_core::EventSender::new(tx.clone()))
+}
 
 /// Warn that execution closeout could not write its audit record (files
 /// touched / memory citations / outcome).
@@ -83,7 +99,29 @@ pub(crate) fn spawn_forwarder(
             crate::diag_boot::dx(),
             Some(crate::diag_boot::workspace_root()),
         );
-        while let Some(event) = rx.recv().await {
+        // The lane's run ending (#3379). The engine ends each turn with
+        // `TurnComplete` and deliberately says nothing about the run, so the
+        // run-terminal `Complete` is the owner's to emit — and for a deck lane
+        // this forwarder *is* that owner: it is the one place that knows the
+        // stream closed rather than merely that a turn did, which is exactly
+        // what "`complete` is last" requires. Synthesizing it into the loop
+        // rather than after it puts it through the same persist-then-forward
+        // path as every other event, so the lane's journal and the deck agree.
+        let mut turn_end: Option<(String, f64)> = None;
+        loop {
+            let event = match rx.recv().await {
+                Some(event) => event,
+                None => match turn_end.take() {
+                    Some((model, cost_usd)) => AgentEvent::Complete { model, cost_usd },
+                    // Either the run already sealed on the previous pass, or
+                    // no turn of it ever succeeded — a failed run ends on
+                    // `Error`, never on `Complete`.
+                    None => break,
+                },
+            };
+            if let AgentEvent::TurnComplete { model, cost_usd } = &event {
+                turn_end = Some((model.clone(), *cost_usd));
+            }
             bridge.observe(&event);
             // A plan that reached the gate is the plan whose progress the
             // board records, so this is where it becomes one. Seeded on the
@@ -185,7 +223,8 @@ pub(crate) fn spawn_forwarder(
 ///
 /// `drop(tx)` on its own never closes the channel: the turn handed the
 /// registry an `EventSender` clone (`ToolRegistry::attach_events`) so
-/// `record_touch` could announce `FileChange`s, and the registry outlives the
+/// registry-born events — the task board, sub-agent lifecycle — ride the
+/// turn's own stream, and the registry outlives the
 /// turn — the deck's session registry by design, a worker lane's because the
 /// closing future itself still holds the `Arc`. With that clone alive, the
 /// forwarder's `recv()` loop stayed pending forever and awaiting it wedged

@@ -2097,6 +2097,14 @@ export type AgentEvent = {
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
   ts?: number;
+  type: "turn_complete";
+} | {
+  cost_usd: number;
+  model: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "complete";
 };
 
@@ -2144,4 +2152,5 @@ export type KnownTypeTag =
   | "sub_agent"
   | "candidate_delivery"
   | "error"
+  | "turn_complete"
   | "complete";

@@ -492,10 +492,23 @@ impl DomainBridge {
                     self.at_seq().with("stage", stage_name(*name)),
                 );
             }
+            // The per-turn ending (#3379). The retention drain belongs here,
+            // not only on the run terminator: it is a *turn* obligation — any
+            // call still awaiting a result when a turn ends will never get
+            // one — and before the two endings were split, a wrapped run's
+            // intermediate turns never reached this bridge at all, so their
+            // stale entries rode into the next turn.
+            AgentEvent::TurnComplete { model, cost_usd } => {
+                self.in_flight.clear();
+                self.emit(
+                    Level::Info,
+                    "agent.turn_complete",
+                    self.at_seq()
+                        .with("model", operator_id(model))
+                        .with("cost_usd", *cost_usd),
+                );
+            }
             AgentEvent::Complete { model, cost_usd } => {
-                // A turn terminator: any call still awaiting a result will
-                // never get one, so the retention map drains rather than
-                // carrying stale entries into the next turn.
                 self.in_flight.clear();
                 self.emit(
                     Level::Info,

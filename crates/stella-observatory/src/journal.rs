@@ -76,7 +76,7 @@ pub(crate) fn entries(
            AND event_type IN ('stage', 'text', 'reasoning', 'tool_start',
                               'tool_result', 'speculation_discarded',
                               'turn_parked', 'turn_woken',
-                              'candidate_delivery')
+                              'candidate_delivery', 'turn_complete')
          ORDER BY seq ASC";
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
@@ -239,6 +239,14 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
             out["proven"] = delivery["proven"].clone();
             // `Declined` reason — absent on a delivery.
             out["reason"] = delivery["reason"].clone();
+        }
+        // The engine's per-turn ending (#3379). Selected so a reader can see
+        // where one turn stopped and the next began — a staged run with a
+        // revise loop is several turns, and before this signal existed the
+        // journal showed one undivided sequence of steps.
+        "turn_complete" => {
+            out["model"] = payload["model"].clone();
+            out["cost_usd"] = payload["cost_usd"].clone();
         }
         _ => {}
     }
