@@ -140,8 +140,7 @@ pub(crate) fn spawn_forwarder(
                     },
                 },
             };
-            let event = if owes_stage_execute
-                && !matches!(event, AgentEvent::ContextRecall { .. })
+            let event = if owes_stage_execute && !matches!(event, AgentEvent::ContextRecall { .. })
             {
                 // First event that is not the turn's recall: open the stage
                 // ahead of it, and let it ride the next iteration.
