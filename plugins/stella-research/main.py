@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`stella-research` — the pipeline's research stage, as a plugin.
+"""`stella-research` — the pipeline's research and recall stages, as a plugin.
 
 Standard library only, deliberately: `doc:pipeline-as-plugins` §9 rule 3 is
 that "if a plugin CANNOT be written without an SDK, the protocol is too
@@ -11,11 +11,15 @@ protocol is here.
 
 `crates/stella-plugin/src/wire.rs` is the contract; these are its shapes as a
 plugin author meets them. The host spawns `[runtime].argv` directly — no shell
-— writes one JSON request on stdin, closes it, and reads one JSON response
-from stdout:
+— writes one JSON request on stdin and reads the response from stdout:
 
     {"point": "before_turn", "body": {...BeforeTurnRequest}}
  -> {"point": "before_turn", "body": {...BeforeTurnResponse}}
+
+That is the whole exchange unless the plugin asks the host for something in
+between, which is the host-call channel below. Stdin stays open for as long as
+the host can answer such a call and is shut down when it cannot, so a plugin
+reads its input as documents rather than to end-of-file (`read_json`).
 
 Every table on that wire **denies unknown fields**, the envelope included, so
 this program does too, at every level. A field the host does not know, at a
@@ -26,7 +30,8 @@ contract is additive-only.
 There is no error variant in `BeforeTurnResponse`. A plugin that cannot answer
 *fails* — non-zero exit, one line on stderr — and the host runs the turn
 without the contribution: a wrapper that cannot speak has nothing to say, and
-that is not the user's fault. So stdout carries a valid response or nothing.
+that is not the user's fault. So stdout carries a valid response or no response
+at all.
 
 # What it contributes, and why it is only ever a message
 
@@ -42,30 +47,68 @@ The built-in stage this extracts (`crates/stella-pipeline/src/research.rs` and
 `pipeline/research_stage.rs`) answers triage's questions by fanning out
 **read-only model sub-agents**. This plugin cannot: `doc:wrapper-socket` §7 is
 explicit that the socket hands a plugin no engine, no provider and no
-credential, and the request carries no `[roles]` call it could spend. Two
-consequences, both stated out loud rather than papered over:
+credential, and the request carries no `[roles]` call it could spend. So it
+does deterministic grounding instead of model research — it reports what a
+literal scan of the granted workspace actually contains, which is the half of
+a research finding that is checkable.
 
-  - It does deterministic grounding instead of model research — it reports
-    what a literal scan of the granted workspace actually contains, which is
-    the half of a research finding that is checkable.
-  - It contributes at the `research` stage only. The built-in `recall` stage
-    reads the context plane (memories, episodes, the code graph), and the wire
-    has no representation for that plane, so this plugin answers `recall` with
-    an empty contribution rather than pretending.
-
-It publishes no signals for the same kind of reason: the `Signal` vocabulary
-is closed, and `StageName::Research.publishes()` is empty in the host today, so
+It publishes no signals for a related reason: the `Signal` vocabulary is
+closed, and `StageName::Research.publishes()` is empty in the host today, so
 there is no signal a research stage may honestly publish.
+
+# Recall: a plugin may ask, never reach
+
+The `recall` stage is the other half of `doc:pipeline-as-plugins` §3's
+stella-research row, and it reads the context plane — materialized memories,
+episodes, facts, code-graph symbols — which no filesystem root contains. This
+plugin does not reach for it. It **asks**, over the host-call channel
+`doc:wrapper-socket` §6b adds, and the host performs the retrieval, applies the
+gate and returns only what the grant permits:
+
+    host   {"point": "before_turn", "body": {...}}
+ -> plugin {"call": "recall", "id": 1, "args": {"goal": "...", "limit": 8}}
+ -> host   {"result": 1, "ok": {"frames": [...]}}
+ -> plugin {"point": "before_turn", "body": {"context": [...]}}   <- ends it
+
+**What may be asked for is declared in the manifest, never negotiated here.**
+`[loop] calls = ["recall"]` is the grant a human read at install and
+`LoopGrant::permits_call` is the filter the host applies — the same
+authoritative filter an undeclared hook meets. So this program does not ask a
+host what it is allowed to do. It asks for the one capability its own manifest
+declares, and reads the answer.
+
+Every way that answer can fail to be frames — the host offers no channel at all
+(`unavailable`), the manifest declares no such call (`undeclared`), this host
+does not implement it (`unsupported`), the per-point allowance is spent
+(`allowance-spent`), the host tried and failed (`failed`), or nobody answered —
+degrades to the empty contribution rather than a fabricated one, and says so on
+stderr. That is §6b's third bound taken from the plugin's side: a refused call
+is *delivered* to the plugin instead of killing it, and a degradation nobody
+can see is the silence this project exists to refuse.
+
+One consequence of a conversation that a single exchange did not have: a
+refusal raised *after* a call has been made leaves that call on stdout. The
+host reading it is by definition the host that answered it, and the rule holds
+in the form that matters — stdout carries no *response* a refusing plugin did
+not mean.
+
+The three shapes it speaks are the host's own, not a reading of the design:
+`crates/stella-plugin/src/host_call.rs` holds `HostCallRequest`,
+`HostCallResponse` and `RecallFrame`, and the harness beside these vectors
+decodes this program's calls and encodes its answers with exactly those types,
+so a divergence is a failing test rather than a silent refusal in the field.
 
 # Every capability arrives in the request
 
 `candidate` is a `CandidateGrant`: the handle, the canonical workspace `root`,
 and the test the host would run there (which this plugin ignores — it runs
-nothing). This program reaches for nothing else: no environment, no working
-directory, no git checkout, no terminal. That is what lets it run unchanged
-under `stella-cli`, under `stella-serve`, and inside an application that
-embedded the loop. With no grant there is no root, and a stage with nothing to
-read contributes nothing.
+nothing). `calls` is the other grant, and it is the same idea pointed at a
+capability the plugin cannot hold at all: it names what this program may ask
+the host to do, and how often. This program reaches for nothing outside those
+two: no environment, no working directory, no git checkout, no terminal. That
+is what lets it run unchanged under `stella-cli`, under `stella-serve`, and
+inside an application that embedded the loop. With no grant there is nothing to
+read and nothing to ask, and a stage with neither contributes nothing.
 """
 
 import json
@@ -82,10 +125,13 @@ PROTOCOL_VERSION = 1
 # plugin did not agree to answer.
 POINT = "before_turn"
 
-# The one stage it contributes at. Every other declared stage gets an empty
+# The two stages it contributes at, and they contribute from different
+# sources: `research` reads the granted workspace itself, `recall` asks the
+# host for the context plane. Every other declared stage gets an empty
 # contribution, which must be byte-identical to the one a host that never
 # installed this plugin would have used.
-CONTRIBUTING_STAGE = "research"
+RESEARCH_STAGE = "research"
+RECALL_STAGE = "recall"
 
 # The fields each table on the request declares. Anything else is a typo, per
 # the deny-unknown-fields rule the whole wire contract is written under.
@@ -100,6 +146,51 @@ BEFORE_TURN_REQUEST_FIELDS = {
 }
 CANDIDATE_GRANT_FIELDS = {"handle", "root", "test"}
 PUBLISHED_SIGNAL_FIELDS = {"signal", "value"}
+
+# ── The host-call channel (`doc:wrapper-socket` §6b) ─────────────────────────
+#
+# The one call this plugin makes, and the one its manifest declares. `HostCall`
+# is a closed set — a capability is a value the host enumerates, never a string
+# a plugin invents — and `[loop] calls` is where a human consented to this one.
+CALL_RECALL = "recall"
+
+# The answer's tables (`host_call::HostCallResponse`), read under the same rule
+# as the request. `ok` and `err` are exclusive: the host's own decoder refuses
+# an answer carrying both or neither, and so does this one.
+CALL_ANSWER_FIELDS = {"result", "ok", "err"}
+RECALL_OK_FIELDS = {"frames"}
+# What a refusal calls the document it was reading, since by then it is the
+# host's answer rather than the host's question.
+RECALL_ANSWER = "the recall answer"
+# `host_call::RecallFrame` field for field. Deliberately a *view* of the host's
+# own frame rather than a copy: the record id, the token cost and the content
+# digest are the host's accounting, and a plugin that cannot act on them has no
+# business holding them. What is here is what it takes to build context a human
+# can trace — the label to attribute it, the kind and source to weigh it, the
+# uri to point at it, and the text.
+RECALL_FRAME_FIELDS = {"label", "kind", "source", "uri", "content"}
+
+# How many frames this stage asks for — §6b's own example number, and an *ask*:
+# the host clamps it against its own ceiling (`DEFAULT_RECALL_FRAMES`), which is
+# why there is no character cap here to match the scan's. What this program
+# bounds is only what it will render, so an answer past the ask is named rather
+# than silently trimmed.
+RECALL_FRAME_LIMIT = 8
+
+# The prefix `stella_core::receipts::user_block_kind` recognises a recalled
+# context block by (`receipts::RECALL_MARKER`), and the line format under it is
+# `receipts::render_recall_line`'s. Both are mirrored on purpose: without the
+# marker the host's receipts file these frames as the *person's* words, which
+# is the misattribution #3243 D4 removed from the built-in path. That makes
+# this program a second producer of a format whose only other producer is in
+# Rust; the goldens beside it are what make a drift between the two visible
+# instead of silent.
+#
+# What it deliberately does not mirror is the `[id]` half of that line. A
+# `RecallFrame` carries no record id, so this plugin has nothing to join a
+# receipt back to — and minting one from the label would be fabricating the one
+# field the write→citation loop trusts.
+RECALL_MARKER = "[auto-recalled context]"
 
 # `StageName`, closed. A stage the host cannot dispatch is exactly the manifest
 # that quietly does nothing, and a stage *name* this plugin does not recognise
@@ -289,26 +380,92 @@ def refuse(reason):
     raise Refusal(reason)
 
 
-def deny_unknown(table, allowed):
+def deny_unknown(table, allowed, subject="the request"):
     """Refuse a table carrying a key the contract does not declare.
 
     One message shape for every table, matching the reference plugins in
     `stella-examples`: a refusal line is part of the contract a conformance
     harness grades, and Rust's `serde` reports the offending key without a
     path to the table it was found in, so neither does this.
+
+    `subject` names which side of the conversation the table came from, and
+    that is the only distinction drawn: a request is the host asking, a host
+    call's answer is the host replying, and an author reading the refusal needs
+    to know which document to go and look at.
     """
     unknown = sorted(set(table) - allowed)
     if unknown:
-        refuse("the request denies unknown fields; got {}".format(", ".join(unknown)))
+        refuse(
+            "{} denies unknown fields; got {}".format(subject, ", ".join(unknown))
+        )
     return table
 
 
-def read_request():
+def read_json(stream):
+    """The next JSON document on `stream`, or `None` when there is not one.
+
+    Line-oriented *and* whole-document tolerant, because the two hosts this
+    program meets frame differently and both are legitimate. A host that asks
+    one question writes the request, a newline, and shuts stdin down
+    (`SubprocessWrapper::exchange`); a host that can answer a call keeps stdin
+    open and writes one document per line, because it has to be able to send a
+    second one. Reading to EOF deadlocks against the second host and reading
+    exactly one line truncates a pretty-printed request from the first, so this
+    accumulates lines and stops at the first *complete* document.
+
+    A document followed by anything but whitespace is not returned: one message
+    is one document, and `json.loads` — what this replaced — refused the same
+    trailing bytes.
+    """
+    decoder = json.JSONDecoder()
+    buffered = ""
+    while True:
+        text = buffered.strip()
+        if text:
+            try:
+                document, end = decoder.raw_decode(text)
+            except ValueError:
+                pass  # Not yet complete, or never will be. EOF decides which.
+            else:
+                if not text[end:].strip():
+                    return document
+        line = stream.readline()
+        if not line:
+            return None
+        buffered += line
+
+
+def write_json(stream, document):
+    """One JSON document, on one line, flushed.
+
+    The **flush** is the load-bearing word: a host answering a call is blocked
+    reading this pipe, and a call still sitting in this process's buffer is a
+    conversation that ends at the point timeout with neither side at fault. The
+    newline is courtesy in both directions — the host ends a message where its
+    JSON value ends rather than at a line break (`SubprocessWrapper::converse`),
+    and its own writer terminates every answer with one anyway.
+    """
+    stream.write(json.dumps(document) + "\n")
+    stream.flush()
+
+
+def report(reason):
+    """Say on stderr what this stage degraded to, and why.
+
+    Not a refusal — the program still answers, with the honest empty
+    contribution. §6b's bound is that a refused or failed host call is
+    *delivered* to the plugin so it can degrade honestly rather than being
+    killed, and the other half of that bargain is that the degradation is
+    reported: a stage that quietly contributed nothing is a fact the plugin's
+    author has to be able to see, and the reason is the only thing that tells
+    them whether to fix a manifest, a host, or nothing at all.
+    """
+    sys.stderr.write("stella-research: {}\n".format(reason))
+
+
+def read_request(stdin):
     """Decode `{"point": ..., "body": ...}` and return the `before_turn` body."""
-    try:
-        envelope = json.loads(sys.stdin.read())
-    except ValueError:
-        refuse("stdin was not a single JSON object")
+    envelope = read_json(stdin)
     if not isinstance(envelope, dict):
         refuse("stdin was not a single JSON object")
     if set(envelope) - {"point", "body"}:
@@ -374,6 +531,100 @@ def grant_root(body):
     if not isinstance(root, str) or not root:
         refuse("the candidate grant carried no root")
     return root
+
+
+class HostCalls:
+    """This plugin's end of the host-call conversation (§6b).
+
+    A plugin may ask the host for a capability; it may never reach for one. So
+    there is nothing here but "write a question, read its answer". Nothing is
+    negotiated: what this plugin may ask for was settled by the manifest a
+    human consented to, and how often is a ceiling the host clamps — neither is
+    a number this program gets to hold an opinion about.
+
+    The `id` is this plugin's own correlation number and the host echoes it
+    back as `result`, so an answer to a different call is not an answer to
+    this one.
+    """
+
+    def __init__(self, stdin, stdout):
+        self.stdin = stdin
+        self.stdout = stdout
+        self.asked = 0
+
+    def ask(self, call, args):
+        """Make one host call and return its `ok` payload, or `None`.
+
+        `None` is every way a call can fail to produce one: refused for any of
+        the five closed reasons, answered for a different call, or not answered
+        at all. Each degrades the caller to the contribution it would have made
+        with no channel, and each is reported — the host records its own half
+        (`HostCallGate::refusals`) and this is the plugin's.
+
+        It does **not** branch on which refusal it was. Every one of them
+        leaves this stage with no frames, and a `match` whose arms all do the
+        same thing is a claim to be handling something. The code is *reported*,
+        because that is what the author debugging a silent stage needs.
+
+        What is deliberately not degraded here is a malformed payload, and that
+        line is the one this whole wire is written on: the **outcome** of a
+        call is a fact about this call, while the **shape** of an answer is a
+        fact about the contract — so a table that decodes to something the
+        contract does not describe refuses out loud, because a message that
+        quietly does nothing is worse than one that refuses.
+        """
+        self.asked += 1
+        call_id = self.asked
+        write_json(self.stdout, {"call": call, "id": call_id, "args": args})
+
+        answer = read_json(self.stdin)
+        if not isinstance(answer, dict):
+            report("the host did not answer the {} call".format(call))
+            return None
+        # A `true` result would otherwise compare equal to call 1.
+        answered = answer.get("result")
+        if isinstance(answered, bool) or answered != call_id:
+            report(
+                "the host answered call {} while this plugin asked {}".format(
+                    json.dumps(answered), call_id
+                )
+            )
+            return None
+        deny_unknown(answer, CALL_ANSWER_FIELDS, RECALL_ANSWER)
+        ok = answer.get("ok")
+        failure = answer.get("err")
+        # Exactly one, which is what the host's own decoder enforces on the
+        # other side of this pipe — an answer carrying both is two claims about
+        # what happened, and believing either is a guess.
+        if (ok is None) == (failure is None):
+            refuse("a host-call answer carries either ok or err, never both")
+        if failure is not None:
+            report(
+                "the host did not serve the {} call: {}".format(call, refusal(failure))
+            )
+            return None
+        if not isinstance(ok, dict):
+            refuse("the recall answer's ok must be an object")
+        return ok
+
+
+def refusal(failure):
+    """A failed call's `err`, as the one line this plugin logs about it.
+
+    `HostCallFailure` is `{"refusal": <closed code>, "detail": <words>}`, and
+    that shape is read leniently *here alone*: an error report is prose about
+    something that has already gone wrong, and refusing to parse it would trade
+    a degradation the author can read for a refusal they cannot. Anything else
+    is echoed verbatim, sorted — JSON key order is not a fact about the
+    refusal, and a report that reordered itself between two hosts saying the
+    same thing could not be a golden.
+    """
+    if isinstance(failure, dict):
+        code = failure.get("refusal")
+        detail = failure.get("detail")
+        if isinstance(code, str) and isinstance(detail, str):
+            return "{}: {}".format(code, detail)
+    return json.dumps(failure, sort_keys=True)
 
 
 def is_symbolish(token):
@@ -607,17 +858,136 @@ def bounded_context():
     }
 
 
-def contribute(body):
+def frame_text(frame, field, required):
+    """One string field of a recalled frame.
+
+    Absent and `null` are the same answer for an optional field — `RecallFrame`
+    carries `uri` as an `Option<String>`, and a host writing `null` and a host
+    omitting it are saying the same thing. A value of another type is not a
+    missing field, it is a frame this program cannot render, so it refuses.
+    """
+    value = frame.get(field)
+    if value is None:
+        if required:
+            refuse("a recalled frame carried no {}".format(field))
+        return None
+    if not isinstance(value, str):
+        refuse("a recalled frame's {} must be a string".format(field))
+    return value
+
+
+def distinct_label(label, content):
+    """The citation label, when it says something the content does not.
+
+    `RecalledFrame::distinct_label`'s rule, mirrored. Memory and episode nodes
+    mint their label FROM their content — verbatim at 80 characters or under,
+    its first 79 plus `…` above that — so rendering both ships the same
+    sentence twice into a rationed recall budget, which is #2476. It models
+    that mint rather than similarity, which is what keeps a label a human
+    chose from ever being swallowed for merely resembling its content.
+    """
+    label = label.strip()
+    body = content.strip()
+    if not label or label == body:
+        return None
+    stem = label[:-1] if label.endswith("…") else ""
+    if stem and body.startswith(stem):
+        return None
+    return label
+
+
+def recall_line(frame):
+    """One frame as the `- ...` line `receipts::render_recall_line` writes.
+
+    The label is separated from the body by the em-dash the host's
+    `parse_recall_item` splits on, and the source rides last so it lands in the
+    body half of that split rather than corrupting the label a receipt records.
+    A frame whose label says nothing its content does not renders as its body
+    alone.
+    """
+    content = frame_text(frame, "content", required=True)
+    line = "- "
+    label = distinct_label(frame_text(frame, "label", required=True), content)
+    if label is not None:
+        line += "{} — ".format(label)
+    line += content.strip()
+    source = frame_text(frame, "source", required=True)
+    if source:
+        line += " ({})".format(source)
+    return line
+
+
+def recalled_frames(host_calls, goal):
+    """The frames the host recalled for `goal`; `[]` when it recalled none.
+
+    The plugin does not retrieve. It asks, and the host queries the context
+    plane, applies the gate, and returns only what this plugin's grant permits
+    — which is what makes a retrieval plugin possible without handing it the
+    plane (§6b).
+    """
+    ok = host_calls.ask(CALL_RECALL, {"goal": goal, "limit": RECALL_FRAME_LIMIT})
+    if ok is None:
+        return []
+    deny_unknown(ok, RECALL_OK_FIELDS, RECALL_ANSWER)
+    # Absent is empty: `RecallResult` skips the list when it has nothing in it,
+    # and an empty recall is an ordinary answer — nothing was relevant — never
+    # an error to handle specially (the `ContextRecallPort` discipline, L-C6).
+    frames = ok.get("frames", [])
+    if not isinstance(frames, list):
+        refuse("the recall answer's frames must be an array")
+    # Names here, types where they are rendered (`frame_text`): a field this
+    # program never reads is still checked for being *named*, because an
+    # unrecognised name is the host and this plugin disagreeing about the
+    # contract, while an unreadable value is only ever a frame that cannot be
+    # written into a line.
+    for frame in frames:
+        if not isinstance(frame, dict):
+            refuse("a recalled frame must be an object")
+        deny_unknown(frame, RECALL_FRAME_FIELDS, RECALL_ANSWER)
+    return frames
+
+
+def recall_context(frames):
+    """The recalled frames, as the one contribution this stage makes.
+
+    Assembled the way `pipeline/user_message.rs::assemble_recall_message`
+    assembles it, marker included — see `RECALL_MARKER` for why a second
+    producer of that format is the right call and what the goldens are for.
+    """
+    shown = frames[:RECALL_FRAME_LIMIT]
+    text = RECALL_MARKER + "\n\nRelevant context:\n"
+    for frame in shown:
+        text += recall_line(frame) + "\n"
+    if len(frames) > len(shown):
+        # The host was asked for this many and answered with more, so the
+        # bound that binds here is this program's own — and a cap that binds
+        # in silence turns "we did not show it" into "it was not recalled".
+        text += "[… {} not shown; this stage asked for the first {} …]\n".format(
+            counted(len(frames) - len(shown), "further frame", "further frames"),
+            RECALL_FRAME_LIMIT,
+        )
+    return {"label": "recall", "text": text}
+
+
+def contribute(body, host_calls):
     """The context this stage contributes, which may be nothing.
 
-    Nothing is a complete answer and the common case: a stage that is not
-    `research`, a request with no candidate grant, a root that cannot be read.
-    Every one of those returns an empty contribution — byte-identical to the
-    one a host that never installed this plugin would have used, which is the
-    advisory contract the built-in stage holds too (zero findings leave the
-    prompt exactly as it was).
+    Nothing is a complete answer and the common case: a stage that is neither
+    `recall` nor `research`, a request with no candidate grant, a root that
+    cannot be read, a recall the host would not serve. Every one of those
+    returns an empty contribution — byte-identical to the one a host that never
+    installed this plugin would have used, which is the advisory contract the
+    built-in stages hold too (zero findings, or zero frames, leave the prompt
+    exactly as it was).
+
+    The two contributing stages read different things and the split is the
+    point: `research` reads the workspace the request granted, `recall` reads
+    nothing at all and asks the host instead.
     """
-    if body["stage"] != CONTRIBUTING_STAGE:
+    if body["stage"] == RECALL_STAGE:
+        frames = recalled_frames(host_calls, body["goal"])
+        return [recall_context(frames)] if frames else []
+    if body["stage"] != RESEARCH_STAGE:
         return []
     root = grant_root(body)
     if root is None or not os.path.isdir(root):
@@ -646,8 +1016,8 @@ def contribute(body):
 
 def main():
     try:
-        body = read_request()
-        context = contribute(body)
+        body = read_request(sys.stdin)
+        context = contribute(body, HostCalls(sys.stdin, sys.stdout))
     except Refusal as refusal:
         sys.stderr.write("stella-research: {}\n".format(refusal))
         return 1
@@ -658,8 +1028,7 @@ def main():
         # `BeforeTurnResponse` skips empty collections when it serializes, so
         # an empty contribution is the same bytes on both sides of the wire.
         response["context"] = context
-    sys.stdout.write(json.dumps({"point": POINT, "body": response}) + "\n")
-    sys.stdout.flush()
+    write_json(sys.stdout, {"point": POINT, "body": response})
     return 0
 
 

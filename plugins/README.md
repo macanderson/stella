@@ -7,7 +7,7 @@ yes or no. Nothing a plugin does is inferred.
 
 | Plugin | Replaces | Points | Status |
 | --- | --- | --- | --- |
-| [`stella-research/`](stella-research/) | the pipeline's research stage | `before_turn` | Track B's first extraction (#3380 §7) |
+| [`stella-research/`](stella-research/) | the pipeline's research **and recall** stages | `before_turn` | Track B's first extraction (#3380 §7); recall asks the host for the context plane (#3540) |
 
 ## Why these are not workspace members
 
@@ -18,10 +18,13 @@ the staged pipeline from the binary — its stated endpoint is that
 that is a workspace member is built, versioned and linked with the binary it
 was supposed to leave. It would prove the opposite of what it is here to prove.
 
-A plugin is a **separate program the host spawns**: argv from `[runtime]`, one
-JSON request on stdin, one JSON response on stdout, an environment allowlist
-the manifest names and a human consented to. That is the same contract a
-third-party plugin gets, and it is the contract these are written against.
+A plugin is a **separate program the host spawns**: argv from `[runtime]`, a
+JSON request on stdin, a JSON response on stdout, an environment allowlist the
+manifest names and a human consented to. Between those two it may *ask* the
+host for a capability it cannot hold — the host-call channel, and only for the
+capabilities `[loop] calls` declared (`doc:wrapper-socket` §6b). That is the
+same contract a third-party plugin gets, and it is the contract these are
+written against.
 
 ## Why they live here rather than in `stella-examples`
 

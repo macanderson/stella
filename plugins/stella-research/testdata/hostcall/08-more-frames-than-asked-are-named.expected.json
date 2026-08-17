@@ -1,0 +1,12 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "context": [
+      {
+        "label": "recall",
+        "text": "[auto-recalled context]\n\nRelevant context:\n- recalled fact 1 (context.db)\n- recalled fact 2 (context.db)\n- recalled fact 3 (context.db)\n- recalled fact 4 (context.db)\n- recalled fact 5 (context.db)\n- recalled fact 6 (context.db)\n- recalled fact 7 (context.db)\n- recalled fact 8 (context.db)\n[… 1 further frame not shown; this stage asked for the first 8 …]\n"
+      }
+    ]
+  }
+}

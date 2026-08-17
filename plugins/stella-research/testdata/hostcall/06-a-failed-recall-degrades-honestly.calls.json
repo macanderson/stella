@@ -1,0 +1,19 @@
+[
+  {
+    "expect": {
+      "call": "recall",
+      "id": 1,
+      "args": {
+        "goal": "the retry budget is exhausted before the second attempt",
+        "limit": 8
+      }
+    },
+    "answer": {
+      "result": 1,
+      "err": {
+        "refusal": "failed",
+        "detail": "the context plane could not be read: database is locked"
+      }
+    }
+  }
+]

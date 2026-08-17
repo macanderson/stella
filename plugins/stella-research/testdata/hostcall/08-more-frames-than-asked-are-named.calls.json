@@ -1,0 +1,73 @@
+[
+  {
+    "expect": {
+      "call": "recall",
+      "id": 1,
+      "args": {
+        "goal": "the retry budget is exhausted before the second attempt",
+        "limit": 8
+      }
+    },
+    "answer": {
+      "result": 1,
+      "ok": {
+        "frames": [
+          {
+            "label": "recalled fact 1",
+            "kind": "note",
+            "source": "context.db",
+            "content": "recalled fact 1"
+          },
+          {
+            "label": "recalled fact 2",
+            "kind": "note",
+            "source": "context.db",
+            "content": "recalled fact 2"
+          },
+          {
+            "label": "recalled fact 3",
+            "kind": "note",
+            "source": "context.db",
+            "content": "recalled fact 3"
+          },
+          {
+            "label": "recalled fact 4",
+            "kind": "note",
+            "source": "context.db",
+            "content": "recalled fact 4"
+          },
+          {
+            "label": "recalled fact 5",
+            "kind": "note",
+            "source": "context.db",
+            "content": "recalled fact 5"
+          },
+          {
+            "label": "recalled fact 6",
+            "kind": "note",
+            "source": "context.db",
+            "content": "recalled fact 6"
+          },
+          {
+            "label": "recalled fact 7",
+            "kind": "note",
+            "source": "context.db",
+            "content": "recalled fact 7"
+          },
+          {
+            "label": "recalled fact 8",
+            "kind": "note",
+            "source": "context.db",
+            "content": "recalled fact 8"
+          },
+          {
+            "label": "recalled fact 9",
+            "kind": "note",
+            "source": "context.db",
+            "content": "recalled fact 9"
+          }
+        ]
+      }
+    }
+  }
+]

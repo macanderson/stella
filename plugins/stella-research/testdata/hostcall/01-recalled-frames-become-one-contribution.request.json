@@ -1,0 +1,10 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "research-v1",
+    "stage": "recall",
+    "round": 0,
+    "goal": "the retry budget is exhausted before the second attempt"
+  }
+}
