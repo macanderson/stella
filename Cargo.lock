@@ -3253,6 +3253,8 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "stella-core",
+ "stella-embed",
+ "stella-graph",
  "stella-home",
  "stella-protocol",
  "stella-store",
