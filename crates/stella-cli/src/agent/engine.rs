@@ -67,6 +67,18 @@ fn tuned_engine_config(
         // what stops `persist_checkpoint` from serializing a whole transcript
         // per step only to discard it.
         checkpoint_sink: cfg.durability.sink(),
+        // What this session already learned its providers will fund (#3307).
+        // Attached here for the same reason `lifecycle_enabled` is read here —
+        // this is the one place an engine is tuned in this crate, so every role
+        // the session builds shares one view of the account paying for all of
+        // them, and none is left re-learning a refused ceiling by paying its
+        // own 402.
+        //
+        // Deliberately NOT stripped for sub-agents, candidates or sub-sessions,
+        // which is the opposite of `checkpoint_sink` above. That handle is one
+        // session record and a second writer corrupts it; this one is one
+        // account balance, and a second reader is exactly the point.
+        session_output_ceilings: Some(cfg.output_ceilings.clone()),
         ..EngineConfig::default()
     };
     // Compaction must fire BEFORE the provider's context window overflows:

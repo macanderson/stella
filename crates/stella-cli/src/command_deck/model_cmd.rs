@@ -227,6 +227,7 @@ mod tests {
             plan_mode: false,
             model_pinned_by_flag: false,
             durability: Default::default(),
+            output_ceilings: Default::default(),
             create_worktrees: Default::default(),
             allowed_write_dirs: Vec::new(),
             api_key: stella_model::ApiKey::new("dummy-key-unused-offline"),

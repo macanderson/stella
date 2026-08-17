@@ -144,7 +144,7 @@ pub(crate) mod deadline_notice;
 mod dispatch;
 mod drive;
 mod model_fallback;
-pub(crate) mod output_budget_recovery;
+pub mod output_budget_recovery;
 pub(crate) mod overflow_recovery;
 mod rate_limit;
 mod restore;
@@ -867,7 +867,7 @@ impl<'a> Engine<'a> {
         let step_started = std::time::Instant::now();
         let committed = match self
             .run_model_call(
-                state.model_call_shape(self.config.max_output_tokens),
+                state.model_call_shape(self.configured_output_ceiling()),
                 &state.messages,
                 &mut state.budget,
                 &mut state.memos.receipts,
