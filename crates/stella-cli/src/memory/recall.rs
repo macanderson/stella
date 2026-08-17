@@ -505,6 +505,11 @@ impl SessionMemory {
         .await
     }
     /// Recall with an injectable diagnostic sink to avoid global stderr capture in tests.
+    ///
+    /// Test-only, and gated as such: every caller is inside a `#[cfg(test)]`
+    /// module, so the shipping binary carries no reference to it and
+    /// `clippy -D warnings` reads it as dead code in that build.
+    #[cfg(test)]
     pub(super) async fn recalled_frames_reporting(
         &self,
         goal: &str,
