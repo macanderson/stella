@@ -346,7 +346,7 @@ pub async fn run_deck_session(
         crate::enterprise_telemetry::ExecutionSurface::Deck,
     )?;
     let provider = agent::build_provider(cfg)?;
-    let registry: Arc<ToolRegistry> = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+    let registry: Arc<ToolRegistry> = Arc::new(crate::write_dirs::registry_for(cfg));
 
     crate::subagent::install_for_session(cfg, &registry)?;
     let active_rules =

@@ -65,7 +65,28 @@ pub(crate) fn resolve(
 /// operator configured — the failure mode would be a tool refusing a path the
 /// committed config plainly allows, which reads as a bug in the tool.
 pub(crate) fn registry_for(cfg: &crate::config::Config) -> stella_tools::ToolRegistry {
-    let registry = stella_tools::ToolRegistry::new(cfg.workspace_root.clone());
+    registry_rooted_at(cfg, cfg.workspace_root.clone())
+}
+
+/// The same grant, for a registry rooted somewhere other than the session's
+/// workspace: a fleet worker's worktree, a best-of-N candidate's snapshot.
+///
+/// These exist because the *root* differs, never because the grant should.
+/// An operator who allowed a shared directory meant it for the work, and the
+/// work is what runs in these registries — so leaving them out made
+/// `--allow-dir` a no-op in the default interactive shell, in every fleet
+/// worker and in every pipeline candidate, which is exactly the silent
+/// narrowing [`registry_for`]'s doc promises cannot happen.
+///
+/// The root is honoured as given: a worktree root makes
+/// `stella_core::workspace_scope` treat that worktree as the workspace, which
+/// is what lets a worker write its own tree while the origin project stays
+/// invisible to it.
+pub(crate) fn registry_rooted_at(
+    cfg: &crate::config::Config,
+    root: PathBuf,
+) -> stella_tools::ToolRegistry {
+    let registry = stella_tools::ToolRegistry::new(root);
     registry.allow_write_dirs(cfg.allowed_write_dirs.iter().cloned());
     registry
 }
@@ -76,6 +97,98 @@ mod tests {
 
     fn root() -> PathBuf {
         PathBuf::from("/work/project")
+    }
+
+    /// The invariant [`registry_for`]'s doc claims, enforced instead of
+    /// asserted in prose.
+    ///
+    /// An adversarial audit found the doc was false the day it was written:
+    /// five production paths called `ToolRegistry::new` directly and never
+    /// granted, so `--allow-dir` was a silent no-op in the Command Deck (the
+    /// default interactive shell), in `--resume`, in every fleet worker and in
+    /// every best-of-N candidate. A comment cannot hold that line; a test
+    /// naming the constructor can.
+    ///
+    /// Deliberately a source scan rather than a runtime check: the defect is
+    /// *which call site was used*, which no assembled registry can report. A
+    /// new session path either goes through this module or adds itself to the
+    /// exemption list with a reason a reviewer reads.
+    #[test]
+    fn every_production_registry_is_built_through_this_module() {
+        /// Call sites that legitimately construct a registry directly, each
+        /// with the reason it needs no grant.
+        const EXEMPT: &[(&str, &str)] = &[
+            ("src/write_dirs.rs", "this module — it IS the grant"),
+            (
+                "src/candidate_ws.rs",
+                "grants explicitly from `with_allowed_write_dirs`, because a \
+                 candidate is rooted at its own snapshot rather than the \
+                 session workspace",
+            ),
+            (
+                "src/enterprise_telemetry.rs",
+                "a content-free rollup probe that dispatches no model-supplied \
+                 path, so it has nothing to confine",
+            ),
+            (
+                "src/tool_docs.rs",
+                "the docs generator: it reads `schemas()` and never executes a \
+                 tool, and it must document the surface a bare registry \
+                 advertises rather than one session's grants",
+            ),
+        ];
+
+        let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut offenders: Vec<String> = Vec::new();
+        let mut stack = vec![crate_dir.join("src")];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs") {
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(crate_dir)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                // Test modules build registries freely; the invariant is about
+                // what a real session does.
+                if relative.contains("tests") {
+                    continue;
+                }
+                if EXEMPT.iter().any(|(file, _)| relative == *file) {
+                    continue;
+                }
+                let Ok(source) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                for (number, line) in source.lines().enumerate() {
+                    // An inline `#[cfg(test)]` module ends the production half
+                    // of a file. Test code builds registries freely — the
+                    // invariant is about what a real session does.
+                    if line.trim_start().starts_with("#[cfg(test)]") {
+                        break;
+                    }
+                    if line.contains("ToolRegistry::new(") {
+                        offenders.push(format!("{relative}:{}", number + 1));
+                    }
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "these build a ToolRegistry without the operator's write grants — \
+             route them through `write_dirs::registry_for` / \
+             `registry_rooted_at`, or add them to EXEMPT with a reason: {offenders:?}"
+        );
     }
 
     /// The two surfaces UNION. The flag was the shape most likely to be

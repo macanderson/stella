@@ -355,6 +355,10 @@ pub(crate) struct GitCandidateWorkspaces {
     /// rule denials evaluating and blocking exactly as before — they simply
     /// never land as typed `PolicyDecision` events.
     events: Option<stella_core::EventSender>,
+    /// The operator's extra write directories (`--allow-dir`,
+    /// `[workspace] allowed_dirs`), granted to every candidate registry so
+    /// fan-out neither widens nor narrows what the session was allowed.
+    allowed_write_dirs: Vec<PathBuf>,
     /// The session's sub-agent runner, shared into every candidate registry.
     /// `None` leaves the `task` tool reporting sub-agents as unavailable —
     /// see [`GitCandidateWorkspaces::with_sub_agents`].
@@ -382,7 +386,25 @@ impl GitCandidateWorkspaces {
             events: None,
             sub_agents: None,
             adoption_ledger: None,
+            allowed_write_dirs: Vec::new(),
         }
+    }
+
+    /// Grant each candidate the operator's extra write directories.
+    ///
+    /// Best-of-N must not be a way *around* the operator's configuration, and
+    /// it must not be a way to lose it either: a candidate runs the same task
+    /// as the session, so a directory the session may write is one the
+    /// candidate needs. Without this, `--allow-dir` was silently a no-op
+    /// inside every candidate — the shape where a task succeeds on the direct
+    /// path and fails under fan-out for no reason the trace explains.
+    ///
+    /// A candidate's own root is its snapshot, so the grant only ever adds the
+    /// directories *outside* the tree; the snapshot itself is already writable
+    /// as the workspace.
+    pub(crate) fn with_allowed_write_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
+        self.allowed_write_dirs = dirs;
+        self
     }
 
     /// Attribute every adoption these candidates deliver to `execution_id`.
@@ -498,6 +520,7 @@ impl GitCandidateWorkspaces {
             Ok((overlay_untracked, baseline)) => {
                 let ws_root = dir.join(&root_rel);
                 let registry = stella_tools::ToolRegistry::new(ws_root.clone());
+                registry.allow_write_dirs(self.allowed_write_dirs.iter().cloned());
                 // Same governance as the session registry: workspace rules
                 // travel with the tree — best-of-N must not be a way around
                 // them. Applied while `registry` is still a plain
