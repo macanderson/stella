@@ -556,7 +556,16 @@ inputs, not review afterthoughts:
   is the pattern). A ceiling moves only via `make file-size-update`, which
   lands as a reviewable baseline diff to be justified like any other change —
   an escape hatch for a genuinely irreducible line (a module declaration in
-  an already-oversized `lib.rs`), never something a plan may assume.
+  an already-oversized `lib.rs`), never something a plan may assume. It moves
+  a ceiling and nothing else: `--update` **refuses to add** an entry for a file
+  that is not already in the baseline, naming it and pointing at the split
+  remedy (#3441). Before that it recorded every over-limit file it could see,
+  so a run clearing an unrelated ceiling drift would quietly grandfather
+  whatever first-time crossing happened to be sitting in the tree — inside a
+  diff whose stated purpose was the bump, and green forever after. If a
+  crossing is genuinely irreducible, say so out loud with
+  `./scripts/check-file-size.sh --update --grandfather <path>` and justify it
+  in review.
 
 **The ratchet judges your change, not the tree** (#2004). A file over the line
 fails only when `current > max(its own limit, size in the base tree)` — where

@@ -162,6 +162,81 @@ if [ "${1:-}" = "--absolute" ]; then
 fi
 
 if [ "${1:-}" = "--update" ]; then
+  shift
+  grandfathered_arg="$(mktemp)"
+  trap 'rm -f "$grandfathered_arg"' EXIT
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --grandfather)
+      if [ "$#" -lt 2 ]; then
+        echo "check-file-size: --grandfather needs a path." >&2
+        exit 2
+      fi
+      printf '%s\n' "$2" >>"$grandfathered_arg"
+      shift 2
+      ;;
+    --grandfather=*)
+      printf '%s\n' "${1#--grandfather=}" >>"$grandfathered_arg"
+      shift
+      ;;
+    *)
+      echo "check-file-size: unknown argument '$1' after --update." >&2
+      exit 2
+      ;;
+    esac
+  done
+
+  over="$(current_sizes | awk -v limit="$LIMIT" '$1 > limit' | LC_ALL=C sort -k2)"
+
+  if [ -f "$baseline" ]; then
+    # `|| true`: an all-comment baseline — every god file split, which is the
+    # goal — makes `grep -v` exit 1 under `set -e`, and this ran before any
+    # verdict, so the whole command died silently with no message at all. Same
+    # trap the `grep -cv` at the foot of this script carries a note about
+    # (#1800); it is the second time this file has been bitten by it.
+    known="$(grep -v '^#' "$baseline" 2>/dev/null | awk 'NF { print $2 }' | LC_ALL=C sort || true)"
+    over_paths="$(printf '%s' "$over" | awk 'NF { print $2 }' | LC_ALL=C sort)"
+    # Over the limit and carrying no prior decision: either the caller asked
+    # for it by name, or this is the crossing that must be split instead.
+    additions="$(LC_ALL=C comm -23 <(printf '%s\n' "$over_paths") <(printf '%s\n' "$known") | awk 'NF')"
+    asked="$(LC_ALL=C sort -u "$grandfathered_arg" | awk 'NF')"
+    refused="$(LC_ALL=C comm -23 <(printf '%s\n' "$additions") <(printf '%s\n' "$asked") | awk 'NF')"
+    # A --grandfather that names nothing needing it: a stale flag left on a
+    # command line, silently claiming a decision nobody is making today.
+    pointless="$(LC_ALL=C comm -13 <(printf '%s\n' "$additions") <(printf '%s\n' "$asked") | awk 'NF')"
+
+    if [ -n "$pointless" ]; then
+      {
+        echo "check-file-size: --grandfather named path(s) that need no new entry:"
+        printf '%s\n' "$pointless" | sed 's/^/  /'
+        echo ""
+        echo "Each is either already in the baseline or under the ${LIMIT}-line limit."
+        echo "Drop the flag: it is meant to record one deliberate exemption, and one"
+        echo "that applies to nothing teaches a reader the opposite."
+      } >&2
+      exit 1
+    fi
+
+    if [ -n "$refused" ]; then
+      {
+        echo "check-file-size: refusing to ADD baseline entries for:"
+        printf '%s\n' "$refused" | sed 's/^/  /'
+        echo ""
+        echo "These files crossed the ${LIMIT}-line limit for the first time; they are not"
+        echo "grandfathered, and the baseline only ever covered files that predate the"
+        echo "guard. Writing an entry here would grandfather a new god file inside a diff"
+        echo "whose purpose is something else, and turn the gate green so nothing objects"
+        echo "again. Split them into submodules instead (AGENTS.md, \"God files\")."
+        echo ""
+        echo "The baseline was NOT modified. If a crossing is genuinely irreducible, say so"
+        echo "explicitly and justify it in review:"
+        echo ""
+        printf '%s\n' "$refused" | sed 's|^|  ./scripts/check-file-size.sh --update --grandfather |'
+      } >&2
+      exit 1
+    fi
+  fi
+
   {
     echo "# Grandfathered files over the ${LIMIT}-line ratchet. See #629 and"
     echo "# scripts/check-file-size.sh. Format: <ceiling> <path>."
@@ -176,7 +251,9 @@ if [ "${1:-}" = "--update" ]; then
     # on every machine. A UTF-8 locale sorts punctuation differently (macOS
     # orders agent/tests.rs before agent.rs), which reshuffles untouched lines
     # and buries the one ceiling that actually moved.
-    current_sizes | awk -v limit="$LIMIT" '$1 > limit' | LC_ALL=C sort -k2
+    # Already computed above, and deliberately not recomputed: the set written
+    # must be the exact set the refusal check judged.
+    if [ -n "$over" ]; then printf '%s\n' "$over"; fi
   } >"$baseline.tmp"
   mv "$baseline.tmp" "$baseline"
   echo "check-file-size: baseline updated — $(grep -cv '^#' "$baseline") grandfathered file(s) over $LIMIT lines."
