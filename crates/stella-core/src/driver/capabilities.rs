@@ -42,7 +42,7 @@
 
 use std::sync::Arc;
 
-use stella_protocol::ModelCallRole;
+use stella_protocol::{ModelCallRole, TurnLane};
 
 use super::{Engine, EngineConfig, HooksHandle};
 use crate::estimator::CalibrationMap;
@@ -84,6 +84,17 @@ pub struct TurnCapabilities<'a> {
     /// every call has a role, and [`ModelCallRole::Worker`] is the ordinary
     /// answer rather than the absence of one.
     pub call_role: ModelCallRole,
+    /// Which lane is assembling this engine (#3386, #3410), stamped onto
+    /// `agent.turn.started`.
+    ///
+    /// An `Option`, and the `None` is a real answer rather than a gap: a
+    /// caller that genuinely belongs to no named lane (a test, a bare loop)
+    /// says so. What the missing `Default` buys is that the answer must still
+    /// be *written* -- a struct literal cannot omit this field, so
+    /// "unattributed" is always a decision somebody typed. That is the same
+    /// rule #3388 applies to `pipeline_variant`'s NULL: a placeholder has to
+    /// be distinguishable from "nobody recorded it".
+    pub lane: Option<TurnLane>,
 }
 
 impl<'a> TurnCapabilities<'a> {
@@ -105,6 +116,7 @@ impl<'a> TurnCapabilities<'a> {
             outcomes: None,
             fallback: None,
             call_role: ModelCallRole::Worker,
+            lane: None,
         }
     }
 }
@@ -157,6 +169,17 @@ pub struct OwnedTurnCapabilities {
     pub fallback: Option<Arc<dyn FallbackResolver>>,
     /// What this engine's model calls are attributed to.
     pub call_role: ModelCallRole,
+    /// Which lane is assembling this engine (#3386, #3410), stamped onto
+    /// `agent.turn.started`.
+    ///
+    /// An `Option`, and the `None` is a real answer rather than a gap: a
+    /// caller that genuinely belongs to no named lane (a test, a bare loop)
+    /// says so. What the missing `Default` buys is that the answer must still
+    /// be *written* -- a struct literal cannot omit this field, so
+    /// "unattributed" is always a decision somebody typed. That is the same
+    /// rule #3388 applies to `pipeline_variant`'s NULL: a placeholder has to
+    /// be distinguishable from "nobody recorded it".
+    pub lane: Option<TurnLane>,
 }
 
 impl OwnedTurnCapabilities {
@@ -175,6 +198,7 @@ impl OwnedTurnCapabilities {
             outcomes: None,
             fallback: None,
             call_role: ModelCallRole::Worker,
+            lane: None,
         }
     }
 
@@ -200,6 +224,7 @@ impl OwnedTurnCapabilities {
             outcomes,
             fallback,
             call_role,
+            lane,
         } = self;
 
         TurnCapabilities {
@@ -213,6 +238,7 @@ impl OwnedTurnCapabilities {
             outcomes: outcomes.as_deref(),
             fallback: fallback.as_deref(),
             call_role: *call_role,
+            lane: lane.clone(),
         }
     }
 }
@@ -258,6 +284,7 @@ impl<'a> Engine<'a> {
             outcomes,
             fallback,
             call_role,
+            lane,
         } = capabilities;
 
         Self {
@@ -275,6 +302,7 @@ impl<'a> Engine<'a> {
             bus,
             outcomes,
             fallback,
+            lane,
             provider_override: Arc::new(std::sync::OnceLock::new()),
         }
     }
@@ -307,6 +335,7 @@ mod tests {
             outcomes,
             fallback,
             call_role,
+            lane,
         } = TurnCapabilities::none();
 
         assert!(hooks.is_none());
@@ -319,6 +348,7 @@ mod tests {
         assert!(outcomes.is_none());
         assert!(fallback.is_none());
         assert_eq!(call_role, ModelCallRole::Worker);
+        assert!(lane.is_none());
     }
 
     /// The owned-slot witness (#3387): a lane that **owns** its seams can

@@ -3198,7 +3198,6 @@ dependencies = [
  "stella-graph",
  "stella-mcp",
  "stella-model",
- "stella-pipeline",
  "stella-protocol",
  "stella-store",
  "stella-tools",

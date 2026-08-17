@@ -168,6 +168,9 @@ mod tests {
     /// "`task` outranks everything": it did while delegation was the only
     /// built-in that reached the world, and restoring the shell and the file
     /// writers is precisely the change that ends it.
+    ///
+    /// This test replaces `the_catalog_grades_delegation_above_the_rest`,
+    /// which asserted exactly that now-false claim.
     #[test]
     fn the_catalog_grades_separate_observation_from_mutation_from_the_unbounded() {
         let grades: std::collections::BTreeSet<RiskLevel> =
