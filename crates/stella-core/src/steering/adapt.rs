@@ -54,6 +54,37 @@ fn skill_why(sel: &SelectedSkill) -> String {
     }
 }
 
+/// The skills this turn's two skill budgets evicted, as ledger entries
+/// (#3358) — the drops that used to be the loudest silence on the plane.
+///
+/// Two cuts, and they are genuinely different questions, which is why both
+/// are reported and neither is inferred from the other:
+///
+/// - **Top-k** ([`skills::SkillSelection::over_top_k`]) — matched, scored,
+///   and lost a seat to `SelectionConfig::max_skills`. Estimated over the
+///   block it would have rendered, the same producer the survivors' costs
+///   come from, so "what would it have cost to widen `max_skills`" is
+///   answerable from the ledger rather than by re-running selection.
+/// - **Section budget** — survived top-k and then did not fit
+///   `render_skills_section`'s own token budget, per
+///   [`skills::section_fit`]. These candidates are still *selected* on the
+///   plane, deliberately: the section renderer, not the plane, made this cut,
+///   and the plane re-enacting it would change the rendered bytes. The ledger
+///   reports it; folding the section budget into the plane's shared budget is
+///   Phase 4 behavior change (#3243), sequenced apart from this ledger slice.
+pub fn skill_drops(selection: &skills::SkillSelection) -> Vec<DroppedCandidate> {
+    let fit = skills::section_fit(&selection.selected);
+    selection.selected[fit..]
+        .iter()
+        .chain(selection.over_top_k.iter())
+        .map(|sel| DroppedCandidate {
+            source: SteeringSource::Skill,
+            handle: sel.skill.name.clone(),
+            est_tokens: stella_protocol::estimate_tokens(&skills::rendered_skill_block(sel)),
+        })
+        .collect()
+}
+
 /// The records the volatile channel rendered this turn, as candidates.
 ///
 /// `score` flattens the exact importance `render::survivors` drops by —
