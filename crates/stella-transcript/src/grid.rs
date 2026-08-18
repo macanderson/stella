@@ -23,7 +23,6 @@ use crate::digest::{self, Chip};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::FoldState;
 use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, ToolKind, Turn};
-use crate::word::Span;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Width of the elapsed-offset gutter, including its trailing space.
