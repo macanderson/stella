@@ -810,7 +810,9 @@ mod tests {
             model: None,
         }];
         assert!(derive_pipeline_persona(true, None));
-        assert!(initial_pipeline_persona(Some(&resume_state_with(history, None))));
+        assert!(initial_pipeline_persona(Some(&resume_state_with(
+            history, None
+        ))));
     }
 
     /// A genuinely fresh session — no resume state at all, or a resumed one
