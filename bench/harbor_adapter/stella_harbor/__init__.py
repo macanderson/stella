@@ -774,6 +774,94 @@ async def _secure_exec_with_credential_fd(
             wire[index] = 0
 
 
+async def _secure_setup_exec_with_credential_fd(
+    environment: BaseEnvironment,
+    *,
+    command: list[str],
+    env: dict[str, str],
+    credentials: dict[str, str],
+    timeout_sec: int | None = None,
+) -> ExecResult:
+    """Run a *setup* stella command with credentials only on anonymous stdin.
+
+    A sibling of :func:`_secure_exec_with_credential_fd`, not a widening of
+    it. The run path hard-requires a pinned ``--model`` and recomputes the
+    engine posture at the process boundary; both are load-bearing there and
+    neither has any meaning for ``stella init``, so relaxing them to fit a
+    setup command would weaken a guard that is doing real work on the path it
+    was written for. What this shares instead is every property that is about
+    *the credential*: direct stella argv, no credential name rendered into
+    ``docker compose exec -e`` (Harbor puts those in the host process table),
+    values validated against the empty/newline framing attack, the host
+    environment checked for leaked material, and the wire buffer zeroed.
+
+    Why setup needs a credential at all: ``stella init`` is where the semantic
+    index is *built*, and ``stella-embed`` reads ``VOYAGE_API_KEY`` ambiently
+    (``EmbedderEnv::from_process``). Without it, init logs "semantic index:
+    skipped — no embedding backend configured" and the code graph is indexed
+    but never embedded. The credential the run path hands over later cannot
+    repair that: by then there are no vectors to rank, so ``search`` silently
+    degrades to lexical for the whole trial. The handoff is consumed in
+    ``main`` *before* clap dispatch, and `credential_handoff.rs` deliberately
+    re-exports this one target into the process environment, so ``init``
+    honours it exactly as ``run`` does.
+    """
+    if not command or command[0] != _INSTALL_PATH:
+        raise RuntimeError("secure setup runner only accepts direct stella argv")
+    if not credentials:
+        raise RuntimeError("secure setup runner requires at least one credential")
+
+    values = tuple(credentials.values())
+    if any(not value or "\n" in value or "\r" in value for value in values):
+        # A newline inside a value would silently re-frame the pipe, handing
+        # Stella a different value under a name it trusts.
+        raise RuntimeError("setup credential is empty or contains a line break")
+
+    env = _apply_launcher_env_controls(dict(env))
+    env[_HANDOFF_FD_ENV] = "0"
+    # One name per value, in the order the values are written to the pipe.
+    # Stella pairs them positionally, so this ordering is the contract.
+    env[_HANDOFF_TARGET_ENV] = ",".join(credentials)
+
+    test_hook = getattr(environment, "_stella_secure_exec_with_stdin", None)
+    wire = bytearray("\n".join(values).encode("utf-8"))
+    wire.append(ord("\n"))
+    try:
+        if callable(test_hook):
+            return await test_hook(command=command, env=env, stdin=bytes(wire))
+
+        compose_base = _compose_base_argv(environment)
+        compose = [*compose_base, "exec", "-T"]
+
+        cwd = getattr(environment.task_env_config, "workdir", None)
+        if cwd:
+            compose.extend(["-w", str(cwd)])
+        for key, value in env.items():
+            if _is_credential_env_name(key):
+                raise RuntimeError(
+                    f"refusing to place credential variable {key} in Docker exec argv"
+                )
+            compose.extend(["-e", f"{key}={value}"])
+
+        resolver = getattr(environment, "_resolve_user", None)
+        user = resolver(None) if callable(resolver) else None
+        if user is not None:
+            compose.extend(["-u", str(user)])
+        compose.extend(["main", *command])
+
+        host_env = _compose_host_environment(environment)
+        carriers = _credential_carrying_names(host_env, values)
+        if carriers:
+            raise RuntimeError(_credential_leak_message(carriers))
+
+        return await exec_with_agent_reap(
+            compose, compose_base, host_env, wire, None, _INSTALL_PATH
+        )
+    finally:
+        for index in range(len(wire)):
+            wire[index] = 0
+
+
 def _sha256_file(path: Path) -> str:
     """Return the full SHA-256 digest of a host binary."""
     digest = hashlib.sha256()
@@ -1019,20 +1107,40 @@ class StellaAgent(BaseInstalledAgent):
         plane — recall fans out through the CGP host over this index — so the
         step buys the turn code intelligence it would otherwise lack. The
         embedding half needs a backend in the container (``VOYAGE_API_KEY`` /
-        ``OPENAI_API_KEY`` / ``STELLA_EMBED_URL``), which this rig lacks
-        today: the gap #2995 measures. Neither half needs a credential
+        ``OPENAI_API_KEY`` / ``STELLA_EMBED_URL``), and **this is the step
+        that has to have it**: init is where the index is built, so a
+        credential that only arrives later on the run path's handoff finds no
+        vectors to rank and leaves ``search`` lexical for the whole trial.
+        When one is configured the command therefore goes through
+        :func:`_secure_setup_exec_with_credential_fd` — the same
+        anonymous-stdin discipline the run uses, never ``exec(env=...)``,
+        which Harbor renders into the host process table.
+
+        With none configured this falls back to the plain agent exec and init
+        reports ``semantic index: skipped``, which is the honest no-backend
+        posture rather than a failure. Neither half needs a credential
         otherwise, and best-effort is by construction — a workspace with
         nothing indexable (or no tree-sitter grammar) is this benchmark's
         normal case, not a failure, and must never block a run. All of it is
         off the agent's clock.
         """
         cwd = getattr(environment.task_env_config, "workdir", None)
-        command = f"cd {shlex.quote(str(cwd))} && " if cwd else ""
-        command += f"{_INSTALL_PATH} init"
+        embedding = optional_embedding_credentials(self._configured_value)
         try:
-            result = await self.exec_as_agent(
-                environment, command=command, timeout_sec=300
-            )
+            if embedding:
+                result = await _secure_setup_exec_with_credential_fd(
+                    environment,
+                    command=[_INSTALL_PATH, "init"],
+                    env={},
+                    credentials=embedding,
+                    timeout_sec=300,
+                )
+            else:
+                command = f"cd {shlex.quote(str(cwd))} && " if cwd else ""
+                command += f"{_INSTALL_PATH} init"
+                result = await self.exec_as_agent(
+                    environment, command=command, timeout_sec=300
+                )
         except Exception as exc:  # noqa: BLE001 - discovery aid, never fatal
             print(f"stella-adapter: code graph unavailable: {exc}", file=sys.stderr)
             self._code_graph_summary = code_graph.unavailable(exc)
