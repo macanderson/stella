@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 import {
-  GOLD,
+  BRAND,
   STAR_PATH,
   TRAIL_RECTS,
   WORDMARK_LETTERS_PATH,
@@ -21,8 +21,8 @@ import {
  * double up — the kit's own lockup SVG omits it for the same reason.
  *
  * Colours are literals or imported constants rather than CSS vars because
- * Satori resolves no cascade: Ink #10100f, Paper #f2eee5, Bronze Gold
- * #c58a32 (6.4:1 on ink), muted #a19a8e (6.8:1 on ink). Keep the markup inside Satori's
+ * Satori resolves no cascade: Ink #070b10, Paper #e9edf2, Bronze Gold
+ * #00d1f9 (6.4:1 on ink), muted #9299a1 (6.8:1 on ink). Keep the markup inside Satori's
  * supported subset — plain <path>/<rect> fills only, no gradients, masks, or
  * filters (the trails are pre-flattened rounded rects for exactly this
  * reason), and every element with children carries an explicit `display`.
@@ -39,12 +39,12 @@ export const alt =
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const INK = "#10100f";
-const PAPER = "#f2eee5";
-const MUTED = "#a19a8e";
-const SURFACE = "#171614";
-const SURFACE_TOP = "#1d1b18";
-const BORDER = "#2c2924";
+const INK = "#070b10";
+const PAPER = "#e9edf2";
+const MUTED = "#9299a1";
+const SURFACE = "#12181d";
+const SURFACE_TOP = "#141b22";
+const BORDER = "#2a3036";
 
 /** The repo this card advertises, and the one command that installs it. */
 const REPO_SLUG = "macanderson/stella";
@@ -58,9 +58,9 @@ function Comet({ size: px }: { size: number }) {
   return (
     <svg viewBox="0 0 96 96" width={px} height={px}>
       {TRAIL_RECTS.map((r) => (
-        <rect key={r.y} {...r} fill={GOLD} />
+        <rect key={r.y} {...r} fill={BRAND} />
       ))}
-      <path d={STAR_PATH} fill={GOLD} />
+      <path d={STAR_PATH} fill={BRAND} />
     </svg>
   );
 }
@@ -75,7 +75,7 @@ function Comet({ size: px }: { size: number }) {
 function StarGlyph({ size: px }: { size: number }) {
   return (
     <svg viewBox="42 26 44 44" width={px} height={px}>
-      <path d={STAR_PATH} fill={GOLD} />
+      <path d={STAR_PATH} fill={BRAND} />
     </svg>
   );
 }
@@ -103,7 +103,7 @@ function Sweeps() {
       <path
         d={STAR_PATH}
         transform="translate(-1806.9 -1738.6) scale(51.8182)"
-        fill={GOLD}
+        fill={BRAND}
         fillOpacity={0.055}
       />
     </svg>
@@ -168,7 +168,7 @@ export default function OpengraphImage() {
             }}
           >
             {/* One dot gold: gold is the signal, so exactly one thing gets it. */}
-            {[GOLD, "#4a4945", "#35342f"].map((c, i) => (
+            {[BRAND, "#474d54", "#2f353b"].map((c, i) => (
               <div
                 key={c}
                 style={{
@@ -204,7 +204,7 @@ export default function OpengraphImage() {
               fontSize: "32px",
             }}
           >
-            <div style={{ display: "flex", color: GOLD }}>$</div>
+            <div style={{ display: "flex", color: BRAND }}>$</div>
             <div style={{ display: "flex", marginLeft: "14px" }}>{INSTALL_CMD}</div>
             {/* A resting block cursor — the tell that says terminal, not code block. */}
             <div
@@ -212,7 +212,7 @@ export default function OpengraphImage() {
                 width: "17px",
                 height: "32px",
                 marginLeft: "12px",
-                background: GOLD,
+                background: BRAND,
               }}
             />
           </div>
@@ -242,10 +242,12 @@ export default function OpengraphImage() {
               alignItems: "center",
               padding: "12px 26px",
               borderRadius: "34px",
-              border: `2px solid ${GOLD}`,
-              // The one thing on the card a reader is meant to act on.
-              background: "rgba(255,176,0,0.12)",
-              color: GOLD,
+              border: `2px solid ${BRAND}`,
+              // The one thing on the card a reader is meant to act on. The
+              // wash is the accent at 12%, written out because Satori has no
+              // cascade and cannot resolve a custom property.
+              background: "rgba(0,209,249,0.12)",
+              color: BRAND,
             }}
           >
             <StarGlyph size={30} />
