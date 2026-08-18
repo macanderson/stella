@@ -330,8 +330,21 @@ impl Tool for SpawnSubAgent {
 /// the salvaged text is real evidence the parent paid for, and burying it in
 /// an error message invites the model to discard it and redo the work.
 /// A child that never ran IS an error, because there is nothing to use.
+///
+/// A child that *completed* and said nothing is the same error wearing a
+/// success label, and is reported as one. The `Incomplete` arms below already
+/// split on an empty summary; `Completed` did not, so a child whose report was
+/// blank returned `ok` with no findings and the parent had to notice the
+/// thinness itself — which, in a real session, it did only after paying for
+/// the sweep twice.
 fn render(outcome: &SubAgentOutcome) -> ToolOutput {
     match outcome {
+        SubAgentOutcome::Completed(report) if report.summary.trim().is_empty() => {
+            ToolOutput::error(
+                "the sub-agent finished without reporting anything — its answer was empty. \
+                 Do the work directly, or re-ask with a narrower, self-contained question.",
+            )
+        }
         SubAgentOutcome::Completed(report) => ToolOutput::Ok {
             content: if report.truncated {
                 format!(

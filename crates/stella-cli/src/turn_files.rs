@@ -57,26 +57,88 @@
 //! grandfathered god file, closed to growth (AGENTS.md § "God files — plan
 //! around them, never into them").
 
+use std::sync::Arc;
+
 use stella_core::EventSender;
 use stella_protocol::event::{AgentEvent, FileChangeKind};
 use stella_store::work_journal::{JournalChange, JournalChangeKind};
+use stella_store::{FileTouchRow, Store};
 
 use crate::config::Config;
 
-/// Measure the shared work tree and emit one [`AgentEvent::FileChange`] per
-/// path this turn changed.
+/// Measure the shared work tree once, then write both of this turn's file
+/// projections from that one reading: the [`AgentEvent::FileChange`] stream
+/// and the durable `files_touched` rows.
 ///
 /// Call **before** the turn's event channel closes — these are the turn's
 /// events, and a consumer folding the stream must see them inside the turn
 /// they describe.
 ///
+/// The measurement is taken exactly once and both projections are derived from
+/// it. Snapshotting twice would not merely cost a second `--numstat`: the
+/// journal's snapshot advances its own baseline, so the second reading would
+/// report an unchanged tree and the two projections would disagree about the
+/// same turn.
+///
 /// Best-effort and silent, like every other turn-boundary write: a turn that
 /// ended is not made less ended by an unmeasurable tree. A send failure means
 /// the renderer is already gone, which is not this function's problem to
 /// report.
-pub(crate) fn emit_shared_tree_changes(cfg: &Config, tx: &EventSender) {
-    for change in cfg.durability.snapshot_worktree() {
+pub(crate) fn emit_shared_tree_changes(
+    cfg: &Config,
+    tx: &EventSender,
+    execution: Option<&(Arc<Store>, i64)>,
+) {
+    let measured = cfg.durability.snapshot_worktree();
+    if measured.is_empty() {
+        return;
+    }
+    if let Some((store, execution_id)) = execution {
+        let rows: Vec<FileTouchRow> = measured.iter().map(file_touch_row).collect();
+        // Best-effort for the same reason `AdoptionLedger::record` is: this is
+        // observability, not evidence (#2882). A telemetry write must never
+        // fail a turn whose bytes are already on disk.
+        let _ = store.record_files_touched(*execution_id, &rows);
+    }
+    for change in measured {
         let _ = tx.send(file_change(change));
+    }
+}
+
+/// One measured delta as a durable row.
+///
+/// The durable half of #3413. That change gave the engine path a `FileChange`
+/// producer but no `files_touched` producer, leaving adoption as the table's
+/// only writer — so every direct-edit turn recorded zero touched files however
+/// many it wrote. `Store::finalize_execution_reflection` reads exactly this
+/// table for its `wrote_files` flag, so the empty table also told the
+/// reflection loop that a turn which edited dozens of files had written none.
+fn file_touch_row(change: &JournalChange) -> FileTouchRow {
+    FileTouchRow {
+        path: change.path.clone(),
+        ops: ops_letter(change.kind).to_string(),
+        lines_added: u64::from(change.added),
+        lines_removed: u64::from(change.removed),
+        events_json: serde_json::json!([{
+            "event": "measured",
+            "reason": "turn-boundary work-tree measurement",
+            "lines_added": change.added,
+            "lines_removed": change.removed,
+        }])
+        .to_string(),
+    }
+}
+
+/// The `ops` alphabet is CRUD letters, fixed by the reader rather than by
+/// preference — `Store::execution_rollup` and `finalize_execution_reflection`
+/// both match `ops LIKE '%C%' OR '%U%' OR '%D%'`, so a row spelled any other
+/// way is a row those queries cannot see. Same alphabet as
+/// [`crate::candidate_ws::adoption_ledger`], deliberately.
+fn ops_letter(kind: JournalChangeKind) -> &'static str {
+    match kind {
+        JournalChangeKind::Created => "C",
+        JournalChangeKind::Modified => "U",
+        JournalChangeKind::Deleted => "D",
     }
 }
 
@@ -110,6 +172,42 @@ mod tests {
             removed: 3,
             diff: Some("@@ -1 +1,2 @@\n+new\n".into()),
         }
+    }
+
+    /// The letters the two readers grep for. `execution_rollup`'s
+    /// `files_written` and `finalize_execution_reflection`'s `wrote_files`
+    /// both match `ops LIKE '%C%' OR '%U%' OR '%D%'`, so a row spelled any
+    /// other way fills the table while both queries answer zero.
+    #[test]
+    fn durable_rows_use_the_crud_letters_both_reader_queries_match() {
+        for (kind, expected) in [
+            (JournalChangeKind::Created, "C"),
+            (JournalChangeKind::Modified, "U"),
+            (JournalChangeKind::Deleted, "D"),
+        ] {
+            assert_eq!(ops_letter(kind), expected);
+        }
+    }
+
+    /// The durable projection carries the same measurement as the stream one,
+    /// from the same reading. Before this existed, a direct-edit turn emitted
+    /// `FileChange` events and wrote no `files_touched` row at all.
+    #[test]
+    fn a_measured_change_becomes_a_durable_row_carrying_the_same_counts() {
+        let row = file_touch_row(&measured(JournalChangeKind::Modified));
+        assert_eq!(row.path, "src/lib.rs");
+        assert_eq!(row.ops, "U");
+        assert_eq!((row.lines_added, row.lines_removed), (12, 3));
+
+        let events: serde_json::Value = serde_json::from_str(&row.events_json).expect("json");
+        let entries = events.as_array().expect("an array");
+        assert_eq!(entries.len(), 1, "one measurement is one audit entry");
+        assert_eq!(entries[0]["event"], "measured");
+        assert_eq!(entries[0]["lines_added"], 12);
+        assert!(
+            !row.events_json.contains("@@"),
+            "files_touched indexes paths; the diff rides the FileChange event"
+        );
     }
 
     #[test]

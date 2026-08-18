@@ -160,6 +160,28 @@ async fn a_child_that_produced_nothing_is_an_error() {
     assert!(matches!(out, ToolOutput::Error { .. }), "{out:?}");
 }
 
+/// The silent-loss shape: a child that *completed* and reported nothing used
+/// to render as a plain `ok` with empty content, indistinguishable from a
+/// sweep that genuinely found nothing to say. The parent could only recover by
+/// noticing the thinness itself and paying for the whole delegation again.
+#[tokio::test]
+async fn a_completed_child_with_an_empty_report_is_an_error_not_a_silent_ok() {
+    for blank in ["", "   \n\t "] {
+        let (tool, _) = tool_with(SubAgentOutcome::Completed(report(blank, 0.42, false)));
+
+        let out = tool
+            .execute(
+                &call("x", "y"),
+                &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+            )
+            .await;
+        assert!(
+            matches!(out, ToolOutput::Error { .. }),
+            "a completed child that said nothing must not read as success: {out:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_truncated_report_says_so_to_the_model() {
     let (tool, _) = tool_with(SubAgentOutcome::Completed(report(
