@@ -107,20 +107,18 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 // only — `/color` exists so several terminal windows running stella can be told
 // apart at a glance, which needs hues that are *distinct* rather than on-brand.
 // `colored`'s named ANSI colors are the portable stand-ins, and the nearest one
-// to the brand's Ion (`theme::ACCENT`, `#00D1F9`) is bright-cyan.
+// to the brand's Phosphor Gold (`theme::ACCENT`, `#FFB81A`) is bright-yellow.
 //
-// The default used to be bright-blue (and bright-yellow, and bright-cyan
-// before those): the accent trailed the identity through recolour after
-// recolour because nothing asserted which hue the default resolves to. The
-// comet kit ended that — the brand slot is `ion` now, and the test below pins
-// it.
+// The default used to be bright-blue (and bright-cyan before that): the
+// accent trailed the identity through recolour after recolour because
+// nothing asserted which hue the default resolves to. The comet kit ends
+// that — the brand slot is `gold` now, and the test below pins it.
 //
-// The old slugs are all kept as personalisation: `gold` still lands on
-// bright-yellow, `sky` and `azure` on bright-blue (the named set holds no
-// second distinct blue), and `/color gold` keeps working for anyone whose
-// muscle memory types it — it just no longer claims to be the brand.
-const PALETTE: [(&str, Color); 8] = [
-    ("ion", Color::BrightCyan),
+// The old slugs are all kept as personalisation: `sky` and `azure` still
+// land on bright-blue (the named set holds no second distinct blue), and
+// `/color sky` keeps working for anyone whose muscle memory types it — it
+// just no longer claims to be the brand.
+const PALETTE: [(&str, Color); 7] = [
     ("gold", Color::BrightYellow),
     ("sky", Color::BrightBlue),
     ("cyan", Color::BrightCyan),
@@ -132,7 +130,7 @@ const PALETTE: [(&str, Color); 8] = [
 
 static ACCENT: AtomicUsize = AtomicUsize::new(0);
 
-/// The session accent color (defaults to the brand ion, `PALETTE[0]`).
+/// The session accent color (defaults to the brand gold, `PALETTE[0]`).
 ///
 /// `agent.rs` imports this **by name** rather than reaching for it through the
 /// module path. That is not style: `plain::accent()` is two characters longer
@@ -206,9 +204,9 @@ pub fn tool_call_card(name: &str, input: &serde_json::Value, status: &str) {
 
     // The tool name takes the session accent, matching the deck: it is the one
     // token in a transcript that carries the brand hue, because the names are
-    // what a reader scans a scrollback *for*. It was once a hard-coded
-    // `bright_yellow` — this file's own stand-in for a long-retired gold —
-    // which survived two recolours because no "gold" string named it.
+    // what a reader scans a scrollback *for*. It was `bright_yellow` — this
+    // file's own stand-in for the retired gold — which survived the recolour
+    // because no "gold" string named it.
     println!(
         "  {} {}({})",
         icon,
@@ -985,29 +983,25 @@ mod tests {
         );
     }
 
-    /// Ion is the brand, so it is the default accent -- `/color` with no
+    /// Gold is the brand, so it is the default accent -- `/color` with no
     /// argument, and a fresh session, must land on it.
     #[test]
-    fn default_accent_is_ion() {
-        assert_eq!(PALETTE[0].0, "ion");
+    fn default_accent_is_gold() {
+        assert_eq!(PALETTE[0].0, "gold");
         assert_eq!(ACCENT.load(Ordering::Relaxed) % PALETTE.len(), 0);
         // …and it must be the BRAND hue, not merely first in the list. The
         // default trailed the identity through recolour after recolour
         // because nothing asserted which colour the default slug actually
-        // resolves to. Bright-cyan is the nearest named ANSI stand-in for
-        // `theme::ACCENT` (Ion `#00D1F9`), and it is what `theme::FALLBACKS`
-        // degrades the accent to at 16 colours, so the two surfaces agree.
-        assert_eq!(PALETTE[0].1, Color::BrightCyan);
-        assert_eq!(accent(), Color::BrightCyan);
-        // The retired brand slugs survive as personalisation, then the
-        // process global returns to the brand default for any test that
-        // reads it.
-        assert!(set_accent("gold"));
-        assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "gold");
+        // resolves to. Bright-yellow is the nearest named ANSI stand-in for
+        // `theme::ACCENT` (Phosphor Gold `#FFB81A`).
+        assert_eq!(PALETTE[0].1, Color::BrightYellow);
+        assert_eq!(accent(), Color::BrightYellow);
+        // The old brand slug survives as personalisation, then the process
+        // global returns to the brand default for any test that reads it.
         assert!(set_accent("sky"));
         assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "sky");
-        assert!(set_accent("ion"));
-        assert_eq!(accent(), Color::BrightCyan);
+        assert!(set_accent("gold"));
+        assert_eq!(accent(), Color::BrightYellow);
     }
 
     #[test]

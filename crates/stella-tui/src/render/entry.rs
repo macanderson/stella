@@ -232,7 +232,7 @@ fn entry_body(
             // the `[user]:` tag and every line of the prompt ride the same
             // violet as the composer's keybind glyphs and the
             // "deterministic-first" chip (`deck_render`) — the interactive-
-            // chrome accent, never the brand ion. Rendered as plain lines
+            // chrome accent, never the brand gold. Rendered as plain lines
             // (not markdown) so nothing tints part of the prompt a 2nd color.
             let violet = Style::new().fg(theme::VIOLET);
             let lines: Vec<Line<'static>> = text
@@ -353,7 +353,7 @@ fn entry_body(
             // white/dim (`path_spans`), so the colour marks the verb and never
             // the object.
             //
-            // Not the brand accent: ion means brand/active/focus, and every
+            // Not the brand accent: gold means brand/active/focus, and every
             // tool name wearing it made the accent mean "a tool ran", which is
             // every row.
             let class = crate::tool_class::classify(name);
@@ -984,11 +984,10 @@ fn entry_body(
 
 fn pr_status_color(status: PrStatus) -> Color {
     // A ramp toward the brand accent as the PR matures, so the `[⇢ pr]:`
-    // gutter reads with the rest of the transcript: warning amber draft, the
-    // deep accent stop while open, full ion on merge, danger on close. (The
-    // "ember" family this comment used to name was retired with the
-    // aurora→gold recolour, and the gold with the gold→ion one — see
-    // `theme`'s palette-law test.)
+    // gutter reads with the rest of the transcript: warning-orange draft, deep
+    // gold while open, full gold on merge, danger on close. (The "ember"
+    // family this comment used to name was retired with the aurora→gold
+    // recolour — see `theme`'s palette-law test.)
     match status {
         PrStatus::Draft => theme::WARNING,
         PrStatus::Open => theme::ACCENT_DEEP,
