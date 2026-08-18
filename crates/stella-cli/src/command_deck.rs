@@ -3660,22 +3660,16 @@ async fn run_deck_command(
             });
         }
         "/init" => {
-            // Replay the launch cinematic over the reindex: the battle loops
-            // for as long as init runs, then the wordmark reveal hands the
-            // frame back to the deck. The progress lines still land in the
-            // transcript behind the splash (and any key skips straight to
-            // them). Released on BOTH outcomes — a failed init must never
-            // strand a held splash.
-            let _ = in_tx.send(Inbound::Splash(SplashCue::Replay));
-            let mut emit = agent::deck_narrator(in_tx.clone(), LEAD);
-            let outcome = agent::init_workspace(
-                Some(provider),
+            // The splash replay, the narrator, and the question channel all
+            // live in `init_cmd` — this file is closed to growth.
+            match init_cmd::run(
+                provider,
                 &cfg.workspace_root,
                 &cfg.model_id,
                 budget_limit,
                 ask_io,
-                say,
-                init_cmd::splash_sender(in_tx),
+                in_tx,
+                LEAD,
             )
             .await
             {
