@@ -265,44 +265,6 @@ pub async fn read_to_string_async(
         .map_err(|error| RootError::Io(io::Error::other(format!("read task failed: {error}"))))?
 }
 
-// --- One-shot helpers -------------------------------------------------------
-//
-// For the callers that touch exactly one file and have no handle to reuse:
-// the registry's schema gate and its file-touch ledger, both of which look at
-// a single path on a path that is already rare. Each pays for a `canonicalize`
-// and an `open` of the root; a caller with a *list* of paths should open a
-// [`RootHandle`] once and loop instead. All of them collapse a refusal and a
-// failure into the same "no answer", because that is what these callers do
-// with both: an unreadable file has no current content and no digest.
-
-/// Open `root` and read one file under it, confined.
-pub fn read_confined_bytes(root: &Path, rel: &str) -> Option<Vec<u8>> {
-    RootHandle::open(root)
-        .and_then(|handle| handle.read(rel))
-        .ok()
-}
-
-/// [`read_confined_bytes`] decoded as UTF-8; `None` if it is not text.
-pub fn read_confined(root: &Path, rel: &str) -> Option<String> {
-    read_confined_bytes(root, rel).and_then(|bytes| String::from_utf8(bytes).ok())
-}
-
-/// [`read_confined_bytes`] decoded *lossily*, so a binary file still yields a
-/// deterministic (if approximate) line count for the file-touch ledger rather
-/// than reporting the touch as zero lines long.
-pub fn read_confined_lossy(root: &Path, rel: &str) -> Option<String> {
-    read_confined_bytes(root, rel).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-}
-
-/// Does `rel` name something that exists inside `root`?
-///
-/// The create-vs-update question the ledger asks before a write. Answered
-/// through the confined walk, so a swapped intermediate cannot make a create
-/// look like an update by pointing at a file outside the workspace.
-pub fn exists_confined(root: &Path, rel: &str) -> bool {
-    RootHandle::open(root).is_ok_and(|handle| handle.stat(rel).is_ok())
-}
-
 // ---------------------------------------------------------------------------
 // Unix: the real thing.
 // ---------------------------------------------------------------------------

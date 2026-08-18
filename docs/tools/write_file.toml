@@ -27,7 +27,7 @@ available_for_speculation = false
 risk_level = "medium"
 
 description = '''
-Create or overwrite a file. Creates parent directories as needed.
+Create or overwrite a file. Creates parent directories as needed. Overwriting an existing file is refused unless you have already read all of it this session — read_file it in full first, or use edit_file to change part of it in place.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.
