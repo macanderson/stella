@@ -45,7 +45,6 @@ or arbitrary Harbor agent extras abort a claim run.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -53,7 +52,8 @@ import re
 import shlex
 import sys
 import uuid
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Sequence
+from functools import partial
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -69,6 +69,12 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.agent.context import AgentContext
 
 from .atif import envelope_accounting, envelope_to_trajectory
+from .credential_guard import captured_process as _captured_process
+from .credential_guard import contains_credential as _contains_credential
+from .credential_guard import credential_carrying_names as _credential_carrying_names
+from .credential_guard import credential_leak_message as _credential_leak_message
+from .credential_guard import forbidden_main_container_env_names
+from .setup_exec import secure_setup_exec_with_credential_fd
 from .credential_bundle import (
     ENV_CREDENTIAL_SOURCE,
     HOST_CREDENTIAL_BUNDLE_FD_ENV,
@@ -471,107 +477,20 @@ def _compose_host_environment(environment: BaseEnvironment) -> dict[str, str]:
     return _apply_launcher_env_controls(host_env)
 
 
-def _credential_carrying_names(
-    host_env: Mapping[str, str], credentials: Iterable[str]
-) -> tuple[str, ...]:
-    """Variable *names* in ``host_env`` whose value carries a live credential.
-
-    Names only, never values, and never which credential matched: the point of
-    the guard is that this material must not be rendered anywhere, and an error
-    message is one of the places it must not be rendered.
-    """
-    secrets = tuple(credentials)
-    return tuple(
-        sorted(
-            name
-            for name, value in host_env.items()
-            if any(secret in value for secret in secrets)
-        )
-    )
-
-
-def _credential_leak_message(carriers: Sequence[str]) -> str:
-    """Name the offending variables and the fix, not just the symptom.
-
-    This refusal is correct and load-bearing — it is the check that stops a
-    provider key reaching a task container's ``/proc/<pid>/environ`` — but for
-    as long as it said only *that* a credential remained, it did not say
-    *which variable* held it, and every occurrence cost an operator a manual
-    hunt through the host environment.
-
-    The failure it actually catches is an **alias under a name nothing
-    recognises**: ``VOYAGE_AI_KEY`` beside ``VOYAGE_API_KEY`` holds the same
-    secret, but ends ``_AI_KEY``, so :func:`_is_credential_env_name` does not
-    strip it and the arena's ``_SCRUBBED_PREFIXES`` do not scrub it. The guard
-    fires, correctly, on a variable the operator has to be told the name of.
-    """
-    names = ", ".join(carriers)
-    return (
-        "selected provider credential remains in Docker's host environment, "
-        f"carried by: {names}. These variables hold a live credential under a "
-        "name the credential-name policy does not recognise (an alias such as "
-        "VOYAGE_AI_KEY beside VOYAGE_API_KEY is the usual cause). Unset them "
-        "before launching, or rename them to the canonical *_API_KEY spelling "
-        "so they are stripped from the Compose host environment."
-    )
-
-
-def _contains_credential(value: Any, credential: str) -> bool:
-    """Search a decoded Docker Config without rendering matching material."""
-    if isinstance(value, str):
-        return credential in value
-    if isinstance(value, dict):
-        return any(
-            _contains_credential(key, credential)
-            or _contains_credential(item, credential)
-            for key, item in value.items()
-        )
-    if isinstance(value, list):
-        return any(_contains_credential(item, credential) for item in value)
-    return False
-
-
-def _main_container_config_env_names(config: dict[str, Any]) -> set[str]:
-    """Parse Docker Config.Env without retaining or reporting its values."""
-    raw_env = config.get("Env")
-    if raw_env is None:
-        return set()
-    if not isinstance(raw_env, list):
-        raise RuntimeError("Docker main container Config.Env is not a list")
-    names: set[str] = set()
-    for item in raw_env:
-        if not isinstance(item, str) or "=" not in item:
-            raise RuntimeError("Docker main container Config.Env is malformed")
-        name, _ = item.split("=", 1)
-        if not name or name != name.strip():
-            raise RuntimeError("Docker main container Config.Env is malformed")
-        names.add(name)
-    return names
-
-
-def _forbidden_main_container_env_names(config: dict[str, Any]) -> list[str]:
-    """Return only forbidden variable names, never their potentially secret values."""
-    names = _main_container_config_env_names(config)
-    return sorted(
-        name
-        for name in names
-        if name.startswith(_ENV_PREFIX)
-        or name.upper() in _PROVIDER_CREDENTIAL_CONFIG_ENV
-        or name.upper() in _PROVIDER_ROUTE_CONFIG_ENV
-    )
-
-
-async def _captured_process(argv: list[str], env: dict[str, str]) -> tuple[int, bytes]:
-    """Run one host inspection command without ever echoing captured output."""
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        env=env,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await process.communicate()
-    return process.returncode or 0, stdout
+#: ``stella init`` with the embedding credential on an anonymous pipe. The
+#: plumbing below encodes this module's credential-scrubbing rules, so
+#: :mod:`stella_harbor.setup_exec` takes it as arguments rather than importing
+#: it back and forming a cycle — as :func:`_probe_sigkill_cause` does.
+_secure_setup_exec_with_credential_fd = partial(
+    secure_setup_exec_with_credential_fd,
+    install_path=_INSTALL_PATH,
+    handoff_fd_env=_HANDOFF_FD_ENV,
+    handoff_target_env=_HANDOFF_TARGET_ENV,
+    compose_base_argv=_compose_base_argv,
+    compose_host_environment=_compose_host_environment,
+    apply_launcher_env_controls=_apply_launcher_env_controls,
+    is_credential_env_name=_is_credential_env_name,
+)
 
 
 async def _verify_compose_containers_exclude_credentials(
@@ -650,7 +569,12 @@ async def _verify_compose_containers_exclude_credentials(
         raise RuntimeError(
             "benchmark Compose project must expose exactly one main service container"
         )
-    forbidden_names = _forbidden_main_container_env_names(main_configs[0])
+    forbidden_names = forbidden_main_container_env_names(
+        main_configs[0],
+        env_prefix=_ENV_PREFIX,
+        credential_names=_PROVIDER_CREDENTIAL_CONFIG_ENV,
+        route_names=_PROVIDER_ROUTE_CONFIG_ENV,
+    )
     if forbidden_names:
         raise RuntimeError(
             "main benchmark container defines forbidden inherited environment names: "
@@ -785,94 +709,6 @@ async def _secure_exec_with_credential_fd(
 
         return await exec_with_agent_reap(
             compose, compose_base, host_env, wire, completion_probe, _INSTALL_PATH
-        )
-    finally:
-        for index in range(len(wire)):
-            wire[index] = 0
-
-
-async def _secure_setup_exec_with_credential_fd(
-    environment: BaseEnvironment,
-    *,
-    command: list[str],
-    env: dict[str, str],
-    credentials: dict[str, str],
-    timeout_sec: int | None = None,
-) -> ExecResult:
-    """Run a *setup* stella command with credentials only on anonymous stdin.
-
-    A sibling of :func:`_secure_exec_with_credential_fd`, not a widening of
-    it. The run path hard-requires a pinned ``--model`` and recomputes the
-    engine posture at the process boundary; both are load-bearing there and
-    neither has any meaning for ``stella init``, so relaxing them to fit a
-    setup command would weaken a guard that is doing real work on the path it
-    was written for. What this shares instead is every property that is about
-    *the credential*: direct stella argv, no credential name rendered into
-    ``docker compose exec -e`` (Harbor puts those in the host process table),
-    values validated against the empty/newline framing attack, the host
-    environment checked for leaked material, and the wire buffer zeroed.
-
-    Why setup needs a credential at all: ``stella init`` is where the semantic
-    index is *built*, and ``stella-embed`` reads ``VOYAGE_API_KEY`` ambiently
-    (``EmbedderEnv::from_process``). Without it, init logs "semantic index:
-    skipped — no embedding backend configured" and the code graph is indexed
-    but never embedded. The credential the run path hands over later cannot
-    repair that: by then there are no vectors to rank, so ``search`` silently
-    degrades to lexical for the whole trial. The handoff is consumed in
-    ``main`` *before* clap dispatch, and `credential_handoff.rs` deliberately
-    re-exports this one target into the process environment, so ``init``
-    honours it exactly as ``run`` does.
-    """
-    if not command or command[0] != _INSTALL_PATH:
-        raise RuntimeError("secure setup runner only accepts direct stella argv")
-    if not credentials:
-        raise RuntimeError("secure setup runner requires at least one credential")
-
-    values = tuple(credentials.values())
-    if any(not value or "\n" in value or "\r" in value for value in values):
-        # A newline inside a value would silently re-frame the pipe, handing
-        # Stella a different value under a name it trusts.
-        raise RuntimeError("setup credential is empty or contains a line break")
-
-    env = _apply_launcher_env_controls(dict(env))
-    env[_HANDOFF_FD_ENV] = "0"
-    # One name per value, in the order the values are written to the pipe.
-    # Stella pairs them positionally, so this ordering is the contract.
-    env[_HANDOFF_TARGET_ENV] = ",".join(credentials)
-
-    test_hook = getattr(environment, "_stella_secure_exec_with_stdin", None)
-    wire = bytearray("\n".join(values).encode("utf-8"))
-    wire.append(ord("\n"))
-    try:
-        if callable(test_hook):
-            return await test_hook(command=command, env=env, stdin=bytes(wire))
-
-        compose_base = _compose_base_argv(environment)
-        compose = [*compose_base, "exec", "-T"]
-
-        cwd = getattr(environment.task_env_config, "workdir", None)
-        if cwd:
-            compose.extend(["-w", str(cwd)])
-        for key, value in env.items():
-            if _is_credential_env_name(key):
-                raise RuntimeError(
-                    f"refusing to place credential variable {key} in Docker exec argv"
-                )
-            compose.extend(["-e", f"{key}={value}"])
-
-        resolver = getattr(environment, "_resolve_user", None)
-        user = resolver(None) if callable(resolver) else None
-        if user is not None:
-            compose.extend(["-u", str(user)])
-        compose.extend(["main", *command])
-
-        host_env = _compose_host_environment(environment)
-        carriers = _credential_carrying_names(host_env, values)
-        if carriers:
-            raise RuntimeError(_credential_leak_message(carriers))
-
-        return await exec_with_agent_reap(
-            compose, compose_base, host_env, wire, None, _INSTALL_PATH
         )
     finally:
         for index in range(len(wire)):
