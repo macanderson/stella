@@ -187,6 +187,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         execution.clone(),
         cfg.provider.id.to_string(),
         false,
+        Some(record.title.clone()),
     );
 
     // The two ways a resumed run can end: a bare turn's outcome, or — when

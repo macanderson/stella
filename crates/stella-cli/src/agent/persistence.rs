@@ -182,6 +182,10 @@ pub(crate) fn spawn_renderer(
     execution: Option<(Arc<Store>, i64)>,
     provider_id: String,
     durable_pre_persisted: bool,
+    // The turn's prompt, when the caller has it. It is the anchor every row of
+    // a rendered frame is read against, so a caller that knows it should say
+    // so; `None` simply renders a frame with no `you` row.
+    prompt: Option<String>,
 ) -> tokio::task::JoinHandle<RendererOutcome> {
     tokio::spawn(async move {
         let mut tool_names: HashMap<String, String> = HashMap::new();
@@ -210,6 +214,19 @@ pub(crate) fn spawn_renderer(
         // journal stamp has to stay comparable across processes and runs, and a
         // per-construction origin is exactly the wrong shape for that (#2111).
         let clock = WallClock;
+        // The transcript frame is this surface's default rendering (#3578).
+        // `STELLA_PLAIN_STREAM=1` opts back into the line-by-line cards for a
+        // caller that wants tokens as they arrive rather than a finished turn.
+        let mut transcript = (format == OutputFormat::Text
+            && !plain::transcript::TranscriptPrinter::streaming_requested())
+        .then(|| {
+            let mut printer =
+                plain::transcript::TranscriptPrinter::new(String::new(), provider_id.to_string());
+            if let Some(prompt) = &prompt {
+                printer.start_turn(prompt);
+            }
+            printer
+        });
         while let Some(event) = rx.recv().await {
             bridge.observe(&event);
             let event = if format == OutputFormat::StreamJson {
@@ -294,6 +311,18 @@ pub(crate) fn spawn_renderer(
                 // later unmetered call.
                 OutputFormat::StreamJson => emit_stream_json(&event, durable_pre_persisted, &clock),
                 OutputFormat::Json => outcome.events.push(event),
+                // One frame per turn, folded from the same events the cards
+                // below would each have printed. The two cannot both run: the
+                // frame restates every row, so a surface doing both prints the
+                // turn twice.
+                OutputFormat::Text if transcript.is_some() => {
+                    if let AgentEvent::ToolStart { call } = &event {
+                        tool_names.insert(call.call_id.clone(), call.name.clone());
+                    }
+                    if let Some(printer) = transcript.as_mut() {
+                        printer.observe(&event);
+                    }
+                }
                 OutputFormat::Text => match &event {
                     AgentEvent::ToolStart { call } => {
                         tool_names.insert(call.call_id.clone(), call.name.clone());
@@ -323,6 +352,11 @@ pub(crate) fn spawn_renderer(
                     other => plain::render_event(other),
                 },
             }
+        }
+        // The stream is closed, so the turn is final: print whatever frame the
+        // fold accumulated. A turn that never opened prints nothing.
+        if let Some(printer) = transcript.as_mut() {
+            printer.flush();
         }
         // `RunComplete` is the protocol terminator, not ordinary narration.
         // Hold it until every later accounting/reflection event has drained,
@@ -1103,6 +1137,7 @@ mod stream_tests {
             Some((store.clone(), execution_id)),
             "anthropic".into(),
             false,
+            None,
         );
         // The engine turn completes inline, then the run owner emits the
         // terminator — but a reflection event still comes down the channel

@@ -295,6 +295,7 @@ async fn run_pipeline_one_shot(
         execution.clone(),
         cfg.provider.id.to_string(),
         durable_pre_persisted,
+        Some(prompt.to_string()),
     );
 
     // Role wiring from `agent_engine_config`: per-role model pins (worker/
@@ -1638,6 +1639,7 @@ pub(crate) async fn run_turn(
         execution.clone(),
         cfg.provider.id.to_string(),
         durable_pre_persisted,
+        Some(prompt.to_string()),
     );
     // Recall's frames, then this run's own opening stage boundary — see
     // `output::open_raw_turn` for the ordering and for why it lives there.
