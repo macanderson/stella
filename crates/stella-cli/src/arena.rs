@@ -23,6 +23,19 @@
 //! `event_sender_for_run` — one-shot runs are one-per-process, exactly like
 //! the env-gated Harbor sink this mirrors.
 //!
+//! **The default this adapter measures changed with #3381.** `run_arena`
+//! resolves its choice via the same `PipelineChoice::resolve(args.no_pipeline,
+//! None)` `stella run` uses, and #3381 flipped that resolution's no-flag
+//! default from the staged pipeline to the raw step-loop. Arena is the
+//! benchmark adapter, so this is not an incidental side effect: **every arena
+//! episode now measures the raw loop unless the runner passes `--pipeline
+//! <variant>`**, which this adapter does not yet expose as a flag of its own
+//! (only `--no-pipeline`, now a deprecated no-op, and `--test-command`). A
+//! panel run against this binary before and after #3381 is comparing the
+//! staged pipeline to the raw loop, not two builds of the same thing — CLAUDE.md's
+//! like-for-like rule requires that comparison be named, never silently
+//! absorbed into a "regression".
+//!
 //! [`contextgraph-trace`]: https://github.com/macanderson/context-graph-protocol/blob/6f8d7ef13b2528c26913c6472405408ba2584a85/docs/sketches/host-trace.md
 
 use std::collections::{HashMap, HashSet};
@@ -77,6 +90,9 @@ pub(crate) struct ArenaArgs {
 /// Run one arena episode invocation: honor the contract, record the journal,
 /// drive the ordinary one-shot path.
 pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), String> {
+    if let Some(notice) = crate::wrapper_plugin::no_pipeline_deprecation_notice(args.no_pipeline) {
+        eprintln!("⚠ {notice}");
+    }
     let task_dir = args
         .task_dir
         .canonicalize()
@@ -98,7 +114,7 @@ pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), St
         &prompt,
         None,
         OutputFormat::StreamJson,
-        crate::wrapper_plugin::PipelineChoice::resolve(args.no_pipeline, None)?,
+        crate::wrapper_plugin::PipelineChoice::resolve(args.no_pipeline, None),
         args.test_command.as_deref(),
         // The arena verifiers the task result, not the scaffolding that proved
         // it — a witness left in the tree would show up as unexplained work.

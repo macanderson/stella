@@ -1,6 +1,6 @@
 ---
 title: stella run
-description: Send a one-shot prompt through the staged pipeline and let stella work to completion, no back-and-forth — built for scripts, CI jobs, and git hooks.
+description: Send a one-shot prompt through the raw step loop (or an installed pipeline wrapper) and let stella work to completion, no back-and-forth — built for scripts, CI jobs, and git hooks.
 ---
 
 Send a one-shot prompt and let the agent work to completion without any interactive back-and-forth. This is the command to reach for in scripts, CI jobs, and Git hooks.
@@ -13,9 +13,9 @@ stella run <prompt> [--no-pipeline] [--pipeline <VARIANT>] [--test-command <CMD>
 
 ## What it does
 
-By default `stella run` sends the prompt through the **staged pipeline** — triage, plan, execute, verify, verifier — and exits when the task is done. There is no REPL and no prompt for further input; it is the non-interactive counterpart to [`stella chat`](/docs/commands/chat).
+By default `stella run` sends the prompt through the **raw step loop**: the model proposes tool calls, the tools execute, results feed back, and the loop repeats until the model stops proposing actions. There is no REPL and no prompt for further input; it is the non-interactive counterpart to [`stella chat`](/docs/commands/chat).
 
-Pass `--no-pipeline` to fall back to the raw step loop instead: the model proposes tool calls, the tools execute, results feed back, and the loop repeats until the model stops proposing actions.
+Pass `--pipeline classic` to route the turn through the **staged pipeline** instead — triage, plan, execute, verify, verifier — or `--pipeline <variant>` to run it under an installed [wrapper plugin](/docs/inference-pipeline). `--no-pipeline` is a deprecated no-op kept only so an existing script does not break; it has no effect either way.
 
 Because it is non-interactive, `stella run` is the natural place to combine `--output-format json` or `--output-format stream-json` for headless automation, and `--spend-limit` for a hard spend cap.
 
@@ -31,8 +31,10 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
 
 <CardGrid size="md">
   <OptionCard name="--no-pipeline">
-    Use the raw step loop instead of the staged pipeline (triage, plan, execute, verify,
-    verifier).
+    Deprecated, does nothing. The raw step loop is the default now; pass
+    `--pipeline <VARIANT>` to opt into a wrapper instead. Kept parseable so no
+    script breaks — passing it prints a one-line notice and has no other
+    effect, including alongside `--pipeline`, which always wins.
   </OptionCard>
   <OptionCard name="--pipeline <VARIANT>">
     Run the turn under an installed **wrapper plugin**, named by the `[wrapper] id` its
@@ -40,8 +42,8 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
     turn and gathers evidence after it; the rule it declared at install — evaluated by
     stella, never by the plugin — decides whether another turn runs. The variant id is
     recorded on the execution row, so two variants can be compared side by side.
-    `--pipeline classic` names the built-in staged pipeline; omitted, nothing changes.
-    Conflicts with `--no-pipeline`.
+    `classic` names the built-in staged pipeline (triage, plan, execute, verify,
+    verifier); omitted, the raw step loop runs with nothing over it.
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
     The test command the pipeline's verify stage runs deterministically — e.g.
@@ -123,23 +125,27 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 \
   run "Explain what main.rs does"
 ```
 
+`--test-command`, `--keep-witness`, and `--require-verified` all belong to the staged
+pipeline's verify/witness machinery, so pair them with `--pipeline classic` — on the
+raw loop (the default) there is no ladder for them to arm.
+
 Hand the verify stage a deterministic oracle, so a fixed test can submit without a
 model-verifier call:
 
 ```bash
-stella run --test-command "cargo test -p stella-store" \
+stella run --pipeline classic --test-command "cargo test -p stella-store" \
   "Fix the failing WAL checkpoint test"
 ```
 
 Keep the witness the pipeline authored, so you can review and commit it alongside the fix:
 
 ```bash
-stella run --keep-witness \
+stella run --pipeline classic --keep-witness \
   "Add retry-with-backoff to the HTTP client and prove it with a test"
 ```
 
-Skip the pipeline entirely for a small mechanical edit:
+A small mechanical edit needs nothing extra — the raw loop is already the default:
 
 ```bash
-stella run --no-pipeline "Bump the serde dependency to 1.0.220 in every crate"
+stella run "Bump the serde dependency to 1.0.220 in every crate"
 ```

@@ -107,11 +107,11 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
 }
 
 /// Run a one-shot prompt. [`PipelineChoice`](crate::wrapper_plugin::PipelineChoice)
-/// selects which wrapper runs over the turn. `test_command`, when given, arms
-/// the pipeline's deterministic verification ladder (the fail→pass flip
-/// oracle); without it, verification falls back to the model verifier on every
-/// iteration. `keep_witness` promotes an authored witness into the working tree
-/// instead of letting it die with the candidate workspace.
+/// selects which wrapper runs over the turn (`Raw` by default, #3381).
+/// `test_command`, when given, arms the pipeline's deterministic verification
+/// ladder (the fail→pass flip oracle); without it, verification falls back to
+/// the model verifier on every iteration. `keep_witness` promotes an authored
+/// witness into the working tree instead of letting it die with the candidate workspace.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_one_shot(
     cfg: &Config,

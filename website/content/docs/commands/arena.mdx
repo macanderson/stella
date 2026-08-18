@@ -57,14 +57,30 @@ arena-bench invokes an agent with `--task-dir`/`--journal`/`--state-dir`/`[--res
     declares what was recovered, and continues the same session.
   </OptionCard>
   <OptionCard name="--no-pipeline">
-    Use the raw step-loop instead of the staged pipeline. The
-    [pipeline](/docs/inference-pipeline) is the default here exactly as it is for `stella run`.
+    Deprecated, does nothing. Every episode already runs the raw step-loop
+    (see below) — this flag named that fallback before #3381 flipped the
+    default and is kept parseable only so no runner script breaks.
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
-    Test command for the pipeline's deterministic verify ladder, e.g.
-    `--test-command "cargo test -p my-crate"`.
+    Test command for the staged pipeline's deterministic verify ladder, e.g.
+    `--test-command "cargo test -p my-crate"`. Currently inert: this adapter
+    has no `--pipeline <VARIANT>` flag of its own, so an episode has no
+    ladder for it to arm — see the note below.
   </OptionCard>
 </CardGrid>
+
+<Callout type="warn">
+**Every arena episode measures the raw step-loop, unconditionally**, since
+[#3381](https://github.com/macanderson/stella/issues/3381) flipped
+`PipelineChoice::resolve`'s no-flag default from the staged pipeline to raw.
+This adapter has no `--pipeline <VARIANT>` flag the way [`stella
+run`](/docs/commands/run) does, so there is currently no way to make an arena
+episode run the staged pipeline (or a wrapper plugin) at all — `--no-pipeline`
+was always a synonym for the same no-flag default and stayed one across the
+flip. A panel run against this binary before and after #3381 is comparing the
+staged pipeline to the raw loop, not two builds of the same thing; name that
+comparison rather than reporting it as a plain regression.
+</Callout>
 
 ## Why the journal is written before the event is admitted
 
@@ -120,6 +136,6 @@ runner preserves between episodes (and wipes for the `amnesic` arm). A fixture t
 
 ## See also
 
-- [Inference pipeline](/docs/inference-pipeline) — the staged path `--no-pipeline` opts out of.
+- [Inference pipeline](/docs/inference-pipeline) — the staged path every arena episode runs without, since #3381 flipped the default and this adapter has no `--pipeline <VARIANT>` flag to opt back in.
 - [`stella run`](/docs/commands/run) — the ordinary one-shot path this adapter drives underneath.
 - [arena-bench](https://github.com/macanderson/arena-bench) — the harness that invokes this command.

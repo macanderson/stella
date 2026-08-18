@@ -808,6 +808,40 @@ mod pipeline_variant_tests {
         assert_eq!(store.pipeline_variant(bare).expect("read"), None);
     }
 
+    /// **Pins the goal/fleet honesty fix's call shape (#3381, #3388, #3684).**
+    /// `goal.rs`'s `run_goal_pipeline_turn` and `fleet_cmd.rs`'s `run_task`
+    /// used to call `begin_execution(..., None)` even while the staged
+    /// pipeline drove the round, so `NULL` meant "raw OR classic" there —
+    /// unlike `run`/`deck`. The real fix is the one-line argument each site
+    /// now passes, verified by reading those two lines directly (neither is
+    /// reachable from a unit test without a live provider); this pins that
+    /// `begin_execution`/`pipeline_variant` round-trip both call shapes
+    /// correctly for `"goal"`/`"fleet"` — see `wrapper_plugin::tests` for the
+    /// `resolve`-level witnesses that DO fail on old code.
+    #[test]
+    fn goal_and_fleet_write_classic_honestly_never_a_false_null() {
+        let provider = crate::config::PROVIDERS[0].clone();
+        let cfg = crate::config::Config::for_tests(provider, "test-model".to_string());
+        let store = Some(Arc::new(Store::in_memory().expect("in-memory store")));
+        // What `begin_execution` writes and reads back for `door`/`variant`.
+        let written = |door: &str, v| {
+            let (s, id) = begin_execution(&store, door, "prompt", &cfg, None, v).expect("begin");
+            s.pipeline_variant(id).expect("read")
+        };
+
+        for door in ["goal", "fleet"] {
+            // Classic arm: the wrapper that ran is named, not dropped. Raw
+            // arm: NULL is the honest answer here, not a gap.
+            let msg = format!("{door}: honesty rule");
+            assert_eq!(
+                written(door, Some(PIPELINE_VARIANT_CLASSIC)),
+                Some(PIPELINE_VARIANT_CLASSIC.to_string()),
+                "{msg}"
+            );
+            assert_eq!(written(door, None), None, "{msg}");
+        }
+    }
+
     /// The id the CLI records and the id the pipeline calls itself are one
     /// string, not two that happen to agree.
     #[test]

@@ -527,10 +527,12 @@ pub(crate) enum Command {
         /// the usual `--` separator: `stella run -- --my-prompt`.
         prompt: Option<String>,
 
-        /// Use the raw step-loop instead of the staged pipeline (triage, plan,
-        /// execute, verify, verifier). The pipeline is the default; this flag
-        /// falls back to the direct Engine::run_turn path.
-        #[arg(long)]
+        /// Deprecated, does nothing (#3381). The raw step-loop is the default
+        /// now; pass `--pipeline <variant>` to opt into a wrapper instead.
+        /// Kept parseable so no script breaks the day this changed — passing
+        /// it prints a one-line notice and has no other effect, including
+        /// alongside `--pipeline`, which always wins.
+        #[arg(long, hide = true)]
         no_pipeline: bool,
 
         /// Run this turn under an installed wrapper plugin, by the `[wrapper]
@@ -539,8 +541,9 @@ pub(crate) enum Command {
         /// its declared rule — evaluated by Stella, never by the plugin —
         /// decides whether another turn runs. The id is recorded on the
         /// execution row, so two variants can be compared. `classic` names the
-        /// built-in staged pipeline; omitted, nothing changes.
-        #[arg(long, value_name = "VARIANT", conflicts_with = "no_pipeline")]
+        /// built-in staged pipeline; omitted, the raw step-loop runs with
+        /// nothing over it (the default since #3381).
+        #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
 
         /// Test command the pipeline's verify stage runs deterministically
@@ -612,8 +615,11 @@ pub(crate) enum Command {
         #[arg(long)]
         resume: bool,
 
-        /// Use the raw step-loop instead of the staged pipeline.
-        #[arg(long)]
+        /// Deprecated, does nothing (#3381). The raw step-loop is the default
+        /// now — this flag named that fallback before the flip and is kept
+        /// parseable only so no script breaks; passing it prints a one-line
+        /// notice and has no other effect.
+        #[arg(long, hide = true)]
         no_pipeline: bool,
 
         /// Test command for the pipeline's deterministic verify ladder.
@@ -624,19 +630,33 @@ pub(crate) enum Command {
     /// Work in judged rounds until a verifier says the goal is met
     ///
     /// Work in judged rounds until a verifier model confirms the goal is met.
-    /// Each working round runs through the staged pipeline (triage, plan,
-    /// witness, execute, verify) by default; --no-pipeline falls back to the
-    /// raw step-loop.
+    /// Each working round runs the raw step-loop by default (#3381); pass
+    /// `--pipeline classic` to route rounds through the staged pipeline
+    /// (triage, plan, witness, execute, verify) instead.
     Goal {
         /// What must be true when done — assessed by the verifier each round.
         /// Omit it to read the goal from stdin when it is piped, or pass `-`
         /// to read stdin explicitly.
         goal: Option<String>,
 
-        /// Use the raw step-loop instead of the staged pipeline for each
-        /// working round. The pipeline is the default.
-        #[arg(long)]
+        /// Deprecated, does nothing (#3381). The raw step-loop is the default
+        /// now; pass `--pipeline <variant>` to opt into a wrapper instead.
+        /// Kept parseable so no script breaks the day this changed — passing
+        /// it prints a one-line notice and has no other effect, including
+        /// alongside `--pipeline`, which always wins.
+        #[arg(long, hide = true)]
         no_pipeline: bool,
+
+        /// Run each working round through an installed wrapper plugin, by
+        /// the `[wrapper] id` its manifest declares (`stella plugin list`).
+        /// `classic` names the built-in staged pipeline (triage → recall →
+        /// plan → witness → execute → verify); omitted, the raw step-loop
+        /// runs with nothing over it (the default since #3381). A named
+        /// plugin variant is refused today — wrapper plugins run only on
+        /// `stella run --pipeline <variant>` (#3684 tracks driving them
+        /// through a judged round).
+        #[arg(long, value_name = "VARIANT")]
+        pipeline: Option<String>,
     },
 
     /// Watch CI for a branch or PR and fix it until green
@@ -818,11 +838,24 @@ pub(crate) enum Command {
         #[arg(long)]
         watch: bool,
 
-        /// Use the raw step-loop instead of the staged pipeline (triage,
-        /// plan, witness, execute, verify) for each worker. The pipeline is
-        /// the default.
-        #[arg(long)]
+        /// Deprecated, does nothing (#3381). The raw step-loop is the default
+        /// now; pass `--pipeline <variant>` to opt into a wrapper instead.
+        /// Kept parseable so no script breaks the day this changed — passing
+        /// it prints a one-line notice and has no other effect, including
+        /// alongside `--pipeline`, which always wins.
+        #[arg(long, hide = true)]
         no_pipeline: bool,
+
+        /// Run each worker through an installed wrapper plugin, by the
+        /// `[wrapper] id` its manifest declares (`stella plugin list`).
+        /// `classic` names the built-in staged pipeline (triage, plan,
+        /// witness, execute, verify); omitted, the raw step-loop runs with
+        /// nothing over it (the default since #3381). A named plugin variant
+        /// is refused today — wrapper plugins run only on `stella run
+        /// --pipeline <variant>` (#3684 tracks driving them through a fleet
+        /// worker).
+        #[arg(long, value_name = "VARIANT")]
+        pipeline: Option<String>,
 
         /// Wall-clock ceiling per worker attempt, in seconds. On expiry the
         /// task's stop line fires (the same clean cancel the dashboard's
