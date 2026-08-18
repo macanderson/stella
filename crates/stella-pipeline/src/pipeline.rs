@@ -1138,12 +1138,7 @@ impl<'a> Pipeline<'a> {
         // single-shot/best-of-N split below, so `can_author…` — which
         // announces the degradation — is still never consulted for a turn
         // that would not have authored a witness anyway.
-        let authored_witness = !assessment.conversational
-            && schedule_says.witness
-            && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
-            && assessment.wants_witness()
-            && task_class.verifies_unconditionally()
-            && self.can_author_independent_witness();
+        let authored_witness = self.authored_witness(&schedule_says, &assessment, task_class);
         let contract = match verified_by {
             Some(command) => VerificationContract::Oracle(command),
             None if !assessment.conversational
