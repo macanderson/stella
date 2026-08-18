@@ -405,7 +405,10 @@ fn a_capped_pass_embeds_the_most_recently_changed_file_first() {
 
     let scan = pending(&conn, &root, FP, 1).expect("pending");
     assert_eq!(
-        scan.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+        scan.files
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>(),
         vec!["src/z.rs"],
         "a one-file pass must spend itself on the file that just changed"
     );

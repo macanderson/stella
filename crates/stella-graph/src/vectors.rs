@@ -223,12 +223,7 @@ pub fn pending(
         let want = limit - scan.files.len();
         let rows: Vec<(String, String, i64)> = stmt
             .query_map(
-                params![
-                    fingerprint,
-                    cursor_indexed_at,
-                    cursor_path,
-                    want as i64
-                ],
+                params![fingerprint, cursor_indexed_at, cursor_path, want as i64],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?
             .collect::<Result<_, _>>()?;

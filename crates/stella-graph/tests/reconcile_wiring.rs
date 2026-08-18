@@ -89,7 +89,10 @@ fn a_moved_head_indexes_the_commits_files_and_records_the_commit() {
         matches!(plan, Plan::Scoped { .. }),
         "a moved HEAD with a resolvable range must scope: {plan:?}"
     );
-    assert_eq!(stats.files_parsed, 1, "exactly the commit's file was parsed");
+    assert_eq!(
+        stats.files_parsed, 1,
+        "exactly the commit's file was parsed"
+    );
     assert_eq!(
         graph.file_count().expect("count"),
         1,
