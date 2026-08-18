@@ -13,6 +13,13 @@ use crate::html;
 use crate::model::*;
 use crate::word;
 
+fn plain_span(text: &str) -> word::Span {
+    word::Span {
+        text: text.to_string(),
+        changed: false,
+    }
+}
+
 fn output(lines: &[&str]) -> Output {
     Output {
         lines: lines.iter().map(|l| (*l).to_string()).collect(),
@@ -772,4 +779,61 @@ fn the_model_round_trips_through_serde_byte_for_byte() {
     let back: Run = serde_json::from_str(&json).unwrap();
     assert_eq!(run, back);
     assert_eq!(json, serde_json::to_string(&back).unwrap());
+}
+
+/// A minified line is one line, and nothing upstream bounds how many tokens it
+/// holds: the token LCS over a 60,000-character pair is 3.6 billion `u32`
+/// cells, about 14 GB. Over [`word::LCS_CELL_CAP`] the pair degrades to the
+/// plain spans a too-dissimilar pair returns, instantly. Witness for #3739.
+#[test]
+fn a_very_long_line_pair_degrades_instead_of_allocating_the_table() {
+    let old = "{\"k\":1},".repeat(7_500);
+    let new = format!("{old}{{\"k\":2}}");
+    assert!(word::tokenize(&old).len() > 50_000, "input is not dense");
+
+    let started = std::time::Instant::now();
+    let (old_spans, new_spans) = word::highlight(&old, &new);
+    let elapsed = started.elapsed();
+
+    assert_eq!(old_spans, vec![plain_span(&old)]);
+    assert_eq!(new_spans, vec![plain_span(&new)]);
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "the guarded path took {elapsed:?} — the quadratic table was built"
+    );
+}
+
+/// The same hazard through the character-level re-diff: one 60,000-character
+/// *token* is a single changed run, so the token LCS is 1x1 and passes, and it
+/// is [`word::refine_short_runs`]'s per-character table that would allocate.
+#[test]
+fn a_very_long_single_token_change_never_reaches_the_character_table() {
+    let old = "x".repeat(60_000);
+    let new = format!("{old}y");
+    assert_eq!(word::tokenize(&old).len(), 1, "input is not one token");
+
+    let started = std::time::Instant::now();
+    let (old_spans, new_spans) = word::highlight(&old, &new);
+    let elapsed = started.elapsed();
+
+    assert_eq!(old_spans, vec![plain_span(&old)]);
+    assert_eq!(new_spans, vec![plain_span(&new)]);
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "the guarded path took {elapsed:?} — the character table was built"
+    );
+}
+
+/// A pair just under the cap still gets word granularity: the guard bounds the
+/// pathological line without quietly disabling the feature on a long one.
+#[test]
+fn a_long_line_under_the_cap_still_gets_word_highlights() {
+    let prefix = "a,".repeat(200);
+    let (_, new) = word::highlight(&format!("{prefix}old"), &format!("{prefix}new"));
+    let hot: String = new
+        .iter()
+        .filter(|s| s.changed)
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(hot, "new", "a 400-token line lost its word highlight");
 }
