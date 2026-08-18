@@ -21,8 +21,8 @@ import {
  * double up — the kit's own lockup SVG omits it for the same reason.
  *
  * Colours are literals or imported constants rather than CSS vars because
- * Satori resolves no cascade: Ink #0b0b0c, Paper #f4f1ea, Phosphor Gold
- * #ffb000, muted #9b9890 (5.9:1 on ink). Keep the markup inside Satori's
+ * Satori resolves no cascade: Ink #10100f, Paper #f2eee5, Bronze Gold
+ * #c58a32 (6.4:1 on ink), muted #a19a8e (6.8:1 on ink). Keep the markup inside Satori's
  * supported subset — plain <path>/<rect> fills only, no gradients, masks, or
  * filters (the trails are pre-flattened rounded rects for exactly this
  * reason), and every element with children carries an explicit `display`.
@@ -39,12 +39,12 @@ export const alt =
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const INK = "#0b0b0c";
-const PAPER = "#f4f1ea";
-const MUTED = "#9b9890";
-const SURFACE = "#121214";
-const SURFACE_TOP = "#17171a";
-const BORDER = "#2b2b2e";
+const INK = "#10100f";
+const PAPER = "#f2eee5";
+const MUTED = "#a19a8e";
+const SURFACE = "#171614";
+const SURFACE_TOP = "#1d1b18";
+const BORDER = "#2c2924";
 
 /** The repo this card advertises, and the one command that installs it. */
 const REPO_SLUG = "macanderson/stella";

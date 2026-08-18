@@ -1,0 +1,239 @@
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
+
+/**
+ * The site's palette and its logo assets are copies of `docs/brand/`. This is
+ * what makes that true rather than merely intended.
+ *
+ *   pnpm test
+ *
+ * ## What went wrong without it
+ *
+ * `src/app/tokens.css` carried the sentence "every value below is copied from
+ * it verbatim — do not tune a hex here, change the kit and mirror it" while
+ * sitting a whole brand version behind: the kit moved to Bronze Gold #C58A32
+ * on Ink #10100F in the 2026-08-11 rebrand and this site stayed on v1.0's
+ * Phosphor Gold #FFB000 on Ink #0B0B0C. All thirteen SVGs under
+ * `public/brand/` were stale with it, as were seven of the eight PWA icons,
+ * `src/app/icon.svg`, the favicon and the OG card's literals — so the site
+ * served a **bronze wordmark beside phosphor chrome**, and the paragraph
+ * claiming they matched was the only thing anyone had to go on.
+ *
+ * The kit is a shared cell that several surfaces copy, and a comment cannot
+ * hold one. The Rust side already learned this: `provider_parity.rs` enforces
+ * invariant #8 and `crates/stella-cli/tests/design_token_parity.rs` enforces
+ * the instrument palette, both as a matrix checked from both sides in a plain
+ * test. This is the same shape for the marketing surface — which is the copy
+ * of the product most readers ever see, and the one nobody can eyeball beside
+ * the kit.
+ *
+ * ## What it does and does not check
+ *
+ * It checks **values**, not design: the brand-core hexes, the eleven-stop gold
+ * ramp, the warm-neutral ramp, and byte-identity of the logo SVGs and PWA
+ * icons. The site's own tokens — the functional status hues, the type scale,
+ * the `lp-*` landing layer — are deliberately outside the matrix; the kit does
+ * not define them and this test must not freeze them.
+ *
+ * **This is not #2594 reopened.** That issue proposed holding this site to the
+ * *instrument* palette — the Observatory's monochrome system — and was closed
+ * `wontfix` on the correct ground that a marketing page is legitimately not an
+ * instrument and may carry more gold than a page made of data. Nothing here
+ * touches that question: the site keeps its own chrome, its own accent usage
+ * and its own status hues. The only thing asserted is that the ramp this file
+ * already calls normative is the ramp it actually ships, which is a question
+ * about a copy rather than about a design.
+ *
+ * The comparison is textual and case-insensitive because the kit writes
+ * `#C58A32` and CSS convention here writes `#c58a32`. That is the one
+ * difference allowed between the two files.
+ */
+
+const TEST_FILE = fileURLToPath(import.meta.url);
+const HERE = dirname(TEST_FILE);
+const REPO = join(HERE, "..", "..", "..");
+const KIT = join(REPO, "docs", "brand");
+const SITE = join(HERE, "..");
+
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+/**
+ * Every `--stella-*: <value>;` declaration in a CSS file, lowercased.
+ *
+ * Parsed rather than string-matched so a reordering of the kit cannot fail
+ * this test and a changed value cannot pass it. Only the first definition of
+ * a name is kept: both files define the semantic aliases twice (light then
+ * dark), and this matrix is about the raw ramp above them.
+ */
+function tokens(css: string): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const [, name, value] of css.matchAll(
+    /(--stella-[a-z0-9-]+)\s*:\s*([^;]+);/g,
+  )) {
+    const key = name.toLowerCase();
+    if (!found.has(key)) found.set(key, value.trim().toLowerCase());
+  }
+  return found;
+}
+
+/** The tokens the kit owns and the site must mirror exactly. */
+const MIRRORED = [
+  "--stella-gold",
+  "--stella-gold-deep",
+  "--stella-ink",
+  "--stella-paper",
+  "--stella-paper-bg",
+  ...[50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map(
+    (stop) => `--stella-gold-${stop}`,
+  ),
+  ...[50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map(
+    (stop) => `--stella-neutral-${stop}`,
+  ),
+];
+
+test("the site's brand tokens are the kit's, value for value", () => {
+  const kit = tokens(read(join(KIT, "css", "tokens.css")));
+  const site = tokens(read(join(SITE, "app", "tokens.css")));
+
+  for (const name of MIRRORED) {
+    const expected = kit.get(name);
+    assert.ok(expected, `docs/brand/css/tokens.css defines ${name}`);
+    assert.equal(
+      site.get(name),
+      expected,
+      `${name} has drifted from docs/brand/css/tokens.css — change the kit ` +
+        `and mirror it, never tune a hex here`,
+    );
+  }
+});
+
+test("no v1.0 phosphor value survives anywhere in the site", () => {
+  // The rebrand's own regression, asserted directly: these are the exact
+  // values that shipped beside bronze assets for the life of the drift.
+  const RETIRED = [
+    "#ffb000",
+    "#0b0b0c",
+    "#f4f1ea",
+    "#f6f2e9",
+    "#a37200",
+    "255 176 0",
+  ];
+
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "node_modules") walk(path);
+        continue;
+      }
+      if (!/\.(css|tsx?|svg|html)$/.test(entry.name)) continue;
+      // Two files name the retired ramp on purpose: tokens.css in the comment
+      // recording why this test exists, and this test in the list above.
+      // Naming the defect is not committing it.
+      if (path.endsWith("app/tokens.css") || path === TEST_FILE) continue;
+      const text = read(path).toLowerCase();
+      for (const value of RETIRED) {
+        if (text.includes(value)) {
+          offenders.push(`${path} contains retired v1.0 value ${value}`);
+        }
+      }
+    }
+  };
+  walk(SITE);
+  walk(join(SITE, "..", "public"));
+
+  assert.deepEqual(offenders, [], offenders.join("\n"));
+});
+
+test("the site's logo SVGs are byte-identical to the kit's", () => {
+  const kitDir = join(KIT, "logo", "svg");
+  const siteDir = join(SITE, "..", "public", "brand");
+
+  const expected = readdirSync(kitDir).filter((f) => f.endsWith(".svg")).sort();
+  const actual = readdirSync(siteDir).filter((f) => f.endsWith(".svg")).sort();
+  assert.deepEqual(
+    actual,
+    expected,
+    "public/brand/ must carry exactly the kit's SVG set",
+  );
+
+  for (const name of expected) {
+    assert.equal(
+      read(join(siteDir, name)),
+      read(join(kitDir, name)),
+      `public/brand/${name} has drifted from docs/brand/logo/svg/${name} — ` +
+        `re-copy it rather than editing either side`,
+    );
+  }
+});
+
+test("the app icon is the kit's logomark", () => {
+  assert.equal(
+    read(join(SITE, "app", "icon.svg")),
+    read(join(KIT, "logo", "svg", "logomark-color.svg")),
+    "src/app/icon.svg must be docs/brand/logo/svg/logomark-color.svg",
+  );
+});
+
+test("the PWA icons are byte-identical to the kit's", () => {
+  // The site renames the kit's two maskables; every other file keeps its name.
+  const PAIRS: Array<[site: string, kit: string]> = [
+    ["favicon-16.png", "favicon-16.png"],
+    ["favicon-32.png", "favicon-32.png"],
+    ["favicon-48.png", "favicon-48.png"],
+    ["icon-192.png", "icon-192.png"],
+    ["icon-512.png", "icon-512.png"],
+    ["maskable-192.png", "icon-maskable-192.png"],
+    ["maskable-512.png", "icon-maskable-512.png"],
+    ["safari-pinned-tab.svg", "safari-pinned-tab.svg"],
+  ];
+
+  for (const [siteName, kitName] of PAIRS) {
+    const mine = readFileSync(join(SITE, "..", "public", "icons", siteName));
+    const theirs = readFileSync(join(KIT, "pwa", kitName));
+    assert.ok(
+      mine.equals(theirs),
+      `public/icons/${siteName} has drifted from docs/brand/pwa/${kitName} — ` +
+        `re-copy it when the kit regenerates`,
+    );
+  }
+});
+
+test("every icon the manifest advertises exists", () => {
+  // manifest.ts points at four files by path. A rename in the kit that this
+  // site mirrors without updating the manifest is a 404 on install, which no
+  // page render would catch.
+  const manifest = read(join(SITE, "app", "manifest.ts"));
+  const iconsDir = join(SITE, "..", "public", "icons");
+  const present = new Set(readdirSync(iconsDir));
+
+  const referenced = [...manifest.matchAll(/src:\s*"\/icons\/([^"]+)"/g)].map(
+    (m) => m[1],
+  );
+  assert.ok(referenced.length > 0, "manifest.ts references icons by path");
+
+  for (const name of referenced) {
+    assert.ok(
+      present.has(name),
+      `manifest.ts advertises /icons/${name}, which does not exist`,
+    );
+  }
+});
+
+test("the manifest's theme colours are the kit's ink", () => {
+  const manifest = read(join(SITE, "app", "manifest.ts")).toLowerCase();
+  const ink = tokens(read(join(KIT, "css", "tokens.css"))).get("--stella-ink");
+  assert.ok(ink, "the kit defines --stella-ink");
+  for (const key of ["background_color", "theme_color"]) {
+    assert.ok(
+      manifest.includes(`${key}: "${ink}"`),
+      `manifest.ts ${key} must be the kit's ink (${ink})`,
+    );
+  }
+});
