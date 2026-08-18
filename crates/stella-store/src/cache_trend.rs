@@ -33,6 +33,11 @@ pub struct SessionCacheTrendRow {
     /// overwhelmingly stay on one provider for their lifetime, and the
     /// diagnosis only needs one to resolve cache posture / TTL.
     pub provider: String,
+    /// The session's first recorded execution's model, paired with
+    /// [`Self::provider`] for the same reason and read the same way. A
+    /// gateway's cache posture is decided by the upstream this slug names, so
+    /// the diagnosis cannot resolve it from the provider alone.
+    pub model: String,
     pub input_tokens: i64,
     pub cache_read_tokens: i64,
     pub cache_write_tokens: i64,
@@ -59,6 +64,9 @@ impl Store {
                     (SELECT ex.provider FROM executions ex
                        WHERE ex.session_id = e.session_id
                        ORDER BY ex.id ASC LIMIT 1) AS provider,
+                    (SELECT ex.model FROM executions ex
+                       WHERE ex.session_id = e.session_id
+                       ORDER BY ex.id ASC LIMIT 1) AS model,
                     CAST(coalesce(sum(t.input_tokens), 0) AS INTEGER) AS input_tokens,
                     CAST(coalesce(sum(t.cache_read_tokens), 0) AS INTEGER) AS cache_read_tokens,
                     CAST(coalesce(sum(t.cache_write_tokens), 0) AS INTEGER) AS cache_write_tokens,
@@ -82,9 +90,10 @@ impl Store {
                 started_at: row.get(1)?,
                 turns: row.get(2)?,
                 provider: row.get(3)?,
-                input_tokens: row.get(4)?,
-                cache_read_tokens: row.get(5)?,
-                cache_write_tokens: row.get(6)?,
+                model: row.get(4)?,
+                input_tokens: row.get(5)?,
+                cache_read_tokens: row.get(6)?,
+                cache_write_tokens: row.get(7)?,
             })
         })?;
         let mut out = Vec::new();

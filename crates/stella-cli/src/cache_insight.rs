@@ -17,8 +17,7 @@
 //! `CacheCause::OptInNeverEngaged` without the deck knowing which providers
 //! require an explicit cache marker.
 
-use stella_model::provider_parity::{CachePosture, cache_posture};
-use stella_model::{CacheTtl, Catalog, configured_cache_ttl_secs};
+use stella_model::{CacheTtl, Catalog, configured_cache_ttl_secs, route_cache_is_opt_in};
 use stella_protocol::{AgentEvent, CompletionUsage};
 use stella_tui::Inbound;
 
@@ -107,7 +106,11 @@ pub(crate) fn cache_insight_for(
                 .cache_savings_usd_configured(provider_id, &usage, scope.cache_ttl)
         })
         .unwrap_or(0.0);
-    let is_opt_in_provider = matches!(cache_posture(provider_id), Some(CachePosture::OptIn { .. }));
+    // Route-aware, not provider-aware: a gateway's posture belongs to the
+    // upstream this `model` slug names, and the deck's `OptInNeverEngaged`
+    // banner is only defensible where the cache is genuinely opt-in AND
+    // reports its writes. See `route_cache_is_opt_in`.
+    let is_opt_in_provider = route_cache_is_opt_in(provider_id, model);
     Some(Inbound::CacheInsight {
         agent: lane.to_string(),
         savings_usd_delta,
@@ -273,6 +276,29 @@ mod tests {
             } => assert!(!is_opt_in_provider),
             other => panic!("expected CacheInsight, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_gateway_route_carries_its_upstreams_posture_not_the_gateways() {
+        // The deck learns "is this cache opt-in?" only from this producer, so
+        // this is where a gateway's per-route posture has to be resolved. Same
+        // provider id, two routes, two answers: OpenRouter's Claude routes need
+        // the explicit marker, its Moonshot routes cache implicitly and report
+        // no writes ever — so the deck must never accuse the latter of a
+        // missing marker (the `moonshotai/kimi-k3` banner that motivated this).
+        let opt_in = |model: &str| {
+            let event = step_usage(model, 1_000_000, 0, 0);
+            match cache_insight_for(&scope("openrouter"), "lead", &event)
+                .expect("StepUsage yields an insight")
+            {
+                Inbound::CacheInsight {
+                    is_opt_in_provider, ..
+                } => is_opt_in_provider,
+                other => panic!("expected CacheInsight, got {other:?}"),
+            }
+        };
+        assert!(!opt_in("moonshotai/kimi-k3"));
+        assert!(opt_in("anthropic/claude-sonnet-5"));
     }
 
     #[test]

@@ -55,7 +55,8 @@ use clap::Subcommand;
 use colored::Colorize as _;
 use serde::Serialize;
 use stella_model::cache_economics::{
-    diagnose_cache_with_idle, hit_rate, is_cache_expired_rewrite, provider_cache_ttl_secs,
+    CacheRoute, diagnose_cache_with_idle, hit_rate, is_cache_expired_rewrite,
+    provider_cache_ttl_secs,
 };
 use stella_model::catalog::Catalog;
 use stella_protocol::CompletionUsage;
@@ -272,7 +273,10 @@ fn session_diagnosis_lines(
         .iter()
         .filter_map(|s| {
             diagnose_cache_with_idle(
-                &s.provider,
+                CacheRoute {
+                    provider: &s.provider,
+                    model: &s.model,
+                },
                 s.turns.max(0) as u64,
                 s.input_tokens.max(0) as u64,
                 s.cache_read_tokens.max(0) as u64,
@@ -982,6 +986,7 @@ mod tests {
             started_at: "2026-07-21 12:00:00".into(),
             turns,
             provider: provider.into(),
+            model: "a-model".into(),
             input_tokens: input,
             cache_read_tokens: cache_read,
             cache_write_tokens: cache_write,
