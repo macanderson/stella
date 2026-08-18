@@ -94,131 +94,6 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// them would either starve the shell or inflate every page read.
 pub(crate) const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
-/// grep-family commands whose first positional arg is a search pattern.
-const GREP_CMDS: &[&str] = &["grep", "egrep", "fgrep", "rg", "ripgrep", "ag"];
-
-/// Does the command run a grep-family search whose pattern is symbol-shaped —
-/// the `grep -rn "struct X"` that graph_query answers better? The dominant
-/// path in the telemetry (symbol searches ran through bash, not the native
-/// grep tool), so the same nudge has to reach here. First positional after a
-/// grep word is the pattern; flags are skipped, a pipeline boundary ends the
-/// scan.
-fn bash_grep_is_symbol_shaped(command: &str) -> bool {
-    let words = shell_words(command);
-    for (i, w) in words.iter().enumerate() {
-        if !GREP_CMDS.contains(&w.as_str()) {
-            continue;
-        }
-        for next in &words[i + 1..] {
-            if is_operator_word(next) {
-                break;
-            }
-            if next.starts_with('-') {
-                continue; // a flag, not the pattern
-            }
-            if is_symbol_shaped(next) {
-                return true;
-            }
-            break; // first positional was the pattern; it wasn't symbol-shaped
-        }
-    }
-    false
-}
-
-/// Declaration keywords a symbol hunt commonly leads with, across the
-/// languages this repository's users actually search.
-const DECL_KEYWORDS: &[&str] = &[
-    "fn",
-    "func",
-    "function",
-    "def",
-    "class",
-    "struct",
-    "enum",
-    "trait",
-    "impl",
-    "interface",
-    "type",
-    "const",
-    "static",
-    "mod",
-    "module",
-    "pub",
-    "public",
-    "private",
-    "protected",
-    "use",
-    "import",
-    "let",
-    "var",
-    "val",
-    "namespace",
-];
-
-/// Does this pattern look like the agent hunting for where a symbol is defined
-/// or used — the case [`crate::search`] serves better than a text scan?
-/// Applied to every `|`-alternation branch (so a multi-symbol
-/// `struct A|struct B` still counts), each branch must be one of two shapes:
-///   * a lone identifier or `::`/`.`-path — `ReadOnlyTools`, `stella::graph::Foo`
-///   * a declaration-keyword-led identifier — `struct Foo`, `pub fn bar`
-///
-/// A single leading `^` / trailing `$` anchor is tolerated (the everyday
-/// `^pub fn` definition search); any other regex machinery — quantifiers,
-/// char classes, wildcards, embedded metacharacters — means a genuine text
-/// pattern, grep's own job, and does NOT trip the nudge. Deliberately errs
-/// toward missing over false-firing: a stray tip line is cheap, but nudging on
-/// a real text scan is noise on every call.
-fn is_symbol_shaped(pattern: &str) -> bool {
-    let pattern = pattern.trim();
-    if pattern.is_empty() {
-        return false;
-    }
-    // `\|` (escaped, from a shell-quoted rg) and `|` (raw regex) both mean
-    // alternation here; normalize, then every branch must be a symbol.
-    let normalized = pattern.replace("\\|", "|");
-    let mut branches = 0usize;
-    for branch in normalized.split('|') {
-        branches += 1;
-        if !branch_is_symbol(branch) {
-            return false;
-        }
-    }
-    branches > 0
-}
-
-/// One alternation branch: an optional run of declaration keywords followed
-/// by a single identifier/path. `^`/`$` anchors are stripped first.
-fn branch_is_symbol(branch: &str) -> bool {
-    let branch = branch
-        .trim()
-        .trim_start_matches('^')
-        .trim_end_matches('$')
-        .trim();
-    let tokens: Vec<&str> = branch.split_whitespace().collect();
-    let Some((ident, keywords)) = tokens.split_last() else {
-        return false;
-    };
-    keywords
-        .iter()
-        .all(|k| DECL_KEYWORDS.contains(&k.to_ascii_lowercase().as_str()))
-        && is_identifier_or_path(ident)
-}
-
-/// A bare identifier or a `::`/`.`-separated path of them — how a symbol name
-/// is written. Each segment starts alphabetic/underscore and is otherwise
-/// alphanumeric/underscore; the whole must contain at least one letter, so a
-/// bare number never counts as a symbol.
-fn is_identifier_or_path(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    s.split("::").flat_map(|p| p.split('.')).all(|seg| {
-        let mut chars = seg.chars();
-        matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
-            && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    }) && s.chars().any(|c| c.is_ascii_alphabetic())
-}
-
 /// Commands whose positional arguments name things they **change**.
 ///
 /// Deliberately short, and deliberately only commands whose argument shape is
@@ -441,27 +316,31 @@ fn refuse_if_outside(argument: &str, ctx: &crate::ctx::ToolCtx) -> Option<String
     ctx.refuse_write(argument)
 }
 
-/// The tip a symbol-shaped grep earns: [`crate::search`] answers the same
-/// question by meaning and returns the symbol's neighborhood already attached,
-/// so the usual `grep -rn` → `read_file` → `grep` again round trip collapses
-/// into one call.
-const SEARCH_TIP: &str = "note: that pattern looks like a hunt for where a symbol is defined or \
-                          used. `search` answers those directly — it matches by meaning as well \
-                          as text and returns each file with its symbols, callers and imports \
-                          attached, so one call usually replaces several grep/read_file round \
-                          trips. Keep using `grep` when you need every occurrence of one exact \
-                          literal string.";
-
-/// The advisory footer for a bash result: a cross-root `cd` warning takes
-/// precedence, otherwise a symbol-shaped grep is pointed at [`crate::search`].
+/// The advisory footer for a bash result: a cross-root `cd` warning, and
+/// nothing else.
 ///
-/// Neither note is conditioned on a code-graph index existing. The grep tip
-/// used to be, because it advertised a tool (`graph_query`) that genuinely was
-/// not there without one; `search` always answers — its bottom rung is an
-/// index-free file scan — so the advice is never about a tool that is missing.
-/// The drift warning never was gated, and must not become so: gating it on the
-/// index meant the one case that most needs it, a freshly-created tree with
-/// nothing indexed, was the one case that stayed silent.
+/// **A bash result carries no tool-preference advice, ever.** There used to be
+/// a second note here, appended whenever a grep pattern looked symbol-shaped,
+/// pointing the model at [`crate::search`]. It was measured on a 20-task
+/// Terminal-Bench panel and it was pure loss: it fired on **44 of 415 tool
+/// results across 10 of 20 tasks** and produced **zero** `search` calls. It
+/// fired on hardware probes (`cat /proc/cpuinfo | grep -i vmx`), on package
+/// listings (`dpkg -L qemu-system-x86 | grep bin`), on a grep of a C header —
+/// none of them symbol hunts. The predicate keyed on a bare identifier after a
+/// grep word, and in a benchmark container (`/app`, not a repository) there is
+/// nothing to search in the first place.
+///
+/// The lesson generalizes past that one predicate, which is why the machinery
+/// is deleted rather than narrowed: advice injected into tool *output* is
+/// re-sent as input on every later turn of the trial, so a wrong nudge is a
+/// context tax that compounds, and the model has no way to tell engine prose
+/// from the command's own bytes. Tool preference belongs in the tool schema
+/// and the system prompt, which the model reads once. Do not reintroduce a
+/// nudge here in any form.
+///
+/// The `cd` warning stays, and is a different thing: it reports a *fact about
+/// this command's effect* — work outside the session root is not collected —
+/// rather than an opinion about which tool should have been called.
 fn drift_advisory(command: &str, root: &Path) -> Option<String> {
     if let Some(target) = cd_escape_target(command, root) {
         // The remedy has to be one the *agent* can perform. "Re-root the
@@ -478,9 +357,6 @@ fn drift_advisory(command: &str, root: &Path) -> Option<String> {
              session on another tree.",
             root.display()
         ));
-    }
-    if bash_grep_is_symbol_shaped(command) {
-        return Some(format!("\n\n{SEARCH_TIP}"));
     }
     None
 }
@@ -554,17 +430,39 @@ impl Bash {
 #[async_trait]
 impl Tool for Bash {
     fn schema(&self) -> ToolSchema {
+        // Advertised here, and only when the plane actually initialized,
+        // because the confinement error is otherwise the *first* place a model
+        // learns this directory exists — it has to fail a write to find out.
+        // Measured on a Terminal-Bench trial: the agent needed a C file it
+        // could compile, was refused at `/tmp`, and fell back to writing the
+        // shim into the graded workspace — exactly the litter the confinement
+        // exists to prevent, and exactly what this sentence prevents instead.
+        //
+        // The variable name is named, never the path: the path carries a
+        // per-session random suffix, and a system prompt or schema that
+        // embedded it would differ byte-for-byte between sessions and cost a
+        // cold prompt-cache write every time (invariant 7).
+        let scratch = if self.scratch.is_some() {
+            " For working files that are NOT deliverables — a compiled shim, a captured \
+             log, a scratch script — use $STELLA_SCRATCH: it is writable, lives outside \
+             the workspace so nothing there lands in this turn's diff, and is deleted \
+             when the session ends. get_environment reports its absolute path for the \
+             file tools."
+        } else {
+            ""
+        };
         ToolSchema {
             name: "bash".into(),
-            description: "Run a shell command in the workspace root. Returns stdout+stderr with a \
+            description: format!(
+                "Run a shell command in the workspace root. Returns stdout+stderr with a \
                 timeout backstop. You can READ anything on this machine — system headers, the \
                 toolchain, a dependency's source. You can only CHANGE things inside this \
                 session's directories (get_environment reports the workspace root), so a \
                 command that creates, edits, deletes or moves a file elsewhere is refused \
                 before it runs. Prefer write_file/edit_file/delete_file over shell equivalents \
                 for files in the workspace: their changes are what this turn's diff and \
-                verification are computed from."
-                .into(),
+                verification are computed from.{scratch}"
+            ),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1042,21 +940,38 @@ mod tests {
         }
     }
 
+    /// A bash result never carries tool-preference advice — for any command.
+    ///
+    /// The deleted nudge fired on 44 of 415 tool results across a 20-task
+    /// Terminal-Bench panel and produced zero `search` calls, including on
+    /// every command below that is not a symbol hunt at all. The first four
+    /// are the shapes the old predicate deliberately matched; the rest are
+    /// shapes it matched by accident, taken verbatim from the trials it
+    /// misfired on. Both groups must now be silent.
     #[test]
-    fn bash_grep_symbol_detection() {
-        assert!(bash_grep_is_symbol_shaped(
-            r#"grep -rn "struct DeckProviderResolver" stella-tools/"#
-        ));
-        assert!(bash_grep_is_symbol_shaped("grep -n ReadOnlyTools src/"));
-        assert!(bash_grep_is_symbol_shaped(r#"rg -e "pub fn resolve" ."#));
-        assert!(bash_grep_is_symbol_shaped(
-            r#"grep -rn "pub mod ports\|pub use ports" src/"#
-        ));
-        // free-text / non-symbol patterns — no nudge
-        assert!(!bash_grep_is_symbol_shaped(r#"grep -rn "unwrap()" src/"#));
-        assert!(!bash_grep_is_symbol_shaped(r#"grep -rn "TODO:" ."#));
-        assert!(!bash_grep_is_symbol_shaped("ls -la && cargo build"));
-        assert!(!bash_grep_is_symbol_shaped("cat foo.rs"));
+    fn a_bash_result_never_carries_tool_preference_advice() {
+        let root = std::path::Path::new("/app");
+        for command in [
+            // what the old predicate meant to catch
+            r#"grep -rn "struct DeckProviderResolver" stella-tools/"#,
+            "grep -n ReadOnlyTools src/",
+            r#"rg -e "pub fn resolve" ."#,
+            r#"grep -rn "pub mod ports\|pub use ports" src/"#,
+            // what it actually caught, from the measured misfires
+            "ls /dev/kvm 2>&1; cat /proc/cpuinfo | grep -i vmx | head -1; uname -a",
+            "dpkg -L qemu-system-x86 2>&1 | grep bin",
+            r#"ls /usr/bin | grep -iE "^gcc|^cc$|^clang""#,
+            "cat /usr/include/x86_64-linux-gnu/asm/unistd_64.h | grep -i epoll",
+            // ordinary text scans
+            r#"grep -rn "unwrap()" src/"#,
+            "cat foo.rs",
+        ] {
+            assert_eq!(
+                drift_advisory(command, root),
+                None,
+                "advice was appended for `{command}`"
+            );
+        }
     }
 
     /// #2022 witness: the exact observed pathological shape
@@ -1160,14 +1075,43 @@ mod tests {
         );
     }
 
-    /// The witness for the retargeted nudge: a symbol-shaped grep is pointed
-    /// at `search`, and — unlike the `graph_query` tip this replaces — it
-    /// fires on a tree with **no index at all**, because `search`'s bottom
-    /// rung is an index-free file scan. The old tip was index-gated for the
-    /// honest reason that `graph_query` did not answer without one; that
-    /// reason is gone, so the gate is too.
+    /// The scratch directory is advertised where the model looks, not only in
+    /// the error it gets for guessing wrong.
+    ///
+    /// Before this, the sole mention of the path was the confinement refusal,
+    /// so an agent needing a compilable working file learned of it by failing
+    /// and then wrote into the graded workspace anyway. The variable name is
+    /// asserted rather than the path: embedding a per-session random path in a
+    /// schema costs a cold prompt-cache write every session (invariant 7).
+    #[test]
+    fn bash_advertises_the_scratch_directory_only_when_it_exists() {
+        let with = Bash::new(Some(std::path::PathBuf::from("/tmp/stella-scratch-x")));
+        let described = with.schema().description;
+        assert!(
+            described.contains("$STELLA_SCRATCH"),
+            "bash must name the scratch variable: {described}"
+        );
+        assert!(
+            !described.contains("stella-scratch-x"),
+            "the per-session path must not reach the schema: {described}"
+        );
+
+        // No plane, no promise: never advertise a capability that is absent.
+        let without = Bash::new(None);
+        assert!(!without.schema().description.contains("$STELLA_SCRATCH"));
+    }
+
+    /// End-to-end counterpart to the unit witness above: a real `bash` call
+    /// whose command is the most symbol-shaped grep there is comes back with
+    /// the command's own bytes and nothing appended.
+    ///
+    /// This assertion is deliberately the inverse of the one it replaces. That
+    /// test asserted the nudge fired even on an unindexed tree, and it was
+    /// right about the mechanism and wrong about the value: measured over a
+    /// 20-task panel the nudge converted 44 firings into zero `search` calls
+    /// while taxing the context of every later turn in those trials.
     #[tokio::test]
-    async fn a_symbol_shaped_bash_grep_is_pointed_at_search_without_an_index() {
+    async fn a_symbol_shaped_bash_grep_comes_back_unannotated() {
         let dir = tempfile::tempdir().unwrap();
         let out = Bash::new(None)
             .execute(
@@ -1177,8 +1121,12 @@ mod tests {
             .await;
         let text = text_of(out);
         assert!(
-            text.contains("`search` answers those directly"),
-            "grep nudged toward search: {text}"
+            !text.contains("`search` answers those directly"),
+            "a bash result must carry no tool-preference advice: {text}"
+        );
+        assert!(
+            !text.contains("note: that pattern"),
+            "a bash result must carry no tool-preference advice: {text}"
         );
     }
 
