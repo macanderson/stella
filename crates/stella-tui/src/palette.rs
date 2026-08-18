@@ -81,12 +81,22 @@ pub const HAIRLINE_STRONG: Color = Color::Rgb(0x3C, 0x42, 0x48);
 ///
 /// Unlike the bronze it replaces, this value is **not** held apart from the
 /// web kit: `docs/brand/css/tokens.css`'s `--stella-brand` is the same hex.
-/// The gold era kept a brighter terminal stop because the kit's bronze could
-/// not carry a glyph on ink, and #2592 tracked whether the two should ever
-/// mean the same thing. At hue 218 the question answers itself -- one stop
-/// clears 10:1 on obsidian *and* holds its edge in a browser -- so the two
-/// surfaces now share one number and #2592's divergence is closed rather than
-/// re-litigated at a new hue.
+/// The gold era held a brighter terminal stop for a *brightness* reason, not
+/// a contrast one -- the kit's bronze cleared 6.40:1 on the old ink ground,
+/// so it could carry a glyph; it simply did not read as CRT amber at that
+/// saturation. At hue 218 the terminal wants no such lift: one stop clears
+/// 10.79:1 on obsidian and holds its edge in a browser, so the split has
+/// nothing left to buy.
+///
+/// The comment this replaces cited #2592 as an open question about "whether
+/// the two golds should mean the same thing". That was wrong twice over, and
+/// is recorded here rather than quietly deleted: #2592 was closed `wontfix`
+/// on 2026-08-12, and it was never about the two *values* — it is about the
+/// two *rules*, that the accent marks `Running` in the terminal and identity
+/// only on the web. **This recolour does not touch that divergence**: the
+/// deck still paints activity in the accent (`status_color`), the web
+/// instruments still reserve it for the wordmark and one primary action, and
+/// both rules are stated where they always were.
 pub const BRAND: Color = Color::Rgb(0x00, 0xD1, 0xF9);
 
 /// The bright stop of the brand sweep (kit `brand-300`, the observatory's
@@ -270,11 +280,13 @@ pub const INK_DIM: Color = Color::Rgb(0x67, 0x6E, 0x75);
 // edit actually has to satisfy:
 //
 //   * **≥30° of hue from the accent.** The closest mark is the periwinkle at
-//     50°. Under the bronze/gold system `data-1` sat *0.8°* from the accent
-//     and measured 1.06:1 against it, which is why it had to be stood down
-//     from every plotted surface.
+//     50.4°. Under the bronze/gold system `data-1` sat *0.8°* from the accent
+//     at 1.12:1, which is why it had to be stood down from every plotted
+//     surface. That distance is where this recolour buys the most.
 //   * **≥30° between marks**, so two adjacent rows are told apart by hue
-//     alone. The minimum in this set is 34° (orchid 278° / magenta 312°).
+//     alone. The minimum in this set is 33.7° (orchid 278° / magenta 312°) --
+//     a shade *tighter* than the bronze set's 34.6°, stated plainly because
+//     it is the one axis on which the old placement was marginally better.
 //
 // The four status hues (oracle-red 5°, apricot-adjacent warning 44°, success
 // 155°, danger 343°) are *not* excluded zones -- eleven meanings do not fit
@@ -289,7 +301,7 @@ pub const INK_DIM: Color = Color::Rgb(0x67, 0x6E, 0x75);
 ///
 /// This mark stays **stood down** from chips, graph nodes and agent colours,
 /// as it was under the bronze kit -- but for a different reason. It is no
-/// longer confusable with the accent (0.8° and 1.06:1 then; 170° now); it is
+/// longer confusable with the accent (0.8° and 1.12:1 then; 170° now); it is
 /// 24° from [`WARNING`] and 1.08:1 against it, so the two are told apart by
 /// saturation (pastel against saturated) rather than by weight. Inside a code
 /// body, where no verdict is ever painted, that is enough. On a chip beside a

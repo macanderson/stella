@@ -137,7 +137,7 @@ pub const VIOLET: Color = palette::DATA_2;
 /// `data-1`, 11.27:1 on ground.
 ///
 /// Still the one stood-down mark, but the reason moved with the hue. Under
-/// the gold accent it was 0.8° and 1.06:1 from the brand and could not colour
+/// the gold accent it was 0.8° and 1.12:1 from the brand and could not colour
 /// a chip, a node or an agent. It is now 170° from the accent and 24° from
 /// [`WARN`] at 1.08:1 — a pastel beside a saturated amber, which is enough
 /// inside a code body where no verdict is ever painted, and not enough on a
@@ -976,7 +976,7 @@ pub fn spark_glyph(intensity: u8) -> char {
 /// slot, so an agent reads as one consistent color everywhere it appears.
 /// Five distinct categorical hues — periwinkle, magenta, green, jade,
 /// secondary — none of them the reserved brand hue (an agent is not "the
-/// brand"; the amber slot the magenta replaces was 1.06:1 against the gold
+/// brand"; the amber slot the magenta replaces was 1.12:1 against the gold
 /// accent, and a chip that can be mistaken for "running" is worse than no
 /// chip) and none of them danger (which reads as failure elsewhere, so it
 /// never brands a healthy agent).
