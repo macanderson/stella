@@ -1,0 +1,1 @@
+stella-plan: StageName is a closed set {triage, recall, research, plan, scope, execute, witness, verify, verdict, reflect, contextwrite, complete}; got "diagnose"

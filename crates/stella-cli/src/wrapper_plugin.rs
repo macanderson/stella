@@ -57,14 +57,13 @@
 //!    the one thing it cannot be told about.
 //! 4. **A child-turn plane, on this driver** (#3576, this door's slice of it).
 //!    `[loop] calls = ["child_turn"]` reaches
-//!    [`ChildTurns`](stella_runtime::wrapper::ChildTurns) over this session's
+//!    [`stella_runtime::wrapper::ChildTurns`] over this session's
 //!    own sub-agent dispatcher — the same dispatcher `task_assign` runs
-//!    children on
-//!    ([`crate::subagent::SessionSubAgents`](crate::subagent::SessionSubAgents)),
+//!    children on ([`crate::subagent::SessionSubAgents`]),
 //!    shared rather than duplicated so budget carving, read-only tooling and
 //!    report clamping stay one implementation. `resolve` and `bind_installed`
 //!    now take that dispatcher as a parameter rather than opening one
-//!    themselves, which is why [`run_raw_one_shot`](crate::agent::goal::run_raw_one_shot)
+//!    themselves, which is why `run_raw_one_shot` (`agent/goal.rs`)
 //!    builds the session's provider, registry and dispatcher *before* binding
 //!    the wrapper — see that function's own comment for why reordering it does
 //!    not weaken the "fails as a typo before a paid call" guarantee. The other

@@ -1,0 +1,11 @@
+{
+  "point": "before_turn",
+  "extra": true,
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "plan-v1",
+    "stage": "plan",
+    "round": 0,
+    "goal": "retry_budget is not honoured"
+  }
+}
