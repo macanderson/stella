@@ -148,13 +148,13 @@ pub fn sync_directory(dir: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         let file = std::fs::File::open(dir).map_err(|e| {
-            StoreError(format!(
-                "cannot open directory {} for fsync: {e}",
-                dir.display()
-            ))
+            StoreError::io(
+                format!("cannot open directory {} for fsync", dir.display()),
+                e,
+            )
         })?;
         file.sync_all()
-            .map_err(|e| StoreError(format!("cannot fsync directory {}: {e}", dir.display())))?;
+            .map_err(|e| StoreError::io(format!("cannot fsync directory {}", dir.display()), e))?;
     }
     #[cfg(not(unix))]
     {
@@ -173,9 +173,9 @@ fn temp_sibling(path: &Path) -> Result<std::path::PathBuf> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
-    let name = path
-        .file_name()
-        .ok_or_else(|| StoreError(format!("durable path {} has no filename", path.display())))?;
+    let name = path.file_name().ok_or_else(|| {
+        StoreError::Other(format!("durable path {} has no filename", path.display()))
+    })?;
     let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
     let mut temp_name = name.to_os_string();
     temp_name.push(format!(".stella-tmp.{}.{sequence}", std::process::id()));
@@ -195,30 +195,30 @@ fn write_temp_then_rename(temp: &Path, path: &Path, bytes: &[u8], mode: u32) -> 
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     let mut file = options
         .open(temp)
-        .map_err(|e| StoreError(format!("cannot create {}: {e}", temp.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot create {}", temp.display()), e))?;
     let metadata = file
         .metadata()
-        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", temp.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot inspect {}", temp.display()), e))?;
     if !metadata.is_file() {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "temporary path {} is not a regular file",
             temp.display()
         )));
     }
     file.write_all(bytes)
-        .map_err(|e| StoreError(format!("cannot write {}: {e}", temp.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot write {}", temp.display()), e))?;
     // After the write, never before: POSIX clears set-user-ID/set-group-ID on
     // write, so a mode applied first loses exactly the bits hardest to notice
     // missing. Before the fsync, so the metadata change is covered by it.
     // `set_permissions` rather than the `.mode()` above alone, because that
     // one is masked by the umask.
     file.set_permissions(std::fs::Permissions::from_mode(mode))
-        .map_err(|e| StoreError(format!("cannot set mode on {}: {e}", temp.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot set mode on {}", temp.display()), e))?;
     file.sync_all()
-        .map_err(|e| StoreError(format!("cannot fsync {}: {e}", temp.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot fsync {}", temp.display()), e))?;
     drop(file);
     std::fs::rename(temp, path)
-        .map_err(|e| StoreError(format!("cannot replace {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot replace {}", path.display()), e))?;
     if let Some(parent) = path.parent() {
         sync_directory(parent)?;
     }
@@ -237,17 +237,17 @@ fn write_temp_then_rename(temp: &Path, path: &Path, bytes: &[u8], _mode: u32) ->
         .write(true)
         .create_new(true)
         .open(temp)
-        .map_err(|e| StoreError(format!("cannot create {}: {e}", temp.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot create {}", temp.display()), e))?;
     file.write_all(bytes)
-        .map_err(|e| StoreError(format!("cannot write {}: {e}", temp.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot write {}", temp.display()), e))?;
     file.sync_all()
-        .map_err(|e| StoreError(format!("cannot fsync {}: {e}", temp.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot fsync {}", temp.display()), e))?;
     drop(file);
     // `std::fs::rename` is MoveFileEx(MOVEFILE_REPLACE_EXISTING) here, which
     // does replace an existing destination — the one thing the naive
     // "rename never overwrites on Windows" folklore gets wrong.
     std::fs::rename(temp, path)
-        .map_err(|e| StoreError(format!("cannot replace {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot replace {}", path.display()), e))?;
     Ok(())
 }
 
@@ -291,13 +291,13 @@ pub fn ensure_converged_schema_version(
 ) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version < 0 {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "{store} carries a negative schema version ({version}), so it is not a stella store \
              or its header was overwritten. Move the file aside and reopen to start a fresh one."
         )));
     }
     if version > current {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "{store} is at schema version {version}, but this build only knows {current} — your \
              stella binary is older than the workspace, not the other way round. Upgrade stella \
              (brew upgrade stella, install.sh, or a newer release build) and reopen."
@@ -313,7 +313,7 @@ pub fn ensure_converged_schema_version(
             |row| row.get(0),
         )?;
         if present == 0 {
-            return Err(StoreError(format!(
+            return Err(StoreError::Other(format!(
                 "{store} is missing the table {table} that its schema declares, so it cannot be \
                  stamped at version {current}. Move the file aside and reopen to rebuild it."
             )));
@@ -373,11 +373,8 @@ mod tests {
 
         let error = write_atomic(&target, b"replacement", MODE_PRIVATE)
             .expect_err("renaming over a non-empty directory must fail");
-        assert!(
-            error.0.contains("cannot replace"),
-            "unexpected: {}",
-            error.0
-        );
+        let message = error.to_string();
+        assert!(message.contains("cannot replace"), "unexpected: {message}");
         assert!(
             strays(&dir).is_empty(),
             "a failed write left a temp behind: {:?}",
@@ -499,7 +496,8 @@ mod tests {
 
         let error = ensure_converged_schema_version(&conn, "test.db", 2, &["thing"])
             .expect_err("a newer store must fail closed");
-        assert!(error.0.contains("schema version 9"), "{}", error.0);
+        let message = error.to_string();
+        assert!(message.contains("schema version 9"), "{message}");
         assert_eq!(version(&conn), 9, "the future stamp must not be downgraded");
     }
 
@@ -508,7 +506,8 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open");
         let error = ensure_converged_schema_version(&conn, "test.db", 1, &["thing"])
             .expect_err("an unconverged store must fail closed");
-        assert!(error.0.contains("missing the table thing"), "{}", error.0);
+        let message = error.to_string();
+        assert!(message.contains("missing the table thing"), "{message}");
         assert_eq!(version(&conn), 0, "no version is stamped onto a bad shape");
     }
 
@@ -520,6 +519,7 @@ mod tests {
             .expect("set");
         let error = ensure_converged_schema_version(&conn, "test.db", 1, &["thing"])
             .expect_err("a negative stamp must fail closed");
-        assert!(error.0.contains("negative schema version"), "{}", error.0);
+        let message = error.to_string();
+        assert!(message.contains("negative schema version"), "{message}");
     }
 }

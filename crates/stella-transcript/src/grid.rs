@@ -13,11 +13,18 @@
 //! two on some font, the whole column walks. So the fold marker is asserted to
 //! be one cell wide and the row builder pads from the left edge every time,
 //! never by appending to what the previous branch happened to emit.
+//!
+//! That only holds if "width" means what the terminal means by it. A CJK
+//! ideograph or an emoji occupies two columns and one `char`, so every measure
+//! here goes through [`cells`] — never `chars().count()`, which under-counts
+//! exactly the text a fixed column is least able to absorb (#3740).
 
 use crate::digest::{self, Chip};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::FoldState;
 use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, ToolKind, Turn};
+use crate::word::Span;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Width of the elapsed-offset gutter, including its trailing space.
 pub const OFFSET_W: usize = 5;
@@ -159,10 +166,10 @@ impl Cell {
         self
     }
 
-    /// Display width in cells.
+    /// Display width in terminal cells.
     #[must_use]
     pub fn width(&self) -> usize {
-        self.text.chars().count()
+        cells(&self.text)
     }
 }
 
@@ -173,6 +180,16 @@ pub type Line = Vec<Cell>;
 #[must_use]
 pub fn line_width(line: &Line) -> usize {
     line.iter().map(Cell::width).sum()
+}
+
+/// How many terminal columns `text` occupies.
+///
+/// The one measure in this module. A `char` is not a column: CJK and emoji take
+/// two, combining marks take none, and a row padded by character count is a row
+/// whose columns move as soon as either appears.
+#[must_use]
+pub fn cells(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
 }
 
 /// Everything a row builder needs that is the same for every row.
@@ -270,7 +287,10 @@ fn turn_frame_top(turn: &Turn, open: bool, width: usize) -> Line {
     }
 
     let chips = chips_text(&dig.chips);
-    let used = line_width(&line) + chips.chars().count() + 2;
+    // The four cells after the fill — the separating space and the ` ─╮` cap —
+    // are reserved here, not discovered later: a top rail that reserves less
+    // than it emits is two cells longer than the bottom one it has to meet.
+    let used = line_width(&line) + cells(&chips) + 4;
     let fill = width.saturating_sub(used).max(1);
     line.push(Cell::new("─".repeat(fill), Color::Faint));
     line.push(Cell::new(" ", Color::Faint));
@@ -292,7 +312,7 @@ fn spine_blank() -> Line {
 
 fn role_lines(out: &mut Vec<Line>, tag: &str, color: Color, text: &str, width: usize) {
     let badge = format!(" {tag} ");
-    let indent = SPINE_W + badge.chars().count() + 1;
+    let indent = SPINE_W + cells(&badge) + 1;
     let measure = width.saturating_sub(indent + 2).max(20);
     for (i, wrapped) in wrap(text, measure).into_iter().enumerate() {
         let mut line = vec![Cell::new("│ ", Color::Faint)];
@@ -304,10 +324,7 @@ fn role_lines(out: &mut Vec<Line>, tag: &str, color: Color, text: &str, width: u
             );
             line.push(Cell::new(" ", Color::Faint));
         } else {
-            line.push(Cell::new(
-                " ".repeat(badge.chars().count() + 1),
-                Color::Faint,
-            ));
+            line.push(Cell::new(" ".repeat(cells(&badge) + 1), Color::Faint));
         }
         line.push(Cell::new(wrapped, Color::Ink));
         out.push(line);
@@ -377,7 +394,7 @@ fn step_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, step: &Step, ti: usize, si: us
     if dig.status == Status::Error {
         line.push(Cell::new("  ✗ failed", Color::Red).bold());
     }
-    let used = line_width(&line) + chips.chars().count();
+    let used = line_width(&line) + cells(&chips);
     line.push(Cell::new(
         " ".repeat(width.saturating_sub(used).max(1)),
         Color::Faint,
@@ -547,9 +564,7 @@ fn status_line(run: &Run, state: &FoldState, width: usize) -> Line {
         "j/k step  ←/→ fold  z zoom [{}]  e outputs  c copy",
         state.zoom().label()
     );
-    let gap = width
-        .saturating_sub(left.chars().count() + right.chars().count())
-        .max(2);
+    let gap = width.saturating_sub(cells(&left) + cells(&right)).max(2);
     vec![
         Cell::new(left, Color::Ink).bold(),
         Cell::new(" ".repeat(gap), Color::Faint),
@@ -568,12 +583,26 @@ pub fn fold_mark(open: bool) -> &'static str {
     if open { "▾" } else { "▸" }
 }
 
+/// `text`, in exactly `width` display cells: padded when short, truncated when
+/// long.
+///
+/// Truncation counts columns rather than characters, and stops before a
+/// double-width character that would straddle the boundary — the cell it would
+/// have half-filled becomes a space, so the column after it starts where the
+/// constant says it does whether or not the text was cut mid-ideograph.
 fn pad(text: &str, width: usize) -> String {
-    let len = text.chars().count();
-    if len >= width {
-        return text.chars().take(width).collect();
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in text.chars() {
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + w > width {
+            break;
+        }
+        out.push(ch);
+        used += w;
     }
-    format!("{text}{}", " ".repeat(width - len))
+    out.push_str(&" ".repeat(width - used));
+    out
 }
 
 fn chips_text(chips: &[Chip]) -> String {
@@ -630,14 +659,22 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     for paragraph in text.trim().lines() {
         let mut current = String::new();
+        // Carried rather than re-measured per word: the running total is the
+        // same answer, and re-walking the line for every word it already holds
+        // is quadratic in a paragraph's length for no gain.
+        let mut used = 0;
         for word in paragraph.split_whitespace() {
-            if !current.is_empty() && current.chars().count() + 1 + word.chars().count() > width {
+            let word_w = cells(word);
+            if !current.is_empty() && used + 1 + word_w > width {
                 out.push(std::mem::take(&mut current));
+                used = 0;
             }
             if !current.is_empty() {
                 current.push(' ');
+                used += 1;
             }
             current.push_str(word);
+            used += word_w;
         }
         out.push(current);
     }

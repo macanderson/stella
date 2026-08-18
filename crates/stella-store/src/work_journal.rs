@@ -241,7 +241,7 @@ impl WorkJournal {
         let identity = crate::workspace_local::resolve(workspace_root)?;
         let root = store_root.to_path_buf();
         std::fs::create_dir_all(&root)
-            .map_err(|e| StoreError(format!("cannot create work-journal root: {e}")))?;
+            .map_err(|e| StoreError::io("cannot create work-journal root", e))?;
         let journal = Self {
             git_dir: root.join(format!("{}.git", identity.id)),
             work_tree: identity.path,
@@ -415,19 +415,19 @@ impl WorkJournal {
             .stderr(std::process::Stdio::piped());
         let mut child = cmd
             .spawn()
-            .map_err(|e| StoreError(format!("cannot run git hash-object: {e}")))?;
+            .map_err(|e| StoreError::io("cannot run git hash-object", e))?;
         {
             use std::io::Write as _;
             let stdin = child.stdin.as_mut().expect("piped");
             stdin
                 .write_all(content.as_bytes())
-                .map_err(|e| StoreError(format!("cannot write blob: {e}")))?;
+                .map_err(|e| StoreError::io("cannot write blob", e))?;
         }
         let out = child
             .wait_with_output()
-            .map_err(|e| StoreError(format!("git hash-object failed: {e}")))?;
+            .map_err(|e| StoreError::io("git hash-object failed", e))?;
         if !out.status.success() {
-            return Err(StoreError(format!(
+            return Err(StoreError::Other(format!(
                 "git hash-object failed: {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             )));
@@ -844,19 +844,19 @@ impl WorkJournal {
             .stderr(Stdio::piped());
         let mut child = cmd
             .spawn()
-            .map_err(|e| StoreError(format!("cannot run git update-ref: {e}")))?;
+            .map_err(|e| StoreError::io("cannot run git update-ref", e))?;
         {
             use std::io::Write as _;
             let stdin = child.stdin.as_mut().expect("piped");
             stdin
                 .write_all(input.as_bytes())
-                .map_err(|e| StoreError(format!("cannot write ref deletions: {e}")))?;
+                .map_err(|e| StoreError::io("cannot write ref deletions", e))?;
         }
         let out = child
             .wait_with_output()
-            .map_err(|e| StoreError(format!("git update-ref failed: {e}")))?;
+            .map_err(|e| StoreError::io("git update-ref failed", e))?;
         if !out.status.success() {
-            return Err(StoreError(format!(
+            return Err(StoreError::Other(format!(
                 "git update-ref failed: {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             )));
@@ -877,9 +877,9 @@ fn unix_now() -> i64 {
 fn run(cmd: &mut Command) -> Result<String> {
     let out = cmd
         .output()
-        .map_err(|e| StoreError(format!("cannot run git: {e}")))?;
+        .map_err(|e| StoreError::io("cannot run git", e))?;
     if !out.status.success() {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "git {:?} failed: {}",
             cmd.get_args().collect::<Vec<_>>(),
             String::from_utf8_lossy(&out.stderr).trim()

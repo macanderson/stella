@@ -371,7 +371,7 @@ pub(crate) fn apply_migration(
             row.get(0)
         })?;
     if violations > 0 {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "migration to schema version {target} would leave {violations} \
              foreign-key violation(s); rolling back"
         )));
@@ -394,7 +394,7 @@ mod tests {
         conn.pragma_update(None, "user_version", 7).expect("stamp");
 
         fn must_not_run(_: &rusqlite::Transaction<'_>) -> Result<()> {
-            Err(StoreError(
+            Err(StoreError::Other(
                 "the migration body ran even though the version was already stamped".into(),
             ))
         }

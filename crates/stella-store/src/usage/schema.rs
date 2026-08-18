@@ -165,8 +165,9 @@ pub(super) fn apply(conn: &mut Connection) -> Result<()> {
 
     let mut version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     while version < HUB_SCHEMA_VERSION {
-        let index = usize::try_from(version)
-            .map_err(|_| crate::StoreError(format!("hub schema version is negative: {version}")))?;
+        let index = usize::try_from(version).map_err(|_| {
+            crate::StoreError::Other(format!("hub schema version is negative: {version}"))
+        })?;
         let step = HUB_MIGRATIONS[index];
         let tx = conn.transaction()?;
         step(&tx)?;

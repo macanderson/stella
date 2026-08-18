@@ -16,6 +16,13 @@ publish.workspace = true
 [dependencies]
 stella-diff = { path = "../stella-diff" }
 serde = { workspace = true }
+# The grid renderer pads every row to constant gutter widths, and a "width" a
+# terminal disagrees with is not a width at all: one CJK character or emoji
+# occupies two columns, so counting `chars()` under-counts it and every column
+# to its right walks. `stella-tui` already carries this crate for exactly that
+# reason, so it is resident in the tree rather than new supply chain, and it is
+# a pure table lookup over `&str` — no I/O, no allocation, invariant #2 intact.
+unicode-width = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
