@@ -40,17 +40,21 @@ const RESEARCH_MAX_STEPS: usize = 8;
 
 impl Pipeline<'_> {
     /// Answer triage's research questions with parallel read-only sub-agents,
-    /// returning the bounded findings for the planner prompt. Empty questions
-    /// return empty findings with **no events and no spend** — the skip path
-    /// must leave the stream byte-for-byte untouched (L-E2).
+    /// returning the bounded findings for the planner prompt. A `runs`
+    /// answer of `false` — this turn's schedule (#3408) says `research`
+    /// declared `false`, matching `classic.toml`'s `if = "questions > 0"` —
+    /// returns empty findings with **no events and no spend**, the same skip
+    /// path an empty `questions` always took: the stream must stay
+    /// byte-for-byte untouched (L-E2).
     pub(super) async fn research_stage(
         &self,
         goal: &str,
         questions: &[String],
+        runs: bool,
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Vec<ResearchFinding> {
-        if questions.is_empty() {
+        if !runs {
             return Vec::new();
         }
         // Resolution failure degrades to no research — never fail a turn on

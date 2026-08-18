@@ -19,6 +19,7 @@
 use stella_protocol::CompletionMessage;
 
 use crate::plan::PlanStep;
+use crate::schedule::Schedule;
 use crate::triage::TaskAssessment;
 
 /// The immutable per-turn inputs of the execute/verify plane. Constructed
@@ -38,4 +39,10 @@ pub(super) struct TaskFrame<'a> {
     /// Triage's classification — which stages run at all, and how strictly
     /// the ladder verifies.
     pub(super) assessment: TaskAssessment,
+    /// This turn's stage schedule (#3408), decided through `witness` before
+    /// any candidate exists. Rides here rather than as its own parameter on
+    /// every function between `run` and `run_candidate` — the same reason
+    /// every other field above does — and `run_candidate` clones it per
+    /// candidate for `verify`'s decision (`crate::schedule`'s module docs).
+    pub(super) schedule: &'a Schedule<'a>,
 }

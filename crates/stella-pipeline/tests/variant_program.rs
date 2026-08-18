@@ -1,6 +1,6 @@
 //! #3408's acceptance for the pipeline half: the shipped `classic` manifest is
-//! read by this crate, and it resolves to exactly the stage order the pipeline
-//! runs today.
+//! read by this crate, and it resolves — one-shot, at the triage boundary —
+//! to exactly the stage order the pipeline runs today.
 //!
 //! This is the test that makes `variants/classic.toml` a declaration rather
 //! than a description. Before `stella_plugin::Wrapper::resolve` existed nothing
@@ -8,11 +8,14 @@
 //! was unwritable — that is the witness (`git stash && cargo test -p
 //! stella-pipeline --test variant_program` does not compile).
 //!
-//! What it deliberately does **not** claim: that the resolved program *drives*
-//! the run. `crates/stella-pipeline/src/pipeline.rs` still takes its own
-//! branches; binding the two needs the four wrapper interception points
-//! (#3380). Until then this file is what keeps the manifest and the branches
-//! from parting.
+//! `crates/stella-pipeline/src/pipeline.rs` IS now driven by this manifest
+//! (#3408), through `crate::schedule::Schedule` rather than through
+//! `classic_program`/`signals` directly — see `tests/variant_dispatch.rs` for
+//! the witness that two variants take two different stage paths through the
+//! same code. This file keeps a narrower, still-useful claim: that the
+//! one-shot triage-boundary resolution `classic_program` performs agrees with
+//! `classic.toml`'s declared order and with `replay.rs`'s canonical stage
+//! graph.
 
 use stella_pipeline::replay::stage_transition_legal;
 use stella_pipeline::triage::{TaskAssessment, TaskClass};
@@ -277,31 +280,13 @@ fn unobserved() -> SignalValues {
     }
 }
 
-/// The guard behind `variant::signals`'s stated contract: this host takes one
-/// snapshot at the triage boundary, so a shipped variant may only read facts
-/// that exist by then. A condition on a signal execute, witness or verify
-/// publishes would be answered from the snapshot instead of from the stage —
-/// silently, and in the direction of "nothing happened".
-///
-/// Not a limit on the manifest grammar, which is right to have those signals:
-/// it is a limit on *this* host until resolution becomes progressive (#3491),
-/// and it is checked here so the day a variant reaches for one, this fails
-/// instead of the run quietly skipping a stage.
-#[test]
-fn the_shipped_variant_reads_only_facts_the_triage_boundary_has() {
-    let wrapper = variant::classic().expect("the shipped classic manifest must load");
-    for stage in &wrapper.stages {
-        let Some(condition) = stage.condition().expect("a shipped condition must parse") else {
-            continue;
-        };
-        let signal = condition.signal();
-        let publisher = signal.publisher();
-        assert!(
-            matches!(publisher, None | Some(StageName::Triage)),
-            "{} reads {signal}, which {} publishes — this host cannot answer it \
-             at the triage boundary (#3491)",
-            stage.name,
-            publisher.map_or_else(|| "the host".to_string(), |p| p.to_string()),
-        );
-    }
-}
+// `the_shipped_variant_reads_only_facts_the_triage_boundary_has` lived here
+// through #3491: a guard that the shipped manifest never conditioned a stage
+// on a post-triage signal, because this file's one-shot `classic_program`
+// reader could not have answered one correctly. Resolution is progressive
+// now (`crate::schedule::Schedule`, #3408) — the pipeline no longer resolves
+// through this one-shot reader at all — so the guard's premise is gone, and
+// with it the reason to keep asserting a limitation nothing here still has.
+// `tests/variant_dispatch.rs` carries the live version of that concern: a
+// manifest gating a stage on `execute`'s real output reaches the *correct*
+// answer rather than being rejected for trying.
