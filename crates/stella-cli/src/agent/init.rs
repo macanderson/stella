@@ -413,7 +413,7 @@ pub async fn run_init(
 
     // After the embedding pass, so the count reflects the vectors this run
     // just wrote rather than the state it started in.
-    super::graph::report_retired_vectors(&workspace_root, prune_vectors, &mut emit);
+    super::graph::report_retired_vectors(&workspace_root, prune_vectors, &mut io.step_sink());
 
     for domain in &domains.domains {
         println!(

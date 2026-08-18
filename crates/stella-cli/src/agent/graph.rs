@@ -562,12 +562,12 @@ pub(super) fn report_retired_vectors(
 /// nothing at all, and only a pass that actually embedded something — or
 /// failed while trying — is worth a line.
 /// `status` keeps its `Send` bound deliberately: this runs inside the
-/// `tokio::spawn`ed session task, and a bare `&mut dyn FnMut(String)` would
+/// `tokio::spawn`ed session task, and a bare `&mut dyn FnMut(InitLine)` would
 /// make the whole future non-`Send` — the same trap `drive_index_blocking`
 /// documents two functions up.
 async fn refresh_recent_vectors_quietly(
     root: &std::path::Path,
-    status: &mut (dyn FnMut(String) + Send),
+    status: &mut (dyn FnMut(InitLine) + Send),
 ) {
     use crate::search_cmd::semantic::{RefreshOutcome, WarmOutcome, refresh_recent_vectors};
 
@@ -578,15 +578,15 @@ async fn refresh_recent_vectors_quietly(
     };
     match refresh_recent_vectors(root, embedder.as_ref(), stella_graph::MAX_FILES_PER_PASS).await {
         RefreshOutcome::Refreshed(WarmOutcome::Warmed { embedded, .. }) if embedded > 0 => {
-            status(format!(
+            status(InitLine::Step(format!(
                 "· semantic index: {embedded} changed file(s) re-embedded"
-            ));
+            )));
         }
         RefreshOutcome::Refreshed(WarmOutcome::Failed { reason, .. }) => {
-            status(format!(
+            status(InitLine::Step(format!(
                 "! semantic index: refresh stopped — {reason} (search still ranks over the \
                  vectors already stored)"
-            ));
+            )));
         }
         // Nothing changed, no vectors to maintain, or another pass has it.
         // None of the three is news.
