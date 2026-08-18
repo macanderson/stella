@@ -25,19 +25,94 @@
 //! here opens a file — [`survey`] is `read_dir` plus a name test — so there is
 //! no body to leak by accident.
 //!
+//! It answers a second question the first one cannot: **which authority
+//! withheld it**, because that decides the only remedy the line may honestly
+//! name. Repository trust and the org's ceiling both resolve
+//! `project_prompts_allowed` to `false`, and they are not interchangeable — a
+//! `STELLA_TRUST_PROJECT=1` printed against a managed `project_prompts = "off"`
+//! tells a user who has *already set that flag* to set it again. See
+//! [`Withholder`].
+//!
 //! Returning the notice as data and letting the caller print it is the shape
 //! `plugin_cmd::roster::read_project_tier` established for the plugin tier's
-//! identical refusal (#3509): it is what lets the three arms below be asserted
-//! by a test instead of scraped off stderr.
+//! identical refusal (#3509): it is what lets the arms below be asserted by a
+//! unit test. It does not replace the end-to-end witness — the notice is only
+//! *user-visible* because [`super::Settings::load`] prints it, and that wiring
+//! is proved by a process test
+//! (`crates/stella-cli/tests/settings_warnings_cli.rs`), not by this module.
+//!
+//! **stderr is the only carrier today.** #2302 also asks for the counts in the
+//! `--output-format stream-json`/`json` output so a harness sees them without
+//! scraping the human channel; that half is unimplemented and tracked in #3616.
+//! It needs a wire carrier, not a new answer — [`survey`] and [`withholder`]
+//! already return everything it would emit.
 
 use std::path::Path;
 
+use super::Toggle;
+use super::authority::ManagedAuthoritySettings;
+
+/// Which authority is holding the steering back, and therefore what the notice
+/// may tell the user to do about it.
+///
+/// [`super::AuthorityPolicy::compute`] resolves `project_prompts_allowed` as
+/// `project_trusted && managed.project_prompts != Off` — a conjunction, so a
+/// `false` has two possible causes with two different remedies. The managed arm
+/// is a **ceiling**: it is not lifted by trusting the repository, so a notice
+/// that named `STELLA_TRUST_PROJECT=1` there would be advice that cannot work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Withholder {
+    /// This process was not told to trust the repository. The user holds the
+    /// remedy themselves.
+    ProjectUntrusted,
+    /// The org-managed scope pins `authority.project_prompts = "off"`, which
+    /// takes precedence: it withholds the steering whether or not the user
+    /// trusts this checkout, and no environment variable lifts it.
+    ManagedCeiling,
+}
+
+/// Attribute an already-resolved withholding to the authority that caused it,
+/// or `None` when the steering was in fact loaded.
+///
+/// **`project_prompts_allowed` is read, never re-derived** — it is the verdict
+/// the session actually ran under, and the whole point of the call site passing
+/// it is that a second derivation could announce the opposite of what happened.
+/// The managed block is consulted only to *attribute* a withholding this
+/// argument has already established, which is why the ceiling is checked first:
+/// when both causes hold, the one the user cannot lift is the one to report.
+pub(crate) fn withholder(
+    project_prompts_allowed: bool,
+    managed: Option<&ManagedAuthoritySettings>,
+) -> Option<Withholder> {
+    if project_prompts_allowed {
+        return None;
+    }
+    Some(
+        if managed.and_then(|managed| managed.project_prompts) == Some(Toggle::Off) {
+            Withholder::ManagedCeiling
+        } else {
+            Withholder::ProjectUntrusted
+        },
+    )
+}
+
 /// How much project steering the trust gate is holding back, by category.
 ///
-/// Each count is a question about the **filesystem**, not a prediction of what
-/// the matching loader would have produced. A definition that would have failed
-/// to parse was withheld just the same, and re-deriving each loader's discovery
-/// rules here would be a second copy of them, free to drift from the first.
+/// Each count is a question about the **workspace's steering directories**, not
+/// a prediction of what the matching loader would have produced. A definition
+/// that would have failed to parse was withheld just the same, and re-deriving
+/// each loader's discovery rules here would be a second copy of them, free to
+/// drift from the first.
+///
+/// **One withheld source is deliberately not counted**: the extension-authored
+/// rules `rules::store_rule_files` reads out of `.stella/private/store.db`, which
+/// the same gate suppresses (`rules::load_workspace_rules`'s `include_project`
+/// arm). Counting them means `stella_store::Store::open`, and that is not a
+/// read — it creates and hardens the state directory, runs migrations, and
+/// writes through `reconcile_interrupted_executions`. None of that may happen as
+/// a side effect of loading settings, which every `stella` invocation does. A
+/// workspace whose *only* steering is store rules therefore stays silent; it
+/// needs a read-only count exposed by the store, tracked in #3617.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct WithheldSteering {
     /// `<root>/.stella/memories/*.md`.
@@ -89,23 +164,31 @@ fn part(count: usize, one: &str, many: &str) -> Option<String> {
     (count > 0).then(|| format!("{count} {}", if count == 1 { one } else { many }))
 }
 
-/// The one line an untrusted checkout with steering on disk is owed, or `None`.
+/// The one line a checkout whose steering was withheld is owed, or `None`.
 ///
-/// `None` on two arms, and both are load-bearing: a **trusted** workspace is
-/// getting its steering and has nothing to be told, and an untrusted workspace
-/// with **nothing to withhold** must not warn about a suppression that cost it
+/// `None` on two arms, and both are load-bearing: a workspace whose steering
+/// **was loaded** (`withheld_by` is `None`) has nothing to be told, and one with
+/// **nothing to withhold** must not warn about a suppression that cost it
 /// nothing — a notice printed in every repository is one nobody reads.
-pub(crate) fn notice(workspace_root: &Path, project_prompts_allowed: bool) -> Option<String> {
-    if project_prompts_allowed {
-        return None;
-    }
+pub(crate) fn notice(workspace_root: &Path, withheld_by: Option<Withholder>) -> Option<String> {
+    let withheld_by = withheld_by?;
     let withheld = survey(workspace_root);
     if withheld.is_empty() {
         return None;
     }
+    let remedy = match withheld_by {
+        Withholder::ProjectUntrusted => {
+            "set STELLA_TRUST_PROJECT=1 to let this repo's memories, rules, skills, commands \
+             and agents steer this session"
+        }
+        Withholder::ManagedCeiling => {
+            "your org's managed settings set authority.project_prompts = \"off\", so no \
+             repository may steer a session on this machine — STELLA_TRUST_PROJECT does not \
+             lift it"
+        }
+    };
     Some(format!(
-        "  ! project steering in {} was NOT loaded ({}) — set STELLA_TRUST_PROJECT=1 to let \
-         this repo's memories, rules, skills, commands and agents steer this session",
+        "  ! project steering in {} was NOT loaded ({}) — {remedy}",
         workspace_root.display(),
         withheld.parts(),
     ))

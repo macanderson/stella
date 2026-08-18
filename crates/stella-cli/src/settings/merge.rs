@@ -575,15 +575,20 @@ impl Settings {
             }
         }
 
-        // The steering plane's half of the same refusal. Its verdict is read
-        // off the merged policy rather than re-derived from `trust`, because
-        // an org-managed `project_prompts = "off"` withholds steering from a
-        // repository the user *did* trust — re-deriving here would announce
-        // the opposite of what the session got.
+        // The steering plane's half of the same refusal. Whether anything was
+        // withheld is read off the merged policy rather than re-derived from
+        // `trust`, because an org-managed `project_prompts = "off"` withholds
+        // steering from a repository the user *did* trust — re-deriving here
+        // would announce the opposite of what the session got. The managed
+        // block goes along so the line can name a remedy that works on the arm
+        // it is actually on: the ceiling is not lifted by trusting the repo.
         if announce
             && let Some(line) = super::withheld::notice(
                 workspace_root,
-                merged.authority_policy.project_prompts_allowed,
+                super::withheld::withholder(
+                    merged.authority_policy.project_prompts_allowed,
+                    merged.managed_authority.as_ref(),
+                ),
             )
         {
             eprintln!("{line}");
