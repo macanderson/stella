@@ -46,16 +46,15 @@ this is the phase-level rollup the execution order below promises.
   (`before_turn` + `recall`, read-only, no worktree — exactly the "safest
   possible first real plugin" this phase named), graded against committed
   vectors in `crates/stella-runtime/tests/research_plugin_*.rs` and driven
-  end-to-end by `WrapperDispatch`. **One gap the plan did not anticipate**:
-  a plugin run through the raw loop does not yet write its variant id to
-  `executions.pipeline_variant` (`crates/stella-cli/src/agent/goal.rs`'s
-  `run_raw_one_shot` opens a bare `TurnDoor::new("run")` with no
-  `.wrapped_by(..)`), so the side-by-side comparison this phase's bar depends
-  on cannot yet distinguish a `stella-research` run from an unwrapped one in
-  the store — see `doc:pipeline-as-plugins` §7. `stella-plan`, `vera`,
-  `stella-candidates` and `stella-goal` remain unstarted; the dependency cut
-  (the phase's stated last slice) has not started either — the reference
-  count grew, not shrank, in the same work (§7 of the plan).
+  end-to-end by `WrapperDispatch`. Its runs write their variant id to
+  `executions.pipeline_variant` via `crates/stella-cli/src/wrapper_plugin.rs`'s
+  `RawTurnDriver::run_turn` (`TurnDoor::new("run").wrapped_by(self.variant)`),
+  so the side-by-side comparison this phase's bar depends on can already
+  distinguish a `stella-research` run from an unwrapped one in the store — see
+  `doc:pipeline-as-plugins` §7. `stella-plan`, `vera`, `stella-candidates` and
+  `stella-goal` remain unstarted; the dependency cut (the phase's stated last
+  slice) has not started either — the reference count grew, not shrank, in
+  the same work (§7 of the plan).
 - **Phase 5 (Track D, self-driving as a plugin).** Started, not finished.
   `plugins/stella-selfdriving/plugin.toml` exists as the settled D-3 consent
   declaration — the widest grant self-driving needs, written out and provable
