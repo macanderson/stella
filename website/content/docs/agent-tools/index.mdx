@@ -48,7 +48,7 @@ All 18 tools register in every session — no configuration, no prerequisites. G
     Read a file from the workspace. Returns content with 1-based line numbers; `offset` and `limit` take a range out of a large file rather than the whole thing.
   </ToolCard>
   <ToolCard name="write_file" access="mutating">
-    Create or overwrite a file, creating parent directories as needed.
+    Create or overwrite a file, creating parent directories as needed. Overwriting an existing file is refused unless the session has already been shown all of it — the argument is the whole file, so a model working from a fragment would silently truncate the rest. `edit_file` is the way to change part of a file you have not read whole.
   </ToolCard>
   <ToolCard name="edit_file" access="mutating">
     Replace an exact substring in a file. The old string must appear exactly once unless `replace_all` is set — an ambiguous match is refused rather than guessed at.

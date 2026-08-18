@@ -1,4 +1,15 @@
-//! Why a wrapper call failed, as a typed answer (invariant 5).
+//! Why a child conversation failed, as a typed answer (invariant 5) — once for
+//! the wrapper socket ([`WrapperError`]) and once for the driver channel
+//! ([`DriverError`]).
+//!
+//! The two are siblings rather than one enum with a mode, for
+//! [`driver_call`](super::driver_call)'s reason one layer up: a wrapper answers
+//! a point inside a turn and a driver opens a session that starts them, so half
+//! of [`WrapperError`]'s variants name things a driver cannot reach (a role it
+//! did not declare, a mistyped signal, a stage order that would not resolve,
+//! the point it was asked versus the point it answered). Handing a driver's
+//! caller those arms would be handing it a `match` it can never complete
+//! honestly.
 //!
 //! The distinctions here are the ones a host has to act on, and each one was
 //! chosen because collapsing it loses a decision:
@@ -311,6 +322,180 @@ pub enum WrapperError {
         point: stella_plugin::WrapperPoint,
         /// Why.
         detail: String,
+    },
+}
+
+/// A driver session could not be opened, or its answer could not be used.
+///
+/// [`WrapperError`]'s shape, minus every variant that is about standing inside
+/// a turn and plus nothing: a driver session has one point, carries no protocol
+/// version on the wire (`stella_plugin::DriveRequest`), and contributes nothing
+/// to a turn that would need admitting. What is left is what can go wrong
+/// between a host and a child process it is talking to.
+#[derive(Debug, thiserror::Error)]
+pub enum DriverError {
+    /// A transport was constructed with no program to run.
+    #[error("a driver's argv must name a program: it is empty")]
+    EmptyArgv,
+
+    /// A transport was constructed with a zero budget, which would kill the
+    /// driver before it ran.
+    #[error("a driver session's budget must be at least one millisecond")]
+    ZeroTimeout,
+
+    /// The process could not be started at all.
+    #[error("cannot start driver `{program}`: {source}")]
+    Spawn {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The OS error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The session could not be written to the child, or its answer could not
+    /// be read back.
+    #[error("cannot hold a session with driver `{program}`: {source}")]
+    Transport {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The OS error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The driver outlived its session budget and was killed.
+    ///
+    /// The budget covers the **whole** session, not each message of it: a
+    /// driver that spends its session asking is killed at the same deadline as
+    /// one that spends it thinking, so talking buys no time
+    /// (`doc:wrapper-socket` §6b).
+    #[error("driver `{program}` did not end its session within {}s", .timeout.as_secs_f64())]
+    Timeout {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The budget it exceeded.
+        timeout: Duration,
+    },
+
+    /// The driver wrote more than the transport will read, and the read was
+    /// stopped there.
+    #[error(
+        "driver `{program}` wrote more to {stream} than the {cap}-byte ceiling this host will \
+         read, so the session was ended"
+    )]
+    OutputCap {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// Which stream crossed the ceiling: `"stdout"` or `"stderr"`.
+        stream: &'static str,
+        /// The ceiling it crossed.
+        cap: usize,
+    },
+
+    /// The driver ran and exited non-zero.
+    #[error("driver `{program}` exited with {status}: {stderr}")]
+    Exit {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The exit status, rendered — a code, or "a signal" where the
+        /// platform reports one.
+        status: String,
+        /// What it wrote to stderr, bounded.
+        stderr: String,
+    },
+
+    /// The session request could not be serialized. Reachable only for a value
+    /// that cannot be represented as JSON at all.
+    #[error("cannot encode a driver session request: {0}")]
+    Encode(#[source] serde_json::Error),
+
+    /// The driver's stdout ended without the response that ends the session.
+    ///
+    /// **The one failure a self-driving loop must never read as "nothing to
+    /// do".** Both terminal answers say something — `sleep` asks to be woken,
+    /// `halt` says why it stopped — and a driver that says neither has not
+    /// decided anything. A host that treated silence as a halt would retire a
+    /// loop on a crash; one that treated it as a sleep would restart a broken
+    /// driver forever.
+    #[error("driver `{program}` exited without ending its session: {stderr}")]
+    NoResponse {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// What it wrote to stderr, bounded — usually where the reason is.
+        stderr: String,
+    },
+
+    /// The driver's answer was not a readable message.
+    #[error("driver `{program}` answered unreadably: {source} (in: {answer})")]
+    Decode {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// What it wrote, bounded, so the fix does not need a second run.
+        answer: String,
+        /// The parse failure.
+        #[source]
+        source: serde_json::Error,
+    },
+
+    /// The driver asked for a capability at a host that closed its stdin,
+    /// because no callable capability was on offer.
+    ///
+    /// [`WrapperError::UnannouncedCall`]'s shape and its two causes: either the
+    /// manifest declares no `[driver] calls`, or this host attached no
+    /// [`DriverCallGate`](super::DriverCallGate). Reported to the host rather
+    /// than waited out, because the refusal a *declared* call gets is delivered
+    /// to the driver and this one cannot be — there is no channel left to
+    /// deliver it on.
+    #[error(
+        "driver `{program}` asked the host for \"{call}\", but no channel was open to answer on: \
+         its manifest declares no [driver] calls, or this host attached no gate"
+    )]
+    UnannouncedCall {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The capability it asked for.
+        call: stella_plugin::DriverCall,
+    },
+
+    /// The driver asked for a capability after the channel that answers it had
+    /// already died, mid-session.
+    ///
+    /// Distinct from [`DriverError::UnannouncedCall`] for
+    /// [`WrapperError::AnswerChannelFailed`]'s reason: this one fires only
+    /// after an answer already went back through this exact gate, which proves
+    /// the manifest and the gate were both fine and the fault is the pipe.
+    /// `source` is that write failure, recovered by joining the writer task
+    /// rather than discarded.
+    #[error(
+        "driver `{program}` asked the host for \"{call}\", but the channel answering an earlier \
+         ask in this session had already failed: {source}"
+    )]
+    AnswerChannelFailed {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The capability the driver asked for after the channel had died.
+        call: stella_plugin::DriverCall,
+        /// The write failure that killed the channel.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The driver's last message was a capability ask and then its stdout
+    /// ended, so it could not have read the answer.
+    ///
+    /// A driver that asks and stops listening has abandoned the session, and
+    /// crediting it with a `next` it never wrote would be inventing the one
+    /// decision this channel exists to carry.
+    #[error(
+        "driver `{program}` asked the host for \"{call}\" and then closed its output without \
+         reading the answer"
+    )]
+    UnansweredCall {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The capability it asked for and abandoned.
+        call: stella_plugin::DriverCall,
     },
 }
 
