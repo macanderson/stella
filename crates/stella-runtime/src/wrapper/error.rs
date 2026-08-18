@@ -149,6 +149,37 @@ pub enum WrapperError {
         call: stella_plugin::HostCall,
     },
 
+    /// The plugin asked for a host call after the channel that answers it had
+    /// already died, mid-conversation.
+    ///
+    /// **Distinct from [`WrapperError::UnannouncedCall`] on purpose**, even
+    /// though both leave a call unanswered: that variant means the manifest
+    /// declares no `[loop] calls`, or no [`HostCallGate`](super::HostCallGate)
+    /// was ever attached — a manifest or host misconfiguration, fixed by
+    /// editing `[loop] calls` or attaching a gate. Neither is true here — this
+    /// fires only after at least one call was already answered through this
+    /// exact gate, which proves both were fine. The fault is transport-level:
+    /// the write that carried a previous call's answer back to the child's
+    /// stdin failed (a closed stdin, a broken pipe), the writer task exited
+    /// because of it, and the plugin then pipelined another call before
+    /// noticing — a pipelining shape the framing explicitly allows. `source`
+    /// is that write failure, recovered by joining the writer task rather than
+    /// discarded: aborting it without awaiting, as the caller once did, throws
+    /// the one clue that explains what actually happened.
+    #[error(
+        "wrapper `{program}` asked the host for \"{call}\", but the channel answering an earlier \
+         call in this conversation had already failed: {source}"
+    )]
+    AnswerChannelFailed {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The capability the plugin asked for after the channel had died.
+        call: stella_plugin::HostCall,
+        /// The write failure that killed the channel.
+        #[source]
+        source: std::io::Error,
+    },
+
     /// The plugin's last message was a host call and then its stdout ended, so
     /// it could not have read the answer it asked for.
     ///
