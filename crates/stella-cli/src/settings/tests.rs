@@ -1280,3 +1280,98 @@ fn env_flag_accepts_only_truthy_spellings() {
         );
     }
 }
+
+/// An untrusted checkout that actually has steering on disk says so — in
+/// counts, never in content — and names the opt-in (#2302).
+///
+/// Three arms, because the notice is only right if it is also *absent* twice:
+/// a trusted workspace is getting its steering and is owed nothing, and an
+/// untrusted workspace with nothing to withhold must not warn about a
+/// suppression that cost it nothing. The memory body carries a marker the
+/// assertions look for by its absence: the whole point of a counts-only notice
+/// is that a refusal to load repository text cannot itself print repository
+/// text.
+#[test]
+fn an_untrusted_workspace_names_the_steering_it_withheld() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("repo");
+    let stella = workspace.join(".stella");
+    std::fs::create_dir_all(stella.join("memories")).unwrap();
+    std::fs::create_dir_all(stella.join("rules")).unwrap();
+    std::fs::create_dir_all(stella.join("skills").join("triage")).unwrap();
+    std::fs::write(
+        stella.join("memories").join("00-marker.md"),
+        "SECRET-MARKER-BODY",
+    )
+    .unwrap();
+    std::fs::write(stella.join("rules").join("style.toml"), "").unwrap();
+    std::fs::write(stella.join("rules").join("review.toml"), "").unwrap();
+    // Governance is not a record, and the loader already skips it by name.
+    std::fs::write(stella.join("rules").join("governance.toml"), "").unwrap();
+    std::fs::write(
+        stella.join("skills").join("triage").join("SKILL.md"),
+        "# triage",
+    )
+    .unwrap();
+
+    let withheld = super::withheld::survey(&workspace);
+    assert_eq!(withheld.memories, 1);
+    assert_eq!(withheld.records, 2, "governance.toml is not a record");
+    assert_eq!(withheld.skills, 1);
+    assert_eq!(withheld.commands, 0);
+    assert_eq!(withheld.agents, 0);
+
+    let line = super::withheld::notice(&workspace, false)
+        .expect("an untrusted workspace with steering on disk is owed a notice");
+    // The whole inventory in one assertion: singular/plural per count, and the
+    // two empty categories omitted rather than reported as `0 commands`.
+    assert!(
+        line.contains("(1 memory, 2 context records, 1 skill)"),
+        "{line}"
+    );
+    assert!(line.contains("STELLA_TRUST_PROJECT=1"), "{line}");
+    assert!(
+        !line.contains("SECRET-MARKER-BODY") && !line.contains("00-marker"),
+        "the notice must carry counts, never content or filenames: {line}"
+    );
+
+    assert!(
+        super::withheld::notice(&workspace, true).is_none(),
+        "a trusted workspace is getting its steering and is owed no notice"
+    );
+    let bare = dir.path().join("bare");
+    std::fs::create_dir_all(&bare).unwrap();
+    assert!(
+        super::withheld::notice(&bare, false).is_none(),
+        "a repo with no steering must not warn about a suppression that cost it nothing"
+    );
+
+    // …and the verdict `Settings::load` hands the notice really is the untrusted
+    // one, so the arm proved above is the arm a cloned repo actually takes. The
+    // pure arms are what this test is for; this is the join to the call site.
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "HOME",
+        "STELLA_MANAGED_SETTINGS",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+    ]);
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(home.join(".stella")).unwrap();
+    // SAFETY: serialized behind the binary-wide env lock.
+    unsafe {
+        std::env::set_var("HOME", &home);
+        std::env::set_var(
+            "STELLA_MANAGED_SETTINGS",
+            dir.path().join("no-such-managed.json"),
+        );
+        std::env::remove_var("STELLA_TRUST_PROJECT");
+        std::env::remove_var("STELLA_PROJECT_HOOKS");
+    }
+    let merged = Settings::load(&workspace).unwrap();
+    assert!(
+        super::withheld::notice(&workspace, merged.authority_policy.project_prompts_allowed)
+            .is_some(),
+        "an untrusted load must resolve to the arm that speaks"
+    );
+}

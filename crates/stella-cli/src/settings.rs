@@ -51,6 +51,7 @@ mod steering;
 mod toml_config;
 pub(crate) mod toml_io;
 mod unknown;
+mod withheld;
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 pub use toml_config::ConfigScope;
 pub(crate) use unknown::{
