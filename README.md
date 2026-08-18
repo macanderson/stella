@@ -361,33 +361,45 @@ and a notice says so.
 The full subcommand surface. Every command also answers `stella <command> --help`;
 each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen.sh/docs/commands).
 
-| Command                                                               | What it does                                                                                                      |
-| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run)          | Send a one-shot prompt, non-interactive — the staged pipeline by default                                          |
-| [`chat`](https://stella.oxagen.sh/docs/commands/chat)                 | Interactive session: the Command Deck TUI (also what a bare `stella` opens)                                       |
-| [`resume [id]`](https://stella.oxagen.sh/docs/commands/resume)        | Reopen a durable past session exactly where it stood; `--list` browses them                                       |
-| [`goal <goal>`](https://stella.oxagen.sh/docs/commands/goal)          | Work in judged rounds until a verifier model confirms the goal is met                                                |
-| [`monitor [target]`](https://stella.oxagen.sh/docs/commands/monitor)  | Watch a branch/PR's CI and fix failures until it is fully green                                                   |
-| [`fleet <tasks…>`](https://stella.oxagen.sh/docs/commands/fleet)      | Fan tasks out to worker agents, wave-scheduled and recorded in a ledger                                           |
-| [`init`](https://stella.oxagen.sh/docs/commands/init)                 | Infer this workspace's domain taxonomy and build the code-graph index                                             |
-| [`search <query>`](https://stella.oxagen.sh/docs/commands/search)     | Find code by meaning or by name over the code-graph index                                                         |
-| [`storage <cmd>`](https://stella.oxagen.sh/docs/commands/storage)     | Inspect the storage map: layers, namespaces, relations, fields, drift (offline)                                   |
-| [`tools`](https://stella.oxagen.sh/docs/commands/tools)               | List every tool available this session; `--validate` checks custom manifests                                      |
-| [`models`](https://stella.oxagen.sh/docs/commands/models)             | List configured providers and available models                                                                    |
-| [`auth <cmd>`](https://stella.oxagen.sh/docs/commands/auth)           | Manage BYOK provider keys in `~/.stella/credentials.toml` — never prints a secret                                 |
-| [`config`](https://stella.oxagen.sh/docs/commands/config)             | Show the fully resolved configuration                                                                             |
-| [`mcp <cmd>`](https://stella.oxagen.sh/docs/commands/mcp)             | Manage MCP servers: search a registry, install, list, log in, show usage                                          |
-| [`memory <cmd>`](https://stella.oxagen.sh/docs/commands/memory)       | Inspect memories; promote one to a project rule                                                                   |
-| [`stats`](https://stella.oxagen.sh/docs/commands/stats)               | Cost, tokens, and $/resolved task for **this** workspace                                                          |
-| [`usage <cmd>`](https://stella.oxagen.sh/docs/commands/usage)         | The same numbers across **every** project, from the hub at `~/.stella/usage.db`                                   |
-| [`inspect`](https://stella.oxagen.sh/docs/commands/inspect)           | Replay the exact context a past model call was sent, verified against its digests                                 |
-| [`observe`](https://stella.oxagen.sh/docs/commands/observe)           | Serve the Observatory dashboard over local telemetry — loopback-only, read-only                                   |
-| [`cloud <cmd>`](https://stella.oxagen.sh/docs/commands/cloud)         | Show or set the org/workspace identity that scopes replicated telemetry                                           |
-| [`telemetry <cmd>`](https://stella.oxagen.sh/docs/telemetry)          | Inspect or flush the managed enterprise spool — off unless explicitly enrolled                                    |
-| [`arena`](https://stella.oxagen.sh/docs/commands)                     | [arena-bench](https://github.com/macanderson/arena-bench) harness adapter — for benchmarking Stella, not using it |
-| [`doctor`](https://stella.oxagen.sh/docs/commands/doctor)             | Diagnose the install: config, credentials, toolchain, and workspace state                                         |
-| [`proposals <cmd>`](https://stella.oxagen.sh/docs/commands)           | Review the adaptive-context loop's pending proposals — keep, ignore, or retire                                    |
-| [`version`](https://stella.oxagen.sh/docs/commands/version)           | Print the version and exit                                                                                        |
+| Command                                                                     | What it does                                                                                                      |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run)                | Send a one-shot prompt, non-interactive — the staged pipeline by default                                          |
+| [`chat`](https://stella.oxagen.sh/docs/commands/chat)                       | Interactive session: the Command Deck TUI (also what a bare `stella` opens)                                       |
+| [`resume [id]`](https://stella.oxagen.sh/docs/commands/resume)              | Reopen a durable past session exactly where it stood; `--list` browses them                                       |
+| [`daemon <cmd>`](https://stella.oxagen.sh/docs/commands/daemon)             | Find, watch, and stop runs that outlived the terminal that started them                                           |
+| [`goal <goal>`](https://stella.oxagen.sh/docs/commands/goal)                | Work in judged rounds until a verifier model confirms the goal is met                                             |
+| [`monitor [target]`](https://stella.oxagen.sh/docs/commands/monitor)        | Watch a branch/PR's CI and fix failures until it is fully green                                                   |
+| [`self-driving <cmd>`](https://stella.oxagen.sh/docs/commands/self-driving) | Drive the perpetual delivery loop: plan a cycle, fold the ledger, advance the audit                               |
+| [`fleet <tasks…>`](https://stella.oxagen.sh/docs/commands/fleet)            | Fan tasks out to worker agents, wave-scheduled and recorded in a ledger                                           |
+| [`init`](https://stella.oxagen.sh/docs/commands/init)                       | Infer this workspace's domain taxonomy and build the code-graph index                                             |
+| [`search <query>`](https://stella.oxagen.sh/docs/commands/search)           | Find code by meaning or by name over the code-graph index                                                         |
+| [`storage <cmd>`](https://stella.oxagen.sh/docs/commands/storage)           | Inspect the storage map: layers, namespaces, relations, fields, drift (offline)                                   |
+| [`tools`](https://stella.oxagen.sh/docs/commands/tools)                     | List every tool available this session; `--validate` checks custom manifests                                      |
+| [`commands <cmd>`](https://stella.oxagen.sh/docs/commands/commands)         | List this workspace's custom slash commands, or convert markdown ones to TOML                                     |
+| [`plugin <cmd>`](https://stella.oxagen.sh/docs/commands/plugin)      | Install, list, and remove plugins — `install` shows the declaration before it acts                                       |
+| [`models`](https://stella.oxagen.sh/docs/commands/models)                   | List configured providers and available models                                                                    |
+| [`auth <cmd>`](https://stella.oxagen.sh/docs/commands/auth)                 | Manage BYOK provider keys in `~/.stella/credentials.toml` — never prints a secret                                 |
+| [`config`](https://stella.oxagen.sh/docs/commands/config)                   | Show the fully resolved configuration                                                                             |
+| [`migrate <cmd>`](https://stella.oxagen.sh/docs/commands/migrate)           | Move a `settings.json` to `stella.toml`; the JSON is kept, never deleted                                          |
+| [`mcp <cmd>`](https://stella.oxagen.sh/docs/commands/mcp)                   | Manage MCP servers: search a registry, install, list, log in, show usage                                          |
+| [`memory <cmd>`](https://stella.oxagen.sh/docs/commands/memory)             | Inspect memories; promote one to a project rule                                                                   |
+| [`ingest [paths…]`](https://stella.oxagen.sh/docs/commands/ingest)          | Turn markdown you already wrote — `AGENTS.md`, design notes — into steering                                       |
+| [`context <cmd>`](https://stella.oxagen.sh/docs/commands/context)           | Review, publish, and explain the context records that steering ingested                                           |
+| [`stats`](https://stella.oxagen.sh/docs/commands/stats)                     | Cost, tokens, and $/resolved task for **this** workspace                                                          |
+| [`usage <cmd>`](https://stella.oxagen.sh/docs/commands/usage)               | The same numbers across **every** project, from the hub at `~/.stella/usage.db`                                   |
+| [`scoreboard`](https://stella.oxagen.sh/docs/commands/scoreboard)           | What the work cost, and whether a merged or closed PR implies anyone called it good                               |
+| [`calibration`](https://stella.oxagen.sh/docs/commands/calibration)         | Verifier calibration: how often a pass verdict later failed CI                                                    |
+| [`inspect`](https://stella.oxagen.sh/docs/commands/inspect)                 | Replay the exact context a past model call was sent, verified against its digests                                 |
+| [`observe`](https://stella.oxagen.sh/docs/commands/observe)                 | Serve the Observatory dashboard over local telemetry — loopback-only, read-only                                   |
+| [`cloud <cmd>`](https://stella.oxagen.sh/docs/commands/cloud)               | Show or set the org/workspace identity that scopes replicated telemetry                                           |
+| [`telemetry <cmd>`](https://stella.oxagen.sh/docs/commands/telemetry)       | Inspect or flush the managed enterprise spool — off unless explicitly enrolled                                    |
+| [`tune <cmd>`](https://stella.oxagen.sh/docs/commands/tune)                 | A/B one policy knob over two loop-bench result files; `--promote` is reversible                                   |
+| [`dataset <cmd>`](https://stella.oxagen.sh/docs/commands/dataset)           | Curate a redacted training dataset from this workspace's own receipts                                             |
+| [`arena`](https://stella.oxagen.sh/docs/commands/arena)                     | [arena-bench](https://github.com/macanderson/arena-bench) harness adapter — for benchmarking Stella, not using it |
+| [`doctor`](https://stella.oxagen.sh/docs/commands/doctor)                   | Diagnose the install: config, credentials, toolchain, and workspace state                                         |
+| [`proposals <cmd>`](https://stella.oxagen.sh/docs/commands/proposals)       | Review the adaptive-context loop's pending proposals — keep, ignore, or retire                                    |
+| [`completions <shell>`](https://stella.oxagen.sh/docs/commands/completions) | Print a shell completion script to stdout (bash, zsh, fish, powershell, elvish)                                   |
+| [`version`](https://stella.oxagen.sh/docs/commands/version)                 | Print the version and exit                                                                                        |
 
 ### Interactive chat (default)
 
