@@ -36,7 +36,13 @@ stella-autonomy = { path = "../stella-autonomy" }
 # extracted from `stella-cli`'s `inspect::diff` precisely so this crate could
 # link it instead of taking a fourth acknowledged copy. Zero dependencies,
 # zero I/O (the `stella-home` shape), so the observer boundary holds.
-stella-diff = { path = "../stella-diff" }
+# `json` is not optional here despite the name: `context_diff.rs` and
+# `journal.rs` both call `stella_diff::json::hunks` to serialize hunks onto an
+# API payload. Without it this crate compiles only when some other workspace
+# member (`stella-cli`) unifies the feature in, so `cargo test -p
+# stella-observatory` — and any `CARGO_SCOPE`-narrowed gate run — failed to
+# build while the whole-workspace build stayed green.
+stella-diff = { path = "../stella-diff", features = ["json"] }
 # The transcript renderer, shared with the TUI rather than re-implemented in the
 # page's JavaScript — which is what the previous arrangement was, and that copy
 # had drifted to rendering a file edit as raw text in a `<pre>`: no hunks, no
