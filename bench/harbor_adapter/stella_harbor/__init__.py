@@ -53,7 +53,7 @@ import re
 import shlex
 import sys
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -454,6 +454,51 @@ def _compose_host_environment(environment: BaseEnvironment) -> dict[str, str]:
     return _apply_launcher_env_controls(host_env)
 
 
+def _credential_carrying_names(
+    host_env: Mapping[str, str], credentials: Iterable[str]
+) -> tuple[str, ...]:
+    """Variable *names* in ``host_env`` whose value carries a live credential.
+
+    Names only, never values, and never which credential matched: the point of
+    the guard is that this material must not be rendered anywhere, and an error
+    message is one of the places it must not be rendered.
+    """
+    secrets = tuple(credentials)
+    return tuple(
+        sorted(
+            name
+            for name, value in host_env.items()
+            if any(secret in value for secret in secrets)
+        )
+    )
+
+
+def _credential_leak_message(carriers: Sequence[str]) -> str:
+    """Name the offending variables and the fix, not just the symptom.
+
+    This refusal is correct and load-bearing — it is the check that stops a
+    provider key reaching a task container's ``/proc/<pid>/environ`` — but for
+    as long as it said only *that* a credential remained, it did not say
+    *which variable* held it, and every occurrence cost an operator a manual
+    hunt through the host environment.
+
+    The failure it actually catches is an **alias under a name nothing
+    recognises**: ``VOYAGE_AI_KEY`` beside ``VOYAGE_API_KEY`` holds the same
+    secret, but ends ``_AI_KEY``, so :func:`_is_credential_env_name` does not
+    strip it and the arena's ``_SCRUBBED_PREFIXES`` do not scrub it. The guard
+    fires, correctly, on a variable the operator has to be told the name of.
+    """
+    names = ", ".join(carriers)
+    return (
+        "selected provider credential remains in Docker's host environment, "
+        f"carried by: {names}. These variables hold a live credential under a "
+        "name the credential-name policy does not recognise (an alias such as "
+        "VOYAGE_AI_KEY beside VOYAGE_API_KEY is the usual cause). Unset them "
+        "before launching, or rename them to the canonical *_API_KEY spelling "
+        "so they are stripped from the Compose host environment."
+    )
+
+
 def _contains_credential(value: Any, credential: str) -> bool:
     """Search a decoded Docker Config without rendering matching material."""
     if isinstance(value, str):
@@ -539,14 +584,9 @@ async def _verify_compose_containers_exclude_credentials(
 
     compose = _compose_base_argv(environment)
     host_env = _compose_host_environment(environment)
-    if any(
-        credential in value
-        for value in host_env.values()
-        for credential in credentials
-    ):
-        raise RuntimeError(
-            "selected provider credential remains in Docker's host environment"
-        )
+    carriers = _credential_carrying_names(host_env, credentials)
+    if carriers:
+        raise RuntimeError(_credential_leak_message(carriers))
 
     return_code, output = await _captured_process([*compose, "ps", "-aq"], host_env)
     if return_code != 0:
@@ -722,14 +762,9 @@ async def _secure_exec_with_credential_fd(
         # ordinary build settings, but its `/proc/<pid>/environ` cannot expose
         # the benchmark provider key either.
         host_env = _compose_host_environment(environment)
-        if any(
-            credential in value
-            for value in host_env.values()
-            for credential in credentials
-        ):
-            raise RuntimeError(
-                "selected provider credential remains in Docker's host environment"
-            )
+        carriers = _credential_carrying_names(host_env, credentials)
+        if carriers:
+            raise RuntimeError(_credential_leak_message(carriers))
 
         return await exec_with_agent_reap(
             compose, compose_base, host_env, wire, completion_probe, _INSTALL_PATH
