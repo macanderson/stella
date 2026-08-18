@@ -546,6 +546,57 @@ fn a_file_diff_renders_as_a_gutter_diff_rather_than_a_wall_of_text() {
 }
 
 #[test]
+fn a_modified_line_pair_highlights_only_the_changed_token() {
+    // A whole-line tint answers "did this line change"; a reviewer's real
+    // question is "what in it changed". Reuses
+    // `stella_transcript::word::highlight` — the same pass the transcript
+    // surfaces use — rather than a second tokenizer that could drift from it.
+    let event = AgentEvent::FileChange {
+        path: "app/main.tex".into(),
+        kind: stella_protocol::FileChangeKind::Modified,
+        added: 1,
+        removed: 1,
+        diff: Some(
+            "--- a/app/main.tex\n+++ b/app/main.tex\n\
+             @@ -1,1 +1,1 @@\n\
+             -\\setlength{\\parindent}{15pt}\n\
+             +\\setlength{\\parindent}{12pt}\n"
+                .to_string(),
+        ),
+    };
+    let out = render(&at(vec![event]), &no_prompts());
+    assert!(
+        out.body.contains(r#"<span class="ww">15pt</span>"#),
+        "the removed token should carry the word tint:\n{}",
+        out.body
+    );
+    assert!(
+        out.body.contains(r#"<span class="ww">12pt</span>"#),
+        "the added token should carry the word tint:\n{}",
+        out.body
+    );
+    assert!(
+        !out.body
+            .contains(r#"<span class="ww">\setlength{\parindent}{</span>"#),
+        "the unchanged prefix must not be tinted:\n{}",
+        out.body
+    );
+}
+
+#[test]
+fn an_unpaired_addition_carries_no_word_tint() {
+    // `a_rewrite` below is additions with no matching removals — there is
+    // nothing to compare each line against, so the honest answer is a plain
+    // line tint and zero word spans.
+    let out = render(&at(vec![a_rewrite(4)]), &no_prompts());
+    assert!(
+        !out.body.contains(r#"class="ww""#),
+        "an unpaired line has nothing to diff against:\n{}",
+        out.body
+    );
+}
+
+#[test]
 fn a_long_file_diff_shows_its_beginning_and_its_end_and_marks_the_middle() {
     // Only the changed lines, never the whole file, and never more of them
     // than the shared cap — with the elision stated where it happened. A

@@ -2924,6 +2924,7 @@ dependencies = [
  "stella-runtime",
  "stella-store",
  "stella-tools",
+ "stella-transcript",
  "stella-tty",
  "stella-tui",
  "tempfile",
