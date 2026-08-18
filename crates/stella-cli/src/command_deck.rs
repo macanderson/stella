@@ -97,8 +97,8 @@ use crate::{agent, rules};
 
 mod add_dir;
 mod authoring;
-mod init_cmd;
 pub(crate) mod forwarder;
+mod init_cmd;
 mod lead_control;
 mod model_cmd;
 mod pr_observe;

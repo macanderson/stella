@@ -375,7 +375,10 @@ mod tests {
 
     #[test]
     fn a_headless_run_hints_but_stays_askable() {
-        assert_eq!(decide(2, false, false), OfferDecision::NoHuman { pending: 2 });
+        assert_eq!(
+            decide(2, false, false),
+            OfferDecision::NoHuman { pending: 2 }
+        );
         assert_eq!(decide(2, false, true), OfferDecision::Ask { pending: 2 });
     }
 

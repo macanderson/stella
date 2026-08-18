@@ -4,15 +4,22 @@
 //! `stella commands` — list custom slash commands, and convert markdown ones
 //! to TOML.
 //!
-//! # Why conversion is opt-in and never part of `init`
+//! # Why conversion is opt-in, and what `init` may and may not do
 //!
 //! `stella init` **symlinks** `.claude/commands/` into `.stella/commands/`, so
 //! a command edited in either place stays live in both. Converting forks that:
 //! the TOML file is a copy, and the markdown original it came from keeps
 //! drifting away from it. That is a real trade — TOML buys a typed
 //! `allowed-tools` array and a delimiter-free `prompt`, and costs the live
-//! link — and it is the user's to make, per command, deliberately. So this is
-//! a command you run, never something a sync does to you.
+//! link — and it is the user's to make, deliberately. So conversion is never
+//! something a sync does to you.
+//!
+//! `init` does now *ask*, once per workspace, through
+//! [`crate::commands_offer`] — which is the same rule, not an exception to
+//! it: the offer states the cost, converts nothing without an explicit yes,
+//! stays silent when nobody can answer, and never asks a second time. What
+//! remains forbidden is the thing this paragraph originally guarded against,
+//! a conversion the user did not choose.
 //!
 //! Conversion never deletes the source, and never overwrites an existing
 //! `.toml` without `--force`. The worst outcome of a mistaken run is a file
