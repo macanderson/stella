@@ -73,11 +73,12 @@ use stella_protocol::candidate::CandidateHandle;
 
 use crate::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
-    ChildTurnArgs, ChildTurnResult, FlipObservation, HostCall, HostCallArgs, HostCallFailure,
-    HostCallOk, HostCallRefusal, HostCallRequest, HostCallResponse, ObservedEvidence,
-    PROTOCOL_VERSION, PublishedSignal, RecallArgs, RecallFrame, RecallResult, RunTestArgs, Signal,
-    SignalKind, SignalValue, StageName, TestBaseline, TestPlan, TurnOutcome, VolatileContext,
-    WrapperPoint, WrapperRequest, WrapperResponse,
+    ChildTurnArgs, ChildTurnResult, DriveNext, DriveRequest, DriveResponse, DriverCall,
+    DriverCallRequest, DriverCallResponse, DriverOk, FlipObservation, HostCall, HostCallArgs,
+    HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest, HostCallResponse,
+    ObservedEvidence, PROTOCOL_VERSION, PublishedSignal, RecallArgs, RecallFrame, RecallResult,
+    RunTestArgs, Signal, SignalKind, SignalValue, StageName, TestBaseline, TestPlan, TurnOutcome,
+    VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
 };
 
 /// The committed artifact's filename.
@@ -122,6 +123,9 @@ pub fn corpus() -> Result<Value, serde_json::Error> {
         "responses": responses()?,
         "host_calls": host_calls()?,
         "host_results": host_results()?,
+        "driver_session": driver_session()?,
+        "driver_calls": driver_calls()?,
+        "driver_results": driver_results()?,
         "parts": parts()?,
         "vocabulary": vocabulary()?,
     }))
@@ -230,6 +234,77 @@ fn host_results() -> Result<Value, serde_json::Error> {
     ]))
 }
 
+/// The driver channel's session frames — the host's opening and the two
+/// answers that end it (`doc:backlog-self-driving` §3.0, #3599 B0).
+///
+/// A second dispatch context, published beside the first rather than folded
+/// into it, because the two are different consents and a reader of this corpus
+/// should be able to see that a `drive` point is not a wrapper point.
+fn driver_session() -> Result<Value, serde_json::Error> {
+    Ok(Value::Array(vec![
+        case("open", &DriveRequest::new("cycle-7"))?,
+        // Both terminal answers, because a driver that halts and a driver that
+        // sleeps are the two shapes a host must handle and neither is the
+        // other's default.
+        case(
+            "sleep",
+            &DriveResponse {
+                next: DriveNext::Sleep { secs: 900 },
+            },
+        )?,
+        case(
+            "halt",
+            &DriveResponse {
+                next: DriveNext::Halt {
+                    reason: "budget spent".into(),
+                },
+            },
+        )?,
+    ]))
+}
+
+/// A capability ask, in the one shape it has at B0.
+///
+/// No `args` key, and no `full`/`minimal` pair, because the request carries no
+/// optional member — the arguments land with the verb that needs them, and an
+/// `args` appearing here later is exactly the diff that should be reviewed.
+fn driver_calls() -> Result<Value, serde_json::Error> {
+    Ok(Value::Array(vec![case(
+        "backlog_next",
+        &DriverCallRequest {
+            id: 1,
+            call: DriverCall::BacklogNext,
+        },
+    )?]))
+}
+
+/// The host's answers to those asks.
+fn driver_results() -> Result<Value, serde_json::Error> {
+    Ok(Value::Array(vec![
+        // The empty `ok` table is the contract, not an omission: a host
+        // answering with a payload the driver's reader denies is a decode
+        // error, so this case going non-empty is a wire change.
+        case("ok", &DriverCallResponse::ok(1, DriverOk {}))?,
+        case(
+            "err/undeclared",
+            &DriverCallResponse::err(
+                2,
+                HostCallFailure::new(
+                    HostCallRefusal::Undeclared,
+                    "this plugin's manifest does not declare \"deliver_merge\" in [driver] calls",
+                ),
+            ),
+        )?,
+        case(
+            "err/unsupported",
+            &DriverCallResponse::err(
+                3,
+                HostCallFailure::new(HostCallRefusal::Unsupported, "B0 serves no capability yet"),
+            ),
+        )?,
+    ]))
+}
+
 /// The nested types, in the forms the four messages above do not reach.
 ///
 /// A message's `minimal` case omits its optional members entirely, so the
@@ -281,6 +356,11 @@ fn vocabulary() -> Result<Value, serde_json::Error> {
             HostCallRefusal::Undeclared,
             host_call_refusal_after,
         ))?,
+        // Published from `DriverCall::all()` rather than walked with a
+        // successor function: the list is already the enum's own source of
+        // truth for the consent rendering, and a second walk would be a second
+        // thing to keep exhaustive.
+        "driver_call": values(DriverCall::all().to_vec())?,
     }))
 }
 

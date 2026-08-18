@@ -212,3 +212,59 @@ fn the_declared_grant_and_the_loop_name_the_same_powers() {
         );
     }
 }
+
+/// **The driver grant is shown before install, family by family.**
+///
+/// The `[driver]` block is the second consent this manifest carries and it is
+/// a materially different one from the `[loop]` grade above: a grade says how
+/// much say a plugin has *inside* a turn, and this says what it may ask Stella
+/// to do to your repository between them. A user who reads only the first has
+/// not been told about the second, which is the failure
+/// `doc:backlog-self-driving` §6.1 calls "the grant must actually bind".
+///
+/// It also asserts the two deliberate absences. Each is a decision recorded in
+/// the manifest, and a later widening should have to delete an assertion that
+/// says why rather than quietly adding a line to a list.
+#[test]
+fn the_prompt_shows_the_driver_grant_and_its_deliberate_limits() {
+    let text = consent_text();
+
+    assert!(
+        text.contains("DRIVES Stella"),
+        "the install prompt must say the plugin drives Stella, not just that it takes no say in a \
+         turn: {text}"
+    );
+    // Read by family, because "pushes branches, opens pull requests, reads CI,
+    // and merges" is the sentence a human weighs, and `deliver_merge` on its
+    // own is not.
+    for family in [
+        "reads and writes your issue tracker",
+        "runs Stella against an issue in an isolated worktree",
+        "pushes branches, opens pull requests, reads CI, and merges",
+        "runs audit tooling over this workspace and files what it finds",
+        "proposes new tools, context records and skills",
+    ] {
+        assert!(
+            text.contains(family),
+            "missing driver family `{family}`: {text}"
+        );
+    }
+    assert!(
+        text.contains("this plugin holds no credential"),
+        "the prompt must say every driver capability is performed BY Stella: {text}"
+    );
+
+    // `curate_accept` is withheld because this repository is governance mode
+    // `regulated` (§7), and no release verb is on the channel at all (§6.4).
+    assert!(
+        !text.contains("curate_accept"),
+        "the loop may propose an authority and grant itself none: {text}"
+    );
+    // Narrowly `release_`, not `release`: the `bash` capability above legitimately
+    // says "the release install", and asserting on the bare word would fail on
+    // a sentence that has nothing to do with the channel.
+    assert!(
+        !text.contains("release_"),
+        "a release verb is not on the driver channel at B0-B6: {text}"
+    );
+}

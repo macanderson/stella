@@ -119,7 +119,7 @@
       "title": "Ultraudit round 3 \u2014 2026-08-04"
     },
     "backlog-self-driving": {
-      "path": "docs/design/backlog-self-driving.md",
+      "path": "docs/spec/backlog-self-driving.md",
       "sections": [
         0,
         1,
@@ -135,7 +135,7 @@
         11,
         12
       ],
-      "status": "proposed",
+      "status": "living",
       "title": "Backlog Self-Driving \u2014 the loop that owns a queue, not a task"
     },
     "brand": {

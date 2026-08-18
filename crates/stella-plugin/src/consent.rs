@@ -192,6 +192,7 @@ pub fn consent_text(manifest: &PluginManifest) -> String {
 
     lines.push(String::new());
     lines.extend(loop_say(manifest));
+    lines.extend(driver_say(manifest));
     lines.extend(oracle_self_report(manifest));
     lines.push(String::new());
     lines.extend(capability_grant(manifest));
@@ -300,6 +301,18 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
         });
     }
 
+    // The host-call channel, which until now was declared in the manifest and
+    // shown to nobody — `LoopGrant::calls` says a plugin "may not ask for a
+    // capability a human never read at install", and this is the line that
+    // makes the second half of that sentence true.
+    if !grant.calls.is_empty() {
+        let calls: Vec<String> = grant.calls.iter().map(ToString::to_string).collect();
+        lines.push(format!(
+            "  - asks the host for these capabilities while answering a point: {}",
+            calls.join(", ")
+        ));
+    }
+
     if let Some(subloop) = &manifest.subloop {
         let stages: Vec<String> = subloop.stages.iter().map(|stage| one_line(stage)).collect();
         lines.push(format!(
@@ -321,6 +334,65 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
         ));
     }
 
+    lines
+}
+
+/// The "what it does *outside* your turns" half: that this plugin drives
+/// Stella, and every capability family it may ask for while driving.
+///
+/// A separate paragraph from [`loop_say`] rather than another bullet under it,
+/// because the two are different consents and reading them as one is exactly
+/// the confusion `doc:backlog-self-driving` §3.0 keeps the ladder out of: a
+/// grade says how much say a plugin has *inside* a turn, and this says what it
+/// may do to your repository between them.
+///
+/// Rendered by family rather than verb by verb — "pushes branches, opens pull
+/// requests, reads CI, and merges" is the sentence a human weighs, and
+/// `deliver_merge` on its own is not. The verbs are printed beside it so the
+/// declaration stays checkable against the block.
+fn driver_say(manifest: &PluginManifest) -> Vec<String> {
+    let Some(driver) = &manifest.driver else {
+        return Vec::new();
+    };
+    let mut lines = vec![
+        String::new(),
+        format!(
+            "Say outside your turn loop: `{}` DRIVES Stella. It is not a participant in a \
+             turn — it starts them.",
+            one_line(&manifest.name)
+        ),
+    ];
+
+    if driver.calls.is_empty() {
+        // A driver that asks for nothing is a coherent declaration and a
+        // remarkable one, so it is said rather than left as an absence.
+        lines.push("  - asks the host for no capability at all".into());
+        return lines;
+    }
+
+    for family in driver.families() {
+        let verbs: Vec<String> = driver
+            .calls
+            .iter()
+            .filter(|call| call.family() == family)
+            .map(ToString::to_string)
+            .collect();
+        lines.push(format!(
+            "  - {} ({})",
+            family.consent_sentence(),
+            verbs.join(", ")
+        ));
+    }
+
+    lines.push(match driver.max_calls {
+        Some(max) => format!("  - asks for up to {max} of those per driver session"),
+        None => "  - asks for as many of those per driver session as the host allows".into(),
+    });
+    lines.push(
+        "  - every one of those is performed BY Stella on request: this plugin holds no \
+         credential, no provider and no forge token of its own."
+            .into(),
+    );
     lines
 }
 

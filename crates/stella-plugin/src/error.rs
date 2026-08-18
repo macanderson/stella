@@ -5,6 +5,7 @@
 //! of these to a plugin author should be able to print it verbatim and have
 //! the fix be obvious.
 
+use crate::driver::DriverCall;
 use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
 use crate::package::ContributionKind;
@@ -97,6 +98,29 @@ pub enum ManifestError {
          never make one"
     )]
     CallsRequirePoints,
+
+    /// `[driver] calls` listed the same capability twice — the
+    /// [`ManifestError::DuplicateCall`] rule, for the driver channel.
+    #[error("[driver] calls declares {call} more than once")]
+    DuplicateDriverCall {
+        /// The capability that appeared twice.
+        call: DriverCall,
+    },
+
+    /// `[driver] max_calls` was declared with no `[driver] calls` to bound.
+    #[error(
+        "[driver] max_calls has nothing to bound: declare the capabilities in \
+         [driver] calls, or drop the allowance"
+    )]
+    DriverMaxCallsRequiresCalls,
+
+    /// `[driver] max_calls = 0` — an allowance that forbids the calls the same
+    /// block declares. Asking for none is an empty `calls` list, not a zero.
+    #[error(
+        "[driver] max_calls = 0 contradicts the capabilities [driver] calls \
+         declares: asking for none is an empty list, not a zero allowance"
+    )]
+    ZeroDriverMaxCalls,
 
     /// `[loop] max_calls` was declared with no `[loop] calls` to bound.
     #[error(

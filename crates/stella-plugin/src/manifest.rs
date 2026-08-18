@@ -36,6 +36,7 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::consent::{Capability, validate_capabilities};
+use crate::driver::DriverGrant;
 use crate::error::ManifestError;
 use crate::evidence::OracleCheck;
 use crate::host_call::HostCall;
@@ -441,6 +442,22 @@ pub struct PluginManifest {
     /// The `[loop]` registration. Absent = no participation.
     #[serde(rename = "loop", default, skip_serializing_if = "is_default_grant")]
     pub loop_grant: LoopGrant,
+    /// The `[driver]` registration — this plugin drives turns rather than
+    /// sitting inside one, and these are the capabilities it may ask for while
+    /// doing it (`doc:backlog-self-driving` §3.0).
+    ///
+    /// **Absent = not a driver**, which is the outer half of the gate: no
+    /// `[driver]` block means no driver session is ever opened, so there is
+    /// nothing for [`DriverGrant::permits_call`] to be consulted against. It is
+    /// an `Option` rather than a defaulting struct for exactly that reason —
+    /// "this plugin declared no driver capabilities" and "this plugin is not a
+    /// driver" are different consents and must not share a representation.
+    ///
+    /// Independent of [`Self::loop_grant`] in both directions: a driver needs
+    /// no [`Participation`] grade (there is no grade for driving, §3.0) and a
+    /// grade buys no driver capability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver: Option<DriverGrant>,
     /// Arbiter only: the enumerable definition of done. Keys are the names
     /// a hold cites; values are the human-readable statement of each
     /// requirement. A `BTreeMap` so iteration order is deterministic
@@ -624,6 +641,29 @@ impl PluginManifest {
             // for the same shape one rung up.
             Some(0) => return Err(ManifestError::ZeroMaxCalls),
             _ => {}
+        }
+
+        // The driver channel gets the same three rules and *not* the grade
+        // check, which is the one asymmetry in this function and the whole
+        // point of the block: a driver is not on the `Participation` ladder, so
+        // there is no grade to be above (`doc:backlog-self-driving` §3.0). Nor
+        // is there a `points` prerequisite — a driver call is made during a
+        // driver session, and the `[driver]` block *is* the declaration that
+        // this plugin has one.
+        if let Some(driver) = &self.driver {
+            let mut seen = HashSet::with_capacity(driver.calls.len());
+            for call in &driver.calls {
+                if !seen.insert(*call) {
+                    return Err(ManifestError::DuplicateDriverCall { call: *call });
+                }
+            }
+            match driver.max_calls {
+                Some(_) if driver.calls.is_empty() => {
+                    return Err(ManifestError::DriverMaxCallsRequiresCalls);
+                }
+                Some(0) => return Err(ManifestError::ZeroDriverMaxCalls),
+                _ => {}
+            }
         }
 
         if grant.hooks.contains(&HookEvent::Stop) && !participation.includes(Participation::Arbiter)
@@ -1225,6 +1265,73 @@ mod tests {
         )
         .expect("a coherent ask loads");
         assert_eq!(asked.loop_grant.max_calls, Some(4));
+    }
+
+    /// **Witness for #3599 B0, the manifest half.** A driver holds its
+    /// capabilities through a `[driver]` block that the `Participation` ladder
+    /// neither grants nor gates.
+    ///
+    /// The load-bearing assertion is the first one: `participation = "none"` —
+    /// the honest grade for a plugin that never runs inside a turn — used to
+    /// make every capability unreachable, and that is the defect the phase
+    /// exists to fix. The rest pin the asymmetry deliberately: no grade is
+    /// required, no `points` prerequisite applies (a driver call is made during
+    /// a driver session, not during a wrapper point), and the `[loop]` rules
+    /// that *do* transfer — deduplicated, a coherent allowance — still hold.
+    #[test]
+    fn a_driver_holds_capabilities_without_a_participation_grade() {
+        use crate::driver::DriverCall;
+        let driving = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"none\"\n\n[driver]\ncalls = [\"backlog_next\", \"deliver_open\"]",
+        )
+        .expect("a driver at grade `none` loads");
+        let grant = driving.driver.expect("the [driver] block is parsed");
+        assert!(grant.permits_call(DriverCall::BacklogNext));
+        assert!(grant.permits_call(DriverCall::DeliverOpen));
+        // Declared is exhaustive, in the driver's context as in the wrapper's.
+        assert!(!grant.permits_call(DriverCall::DeliverMerge));
+        // And the ladder is untouched: the same manifest still takes no say in
+        // any turn.
+        assert_eq!(driving.loop_grant.participation, Participation::None);
+
+        // Absent is not empty. "Not a driver" and "a driver that asks for
+        // nothing" must not share a representation.
+        assert!(
+            parse("name = \"x\"")
+                .expect("a bare manifest loads")
+                .driver
+                .is_none()
+        );
+        assert_eq!(
+            parse("name = \"x\"\n[driver]")
+                .expect("an empty [driver] block loads")
+                .driver,
+            Some(DriverGrant::default())
+        );
+
+        // The capability set is closed, not an RPC surface — and `release` is
+        // deliberately not in it (§6.4).
+        assert!(matches!(
+            parse("name = \"x\"\n[driver]\ncalls = [\"release\"]").unwrap_err(),
+            ManifestError::Parse(_)
+        ));
+
+        // The `[loop] calls` rules that transfer.
+        assert!(matches!(
+            parse("name = \"x\"\n[driver]\ncalls = [\"sweep_audit\", \"sweep_audit\"]")
+                .unwrap_err(),
+            ManifestError::DuplicateDriverCall {
+                call: DriverCall::SweepAudit
+            }
+        ));
+        assert!(matches!(
+            parse("name = \"x\"\n[driver]\nmax_calls = 4").unwrap_err(),
+            ManifestError::DriverMaxCallsRequiresCalls
+        ));
+        assert!(matches!(
+            parse("name = \"x\"\n[driver]\ncalls = [\"sweep_audit\"]\nmax_calls = 0").unwrap_err(),
+            ManifestError::ZeroDriverMaxCalls
+        ));
     }
 
     /// **Witness for #3501 item 1.** The oracle may be the plugin's own

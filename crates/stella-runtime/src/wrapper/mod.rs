@@ -80,6 +80,7 @@
 
 mod child_turn;
 mod dispatch;
+mod driver_call;
 mod error;
 mod host_call;
 mod in_process;
@@ -97,6 +98,10 @@ pub use child_turn::{ChildTurnPlane, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MA
 pub use dispatch::{
     DEFAULT_HOST_MAX_HOLDS, DispatchReport, DrivenTurn, RoundInput, TurnDriver, TurnPrelude,
     WrapperDispatch,
+};
+pub use driver_call::{
+    DEFAULT_DRIVER_MAX_CALLS, DriverCallGate, DriverCapabilities, DriverSession,
+    NoDriverCapabilities, RefusedDriverCall,
 };
 pub use error::WrapperError;
 pub use host_call::{

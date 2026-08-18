@@ -92,6 +92,7 @@
 //! would answer or ask for one.
 
 mod consent;
+mod driver;
 mod error;
 mod evidence;
 mod host_call;
@@ -112,6 +113,11 @@ pub mod wire_corpus;
 mod wrapper;
 
 pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
+pub use driver::{
+    DriveNext, DrivePoint, DriveRequest, DriveResponse, DriveSession, DriverCall,
+    DriverCallOutcome, DriverCallRequest, DriverCallResponse, DriverFamily, DriverGrant,
+    DriverMessage, DriverOk,
+};
 pub use error::ManifestError;
 pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
 pub use host_call::{
