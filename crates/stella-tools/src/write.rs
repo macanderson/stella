@@ -70,7 +70,6 @@ impl Tool for WriteFile {
         }
     }
 
-    #[allow(clippy::collapsible_if)]
     async fn execute(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let root = ctx.root();
         let path = match crate::input::required_str(input, "path") {

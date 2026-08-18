@@ -130,3 +130,238 @@ impl Store {
         Ok(executions)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{MemoryCitationRow, Store, ToolCallRow, ToolCallState};
+
+    /// One store with one finished execution, ready to hang rows off.
+    fn store() -> Store {
+        Store::in_memory().expect("in-memory store")
+    }
+
+    fn started(store: &Store, prompt: &str) -> i64 {
+        store
+            .begin_execution("run", prompt, "zai", "glm-5.2")
+            .expect("execution")
+    }
+
+    fn finished(store: &Store, prompt: &str) -> i64 {
+        let id = started(store, prompt);
+        store
+            .finish_execution(id, "completed", 0.0)
+            .expect("finish execution");
+        id
+    }
+
+    fn citation(memory_id: &str, remark: &str) -> MemoryCitationRow {
+        MemoryCitationRow {
+            memory_id: memory_id.into(),
+            useful_score: 4,
+            truthful: true,
+            remark: remark.into(),
+        }
+    }
+
+    fn call(name: &str, state: ToolCallState, error: &str) -> ToolCallRow {
+        ToolCallRow {
+            call_id: format!("call-{name}-{error}"),
+            name: name.into(),
+            surface: "native".into(),
+            args_json: "{}".into(),
+            args_digest: String::new(),
+            reason: String::new(),
+            state,
+            error: error.into(),
+            error_class: None,
+            bytes_out: 0,
+            duration_ms: 1,
+        }
+    }
+
+    /// The `outcome IS NOT NULL` filter is the whole point of the read: an
+    /// in-flight execution has no outcome to attribute a use to, and
+    /// extracting it early mints a `ContextUse` whose feedback can never
+    /// arrive.
+    #[test]
+    fn an_unfinished_execution_is_never_attributed() {
+        let store = store();
+        let running = started(&store, "still going");
+        let closed = finished(&store, "done");
+
+        let seen: Vec<i64> = store
+            .finished_executions_after(0, 10)
+            .expect("read")
+            .into_iter()
+            .map(|row| row.execution_id)
+            .collect();
+
+        assert_eq!(seen, vec![closed], "only the closed turn is attributable");
+        assert!(
+            !seen.contains(&running),
+            "an execution with a NULL outcome must not be extracted"
+        );
+    }
+
+    /// `after_execution_id` is a durable watermark: paging with it must walk
+    /// every finished row exactly once, in id order, with no gap and no
+    /// repeat.
+    #[test]
+    fn paging_by_the_watermark_walks_every_row_once_in_order() {
+        let store = store();
+        let ids: Vec<i64> = (0..5)
+            .map(|n| finished(&store, &format!("turn {n}")))
+            .collect();
+
+        let mut cursor = 0;
+        let mut walked = Vec::new();
+        loop {
+            let page = store.finished_executions_after(cursor, 2).expect("read");
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.len() <= 2, "the limit is honoured: {}", page.len());
+            for row in &page {
+                assert!(
+                    row.execution_id > cursor,
+                    "a page must start strictly after the watermark"
+                );
+                walked.push(row.execution_id);
+            }
+            cursor = page.last().expect("non-empty").execution_id;
+        }
+
+        assert_eq!(walked, ids, "every finished row, once, oldest first");
+    }
+
+    /// A finished execution's outcome and session id are read back as written
+    /// — the fields an attribution is keyed on.
+    #[test]
+    fn a_finished_row_carries_its_outcome_and_session() {
+        let store = store();
+        let id = started(&store, "aborted turn");
+        store
+            .set_execution_session(id, "sess-1")
+            .expect("stamp session");
+        store
+            .finish_execution(id, "aborted", 0.0)
+            .expect("finish execution");
+
+        let row = store
+            .finished_executions_after(0, 10)
+            .expect("read")
+            .pop()
+            .expect("one finished execution");
+        assert_eq!(row.execution_id, id);
+        assert_eq!(row.outcome, "aborted");
+        assert_eq!(row.session_id.as_deref(), Some("sess-1"));
+        assert!(
+            row.finished_at.is_some(),
+            "a closed-out row carries its finish timestamp"
+        );
+    }
+
+    /// Only real failures are mined: a call that succeeded is the expected
+    /// case, and a call with no error text has nothing to say — a `running`
+    /// row is a turn still in flight, not a failure.
+    ///
+    /// `ok = 0` and `error <> ''` are not redundant, which is why `noisy` is
+    /// in the fixture: the columns are independent (`ok` is derived from
+    /// `state`, `error` is free text), so a succeeded call carrying text in
+    /// its `error` column is excluded by the `ok` clause alone, and a failed
+    /// call with nothing to say is excluded by the `error` clause alone. Drop
+    /// either and this test goes red.
+    #[test]
+    fn only_calls_that_failed_with_a_message_are_mined() {
+        let store = store();
+        let id = finished(&store, "mixed calls");
+        store
+            .record_tool_calls(
+                id,
+                &[
+                    call("bash", ToolCallState::Ok, ""),
+                    call("noisy", ToolCallState::Ok, "retried once, then worked"),
+                    call("read_file", ToolCallState::Error, "no such file"),
+                    call("search", ToolCallState::Running, ""),
+                    call("edit_file", ToolCallState::Error, ""),
+                ],
+            )
+            .expect("record calls");
+
+        let failures = store.failed_tool_calls_for_execution(id).expect("read");
+
+        assert_eq!(
+            failures,
+            vec![("read_file".to_string(), "no such file".to_string())],
+            "a success (however noisy), an in-flight call, and an empty error are all excluded"
+        );
+    }
+
+    /// Failures come back in call order, and only for the execution asked
+    /// for.
+    #[test]
+    fn failures_are_ordered_by_call_and_scoped_to_one_execution() {
+        let store = store();
+        let mine = finished(&store, "mine");
+        let other = finished(&store, "someone else's");
+        store
+            .record_tool_calls(
+                mine,
+                &[
+                    call("first", ToolCallState::Error, "one"),
+                    call("second", ToolCallState::Error, "two"),
+                    call("third", ToolCallState::Error, "three"),
+                ],
+            )
+            .expect("record mine");
+        store
+            .record_tool_calls(other, &[call("theirs", ToolCallState::Error, "not mine")])
+            .expect("record theirs");
+
+        let names: Vec<String> = store
+            .failed_tool_calls_for_execution(mine)
+            .expect("read")
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+
+        assert_eq!(
+            names,
+            vec!["first", "second", "third"],
+            "seq ASC, no leakage"
+        );
+    }
+
+    /// Citations replay in insert order (`rowid ASC`), so a replay derives
+    /// identical record ids — and only this execution's citations come back.
+    #[test]
+    fn citations_replay_in_insert_order_for_one_execution() {
+        let store = store();
+        let mine = finished(&store, "mine");
+        let other = finished(&store, "someone else's");
+        // Deliberately not sorted by memory id: insert order is the contract,
+        // and an id-sorted read would pass on an already-sorted fixture.
+        store
+            .record_memory_citations(
+                mine,
+                &[
+                    citation("nod_c", "third by id, first written"),
+                    citation("nod_a", "second"),
+                    citation("nod_b", "third"),
+                ],
+            )
+            .expect("record mine");
+        store
+            .record_memory_citations(other, &[citation("nod_z", "not mine")])
+            .expect("record theirs");
+
+        let ids: Vec<String> = store
+            .memory_citations_for_execution(mine)
+            .expect("read")
+            .into_iter()
+            .map(|row| row.memory_id)
+            .collect();
+
+        assert_eq!(ids, vec!["nod_c", "nod_a", "nod_b"]);
+    }
+}

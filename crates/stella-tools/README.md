@@ -287,7 +287,7 @@ discovered at startup with no registry edit. See
 ## See also
 
 - [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not
-  concretions" (ports and the no-I/O rule) and invariant #9 (tool-first,
+  direct dependencies" (ports and the no-I/O rule) and invariant #9 (tool-first,
   single-purpose).
 - [`../stella-core/src/ports.rs`](../stella-core/src/ports.rs) — the
   `ToolExecutor` port this crate implements, and the `ReadOnlyTools` view

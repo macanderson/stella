@@ -244,7 +244,7 @@ pub const RETIRED_TOOL_NAMES: &[&str] = &[
 /// one exact literal string". Scanning for them would fire on correct prose,
 /// so they are excluded and recorded here instead of silently omitted — the
 /// guards err toward missing a stale reference rather than blocking a true
-/// sentence, the same posture `bash.rs`'s `is_symbol_shaped` takes.
+/// sentence.
 pub const RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN: &[&str] = &["glob", "grep"];
 
 /// Look up a tool's canonical row by dispatch name.

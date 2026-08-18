@@ -13,7 +13,7 @@
 # `make doc-links` is a different property: it asserts that docs paths *cited
 # from Rust* resolve. A command nobody ever cited is invisible to it.
 #
-# Three failures this catches:
+# Four failures this catches:
 #
 #   1. **A new subcommand with no page.** The recurrence #928 documented.
 #   2. **A page that no sidebar lists.** meta.json is hand-maintained, so a
@@ -22,6 +22,10 @@
 #   3. **An orphan page.** A command renamed or removed leaves a page behind
 #      describing a surface that no longer ships. Stale reference docs are
 #      worse than absent ones: they read as current.
+#   4. **A README command index that disagrees with the enum**, in either
+#      direction. README.md's table calls itself "the full subcommand
+#      surface" — a completeness claim, and the only one in the repository
+#      that a reader meets before anything else. Section 5 holds it to that.
 #
 # Intentionally-undocumented surfaces go in scripts/command-docs-exempt.txt,
 # committed and visible in review like scripts/file-size-baseline.txt — so an
@@ -235,9 +239,97 @@ $exempt
 EOF
 fi
 
+# --- 5. README's command index matches the enum -----------------------------
+# README.md calls its table "The full subcommand surface", and nothing checked
+# that claim until #3746 found it twelve commands short (self-driving, daemon,
+# commands, plugin, context, tune, dataset, calibration, ingest, scoreboard,
+# migrate, completions) and carrying one row — `scripts` — for a command that
+# has never existed in this workspace, linking to a page that was never
+# written. Both directions had rotted, which is what a table nobody can fail
+# does.
+#
+# It is checked here rather than in a guard of its own because the question is
+# the same one this script already answers, against the same parsed enum: the
+# only new input is which file is claiming to list every command.
+readme_file="README.md"
+if [ -f "$readme_file" ]; then
+  # The table's rows are the lines between "### Command index" and the next
+  # "###" heading that link into the command reference. Anchoring on the
+  # heading rather than a line number is what survives the README being
+  # edited above it.
+  readme_slugs="$(awk '
+    /^### Command index$/ { inside = 1; next }
+    inside && /^### / { exit }
+    inside && /stella\.oxagen\.sh\/docs\/commands\// {
+      line = $0
+      while (match(line, /stella\.oxagen\.sh\/docs\/commands\/[a-z][a-z0-9-]*/)) {
+        slug = substr(line, RSTART, RLENGTH)
+        sub(/.*\//, "", slug)
+        print slug
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$readme_file" | sort -u)"
+
+  if [ -z "$readme_slugs" ]; then
+    note "FAIL parsed zero command rows from $readme_file."
+    note "     Expected a table under the \"### Command index\" heading whose"
+    note "     rows link to https://stella.oxagen.sh/docs/commands/<slug>."
+    note "     If that section moved or was renamed, update section 5 of"
+    note "     scripts/check-command-docs.sh in the same PR."
+    status=1
+  else
+    unlisted=0
+    while IFS= read -r slug; do
+      [ -n "$slug" ] || continue
+      is_exempt "$slug" && continue
+      if ! contains "$readme_slugs" "$slug"; then
+        note "FAIL \`stella $slug\` has no row linking to its own reference page"
+        note "     in $readme_file's command index."
+        unlisted=$((unlisted + 1))
+        status=1
+      fi
+    done <<EOF
+$slugs
+EOF
+    if [ "$unlisted" -ne 0 ]; then
+      note ""
+      note "     Either the row is missing, or it exists and links somewhere"
+      note "     else — the section index, or a neighbouring page. Both read"
+      note "     the same here on purpose: the heading promises each row links"
+      note "     to that command's reference page, so a row pointing elsewhere"
+      note "     has not kept it. Three rows were in exactly that state when"
+      note "     this check was written (#3746)."
+      note ""
+      note "     The row shape is:"
+      note "       | [\`name <cmd>\`](https://stella.oxagen.sh/docs/commands/name) | one line |"
+      note "     Take the line from the variant's doc comment in $enum_file."
+    fi
+
+    phantom=0
+    while IFS= read -r slug; do
+      [ -n "$slug" ] || continue
+      if ! contains "$slugs" "$slug"; then
+        note "FAIL $readme_file's command index lists \`stella $slug\`, which is"
+        note "     not a \`Command\` variant."
+        phantom=$((phantom + 1))
+        status=1
+      fi
+    done <<EOF
+$readme_slugs
+EOF
+    if [ "$phantom" -ne 0 ]; then
+      note ""
+      note "     A row for a command that does not ship is worse than a missing"
+      note "     one: it reads as current and its link 404s. Delete the row, or"
+      note "     repoint it at the surface that replaced the command."
+    fi
+  fi
+fi
+
 emit
 if [ "$status" -eq 0 ]; then
   count="$(printf '%s\n' "$slugs" | wc -l | tr -d '[:blank:]')"
-  echo "check-command-docs: OK — $count subcommands, each with a listed reference page." || true
+  echo "check-command-docs: OK — $count subcommands, each with a listed reference page and a README row." || true
 fi
 exit "$status"

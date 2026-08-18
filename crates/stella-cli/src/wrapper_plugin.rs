@@ -163,9 +163,18 @@ impl<'a> PipelineChoice<'a> {
 /// A pure function returning data rather than printing directly, matching
 /// [`crate::engine_config::effort_notices`]'s shape: [`PipelineChoice::resolve`]
 /// stays a plain decision a unit test can call without capturing stderr, and
-/// each door — `main.rs`'s `Run`/`Goal`/`Fleet` arms, `arena.rs` — prints the
-/// line once, at the one place it already reads `no_pipeline` off its parsed
-/// args.
+/// each door prints the line at most once **to the user's terminal** —
+/// `arena.rs`, which never supervises, at the one place it reads `no_pipeline`
+/// off its parsed args; `main.rs`'s `Run`/`Goal`/`Fleet` arms print it only
+/// after their `Posture`'s early-return, so it fires in whichever single
+/// process actually runs the turn, not in the parent that re-execs an
+/// `Attached`/`Detached` launch's argv verbatim into a supervised child (that
+/// child reaches this same call independently, and its `Foreground` posture
+/// is what prints it — once, on its own stderr, which `Supervised::follow`
+/// then relays back live under `Attached`). Printing it before that
+/// early-return used to mean the parent printed it on its own account and the
+/// re-exec'd child printed it again on the same relayed stream, doubling the
+/// most common invocation's notice.
 pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'static str> {
     no_pipeline.then_some(
         "--no-pipeline is deprecated and does nothing: the raw step-loop is the default now. \
@@ -180,7 +189,7 @@ pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'stat
 /// ([`WrapperDispatch`] over one raw turn): `goal` and `fleet` each drive
 /// their own **round loop** (a judged goal round, a fleet worker's attempt),
 /// and wiring a wrapper plugin through either is a real driver — not a
-/// formatting difference — that nothing in this crate implements (#3684).
+/// formatting difference — that nothing in this crate implements (#3695).
 /// `--pipeline classic` and no `--pipeline` at all both resolve to
 /// [`PipelineChoice::Classic`]/[`PipelineChoice::Raw`], which is fine on
 /// every door; only a *named* plugin variant is out of reach here, and it is
@@ -194,11 +203,68 @@ pub(crate) fn reject_plugin_variant_for_door(
     match choice.plugin() {
         Some(variant) => Err(format!(
             "--pipeline {variant} is not supported on `stella {door}` yet — wrapper plugins \
-             run only on `stella run --pipeline {variant}` today (#3684). Pass `--pipeline \
+             run only on `stella run --pipeline {variant}` today (#3695). Pass `--pipeline \
              classic` for the staged pipeline, or omit --pipeline for the raw loop."
         )),
         None => Ok(()),
     }
+}
+
+/// Refuse a pipeline-only verification flag against a [`PipelineChoice`] that
+/// cannot honor it (#3696).
+///
+/// `--keep-witness`, `--require-verified`, and `--test-command` all belong to
+/// the staged pipeline's verification machinery — the witness-authoring stage
+/// and its fail→pass flip oracle. Before #3381 they always reached
+/// [`PipelineChoice::Classic`], because that was the default; after, `stella
+/// run` with no `--pipeline` resolves to [`PipelineChoice::Raw`], whose
+/// `run_raw_one_shot` does not accept `keep_witness`/`require_verified` as
+/// parameters at all and only threads `test_command` to an installed wrapper's
+/// own oracle. Silently dropping the flag the caller asked for is exactly the
+/// expedient CLAUDE.md forbids, so this refuses before dispatch instead of
+/// letting the run start and the flag do nothing — and it never silently
+/// implies `classic`, which would run something other than what was asked
+/// for without saying so.
+///
+/// `test_command` is meaningful on [`PipelineChoice::Plugin`] too — it arms a
+/// bound wrapper's own `[oracle]` flip check (#3553) — so only that variant
+/// passes it through; `keep_witness`/`require_verified` remain pipeline-only
+/// today and are refused on `Plugin` exactly as on `Raw`, both naming
+/// `--pipeline classic` as the remedy.
+pub(crate) fn reject_verification_flags_without_pipeline(
+    choice: PipelineChoice<'_>,
+    test_command: Option<&str>,
+    keep_witness: bool,
+    require_verified: bool,
+) -> Result<(), String> {
+    if choice.is_classic() {
+        return Ok(());
+    }
+    let mut offending: Vec<&str> = Vec::new();
+    if choice.is_raw() && test_command.is_some() {
+        offending.push("--test-command");
+    }
+    if keep_witness {
+        offending.push("--keep-witness");
+    }
+    if require_verified {
+        offending.push("--require-verified");
+    }
+    if offending.is_empty() {
+        return Ok(());
+    }
+    let where_run = match choice {
+        PipelineChoice::Raw => "the raw loop (no --pipeline)".to_string(),
+        PipelineChoice::Plugin(variant) => format!("`--pipeline {variant}`"),
+        PipelineChoice::Classic => unreachable!("classic returned Ok above"),
+    };
+    Err(format!(
+        "{} belong{} to the staged pipeline's verification machinery and {} nothing on {where_run}: \
+         pass --pipeline classic to run the staged pipeline.",
+        offending.join(", "),
+        if offending.len() == 1 { "s" } else { "" },
+        if offending.len() == 1 { "does" } else { "do" },
+    ))
 }
 
 /// One installed wrapper, bound to its process and to what this host will do
@@ -708,7 +774,7 @@ name = "execute"
         assert!(notice.contains("--pipeline"), "{notice}");
     }
 
-    /// **Witness (#3684).** `stella goal`/`stella fleet` cannot drive a
+    /// **Witness (#3695).** `stella goal`/`stella fleet` cannot drive a
     /// wrapper plugin today — only `stella run` implements [`TurnDriver`] over
     /// one — so a named `--pipeline <variant>` must be refused on those doors
     /// rather than silently downgraded to raw or promoted to classic. This
@@ -739,6 +805,83 @@ name = "execute"
             .expect("classic has no plugin to drive — nothing to refuse");
         reject_plugin_variant_for_door("goal", PipelineChoice::Raw)
             .expect("raw has no plugin to drive — nothing to refuse");
+    }
+
+    /// **Witness (#3696).** `--keep-witness`, `--require-verified`, and
+    /// `--test-command` used to reach `run_one_shot` on the `Raw` arm and be
+    /// silently dropped there (`run_raw_one_shot` takes no `keep_witness`/
+    /// `require_verified` parameter at all). This assertion fails against
+    /// that code (which has no such gate, so every call below returns `Ok`)
+    /// and passes on this one: each flag alone against `Raw` is refused, and
+    /// the message names the remedy.
+    #[test]
+    fn each_verification_flag_alone_is_refused_against_the_raw_loop() {
+        let err = reject_verification_flags_without_pipeline(
+            PipelineChoice::Raw,
+            Some("pytest"),
+            false,
+            false,
+        )
+        .expect_err("--test-command does nothing on the raw loop");
+        assert!(err.contains("--test-command"), "{err}");
+        assert!(err.contains("--pipeline classic"), "{err}");
+
+        let err =
+            reject_verification_flags_without_pipeline(PipelineChoice::Raw, None, true, false)
+                .expect_err("--keep-witness does nothing on the raw loop");
+        assert!(err.contains("--keep-witness"), "{err}");
+
+        let err =
+            reject_verification_flags_without_pipeline(PipelineChoice::Raw, None, false, true)
+                .expect_err("--require-verified does nothing on the raw loop");
+        assert!(err.contains("--require-verified"), "{err}");
+    }
+
+    /// The same three flags are accepted once `--pipeline classic` selects
+    /// the staged pipeline — the refusal only fires against a resolution
+    /// that cannot honor the flag, never against `Classic` itself.
+    #[test]
+    fn verification_flags_are_accepted_with_pipeline_classic() {
+        reject_verification_flags_without_pipeline(
+            PipelineChoice::Classic,
+            Some("pytest"),
+            true,
+            true,
+        )
+        .expect("classic runs the verification machinery these flags belong to");
+    }
+
+    /// A bare raw run with none of the three flags is unaffected — the gate
+    /// only fires when a flag was actually passed.
+    #[test]
+    fn a_bare_raw_run_with_no_verification_flags_is_unaffected() {
+        reject_verification_flags_without_pipeline(PipelineChoice::Raw, None, false, false)
+            .expect("no verification flag was passed — nothing to refuse");
+    }
+
+    /// `--test-command` is meaningful on a named plugin variant too — it arms
+    /// the wrapper's own oracle (#3553) — so it is accepted there, while
+    /// `--keep-witness`/`--require-verified` remain pipeline-only and are
+    /// still refused, naming `classic` as the remedy.
+    #[test]
+    fn plugin_variant_accepts_test_command_but_still_refuses_witness_flags() {
+        reject_verification_flags_without_pipeline(
+            PipelineChoice::Plugin("budget-v1"),
+            Some("pytest"),
+            false,
+            false,
+        )
+        .expect("test-command arms the bound wrapper's own oracle");
+
+        let err = reject_verification_flags_without_pipeline(
+            PipelineChoice::Plugin("budget-v1"),
+            None,
+            true,
+            false,
+        )
+        .expect_err("keep-witness is pipeline-only, even under a named variant");
+        assert!(err.contains("--keep-witness"), "{err}");
+        assert!(err.contains("--pipeline classic"), "{err}");
     }
 
     /// A wrapper plugin is a child process the host starts, so the enterprise

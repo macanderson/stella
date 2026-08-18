@@ -530,6 +530,7 @@ fn request_serializes_both_cache_breakpoints() {
         top_k: None,
         thinking: None,
         output_config: None,
+        context_management: None,
         tools: vec![],
     };
     let v = serde_json::to_value(&body).expect("request serializes");
@@ -1776,4 +1777,5 @@ fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
 }
 
 mod cache_breakpoints;
+mod context_editing;
 mod thinking;

@@ -222,11 +222,15 @@ prompt_file = ".stella/prompts/security-reviewer.md"
 # =============================================================================
 # PIPELINE  ── NEW
 # =============================================================================
-# Today the staged pipeline (triage -> plan -> witness -> execute -> verify ->
-# verdict) is hard-coded in `stella-pipeline`, and the only control is
-# `--no-pipeline`, which turns the entire thing off and drops to the raw
-# step-loop. There is no way to say "skip the verdict" or "allow three revision
-# rounds".
+# The raw step loop is the default on every door; `stella run --pipeline
+# classic` opts into the staged pipeline (triage -> plan -> witness -> execute
+# -> verify -> verdict), and `--pipeline <variant>` opts into any other
+# installed wrapper plugin the same way (`--no-pipeline` is now a deprecated
+# hidden no-op). The `classic` stage order is declared, not hard-coded --
+# `crates/stella-pipeline/variants/classic.toml`'s `[wrapper]` block, resolved
+# through `schedule_wiring.rs` (#3408) -- but that manifest has no way to say
+# "skip the verdict" or "allow three revision rounds"; that is the gap this
+# proposed block still fills.
 #
 # ONE `enabled` FLAG, NOT TWO. The original example had `[agents.*].enabled`
 # and `[pipeline.stages.*].enabled` both answering "does this run", and

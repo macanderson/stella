@@ -1,6 +1,6 @@
 [package]
 name = "stella-plugin"
-description = "The plugin manifest: parsing and validation of a plugin's declared say in the turn loop — participation grades, hook grants, requirements, oracle, and subloop — pure functions over borrowed text, no I/O."
+description = "The plugin manifest and the wrapper socket's wire contract: parsing, validation, and consent rendering for what a plugin declares and what it ships — pure functions over borrowed text, no I/O."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

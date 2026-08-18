@@ -137,6 +137,9 @@ pub(crate) fn announcing_fold<T>(
 }
 
 #[cfg(test)]
+// The lint is wrong here: these fixtures build with `Type::default()` and
+// then set the few fields the test cares about, which reads better than a
+// full struct literal that lists every field.
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;

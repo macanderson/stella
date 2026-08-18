@@ -242,18 +242,6 @@ impl RootHandle {
     }
 }
 
-/// [`RootHandle::read`] on a blocking worker, for the async tools.
-///
-/// The walk is a handful of `openat`s and the read is unbounded, so it goes
-/// where every other blocking file operation in the crate goes rather than
-/// stalling a reactor thread.
-pub async fn read_async(handle: &Arc<RootHandle>, rel: &str) -> Result<Vec<u8>, RootError> {
-    let (handle, rel) = (Arc::clone(handle), rel.to_string());
-    tokio::task::spawn_blocking(move || handle.read(&rel))
-        .await
-        .map_err(|error| RootError::Io(io::Error::other(format!("read task failed: {error}"))))?
-}
-
 /// [`RootHandle::read_to_string`] on a blocking worker.
 pub async fn read_to_string_async(
     handle: &Arc<RootHandle>,

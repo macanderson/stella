@@ -44,8 +44,7 @@ use schema::{migrate, register_fingerprint};
 // the path every consumer uses, so the split is invisible outside this file.
 pub use compact::{CompactionWatermark, ContextCompactPolicy, ContextCompactReport};
 pub(crate) use domain::{
-    domains_by_node, list_domains, node_ids_excluded_by_scope, tag_edge_domains, tag_node_domains,
-    upsert_domain,
+    domains_by_node, node_ids_excluded_by_scope, tag_edge_domains, tag_node_domains, upsert_domain,
 };
 pub(crate) use edge::{
     close_edge, edges_as_of, end_world_validity, insert_edge, neighbors_valid_at, open_anchors,
@@ -480,14 +479,6 @@ impl ContextStore {
             |r| r.get(0),
         )?;
         Ok(n as usize)
-    }
-
-    /// All workspace domains as `(name, description)` — for a `context status`
-    /// surface. The domains themselves are produced by `stella init` and arrive
-    /// through the write path as data.
-    pub fn domains(&self) -> Result<Vec<(String, Option<String>)>, ContextError> {
-        let conn = lock(&self.conn);
-        list_domains(&conn)
     }
 
     /// Every live Memory-kind node, newest first — the inspection surface

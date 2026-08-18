@@ -1159,7 +1159,7 @@ fn tail_chars(s: &str, max_chars: usize) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::field_reassign_with_default)]
+#[allow(clippy::field_reassign_with_default)] // fixtures build with Type::default() then set only the fields under test
 mod tests {
     use super::*;
     use crate::deck::WorkspaceModel;

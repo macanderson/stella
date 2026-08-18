@@ -32,7 +32,7 @@ fn race_generated_ignore(racers: usize, rounds: usize) -> Vec<String> {
 
         for handle in handles {
             if let Err(error) = handle.join().expect("racer panicked") {
-                failures.push(error.0);
+                failures.push(error.to_string());
             }
         }
 
