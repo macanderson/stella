@@ -838,7 +838,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 &cfg.workspace_root,
                 Some(&cfg.model_id),
                 remaining_budget(&budget),
-                &mut emit,
+                &mut io,
             )
             .await
             {

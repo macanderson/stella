@@ -204,15 +204,25 @@ pub(crate) fn push_row(
 /// aligned to [`BODY`] — so an expanded body reads as part of the same block
 /// rather than as a new top-level event.
 pub(crate) fn push_detail_line(text: &str, width: usize, out: &mut Vec<Line<'static>>) {
-    wrap_one_indent(
-        Line::from(vec![
-            Span::raw(" ".repeat(BODY)),
-            Span::styled(text.to_owned(), Style::new().fg(theme::MUTED)),
-        ]),
+    push_detail_spans(
+        vec![Span::styled(text.to_owned(), Style::new().fg(theme::MUTED))],
         width,
-        BODY,
         out,
     );
+}
+
+/// [`push_detail_line`] for content that is already styled — a syntax-colored
+/// JSON body, where the muted single style of the plain form would erase the
+/// coloring it exists to show. Indent, column, and wrapping are identical, so
+/// the two forms interleave in one body without a seam.
+pub(crate) fn push_detail_spans(
+    content: Vec<Span<'static>>,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    let mut spans = vec![Span::raw(" ".repeat(BODY))];
+    spans.extend(content);
+    wrap_one_indent(Line::from(spans), width, BODY, out);
 }
 
 /// Emit a system-note row: `↻ retry`, `⇣ compacted`, `✗ error` and friends.

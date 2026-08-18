@@ -98,6 +98,7 @@ use crate::{agent, rules};
 mod add_dir;
 mod authoring;
 pub(crate) mod forwarder;
+mod init_cmd;
 mod lead_control;
 mod model_cmd;
 mod pr_observe;
@@ -1391,6 +1392,7 @@ pub async fn run_deck_session(
             &mut pipeline_on,
             agent::remaining_budget(&budget),
             &session_record.id,
+            &ask_io,
         )
         .await;
         if matches!(command, DeckCommand::Handled | DeckCommand::InitCompleted) {
@@ -3596,6 +3598,9 @@ async fn run_deck_command(
     // This deck's session registry id — what scopes `/export` to the session
     // the user is actually in (#2558).
     session_id: &str,
+    // The deck's question channel, so `/init`'s first-session conversion
+    // offer raises a card instead of a TTY prompt through the render.
+    ask_io: &dyn AskUserIo,
 ) -> DeckCommand {
     let trimmed = prompt.trim();
     if !trimmed.starts_with('/') {
@@ -3666,14 +3671,15 @@ async fn run_deck_command(
             let outcome = agent::init_workspace(
                 Some(provider),
                 &cfg.workspace_root,
-                Some(&cfg.model_id),
+                &cfg.model_id,
                 budget_limit,
-                &mut emit,
+                ask_io,
+                say,
+                init_cmd::splash_sender(in_tx),
             )
-            .await;
-            let _ = in_tx.send(Inbound::Splash(SplashCue::Release));
-            match outcome {
-                Ok((_domains, _cost_usd)) => return DeckCommand::InitCompleted,
+            .await
+            {
+                Ok(()) => return DeckCommand::InitCompleted,
                 Err(e) => say(format!("init failed: {e}")),
             }
         }
