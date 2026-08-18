@@ -141,18 +141,3 @@ pub(crate) fn node_ids_excluded_by_scope(
     }
     Ok(set)
 }
-
-/// All defined domains as `(name, description)`, for status/inspection.
-pub(crate) fn list_domains(
-    conn: &Connection,
-) -> Result<Vec<(String, Option<String>)>, ContextError> {
-    let mut stmt = conn.prepare("SELECT name, description FROM domain ORDER BY name")?;
-    let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
-    })?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
-}

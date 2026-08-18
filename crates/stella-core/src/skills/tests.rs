@@ -287,6 +287,53 @@ fn a_long_prompt_still_selects_an_untagged_skill_it_names() {
     assert_eq!(selected[0].skill.name, "sql-style");
 }
 
+/// **Witness (#3688).** Two generic coding words shared with a skill's name no
+/// longer select it.
+///
+/// Fails on base, where `code` and `find` were full-strength lexical matches
+/// and cleared the two-shared-term corroboration floor on their own. Observed
+/// in session `ses-1787071651715-48158`: the prompt below selected
+/// `source-command-remove-deadcode` with the recorded reason `terms: code,
+/// find`, injecting a dead-code-removal skill into a turn-loop debugging turn.
+///
+/// The second half is what keeps this from being a blunt fix: the *same* skill
+/// must still be selected by a prompt that actually names its subject, so the
+/// change removes noise rather than removing the skill from reach.
+#[test]
+fn generic_coding_words_alone_do_not_select_a_skill() {
+    let skills = vec![skill(
+        "source-command-remove-deadcode",
+        "find and remove dead code from the source tree",
+        &[],
+        SkillOrigin::Workspace,
+    )];
+
+    let selected = select_skills(
+        &skills,
+        "find a problem with stellas turn loop code",
+        &[],
+        &SelectionConfig::default(),
+    );
+    assert!(
+        selected.is_empty(),
+        "'code' and 'find' carry no information about this task: {selected:?}"
+    );
+
+    // …but the skill is still reachable by a prompt that names its subject.
+    let selected = select_skills(
+        &skills,
+        "remove the dead code you find in the source tree",
+        &[],
+        &SelectionConfig::default(),
+    );
+    assert_eq!(
+        selected.len(),
+        1,
+        "a prompt naming the skill's actual subject must still select it: \
+         {selected:?}"
+    );
+}
+
 /// **Witness (#3298).** A non-Latin prompt whose wording matches a skill's
 /// description selects that skill.
 ///

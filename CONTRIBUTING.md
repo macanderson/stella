@@ -72,7 +72,7 @@ A red gate is an automatic "not yet":
 ./scripts/check-cargo-install-pins.sh
 ./scripts/check-license-allowlist-parity.sh
 ./scripts/check-repro-wiring.sh
-shellcheck install.sh scripts/*.sh .githooks/*
+shellcheck install.sh scripts/*.sh scripts/lib/*.sh .githooks/*
 ./scripts/check-invariants.sh
 python3 ./scripts/check-doc-links.py check
 ./scripts/check-command-docs.sh
@@ -88,8 +88,8 @@ python3 ./scripts/check-typed-errors.py
 ./scripts/check-diagnostic-codes.sh
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --keep-going
 cargo fmt --check
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --keep-going
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ./scripts/check-tool-docs.sh
@@ -178,7 +178,7 @@ chasing the citations in the same PR.
 
 ## Where does my change go? — a workspace tour
 
-Twenty crates — all under the `crates/` directory — sounds like a lot; the
+Twenty-six crates — all under the `crates/` directory — sounds like a lot; the
 rule of thumb is one sentence each:
 
 | You want to… | Go to |
@@ -200,10 +200,15 @@ rule of thumb is one sentence each:
 | Multi-agent fan-out, worktree isolation | `stella-fleet` |
 | The Observatory telemetry dashboard (`stella observe`) | `stella-observatory` |
 | The headless engine server a host process drives over the wire | `stella-serve` (its own binary, not linked into the CLI) |
+| Parse or validate a plugin manifest | `stella-plugin` |
+| Decide whether a human is present to answer a prompt | `stella-tty` |
+| Compute a unified diff | `stella-diff` |
+| Turn text into a vector, or compare two vectors | `stella-embed` |
 | The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) |
 
-`stella-pipeline` drives the default
-`stella run` path, `stella-fleet` powers `stella fleet`, and `stella-tui` is the
+`stella-pipeline` is opt-in — `stella run --pipeline classic` drives it, while
+a plain `stella run` runs the raw step-loop — `stella-fleet` powers
+`stella fleet`, and `stella-tui` is the
 Command Deck (the default interactive shell on a TTY). The context/graph
 plane is wired too — `stella init` builds the code-graph index and recall fans
 out through the CGP host. For what each crate is, see the crate table in the
@@ -217,7 +222,7 @@ These are the architectural invariants the whole design hangs on. PRs that
 break them will be asked to restructure, no matter how good the feature is.
 
 **They are stated once, normatively, in
-[AGENTS.md § Architecture: ports, not concretions](AGENTS.md#architecture-ports-not-concretions)
+[AGENTS.md § Architecture: ports, not direct dependencies](AGENTS.md#architecture-ports-not-direct-dependencies)
 — read them there before your first PR.**
 
 That list is the single source, and its numbering is part of the contract:
@@ -241,8 +246,10 @@ For a behavior change or feature, your PR should include a **witness test**:
 - it **passes** with your change (the feature is genuinely present).
 
 You can check this the artisanal way (`git stash && cargo test -p <crate>`),
-or let Stella verify Stella — run your task through `stella run`, whose
-pipeline witness stage enforces exactly this fail→pass contract.
+or let Stella verify Stella — run your task through `stella run --pipeline
+classic`, whose witness stage enforces exactly this fail→pass contract (a
+plain `stella run`, with no `--pipeline` flag, is the raw step-loop and does
+not verify on its own).
 
 Pure refactors, docs, and CI changes don't need a witness — say so in the PR
 template and move on. If a witness is genuinely impractical (e.g. TUI

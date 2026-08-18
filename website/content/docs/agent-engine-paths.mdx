@@ -17,12 +17,15 @@ see the [Inference Pipeline](/docs/inference-pipeline).
 
 <EnginePathsDiagram />
 
-There are only **two loops**, and the picture above is the whole of it. Four
-doors drive the [staged pipeline](/docs/inference-pipeline), whose `execute`
-stage calls the engine; two skip the pipeline and reach the engine directly.
-Underneath both sits one step loop — `run_step`, twelve fixed phases around a
-single model call — so a fleet worker and a `--plain` prompt run the identical
-code, differing only in what is wrapped around it.
+There are only **two loops**, and the picture above is the whole of it. Every
+door drives the raw step loop by default; four of them (`stella run`,
+`stella goal`, `stella fleet`, and the Command Deck) can additionally opt into
+the [staged pipeline](/docs/inference-pipeline) with `--pipeline classic`,
+whose `execute` stage calls the engine — the other two doors reach the engine
+directly and have no pipeline option at all. Underneath every door sits one
+step loop — `run_step`, twelve fixed phases around a single model call — so a
+fleet worker and a `--plain` prompt run the identical code, differing only in
+what is wrapped around it.
 
 The two direct doors are not the same depth. `stella --plain` calls
 `Engine::run_turn`; `stella-serve` does not — it drives `run_step` itself, one
@@ -68,29 +71,29 @@ came through:
 
 <CardGrid size="lg">
   <SpecCard
-    title="One-shot, pipeline"
-    meta={[
-      { label: "Command", value: "stella run \"…\"" },
-      { label: "Turn shape", value: "One staged pipeline run", mono: false },
-      { label: "Execution kind", value: "pipeline" },
-      { label: "Headless", value: "Yes — json / stream-json", mono: false },
-    ]}
-  >
-    Verified by the pipeline stages plus the verifier. `--test-command` arms the
-    deterministic fail→pass oracle, and a clean flip can submit without a verifier
-    call at all.
-  </SpecCard>
-  <SpecCard
     title="One-shot, raw"
     meta={[
-      { label: "Command", value: "stella run --no-pipeline \"…\"" },
+      { label: "Command", value: "stella run \"…\"" },
       { label: "Turn shape", value: "One step-loop turn", mono: false },
       { label: "Execution kind", value: "run" },
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
     No stages, no verifier — the model works until it decides it is done. You are
-    the verification.
+    the verification. The default for `stella run`.
+  </SpecCard>
+  <SpecCard
+    title="One-shot, pipeline"
+    meta={[
+      { label: "Command", value: "stella run --pipeline classic \"…\"" },
+      { label: "Turn shape", value: "One staged pipeline run", mono: false },
+      { label: "Execution kind", value: "run (pipeline_variant: classic)", mono: false },
+      { label: "Headless", value: "Yes — json / stream-json", mono: false },
+    ]}
+  >
+    Verified by the pipeline stages plus the verifier. `--test-command` arms the
+    deterministic fail→pass oracle, and a clean flip can submit without a verifier
+    call at all.
   </SpecCard>
   <SpecCard
     title="Plain REPL"
@@ -108,13 +111,13 @@ came through:
     title="Command Deck lead"
     meta={[
       { label: "Command", value: "stella" },
-      { label: "Turn shape", value: "One turn per prompt; /pipeline toggles staged (default) vs raw", mono: false },
-      { label: "Execution kind", value: "deck-pipeline / deck" },
+      { label: "Turn shape", value: "One turn per prompt; /pipeline toggles raw (default) vs staged", mono: false },
+      { label: "Execution kind", value: "deck (pipeline_variant: classic when /pipeline is on)", mono: false },
       { label: "Headless", value: "Interactive only", mono: false },
     ]}
   >
-    Pipeline stages when `/pipeline` is on — which it is by default — otherwise
-    you, watching the FILES and DIFF tabs fill in.
+    Raw turns while `/pipeline` is OFF — the default — pipeline stages once
+    you switch it ON, watching the FILES and DIFF tabs fill in either way.
   </SpecCard>
   <SpecCard
     title="Deck sub-agents"
@@ -132,14 +135,14 @@ came through:
     title="Goal mode"
     meta={[
       { label: "Command", value: "stella goal \"…\"" },
-      { label: "Turn shape", value: "Judged rounds until the goal is met — pipeline rounds by default", mono: false },
+      { label: "Turn shape", value: "Judged rounds until the goal is met — raw step-loop rounds by default", mono: false },
       { label: "Execution kind", value: "goal" },
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
     An independent verifier assesses the goal from evidence, over a **read-only**
-    view of the tool stack. `--no-pipeline` makes each round a raw step-loop
-    turn.
+    view of the tool stack. `--pipeline classic` makes each round a staged
+    pipeline run instead.
   </SpecCard>
   <SpecCard
     title="CI monitor"
@@ -158,12 +161,13 @@ came through:
     meta={[
       { label: "Command", value: "stella fleet …" },
       { label: "Turn shape", value: "One worker per task, wave-scheduled by dependency", mono: false },
-      { label: "Execution kind", value: "fleet ledger" },
+      { label: "Execution kind", value: "fleet" },
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    Verified per task — the staged pipeline when available, the raw step loop
-    otherwise. Every attempt is recorded in `.stella/private/fleet.db`.
+    Verified per task — the raw step loop by default, the staged pipeline
+    when `--pipeline classic` is passed. Every attempt is recorded in
+    `.stella/private/fleet.db`.
   </SpecCard>
 </CardGrid>
 
@@ -171,11 +175,11 @@ One command per door, to paste and compare:
 
 ```bash
 # One-shot, pipeline — the strongest verification a single command can buy.
-stella run --test-command "cargo test -p stella-pipeline" \
+stella run --pipeline classic --test-command "cargo test -p stella-pipeline" \
   "make the witness tamper check reject a renamed test file"
 
-# One-shot, raw — a question, not a change.
-stella run --no-pipeline "what does resolve_engine_wiring do with an uncredentialed verifier?"
+# One-shot, raw — a question, not a change. The default; no flag needed.
+stella run "what does resolve_engine_wiring do with an uncredentialed verifier?"
 
 # Interactive, tabbed.
 stella
@@ -201,21 +205,21 @@ stella resume
 The scripting workhorse: one prompt in, verified work out, an exit code
 back.
 
-**Pipeline (default).** The prompt runs the full
+**Raw (default).** Plain `stella run "…"` drives one plain step-loop turn —
+no triage, no verifier, the model works until it decides it's done. Cheapest
+and fastest; the right door for questions, small mechanical edits, and
+anything you'll eyeball anyway.
+
+**Pipeline (`--pipeline classic`).** The prompt runs the full
 [staged pipeline](/docs/inference-pipeline) — triage → recall → research →
 plan → scope review → execute → witness → verify → verdict, with a bounded
 revise loop —
 with per-role model routing and circuit-breaker fallback. Pass
-`--test-command "cargo test -p …"` and verification gets a
+`--test-command "cargo test -p …"` alongside it and verification gets a
 deterministic oracle: a change that flips a failing test to passing can
 submit without spending a verifier call. Headless formats (`--output-format
 json` for one final object, `stream-json` for a line per agent event) make
 it automation-grade — see [Scripting](/docs/scripting).
-
-**Raw (`--no-pipeline`).** Skips the stages and drives one plain step-loop
-turn. No triage, no verifier — the model works until it decides it's done.
-Cheapest and fastest; the right door for questions, small mechanical edits,
-and anything you'll eyeball anyway.
 
 The **session task board** is the one tool this door withholds: a one-shot
 turn has nothing to resume, so a card costs a model round trip and buys
@@ -223,15 +227,15 @@ legibility no one is watching for. Everything else is unchanged, sub-agent
 delegation included — `task` spends money to do work, a different
 trade from `task_create`, and is available here as everywhere.
 
-**Use it when** the task is well-defined and you don't need to watch.
-Prefer the pipeline default whenever the result must be *provably* right;
-drop to `--no-pipeline` when speed beats ceremony.
+**Use it when** the task is well-defined and you don't need to watch. Stay
+on the raw default when speed beats ceremony; opt into `--pipeline classic`
+whenever the result must be *provably* right.
 
 ## Interactive: the Command Deck and the plain REPL
 
 Running `stella` on a real terminal opens the **Command Deck** — the tabbed
 TUI over the engine. Each prompt becomes a lead-agent turn; `/pipeline`
-toggles between staged turns (the default) and the raw step loop. The deck
+toggles between the raw step loop (the default) and staged turns. The deck
 is more than a chat surface: prompts queue while a turn runs, `!` lines run
 shell commands inline in the transcript, `>` steers the turn in flight, Esc
 soft-stops (both below), and tabs expose the session's
@@ -290,10 +294,12 @@ files), never from the worker's claims. Rounds continue until the verifier
 confirms the goal, or a backstop (round cap, `--spend-limit`, worker abort) ends
 the run honestly as *not met*.
 
-Each working round is a staged pipeline run by default; `--no-pipeline`
-makes rounds raw step-loop turns — double verification (pipeline verifier *and*
-goal verifier) is rigor you pay for, so drop the inner pipeline when the goal
-verifier alone is enough.
+Each working round is a raw step-loop turn by default; `--pipeline classic`
+makes rounds staged pipeline runs instead — double verification (pipeline
+verifier *and* goal verifier) is rigor you pay for, so add the inner pipeline
+only when the goal verifier alone is not enough. `stella goal` cannot yet
+drive an installed wrapper plugin (#3695) — only `classic` or the raw
+default.
 
 **Use it when** you can state the outcome crisply but not the steps —
 "the suite passes and clippy is clean", "the flaky test is fixed, proven by
@@ -315,8 +321,9 @@ When the work is *many tasks* rather than one, [fleets](/docs/agent-fleets)
 fan a dependency-ordered task DAG out to parallel workers — in one shared
 tree coordinated by cooperative file claims, or in dedicated worktrees for
 tasks marked `isolation = "isolated"`. Each worker drives the same engine
-per task (staged pipeline when available, raw step loop otherwise), and
-every attempt, commit, and dollar lands in `.stella/private/fleet.db` for review.
+per task (raw step loop by default, the staged pipeline when
+`--pipeline classic` is passed), and every attempt, commit, and dollar lands
+in `.stella/private/fleet.db` for review.
 
 **Use it when** you have a backlog, not a task: migrations across many
 modules, a list of independent fixes, wide refactors.
@@ -352,8 +359,9 @@ verifier can inspect anything it can see, and structurally cannot change it.
 
 - **Watching and steering** → the Command Deck (`stella`).
 - **Interactive, but minimal** → the plain REPL (`stella --plain`).
-- **One defined task, unattended** → `stella run` (add `--test-command` for
-  the strongest verification; `--no-pipeline` for speed).
+- **One defined task, unattended** → `stella run` (the raw default is
+  fastest; add `--pipeline classic --test-command` for the strongest
+  verification).
 - **A defined outcome, unknown steps** → `stella goal`.
 - **CI must be green** → `stella monitor`.
 - **A backlog of tasks** → `stella fleet`.
@@ -366,17 +374,17 @@ If you're changing engine behavior, these are the seams:
 
 <CardGrid size="md">
   <SpecCard
-    title="One-shot pipeline"
-    meta={[
-      { label: "Entry", value: "agent::run_one_shot → run_pipeline_one_shot" },
-      { label: "Engine call", value: "staged pipeline over the engine", mono: false },
-    ]}
-  />
-  <SpecCard
-    title="One-shot raw"
+    title="One-shot raw (default)"
     meta={[
       { label: "Entry", value: "agent::run_one_shot → agent::goal::run_raw_one_shot" },
       { label: "Engine call", value: "Engine::run_turn" },
+    ]}
+  />
+  <SpecCard
+    title="One-shot pipeline (--pipeline classic)"
+    meta={[
+      { label: "Entry", value: "agent::run_one_shot → run_pipeline_one_shot" },
+      { label: "Engine call", value: "staged pipeline over the engine", mono: false },
     ]}
   />
   <SpecCard
@@ -401,14 +409,14 @@ If you're changing engine behavior, these are the seams:
     ]}
   />
   <SpecCard
-    title="Goal — raw rounds"
+    title="Goal — raw rounds (default)"
     meta={[
       { label: "Entry", value: "agent::goal::run_goal_cmd → run_goal_turn" },
       { label: "Engine call", value: "Engine::run_goal with a verifier", mono: false },
     ]}
   />
   <SpecCard
-    title="Goal — pipeline rounds"
+    title="Goal — pipeline rounds (--pipeline classic)"
     meta={[
       { label: "Entry", value: "agent::goal::run_goal_cmd → run_goal_pipeline_turn" },
       { label: "Engine call", value: "pipeline rounds + a verifier engine over ReadOnlyTools", mono: false },
@@ -418,7 +426,7 @@ If you're changing engine behavior, these are the seams:
     title="Fleet worker"
     meta={[
       { label: "Entry", value: "fleet_cmd::run_fleet, per task" },
-      { label: "Engine call", value: "pipeline when available, else Engine::run_turn", mono: false },
+      { label: "Engine call", value: "Engine::run_turn by default, the pipeline when --pipeline classic is passed", mono: false },
     ]}
   />
 </CardGrid>

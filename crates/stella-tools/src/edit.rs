@@ -3,11 +3,11 @@
 //!
 //! The tool shares the session's read-state ledger (#331): when `old_string`
 //! fails to match, it compares current disk bytes against the hash of what
-//! the model last saw (recorded by `read_file`/`read_symbol` and by the
-//! model's own edits/writes) and *attributes* the failure — a drifted file
-//! gets a drift-named error carrying the fresh content so the model can
-//! re-issue the edit against current bytes, instead of a generic not-found
-//! that sends it back into a read→edit-fail thrash. Because the drift echo
+//! the model last saw (recorded by `read_file` and by the model's own
+//! edits/writes) and *attributes* the failure — a drifted file gets a
+//! drift-named error carrying the fresh content so the model can re-issue the
+//! edit against current bytes, instead of a generic not-found that sends it
+//! back into a read→edit-fail thrash. Because the drift echo
 //! embeds the changed content, a legitimate recovery never produces
 //! byte-identical outputs, so the loop detector (which requires identical
 //! outputs to flag a loop) keeps treating it as progress.

@@ -6,14 +6,29 @@ status: living
 
 # Every wrapper is a plugin: the full extraction plan
 
-**Status:** living, updated 2026-08-17. First written 2026-08-17 as a
+**Status:** living, updated 2026-08-18. First written 2026-08-17 as a
 completion plan; each item below is tracked to landed/open individually as it
-ships, which is the reason this reads as "proposed" in no single place — most
-of Track A (A1, A3–A10; A2 still open) and Track D's D1 have landed (#3479,
-building on ce9c7cd/aabb8d4/eb1fe9e/ed18283/9672787/5c5c325), and Tracks B, C
-and the rest of D remain the plan as written. §2's "governing gap" paragraph
-is left in place as history, with a correction above it, because it is the
-clearest record of what A3–A5/A8–A10 actually closed.
+ships, which is the reason this reads as "proposed" in no single place — all
+of Track A (A1–A10) and Track D's D1 have landed (#3479, building on
+ce9c7cd/aabb8d4/eb1fe9e/ed18283/9672787/5c5c325), A3's live driver landed
+separately (#3494/#3672, below), Track B has begun (`stella-research` is the
+first extraction — see §7 and `plugins/stella-research`), and Track C, the
+rest of D, and the remainder of B remain the plan as written. §2's "governing
+gap" paragraph is left in place as history, with a correction above it,
+because it is the clearest record of what A3–A5/A8–A10 actually closed.
+
+**Update, 2026-08-18: the two moves §2 still called open have both shipped.**
+`stella-cli` now drives a live turn through the wrapper socket
+(`crates/stella-cli/src/wrapper_plugin.rs`, #3494) — §4 A3's "None of the
+three drivers calls `TurnWrapper` yet" is no longer true of `stella run`, only
+of `stella-serve` and an embedded `stella-engine` host — and the flag
+inversion §7 named as a precondition has landed: the raw step-loop is the
+default on every door, `--pipeline <variant>` is the sole opt-in, and
+`--no-pipeline` is a deprecated no-op (#3381, PR #3694). Separately,
+`stella-pipeline` itself now runs its stage order from the shipped
+`[wrapper]` manifest instead of hardcoded branches (#3408, PR #3672) — a
+different mechanism from the wrapper socket, not this crate becoming a socket
+consumer. See §4 A3 and §7 for the corrected detail.
 
 `doc:turn-loop-wrappers` established the direction — one loop, six doors,
 wrappers are plugins — and sequenced its first three moves. This document is the
@@ -122,12 +137,23 @@ the gap A3–A5, A8–A10 closed. `stella-plugin` no longer has zero consumers �
 `stella-runtime`, `stella-cli` and `stella-pipeline` all consume it now, per
 `stella-plugin`'s own README "Consumers" section — and `.stella/plugins/`
 resolution, `stella plugin install|list|remove`, and a `TurnWrapper` trait
-with two working transports all exist. **What is still true, restated
-precisely rather than as "zero consumers": nothing drives a live turn through
-the socket yet.** `stella-runtime` has no host sequence that calls
-`before_turn`/`after_turn`/`judge`/`again?` in order (§4 A3's landed note has
-the detail), so a manifest an installed plugin declares is loaded, shown for
-consent, and otherwise inert on the path a real `stella run` takes.
+with two working transports all exist.
+
+**Update, 2026-08-18: a live turn is now driven through the socket.** The
+gap the paragraph above named — "nothing drives a live turn through the
+socket yet" — is closed for one of the socket's three intended drivers:
+`stella_runtime::WrapperDispatch` (`crates/stella-runtime/src/wrapper/dispatch.rs`,
+landed #3494) is the host sequence that calls `before_turn`/`after_turn`/
+`judge`/`again?` in order, and `stella run --pipeline <variant>`
+(`crates/stella-cli/src/wrapper_plugin.rs`) drives it — an installed
+plugin's manifest is no longer only loaded and shown for consent, it
+participates in a real turn and its id reaches `executions.pipeline_variant`.
+`plugins/stella-research` is the first plugin exercising this path (§7).
+What remains open, precisely: `stella-serve` over HTTP and a minimal embedded
+`stella-engine` host — §0's other two acceptance-test drivers — do not call
+`WrapperDispatch` yet (#3551), and a named `--pipeline <variant>` plugin is
+refused on `stella goal`/`stella fleet`, which drive their own round loops
+rather than `WrapperDispatch` (#3695).
 
 > *Original text, now historical:* "`stella-plugin` has **zero consumers**.
 > Nothing calls `PluginManifest::from_toml_str`, there is no `.stella/plugins/`
@@ -240,19 +266,33 @@ Two halves, and they shipped together:
   process, plus `docs/wire/wrapper.wire.json` as the generated, gate-checked
   corpus (`doc:wrapper-socket` §3 commitment 2).
 
-**What "landed" does not yet cover, stated so this item is not read as more
-finished than it is.** There is no `dispatch` function and no host-sequence
-type in `stella-runtime` today — `admissible`, `judge` and `again` are free
-functions and `TurnWrapper` is a trait a caller implements against, but
-nothing in this crate calls all four points in order for a live turn. The
-socket is proven end-to-end against one real (non-Rust, `/bin/sh`) subprocess
-plugin by a test harness that runs its own round loop
-(`crates/stella-runtime/tests/wrapper_socket.rs`) — that is real evidence the
-trait and both transports work, but it is not §6's acceptance test, which asks
-for the same plugin driven unchanged by `stella-cli`, `stella-serve`, and an
-embedded `stella-engine` host. None of the three drivers calls `TurnWrapper`
-yet. Track B (§7) is where a real caller — and with it, a candidate
-dispatcher — would first appear.
+**Update, 2026-08-18: the host sequence has landed too (#3494), and one of
+the three drivers now calls it.** `stella_runtime::wrapper::WrapperDispatch`
+(`crates/stella-runtime/src/wrapper/dispatch.rs`) is the `dispatch` function
+this item said did not exist: it resolves the declared stage program, calls
+`before_turn` per stage, hands a `TurnPrelude` to the host's `TurnDriver`,
+calls `after_turn`, and settles with `judge` + `again`, looping while the
+verdict asks for another turn. `stella-cli` is the first driver —
+`crate::wrapper_plugin` (`crates/stella-cli/src/wrapper_plugin.rs`)
+implements `TurnDriver` over one raw `stella run` turn, resolved by
+`--pipeline <variant>` — so `TurnWrapper` is no longer only proven against a
+test harness's own round loop
+(`crates/stella-runtime/tests/wrapper_socket.rs`); it is proven again against
+the shipped `WrapperDispatch` itself
+(`crates/stella-runtime/tests/wrapper_dispatch.rs`) and driven end-to-end by
+`stella-cli` (`crates/stella-runtime/tests/research_plugin_dispatch.rs`,
+exercising `plugins/stella-research`).
+
+**What "landed" still does not cover, stated so this is not read as more
+finished than it is.** §6's acceptance test — the *same* plugin driven
+unchanged by `stella-cli`, `stella-serve`, and an embedded `stella-engine`
+host — is only one third proven: `stella-serve` and an embedded host neither
+call `WrapperDispatch` yet (#3551). And on `stella-cli` itself, only `stella
+run` is a real `TurnWrapper` driver — `stella goal` and `stella fleet` each
+drive their own round loop (a judged goal round, a fleet worker's attempt),
+and a named `--pipeline <variant>` plugin is refused on either door rather
+than silently downgraded (#3695). Track B (§7) is where the first real
+plugin — `plugins/stella-research` — actually runs against this driver.
 
 ### A4. A loader
 
@@ -261,10 +301,19 @@ dispatcher — would first appear.
 in `crates/stella-cli/src/plugin_cmd.rs` + `plugin_cmd/{roster,process}.rs`,
 gated on `project_code_execution_trusted()` for the project tier (#3509,
 below). `LoopGrant::permits_hook` and `LoopGrant::permits_point` are both
-consulted as routing filters. **What loading does not yet do: drive a turn.**
-The loader resolves a manifest, shows consent, and stops — nothing calls
-`stella-runtime`'s `TurnWrapper` with what it resolved, because (per A3) there
-is no host sequence yet for it to call.
+consulted as routing filters.
+
+**Update, 2026-08-18: the loader now also drives a turn, on `stella run`.**
+`crate::wrapper_plugin` (`crates/stella-cli/src/wrapper_plugin.rs`, #3494)
+resolves `--pipeline <variant>` against `PluginRoster`'s output and hands
+what it resolved to `stella_runtime::WrapperDispatch`, so a manifest is no
+longer resolved, shown for consent, and stopped there — an installed
+plugin's declared points are dispatched into a live turn. What remains true
+of the loader itself is narrower: `stella plugin install|list|remove` resolve
+and show consent, and installation is deliberately decoupled from execution
+— nothing about the install command itself drives a turn, and it should not,
+since a plugin can be installed for `stella run --pipeline <variant>` without
+that command ever running one.
 
 **Uninstall must actually uninstall.** Hook settings currently *concatenate*
 across scopes and no scope can remove another's entries
@@ -592,19 +641,29 @@ corrected, path-scoped wording.
 
 ## 7. Track B — extraction order
 
-Each plugin ships behind the flag inversion of #3381 (`--pipeline <variant>`
-replacing `--no-pipeline`), with the wrapper id recorded on the executions row
-so two variants can be compared. That column and migration already shipped
-(`crates/stella-store/src/ddl.rs:115`, `migrations.rs:29`) but the only writer
-passes the constant `PIPELINE_VARIANT_CLASSIC`
-(`crates/stella-cli/src/agent/persistence.rs:22`, passed at `:83`) — wiring `Wrapper::id`
-to it is a Track A tail item, because without it the A/B comparison this whole
-plan is justified by cannot distinguish two variants.
+**The flag inversion of #3381 shipped (PR #3694), and so did the other half
+of this paragraph's plan.** `--pipeline <variant>` replaced `--no-pipeline`
+as the sole opt-in on every door: the raw loop is the default, and
+`--no-pipeline` is a deprecated no-op. The wrapper id recorded on the
+executions row so two variants can be compared shipped too: the column and
+migration (`crates/stella-store/src/ddl.rs:115`, `migrations.rs:29`), the
+`classic` path writing it (`crates/stella-cli/src/agent/persistence.rs:26`,
+via `begin_pipeline_execution`), and — landed alongside the wrapper-plugin
+driver (#3494) — the raw loop's named-plugin path writing it too:
+`crates/stella-cli/src/wrapper_plugin.rs`'s `RawTurnDriver::run_turn` opens
+its execution row through `TurnDoor::new("run").wrapped_by(self.variant)`,
+where `self.variant` is the resolved plugin's declared `[wrapper] id`
+(`bound.variant()`), so a `--pipeline <variant>` run is distinguishable from
+an unwrapped raw run by a `GROUP BY pipeline_variant` today.
 
 Order, easiest and least risky first:
 
 1. **stella-research** — `before_turn` only, read-only, no worktree. The safest
-   possible first real plugin.
+   possible first real plugin. **Landed** — `plugins/stella-research`
+   (`doc:pipeline-as-plugins-execution` Phase 4), driven end-to-end by
+   `WrapperDispatch`, graded against committed vectors in
+   `crates/stella-runtime/tests/research_plugin_*.rs`, and distinguishable in
+   the store per the paragraph above.
 2. **stella-plan** — `before_turn`, needs the triage signals A8 publishes.
 3. **vera** — `after_turn` + `judge`. Needs A10 (worktrees) and A6 (structured
    verdicts). Ported, not copied: see §8.
@@ -614,8 +673,10 @@ Order, easiest and least risky first:
 
 **The bar for each:** a side-by-side benchmark holds before the built-in path is
 deleted. The dependency cut — `stella-cli` no longer declaring
-`stella-pipeline`, today 166 references across 42 files — is the **last** slice,
-never the first.
+`stella-pipeline`, 187 references across 45 files as of 2026-08-18 (`grep -rn
+stella_pipeline:: crates/stella-cli/src crates/stella-cli/tests`; it was 166/42
+when this section was written and has grown with the flag-inversion and
+schedule-manifest work, not shrunk) — is the **last** slice, never the first.
 
 ---
 
@@ -922,7 +983,11 @@ installed plugin), not of the binary.
 - **Extraction stalls half-done**, leaving two code paths and the drift #3380
   already identifies between goal mode and the pipeline. The flag inversion is
   the forcing function: if inverting the default feels unsafe, the extraction is
-  not finished.
+  not finished. **The flip has shipped (#3381, PR #3694), and it shipped
+  ungated by the side-by-side bench §9.6 of `doc:turn-loop-wrappers` asked
+  for** — the maintainer's explicit call, not an oversight; both paths still
+  coexist and the flip is one flag away from reversal, so this risk is open
+  rather than retired.
 
 ---
 

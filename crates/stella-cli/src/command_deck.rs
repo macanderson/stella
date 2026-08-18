@@ -427,18 +427,13 @@ pub async fn run_deck_session(
     // is durable now, so an exit with prompts waiting is a pause, not loss.
     let mut session_exit = stella_store::SessionStatus::Complete;
     let mut sidecar_dir = session_registry.sidecar_dir(&session_record.id);
-    // Persona matches the driver: a fresh deck session runs the raw engine
-    // loop by default since #3381, so it gets the plain REPL persona now,
-    // not the pipeline worker persona (methodology ladder +
-    // `agents.worker.prompt` override) — that applies only once `/pipeline`
-    // is on (invariant #7: this changes what a NEW session starts with, not
-    // a resumed one). Chosen ONCE per session from the same state
-    // `pipeline_init` reads — byte-stable (L-E8), so a mid-session toggle
-    // changes the driver but keeps the persona until the next session.
-    let pipeline_persona = resume_state
-        .as_ref()
-        .and_then(|rs| rs.pipeline)
-        .unwrap_or(false);
+    // Persona matches the driver: a genuinely fresh session gets the plain REPL
+    // persona (raw is the default since #3381); one resumed with prior journal
+    // history but no explicit `Pipeline` record restores the pipeline persona
+    // instead — it predates the flip and always ran staged, so swapping
+    // personas on a mere resume would breach invariant #7. Chosen ONCE, byte-
+    // stable (L-E8): see `session_persist::initial_pipeline_persona`.
+    let pipeline_persona = crate::session_persist::initial_pipeline_persona(resume_state.as_ref());
     let system_prompt = agent::with_session_hook_context(
         if pipeline_persona {
             // Assembled once per session, before any turn resolves wiring: no
@@ -690,6 +685,8 @@ pub async fn run_deck_session(
     // keeps whatever it last had — the same state the persona choice above
     // read, so driver and persona start the session agreeing.
     let pipeline_init = pipeline_persona;
+    // Journal it once so a future flip never faces this ambiguity again.
+    let _ = in_tx.send(Inbound::Pipeline(pipeline_init));
     // Honour the persisted colour theme (`ui.theme`) before the deck spawns its
     // render task, so the very first frame — the launch cinematic — is already
     // in the chosen theme. Best-effort: an unset/unknown value keeps the
@@ -1106,6 +1103,7 @@ pub async fn run_deck_session(
                                     .send(chrome_note(format!("cannot resume `{id}`: {reason}")));
                             }
                             Ok(mut rs) => {
+                                let had_history = !rs.records.is_empty(); // before the take below
                                 // Park the CURRENT session: sync the journal,
                                 // snapshot the conversation, and either mark it
                                 // Paused — or, if nothing ever happened in it,
@@ -1232,8 +1230,10 @@ pub async fn run_deck_session(
                                     });
                                 }
                                 queue.adopt(sidecar_dir.clone(), restored);
-                                // Same default as the start-up read above (#3381).
-                                pipeline_on = rs.pipeline.unwrap_or(false);
+                                pipeline_on = crate::session_persist::derive_pipeline_persona(
+                                    had_history,
+                                    rs.pipeline,
+                                );
                                 let _ = in_tx.send(Inbound::Pipeline(pipeline_on));
                                 // `--spend-limit` means THIS session, decided and
                                 // implemented on both resume paths: reseed

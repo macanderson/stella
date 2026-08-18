@@ -54,6 +54,7 @@ pub mod provider_parity;
 pub mod sse;
 pub(crate) mod stream_recovery;
 pub mod vertex;
+pub mod wire_log;
 pub mod zai;
 
 pub use cache_economics::{

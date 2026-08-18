@@ -127,9 +127,11 @@ In tests, bind port `0` and read the port back from the `listening on` line on
 stdout. Picking a random port and hoping it is free is the usual source of flaky
 integration tests.
 
-## Step 3: Learn the six routes
+## Step 3: Learn the six routes this walkthrough uses
 
-That is the whole surface.
+That is the whole surface *this walkthrough* touches — not the whole surface
+`stella-serve` ships. See [the full route reference](#the-full-route-surface)
+below for the rest.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -140,8 +142,12 @@ That is the whole surface.
 | `POST` | `/v1/turns/{id}/tool-result` | Answer a tool request |
 | `POST` | `/v1/turns/{id}/cancel` | End a turn. The only teardown, there is no `DELETE` |
 
-A **turn** is the top-level resource. There is no session object, so your app
-owns conversation history and sends it with each turn.
+A **turn** is the top-level resource in this walkthrough: your app owns
+conversation history and sends it with each turn. The server also offers an
+optional server-owned alternative — `POST /v1/sessions`, covered in [the full
+route surface](#the-full-route-surface) below — where the engine threads the
+transcript for you instead. This guide sticks to the turn-only path because it
+has no state for your app to reason about beyond the turn itself.
 
 Six frame types arrive on the event stream, tagged by a `type` field:
 
@@ -163,6 +169,33 @@ Six frame types arrive on the event stream, tagged by a `type` field:
   routing, so an unauthenticated request to a wrong path returns 401, not 404. A
   401 is not proof that your token is wrong.
 </Callout>
+
+### The full route surface
+
+The six routes above run this walkthrough end to end, but `stella-serve` ships
+far more than that. The source of truth is the module doc at the top of
+[`crates/stella-serve/src/server.rs`](https://github.com/macanderson/stella/blob/main/crates/stella-serve/src/server.rs)
+and the route enum in `crates/stella-serve/src/observe/event.rs`, cross-checked
+against the handlers each variant actually dispatches to:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/readyz` | Readiness — is it safe to send new work |
+| `GET` | `/v1/metrics` | Counters, authenticated, pull-only |
+| `GET` | `/v1/calibration` | Token-drift report — estimated vs. billed tokens, per `(provider_id, model)` |
+| `POST` | `/v1/turns/{id}/steer` | Inject a mid-turn user message |
+| `POST` | `/v1/turns/{id}/pause` | Hold the turn at its next step boundary; optional `{"reason"}` |
+| `POST` | `/v1/turns/{id}/resume` | Release a held turn |
+| `POST` | `/v1/turns/{id}/approve` | Answer a `scope_review` gate by `request_id` |
+| `POST` | `/v1/turns/{id}/provider-delta` | Streamed fragments for an in-flight `provider_request`, ahead of its `provider-result` |
+| `GET`, `DELETE` | `/v1/turns/{id}/checkpoint` | Read back or reclaim a resume point |
+| `POST` | `/v1/sessions` | Open a server-owned conversation. Returns `{"session_id": …}` |
+| `GET`, `DELETE` | `/v1/sessions/{id}` | History and cost to date, live turn; end the session |
+| `POST` | `/v1/sessions/{id}/turns` | Run the next turn on a session — turn semantics minus `messages` |
+| `GET`, `DELETE` | `/v1/sessions/{id}/checkpoint` | Read back or reclaim a session's resume point |
+
+Any other method on a known path is a `405` carrying `Allow`; any other path is
+a `404`.
 
 ## Step 4: Write the host
 

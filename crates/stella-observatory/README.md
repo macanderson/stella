@@ -81,7 +81,7 @@ half of that alarm — which of the two things a digest mismatch means depends o
 the journal's era, read from `executions.journal_era` (#1981).
 
 Only [`stella-cli`](../stella-cli) depends on it: `run_observe`
-([`../stella-cli/src/storage_cmd.rs:47`](../stella-cli/src/storage_cmd.rs))
+([`../stella-cli/src/storage_cmd.rs`](../stella-cli/src/storage_cmd.rs))
 preflights the private store paths and calls `serve` (`--port`, default `7787`; `0` picks a
 free one). This crate builds no binary —
 [`examples/serve.rs`](examples/serve.rs) is the dev harness. It reads two tiers:
@@ -119,13 +119,13 @@ it crosses.
 ### The three boundaries, and what actually enforces each
 
 **Loopback-only** starts at `TcpListener::bind(("127.0.0.1", port))`
-(`src/lib.rs:299`), but the bind is not the boundary: a web page can resolve an
+(`src/lib.rs`), but the bind is not the boundary: a web page can resolve an
 attacker-controlled name to `127.0.0.1` and read this dashboard cross-origin.
-Three things close that. `host_is_local` (`src/lib.rs:356`) refuses any `Host`
+Three things close that. `host_is_local` (`src/lib.rs`) refuses any `Host`
 that does not *parse* as a loopback IP — never a prefix test, because
 `127.0.0.1.attacker.example` is a registrable name `starts_with("127.")` waves
 through. `handle` refuses an unterminated request head with `431` *before*
-routing (`src/lib.rs:385`): padding the request line past the 8 KiB cap used to
+routing (`src/lib.rs`): padding the request line past the 8 KiB cap used to
 push `Host` out of the buffer entirely, and the no-`Host` allowance then waved
 the rebound request through to a route that still parsed out of the truncated
 path. And `frame-ancestors 'none'` in the CSP stops that page framing it
@@ -133,18 +133,18 @@ instead. The no-`Host` allowance itself is deliberate — a browser `fetch`
 always sends one, so its absence means raw curl or a test, not the attack.
 
 **Read-only** is `OpenFlags::SQLITE_OPEN_READ_ONLY` at all three open sites —
-`db::open_read_only` (`src/db.rs:780`), `global::open_usage`
-(`src/global.rs:59`), `codegraph::snapshot` (`src/codegraph.rs:45`) — each with
+`db::open_read_only` (`src/db.rs`), `global::open_usage`
+(`src/global.rs`), `codegraph::snapshot` (`src/codegraph.rs`) — each with
 a 5 s `busy_timeout`, so a checkpoint or a migration's exclusive lock makes a
 poll wait rather than 500. `Observatory::new` opens nothing, and each open
 returns `None` for a missing file rather than creating it. Outside
 `#[cfg(test)]` nothing here writes to the filesystem, and non-`GET` requests get
-`405` (`src/lib.rs:454`), so there is no mutation verb to reach.
+`405` (`src/lib.rs`), so there is no mutation verb to reach.
 
-**Embedded** is three `include_str!`s (`src/lib.rs:51`–`55`).
+**Embedded** is three `include_str!`s (`src/lib.rs`).
 `dashboard_html_has_no_external_references` fails the suite if `index.html` ever
 contains `http://`, `https://`, `//cdn`, `@import` or `integrity=`, and the
-`CSP` constant (`src/lib.rs:84`) restates that to the browser (`default-src
+`CSP` constant (`src/lib.rs`) restates that to the browser (`default-src
 'self'`, `connect-src 'self'`, `img-src 'self'`). `'unsafe-inline'` on
 `script-src`/`style-src` is unavoidable and load-bearing: the page is one
 document with an inline `<script>`, an inline `<style>` and inline `style="…"`
@@ -153,11 +153,11 @@ attributes, so dropping it from `style-src` would strip the layout silently.
 
 ### `respond` is pure; there is no server state
 
-`respond(workspace_root, path)` (`src/lib.rs:134`) maps a path to a `Response`
+`respond(workspace_root, path)` (`src/lib.rs`) maps a path to a `Response`
 and is what the unit tests drive — no sockets involved. Every request opens its
 own connections and drops them; the page re-polls every 5 s while its tab is
 visible. The one twist is `?project=<id>`, accepted by every `/api/*` route: the
-id is resolved by `global::resolve_project_root` (`src/global.rs:138`) against
+id is resolved by `global::resolve_project_root` (`src/global.rs`) against
 the rollup's own `projects` table — never a path supplied by the client — and
 that root replaces the serving root for the request. Unknown ids fall back to
 the serving workspace rather than erroring, so a stale dropdown cannot break the
@@ -170,7 +170,7 @@ keep the original root.
 — one row in `executions`, the foreign key `telemetry`, `tool_calls`,
 `files_touched` and `execution_reflection` hang off; every join in
 `Observatory::executions`, `execution`, `models` and `activity` is on it.
-`run_id` appears only in `Observatory::fleet` (`src/db.rs:722`), against a
+`run_id` appears only in `Observatory::fleet` (`src/db.rs`), against a
 different file (`fleet.db`) and a different hierarchy: a fleet run fans out to
 tasks, then attempts, then commits. It is not an execution and not a session,
 and no query may join the two. AGENTS.md's glossary is the authority.
@@ -217,7 +217,7 @@ underneath the predicate fails there.
 ### Secrets never reach the browser
 
 `settings.json` and `mcp.toml` carry credentials, and both are served. `redact`
-(`src/fsview.rs:493`) replaces every string at or below a *credential scope* —
+(`src/fsview.rs`) replaces every string at or below a *credential scope* —
 a key `sensitive_key` matches, or an `env`/`headers` map whose values are
 credentials by position. The scope is **inherited, not recomputed per level**:
 settings are arbitrary user JSON, so a secret can sit a container below the key
@@ -312,14 +312,14 @@ badge context, never the hue, still say "warning".
   `executions`/`telemetry`/`tool_calls` — so the payload, the per-request
   allocation and the page's re-render all grow with the workspace's entire
   history, and the tab re-fetches all of it every 5 s.
-- **`percent_decode` (`src/lib.rs:258`) parses attacker-reachable bytes.** A
+- **`percent_decode` (`src/lib.rs`) parses attacker-reachable bytes.** A
   malformed escape (`%`, `%A`, `%ZZ`) must stay literal — never a panic, never
   a dropped byte — and decoding runs over bytes before UTF-8 validation so a
   multi-byte character split across escapes reassembles.
 - **`STELLA_DATA_DIR` is process-wide.** The two tests that set it serialize on
   `DATA_DIR_LOCK`, poison-tolerantly; a third that mutates it without the lock
   will flake the other two.
-- **The code graph is capped at 600 nodes** (`MAX_NODES`, `src/codegraph.rs:29`):
+- **The code graph is capped at 600 nodes** (`MAX_NODES`, `src/codegraph.rs`):
   the highest-degree files are kept and the rest reported as `truncated`, so a
   large workspace's graph is a sample, not the whole index.
 
@@ -342,7 +342,7 @@ schema it is checking, a real socket, `node`, or room:
 | [`tests/journal_era.rs`](tests/journal_era.rs) | The other half of the digest alarm: which of two things a mismatch means depends on `executions.journal_era` (#1981). |
 | [`tests/live_stream.rs`](tests/live_stream.rs) | Drives the live endpoint over a real socket. |
 | [`tests/page_clipper.rs`](tests/page_clipper.rs) | Executes the page's own JavaScript under `node` — see below. |
-| [`tests/rules_ledger.rs`](tests/rules_ledger.rs) | Room: [`src/tests.rs`](src/tests.rs) sits at the file-size ratchet's 1500 lines exactly and this crate carries no baseline entry, so it is closed to growth. New route coverage lands in a sibling rather than raising a ceiling. |
+| [`tests/rules_ledger.rs`](tests/rules_ledger.rs) | Room: [`src/tests.rs`](src/tests.rs) is already large, and this crate has no baseline entry, so new route coverage lands in a sibling file to keep it clear of the 1500-line ratchet. |
 
 The dominant shape: `seeded_workspace()` builds a `TempDir` with a `store.db`
 seeded from hand-written DDL, `seed_fs_surfaces()` layers on the file-backed
@@ -366,7 +366,7 @@ Adding an API route:
    char-not-byte count and `max` excluding the ellipsis stay one decision
    rather than a per-module one (#1999). The clip *lengths* are per-surface;
    the clip *shape* is not.
-2. Add the arm to the `match route` in `respond` (`src/lib.rs:148`). Take
+2. Add the arm to the `match route` in `respond` (`src/lib.rs`). Take
    filters via `query_param`, never by splitting the query string yourself.
 3. Add the path to `empty_workspace_degrades_to_empty_payloads_not_errors`'s
    list — it fails until step 1's degradation is right — then seed the table or

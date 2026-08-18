@@ -1,6 +1,6 @@
 //! Production implementations of `stella-core`'s time ports. The engine
 //! exports only the [`Clock`] and [`Sleeper`] traits (ports, not
-//! concretions), so the binary owns the concrete
+//! specific implementations), so the binary owns the concrete
 //! wall-clock/tokio impls and wires them at construction. This is what
 //! keeps `stella-core` free of production `tokio::time` calls.
 

@@ -1,27 +1,30 @@
 ---
 title: Inference Pipeline
-description: How stella turns a prompt into verified work — the step loop, the staged pipeline from triage to verdict, deterministic verification, and per-role routing.
+description: How stella turns a prompt into verified work — the raw step loop, the opt-in staged pipeline wrapper from triage to verdict, deterministic verification, and per-role routing.
 ---
 
 stella's answer to "did the agent actually do the work?" is structural, not
-rhetorical. Every prompt runs through an **inference pipeline** that separates
-*doing* the work from *verifying* it. Verification is **deterministic**: the
-answer comes from measurements — a fail→pass flip of one command, a test run, a
-diff — and no model is ever asked to rule on whether the work is done. When the
+rhetorical. When you opt into the staged pipeline, it separates *doing* the
+work from *verifying* it. Verification is **deterministic**: the answer comes
+from measurements — a fail→pass flip of one command, a test run, a diff — and
+no model is ever asked to rule on whether the work is done. When the
 measurements do not settle it, the run says so.
 
 <Callout type="warn">
-**This guarantee is a property of the path, not of the binary.** Everything
-below is real and host-run in stella's built-in staged pipeline today — no
-plugin required. The [plugin platform](/docs/plugins) that will eventually
-carry this mechanism outside the built-in binary already exists, and a
-verification plugin can already be installed — but nothing in a live
-`stella run` dispatches an installed plugin into a turn yet, so the staged
-pipeline below remains the only path that actually decides a run today. Once
-dispatch lands, an installed plugin reports its own evidence instead of
-stella running the check, and this page's guarantee does not automatically
-carry over to that path — see [Plugins](/docs/plugins#the-honest-part-who-verifies-what)
-for what that split means. This page documents the built-in mechanism as it
+**This guarantee is a property of the path, not of the binary.** The raw step
+loop is the default on every door (`stella run`, `arena`, `goal`, `fleet`, the
+Command Deck) since #3381/#3694; nothing below applies unless you opt in with
+`--pipeline classic`, the wrapper id naming stella's built-in staged pipeline.
+Everything below is real and host-run there today. The
+[plugin platform](/docs/plugins) that lets this mechanism live outside the
+built-in binary is live too: `stella run --pipeline <variant>` drives an
+installed wrapper plugin (`plugins/stella-research` is the shipped reference
+one), through the same `before_turn`/`after_turn` wrapper socket the staged
+pipeline itself now runs on. Once you dispatch through a plugin instead of
+`classic`, it reports its own evidence instead of stella running the check,
+and this page's guarantee does not automatically carry over to that path —
+see [Plugins](/docs/plugins#the-honest-part-who-verifies-what) for what that
+split means. This page documents the `--pipeline classic` mechanism as it
 exists today.
 </Callout>
 
@@ -43,13 +46,17 @@ deterministic loop: plan, fan tools out, observe, compact if the conversation
 gets noisy, repeat. When the conversation approaches the compaction budget,
 stella compacts it and keeps going.
 
-`stella run --no-pipeline` and interactive chat drive this raw loop directly.
-Everything else in this page is structure built **on top of** it.
+`stella run`, `stella goal`, `stella fleet`, `stella arena`, and interactive
+chat all drive this raw loop directly by default; the Command Deck's
+`/pipeline` toggle is OFF by default for the same reason. `--no-pipeline` is a
+deprecated, inert flag kept only so an old script does not break. Everything
+else in this page is structure built **on top of** the raw loop, entered only
+with `--pipeline classic`.
 
-## The staged pipeline
+## The staged pipeline (opt in with `--pipeline classic`)
 
-`stella run` (and pipeline-mode turns in the Command Deck) wraps the step loop
-in stages:
+Pass `--pipeline classic` to `stella run` (or turn `/pipeline` ON in the
+Command Deck) and the raw step loop above is wrapped in stages:
 
 <PipelineFlowDiagram />
 
@@ -209,31 +216,36 @@ gathered first:
 - **The diff budget.** A small diff (≤ 400 changed lines by default) backed by
   deterministic evidence submits on the evidence alone.
 
-From those, the ladder picks one of **five** outcomes, in this order. Every one
+From those, the ladder picks one of **six** outcomes, in this order. Every one
 of them is **terminal** — the ladder is the whole decision, and no model is
 consulted at any rung:
 
 <CardGrid size="md">
-  <OptionCard name="1 · Revise">
+  <OptionCard name="1 · Witness unsatisfiable">
+    The authored witness failed **the same way** before and after the work, so its red
+    says nothing about the change. This is a claim about the test, not the work — and
+    no revision can fix an instrument, which is why it is ranked above **Revise**.
+  </OptionCard>
+  <OptionCard name="2 · Revise">
     Touched tests are **red**. That is already a deterministic failure, so the evidence
     goes straight back into a revision turn. Nothing is spent confirming a
     failure that is not in doubt.
   </OptionCard>
-  <OptionCard name="2 · Nothing attempted">
+  <OptionCard name="3 · Nothing attempted">
     The turn dispatched no call capable of changing the workspace, and nothing that
     *could* look saw a change. A determinate finding about the turn — and the one
     place the ladder reads an absence as evidence.
   </OptionCard>
-  <OptionCard name="3 · Unverifiable">
+  <OptionCard name="4 · Unverifiable">
     **Every** channel was blind — no flip, no test result, an unreadable working tree,
     and no recorded file touch. The ladder **abstains**: nothing is claimed about the
     work, in particular not that it failed.
   </OptionCard>
-  <OptionCard name="4 · Submit fast">
+  <OptionCard name="5 · Submit fast">
     Flip achieved, touched tests green, diff within budget, no fresh diagnostics.
     The full deterministic pass.
   </OptionCard>
-  <OptionCard name="5 · Unverified">
+  <OptionCard name="6 · Unverified">
     The probes looked and what they returned did not amount to a proof — no flip, or a
     diff over budget, or tests that could not run. The ladder's honest *I do not know*.
   </OptionCard>
@@ -254,7 +266,7 @@ The evidence that reaches this rung is by construction the evidence no oracle
 could settle, so a model handed it is guessing too, only with a verdict's
 authority attached. The run reports `UNVERIFIED` and says what was missing.
 
-There is one narrow case where a sixth rung, **waived**, is recorded instead: the
+There is one narrow case where a seventh rung, **waived**, is recorded instead: the
 warrant read the diff and found nothing a test could prove (a docs-only edit, a
 pure removal), or triage waived independent review and the warrant agreed from
 the change itself. A waived pass carries no evidence either way and is scored
@@ -443,8 +455,9 @@ key can restore is one a deployment will restore.
 `enabled: false` is a genuine **single-stage ablation**: the stage buys no
 call and emits no event frame, so a recorded session shows the ablation
 instead of leaving a reader to infer it from a missing call. That is what
-`--no-pipeline` cannot do — it removes triage, plan, scope, witness and verify
-together, so nothing measured against it can be attributed to one stage.
+running the raw loop cannot do — plain `stella run`, with no `--pipeline`
+flag at all, removes triage, plan, scope, witness and verify together, so
+nothing measured against it can be attributed to one stage.
 
 Every stage stays on unless you turn it off, and an unconfigured roster is the
 pipeline exactly as it ships.
@@ -492,23 +505,28 @@ stella --spend-limit 1.50 run --test-command "cargo test -p stella-core" \
 
 <CardGrid size="md">
   <OptionCard name="stella run">
-    The full staged pipeline — the default.
+    The raw step loop by default. Pass `--pipeline classic` for the full
+    staged pipeline, or `--pipeline <variant>` for an installed wrapper
+    plugin.
   </OptionCard>
-  <OptionCard name="stella run --no-pipeline">
-    The raw step loop, with none of the stages above.
+  <OptionCard name="stella run --pipeline classic">
+    The full staged pipeline, with every stage above.
   </OptionCard>
   <OptionCard name="Command Deck">
-    The staged pipeline per turn while `/pipeline` is ON, which it is by
-    default.
+    Raw turns while `/pipeline` is OFF, which is the default; the staged
+    pipeline per turn once you switch it ON.
   </OptionCard>
   <OptionCard name="stella goal">
-    Pipeline rounds plus an independent goal verifier by default;
-    `--no-pipeline` makes the rounds raw. See
+    Raw rounds plus an independent goal verifier by default;
+    `--pipeline classic` runs every round through the staged pipeline
+    instead. Cannot yet drive an installed wrapper plugin (#3695) — see
     [goal mode](/docs/agent-modes#outcome-driven-goal-mode).
   </OptionCard>
   <OptionCard name="stella fleet">
-    The pipeline per worker, fanned out in one shared tree — worktrees on
-    opt-in. See [fleets](/docs/agent-fleets).
+    Raw workers by default; `--pipeline classic` routes every worker through
+    the staged pipeline, fanned out in one shared tree — worktrees on
+    opt-in. Cannot yet drive an installed wrapper plugin (#3695) — see
+    [fleets](/docs/agent-fleets).
   </OptionCard>
 </CardGrid>
 

@@ -1,6 +1,6 @@
 //! Session tab — the focused agent's REPL surface: identity header, the stat
 //! box with its vitals gauges, any pending gate card, the transcript, and the
-//! right-hand rail carrying PLAN over PROOF
+//! right-hand rail carrying PLAN
 //! ([`crate::views::plan_rail`]).
 //!
 //! It **reuses** the shared renderers (`render_hud`, `render_transcript`,
@@ -172,7 +172,7 @@ impl SessionFold {
     /// into the live tail after the last entry, so it re-wraps per frame
     /// like the tail does and vanishes without residue when the
     /// authoritative `Text` clears it — never a settled entry.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // mirrors the fold's inputs one to one; a struct would just add a second shape
     fn refresh(
         &mut self,
         agent: &str,
@@ -363,29 +363,28 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
 
     let hud_h = crate::render::HUD_H;
 
-    // PLAN and PROOF live in the right-hand rail
-    // ([`crate::views::plan_rail`]) and are up for the whole session. Too
-    // narrow for a column — or accessible mode, where a side-by-side column
-    // reads as interleaved lines (#1258) — stacks them above the transcript
-    // instead, sized against the rows the gates left. Nothing is dropped.
+    // PLAN lives in the right-hand rail ([`crate::views::plan_rail`]) and is up
+    // for the whole session. Too narrow for a column — or accessible mode,
+    // where a side-by-side column reads as interleaved lines (#1258) — stacks
+    // it above the transcript instead, sized against the rows the gates left.
+    // Nothing is dropped.
     let split_rail = crate::views::plan_rail::rail_visible(ui.accessible, area.width);
     let claimed = 1 + subs_h + hud_h + ask_h + hunk_h + dispatch_h;
-    let (stacked_plan_h, stacked_verify_h) = if split_rail {
-        (0, 0)
+    let stacked_plan_h = if split_rail {
+        0
     } else {
-        crate::views::plan_rail::stacked_heights(area.height.saturating_sub(claimed))
+        crate::views::plan_rail::stacked_plan_height(area.height.saturating_sub(claimed))
     };
 
     let bands = Layout::vertical([
-        Constraint::Length(1),                // identity header
-        Constraint::Length(subs_h),           // nested subagent rows (0 = none)
-        Constraint::Length(hud_h),            // stat box (+1 row for the vitals gauges)
-        Constraint::Length(ask_h),            // pending ask-user (0 = collapsed)
-        Constraint::Length(hunk_h),           // pending hunk review (0 = collapsed)
-        Constraint::Length(dispatch_h),       // mid-turn routing (0 = collapsed)
-        Constraint::Length(stacked_plan_h),   // PLAN, when stacked (0 = in the rail)
-        Constraint::Min(1),                   // transcript (+ right rail on a wide frame)
-        Constraint::Length(stacked_verify_h), // PROOF, when stacked
+        Constraint::Length(1),              // identity header
+        Constraint::Length(subs_h),         // nested subagent rows (0 = none)
+        Constraint::Length(hud_h),          // stat box (+1 row for the vitals gauges)
+        Constraint::Length(ask_h),          // pending ask-user (0 = collapsed)
+        Constraint::Length(hunk_h),         // pending hunk review (0 = collapsed)
+        Constraint::Length(dispatch_h),     // mid-turn routing (0 = collapsed)
+        Constraint::Length(stacked_plan_h), // PLAN, when stacked (0 = in the rail)
+        Constraint::Min(1),                 // transcript (+ right rail on a wide frame)
     ])
     .split(area);
 
@@ -430,9 +429,8 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     match rail_area {
         Some(rail) => crate::views::plan_rail::render(sm, model.now_ms, animate, rail, buf),
         None => {
-            // Stacked: same two panels, same order, full width.
+            // Stacked: the same panel, full width.
             crate::views::plan_rail::render_plan(&sm.plan, model.now_ms, animate, bands[6], buf);
-            crate::views::plan_rail::render_verification(&sm.proof, bands[8], buf);
         }
     }
 
@@ -1238,42 +1236,22 @@ mod tests {
     }
 
     /// **The headline of this change.** On the terminal size the deck is most
-    /// often run at, a turn triage waived must leave the transcript the room it
-    /// used to lose to two panels with nothing to report.
+    /// often run at, the rail must cost the transcript columns rather than
+    /// rows — it used to spend seven of a 24-row frame on a band that, on the
+    /// most common turn shape, had nothing to report.
     #[test]
-    fn a_waived_turn_spends_no_rows_on_panels_that_have_nothing_to_say() {
-        use stella_protocol::ProofStep;
+    fn the_rail_spends_columns_on_the_plan_not_rows() {
         let mut model = WorkspaceModel::new();
         model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
-        model.apply_inbound(&Inbound::Event {
-            agent: "lead".into(),
-            event: AgentEvent::Proof {
-                step: ProofStep::Assurance {
-                    witness: false,
-                    verifier: false,
-                },
-            },
-        });
         let area = Rect::new(0, 0, 80, 24);
         let mut ui = DeckUi::default();
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
-        let text = buffer_text(&buf);
-        assert!(
-            text.contains("PROOF"),
-            "the panel is unconditional — a waived turn is a report, not an \
-             absence:\n{text}"
-        );
-        assert!(
-            text.contains("not needed"),
-            "…and it says what was decided, in the reader's words:\n{text}"
-        );
-        // header(1) + stat box(3) = 4 of the 24 rows, and PLAN / PROOF cost
-        // COLUMNS rather than rows. Before this change the same turn spent 7
-        // more rows on a band with nothing to report.
+        // header(1) + stat box(3) = 4 of the 24 rows, and PLAN costs COLUMNS
+        // rather than rows.
         assert_eq!(
             ui.metrics.session_height, 18,
-            "the transcript must own every row the panels do not"
+            "the transcript must own every row the rail does not"
         );
     }
 
@@ -1302,13 +1280,12 @@ mod tests {
         render(&model, &mut ui, wide, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("PLAN"), "{text}");
-        assert!(text.contains("PROOF"), "{text}");
         assert!(
             text.contains("Fix the auth redirect"),
             "with the step named, not just a count:\n{text}"
         );
 
-        // Too narrow for a column: the SAME two panels, stacked. The old rail
+        // Too narrow for a column: the SAME panel, stacked. The old rail
         // simply disappeared here, which taught readers that its absence meant
         // nothing was happening.
         let narrow = Rect::new(0, 0, 70, 30);
@@ -1317,7 +1294,6 @@ mod tests {
         render(&model, &mut ui, narrow, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("PLAN"), "stacked, never dropped:\n{text}");
-        assert!(text.contains("PROOF"), "{text}");
         assert!(text.contains("Fix the auth redirect"), "{text}");
     }
 

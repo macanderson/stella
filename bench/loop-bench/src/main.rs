@@ -208,9 +208,10 @@ struct Args {
 }
 
 /// The `--primary` choices, mapped onto the shared metric vocabulary. A
-/// separate enum so clap validates the flag at parse time and so the harness
-/// offers only the metrics a *model* comparison is meaningfully judged on —
-/// `retries` is a loop signal this harness already gates on separately.
+/// separate enum so clap validates the flag at parse time, and so the harness
+/// only offers metrics that judge the *model*. `stella-core` also has a
+/// `retries` metric; it is left out here because it counts model-call
+/// flakiness, not how well the model did the task.
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 enum PrimaryMetric {
     PassRate,

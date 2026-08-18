@@ -45,7 +45,6 @@ pub mod models_card;
 pub mod plan_card;
 pub mod plan_rail;
 pub(crate) mod plan_style;
-pub mod proof;
 pub(crate) mod queue_popup;
 pub(crate) mod scope_dialog;
 pub mod session;

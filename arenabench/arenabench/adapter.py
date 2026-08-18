@@ -223,6 +223,12 @@ def _probe_roots() -> list[str]:
     ]
 
 
+#: Shebang interpreters that are a wrapper around the real one rather than the
+#: real one. Named rather than sniffed for: the question is "did a packager
+#: write a re-exec stub here", and that set is small, stable and knowable.
+_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ksh"})
+
+
 def harbor_interpreter(binary: str) -> str:
     """The Python that will execute ``binary``.
 
@@ -232,6 +238,19 @@ def harbor_interpreter(binary: str) -> str:
     form is resolved through ``PATH`` the same way exec would. Falls back to
     the interpreter beside the script, then to this process's own, so a probe
     is always possible even against a binary that is not a Python stub.
+
+    **A shell shebang is not an answer to this question.** ``uv`` writes its
+    console scripts with a portable wrapper — ``#!/bin/sh`` followed by a line
+    that re-execs ``$(dirname $0)/python`` — so the shebang the kernel reads
+    names a shell, and the Python that ultimately imports the seat is the one
+    beside the script. Returning ``/bin/sh`` is not a wrong guess that degrades
+    gracefully: the seat probe then runs ``/bin/sh -c "import
+    arenabench.harbor_agent"``, which fails with ``import: command not found``,
+    and every Stella seat is refused on a rig that would have run it. That is
+    every Frontier-Bench match, because that dataset's ``min_harbor`` forces a
+    uv-provisioned Harbor. So a shell shebang falls through to the
+    beside-the-script lookup — the case the fallback already existed for and
+    could never reach while ``/bin/sh`` counted as an absolute interpreter.
     """
     path = Path(binary)
     try:
@@ -248,6 +267,8 @@ def harbor_interpreter(binary: str) -> str:
                 resolved = shutil.which(parts[1])
                 if resolved:
                     return resolved
+            elif Path(head).name in _SHELLS:
+                pass  # a uv-style wrapper; the real interpreter sits beside it
             elif Path(head).is_absolute():
                 return head
     for name in ("python3", "python"):

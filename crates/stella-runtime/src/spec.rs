@@ -121,9 +121,6 @@ impl ProviderParts {
 /// belong: `stella-cli` fills it from a loaded `Config` plus its process
 /// globals, and `stella-serve` fills it from a session-create request. The
 /// builder itself is then a pure function of this struct.
-///
-/// No `Debug`: deriving one would put a credential (`ProviderParts::api_key`)
-/// one `{:?}` away from a log line.
 #[derive(Clone)]
 pub struct RuntimeSpec {
     /// The workspace this session is rooted at. Every store, registry and

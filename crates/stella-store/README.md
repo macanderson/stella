@@ -140,7 +140,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 
 [`ddl.rs`](src/ddl.rs) says what the shape *is*; [`migrations.rs`](src/migrations.rs)
 says how an existing file *gets there*. A fresh database gets `create_latest_schema`
-in one shot and is stamped at `SCHEMA_VERSION` (`= MIGRATIONS.len()`, 22 today);
+in one shot and is stamped at `SCHEMA_VERSION` (`= MIGRATIONS.len()`);
 an existing one runs each pending step. `PRAGMA user_version` 0 is ambiguous — it
 is both "fresh empty file" and "legacy pre-versioning file" — so `Store::migrate`
 disambiguates by probing `TABLES` via `any_store_table_exists`. A file stamped
@@ -331,7 +331,7 @@ from `NotYetBuilt` to `Guarded`. `every_registered_encoder_is_content_free` and
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions"
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies"
   (invariant #3), "The `.stella/` directory", and the glossary of look-alike
   identifiers (session vs execution vs run vs task).
 - [`../../docs/spec/session-telemetry-receipts-spec.md`](../../docs/spec/session-telemetry-receipts-spec.md)

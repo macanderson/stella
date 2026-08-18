@@ -17,6 +17,69 @@ strict about the handful of things that are genuinely hard to undo.
 
 ---
 
+## Status, 2026-08-18 — re-verified against the tree, per phase
+
+Read against `doc:pipeline-as-plugins`, which carries the item-level detail;
+this is the phase-level rollup the execution order below promises.
+
+- **Phase 0 (Orientation).** N/A — a per-run step, not something that lands.
+- **Phase 1 (independent work).** All four items landed: D1 (self-driving's
+  decision core moved to the `stella-autonomy` leaf crate, 5c5c325); #3280
+  (`stella-runtime/Cargo.toml` declares no `stella-pipeline` dependency);
+  #3473 (the ladder-outcome count correction is in both `AGENTS.md` and
+  `doc:turn-loop-wrappers` §4); #3408 (the `[wrapper]` manifest is read and,
+  as of #3672 below, driven).
+- **Phase 2 (Track A substrate).** Landed in full: A1 through A10 (§4 A1–A10
+  of the plan), the D-2 transport spike (decided: the subprocess hook path —
+  `doc:plugin-transport-spike`), and the D-1 grammar falsifier (run — §6.1 of
+  the plan). The one item this phase's landed note underclaimed at the time:
+  A3's "socket exists but nothing drives a live turn through it" gap closed
+  separately, after Phase 2 landed — `stella_runtime::WrapperDispatch` (#3494)
+  is now the host sequence, and `stella run --pipeline <variant>` drives it.
+- **Phase 3 (Track C, the language proof).** No evidence in this repository
+  either way — `verify-rs`/`verify-py`/`verify-ts` are specified to live in
+  `macanderson/stella-examples`, a separate repository this census did not
+  have access to. Treat as **not verified**, not as landed.
+- **Phase 4 (Track B extraction).** Started, not finished. Of the five-item
+  order (`stella-research` → `stella-plan` → `vera` → `stella-candidates` →
+  `stella-goal`), only the first has shipped: `plugins/stella-research`
+  (`before_turn` + `recall`, read-only, no worktree — exactly the "safest
+  possible first real plugin" this phase named), graded against committed
+  vectors in `crates/stella-runtime/tests/research_plugin_*.rs` and driven
+  end-to-end by `WrapperDispatch`. Its runs write their variant id to
+  `executions.pipeline_variant` via `crates/stella-cli/src/wrapper_plugin.rs`'s
+  `RawTurnDriver::run_turn` (`TurnDoor::new("run").wrapped_by(self.variant)`),
+  so the side-by-side comparison this phase's bar depends on can already
+  distinguish a `stella-research` run from an unwrapped one in the store — see
+  `doc:pipeline-as-plugins` §7. `stella-plan`, `vera`, `stella-candidates` and
+  `stella-goal` remain unstarted; the dependency cut (the phase's stated last
+  slice) has not started either — the reference count grew, not shrank, in
+  the same work (§7 of the plan).
+- **Phase 5 (Track D, self-driving as a plugin).** Started, not finished.
+  `plugins/stella-selfdriving/plugin.toml` exists as the settled D-3 consent
+  declaration — the widest grant self-driving needs, written out and provable
+  expressible/showable before install — but its own header states plainly
+  what it is not: "installing this copies a declaration and a README, and
+  starts nothing." No command surface drives it, and no `Principal::Plugin`
+  grant binds its declared capabilities to an `AuthzGate` rule yet.
+  `scripts/self-driving.sh` remains the sole working driver, untouched, per
+  this phase's own instruction not to delete it before a replacement is
+  proven.
+- **Phase 6 (Documentation).** In progress. This document, `doc:pipeline-as-plugins`,
+  and `crates/stella-pipeline/README.md` were rewritten to the post-flip state
+  in this pass; `crates/stella-plugin/README.md` and
+  `crates/stella-runtime/README.md` were partially rewritten by an earlier
+  commit (#3672) and had residual stale lines corrected in this pass. Not yet
+  done: the `website/content/docs/` external surface (run/goal/fleet/arena
+  command pages, `inference-pipeline.mdx`, `agent-engine-paths.mdx`,
+  `agent-modes.mdx`, `agent-fleets.mdx` and others still describe the staged
+  pipeline as the default), `macanderson/stella-examples`'s `plugins/README.md`,
+  `llms.txt`'s generated description text, and the turn-loop deck under
+  `website/public/presentations/turn-loop/`. This phase is explicitly not
+  optional and is not closed by this pass.
+
+---
+
 ## 0. Standing rules for the whole run
 
 **Bias to shipping.** There are no customers on this yet and every mistake here
