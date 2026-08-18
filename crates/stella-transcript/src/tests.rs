@@ -12,6 +12,7 @@ use crate::grid;
 use crate::html;
 use crate::model::*;
 use crate::word;
+use unicode_width::UnicodeWidthStr;
 
 fn plain_span(text: &str) -> word::Span {
     word::Span {
@@ -836,4 +837,103 @@ fn a_long_line_under_the_cap_still_gets_word_highlights() {
         .map(|s| s.text.as_str())
         .collect();
     assert_eq!(hot, "new", "a 400-token line lost its word highlight");
+}
+
+/// A CJK ideograph is one `char` and two terminal columns. Measuring a row in
+/// characters therefore under-counts exactly the text a fixed column cannot
+/// absorb: the fill computed from the undercount is too wide, the row runs past
+/// the grid, and every gutter to the right of it walks. Witness for #3740.
+#[test]
+fn double_width_text_keeps_every_row_inside_the_grid() {
+    const WIDTH: usize = 100;
+    let mut run = run_with(vec![step(
+        edit("src/日本語/データ処理.rs", "a\n", "b\n"),
+        1_000,
+    )]);
+    // Spaced so the wrapper has somewhere to break: an unbroken run of any
+    // script overflows a fixed grid, which is a wrapping limit rather than a
+    // measurement one.
+    run.turns[0].prompt = "日本語 の 警告 を 直して ください ".repeat(6);
+    run.turns[0].answer = Some("警告 は ✅ 全部 消えました ".repeat(6));
+    run.turns[0].prose = vec![Prose {
+        text: "Reading the file first.".to_string(),
+        before_step: 0,
+    }];
+
+    let lines = grid::render(&run, &FoldState::new(), WIDTH);
+
+    let mut saw_wide = false;
+    let mut overruns = Vec::new();
+    for line in &lines {
+        let text: String = line.iter().map(|c| c.text.as_str()).collect();
+        // The oracle is `unicode-width` over the row's own text, never
+        // `grid::line_width`: measuring the renderer with the measure under
+        // test is how this bug stayed invisible: every row it over-fills also
+        // reports itself as fitting.
+        let width = UnicodeWidthStr::width(text.as_str());
+        saw_wide |= width > text.chars().count();
+        assert_eq!(
+            grid::line_width(line),
+            width,
+            "the grid disagrees with the terminal about {text:?}"
+        );
+        // Every offending row, not just the first: the failure this guards
+        // against walks a whole column, and one row out of context reads as a
+        // one-off.
+        if width > WIDTH {
+            overruns.push(format!("{width} cells: {text:?}"));
+        }
+    }
+    assert!(saw_wide, "no double-width text survived to the grid");
+    assert!(
+        overruns.is_empty(),
+        "{} of {} rows overran a {WIDTH}-cell grid:\n{}",
+        overruns.len(),
+        lines.len(),
+        overruns.join("\n")
+    );
+}
+
+/// The turn frame's two rails are one box: a top that reserves fewer cells for
+/// its `─╮` cap than it emits is two cells longer than the bottom it meets.
+#[test]
+fn the_turn_frame_rails_are_the_same_width() {
+    const WIDTH: usize = 100;
+    let run = run_with(vec![step(edit("src/lib.rs", "a\n", "b\n"), 1_000)]);
+    let lines = grid::render(&run, &FoldState::new(), WIDTH);
+    let rail = |corner: char| {
+        lines
+            .iter()
+            .find(|l| l.first().is_some_and(|c| c.text.starts_with(corner)))
+            .map(grid::line_width)
+    };
+    assert_eq!(rail('╭'), Some(WIDTH), "the frame's top rail");
+    assert_eq!(rail('╰'), Some(WIDTH), "the frame's bottom rail");
+}
+
+/// The step digest's chips are flush right, and a double-width object must not
+/// move them: the row occupies the grid's width either way.
+#[test]
+fn a_double_width_object_leaves_the_chip_column_flush_right() {
+    const WIDTH: usize = 100;
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Steps);
+    let widths: Vec<usize> = ["src/lib.rs", "src/日本語/データ処理.rs"]
+        .iter()
+        .map(|path| {
+            let run = run_with(vec![step(edit(path, "a\n", "b\n"), 1_000)]);
+            let lines = grid::render(&run, &state, WIDTH);
+            let row = lines
+                .iter()
+                .find(|l| l.iter().any(|c| c.text.contains("edit_file")))
+                .expect("no step digest row");
+            let text: String = row.iter().map(|c| c.text.as_str()).collect();
+            UnicodeWidthStr::width(text.as_str())
+        })
+        .collect();
+    assert_eq!(
+        widths,
+        vec![WIDTH, WIDTH],
+        "the double-width path moved the right edge of its row"
+    );
 }
