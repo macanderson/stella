@@ -63,9 +63,10 @@ queries instead of grepping blind — see
 stella run "explain what this repository does, then list the riskiest files"
 ```
 
-`stella run` runs a one-shot, non-interactive task and prints the result. By default it goes
-through the staged pipeline (triage → plan → execute → verify → verdict); `--no-pipeline` falls
-back to a single raw step loop. It can read files, run commands, and edit code as needed.
+`stella run` runs a one-shot, non-interactive task and prints the result. By default it runs
+a single raw step loop; pass `--pipeline classic` to route it through the staged pipeline
+instead (triage → plan → execute → witness → verify → verdict). It can read files, run
+commands, and edit code as needed.
 
 ## 4. Chat interactively
 
@@ -84,7 +85,7 @@ worth knowing on day one:
   <OptionCard name="/models">List providers and models.</OptionCard>
   <OptionCard name="/files">Files changed this session.</OptionCard>
   <OptionCard name="/diff">Review the working diff.</OptionCard>
-  <OptionCard name="/pipeline">Toggle the staged pipeline on or off.</OptionCard>
+  <OptionCard name="/pipeline">Toggle the staged pipeline on or off — off by default.</OptionCard>
   <OptionCard name="/graph">The code-graph tab.</OptionCard>
   <OptionCard name="/skills">The skills tab.</OptionCard>
   <OptionCard name="/mcp">The MCP tab — enable and disable servers.</OptionCard>
