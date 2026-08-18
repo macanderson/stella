@@ -73,7 +73,7 @@ pub(crate) use graph::spawn_session_graph;
 #[cfg(test)]
 use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
 pub use init::run_init;
-pub(crate) use init::{InitLine, init_workspace};
+pub(crate) use init::{InitLine, deck_narrator, deck_notice_narrator, init_workspace};
 use outcome::{
     VerificationRequirement, pipeline_episode_outcome, pipeline_failure_reason,
     pipeline_session_status, pipeline_status_label, pipeline_status_result,

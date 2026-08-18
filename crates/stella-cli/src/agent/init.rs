@@ -174,6 +174,53 @@ pub(crate) fn stderr_narrator() -> impl FnMut(InitLine) + Send {
     narrator(true)
 }
 
+/// The Command Deck's narrator for `/init`: a step joins `agent`'s transcript,
+/// a counter rewrites the counter before it.
+///
+/// A step carries its own terminator because the transcript fold coalesces
+/// consecutive `Text` verbatim — without one, init's stages run together into a
+/// single paragraph.
+pub(crate) fn deck_narrator(
+    tx: tokio::sync::mpsc::UnboundedSender<stella_tui::Inbound>,
+    agent: &str,
+) -> impl FnMut(InitLine) {
+    let agent = agent.to_string();
+    move |line| {
+        let _ = tx.send(match line {
+            InitLine::Step(text) => stella_tui::Inbound::Event {
+                agent: agent.clone(),
+                event: AgentEvent::Text {
+                    text: format!("{text}\n"),
+                },
+            },
+            InitLine::Progress(text) => stella_tui::Inbound::Progress {
+                agent: agent.clone(),
+                text,
+            },
+        });
+    }
+}
+
+/// [`deck_narrator`] for the deck's session-startup index build, whose
+/// milestones are chrome rather than session speech: a step is a dwell notice,
+/// while a counter still rewrites in place rather than stacking another
+/// near-identical row in that dialog.
+pub(crate) fn deck_notice_narrator(
+    tx: tokio::sync::mpsc::UnboundedSender<stella_tui::Inbound>,
+    agent: &str,
+) -> impl FnMut(InitLine) + Send {
+    let agent = agent.to_string();
+    move |line| {
+        let _ = tx.send(match line {
+            InitLine::Step(text) => stella_tui::Inbound::Notice(text),
+            InitLine::Progress(text) => stella_tui::Inbound::Progress {
+                agent: agent.clone(),
+                text,
+            },
+        });
+    }
+}
+
 fn narrator(to_stderr: bool) -> impl FnMut(InitLine) + Send {
     use std::io::IsTerminal;
 

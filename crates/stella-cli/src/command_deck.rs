@@ -740,17 +740,7 @@ pub async fn run_deck_session(
     let ready_root = cfg.workspace_root.clone();
     let (_session_graph, _graph_build) = agent::spawn_session_graph(
         &cfg.workspace_root,
-        // A milestone is a notice; a counter rewrites the counter before it
-        // rather than stacking another near-identical row in the dwell dialog.
-        Box::new(move |line| {
-            let _ = match line {
-                agent::InitLine::Step(text) => status_tx.send(system_notice(text)),
-                agent::InitLine::Progress(text) => status_tx.send(Inbound::Progress {
-                    agent: LEAD.to_string(),
-                    text,
-                }),
-            };
-        }),
+        Box::new(agent::deck_notice_narrator(status_tx, LEAD)),
         Box::new(move || {
             // Populate the Graph tab now the index exists (it opened on the
             // "run stella init" hint), and assert the lead is idle — the
@@ -3672,20 +3662,7 @@ async fn run_deck_command(
             // them). Released on BOTH outcomes — a failed init must never
             // strand a held splash.
             let _ = in_tx.send(Inbound::Splash(SplashCue::Replay));
-            // A step joins the record; a counter rewrites the counter before
-            // it. Both are one line, so a step carries its own terminator —
-            // the transcript fold coalesces consecutive `Text` into one
-            // buffer verbatim, which is what ran init's stages together into
-            // a single paragraph.
-            let mut emit = |line: agent::InitLine| match line {
-                agent::InitLine::Step(text) => say(format!("{text}\n")),
-                agent::InitLine::Progress(text) => {
-                    let _ = in_tx.send(Inbound::Progress {
-                        agent: LEAD.to_string(),
-                        text,
-                    });
-                }
-            };
+            let mut emit = agent::deck_narrator(in_tx.clone(), LEAD);
             let outcome = agent::init_workspace(
                 Some(provider),
                 &cfg.workspace_root,
