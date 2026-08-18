@@ -119,7 +119,7 @@ pub(crate) async fn run_raw_one_shot(
     // the run it was meant to shape. The grant is minted in the same breath and
     // for the same reason — a `--test-command` the host's parser refuses must
     // stop the run here, not after it is paid for.
-    let bound = match pipeline.plugin() {
+    let resolved = match pipeline.plugin() {
         Some(variant) => Some(
             crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
                 eprintln!("  ! {line}");
@@ -130,7 +130,7 @@ pub(crate) async fn run_raw_one_shot(
     };
     // Pinned *before* the turn runs, which is the whole content of the tamper
     // claim: an identity snapshotted afterwards vouches for nothing.
-    let candidate = match &bound {
+    let candidate = match &resolved {
         Some(_) => Some(
             crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
                 .map_err(crate::failure::CliFailure::from)?,
@@ -144,7 +144,27 @@ pub(crate) async fn run_raw_one_shot(
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
-    crate::subagent::install_for_session(cfg, &registry)?;
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
+    // The gate is built *here*, not beside `resolve` above, and the ordering is
+    // the whole reason the two halves are separate: a `--pipeline` naming
+    // nothing installed must fail as a typo before a paid call, while a
+    // plugin's `child_turn` needs this session's dispatcher, which needs the
+    // provider built two lines up (#3576).
+    let bound = match resolved {
+        Some(resolved) => {
+            let host = crate::wrapper_plugin::session_host(
+                &cfg.workspace_root,
+                resolved.manifest(),
+                sub_agents,
+            );
+            Some(
+                resolved
+                    .serving(host)
+                    .map_err(crate::failure::CliFailure::from)?,
+            )
+        }
+        None => None,
+    };
     // The one derivation of "a human is here to answer" — the #2676 approval
     // responder and the rules-enforcement prompt both read this value.
     let ask = human_is_present(format == OutputFormat::Text);

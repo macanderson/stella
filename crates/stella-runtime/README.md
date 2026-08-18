@@ -92,18 +92,28 @@ crate's `TurnWrapper` socket, not this socket wearing a new caller.
 Candidate-workspace grants on the CLI path landed (#3553,
 `crates/stella-cli/src/wrapper_candidate.rs`): `RoundInput::candidate` now
 carries a real grant over the shared work tree a `flip = "required"` oracle
-can observe. A wrapper is also meant to be handed a child-turn **port** that
+can observe. A wrapper is also handed a child-turn **port** that
 names a role intent (`triage`, `planner`, `witness_author`) — never a
 provider, an `Engine`, or a credential; the host resolves the intent against
 the user's BYOK providers, carves the budget, attaches gate/steering/hooks,
-and settles once. That port now has a name and a type in this crate —
+and settles once. That port is
 [`ChildTurnPlane`](src/wrapper/child_turn.rs), implemented by
 [`ChildTurns`](src/wrapper/child_turn.rs) over the host's own sub-agent
-dispatcher, taking `ChildTurnArgs` on the wire — built and tested
-end-to-end in `child_turn.rs`'s own suite. What remains is attaching it at a
-live call site: no host builds a `HostCallGate` with `.with_child_turns(..)`
-yet, so a real plugin cannot reach it today even though the port itself is
-no longer design (`doc:pipeline-as-plugins` §9.3) but code.
+dispatcher, taking `ChildTurnArgs` on the wire. It is now attached at a live
+call site (#3576): `stella run --pipeline <variant>` builds its
+`HostCallGate` with `.with_child_turns(..)` over the session's own
+`SubAgentDispatcher` — the one `task_assign` runs on — so an installed plugin
+declaring `[loop] calls = ["child_turn"]` and a `[roles.<name>]` gets a real
+turn, read-only, attributed to the seat its tier resolves to, with what it
+spent printed beside what it was refused
+(`crates/stella-cli/src/wrapper_plugin.rs`). Two limits stand: the `verifier`
+tier is deliberately bound to no seat, so a plugin naming it is answered
+`Unavailable` rather than having its call attributed to a role the host never
+made (`ChildTurns::with_seat` is how a driver that wants it owns the claim);
+and a plugin's points run *between* the parent's turns, where the tool
+registry's event sender is a sink — so the child's `step_usage` reaches the
+run's report and the session's budget guard, but not the store's receipt
+(#3802).
 
 **The driver channel now moves bytes, and still has no production caller.**
 `SubprocessDriver` (#3634) is the transport between the wire
