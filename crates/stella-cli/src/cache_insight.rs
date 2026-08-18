@@ -278,6 +278,29 @@ mod tests {
         }
     }
 
+    /// The deck re-derives `diagnose_cache`'s gate by hand because
+    /// `stella-tui` cannot link the model tier, so its constants are copies —
+    /// and the module docs of `cache_economics` say plainly that nothing
+    /// cross-checks the two: "the deck will not fail if it isn't, it will
+    /// simply disagree". This crate links both, so it is the one place the
+    /// copies can be held together. Cheap, and it turns a silent divergence
+    /// into a red test.
+    #[test]
+    fn the_decks_copies_of_the_diagnosis_constants_match_the_model_tiers() {
+        assert_eq!(
+            stella_tui::cache_panel::MIN_CACHEABLE_PROMPT_TOKENS,
+            stella_model::MIN_CACHEABLE_PROMPT_TOKENS,
+            "the deck's cacheable floor drifted from the model tier's"
+        );
+        assert!(
+            (stella_tui::cache_panel::LOW_HIT_RATE_THRESHOLD
+                - crate::stats::LOW_HIT_RATE_THRESHOLD)
+                .abs()
+                < f64::EPSILON,
+            "the deck's low-hit bar drifted from `stella stats`'s"
+        );
+    }
+
     #[test]
     fn a_gateway_route_carries_its_upstreams_posture_not_the_gateways() {
         // The deck learns "is this cache opt-in?" only from this producer, so
