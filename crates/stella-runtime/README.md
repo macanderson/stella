@@ -84,16 +84,26 @@ id reaches `executions.pipeline_variant`.
 What has **not** landed: the other two drivers `doc:wrapper-socket` §6 makes an
 acceptance criterion — `stella-serve` over HTTP and a minimal embedded host
 linking `stella-engine` — neither of which calls `WrapperDispatch` yet (#3551);
-candidate-workspace grants on the CLI path, so `RoundInput::candidate` is
-`None` there and a `flip = "required"` oracle abstains (#3553); and
-[`stella-pipeline`](../stella-pipeline), which still takes its own branches
+and [`stella-pipeline`](../stella-pipeline), which still takes its own branches
 rather than being ported onto this socket (Track B, `doc:pipeline-as-plugins`
-§7). A wrapper is meant to be handed a child-turn **port** that names a role
-intent (`triage`, `planner`, `witness_author`) — never a provider, an
-`Engine`, or a credential; the host would resolve the intent against the
-user's BYOK providers, carve the budget, attach gate/steering/hooks, and
-settle once. That port has no name and no type in this crate yet — it is
-design (`doc:pipeline-as-plugins` §9.3), not code.
+§7) — it now dispatches from its own `[wrapper]` manifest via
+`Schedule`/`ProgressiveResolver` (#3408), a separate mechanism from this
+crate's `TurnWrapper` socket, not this socket wearing a new caller.
+Candidate-workspace grants on the CLI path landed (#3553,
+`crates/stella-cli/src/wrapper_candidate.rs`): `RoundInput::candidate` now
+carries a real grant over the shared work tree a `flip = "required"` oracle
+can observe. A wrapper is also meant to be handed a child-turn **port** that
+names a role intent (`triage`, `planner`, `witness_author`) — never a
+provider, an `Engine`, or a credential; the host resolves the intent against
+the user's BYOK providers, carves the budget, attaches gate/steering/hooks,
+and settles once. That port now has a name and a type in this crate —
+[`ChildTurnPlane`](src/wrapper/child_turn.rs), implemented by
+[`ChildTurns`](src/wrapper/child_turn.rs) over the host's own sub-agent
+dispatcher, taking `ChildTurnArgs` on the wire — built and tested
+end-to-end in `child_turn.rs`'s own suite. What remains is attaching it at a
+live call site: no host builds a `HostCallGate` with `.with_child_turns(..)`
+yet, so a real plugin cannot reach it today even though the port itself is
+no longer design (`doc:pipeline-as-plugins` §9.3) but code.
 
 One piece of that design is no longer the open risk `doc:turn-loop-wrappers`
 §9.3 described it as, though it is not wired to this socket: `TurnCapabilities`
