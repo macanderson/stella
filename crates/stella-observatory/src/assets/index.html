@@ -2322,8 +2322,9 @@ async function openTranscript(id, full = false) {
            below remain the flat journal until the two are reconciled.
            No backticks in this comment: it sits inside a JS template
            literal, so one would close the template early and take the whole
-           script down with it. Guarded by inline_script_template_literals_
-           are_balanced in lib.rs. -->
+           script down with it. Guarded by the test
+           inline_script_html_comments_carry_no_backtick in
+           tests/inline_script_backticks.rs. -->
       <a class="tx-step" id="tx-rendered" target="_blank" rel="noopener"
          href="/transcript?id=${encodeURIComponent(d.id)}"
          title="Folds, digests and file diffs — the same renderer the TUI uses">
