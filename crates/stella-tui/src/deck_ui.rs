@@ -1788,11 +1788,11 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
 
     // Ctrl-S raises the plan card — the same surface `/plan` opens.
     //
-    // It used to open a STATE overlay holding the approved scope, the task
-    // board and the full proof rail, because none of those had anywhere else
-    // to live. All three are now permanently in the rail, so the keystroke's
-    // job is no longer *recall*, it is *detail*: the full text of every plan
-    // step. Kept bound because the chord was taught. Free at the deck level:
+    // It used to open a STATE overlay holding the approved scope and the task
+    // board, because neither had anywhere else to live. Both are now
+    // permanently in the rail, so the keystroke's job is no longer *recall*, it
+    // is *detail*: the full text of every plan step. Kept bound because the
+    // chord was taught. Free at the deck level:
     // ctrl+s is a save chord only inside the modal SETTINGS/SKILLS editors,
     // which claim the keyboard before this line is reached.
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('s')) {

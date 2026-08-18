@@ -144,8 +144,6 @@ fn deck_renders_every_tab_with_real_content() {
                 "budget",
                 "think",
                 "verify",
-                "oracle flips red → green",
-                "(confirmed from evidence, not self-report)",
             ],
         ),
         (

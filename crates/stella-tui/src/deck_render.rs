@@ -1448,10 +1448,7 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
     ("/", "slash commands — ↑↓ pick · tab completes · ⏎ runs"),
     ("ctrl-v", "paste — a copied image is attached to the prompt"),
     ("ctrl-t", "open the queue editor"),
-    (
-        "ctrl-s",
-        "STATE — the approved scope's steps, the task board, the proof rail",
-    ),
+    ("ctrl-s", "PLAN — every step of the approved plan, in full"),
     (
         ">text",
         "steer the running turn — lands at the next step boundary",

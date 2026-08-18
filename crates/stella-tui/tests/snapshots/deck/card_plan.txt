@@ -18,24 +18,24 @@
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 24 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
+┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
 │                                                                                                                      ││Refactor the automations store into a…│
-│  Planning the automations cluster: list, editor, triggers, workflows.                                                ││○ 1. extract types                    │
-│                                                   ┌ plan  pending approval · 3 steps  x skip · esc close ┐           ││○ 2. move hooks                       │
-│☰  plan  4/7  ·  Wire the triggers API             │Refactor the automations store into a shared worksp…  │           ││○ 3. update 9 imports                 │
+│── PLAN ──────────────────────────────────────────────────────────────────────────────────────────────────────────────││○ 1. extract types                    │
+│                                                                                                                      ││○ 2. move hooks                       │
+│  Planning the automations cluster: list, editor, triggers, workflows.                                                ││○ 3. update 9 imports                 │
+│                                                   ┌ plan  pending approval · 3 steps  x skip · esc close ┐           ││                                      │
+│☰  plan  4/7  ·  Wire the triggers API             │Refactor the automations store into a shared worksp…  │           ││                                      │
 │                                                   │                                                      │           ││                                      │
-│── WITNESS ────────────────────────────────────────│▸ ○ 1. extract types                                  │───────────││                                      │
+│── EXECUTE ────────────────────────────────────────│▸ ○ 1. extract types                                  │───────────││                                      │
 │                                                   │  ○ 2. move hooks                                     │           ││                                      │
-│── EXECUTE ────────────────────────────────────────│  ○ 3. update 9 imports                               │───────────││                                      │
-│                                                   │                                                      │           ││                                      │
-│● mcp__fs__read_file apps/app/automations/page.tsx │repo      macanderson/web-app ⎇ feat/automations-store│           ││                                      │
-│  ⎿ 312 lines                                      │write     packages/automations/** · apps/app/automatio│       42ms││                                      │
-│                                                   │read      apps/** · packages/**  (2 globs)            │           │└────────────────────── /plan reads it ┘
-│☰  plan  5/7  ·  Workflows canvas                  │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │           │┌ PROOF ✓ proved ──────────────────────┐
-│                                                   │models    think — · work glm-5.2-air · verify —       │           ││a test fails without this change and  │
-│⏸ plan  Refactor the automations store into a share│shell     allowlisted                                 │           ││passes with it                        │
-│                                                   │done when oracle flips red → green                    │           ││apps/app/automations/triggers.test.ts │
-└─────────────────────────────────────────── ↑ selec│          (confirmed from evidence, not self-report)  │nd · /plan ┘└──────────────────────────────────────┘
+│● mcp__fs__read_file apps/app/automations/page.tsx │  ○ 3. update 9 imports                               │           ││                                      │
+│  ⎿ 312 lines                                      │                                                      │       42ms││                                      │
+│                                                   │repo      macanderson/web-app ⎇ feat/automations-store│           ││                                      │
+│☰  plan  5/7  ·  Workflows canvas                  │write     packages/automations/** · apps/app/automatio│           ││                                      │
+│                                                   │read      apps/** · packages/**  (2 globs)            │           ││                                      │
+│⏸ plan  Refactor the automations store into a share│budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │           ││                                      │
+│                                                   │models    think — · work glm-5.2-air · verify —       │           ││                                      │
+└─────────────────────────────────────────── ↑ selec│shell     allowlisted                                 │nd · /plan ┘└────────────────────── /plan reads it ┘
 ────────────────────────────────────────────────────└──────────────────────────────────────────────────────┘────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify

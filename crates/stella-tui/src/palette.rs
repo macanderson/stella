@@ -181,7 +181,7 @@ pub const WARNING: Color = Color::Rgb(0xEA, 0xB3, 0x08);
 /// Error / failed / removed (6.62:1 on ground).
 pub const DANGER: Color = Color::Rgb(0xFF, 0x5C, 0x7A);
 
-/// The oracle's pre-flip state — the witness surface's `red` token, the one
+/// The oracle's pre-flip state — a verification surface's `red` token, the one
 /// sanctioned red-as-meaning in the deck (D6). A true signal red, kept
 /// distinct from [`DANGER`]'s pink-red so "the test is red before the patch"
 /// (a healthy, expected state) never shares a value with "something failed".

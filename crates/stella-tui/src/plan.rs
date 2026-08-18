@@ -33,8 +33,7 @@
 //! they become one vocabulary.
 //!
 //! Pure: this module folds and formats, and returns rows for a renderer to
-//! style. No ratatui types, so the fold is unit-testable without a terminal —
-//! the same discipline as [`crate::proof`].
+//! style. No ratatui types, so the fold is unit-testable without a terminal.
 
 use stella_protocol::{ScopeProposal, TaskItem, TaskStatus};
 
@@ -228,9 +227,9 @@ impl Plan {
     /// Close the plan at the end of a turn: a step still `Started` when the
     /// turn ends never finished, and saying so is the honest report.
     ///
-    /// The same half-invariant [`crate::proof::ProofState::finish`] holds — a
-    /// surface that only resolves on the happy path is silence wearing the
-    /// costume of progress.
+    /// A surface that only resolves on the happy path is silence wearing the
+    /// costume of progress, so this is called from every terminal exit — the
+    /// run ending, and a non-retryable error ending it early.
     pub fn finish(&mut self) {
         for item in &mut self.board {
             if item.status == TaskStatus::InProgress {
