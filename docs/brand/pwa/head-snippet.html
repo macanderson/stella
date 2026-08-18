@@ -3,7 +3,11 @@
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#00D1F9">
+<!-- Safari tints the pinned-tab mask itself, and its tab bar is light, so this
+     takes the kit's light-ground mark stop (brand-700, 3.58:1 on white) rather
+     than full Ion (1.83:1) — the same v3.0 rule the *-color-light.svg cuts
+     follow. -->
+<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#0094B1">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070B10">
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#EEF1F5">
