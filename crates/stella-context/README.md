@@ -97,9 +97,20 @@ crossing the limit fails the gate outright, and
 approaches the limit, split it before it crosses, the way
 [`src/store.rs`](src/store.rs) already fans out into
 [`src/store/schema.rs`](src/store/schema.rs), [`src/store/node.rs`](src/store/node.rs)
-and friends — and know that [`src/store/tests.rs`](src/store/tests.rs) sits at
-1498 lines today, so the very next test added there must instead start a new
-sibling test module.
+and friends.
+
+Three files were within 90 lines of that ceiling with no room to grow, and
+were split along their own seams rather than left to fail the next PR that
+touched them (#3705): [`src/retrieval.rs`](src/retrieval.rs) shed its knobs to
+[`src/retrieval/tuning.rs`](src/retrieval/tuning.rs) and its result vocabulary
+to [`src/retrieval/outcome.rs`](src/retrieval/outcome.rs);
+[`src/retrieval/tests.rs`](src/retrieval/tests.rs) shed the end-to-end half to
+[`src/retrieval/recall_tests.rs`](src/retrieval/recall_tests.rs); and
+[`src/writeback.rs`](src/writeback.rs) moved its inline tests to
+[`src/writeback/tests.rs`](src/writeback/tests.rs). No line count is repeated
+here on purpose — `scripts/file-size-baseline.txt` and the guard are the only
+copies that can stay correct, and a number written into prose is exactly what
+went stale before.
 
 ## Layout
 
@@ -114,7 +125,9 @@ sibling test module.
 | [`src/store/embedding.rs`](src/store/embedding.rs) | The vector codec and the fingerprinted index reads. |
 | [`src/store/record.rs`](src/store/record.rs) | Episode and memory rows, including memory lineage and revisions. |
 | [`src/store/domain.rs`](src/store/domain.rs) | The domain tag table, its junctions, and the scope anti-join. |
-| [`src/retrieval.rs`](src/retrieval.rs) | `recall` / `recall_scoped` / `recall_scoped_excluding`: fusion, dedup, MMR, budget packing, the coverage gate, `RecallTuning`, and `frame_from_node` (where a `ContextFrame` is actually minted — for packed survivors only). |
+| [`src/retrieval.rs`](src/retrieval.rs) | `recall` / `recall_scoped` / `recall_scoped_excluding`: the pipeline and its I/O — fusion, dedup, MMR, budget packing, the coverage gate, and `frame_from_node` (where a `ContextFrame` is actually minted — for packed survivors only). |
+| [`src/retrieval/tuning.rs`](src/retrieval/tuning.rs) | `RecallTuning` and every `DEFAULT_*` knob, with the reasoning for each value. Change what a recall is tuned by here; change what it *does* one file up. |
+| [`src/retrieval/outcome.rs`](src/retrieval/outcome.rs) | What a recall reports: `RecallResult`, `DroppedFrame`/`DropReason`, `SelectionReason`, `RecallTier`, and the crate-private `Ranked` shortlist candidate. |
 | [`src/writeback.rs`](src/writeback.rs) | `ContextDelta` and `upsert`, plus bi-temporal fact supersession (`apply_fact`) and the `facts_as_of` audit read. |
 | [`src/provider.rs`](src/provider.rs) | The `ContextProvider` trait, `ContextStore`'s implementation of it (`info`/`capabilities`/`query`/`verify`), and `ProviderRegistry` fan-out. |
 | [`src/embed.rs`](src/embed.rs) | A re-export of [`stella-embed`](../stella-embed), which now owns the `Embedder` seam, `EmbedderFingerprint` and the offline `HashEmbedder` default. The seam moved down to a leaf so `stella-graph` could share it for semantic code search without either plane depending on the other; nothing above this module changed. |
