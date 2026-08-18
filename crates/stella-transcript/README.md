@@ -1,9 +1,10 @@
 # stella-transcript
 
 One transcript information model, two renderers: the jet-black web surface the
-Observatory serves, and a character grid for the TUI. Pure functions over owned
-data — nothing here reads a file, spawns a process, formats a timestamp or
-touches the network.
+Observatory serves, and a character grid renderer in the same shape a TUI
+needs — though nothing in the shipping TUI reads it yet. Pure functions over
+owned data — nothing here reads a file, spawns a process, formats a timestamp
+or touches the network.
 
 ## Boundary
 

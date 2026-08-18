@@ -44,12 +44,24 @@ use super::*;
 /// that, because the schemas are read one at a time and none of them can say
 /// "prefer the other one".
 ///
+/// Leading with `search` is necessary and was not sufficient (#3687). In
+/// session `ses-1787071651715-48158` the single `search` call of a 67-call
+/// turn hit the 200-row rank ceiling (`stella_tools::search::engine`), and the
+/// model read that disclosure as "this tool is broken" — every one of the
+/// remaining 66 calls was `bash` + `grep` or `read_file`. The ceiling note
+/// already says "narrow the query"; what was missing is anywhere in the prompt
+/// saying a ceiling is a *query* result, not a *tool* verdict. The re-read
+/// clause is the other half of the same turn: `driver.rs` was read whole
+/// (65,685 bytes) and then grepped seven more times, `loop_escalation.rs`
+/// whole (65,723 bytes) then five more — twelve greps over bytes already in
+/// context, the largest single source of waste in a $3.77 turn.
+///
 /// No trailing newline: each prompt continues with its own blank line.
 macro_rules! tool_steering {
     () => {
         r#"The schemas are the reference for your tools; this is how they fit together.
 
-To find code, call search first: it takes a description or a name and returns the files that answer it with their symbols, callers and imports attached, so one call usually replaces a run of grep and read_file round trips. Use read_file when you already know the exact path, and bash with grep only when you need every occurrence of one exact literal string.
+To find code, call search first: it takes a description or a name and returns the files that answer it with their symbols, callers and imports attached, so one call usually replaces a run of grep and read_file round trips. Use read_file when you already know the exact path, and bash with grep only when you need every occurrence of one exact literal string. A RANK CEILING note on a search result means your query was too broad, not that search failed: narrow it and search again. Never grep or sed a file you already read in full this turn — those bytes are already in front of you; re-read a specific range with read_file offset and limit only if you need to re-anchor.
 
 To change the workspace, use the file tools rather than the shell: write_file creates or overwrites, edit_file replaces an exact substring, delete_file removes a file. Prefer them over shell equivalents like cat > file, sed -i or rm — they are confined to the workspace root, they report what actually changed, and their edits are what the turn's diff and verification are computed from. bash is for running things: builds, tests, linters, git, anything the task needs executed.
 
@@ -163,6 +175,43 @@ macro_rules! complexity_discipline {
     };
 }
 
+/// The hypothesis-falsification contract shared by both static prompts: when
+/// the task is to find out whether something is wrong, the existing test suite
+/// is the cheapest instrument in the workspace and belongs at the START of the
+/// investigation, not the end.
+///
+/// This is the rung the pipeline's methodology ladder never had (#3693). Every
+/// step of that ladder — ORIENT, REPRODUCE, LOCALIZE, MINIMAL FIX, VERIFY —
+/// presumes a *known* defect being *fixed*: "run the failing test" has no
+/// referent when the task is to determine whether a failing test could exist.
+/// So an investigative prompt falls through the ladder into unstructured
+/// source reading, which is exactly what happened in session
+/// `ses-1787071651715-48158`: the prompt "find a problem with stellas turn
+/// loop code" spent 87 steps, 67 tool calls, 30 minutes and $3.77 reading
+/// source to look for a bug that 278 already-passing tests in
+/// `stella_core::driver::tests` had ruled out. Its own reflection named the
+/// fix — "should have run the test suite immediately after reading the
+/// completion logic" — and estimated a test-first path at a tenth of the cost.
+///
+/// The second sentence is the load-bearing one and is pinned separately below.
+/// A suite that passes is *evidence about the hypothesis*, which is what turns
+/// "am I done" from a judgement the model argues into an observation it reads
+/// — the same discipline `stella_pipeline::verify`'s ladder enforces on the
+/// verdict side, moved to where the cost is actually incurred.
+///
+/// Deliberately scoped by "when a test or build command is known": an
+/// unconditional rule here would fire a suite run on every trivial turn, which
+/// is the disproportionate checking `verification_proportionality!` exists to
+/// prevent — so the two contracts cross-reference, the same way
+/// `faithful_reporting!` leans on that one. One shared literal, embedded
+/// verbatim by both prompts, same as `tool_steering!` and for the same
+/// anti-drift reason (#450).
+macro_rules! hypothesis_falsification {
+    () => {
+        r#"When the task is to find, diagnose, or assess rather than to change, run the project's existing tests and build early, while you are still reading — a suite that already passes is evidence against your hypothesis and can end the investigation in one call instead of a tour of the source. When the task is to change something and no test captures it yet, write the failing test before the edit and watch it fail. Then let the test decide you are done: a fail that turns to a pass is the answer, and reasoning about whether the work is complete is not a substitute for running it."#
+    };
+}
+
 /// The action-care contract shared by both static prompts: irreversibility
 /// and blast radius, weighed before an action runs rather than explained
 /// after. Neither prompt said anything about treating `rm -rf`, a
@@ -260,6 +309,10 @@ pub(crate) const SYSTEM_PROMPT: &str = concat!(
     r#"
 
 "#,
+    hypothesis_falsification!(),
+    r#"
+
+"#,
     action_care!(),
     r#"
 
@@ -307,6 +360,10 @@ pub(crate) const PIPELINE_SYSTEM_PROMPT: &str = concat!(
 
 "#,
     complexity_discipline!(),
+    r#"
+
+"#,
+    hypothesis_falsification!(),
     r#"
 
 "#,

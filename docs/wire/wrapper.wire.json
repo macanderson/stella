@@ -176,7 +176,7 @@
       }
     }
   ],
-  "note": "GENERATED FILE — DO NOT EDIT. Every message the wrapper socket carries, serialized by the same impls stella_runtime's subprocess transport uses. Regenerate with `bash scripts/export-agentevent-schema.sh`; guarded by `scripts/check-wire-schema.sh` (`make wire-schema`). Source of truth: crates/stella-plugin/src/wire.rs and src/host_call.rs. A message with an optional member appears twice — `full` populates every optional field, `minimal` omits every one that may be omitted — so a field changing between required and optional is a diff here. This is a corpus, not a JSON Schema: see crates/stella-plugin/src/wire_corpus.rs for what that does and does not catch (#3532).",
+  "note": "GENERATED FILE — DO NOT EDIT. Every message the wrapper socket carries, serialized by the same impls stella_runtime's subprocess transport uses. Regenerate with `bash scripts/export-agentevent-schema.sh`; guarded by `scripts/check-wire-schema.sh` (`make wire-schema`). Source of truth: crates/stella-plugin/src/wire.rs, src/host_call.rs and src/driver.rs. A message with an optional member appears twice — `full` populates every optional field, `minimal` omits every one that may be omitted — so a field changing between required and optional is a diff here. This is a corpus, not a JSON Schema: see crates/stella-plugin/src/wire_corpus.rs for what that does and does not catch (#3532).",
   "parts": [
     {
       "case": "candidate_grant/full",

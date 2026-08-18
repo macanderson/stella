@@ -4,9 +4,9 @@
 //! A real filter, not a level — `docs/spec/diagnostics.md` §6.
 //!
 //! `STELLA_SERVE_LOG` is a single level, which `serve-observability.md` §9
-//! knowingly gave up. At seventeen crates that stops being acceptable: `debug`
-//! across the workspace is noise nobody can read, so the one thing an operator
-//! actually needs is "quiet everywhere, loud in `stella_store`".
+//! knowingly gave up. Across a whole workspace of crates that stops being
+//! acceptable: `debug` everywhere is noise nobody can read, so the one thing
+//! an operator actually needs is "quiet everywhere, loud in `stella_store`".
 //!
 //! ```text
 //! STELLA_LOG=warn                                  # global

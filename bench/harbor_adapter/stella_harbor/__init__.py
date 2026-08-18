@@ -45,7 +45,6 @@ or arbitrary Harbor agent extras abort a claim run.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -54,6 +53,7 @@ import shlex
 import sys
 import uuid
 from collections.abc import Callable, Sequence
+from functools import partial
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -69,6 +69,12 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.agent.context import AgentContext
 
 from .atif import envelope_accounting, envelope_to_trajectory
+from .credential_guard import captured_process as _captured_process
+from .credential_guard import contains_credential as _contains_credential
+from .credential_guard import credential_carrying_names as _credential_carrying_names
+from .credential_guard import credential_leak_message as _credential_leak_message
+from .credential_guard import forbidden_main_container_env_names
+from .setup_exec import secure_setup_exec_with_credential_fd
 from .credential_bundle import (
     ENV_CREDENTIAL_SOURCE,
     HOST_CREDENTIAL_BUNDLE_FD_ENV,
@@ -156,6 +162,18 @@ _RUN_STDOUT_NAME = "stella-run.stdout.txt"
 _RUN_STDERR_NAME = "stella-run.stderr.txt"
 _STREAM_EVENTS_NAME = "stella-events.jsonl"
 _STREAM_EVENTS_PATH = f"/logs/agent/{_STREAM_EVENTS_NAME}"
+# The outbound request bodies for this trial, captured in-process by
+# `stella_model::wire_log`. Beside the event stream on purpose: that directory
+# is already collected, so the transcript survives the container without a
+# second artifact path to wire up and keep correct.
+#
+# `step_usage` records what a call *cost*; only the request records what it
+# *asked for* — the reasoning budget, the output ceiling, the tool schemas. A
+# head-to-head that cannot read those cannot say whether two arms nominally on
+# the same effort resolved to the same thinking budget, which is exactly the
+# question a 20-task panel had to leave open.
+_WIRE_LOG_NAME = "stella-wire.jsonl"
+_WIRE_LOG_PATH = f"/logs/agent/{_WIRE_LOG_NAME}"
 _TRAJECTORY_NAME = "trajectory.json"
 
 # The one log line that means telemetry was actually lost: a host-side
@@ -184,6 +202,11 @@ _ADAPTER_VERSION = "0.6.0"
 _HANDOFF_FD_ENV = "STELLA_CREDENTIAL_HANDOFF_FD"
 _HANDOFF_TARGET_ENV = "STELLA_CREDENTIAL_HANDOFF_TARGET"
 _DURABLE_STREAM_ENV = "STELLA_DURABLE_STREAM_JSON_PATH"
+#: Names the file `stella_model::wire_log` appends outbound request bodies to.
+#: Unset, the capture does not exist; the adapter always sets it, because a
+#: measured run that cannot be asked what it requested is a measurement with a
+#: hole in it.
+_WIRE_LOG_ENV = "STELLA_WIRE_LOG"
 _ENGINE_CONFIG_ENV = "STELLA_ENGINE_CONFIG_JSON"
 _HANDOFF_MODE = "anonymous-fd"
 
@@ -454,62 +477,20 @@ def _compose_host_environment(environment: BaseEnvironment) -> dict[str, str]:
     return _apply_launcher_env_controls(host_env)
 
 
-def _contains_credential(value: Any, credential: str) -> bool:
-    """Search a decoded Docker Config without rendering matching material."""
-    if isinstance(value, str):
-        return credential in value
-    if isinstance(value, dict):
-        return any(
-            _contains_credential(key, credential)
-            or _contains_credential(item, credential)
-            for key, item in value.items()
-        )
-    if isinstance(value, list):
-        return any(_contains_credential(item, credential) for item in value)
-    return False
-
-
-def _main_container_config_env_names(config: dict[str, Any]) -> set[str]:
-    """Parse Docker Config.Env without retaining or reporting its values."""
-    raw_env = config.get("Env")
-    if raw_env is None:
-        return set()
-    if not isinstance(raw_env, list):
-        raise RuntimeError("Docker main container Config.Env is not a list")
-    names: set[str] = set()
-    for item in raw_env:
-        if not isinstance(item, str) or "=" not in item:
-            raise RuntimeError("Docker main container Config.Env is malformed")
-        name, _ = item.split("=", 1)
-        if not name or name != name.strip():
-            raise RuntimeError("Docker main container Config.Env is malformed")
-        names.add(name)
-    return names
-
-
-def _forbidden_main_container_env_names(config: dict[str, Any]) -> list[str]:
-    """Return only forbidden variable names, never their potentially secret values."""
-    names = _main_container_config_env_names(config)
-    return sorted(
-        name
-        for name in names
-        if name.startswith(_ENV_PREFIX)
-        or name.upper() in _PROVIDER_CREDENTIAL_CONFIG_ENV
-        or name.upper() in _PROVIDER_ROUTE_CONFIG_ENV
-    )
-
-
-async def _captured_process(argv: list[str], env: dict[str, str]) -> tuple[int, bytes]:
-    """Run one host inspection command without ever echoing captured output."""
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        env=env,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await process.communicate()
-    return process.returncode or 0, stdout
+#: ``stella init`` with the embedding credential on an anonymous pipe. The
+#: plumbing below encodes this module's credential-scrubbing rules, so
+#: :mod:`stella_harbor.setup_exec` takes it as arguments rather than importing
+#: it back and forming a cycle — as :func:`_probe_sigkill_cause` does.
+_secure_setup_exec_with_credential_fd = partial(
+    secure_setup_exec_with_credential_fd,
+    install_path=_INSTALL_PATH,
+    handoff_fd_env=_HANDOFF_FD_ENV,
+    handoff_target_env=_HANDOFF_TARGET_ENV,
+    compose_base_argv=_compose_base_argv,
+    compose_host_environment=_compose_host_environment,
+    apply_launcher_env_controls=_apply_launcher_env_controls,
+    is_credential_env_name=_is_credential_env_name,
+)
 
 
 async def _verify_compose_containers_exclude_credentials(
@@ -539,14 +520,9 @@ async def _verify_compose_containers_exclude_credentials(
 
     compose = _compose_base_argv(environment)
     host_env = _compose_host_environment(environment)
-    if any(
-        credential in value
-        for value in host_env.values()
-        for credential in credentials
-    ):
-        raise RuntimeError(
-            "selected provider credential remains in Docker's host environment"
-        )
+    carriers = _credential_carrying_names(host_env, credentials)
+    if carriers:
+        raise RuntimeError(_credential_leak_message(carriers))
 
     return_code, output = await _captured_process([*compose, "ps", "-aq"], host_env)
     if return_code != 0:
@@ -593,7 +569,12 @@ async def _verify_compose_containers_exclude_credentials(
         raise RuntimeError(
             "benchmark Compose project must expose exactly one main service container"
         )
-    forbidden_names = _forbidden_main_container_env_names(main_configs[0])
+    forbidden_names = forbidden_main_container_env_names(
+        main_configs[0],
+        env_prefix=_ENV_PREFIX,
+        credential_names=_PROVIDER_CREDENTIAL_CONFIG_ENV,
+        route_names=_PROVIDER_ROUTE_CONFIG_ENV,
+    )
     if forbidden_names:
         raise RuntimeError(
             "main benchmark container defines forbidden inherited environment names: "
@@ -722,14 +703,9 @@ async def _secure_exec_with_credential_fd(
         # ordinary build settings, but its `/proc/<pid>/environ` cannot expose
         # the benchmark provider key either.
         host_env = _compose_host_environment(environment)
-        if any(
-            credential in value
-            for value in host_env.values()
-            for credential in credentials
-        ):
-            raise RuntimeError(
-                "selected provider credential remains in Docker's host environment"
-            )
+        carriers = _credential_carrying_names(host_env, credentials)
+        if carriers:
+            raise RuntimeError(_credential_leak_message(carriers))
 
         return await exec_with_agent_reap(
             compose, compose_base, host_env, wire, completion_probe, _INSTALL_PATH
@@ -984,20 +960,40 @@ class StellaAgent(BaseInstalledAgent):
         plane — recall fans out through the CGP host over this index — so the
         step buys the turn code intelligence it would otherwise lack. The
         embedding half needs a backend in the container (``VOYAGE_API_KEY`` /
-        ``OPENAI_API_KEY`` / ``STELLA_EMBED_URL``), which this rig lacks
-        today: the gap #2995 measures. Neither half needs a credential
+        ``OPENAI_API_KEY`` / ``STELLA_EMBED_URL``), and **this is the step
+        that has to have it**: init is where the index is built, so a
+        credential that only arrives later on the run path's handoff finds no
+        vectors to rank and leaves ``search`` lexical for the whole trial.
+        When one is configured the command therefore goes through
+        :func:`_secure_setup_exec_with_credential_fd` — the same
+        anonymous-stdin discipline the run uses, never ``exec(env=...)``,
+        which Harbor renders into the host process table.
+
+        With none configured this falls back to the plain agent exec and init
+        reports ``semantic index: skipped``, which is the honest no-backend
+        posture rather than a failure. Neither half needs a credential
         otherwise, and best-effort is by construction — a workspace with
         nothing indexable (or no tree-sitter grammar) is this benchmark's
         normal case, not a failure, and must never block a run. All of it is
         off the agent's clock.
         """
         cwd = getattr(environment.task_env_config, "workdir", None)
-        command = f"cd {shlex.quote(str(cwd))} && " if cwd else ""
-        command += f"{_INSTALL_PATH} init"
+        embedding = optional_embedding_credentials(self._configured_value)
         try:
-            result = await self.exec_as_agent(
-                environment, command=command, timeout_sec=300
-            )
+            if embedding:
+                result = await _secure_setup_exec_with_credential_fd(
+                    environment,
+                    command=[_INSTALL_PATH, "init"],
+                    env={},
+                    credentials=embedding,
+                    timeout_sec=300,
+                )
+            else:
+                command = f"cd {shlex.quote(str(cwd))} && " if cwd else ""
+                command += f"{_INSTALL_PATH} init"
+                result = await self.exec_as_agent(
+                    environment, command=command, timeout_sec=300
+                )
         except Exception as exc:  # noqa: BLE001 - discovery aid, never fatal
             print(f"stella-adapter: code graph unavailable: {exc}", file=sys.stderr)
             self._code_graph_summary = code_graph.unavailable(exc)
@@ -1083,6 +1079,7 @@ class StellaAgent(BaseInstalledAgent):
         # is disclosed in the manifest, not a secret to keep out of `/proc`.
         env.update(selected.routing)
         env[_DURABLE_STREAM_ENV] = _STREAM_EVENTS_PATH
+        env[_WIRE_LOG_ENV] = _WIRE_LOG_PATH
         self._credential_handoff_mode = _HANDOFF_MODE
         self._provider_routing = dict(selected.routing)
 
@@ -1442,6 +1439,7 @@ class StellaAgent(BaseInstalledAgent):
             _HANDOFF_FD_ENV,
             _HANDOFF_TARGET_ENV,
             _DURABLE_STREAM_ENV,
+            _WIRE_LOG_ENV,
             _ENGINE_CONFIG_ENV,
             HOST_CREDENTIAL_BUNDLE_FD_ENV,
         }

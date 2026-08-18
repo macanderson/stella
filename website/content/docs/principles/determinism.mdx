@@ -88,14 +88,18 @@ failure class has nowhere to occur.
 put frontier models to work. It is a statement about **where to spend
 them**:
 
-- Verification prefers the [flip oracle](/docs/inference-pipeline) — a
-  test that fails before and passes after — and escalates to a model verifier
-  only when deterministic evidence is inconclusive. Evidence first, opinion
-  as fallback.
-- When a model *is* asked to verifier, the setup is engineered like a
-  mechanism: a different family than the worker (bias resistance), a
-  strict output contract, read-only tools, a heuristic fallback if the
-  call fails.
+- Verification runs the [flip oracle](/docs/inference-pipeline) — a test
+  that fails before the change and passes after — and the ladder is terminal
+  at every rung: when the evidence does not add up, it stops and reports
+  `Unverified`, an honest "not proven," instead of asking a model to guess.
+- The one model call that survives in the pipeline is the witness *author*,
+  which writes the failing test. It never judges the result — the test's own
+  fail→pass flip does that, by running.
+- Goal mode is a separate mechanism with its own standing verifier: after
+  every round, unconditionally, an independent model assesses the transcript
+  against the goal. It is not a fallback for inconclusive evidence — it runs
+  every round regardless, and degrades gracefully rather than fabricating a
+  verdict if the call itself fails.
 - Routing, budgets, compaction, retries, memory injection — all
   deterministic, all boring, all auditable. The model's tokens go to the
   two things only intelligence can do: **writing the change** and

@@ -35,8 +35,6 @@
 //! the agent's search and the operator's search from drifting into two
 //! different answers to the same question.
 
-use std::path::Path;
-
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
@@ -169,12 +167,6 @@ impl Tool for Search {
             .await
             .rendered
     }
-}
-
-/// The tool's answer for one workspace, with no cache — the seam a test drives
-/// against a temp root, and the shape the one-shot CLI command uses.
-pub async fn search_in(root: &Path, query: &str, config: SearchConfig) -> ToolOutput {
-    engine::report(root, query, config).await.rendered
 }
 
 #[cfg(test)]

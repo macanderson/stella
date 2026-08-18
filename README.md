@@ -660,7 +660,7 @@ witness-tested rather than assumed — and Stella sends **zero telemetry
 anywhere** by default.
 
 They are stated normatively, in full, in
-[AGENTS.md § Architecture: ports, not concretions](AGENTS.md#architecture-ports-not-concretions).
+[AGENTS.md § Architecture: ports, not direct dependencies](AGENTS.md#architecture-ports-not-direct-dependencies).
 That is the only copy: this section is a summary and does not govern. A PR that
 breaks one of them will be asked to restructure regardless of how good the
 feature is.
@@ -671,7 +671,7 @@ most people want to know first.
 
 ## Workspace layout
 
-Twenty `stella-*` crates make up the workspace. The Context Graph Protocol
+Twenty-six `stella-*` crates make up the workspace. The Context Graph Protocol
 (CGP) —
 the retrieval abstraction Stella's recall routes through — now lives in its own
 repository and is pulled in as registry crates pinned to exact versions in the
@@ -703,6 +703,12 @@ extending it.
 | [`stella-engine`](crates/stella-engine/README.md) | Step-scoped facade over `stella-core` for durable hosts: `run_step` + checkpoint/resume, re-exports only — consumed by `stella-serve`, never linked by the CLI                                                                          |
 | [`stella-runtime`](crates/stella-runtime/README.md) | The shared engine-assembly bottom half (`RuntimeSpec` → `SessionRuntime`): provider, registry, store, budget — construction only, and it reads no ambient environment by contract                                                       |
 | [`stella-parity`](crates/stella-parity/README.md) | The CLI-vs-API capability matrix: every engine capability declares a witnessed posture on both surfaces, so a feature cannot ship on one and silently miss the other                                                                    |
+| [`stella-autonomy`](crates/stella-autonomy/README.md) | The self-driving loop's decision core: the AIMD controller, aperture ladder, dry-streak oracle, and ledger folds — pure and shared by the CLI and the Observatory so they cannot drift                                                  |
+| [`stella-diff`](crates/stella-diff/README.md) | A pure line-oriented unified diff with git's exact hunk shape and no dependencies                                                                                                                                                      |
+| [`stella-embed`](crates/stella-embed/README.md) | The embedding seam: the `Embedder` trait, the fingerprint stamped on every stored vector, and cosine ranking                                                                                                                          |
+| [`stella-plugin`](crates/stella-plugin/README.md) | Parses and validates a plugin's manifest — what it declares in the turn loop — with no I/O                                                                                                                                             |
+| [`stella-transcript`](crates/stella-transcript/README.md) | The shared transcript model plus its two renderers: HTML for the Observatory and a character grid for the TUI                                                                                                                 |
+| [`stella-tty`](crates/stella-tty/README.md) | A no-dependency leaf that answers whether a human is around to see and answer a prompt                                                                                                                                                |
 | Context Graph Protocol                               | Its own project now: [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — wire types, host runtime, and the public conformance suite. Stella is its reference host and depends on it as exact-version registry crates. |
 
 Alongside the Rust workspace, the documentation site
