@@ -443,11 +443,18 @@ impl Tool for Bash {
         // embedded it would differ byte-for-byte between sessions and cost a
         // cold prompt-cache write every time (invariant 7).
         let scratch = if self.scratch.is_some() {
-            " For working files that are NOT deliverables — a compiled shim, a captured \
-             log, a scratch script — use $STELLA_SCRATCH: it is writable, lives outside \
-             the workspace so nothing there lands in this turn's diff, and is deleted \
-             when the session ends. get_environment reports its absolute path for the \
-             file tools."
+            // Phrased as a usable command fragment, not as a fact to look up.
+            // Measured: told only that a scratch directory existed and that
+            // `get_environment` reports its path, an agent spent a turn
+            // calling `get_environment` before retrying. `$STELLA_SCRATCH` is
+            // already in the command's environment; saying so removes the
+            // lookup entirely.
+            " Redirect working files that are NOT deliverables — a captured log, a \
+             compiled shim, a scratch script — to $STELLA_SCRATCH, which is already \
+             exported into your shell: `apt-get update > $STELLA_SCRATCH/apt.log` \
+             needs no lookup. It is writable, nothing there lands in this turn's diff, \
+             and it is deleted when the session ends. (get_environment reports its \
+             absolute path if a file tool needs one.)"
         } else {
             ""
         };
