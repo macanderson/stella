@@ -156,6 +156,18 @@ _RUN_STDOUT_NAME = "stella-run.stdout.txt"
 _RUN_STDERR_NAME = "stella-run.stderr.txt"
 _STREAM_EVENTS_NAME = "stella-events.jsonl"
 _STREAM_EVENTS_PATH = f"/logs/agent/{_STREAM_EVENTS_NAME}"
+# The outbound request bodies for this trial, captured in-process by
+# `stella_model::wire_log`. Beside the event stream on purpose: that directory
+# is already collected, so the transcript survives the container without a
+# second artifact path to wire up and keep correct.
+#
+# `step_usage` records what a call *cost*; only the request records what it
+# *asked for* — the reasoning budget, the output ceiling, the tool schemas. A
+# head-to-head that cannot read those cannot say whether two arms nominally on
+# the same effort resolved to the same thinking budget, which is exactly the
+# question a 20-task panel had to leave open.
+_WIRE_LOG_NAME = "stella-wire.jsonl"
+_WIRE_LOG_PATH = f"/logs/agent/{_WIRE_LOG_NAME}"
 _TRAJECTORY_NAME = "trajectory.json"
 
 # The one log line that means telemetry was actually lost: a host-side
@@ -184,6 +196,11 @@ _ADAPTER_VERSION = "0.6.0"
 _HANDOFF_FD_ENV = "STELLA_CREDENTIAL_HANDOFF_FD"
 _HANDOFF_TARGET_ENV = "STELLA_CREDENTIAL_HANDOFF_TARGET"
 _DURABLE_STREAM_ENV = "STELLA_DURABLE_STREAM_JSON_PATH"
+#: Names the file `stella_model::wire_log` appends outbound request bodies to.
+#: Unset, the capture does not exist; the adapter always sets it, because a
+#: measured run that cannot be asked what it requested is a measurement with a
+#: hole in it.
+_WIRE_LOG_ENV = "STELLA_WIRE_LOG"
 _ENGINE_CONFIG_ENV = "STELLA_ENGINE_CONFIG_JSON"
 _HANDOFF_MODE = "anonymous-fd"
 
@@ -1226,6 +1243,7 @@ class StellaAgent(BaseInstalledAgent):
         # is disclosed in the manifest, not a secret to keep out of `/proc`.
         env.update(selected.routing)
         env[_DURABLE_STREAM_ENV] = _STREAM_EVENTS_PATH
+        env[_WIRE_LOG_ENV] = _WIRE_LOG_PATH
         self._credential_handoff_mode = _HANDOFF_MODE
         self._provider_routing = dict(selected.routing)
 
@@ -1585,6 +1603,7 @@ class StellaAgent(BaseInstalledAgent):
             _HANDOFF_FD_ENV,
             _HANDOFF_TARGET_ENV,
             _DURABLE_STREAM_ENV,
+            _WIRE_LOG_ENV,
             _ENGINE_CONFIG_ENV,
             HOST_CREDENTIAL_BUNDLE_FD_ENV,
         }
