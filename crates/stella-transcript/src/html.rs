@@ -114,7 +114,7 @@ fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index
         status_word(turn.status),
     );
 
-    let dig = digest::turn_digest(turn, 64);
+    let dig = digest::turn_digest(turn, 64, digest::ChipStyle::Roomy);
     if !open {
         let _ = write!(
             out,

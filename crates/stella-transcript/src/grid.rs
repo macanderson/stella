@@ -250,7 +250,7 @@ fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
 }
 
 fn turn_frame_top(turn: &Turn, open: bool, width: usize) -> Line {
-    let dig = digest::turn_digest(turn, 40);
+    let dig = digest::turn_digest(turn, 40, digest::ChipStyle::Tight);
     let mut line = vec![
         Cell::new("╭─ ", Color::Faint),
         Cell::new(&turn.name, Color::Violet).bold(),
@@ -260,10 +260,13 @@ fn turn_frame_top(turn: &Turn, open: bool, width: usize) -> Line {
             status_color(turn.status),
         ),
         Cell::new(" ", Color::Faint),
-        Cell::new(fold_mark(open), Color::Dim),
-        Cell::new(" ", Color::Faint),
     ];
+    // An expanded turn shows its content in full, so a fold marker on its own
+    // header would be an affordance for a click that does nothing new. Only a
+    // collapsed turn — whose header stands in for hidden content — gets one.
     if !open {
+        line.push(Cell::new(fold_mark(open), Color::Dim));
+        line.push(Cell::new(" ", Color::Faint));
         line.push(Cell::new(format!("\"{}\" ", dig.prompt_line), Color::Dim));
     }
 
