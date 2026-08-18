@@ -278,9 +278,17 @@ test asserting the result is never more permissive than either input.
 
 ### 4.5 Pipeline stages
 
-Today the staged pipeline (triage → plan → witness → execute → verify →
-verifier) is hard-coded in `stella-pipeline`, and `--no-pipeline` is the only
-control — it turns the whole thing off and drops to the raw step-loop.
+The raw step loop is the default on every door; `stella run --pipeline
+classic` opts into the staged pipeline (`stella run --pipeline <variant>`
+opts into any other installed wrapper plugin instead, `--no-pipeline` is now
+a deprecated hidden no-op). The `classic` variant's stage order itself is no
+longer hard-coded: it is declared in `crates/stella-pipeline/variants/classic.toml`'s
+`[wrapper]` block and resolved through `Pipeline::begin_turn_schedule`
+(`src/pipeline/schedule_wiring.rs`) into the `Schedule` that actually drives
+dispatch (#3408). The manifest declares only the order and what its closed
+condition grammar can express, so the proposal below — a
+`[pipeline.stages.<name>]` config block — would need to compose with that
+manifest rather than with a single on/off switch.
 
 `[pipeline.stages.<name>]` gives each stage `enabled`, `on_disable`
 (`skip` | `fail`), and where relevant `max_revisions` / `routes_to`.
