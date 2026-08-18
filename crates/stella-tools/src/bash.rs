@@ -407,14 +407,12 @@ fn segment_args(words: &[String], command_index: usize) -> Vec<&str> {
 /// is stored. `/dev/stdout` and `/dev/stderr` write to the pipes Stella is
 /// already capturing.
 ///
-/// The system temp directory is deliberately **not** here. It was, briefly,
-/// on the argument that `/tmp` is not the user's work — but the rule this
-/// module enforces is that a session writes inside its own directories, and
-/// `/tmp` is outside them. A session that needs scratch space has a scratch
-/// directory of its own (`STELLA_SCRATCH`, granted as a scope root by
-/// `ToolRegistry::write_scope`), which is where that work belongs and which
-/// is cleaned up with the session. An operator who genuinely wants `/tmp`
-/// writable says so with `--allow-dir /tmp`.
+/// The system temp directory is deliberately **not** here either, and this
+/// time not because it is refused: it is a genuine scope root now
+/// ([`crate::temp_roots`]), so `ctx.refuse_write` allows it on the same
+/// evidence as the workspace, and listing it as an exemption would be a second
+/// spelling of one boundary — the shape that lets `write_file` and `bash`
+/// disagree about the same path.
 const ALWAYS_WRITABLE: &[&str] = &["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"];
 
 /// The refusal for one argument, when it resolves to something outside the

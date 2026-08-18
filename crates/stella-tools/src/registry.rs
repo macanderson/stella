@@ -255,7 +255,16 @@ impl ToolRegistry {
     }
 
     /// This session's write scope: the workspace root, the session scratch
-    /// directory, and whatever [`Self::allow_write_dirs`] added.
+    /// directory, the system temp directories, and whatever
+    /// [`Self::allow_write_dirs`] added.
+    ///
+    /// The system temp directories are in the scope because a write there
+    /// cannot be the lost work the confinement exists to prevent, and because
+    /// `… | tee /tmp/out.txt` is what shell convention spells rather than
+    /// something a prompt has to teach — see [`crate::temp_roots`] for the full
+    /// argument and for the earlier decision it reverses. `STELLA_SCRATCH`
+    /// remains the recommended place: it is per-session, so two concurrent runs
+    /// cannot collide on one filename, and it is removed with the session.
     ///
     /// The scratch directory is in the scope because the prompt tells the
     /// model to put working files there — "keep intermediate notes and working
@@ -273,7 +282,7 @@ impl ToolRegistry {
             .unwrap_or_else(|_| self.root.clone());
         let scratch = self.scratch_dir.iter().cloned();
         stella_core::workspace_scope::SessionScope::new(root).with_additional(
-            scratch.chain(
+            scratch.chain(crate::temp_roots::system_temp_roots()).chain(
                 self.extra_write_dirs
                     .read()
                     .unwrap_or_else(|p| p.into_inner())
