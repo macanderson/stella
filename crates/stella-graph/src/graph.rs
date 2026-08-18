@@ -360,6 +360,26 @@ impl CodeGraph {
         lease::release(&conn, lease);
     }
 
+    /// Vectors stranded under fingerprints that are not `active` (#3652), as
+    /// `(fingerprint, rows)` — see [`crate::vectors::retired_fingerprints`]
+    /// for why these are reported rather than swept.
+    pub fn retired_vector_fingerprints(
+        &self,
+        active: &str,
+    ) -> Result<Vec<(String, usize)>, GraphError> {
+        vectors::retired_fingerprints(&self.inner.read_guard(), active)
+    }
+
+    /// Delete every vector held under a retired `fingerprint`, returning the
+    /// rows removed. Refuses to touch `active`.
+    pub fn prune_vector_fingerprint(
+        &self,
+        fingerprint: &str,
+        active: &str,
+    ) -> Result<usize, GraphError> {
+        vectors::prune_fingerprint(&mut self.inner.write_guard(), fingerprint, active)
+    }
+
     /// Number of files currently in the index.
     pub fn file_count(&self) -> Result<usize, GraphError> {
         store::file_count(&self.inner.read_guard())

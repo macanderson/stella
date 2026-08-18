@@ -364,6 +364,81 @@ pub fn count(conn: &Connection, fingerprint: &str) -> Result<usize, GraphError> 
     Ok(count.max(0) as usize)
 }
 
+/// Vectors held under a fingerprint that is not the active one (#3652).
+///
+/// A vector is keyed `(file_id, fingerprint)` precisely so two embedders
+/// never share a vector space, which means switching model does not
+/// invalidate the old vectors — it makes them **invisible**. Invisible is not
+/// gone: nothing deletes them, nothing counts them, and a 1536-dimension f32
+/// vector is about 6 KiB per file, so a workspace that has tried three models
+/// silently carries two full corpora it can never read.
+///
+/// Reported rather than swept, and that is a deliberate decision rather than
+/// an unfinished one. Sweeping automatically would destroy the exact property
+/// the coexisting key buys: a user moving between two models — comparing
+/// them, or switching back after a bad result — would pay a full re-embed in
+/// each direction. So this answers the question and leaves the spending
+/// decision with whoever is paying for it.
+///
+/// Ordered by count descending, then fingerprint, so a report is stable.
+pub fn retired_fingerprints(
+    conn: &Connection,
+    active: &str,
+) -> Result<Vec<(String, usize)>, GraphError> {
+    // Both tables, unioned: chunk vectors outnumber file vectors by roughly
+    // the symbol-per-file ratio, so a report that counted only the file rung
+    // would understate the reclaimable space by an order of magnitude.
+    let mut stmt = conn.prepare(
+        "SELECT fingerprint, SUM(n) FROM ( \
+           SELECT fingerprint, COUNT(*) AS n FROM code_graph_vectors \
+             WHERE fingerprint <> ?1 GROUP BY fingerprint \
+           UNION ALL \
+           SELECT fingerprint, COUNT(*) AS n FROM code_graph_chunk_vectors \
+             WHERE fingerprint <> ?1 GROUP BY fingerprint \
+         ) GROUP BY fingerprint \
+         ORDER BY SUM(n) DESC, fingerprint",
+    )?;
+    let rows = stmt
+        .query_map(params![active], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as usize,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Delete every vector held under `fingerprint`, returning how many rows went.
+///
+/// One transaction across both tables: a half-swept fingerprint is a state
+/// nothing else in this module knows how to describe, and the whole point of
+/// the operation is reclaiming space, which a partial result does not do.
+///
+/// Refuses to touch the active fingerprint. Sweeping the vectors currently in
+/// use is never what a caller means by "reclaim retired space", and doing it
+/// would silently bill them for a full re-embed on the next query.
+pub fn prune_fingerprint(
+    conn: &mut Connection,
+    fingerprint: &str,
+    active: &str,
+) -> Result<usize, GraphError> {
+    if fingerprint == active {
+        return Ok(0);
+    }
+    let tx = conn.transaction()?;
+    let mut removed = tx.execute(
+        "DELETE FROM code_graph_vectors WHERE fingerprint = ?1",
+        params![fingerprint],
+    )?;
+    removed += tx.execute(
+        "DELETE FROM code_graph_chunk_vectors WHERE fingerprint = ?1",
+        params![fingerprint],
+    )?;
+    tx.commit()?;
+    Ok(removed)
+}
+
 /// Little-endian f32, fixed so a `codegraph.db` copied between machines ranks
 /// identically. SQLite's own float storage would cost a row per dimension.
 fn encode(vector: &[f32]) -> Vec<u8> {

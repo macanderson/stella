@@ -484,6 +484,75 @@ impl Drop for SessionGraph {
 /// stderr or the deck transcript, never to a machine-readable stdout);
 /// `on_ready` fires once after the build (the deck refreshes its Graph tab
 /// there; other callers pass a no-op).
+/// Report — or, with `prune`, reclaim — semantic vectors left behind by an
+/// embedding model this workspace no longer uses (#3652).
+///
+/// Reporting is the default and sweeping is the flag, which is the opposite
+/// of what "leaked rows" usually warrants. The reason is that these rows are
+/// not leaked by accident: vectors are keyed by embedder fingerprint
+/// specifically so two models never share a vector space, and the same key is
+/// what lets a user switch back to a previous model and reuse its vectors for
+/// free. Sweeping on every init would quietly bill a full re-embed to anyone
+/// evaluating two embedders against each other — so `stella init` states the
+/// cost and leaves the decision to whoever is paying it.
+///
+/// Silent when no embedder is configured: without an active fingerprint there
+/// is no way to say which of the stored ones is retired, and guessing here
+/// would delete the wrong corpus.
+pub(super) fn report_retired_vectors(
+    workspace_root: &std::path::Path,
+    prune: bool,
+    emit: &mut dyn FnMut(String),
+) {
+    use stella_embed::Embedder;
+
+    let stella_embed::Resolution::Configured(embedder) =
+        stella_embed::resolve(&stella_embed::EmbedderEnv::from_process())
+    else {
+        return;
+    };
+    let active = embedder.fingerprint().id();
+
+    let Ok(db_path) = stella_store::workspace_private_sqlite_path(workspace_root, "codegraph.db")
+    else {
+        return;
+    };
+    let Ok(graph) = stella_graph::CodeGraph::open(workspace_root, &db_path) else {
+        return;
+    };
+    let retired = graph
+        .retired_vector_fingerprints(&active)
+        .unwrap_or_default();
+    if retired.is_empty() {
+        graph.shutdown();
+        return;
+    }
+
+    let rows: usize = retired.iter().map(|(_, count)| count).sum();
+    if !prune {
+        emit(format!(
+            "· semantic index: {rows} vector(s) from {} retired embedding model(s) are still \
+             stored — they are reused for free if you switch back; run `stella init \
+             --prune-vectors` to reclaim the space",
+            retired.len()
+        ));
+        graph.shutdown();
+        return;
+    }
+
+    let mut removed = 0usize;
+    for (fingerprint, _) in &retired {
+        removed += graph
+            .prune_vector_fingerprint(fingerprint, &active)
+            .unwrap_or(0);
+    }
+    emit(format!(
+        "· semantic index: reclaimed {removed} vector(s) from {} retired embedding model(s)",
+        retired.len()
+    ));
+    graph.shutdown();
+}
+
 /// Session-start vector top-up (#3649), reporting only what a user can act on.
 ///
 /// Deliberately quieter than `stella init`'s pass. Init is where a workspace
