@@ -65,18 +65,26 @@ this is the phase-level rollup the execution order below promises.
   `scripts/self-driving.sh` remains the sole working driver, untouched, per
   this phase's own instruction not to delete it before a replacement is
   proven.
-- **Phase 6 (Documentation).** In progress. This document, `doc:pipeline-as-plugins`,
-  and `crates/stella-pipeline/README.md` were rewritten to the post-flip state
-  in this pass; `crates/stella-plugin/README.md` and
-  `crates/stella-runtime/README.md` were partially rewritten by an earlier
-  commit (#3672) and had residual stale lines corrected in this pass. Not yet
-  done: the `website/content/docs/` external surface (run/goal/fleet/arena
-  command pages, `inference-pipeline.mdx`, `agent-engine-paths.mdx`,
-  `agent-modes.mdx`, `agent-fleets.mdx` and others still describe the staged
-  pipeline as the default), `macanderson/stella-examples`'s `plugins/README.md`,
-  `llms.txt`'s generated description text, and the turn-loop deck under
-  `website/public/presentations/turn-loop/`. This phase is explicitly not
-  optional and is not closed by this pass.
+- **Phase 6 (Documentation).** In progress, across more than one pass. This
+  document, `doc:pipeline-as-plugins`, and `crates/stella-pipeline/README.md`
+  were rewritten to the post-flip state in this pass; `crates/stella-plugin/README.md`
+  and `crates/stella-runtime/README.md` were partially rewritten by an
+  earlier commit (#3672) and had residual stale lines corrected in this pass.
+  Spot-checked against the tree while writing this status: `run.mdx`,
+  `goal.mdx`, `fleet.mdx`, and `arena.mdx` under `website/content/docs/commands/`
+  already state the raw-default/`--pipeline <variant>`-opt-in shape correctly
+  as of this update, and `inference-pipeline.mdx` opens with "the raw step
+  loop is the default on every door" — so at least part of the external
+  surface has already moved, likely in a separate pass of this same effort.
+  `agent-fleets.mdx:50` ("Pass `--no-pipeline` to run the raw step loop") is a
+  counter-example found in the same spot-check — still backwards, not
+  rewritten. Do not trust this paragraph as a full audit of
+  `website/content/docs/`: verify each page against the tree before assuming
+  it is done or stale. Also not yet verified as done:
+  `macanderson/stella-examples`'s `plugins/README.md` (separate repository,
+  not in this checkout), `llms.txt`'s generated description text, and the
+  turn-loop deck under `website/public/presentations/turn-loop/`. This phase
+  is explicitly not optional and is not closed by this pass.
 
 ---
 
