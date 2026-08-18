@@ -10,13 +10,16 @@ Status: proposal, unbuilt. Phases in §9.
 
 **Reads on top of:** [`doc:pipeline-as-plugins`](../spec/pipeline-as-plugins.md) §10
 (self-driving is a *host*, not a wrapper — that decision is upstream of this
-document and is not reopened here) and
+document and is not reopened here); [`doc:wrapper-socket`](../spec/wrapper-socket.md)
+§6b (the host-call channel — *"a plugin may ask, never reach"* — whose second
+dispatch context is the mechanism this design turns on, §2.1); and
 [`doc:agent-native-delivery`](agent-native-delivery.md) (the issue kernel, the
 provider manifests, and the residue gate — designed, unbuilt, and a hard
 dependency of §3.1 and §5).
 
-**Tracked by:** #3546 (Track D remainder) is the nearest open work and is
-subsumed by B0+B2 below. Epic #1280 (agent-native delivery) was closed
+**Tracked by:** #3599 is the epic. #3546 (Track D remainder) is the nearest open
+work: its `AuthzGate` half is closed structurally by B0 (§2.1) and its
+"move the shell driver" half is subsumed by B2. Epic #1280 (agent-native delivery) was closed
 `not_planned` on 2026-08-10 as *policy*, frozen behind #2374; #2374 closed
 `completed` on 2026-08-14, so the freeze that closed it has lifted, and #2374's
 own closing sentence names this document's subject as the weakest area in the
@@ -32,9 +35,12 @@ rhythm with developer drivers."*
 > **ship** it. Those three verbs live outside the product, in Claude Code
 > slash-command markdown, and that is the whole gap.
 
-The loop is not missing a feature. It is missing a *surface*: everything a host
-would need to call in order to drive delivery, as opposed to bookkeeping about
-delivery.
+The loop is not missing a feature, and it is not missing a plugin — it already
+is one. It is missing a **channel**: since #3590 the plugin platform has a
+well-designed way to hand a capability to a plugin that participates in a turn,
+and no way at all to hand one to a plugin that *drives* turns. Self-driving is
+the second kind, so the only route left to it is a CLI verb surface that does
+bookkeeping and nothing else.
 
 ---
 
@@ -71,7 +77,8 @@ Nothing below proposes changing it.
 | The `Issue` kernel, provider manifests, `kind = "exec"` | [`doc:agent-native-delivery`](agent-native-delivery.md) §3–§4 | Design only. Epic closed `not_planned` under a freeze that has since lifted. |
 | The residue gate — a prose follow-up becomes undischargeable | [`doc:agent-native-delivery`](agent-native-delivery.md) §7 | Design only. This is the mechanism that makes "file new tickets" a *guarantee* rather than a habit. |
 | Backlog dedup + decay | [`doc:agent-native-delivery`](agent-native-delivery.md) §10.1 | Design only. |
-| Self-driving as a plugin that actually drives | #3546, [`doc:pipeline-as-plugins`](../spec/pipeline-as-plugins.md) §10 D6 | Manifest exists (`plugins/stella-selfdriving/plugin.toml`); it starts nothing. |
+| Self-driving as a plugin that actually drives | #3546, [`doc:pipeline-as-plugins`](../spec/pipeline-as-plugins.md) §10 D6 | Manifest exists (`plugins/stella-selfdriving/plugin.toml`); it starts nothing, and could not drive anything if it did — §2.1. |
+| The host-call channel: `recall`, `child_turn`, `run_test` | `crates/stella-plugin/src/host_call.rs`, `crates/stella-runtime/src/wrapper/host_call.rs` | **Built** (#3590), and reachable only from inside a turn. The capability self-driving needs exists and is out of its reach. |
 
 One correction to the record, because a design doc is a claim and not a fact:
 [`doc:agent-native-delivery`](agent-native-delivery.md) §11.1 lands the provider
@@ -90,6 +97,7 @@ larger than §11.1 implies.
 | **Autonomous release.** `scripts/release.sh` is a human-driven script that refuses a tag that already exists. | `scripts/release.sh:143` |
 | **Structural self-curation.** Tools, context records, and skills are curated by a human or by a prompt, never proposed from loop evidence. | `/self-driving:evolve` is `scripts/self-driving/commands/self-driving/evolve.md` — prose. |
 | **A work generator.** The ladder terminates *into* `watch` and stays there until an external event. Nothing manufactures the next question. | `advance` returns `WATCH` once `LENSES` is exhausted (`crates/stella-autonomy/src/lib.rs:340`). |
+| **Any way for the self-driving plugin to ask the host for a capability.** The host-call channel exists and carries exactly the right capability (`child_turn`), and self-driving is structurally excluded from it. | `LoopGrant::permits_call` (`crates/stella-plugin/src/manifest.rs:213`) requires `participation >= Steering`; `plugins/stella-selfdriving/plugin.toml` declares `participation = "none"`. §2.1. |
 
 ### 1.4 The verdict
 
@@ -110,37 +118,75 @@ why.
 
 ## 2. The diagnosis
 
-### 2.1 "Make it a plugin" is right, and is not sufficient
+### 2.1 The plugin platform grants capability only to *in-turn* plugins
 
-Self-driving being a plugin is already settled —
-[`doc:pipeline-as-plugins`](../spec/pipeline-as-plugins.md) §10 chose *host*
-over *wrapper*, `plugins/stella-selfdriving/plugin.toml` is the consent
-document, and #3546 tracks finishing the move. This design does not reopen
-that; it adopts it.
+Self-driving already **is** a plugin. `plugins/stella-selfdriving/plugin.toml`
+exists, [`doc:pipeline-as-plugins`](../spec/pipeline-as-plugins.md) §10 chose
+*host* over *wrapper*, and #3546 tracks finishing the move. So "it should be a
+plugin" cannot be the missing step. The useful question is the next one down:
+**a plugin gets capability from the host by what mechanism, and does
+self-driving qualify?**
 
-But it is worth being exact about what packaging would and would not fix,
-because "it should be a plugin" is a tempting whole answer and it is not one.
+Since #3590 there is a precise answer, and it is the whole diagnosis.
 
-A host plugin drives Stella **through the host surface**. The host surface is
-`HOST_SURFACE` — 18 verbs, every one of them bookkeeping. There is no verb for
-"give me the next unit of work", none for "do this unit", none for "open the
-PR", none for "is it merged yet". A plugin bound strictly to the declared
-surface, as #3546's definition of done requires, therefore **cannot deliver
-anything.** It can size a cycle it has no way to run.
+**The mechanism is the host-call channel** (`crates/stella-plugin/src/host_call.rs`),
+whose principle is exactly right: *a plugin may **ask** the host for a
+capability, and may never reach for one.* It is a closed enum of three
+capabilities, and one of them is `child_turn` — "a bounded turn at a declared
+role intent… the host resolves it, carves the budget, runs the turn and settles
+once", performed over the host's own sub-agent dispatcher so the plugin holds no
+provider and no credential. **That is the "do the work" capability**, already
+built, already gated, already on the wire.
 
-Which is exactly the shape of what exists. `scripts/self-driving.sh` is 996
-lines that call the bookkeeping verbs, and every actual decision — what to fix,
-how to fix it, what to file, what to ship — was pushed out into the eight
-slash-command markdown files, because the surface offered nowhere else to put
-it. The bash is not the problem, and moving the bash into
-`plugins/stella-selfdriving/` would not change one thing about what the loop can
-do. **The judgement half lives outside the product because the surface gave it
-no way in.**
+**Self-driving is structurally excluded from it, twice over.**
 
-So packaging is B-tier work and the surface is the design. Do the surface, and
-the plugin becomes thin and honest — which is what a host plugin should be. Do
-the packaging alone, and we relocate 996 lines of bash and still cannot
-self-drive a backlog.
+```rust
+pub fn permits_call(&self, call: HostCall) -> bool {
+    self.participation.includes(Participation::Steering) && self.calls.contains(&call)
+}
+// crates/stella-plugin/src/manifest.rs:213
+```
+
+1. **By grade.** `plugins/stella-selfdriving/plugin.toml` declares
+   `participation = "none"`, and `None.includes(Steering)` is false. Every host
+   call it could ask for is refused before the manifest's `calls` list is even
+   consulted.
+2. **By construction, which is the deeper one.** A host call may be made "during
+   `before_turn` or `after_turn` and nowhere else". Those are wrapper points —
+   they happen *inside a turn*. Self-driving is a host: it never runs inside a
+   turn, it decides which turns exist. Raising its participation grade would not
+   help, because there is no turn for it to be inside of.
+
+So the `Participation` ladder — `none` → `observer` → `steering` → `arbiter` —
+is a ladder of **in-turn influence**, and self-driving is not on it at all.
+`none` is the honest grade for what the loop does and a dead end for what it
+needs. The plugin platform, as built, has a rich and well-designed way to hand
+capability to a plugin that participates in a turn, and **no way at all to hand
+capability to a plugin that drives turns.**
+
+That is why the judgement half ended up as eight Claude Code slash-command
+markdown files. It is not that somebody chose badly; it is that the only channel
+into the host is a channel a driver cannot stand in. The remaining route is the
+CLI verb surface — `HOST_SURFACE`, 18 verbs, all of them bookkeeping: size a
+cycle, read state, stamp a phase, record a finding. Not one fixes, opens, or
+ships anything. A driver restricted to it can size a cycle it has no way to run.
+
+**The correction, then, is not to package self-driving as a plugin — it is
+already one — but to give the plugin platform a second channel: the same "may
+ask, never reach" discipline, for out-of-turn drivers.** §3 is that channel.
+
+Two things follow that are worth stating before the phases, because they change
+what this work costs:
+
+- **It is smaller than it looks.** The wire shapes, the refusal-as-a-value
+  discipline, the manifest gate, the consent rendering, and the subprocess
+  transport all exist and are exercised by `stella-research`. The driver channel
+  is a second dispatch context over the same machinery, not a second platform.
+- **It closes #3546's real defect as a side effect rather than as separate
+  work.** That issue's P1 half is that the declared grant binds to no
+  `AuthzGate` rule, so consent promises what nothing enforces. A driver channel
+  gated by `permits_call` inverts that: capability arrives *only* through the
+  grant, so there is no unbound path left to forget to bind.
 
 ### 2.2 The split this commits to: **the plugin decides, the binary does**
 
@@ -151,7 +197,7 @@ decides, `stella-cli` probes):
 |---|---|---|
 | **`stella-autonomy`** (leaf, pure) | Cycle plan, ladder, dedup, AIMD, and — new — the loop step machine (§3.7), the PR state machine (§3.3), and the supply model (§4). | Property-testable over owned data. A governor that reads the machine itself cannot be handed a fake in a test. |
 | **`stella-cli`** (the binary) | Every new verb in §3. The issue port, the run execution, the git/forge effects, the curation writes. | Invariant 2 keeps all of it out of the engine; invariant 1 keeps the forge behind a port. |
-| **`plugins/stella-selfdriving`** (the host) | *Policy only*: when to run, how many at once, in what order, when to stop, what to escalate. A loop over declared verbs and nothing else. | It is the piece an operator should be able to fork, replace, or write in another language without forking Stella. |
+| **`plugins/stella-selfdriving`** (the driver) | *Policy only*: when to run, how many at once, in what order, when to stop, what to escalate. A loop that asks for declared capabilities and nothing else. | It is the piece an operator should be able to fork, replace, or write in another language without forking Stella. |
 
 The load-bearing consequence: **the judgement half becomes Stella's own agent
 loop.** `work` (§3.2) runs a unit of backlog through Stella's staged pipeline —
@@ -162,15 +208,55 @@ somebody else's agent. Today it is routed around.
 
 ---
 
-## 3. The delivery surface
+## 3. The driver channel, and the five capabilities on it
 
-Five new verb groups. Each is `HOST_SURFACE`-declared in the same PR that adds
-it (the build fails otherwise), each binds to a capability in the plugin
-manifest, and each emits a shape a host can parse.
+### 3.0 The channel
 
-`HOST_SURFACE_VERSION` goes to `2` **once**, at B1, and not per group: every
-change here is additive, and the bump rule (`surface.rs`) says additions do not
-bump. It moves only because B1 changes what `queue` emits — see §3.1.
+A second dispatch context for the host-call channel, for plugins whose
+`participation` is `none` because they drive turns rather than sit inside one.
+Same wire, same closed enum, same `permits_call` filter, same
+refusal-as-a-value discipline — the *only* change is that the conversation is
+opened by a **driver session** rather than by a wrapper point:
+
+```text
+host  → { "point": "drive", "body": { "session": "…", "state": { … } } }
+plugin→ { "call": "backlog_next", "id": 1, "args": { "limit": 5 } }
+host  → { "result": 1, "ok": { "issues": [ … ] } }
+plugin→ { "call": "work_start",   "id": 2, "args": { "issue": "…" } }
+host  → { "result": 2, "ok": { "verdict": "…", "diff": … } }
+plugin→ { "point": "drive", "body": { "next": "sleep", "secs": 900 } }   ← ends it
+```
+
+Three properties carried over deliberately, because each already earned its
+place:
+
+- **A refusal is a value.** A driver denied `deliver_merge` degrades to opening
+  the PR and stopping, and says so. It is not killed mid-cycle.
+- **Capability arrives only through the grant.** `permits_call` is the one
+  filter, so consent and enforcement are the same object — §2.1's last point.
+- **The plugin holds no credential.** Every model call, every forge write, every
+  test run is the host's, performed on request. A driver that could reach
+  directly would be ambient authority wearing a manifest.
+
+The `Participation` ladder is not extended and not renumbered. Driving is a
+different axis from in-turn influence, and conflating them would make `arbiter`
+— already "the strongest grant" over a turn's completion — silently also mean
+"may merge to `main`". A separate `[driver]` block, with its own declared call
+list, keeps the two consents legible to the human reading them.
+
+**`HOST_SURFACE` is not widened.** The 18 CLI verbs stay exactly as they are and
+keep serving what they were built for — an operator, a shell driver, the
+Observatory. Delivery capability arrives on the channel instead, which is why
+`HOST_SURFACE_VERSION` moves only once, at B1, and only because `queue`'s row
+shape changes (§3.1). This is a change of mind from an earlier draft of this
+document, which proposed adding all five groups as CLI subcommands; the channel
+is better on every axis that matters — gated by construction rather than by a
+guard somebody must remember to write, refusable without dying, and already
+built.
+
+Each of the five below is a variant on the driver channel's call enum, declared
+in the manifest's `[driver] calls` list, and refused with a `HostCallRefusal`
+code the driver can branch on when undeclared.
 
 ### 3.1 `backlog` — the issue port
 
@@ -180,7 +266,7 @@ modification: four states, four classes, title, description, comments, parent
 edge, and everything else in a source-tracked TOML manifest under
 `.stella/issues/`.
 
-| Verb | Emits | What it does |
+| Call | Returns | What it does |
 |---|---|---|
 | `backlog next` | `query-envelope` | The ranked readiness queue. Supersedes `queue`, which stays as a deprecated alias for one minor version. |
 | `backlog claim <key>` | `json` | Takes a cooperative lease on an issue (§6.3) and returns it, or reports who holds it. |
@@ -199,7 +285,7 @@ file, `deliver` needs something to close.
 
 ### 3.2 `work` — one unit of backlog, through Stella's own loop
 
-| Verb | Emits | What it does |
+| Call | Returns | What it does |
 |---|---|---|
 | `work start --issue <key>` | `json` | Resolve context for the issue, create the isolated worktree, run the staged pipeline against it, return the outcome and the diff. |
 | `work status` | `query-envelope` | The in-flight unit: stage, spend, elapsed, checkpoint. |
@@ -220,7 +306,7 @@ mechanism rather than new invention:
 
 ### 3.3 `deliver` — branch, PR, CI, review, merge
 
-| Verb | Emits | What it does |
+| Call | Returns | What it does |
 |---|---|---|
 | `deliver open` | `json` | Branch, commit, push, open the PR as a draft, with `Closes #N` in **both** the body and a commit trailer (AGENTS.md § *Closing the issue on merge*). |
 | `deliver observe` | `json` | One read of the forge: CI conclusions, review threads, mergeability, base drift. Pure read, no decisions. |
@@ -259,7 +345,7 @@ and escalates to no model.
 
 ### 3.4 `sweep` — where the next question comes from
 
-| Verb | Emits | What it does |
+| Call | Returns | What it does |
 |---|---|---|
 | `sweep audit` | `json` | Run the open lens's tooling, digest the findings, emit only the ones not in `seen.txt`. |
 | `sweep regress` | `json` | Re-run the witnesses named by receipts on issues this loop closed; report any green→red. |
@@ -269,22 +355,23 @@ and escalates to no model.
 
 ### 3.5 `curate` — tools, context records, skills
 
-| Verb | Emits | What it does |
+| Call | Returns | What it does |
 |---|---|---|
 | `curate propose` | `json` | Emit a proposal — a custom tool, a context record, a skill — with the evidence that motivated it. |
 | `curate list` | `query-envelope` | Pending proposals and their evidence counts. |
 | `curate accept <id>` | `json` | Apply a proposal **if the workspace's declared authority permits it** (§7). |
 
-### 3.6 What deliberately stays out of the surface
+### 3.6 What deliberately stays off the channel
 
-- **No `release` verb at B0–B6.** §6.4.
-- **No verb that edits the loop's own grant.** The loop may propose an authority
-  change (§7); the surface offers no way for it to apply one.
-- **No verb that breaks or steals another worker's claim.** The lease expires on
+- **No `release` call at B0–B6.** §6.4.
+- **No call that edits the driver's own grant.** The loop may propose an
+  authority change (§7); the channel offers no way for it to apply one. A
+  capability that could widen `[driver] calls` would make the grant advisory.
+- **No call that breaks or steals another worker's claim.** The lease expires on
   its own; `fleet_claims.rs` already declines to offer this and gives the
   reason.
 - **No mode flags.** Invariant 9: a parameter scopes, never selects. `curate
-  accept` and `curate reject` are two verbs.
+  accept` and `curate reject` are two calls, not one with a boolean.
 
 ### 3.7 The loop step machine
 
@@ -548,9 +635,9 @@ its witness — a test that fails on `main` and passes with the change.
 
 | Phase | Deliverable | Witness | Unblocks |
 |---|---|---|---|
-| **B0** | **Bind the grant.** Derive `AuthzGate` rules from an installed manifest under `Principal::Plugin`; `plugins/stella-selfdriving` enforced, not merely rendered. Closes the real half of #3546. | A plugin whose manifest omits `process_spawn` is *denied* the spawn at runtime, not merely undocumented. | everything unattended |
-| **B1** | **The issue port.** `Issue` kernel in `stella-protocol`; `IssueProvider` port; GitHub as a shipped manifest under `.stella/issues/`; `backlog` verbs; `queue` → deprecated alias. `HOST_SURFACE_VERSION` → 2. | The ranked queue is produced against a fixture provider with **no `gh` on `PATH`**. | "any issue provider" |
-| **B2** | **`work` + the loop step machine.** `LoopStep`/`step` pure in `stella-autonomy`; `work start/status/abandon` in `stella-cli`; the plugin becomes a policy loop over declared verbs; the eight slash commands and `scripts/self-driving.sh` retire **only after** `scripts/test-self-driving.sh` is green against the new path with every assertion intact. | One issue goes from `backlog next` to a verified diff with no Claude Code and no human. | the headline |
+| **B0** | **The driver channel** (§3.0). A second dispatch context for the existing host-call machinery, opened by a driver session rather than a wrapper point; a `[driver]` block with its own `calls` list; `permits_call` extended to it *without* touching the `Participation` ladder. `plugins/stella-selfdriving` becomes a program the host actually runs. | A driver whose manifest omits a call is refused it with a `HostCallRefusal` code and **keeps running**; a driver that declares it is served. Both directions, because either alone is half a gate. | everything below |
+| **B1** | **The issue port.** `Issue` kernel in `stella-protocol`; `IssueProvider` port; GitHub as a shipped manifest under `.stella/issues/`; the `backlog` calls on the channel; the CLI's `queue` row reshaped, `HOST_SURFACE_VERSION` → 2. | The ranked queue is produced against a fixture provider with **no `gh` on `PATH`**. | "any issue provider" |
+| **B2** | **`work` + the loop step machine.** `LoopStep`/`step` pure in `stella-autonomy`; `work_start`/`work_status`/`work_abandon` served over the channel from `stella-cli`, built on the existing `child_turn` dispatcher rather than a second one; the plugin becomes a policy loop over declared calls; the eight slash commands and `scripts/self-driving.sh` retire **only after** `scripts/test-self-driving.sh` is green against the new path with every assertion intact. | One issue goes from `backlog next` to a verified diff with no Claude Code and no human. | the headline |
 | **B3** | **`deliver`.** `PrState` pure; open/observe/next/merge; `Escalated` reachable and terminal; `CiRed` vs `BaseBroken` distinguished. | A PR whose CI is red *on its base branch* transitions to `BaseBroken`, and the loop does not push a fix. |  PR rhythm (#2374's named weakness) |
 | **B4** | **Supply.** Ladder re-arm on baseline delta; `sweep regress` over closed-issue receipts; `sweep meta`. Per-supply switch, default queue-only. | A lens dry at `HEAD` re-opens after the declared baseline delta and yields **only** digests absent from `seen.txt`. | never runs out |
 | **B5** | **The residue gate** ([`doc:agent-native-delivery`](agent-native-delivery.md) §7) in `warn`, plus fingerprint dedup and decay. | A run stating a follow-up in prose and claiming `done` fails the gate; the same run with the item `filed` passes. | filing is a guarantee |
@@ -567,9 +654,15 @@ its witness — a test that fails on `main` and passes with the change.
 | The residue gate stage | `stella-pipeline`, beside `verify`/`witness` |
 | `backlog`/`work`/`deliver`/`sweep`/`curate` verbs, the forge adapter, provider manifests | `stella-cli` (`self_driving_cmd/` — note `self_driving_cmd.rs` is 1005 lines and new logic lands in siblings) |
 | Issue claims | `stella-fleet` ledger |
+| The driver channel: dispatch context, `[driver]` block, `permits_call` | `stella-plugin` (wire + gate), `stella-runtime` (`src/wrapper/`, beside the existing host-call dispatch) |
 | The policy loop | `plugins/stella-selfdriving/` |
 
-**Sequencing note.** B0 → B1 → B2 is a hard chain. B3 and B4 are independent of
+**Sequencing note.** B0 → B1 → B2 is a hard chain, and B0 is now the load-bearing
+one: it is the phase that makes a self-driving plugin able to hold any capability
+at all. It is also the smallest of the three, because the wire shapes, the
+refusal codes, the manifest gate, the consent rendering and the subprocess
+transport all exist and are exercised by `stella-research` — B0 adds a dispatch
+context, not a platform. B3 and B4 are independent of
 each other and both need B2. B5 is independent of everything after B1 and could
 land early if the residue gate is wanted sooner than the autonomy.
 
@@ -592,21 +685,32 @@ land early if the residue gate is wanted sooner than the autonomy.
 
 ## 11. Open questions
 
-1. **Does `work` reuse `stella run` or the pipeline API directly?** Spawning a
-   child gives process isolation and the existing budget/supervision path;
-   linking gives checkpointing and cheaper context reuse. Lean: spawn at B2 for
-   the isolation, revisit once measured.
-2. **Baseline-delta threshold for the ladder re-arm.** *N* commits or *D* days
+1. **Does `work_start` reuse the existing `child_turn` dispatcher unchanged?**
+   `child_turn` is specified as "a bounded turn at a declared role intent" and
+   was built for a wrapper asking mid-turn; a driver asking for a whole unit of
+   delivery is a longer, coarser ask against the same dispatcher. Whether that
+   is one capability with a wider budget carve or genuinely a second one is the
+   first thing B2 has to settle, and it decides how much of B0 is reuse.
+2. **What is a driver session's lifetime, and who owns the heartbeat?** The
+   wrapper channel's conversation is bounded by a turn, which gives it a natural
+   end. A driver session has none — it is the thing that outlives everything. The
+   loop already resolves liveness from heartbeats rather than pids (`fold_runs`),
+   so the machinery exists; where it attaches on the channel does not.
+3. **A `[driver]` block, or a new axis on `[loop]`?** §3.0 argues for a separate
+   block so `arbiter` never silently also means "may merge to `main`". The cost
+   is a second consent surface for a human to read, and two blocks that can
+   disagree about the same plugin.
+4. **Baseline-delta threshold for the ladder re-arm.** *N* commits or *D* days
    is a guess, the same guess §12.5 of the companion admits about decay. It
    should be derived from observed finding yield per re-pass, once B4 has data.
-3. **Does the plugin or the binary own the retry ceiling?** Policy says plugin;
+5. **Does the plugin or the binary own the retry ceiling?** Policy says plugin;
    but a ceiling the plugin owns is a ceiling a forked plugin can remove.
-4. **Multi-repo.** One loop draining several repositories' backlogs is a natural
+6. **Multi-repo.** One loop draining several repositories' backlogs is a natural
    next ask and is not designed here.
-5. **What happens to `/self-driving:*` slash commands after B2?** They become a
+7. **What happens to `/self-driving:*` slash commands after B2?** They become a
    second, divergent implementation the moment the plugin can drive. Deleting
    them is right; the migration for people who use them today is not designed.
-6. **Is `sweep regress`'s cost justified?** It re-runs tests that passed. The
+8. **Is `sweep regress`'s cost justified?** It re-runs tests that passed. The
    answer is empirical and B4 should be built to measure it, not to assume it.
 
 ---
