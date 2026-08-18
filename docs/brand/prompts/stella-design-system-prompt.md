@@ -19,7 +19,7 @@ Lockup = this mark + "stella" in JetBrains Mono ExtraBold, lowercase, tracking �
 - **Obsidian `#070B10`** — dark surface. Never pure black. **Paper `#E9EDF2`** — text on dark. **Paper-bg `#EEF1F5`** — light surface.
 - Brand ramp 50→950: `#EAFAFF #C7F2FF #9DE9FF #72E1FF #46DBFF #00D1F9 #00B0D2 #0094B1 #00778F #005769 #003440`
 - Cool neutral ramp 50→950: `#F1F8FF #DBE2EA #C0C8D0 #A7AEB6 #90979E #7A8088 #60666D #474D54 #2F353B #1A1F25 #070B10`
-- Semantic (shadcn-style): primary = ion with obsidian foreground; ring = ion. Dark: background obsidian, card `#12181D`, border `#2A3036`, muted-foreground `#9299A1`, destructive `#FF6A95`. Light: background `#EEF1F5`, card `#F7F9FC`, border `#CFD6DD`, muted-foreground `#61676F`, destructive `#C21F3A`.
+- Semantic (shadcn-style): primary = ion with obsidian foreground; ring = ion. Dark: background obsidian, card `#12181D`, border `#2A3036`, muted-foreground `#9299A1`, destructive `#FF749B`. Light: background `#EEF1F5`, card `#F7F9FC`, border `#CFD6DD`, muted-foreground `#61676F`, destructive `#C21F3A`.
 - Budget per view: surfaces + text ≈86%, secondary ≈10%, ion ≤4%. Ion is the signal, never the surface.
 - Contrast facts to respect: ion on obsidian 10.79:1 (AAA); ion on paper-bg 1.61:1 (unusable — swap to brand-deep for text, brand-700 for marks).
 

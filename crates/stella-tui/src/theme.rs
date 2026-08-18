@@ -628,13 +628,13 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (IDENTITY_DEEP, 31, 6),
     (SUCCESS, 42, 10),
     (WARNING, 214, 11),
-    (DANGER, 204, 9),
-    // Nearest cube entry to ORACLE_PRE_FLIP's `#FF3D2A` is 202 (255,95,0) —
-    // two steps from DANGER's 204, so the two stay distinct at 256 colours.
+    (DANGER, 211, 9),
+    // Nearest cube entry to ORACLE_PRE_FLIP's `#FF4734` is 203 (255,95,95) —
+    // eight steps from DANGER's 211, so the two stay distinct at 256 colours.
     // At 16 colours there is only one red (9) and the pre-flip state shares
     // it with danger; the `red ──▸ green` wording, not the hue, carries the
     // meaning there (the same glyph-over-hue rule every status obeys).
-    (ORACLE_PRE_FLIP, 202, 9),
+    (ORACLE_PRE_FLIP, 203, 9),
     (VIOLET, 105, 12),
     (AMBER, 216, 3),
     (JADE, 77, 2),

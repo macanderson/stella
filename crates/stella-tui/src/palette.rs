@@ -204,16 +204,22 @@ pub const SUCCESS: Color = Color::Rgb(0x00, 0xE7, 0x86);
 /// rather than load-bearing.
 pub const WARNING: Color = Color::Rgb(0xF2, 0xB1, 0x00);
 
-/// Error / failed / removed (7.28:1 on ground).
-pub const DANGER: Color = Color::Rgb(0xFF, 0x6A, 0x95);
+/// Error / failed / removed (7.73:1 on ground, 6.06:1 on [`RAISED`]).
+pub const DANGER: Color = Color::Rgb(0xFF, 0x74, 0x9B);
 
 /// The oracle's pre-flip state — the witness surface's `red` token, the one
 /// sanctioned red-as-meaning in the deck (D6). A true signal red, kept
 /// distinct from [`DANGER`]'s pink-red so "the test is red before the patch"
 /// (a healthy, expected state) never shares a value with "something failed".
-/// 5.59:1 on [`GROUND`], and 1.30:1 against [`DANGER`] at 25° of hue -- the
-/// pair is told apart by hue and by the words around it, never by weight.
-pub const ORACLE_RED: Color = Color::Rgb(0xFF, 0x3D, 0x2A);
+/// 5.83:1 on [`GROUND`] and 4.57:1 on [`RAISED`], which is the binding
+/// surface: the witness panel is a raised card, so a value that cleared AA on
+/// ground alone would fail where this token actually renders.
+///
+/// 1.33:1 against [`DANGER`] at 23° of hue. The bronze pair managed 1.30:1 at
+/// 11.8°, so the two are now separated further by hue and marginally further
+/// by weight -- but the `red ──▸ green` wording beside them is still what
+/// carries the meaning, exactly as it was.
+pub const ORACLE_RED: Color = Color::Rgb(0xFF, 0x47, 0x34);
 
 // ── Status (light ground) ───────────────────────────────────────
 //
