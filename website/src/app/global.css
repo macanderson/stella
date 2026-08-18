@@ -1,7 +1,7 @@
 /**
  * stella docs — the semantic layer.
  *
- * Brand system: brand kit v1.0, "the comet" — Phosphor Gold on Ink, warm Paper
+ * Brand system: brand kit v2.0, "the comet" — Bronze Gold on Ink, warm Paper
  * on the light side, JetBrains Mono as the one and only face (docs/brand/ is
  * the normative source). The product lives in a terminal, so the brand speaks
  * in monospace; there is no second family to fall back to, on purpose.
@@ -12,8 +12,9 @@
  * the mark, the prompt, the active item, the primary action — and nowhere
  * else. If everything is gold, nothing is.
  *
- * Gold text is ground-aware. Full-strength #FFB000 only earns its keep on the
- * dark ground; at small text sizes on paper it drops to gold-deep (#A37200).
+ * Gold text is ground-aware. Full-strength #C58A32 only earns its keep on the
+ * dark ground (6.4:1 on ink); at small text sizes on paper it is 2.6:1 and
+ * drops to gold-deep (#8B5E1A, 5.0:1).
  * `--stella-accent-text` in tokens.css encodes exactly this flip — components
  * use it and never pick a gold by hand.
  *
@@ -69,11 +70,11 @@
    * custom property is invalid at computed-value time — it silently falls
    * back — so every token a component consumes is defined here for BOTH
    * grounds. */
-  --stella-rule: var(--stella-neutral-500); /* ~3.2:1 on paper-bg */
-  --stella-faint: var(--stella-muted-fg); /* 4.6:1 on paper-bg */
+  --stella-rule: var(--stella-neutral-500); /* 3.3:1 on paper-bg */
+  --stella-faint: var(--stella-muted-fg); /* 4.9:1 on paper-bg */
   --stella-mark: var(--stella-accent-text); /* small gold marks beside text */
 
-  /* The one primary action: a Phosphor Gold fill with an ink label. Gold is
+  /* The one primary action: a Bronze Gold fill with an ink label. Gold is
    * the signal — the CTA is the signal, so it is the one gold surface. */
   --stella-cta-bg: var(--stella-gold);
   --stella-cta-fg: var(--stella-ink);
@@ -82,7 +83,7 @@
   --color-fd-background: var(--stella-bg);
   --color-fd-foreground: var(--stella-fg);
   --color-fd-muted: #ede8db;
-  --color-fd-muted-foreground: var(--stella-muted-fg); /* 4.6:1 on paper-bg */
+  --color-fd-muted-foreground: var(--stella-muted-fg); /* 4.9:1 on paper-bg */
   --color-fd-card: var(--stella-surface);
   --color-fd-card-foreground: var(--stella-fg);
   --color-fd-popover: var(--stella-surface);
@@ -102,8 +103,8 @@
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .dark {
-  --stella-rule: var(--stella-neutral-600); /* ~3.3:1 on ink */
-  --stella-faint: var(--stella-muted-fg); /* 5.9:1 on ink */
+  --stella-rule: var(--stella-neutral-600); /* 3.5:1 on ink */
+  --stella-faint: var(--stella-muted-fg); /* 6.8:1 on ink */
   --stella-mark: var(--stella-gold);
 
   --stella-cta-bg: var(--stella-gold);
@@ -113,17 +114,17 @@
   --color-fd-background: var(--stella-bg);
   --color-fd-foreground: var(--stella-fg);
   --color-fd-muted: var(--stella-surface);
-  --color-fd-muted-foreground: var(--stella-muted-fg); /* 5.9:1 on ink */
+  --color-fd-muted-foreground: var(--stella-muted-fg); /* 6.8:1 on ink */
   --color-fd-card: var(--stella-surface);
   --color-fd-card-foreground: var(--stella-fg);
-  --color-fd-popover: #1a1a1d;
+  --color-fd-popover: #171614;
   --color-fd-popover-foreground: var(--stella-fg);
   --color-fd-border: var(--stella-border);
   --color-fd-accent: #201d15; /* hover surface — ink warmed with gold */
   --color-fd-accent-foreground: var(--stella-fg);
-  --color-fd-primary: var(--stella-gold); /* 9.6:1 on ink */
+  --color-fd-primary: var(--stella-gold); /* 6.4:1 on ink */
   --color-fd-primary-foreground: var(--stella-ink);
-  --color-fd-secondary: #1a1a1d;
+  --color-fd-secondary: #171614;
   --color-fd-secondary-foreground: var(--stella-fg);
   --color-fd-ring: var(--stella-gold);
 }
@@ -316,13 +317,13 @@ figure.shiki ::selection,
  * colour, and it takes the ground-aware gold because it is the signal.
  *
  * The sidebar's ground is WHITE, not the page's warm paper. Fumadocs paints
- * the aside with `bg-fd-card` (#fcfaf4 here), which sat within 1.02:1 of the
- * #f6f2e9 page — the two grounds read as one soft warm field with no seam.
+ * the aside with `bg-fd-card` (#fbf8f2 here), which sat within 1.02:1 of the
+ * #f5f0e6 page — the two grounds read as one soft warm field with no seam.
  * Navigation is chrome, not page: it gets the cool white ground so the warm
  * paper reads as "the document" and the sidebar reads as "the frame". The
  * fd tokens are re-scoped inside the aside so hover/selected chips stay
  * neutral on white instead of dropping warm cream blobs on it. Dark mode
- * needs no override: fd-card (#131315) already lifts off the ink ground.
+ * needs no override: fd-card (#171614) already lifts off the ink ground.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 #nd-sidebar {
@@ -337,7 +338,7 @@ figure.shiki ::selection,
 .dark #nd-sidebar {
   --color-fd-card: var(--stella-surface);
   --color-fd-accent: #201d15; /* restore the ink-warmed hover on dark */
-  --color-fd-secondary: #1a1a1d;
+  --color-fd-secondary: #171614;
   --color-fd-muted: var(--stella-surface);
   background-color: var(--stella-surface);
 }
@@ -609,10 +610,10 @@ figure.shiki ::selection,
  * page bottoming out into the terminal. The fd text tokens are re-scoped so
  * the light mode's ink text doesn't land on a near-black ground. */
 .lp-footer {
-  background: #070708;
-  border-top-color: #232327;
+  background: #0a0a09;
+  border-top-color: #2c2924;
   --color-fd-foreground: var(--stella-paper);
-  --color-fd-muted-foreground: #9b9890;
+  --color-fd-muted-foreground: #a19a8e;
   color: var(--stella-paper);
 }
 
@@ -739,7 +740,7 @@ html[data-home-nav="hidden"] #nd-nav {
   font-family: var(--font-mono);
   font-size: var(--stella-type-sm);
   line-height: 1.7;
-  border: 1px solid #232327;
+  border: 1px solid #2c2924;
   border-radius: 0.5rem;
   background: var(--stella-ink);
   color: var(--stella-paper);
@@ -752,9 +753,9 @@ html[data-home-nav="hidden"] #nd-nav {
   align-items: center;
   gap: 0.6rem;
   padding: 0.5rem 0.9rem;
-  border-bottom: 1px solid #232327;
+  border-bottom: 1px solid #2c2924;
   font-size: var(--stella-type-xs);
-  color: #9b9890; /* muted on ink, regardless of page theme */
+  color: #a19a8e; /* muted on ink, regardless of page theme */
 }
 
 .term-body {
@@ -768,7 +769,7 @@ html[data-home-nav="hidden"] #nd-nav {
   color: var(--stella-gold); /* 9.6:1 on ink */
 }
 .term-dim {
-  color: #9b9890;
+  color: #a19a8e;
 }
 .term-ok {
   color: var(--stella-success); /* 11.4:1 on ink */
@@ -784,7 +785,7 @@ html[data-home-nav="hidden"] #nd-nav {
 
 .dke {
   font-family: var(--font-mono);
-  border: 1px solid #232327;
+  border: 1px solid #2c2924;
   border-radius: 0.5rem;
   background: var(--stella-ink);
   color: var(--stella-paper);
@@ -798,14 +799,14 @@ html[data-home-nav="hidden"] #nd-nav {
   flex-wrap: wrap;
   gap: 0.125rem;
   padding: 0.6rem 0.6rem 0;
-  border-bottom: 1px solid #232327;
+  border-bottom: 1px solid #2c2924;
 }
 
 .dke-tab {
   font-family: inherit;
   font-size: var(--stella-type-xs);
   letter-spacing: 0.08em;
-  color: #9b9890; /* muted on ink, regardless of page theme */
+  color: #a19a8e; /* muted on ink, regardless of page theme */
   background: none;
   border: none;
   border-radius: 0.35rem 0.35rem 0 0;
@@ -818,7 +819,7 @@ html[data-home-nav="hidden"] #nd-nav {
 }
 
 .dke-tab[data-active="true"] {
-  background: #1e1806;
+  background: #1d1608;
   color: var(--stella-gold);
 }
 
@@ -834,7 +835,7 @@ html[data-home-nav="hidden"] #nd-nav {
 .dke-blurb {
   margin: 0 0 0.75rem;
   font-size: var(--stella-type-sm);
-  color: #9b9890;
+  color: #a19a8e;
 }
 
 .dke-lines {
@@ -900,9 +901,9 @@ html[data-home-nav="hidden"] #nd-nav {
   background: linear-gradient(
     105deg,
     transparent 35%,
-    rgb(255 176 0 / 0.05) 45%,
-    rgb(255 216 115 / 0.16) 50%,
-    rgb(255 176 0 / 0.05) 55%,
+    rgb(197 138 50 / 0.05) 45%,
+    rgb(223 180 115 / 0.16) 50%,
+    rgb(197 138 50 / 0.05) 55%,
     transparent 65%
   );
   transform: translateX(-101%);
@@ -948,9 +949,9 @@ html[data-home-nav="hidden"] #nd-nav {
   font-size: var(--stella-type-2xs);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #9b9890; /* muted on ink, regardless of page theme */
-  background: #1a1a1d;
-  border: 1px solid #232327;
+  color: #a19a8e; /* muted on ink, regardless of page theme */
+  background: #171614;
+  border: 1px solid #2c2924;
   border-radius: 0.375rem;
   padding: 0.15rem 0.5rem;
 }
@@ -1217,20 +1218,20 @@ html[data-home-nav="hidden"] #nd-nav {
 
 figure.shiki {
   background: var(--stella-ink);
-  border-color: #232327;
+  border-color: #2c2924;
   border-radius: 0.5rem;
   box-shadow: var(--stella-shadow-card);
   color: var(--stella-paper);
   cursor: copy;
   --color-fd-primary: var(--stella-gold);
-  --color-fd-muted-foreground: #9b9890;
+  --color-fd-muted-foreground: #a19a8e;
   --color-fd-ring: var(--stella-gold);
 }
 
 /* The title bar, when a block has one — the `.term-head` look. */
 figure.shiki > div:has(figcaption) {
-  border-bottom-color: #232327;
-  color: #9b9890;
+  border-bottom-color: #2c2924;
+  color: #a19a8e;
 }
 
 /* The floating copy chip — bottom-right, over the code, anchored to the
@@ -1242,10 +1243,10 @@ figure.shiki > div:has(figcaption) {
   bottom: 0.6rem;
   inset-inline-end: 0.6rem;
   z-index: 2;
-  border: 1px solid #232327;
+  border: 1px solid #2c2924;
   border-radius: 0.375rem;
-  background: #1a1a1d;
-  color: #9b9890;
+  background: #171614;
+  color: #a19a8e;
   font-family: var(--font-mono);
   font-size: var(--stella-type-2xs);
   font-weight: 500;
@@ -1268,7 +1269,7 @@ figure.shiki > div:has(figcaption) {
 }
 .lp-code-copy[data-copied] {
   color: var(--stella-success); /* 11.4:1 on ink; word + glyph carry it */
-  border-color: color-mix(in oklab, var(--stella-success) 40%, #232327);
+  border-color: color-mix(in oklab, var(--stella-success) 40%, #2c2924);
 }
 
 .lp-code-copy-face {

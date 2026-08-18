@@ -1,4 +1,4 @@
-/* Jet Black — the transcript surface.
+/* The transcript surface.
  *
  * Two rules carry most of the design:
  *   1. Fixed-width gutters. Every fold control lives in a grid column with a
@@ -6,26 +6,61 @@
  *      its right. Nothing here may use padding to position a gutter.
  *   2. Success is quiet, failure is loud. A finished step is a muted one-liner;
  *      an error tints its digest and pins itself open.
+ *
+ * The ground, the neutral ramp and the three semantic colours are the web
+ * instrument palette, whose single definition is the delimited block in
+ * `crates/stella-observatory/src/assets/index.html`. They are not a separate
+ * system that happens to look similar: the Observatory renders this page (its
+ * `render_transcript` route serves `html::render_page`), so a reader clicking
+ * a run in the dashboard lands here. It used to land on a different ground —
+ * `#000` against the instrument's `#0A0A0A` — with "passed" a different green
+ * in the two views of the same run, which is the drift
+ * `crates/stella-cli/tests/design_token_parity.rs` exists to prevent
+ * everywhere it can see. It cannot see this file yet: that matrix requires a
+ * dark *and* a light scheme per surface and this page has only the one.
+ * Adding both is #3630.
+ *
+ * **Comments here are page content.** This file is `include_str!`-ed and
+ * inlined into every rendered transcript, so anything written in it ships to
+ * the reader and is visible to any assertion made over the whole document.
+ * The Observatory proves a tool call states its argument exactly once by
+ * counting that argument's occurrences across the page — and the seeded
+ * fixture's argument is a crate-relative Rust path. An earlier draft of the
+ * paragraph above cited a module by exactly that shape of path, which made
+ * the count 2 and failed a test about the transcript's *structure* from a
+ * comment about its *colours*. So: cite modules and routes by name here, and
+ * never by source path.
+ *
+ * `--cyan` and `--violet` are deliberately NOT instrument values. They encode
+ * tool *kind* and speaker, and the instrument system separates categories by
+ * lightness (`--c1`..`--c4`) rather than hue on purpose. Which of the two this
+ * dense a surface should use is a design question, not a drift, and it is open
+ * — see #3630. Until it settles they stay as they are rather than
+ * being half-migrated into a palette that would then match nothing.
  */
 
 :root {
-  --bg: #000;
-  --panel: #0a0a0a;
-  --raised: #101010;
+  /* Instrument ground / neutral ramp — observatory `BEGIN palette` block. */
+  --bg: #0a0a0a;
+  --panel: #0f0f0f;
+  --raised: #111111;
   --line: #1f1f1f;
-  --line2: #2a2a2a;
-  --ink: #e8e8e8;
-  --dim: #9c9c9c;
-  --faint: #585858;
+  --line2: #2e2e2e;
+  --ink: #ededed;
+  --dim: #a1a1a1;
+  --faint: #6e6e6e;
+  /* Categorical — see the header note; not instrument values. */
   --cyan: #4ed6e0;
-  --green: #56d364;
-  --red: #f85149;
-  --amber: #e3b341;
   --violet: #a8a3f5;
-  --del-line: rgba(248, 81, 73, 0.13);
-  --del-word: rgba(248, 81, 73, 0.38);
-  --add-line: rgba(86, 211, 100, 0.12);
-  --add-word: rgba(86, 211, 100, 0.34);
+  /* The three semantic colours: instrument `--ok` / `--bad` / `--warn`. */
+  --green: #4cc38a;
+  --red: #e5715f;
+  --amber: #c9a227;
+  /* Diff washes, derived from the semantic pair above at the same alphas. */
+  --del-line: rgba(229, 113, 95, 0.13);
+  --del-word: rgba(229, 113, 95, 0.38);
+  --add-line: rgba(76, 195, 138, 0.12);
+  --add-word: rgba(76, 195, 138, 0.34);
   --mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
 
@@ -188,7 +223,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 
 .step > summary { padding: 7px 18px 7px 0; border-bottom: 1px solid #101010; }
 .step > summary:hover { background: #0e0e0e; }
-.step.err > summary { background: rgba(248, 81, 73, 0.07); }
+.step.err > summary { background: rgba(229, 113, 95, 0.07); }
 .digest {
   display: flex;
   gap: 9px;

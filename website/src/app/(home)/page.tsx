@@ -19,8 +19,17 @@ import { REPO_URL, SITE_URL } from "@/lib/site";
 // and Twitter titles right below it, which are NOT template-expanded — the tab
 // said one thing and every shared card said another.
 const HOME_TITLE = "stella — the terminal agent that proves its work finished";
+// "ends a run on evidence" is load-bearing and deliberately not "a second
+// model confirms it". That was the old wording, and it described a rung the
+// pipeline no longer has: #2584 removed the model verdict outright, and
+// `LadderDecision` (crates/stella-pipeline/src/verify.rs) carries no arm that
+// asks a model anything — a turn the oracle cannot settle reports UNVERIFIED
+// rather than borrowing a model's opinion. One verifier-tier call survives, and
+// it is the witness *author*; what it writes is then decided by running it.
+// `stella goal` does still end on a verifier model's judgement, but it is one
+// mode, and the front page was generalising it to the whole product.
 const HOME_DESCRIPTION =
-  "A terminal coding agent that runs on the API keys you already have, speaks ten providers' own protocols, and ends a run only when a second model has confirmed the goal from evidence.";
+  "A terminal coding agent that runs on the API keys you already have, speaks ten providers' own protocols, and ends a run on evidence — a test that failed before the change and passes after — rather than on a model's say-so.";
 
 export const metadata: Metadata = {
   title: { absolute: HOME_TITLE },
@@ -94,8 +103,13 @@ const DOORS = [
   },
   {
     href: "/docs/inference-pipeline",
+    // The order is the pipeline's own (`stage_rank` in
+    // crates/stella-pipeline/src/replay.rs): witness authoring is
+    // demand-driven and runs AFTER execute, once the warrant has read the
+    // executed diff. This read "witness, execute … verifier" — the two
+    // swapped, and ending on a role that is not a stage and no longer judges.
     title: "Read the pipeline",
-    body: "triage, plan, witness, execute, verify, verifier — and where a run can stop.",
+    body: "triage, plan, execute, witness, verify, verdict — and where a run can stop.",
   },
 ];
 
@@ -120,9 +134,10 @@ export default function HomePage() {
           </h1>
           <p className="lp-lead mt-6">
             It runs on the API keys you already have, speaks ten providers&apos;
-            own protocols, and ends a run only when a second model has confirmed
-            the goal from evidence. Nothing is proxied through a hosted service,
-            and telemetry never leaves your disk.
+            own protocols, and ends a run on evidence — a test that failed
+            before the change and passes after — rather than on a model&apos;s
+            say-so. Nothing is proxied through a hosted service, and telemetry
+            never leaves your disk.
           </p>
 
           {/* Install and "read the docs" are the same decision — try it now,
