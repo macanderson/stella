@@ -403,6 +403,7 @@ pub async fn run_init(
     model_override: Option<&str>,
     api_key_override: Option<&str>,
     base_url_override: Option<&str>,
+    prune_vectors: bool,
 ) -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
@@ -440,6 +441,10 @@ pub async fn run_init(
         &mut io,
     )
     .await?;
+
+    // After the embedding pass, so the count reflects the vectors this run
+    // just wrote rather than the state it started in.
+    super::graph::report_retired_vectors(&workspace_root, prune_vectors, &mut io.step_sink());
 
     for domain in &domains.domains {
         println!(

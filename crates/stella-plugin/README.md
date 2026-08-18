@@ -126,19 +126,21 @@ unless that plugin is installed — which is exactly why the manifest's rules ar
 load errors rather than warnings: an opt-in verifier that silently declined to
 participate would be worse than none.
 
-**Declared, then callable — still not driven.** The manifest is declared here.
+**Declared, then callable, and now driven.** The manifest is declared here.
 The socket a caller would drive it through — the `TurnWrapper` trait, `judge`,
 `again`, and both an in-process and a subprocess transport — landed in
 `stella-runtime` (#3380, shipped #3479, `doc:wrapper-socket`), proven
-end-to-end against a real subprocess plugin in that crate's own tests. What has
-**not** landed is a host sequence that calls all four points for a live turn,
-or anything driving one: `stella-pipeline`'s `variant.rs` resolves the shipped
-`[wrapper]` block into a `StageProgram` (#3408) but `pipeline.rs` does not
-consult it to run a turn, and `stella-cli`'s loader (`stella plugin
-install|list|remove`) resolves and shows consent for a manifest without
-driving a turn through it either. That gap is tracked, not incidental — the
-crate takes no engine dependency, which is what let the load-time contract
-ship complete before the runtime half existed.
+end-to-end against a real subprocess plugin in that crate's own tests. The
+host sequence that calls all four points for a live turn is
+`stella_runtime::WrapperDispatch`, and `stella-cli` drives it: `--pipeline
+<variant>` on `stella run` resolves an installed manifest and runs a live
+turn through `crate::wrapper_plugin` (#3494), and separately
+`stella-pipeline`'s own staged pipeline now dispatches from the shipped
+`[wrapper]` block via `Pipeline::begin_turn_schedule` (#3408) rather than a
+hardcoded stage order. The remaining gap: `stella-cli`'s manifest loader
+(`stella plugin install|list|remove`) resolves and shows consent for a
+manifest without itself driving a turn through it — that command surface is
+about installation, not execution, so nothing there needs to.
 
 The one function a host must never bypass is
 `LoopGrant::permits_hook(event)` — the authoritative filter behind the

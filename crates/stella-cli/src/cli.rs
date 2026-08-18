@@ -712,7 +712,19 @@ pub(crate) enum Command {
     /// and it re-infers (a model call) only when the repository's shape has
     /// changed; otherwise the existing .stella/domains.toml is reused at no
     /// cost. Delete that file to force re-inference.
-    Init,
+    Init {
+        /// Delete semantic vectors left behind by an embedding model this
+        /// workspace no longer uses, reclaiming their disk space.
+        ///
+        /// Vectors are keyed by embedder fingerprint so two models never
+        /// share a vector space — which means switching model hides the old
+        /// vectors rather than removing them, and switching back reuses them
+        /// at no cost. That is why this is a flag and not automatic: sweeping
+        /// on every init would bill a full re-embed to anyone comparing two
+        /// models. Without it, `stella init` only *reports* what is stranded.
+        #[arg(long)]
+        prune_vectors: bool,
+    },
 
     /// List every tool available to the agent this session
     ///
