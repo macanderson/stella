@@ -14,6 +14,51 @@
 use super::graph::build_code_graph;
 use super::*;
 use crate::domains::{cached_taxonomy, summarize_repo};
+use crate::interactive::{AskUserIo, TtyAskUserIo};
+
+/// How init talks to the user: the progress transcript it writes, and the
+/// questions it is allowed to ask.
+///
+/// These travel together because they are two halves of one thing — the
+/// surface the human is looking at — and every surface answers both at once.
+/// The plain CLI prints to stdout and reads stdin; the Command Deck routes
+/// both through its own channels, and a `TtyAskUserIo` there would print
+/// straight through the full-screen render. Passing them as one injected
+/// seam is also what keeps `init_workspace`'s arity fixed, which matters
+/// concretely: both of its interactive call sites live in files closed to
+/// growth (`agent.rs`, `command_deck.rs`).
+///
+/// `ask` is `None` exactly when nobody can answer — a piped or redirected
+/// run. Init never derives that itself; the surface knows, and a second
+/// derivation is how two consumers end up disagreeing about whether anyone
+/// is listening.
+pub(crate) struct InitIo<'a> {
+    emit: Box<dyn FnMut(String) + 'a>,
+    ask: Option<&'a dyn AskUserIo>,
+}
+
+impl<'a> InitIo<'a> {
+    /// An io over a caller-supplied transcript sink and question channel.
+    pub(crate) fn new(emit: impl FnMut(String) + 'a, ask: Option<&'a dyn AskUserIo>) -> Self {
+        Self {
+            emit: Box::new(emit),
+            ask,
+        }
+    }
+
+    /// The plain-CLI io: the indented stdout transcript both `stella init`
+    /// and the non-deck REPL's `/init` print, with TTY questions enabled
+    /// only when [`crate::interactive::human_is_present`] says someone can
+    /// answer them.
+    pub(crate) fn stdout_tty() -> InitIo<'static> {
+        let ask: Option<&'static dyn AskUserIo> =
+            crate::interactive::human_is_present(true).then_some(&TtyAskUserIo);
+        InitIo {
+            emit: Box::new(|line: String| println!("  {line}")),
+            ask,
+        }
+    }
+}
 
 /// The domain step of init, wearing the #3102 inference-skip gate: a
 /// model-inferred taxonomy whose recorded repo-shape fingerprint still
@@ -62,8 +107,10 @@ pub(crate) async fn init_workspace(
     workspace_root: &std::path::Path,
     model_hint: Option<&str>,
     budget_limit: Option<f64>,
-    emit: &mut dyn FnMut(String),
+    io: &mut InitIo<'_>,
 ) -> Result<(Domains, f64), String> {
+    let InitIo { emit, ask } = io;
+    let emit: &mut dyn FnMut(String) = &mut **emit;
     let (domains, inference_cost_usd) =
         resolve_domains(provider, workspace_root, model_hint, budget_limit, emit).await;
 
@@ -75,6 +122,16 @@ pub(crate) async fn init_workspace(
     // `.agents/` (workspace + user scope) as symlinks into stella's own
     // directories — idempotent, never clobbers, never fatal.
     crate::extensions::sync_extensions(workspace_root, emit);
+
+    // Then, once — and only once per workspace — offer to convert the
+    // markdown definitions just adopted into TOML, the format the rest of
+    // stella's config speaks. This runs AFTER the sync deliberately: the
+    // definitions worth converting are largely the ones the sync just
+    // linked, and asking before they exist would spend the single ask this
+    // workspace gets on an empty directory. It never converts on its own —
+    // see `crate::commands_offer` for why that trade stays the user's.
+    let user_root = crate::extensions::user_config_root();
+    crate::commands_offer::offer_conversion(workspace_root, user_root.as_deref(), *ask, emit).await;
 
     let path = domains.save(workspace_root)?;
 
@@ -143,13 +200,13 @@ pub async fn run_init(
             }
         };
 
-    let mut emit = |line: String| println!("  {line}");
+    let mut io = InitIo::stdout_tty();
     let (domains, _inference_cost_usd) = init_workspace(
         provider.as_deref(),
         &workspace_root,
         model_hint.as_deref(),
         None,
-        &mut emit,
+        &mut io,
     )
     .await?;
 
