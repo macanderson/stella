@@ -104,6 +104,20 @@ impl DriverCapabilities for NoDriverCapabilities {
     }
 }
 
+/// The answer for an ask that reached a transport with no session open.
+///
+/// Unreachable on the shipping path — a transport only relays an ask once it
+/// has a session to relay it to — and written as a value rather than an
+/// `expect` because invariant 5 makes no exception for "I checked earlier".
+/// [`NoHostCalls`](super::NoHostCalls) is the same shape in the wrapper
+/// socket's context.
+pub(super) fn unserved(call: DriverCall) -> DriverCallOutcome {
+    DriverCallOutcome::Err(HostCallFailure::new(
+        HostCallRefusal::Unsupported,
+        format!("no driver session was open to perform \"{call}\""),
+    ))
+}
+
 /// One capability ask the gate answered with a refusal or a failure.
 ///
 /// Recorded so the host can say what a driver did not get. The driver already
