@@ -12,6 +12,13 @@
 //! the #2123 assertions fail on the pre-#2123 tree, where
 //! `--include-unverified-transcripts` is not an argument at all and the
 //! unvouched turn is unreachable by any invocation.
+//!
+//! The last of those is the pre-receipts turn's reward label: read the empty
+//! receipts plane as a zero step count and the record exports a scalar
+//! *above* what the same trajectory earns once its calls are counted, on the
+//! records whose provenance is weakest. That is what
+//! `a_turn_with_no_receipts_at_all_withholds_the_reward_scalar_it_cannot_shape`
+//! pins.
 
 use std::path::Path;
 use std::process::Command;
@@ -136,7 +143,17 @@ fn ladder(rung: LadderRung) -> Option<Box<LadderSnapshot>> {
     }))
 }
 
-/// A workspace whose store holds four settled executions, one per filter arm:
+/// The seeded workspace and the execution ids the assertions name.
+struct Seeded {
+    dir: tempfile::TempDir,
+    flipped: i64,
+    tampered: i64,
+    /// The turn whose receipts plane holds nothing at all — see
+    /// [`seeded_workspace`].
+    pre_receipts: i64,
+}
+
+/// A workspace whose store holds five settled executions, one per filter arm:
 ///
 /// - `flipped`: accepted — `completed`, a mutating change, a digest-verified
 ///   worker transcript, and a `SubmitFast` verdict (the deterministic flip,
@@ -146,12 +163,18 @@ fn ladder(rung: LadderRung) -> Option<Box<LadderSnapshot>> {
 /// - one `aborted` turn, excluded by outcome;
 /// - one `completed` turn whose only receipt cites a block with no journal
 ///   preimage, so its reconstruction cannot verify: excluded by the
-///   transcript gate and counted in the manifest.
+///   transcript gate and counted in the manifest;
+/// - `pre_receipts`: a `completed` turn with a mutating change and a passing
+///   verdict but **no `step_receipt` row at all** — the shape of a whole store
+///   predating the receipts plane, which is the headline case #2123 exists
+///   for. It reaches the unvouched arm by the other route (nothing to
+///   reconstruct rather than a reconstruction that fell short), and it is the
+///   only fixture on which the reward's step term has nothing to count.
 ///
 /// A project-scope `.stella/settings.json` pins the default reward weights
 /// explicitly, so the labels asserted below cannot drift with whatever the
 /// developer's user-scope settings say.
-fn seeded_workspace() -> (tempfile::TempDir, i64, i64) {
+fn seeded_workspace() -> Seeded {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = Store::open(dir.path()).expect("store");
     std::fs::write(
@@ -366,7 +389,51 @@ fn seeded_workspace() -> (tempfile::TempDir, i64, i64) {
         .finish_execution(unvouched, "completed", 0.01)
         .expect("finish");
 
-    (dir, flipped, tampered)
+    // A settled success from before the receipts plane existed: the journal
+    // holds the change and the verdict, and `step_receipt` holds nothing, so
+    // there is no recorded model call to reconstruct — and no count of how
+    // many calls the turn actually bought.
+    let pre_receipts = store
+        .begin_execution(
+            "run",
+            "a turn from before the receipts plane",
+            "zai",
+            "glm-5.2",
+        )
+        .expect("execution");
+    let pre_receipts_events = [
+        AgentEvent::FileChange {
+            path: "src/legacy.rs".into(),
+            kind: FileChangeKind::Modified,
+            added: 4,
+            removed: 1,
+            diff: None,
+        },
+        AgentEvent::Verdict {
+            passed: true,
+            evidence: VerdictEvidence {
+                summary: "the touched tests are green".into(),
+                deterministic: true,
+                evidence_refs: Vec::new(),
+                ladder: ladder(LadderRung::SubmitFast),
+            },
+        },
+    ];
+    for (seq, event) in pre_receipts_events.iter().enumerate() {
+        store
+            .record_event(pre_receipts, seq as u64, event)
+            .expect("event");
+    }
+    store
+        .finish_execution(pre_receipts, "completed", 0.10)
+        .expect("finish");
+
+    Seeded {
+        dir,
+        flipped,
+        tampered,
+        pre_receipts,
+    }
 }
 
 fn export(dir: &tempfile::TempDir, out: &str, extra: &[&str]) -> String {
@@ -401,10 +468,15 @@ fn read(dir: &Path, out: &str, file: &str) -> Vec<u8> {
 /// and the reward labels the issues describe.
 #[test]
 fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
-    let (dir, flipped, tampered) = seeded_workspace();
+    let Seeded {
+        dir,
+        flipped,
+        tampered,
+        ..
+    } = seeded_workspace();
     let summary = export(&dir, "out", &[]);
     assert!(
-        summary.contains("2 accepted turn(s) from 4 settled execution(s)"),
+        summary.contains("2 accepted turn(s) from 5 settled execution(s)"),
         "the summary reports what it kept and what it read: {summary}"
     );
 
@@ -412,7 +484,7 @@ fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
     assert_eq!(
         jsonl.lines().count(),
         2,
-        "the aborted and the unvouched executions are excluded: {jsonl}"
+        "the aborted and the two unvouched executions are excluded: {jsonl}"
     );
     let mut lines = jsonl.lines();
     let record: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
@@ -491,8 +563,8 @@ fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
     let manifest: serde_json::Value =
         serde_json::from_slice(&read(dir.path(), "out", "manifest.json")).expect("manifest json");
     assert_eq!(manifest["records"], 2);
-    assert_eq!(manifest["filter"]["executions_scanned"], 4);
-    assert_eq!(manifest["filter"]["executions_transcripts_unverified"], 1);
+    assert_eq!(manifest["filter"]["executions_scanned"], 5);
+    assert_eq!(manifest["filter"]["executions_transcripts_unverified"], 2);
     assert_eq!(manifest["filter"]["include_unverified_transcripts"], false);
     assert_eq!(manifest["filter"]["executions_accepted"], 2);
     assert_eq!(
@@ -515,7 +587,7 @@ fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
 /// detail can hide a leak.
 #[test]
 fn a_planted_key_in_the_prompt_or_a_tool_argument_never_reaches_the_output() {
-    let (dir, _, _) = seeded_workspace();
+    let dir = seeded_workspace().dir;
     export(&dir, "out", &[]);
 
     for file in ["dataset.jsonl", "manifest.json"] {
@@ -547,7 +619,7 @@ fn a_planted_key_in_the_prompt_or_a_tool_argument_never_reaches_the_output() {
 /// files. Run twice into different directories and compare the bytes.
 #[test]
 fn the_same_store_and_filter_export_byte_identical_files() {
-    let (dir, _, _) = seeded_workspace();
+    let dir = seeded_workspace().dir;
     export(&dir, "first", &[]);
     export(&dir, "second", &[]);
 
@@ -564,13 +636,13 @@ fn the_same_store_and_filter_export_byte_identical_files() {
 /// rule rather than the default one.
 #[test]
 fn the_date_window_and_require_verdict_are_reported_as_applied() {
-    let (dir, _, _) = seeded_workspace();
+    let dir = seeded_workspace().dir;
 
     export(&dir, "future", &["--since", "2099-01-01"]);
     let manifest: serde_json::Value =
         serde_json::from_slice(&read(dir.path(), "future", "manifest.json")).expect("json");
     assert_eq!(manifest["records"], 0);
-    assert_eq!(manifest["filter"]["executions_scanned"], 4);
+    assert_eq!(manifest["filter"]["executions_scanned"], 5);
     assert_eq!(manifest["filter"]["executions_in_window"], 0);
     assert_eq!(manifest["filter"]["since"], "2099-01-01");
     assert_eq!(manifest["execution_id_range"], serde_json::Value::Null);
@@ -603,28 +675,28 @@ fn the_date_window_and_require_verdict_are_reported_as_applied() {
 /// modes stay comparable.
 #[test]
 fn the_unvouched_turn_is_reachable_only_under_the_transcript_opt_in() {
-    let (dir, _, _) = seeded_workspace();
+    let dir = seeded_workspace().dir;
 
-    // The default is unchanged: the unvouched turn is still excluded.
+    // The default is unchanged: neither unvouched turn is exported.
     export(&dir, "strict", &[]);
     let strict = String::from_utf8(read(dir.path(), "strict", "dataset.jsonl")).expect("utf8");
-    assert_eq!(strict.lines().count(), 2, "the default still excludes it");
+    assert_eq!(strict.lines().count(), 2, "the default still excludes them");
 
     let summary = export(&dir, "loose", &["--include-unverified-transcripts"]);
     assert!(
-        summary.contains("3 accepted turn(s) from 4 settled execution(s)"),
-        "the unvouched turn is now kept: {summary}"
+        summary.contains("4 accepted turn(s) from 5 settled execution(s)"),
+        "both unvouched turns are now kept: {summary}"
     );
     assert!(
-        summary.contains("1 turn(s) exported with transcript_verified=false"),
+        summary.contains("2 turn(s) exported with transcript_verified=false"),
         "the summary says the transcripts were withheld, not that nothing happened: {summary}"
     );
 
     let jsonl = String::from_utf8(read(dir.path(), "loose", "dataset.jsonl")).expect("utf8");
     assert_eq!(
         jsonl.lines().count(),
-        3,
-        "the unvouched execution joins the two verified ones: {jsonl}"
+        4,
+        "the two unvouched executions join the two verified ones: {jsonl}"
     );
     let unvouched: serde_json::Value =
         serde_json::from_str(jsonl.lines().nth(2).unwrap()).expect("record json");
@@ -659,13 +731,13 @@ fn the_unvouched_turn_is_reachable_only_under_the_transcript_opt_in() {
         manifest["schema"], 3,
         "the record shape changed, so did the schema"
     );
-    assert_eq!(manifest["records"], 3);
+    assert_eq!(manifest["records"], 4);
     assert_eq!(manifest["filter"]["include_unverified_transcripts"], true);
     assert_eq!(
-        manifest["filter"]["executions_transcripts_unverified"], 1,
+        manifest["filter"]["executions_transcripts_unverified"], 2,
         "the same count in both modes is what makes them comparable"
     );
-    assert_eq!(manifest["filter"]["executions_accepted"], 3);
+    assert_eq!(manifest["filter"]["executions_accepted"], 4);
     assert_eq!(
         manifest["filter"]["acceptance_predicate"],
         "executions.outcome in {completed, goal_met} AND at least one mutating \
@@ -686,6 +758,70 @@ fn the_unvouched_turn_is_reachable_only_under_the_transcript_opt_in() {
     }
 }
 
+/// #2123, the headline case: a store predating the receipts plane holds no
+/// `step_receipt` row, so nothing recorded how many model calls its turns
+/// bought. The flag exports those turns — and the reward label refuses to
+/// price a step count nobody wrote down.
+///
+/// Read as zero, the shaping subtracts nothing, so the record would carry a
+/// scalar strictly ABOVE what the same trajectory earns once its calls are
+/// counted: `1.0 − 0.5·$0.10 = 0.95` here, against `0.93` for a five-call
+/// version of the identical turn. That inflation would land on exactly the
+/// records whose provenance is weakest, and nothing on the record would say
+/// so. The label reports `steps_unknown` instead, keeping the rung, the
+/// outcome term and the policy — everything a consumer needs to re-shape it
+/// under a count of its own.
+#[test]
+fn a_turn_with_no_receipts_at_all_withholds_the_reward_scalar_it_cannot_shape() {
+    let Seeded {
+        dir, pre_receipts, ..
+    } = seeded_workspace();
+    export(&dir, "loose", &["--include-unverified-transcripts"]);
+
+    let jsonl = String::from_utf8(read(dir.path(), "loose", "dataset.jsonl")).expect("utf8");
+    let record: serde_json::Value = jsonl
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record json"))
+        .find(|record: &serde_json::Value| record["execution_id"] == pre_receipts)
+        .expect("the pre-receipts turn is exported under the flag");
+
+    // The journal half is intact: this is a real trajectory, worth exporting.
+    assert_eq!(record["outcome"], "completed");
+    assert_eq!(record["changes"][0]["path"], "src/legacy.rs");
+    assert_eq!(record["verdict"]["passed"], true);
+    assert_eq!(record["transcript_verified"], false);
+    assert_eq!(record["calls"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        record["transcript_mismatch_severity"], "none",
+        "there is nothing to reconstruct, so nothing mismatched"
+    );
+
+    // The label half: everything true is published, and only the number that
+    // would have been wrong is withheld.
+    assert_eq!(record["reward"]["rung"], "submit_fast");
+    assert_eq!(record["reward"]["outcome"], 1.0);
+    assert_eq!(record["reward"]["policy"]["shaping"]["per_step"], 0.02);
+    assert!(
+        record["reward"]["cost"]["steps"].is_null(),
+        "an unrecorded step count is null, never a zero that prices as free: {record}"
+    );
+    assert!(
+        record["reward"]["reward"].is_null(),
+        "no scalar is claimed for a trajectory whose step cost is unknown: {record}"
+    );
+    assert_eq!(
+        record["reward"]["discard"], "steps_unknown",
+        "and the reason is named, so the row is selectable rather than lost"
+    );
+
+    // A turn whose receipts DID record its calls still scores, unverified
+    // transcript or not: the gap is the step count, not the flag.
+    let verified: serde_json::Value =
+        serde_json::from_str(jsonl.lines().next().unwrap()).expect("record json");
+    assert_eq!(verified["reward"]["cost"]["steps"], 1);
+    assert!(verified["reward"]["reward"].as_f64().is_some());
+}
+
 /// The dataset carries redacted prompts and full tool outputs, which is at
 /// least as sensitive as the session archive that was hardened for the same
 /// reason — so the directory is owner-only and so are both files.
@@ -694,7 +830,7 @@ fn the_unvouched_turn_is_reachable_only_under_the_transcript_opt_in() {
 fn the_dataset_and_its_directory_are_owner_only() {
     use std::os::unix::fs::PermissionsExt;
 
-    let (dir, _, _) = seeded_workspace();
+    let dir = seeded_workspace().dir;
     export(&dir, "out", &[]);
 
     let out = dir.path().join("out");

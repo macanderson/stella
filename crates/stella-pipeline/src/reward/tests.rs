@@ -8,7 +8,7 @@ use super::*;
 
 fn cost(steps: u32, cost_usd: f64, revisions: u32) -> TrajectoryCost {
     TrajectoryCost {
-        steps,
+        steps: Some(steps),
         cost_usd,
         revisions,
     }
@@ -95,7 +95,7 @@ fn shaping_prices_steps_cost_and_revisions() {
     assert!((reward - 0.4).abs() < 1e-9, "got {reward}");
     // The inputs travel with the label, so a consumer can re-shape without
     // re-reading the journal.
-    assert_eq!(label.cost.steps, 10);
+    assert_eq!(label.cost.steps, Some(10));
     assert_eq!(label.cost.revisions, 2);
 }
 
@@ -223,6 +223,63 @@ fn a_non_finite_cost_withholds_the_scalar_only() {
             "the rung's own term is still true"
         );
     }
+}
+
+/// An unrecorded step count is refused, not read as zero.
+///
+/// The direction is what makes this a defect rather than an imprecision:
+/// shaping only ever subtracts, so a missing count does not shrink the reward,
+/// it *raises* it above what the same trajectory earns once its calls are
+/// counted — and it raises it on exactly the rows whose provenance is
+/// weakest, which then pool with the trustworthy ones as though they had been
+/// cheaper.
+#[test]
+fn an_unrecorded_step_count_is_discarded_rather_than_priced_as_zero() {
+    let policy = RewardPolicy::default();
+    let unknown = label(
+        settled(LadderRung::SubmitFast, true),
+        TrajectoryCost {
+            steps: None,
+            cost_usd: 0.10,
+            revisions: 0,
+        },
+        &policy,
+    );
+    assert_eq!(unknown.reward, None, "no scalar is claimed");
+    assert_eq!(unknown.discard, Some(DiscardReason::StepsUnknown));
+    assert_eq!(
+        unknown.outcome,
+        Some(1.0),
+        "the rung's own term is still true, so the row stays selectable"
+    );
+    assert_eq!(unknown.cost.steps, None, "the gap travels with the label");
+
+    // Priced as zero it would have out-scored the same trajectory with its
+    // calls counted, which is the failure this refuses.
+    let counted = label(
+        settled(LadderRung::SubmitFast, true),
+        cost(5, 0.10, 0),
+        &policy,
+    );
+    assert!(
+        counted.reward.expect("scored") < 1.0 - 0.5 * 0.10,
+        "the counted trajectory pays its step penalty"
+    );
+}
+
+/// The receipts plane's empty answer is "nobody wrote it down", never "zero
+/// calls" — one rule, so `stella trace` and `stella dataset export` cannot
+/// drift on the labels they are documented to agree about.
+#[test]
+fn an_empty_receipts_plane_is_an_unknown_step_count_not_a_zero_one() {
+    assert_eq!(TrajectoryCost::recorded_steps(0), None);
+    assert_eq!(TrajectoryCost::recorded_steps(1), Some(1));
+    assert_eq!(TrajectoryCost::recorded_steps(7), Some(7));
+    assert_eq!(
+        TrajectoryCost::recorded_steps(usize::MAX),
+        Some(u32::MAX),
+        "a count past the field saturates rather than panicking or wrapping"
+    );
 }
 
 /// A policy with a helper for the common case: restate the unit, keep the rest.

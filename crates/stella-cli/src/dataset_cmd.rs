@@ -114,6 +114,14 @@ use stella_store::{FinishedExecution, MismatchSeverity, RecordedCall, Store};
 /// v3 record's empty `calls` for a verified execution that made no model call,
 /// which v2 could not produce — so the shape is not compatible even though
 /// every v2 field is still present and still means what it did.
+///
+/// The same bump covers `reward.cost.steps` becoming nullable: a record the
+/// receipts plane holds nothing for reports an unrecorded step count and a
+/// `steps_unknown` discard rather than a scalar shaped against a zero. It is
+/// not a separate version because no v3 dataset can exist without it: `3` is
+/// unreleased at the time both halves were written, and only
+/// `--include-unverified-transcripts` can produce a record either one is
+/// visible on.
 pub const DATASET_SCHEMA_VERSION: u32 = 3;
 
 /// The dataset file written under `--output`.
@@ -291,6 +299,11 @@ pub struct DatasetRecord {
     /// this execution's *receipts*, not about its trajectory: `tool_calls`,
     /// `changes` and `verdict` come from the journal and are exactly as
     /// trustworthy as on any other record.
+    ///
+    /// [`Self::reward`] is the one field that is neither: its outcome term is
+    /// the journal's, but its shaping prices the receipts plane's step count.
+    /// An execution the plane holds nothing for therefore carries a discarded
+    /// label (`steps_unknown`) rather than a scalar — see [`Self::reward`].
     pub transcript_verified: bool,
     /// What a digest mismatch in this execution's reconstructions means, as
     /// [`stella_store::MismatchSeverity`]'s wire token — `none`,
@@ -324,6 +337,15 @@ pub struct DatasetRecord {
     /// journal holds no verdict at all: there is no proof or ladder evidence
     /// to derive a label from, and synthesizing a discard under a policy the
     /// run never saw would claim more than the store knows.
+    ///
+    /// A *present* label may still carry no scalar. Under
+    /// `--include-unverified-transcripts` an execution whose receipts plane
+    /// holds nothing has an unrecorded step count, and the shaping refuses to
+    /// price it as zero, so the label reports
+    /// `stella_pipeline::reward::DiscardReason::StepsUnknown` with its rung,
+    /// its outcome term and its policy intact. That is the discard's whole
+    /// point here: the row stays selectable and re-shapeable, and only the
+    /// number that would have been wrong is withheld.
     pub reward: Option<RewardLabel>,
     /// Whether redaction actually replaced something anywhere in this record.
     /// Recorded so "this was redacted" is a visible fact rather than an
@@ -804,9 +826,18 @@ fn worst_severity(a: MismatchSeverity, b: MismatchSeverity) -> MismatchSeverity 
 /// role, not just the worker's) and revisions the verdicts beyond the
 /// settling one — the same fold `trace.rs` applies, so a dataset label and a
 /// trace label of one execution agree.
+///
+/// The step count is [`TrajectoryCost::recorded_steps`]'s, so an execution
+/// with no receipt at all — the shape
+/// `--include-unverified-transcripts` exists to admit — carries `steps: null`
+/// and a `steps_unknown` discard rather than a scalar shaped as though the
+/// turn had bought no model call. Reading that absence as zero would drop the
+/// step penalty from precisely the records whose provenance is weakest and
+/// leave them pooling with verified ones as though they had been cheaper
+/// (#2123).
 fn reward_label(
     fold: &JournalFold,
-    steps: usize,
+    recorded_calls: usize,
     cost_usd: f64,
     policy: &RewardPolicy,
 ) -> Option<RewardLabel> {
@@ -814,7 +845,7 @@ fn reward_label(
     Some(label(
         settlement,
         TrajectoryCost {
-            steps: u32::try_from(steps).unwrap_or(u32::MAX),
+            steps: TrajectoryCost::recorded_steps(recorded_calls),
             cost_usd,
             revisions: fold.verdicts.saturating_sub(1),
         },

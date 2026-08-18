@@ -79,7 +79,9 @@ The transcript clause is what a store predating the receipts plane cannot satisf
 - `transcript_verified` is `false`, so the record says why;
 - `transcript_mismatch_severity` reports what a digest mismatch here *means* — `none`, `compaction` (the journal predates compaction journaling its rewrites, so the mismatched bytes are a routine pre-compaction preimage), or `integrity` (compaction is no longer an available explanation).
 
-The gate itself stays era-blind: a benign `compaction` record is excluded by default exactly like an `integrity` one. The severity is reported so a consumer can tell them apart, never used to admit one. `tool_calls`, `changes`, `verdict`, and `reward` come from the journal and are exactly as trustworthy on these records as on any other.
+The gate itself stays era-blind: a benign `compaction` record is excluded by default exactly like an `integrity` one. The severity is reported so a consumer can tell them apart, never used to admit one. `tool_calls`, `changes`, and `verdict` come from the journal and are exactly as trustworthy on these records as on any other.
+
+`reward` is the one field that is not purely journal-derived, and on the pre-receipts shape it says so. Its outcome term comes from the journal's verdict, but its shaping prices the *step count*, which comes from the receipts plane — and a plane holding no row for a turn has not recorded that the turn made zero calls, it has recorded nothing. Read as zero the step penalty would simply vanish, handing exactly these records a scalar **above** what the same trajectory earns once its calls are counted. So `cost.steps` is `null` and the label reports `discard: "steps_unknown"` instead, keeping its rung, its outcome term and its policy so the row stays selectable and re-shapeable under a count of your own. A record whose receipts exist but fail to verify is unaffected: its calls were recorded, so its step count is real and its reward scores normally.
 
 ## The record
 
@@ -156,7 +158,7 @@ Every record carries the same keys — absence is spelled `null`, never omitted 
 
 `calls` is every model call in wire order, each with the exact messages it was sent — rebuilt from the receipts plane by the same reconstruction `stella inspect` reads, and admitted only once its digest verifies. That is what makes an SFT pair derivable from a record alone. It is empty exactly when `transcript_verified` is `false`, which only `--include-unverified-transcripts` can produce.
 
-`reward` is the training label the settled verdict earned, computed under the workspace's resolved reward policy — and the policy rides on the label, so a scalar stays interpretable outside the workspace that produced it. It is `null` when the journal holds no verdict at all: there is nothing to derive a label from, and synthesizing one under a policy the run never saw would claim more than the store knows. The raw `verdict` is carried beside it so a reader can re-derive a label under different weights.
+`reward` is the training label the settled verdict earned, computed under the workspace's resolved reward policy — and the policy rides on the label, so a scalar stays interpretable outside the workspace that produced it. It is `null` when the journal holds no verdict at all: there is nothing to derive a label from, and synthesizing one under a policy the run never saw would claim more than the store knows. The raw `verdict` is carried beside it so a reader can re-derive a label under different weights. A label that *is* present may still carry no scalar — `reward.reward` is `null` beside a named `reward.discard` whenever the trajectory cannot be priced honestly, including the `steps_unknown` case described above.
 
 ### Provenance
 

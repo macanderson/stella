@@ -294,6 +294,13 @@ pub enum DiscardReason {
     /// The shaping terms could not be computed — a non-finite cost. A reward
     /// that is `NaN` is not a smaller reward, it is a corrupt one.
     CostNotFinite,
+    /// How many model calls the trajectory spent was never recorded, so the
+    /// step term of the shaping has no value ([`TrajectoryCost::steps`] is
+    /// `None`). Distinct from zero steps in the direction that matters: a zero
+    /// would subtract nothing and hand back a *larger* reward than the same
+    /// trajectory earns once its calls are counted, so every such row would
+    /// pool as though it had been cheaper than the ones beside it.
+    StepsUnknown,
     /// The workspace set its judged weight to `0.0`: this verifier is not trusted
     /// to label anything. Distinct from a `0.0` reward, which would assert that
     /// a neutral outcome was observed.
@@ -365,7 +372,16 @@ pub struct TrajectoryCost {
     /// Model calls in the trajectory — every role, not just the worker's,
     /// because a turn that bought three verifier calls did cost three verifier
     /// calls.
-    pub steps: u32,
+    ///
+    /// `None` when nothing recorded them, which is **not** the same fact as
+    /// zero: a store predating the receipts plane holds no `step_receipt` row
+    /// for turns that did make model calls, and reading that absence as `0`
+    /// silently drops the whole step penalty from the scalar. Such a
+    /// trajectory is discarded with [`DiscardReason::StepsUnknown`] rather
+    /// than shaped against a number nothing observed. Build it with
+    /// [`Self::recorded_steps`] wherever the count comes from the receipts
+    /// plane, so no surface has to re-decide what an empty plane means.
+    pub steps: Option<u32>,
     /// Settled USD for the whole trajectory.
     pub cost_usd: f64,
     /// Verification rounds beyond the first: how many times verify sent the
@@ -377,6 +393,21 @@ pub struct TrajectoryCost {
     /// deliberate: shaping only ever subtracts, so the error under-rewards an
     /// expensive turn rather than over-rewarding it.
     pub revisions: u32,
+}
+
+impl TrajectoryCost {
+    /// The step term for a trajectory whose model calls are counted from the
+    /// receipts plane.
+    ///
+    /// One rule in one place: an empty plane is [`TrajectoryCost::steps`]
+    /// `None` ("nobody wrote down what this turn spent"), never `Some(0)`
+    /// ("this turn called no model"). `stella trace` and `stella dataset
+    /// export` both count that way and are documented to agree on the label of
+    /// one execution, which they only can while the rule has a single home.
+    #[must_use]
+    pub fn recorded_steps(recorded_calls: usize) -> Option<u32> {
+        (recorded_calls > 0).then(|| u32::try_from(recorded_calls).unwrap_or(u32::MAX))
+    }
 }
 
 /// One trajectory's training label: the rung it came to rest on, the outcome
@@ -426,8 +457,9 @@ impl RewardLabel {
 
 /// Label one trajectory under `policy`.
 ///
-/// Total: every settlement, every rung, any cost — including a non-finite one —
-/// and any policy, including an invalid one, resolves to a `RewardLabel`, never
+/// Total: every settlement, every rung, any cost — including a non-finite one
+/// and one whose step count was never recorded — and any policy, including an
+/// invalid one, resolves to a `RewardLabel`, never
 /// a panic (invariant #5). A trajectory that cannot be scored says so in
 /// [`RewardLabel::discard`], and the policy is stamped on the result either way.
 pub fn label(settlement: Settlement, cost: TrajectoryCost, policy: &RewardPolicy) -> RewardLabel {
@@ -464,9 +496,17 @@ pub fn label(settlement: Settlement, cost: TrajectoryCost, policy: &RewardPolicy
         Err(discard) => return unscored(discard, None),
     };
 
+    // An unrecorded step count is refused rather than read as zero: the
+    // shaping only ever subtracts, so a missing count does not shrink the
+    // reward, it inflates it — and it inflates exactly the rows whose
+    // provenance is weakest.
+    let Some(steps) = cost.steps else {
+        return unscored(DiscardReason::StepsUnknown, Some(outcome));
+    };
+
     let shaping = &policy.shaping;
     let reward = outcome
-        - shaping.per_step * f64::from(cost.steps)
+        - shaping.per_step * f64::from(steps)
         - shaping.per_usd * cost.cost_usd
         - shaping.per_revision * f64::from(cost.revisions);
     if !reward.is_finite() {

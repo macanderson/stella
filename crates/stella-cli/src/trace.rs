@@ -80,7 +80,15 @@ use stella_store::Store;
 /// yet, and the alternative is every future reader carrying "v2 implies the
 /// 2026-08 defaults" as a permanent special case. Skipping is cheaper and
 /// cannot rot.
-pub const TRACE_SCHEMA_VERSION: u32 = 3;
+///
+/// `4` makes the label's step count nullable ([`TrajectoryCost::steps`]).
+/// A v3 record whose execution recorded no model call wrote `steps: 0` and a
+/// reward scalar shaped as though the turn had bought none — the step penalty
+/// silently absent from every trace of a store predating the receipts plane
+/// (#2123). v4 writes `steps: null` and discards the scalar instead, so a v3
+/// line is skipped rather than pooled beside a v4 one that priced the same
+/// trajectory differently.
+pub const TRACE_SCHEMA_VERSION: u32 = 4;
 
 /// The append-only trace file, one JSON record per line, under
 /// `.stella/private/`.
@@ -383,7 +391,7 @@ pub fn assemble(
     let reward = label(
         fold.settlement.unwrap_or(Settlement::Absent),
         TrajectoryCost {
-            steps: u32::try_from(calls.len()).unwrap_or(u32::MAX),
+            steps: TrajectoryCost::recorded_steps(calls.len()),
             cost_usd: summary.cost_usd,
             revisions: fold.verdicts.saturating_sub(1),
         },
@@ -1103,10 +1111,20 @@ mod tests {
             record.reward.cost.revisions, 1,
             "two verdicts, one revision"
         );
-        assert_eq!(record.reward.cost.steps, 0, "no receipts in this fixture");
-        // 1.0 − 0.02·0 − 0.5·0.40 − 0.1·1 = 0.70
-        let reward = record.reward.reward.expect("scored");
-        assert!((reward - 0.70).abs() < 1e-9, "got {reward}");
+        // No receipts in this fixture, so how many calls the turn bought was
+        // never recorded. Shaped against a zero it would have scored
+        // 1.0 − 0.02·0 − 0.5·0.40 − 0.1·1 = 0.70, a step penalty lighter than
+        // any counted trajectory pays; the label withholds the scalar instead
+        // and keeps the rung and the outcome term, which are still true.
+        assert_eq!(
+            record.reward.cost.steps, None,
+            "no receipts in this fixture"
+        );
+        assert_eq!(record.reward.reward, None);
+        assert_eq!(
+            record.reward.discard,
+            Some(stella_pipeline::reward::DiscardReason::StepsUnknown)
+        );
 
         // The airlock at the trace seam: the verifier's own sentence is in the
         // journal this was folded from, and nowhere in the label.
