@@ -66,6 +66,15 @@
 //!   direction. The host renders **nothing** of its own about what a package
 //!   ships; it used to, and the cost was an embedding host showing a document
 //!   that omitted executable code entering the agent's tool surface.
+//!
+//!   Consent is a one-time transaction, but the directories it approved are
+//!   not — a plugin is an ordinary subprocess with no filesystem sandbox, so
+//!   its own process can write a new `tools/*.toml` any time after install
+//!   completes. [`dirs_of`] re-runs `reconcile` against the disk on **every**
+//!   load, not only the one `stella plugin install` performs, so a directory
+//!   that drifted from the consented manifest after install contributes
+//!   nothing rather than loading silently on the next session
+//!   ([`reconciles_with_disk`]).
 //! - **Retraction.** Structural, per above.
 //!
 //! # The trust gate is the roster's, not a second one
@@ -110,7 +119,10 @@ pub(crate) struct ContributedDir {
     pub(crate) dir: PathBuf,
 }
 
-/// Every plugin's contributed directory of one kind, in roster order.
+/// Every plugin's contributed directory of one kind, in roster order,
+/// withholding any plugin whose directories no longer reconcile against what
+/// its manifest declared and a human consented to (see
+/// [`reconciles_with_disk`]).
 ///
 /// Roster order is name order, and it is the precedence order for
 /// plugin-versus-plugin name collisions: the first plugin to claim a name
@@ -120,11 +132,43 @@ fn dirs_of(roster: &PluginRoster, kind: &str) -> Vec<ContributedDir> {
     roster
         .plugins()
         .iter()
+        .filter(|plugin| reconciles_with_disk(plugin))
         .map(|plugin| ContributedDir {
             plugin: plugin.manifest.name.clone(),
             dir: plugin.dir.join(kind),
         })
         .collect()
+}
+
+/// Re-run, on every load, the check `stella plugin install` runs once.
+///
+/// [`PluginManifest::reconcile`](stella_plugin::PluginManifest::reconcile) —
+/// a package's `tools/`, `skills/` and `rules/` directories must match
+/// exactly what the manifest declared and a human consented to — used to be
+/// invoked only from `stella plugin install` (`plugin_cmd.rs`), which makes
+/// "the shown document is provably complete" true for exactly one instant:
+/// install time. A plugin runs as an ordinary OS subprocess with no
+/// filesystem sandbox beyond the env-var allowlist
+/// (`crates/stella-runtime/src/wrapper/subprocess.rs`), so its own process —
+/// or any process running as the same user — can write a new
+/// `<plugin_dir>/tools/backdoor.toml` or `<plugin_dir>/rules/*.toml` at any
+/// point after install completes. Without this check, the next session's
+/// [`dirs_of`] would read that new file straight off disk with no new
+/// consent prompt anywhere on the path. Running the same check here, on
+/// every call, is what makes the guarantee hold for every session a plugin
+/// is loaded into rather than only the one that installed it.
+///
+/// A plugin that fails reconciliation contributes **nothing** of any kind —
+/// not a partial read of whatever entry still happens to match — because a
+/// package that grew one undeclared entry is not a package whose other,
+/// still-declared entries can still be trusted to be the ones consented to.
+/// The whole package is withheld until it is reinstalled against what is
+/// actually on disk, which re-shows the declaration and asks again.
+fn reconciles_with_disk(plugin: &InstalledPlugin) -> bool {
+    plugin
+        .manifest
+        .reconcile(&Inventory::of_package(&plugin.dir).listing())
+        .is_ok()
 }
 
 /// The roster this workspace's session runs under, or an empty one.

@@ -899,6 +899,74 @@ fn a_plugins_tool_installs_runs_as_the_plugin_and_retracts_with_it() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// **The re-check witness.** `reconcile` used to run only once, from
+/// `stella plugin install` — which makes the consent document "provably
+/// complete" true for exactly one instant. A plugin runs as an ordinary
+/// subprocess with no filesystem sandbox beyond the env-var allowlist, so its
+/// own process can write a new `tools/*.toml` into its own installed
+/// directory at any point after install completes, with no new consent
+/// transaction anywhere on the path. This test simulates exactly that write
+/// rather than trusting a hostile plugin's process to demonstrate it.
+///
+/// Before the fix, `contributed_tools` reads the installed directory straight
+/// off disk and the `backdoor` assertion fails. After the fix, a plugin whose
+/// directories no longer agree with its manifest contributes nothing at all —
+/// not even `vera_review`, which it still declares truthfully — because a
+/// package that grew one undeclared entry is not a package whose other
+/// entries can still be trusted to be the ones a human consented to.
+#[test]
+fn a_plugin_that_drifts_from_its_declaration_after_install_contributes_nothing() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-drift");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    assert_eq!(
+        contributed_tools(&root)
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["vera_review".to_string()],
+        "the declared tool loads normally right after install"
+    );
+
+    // What a hostile plugin's own subprocess can do at any time while it
+    // runs: write a new file into its own installed `tools/` directory.
+    let installed_dir = stella_home::resolve_project_plugins_dir(&root).join("vera");
+    std::fs::write(
+        installed_dir.join(package::TOOLS_DIR).join("backdoor.toml"),
+        "name = \"backdoor\"\ndescription = \"not consented to\"\ncommand = [\"/bin/true\"]\n",
+    )
+    .expect("simulated post-install write");
+
+    let after = contributed_tools(&root);
+    assert!(
+        after.iter().all(|tool| tool.name != "backdoor"),
+        "an undeclared tool written after install must never be loaded: {after:?}"
+    );
+    assert!(
+        after.iter().all(|tool| tool.name != "vera_review"),
+        "a package that drifted from its declaration is withheld whole, not just the \
+         undeclared entry: {after:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// **The clone witness, extended to the sharpest contribution (#3509 +
 /// #3380).** A contributed tool is executable code that a `git clone`
 /// carried in, so it must sit behind exactly the same trust gate the

@@ -202,3 +202,48 @@ async fn a_timed_out_plugin_leaves_no_surviving_grandchild() {
          evidence for",
     );
 }
+
+/// **Witness 3.** A plugin that keeps writing to stdout after it has already
+/// answered the point does not wedge the exchange.
+///
+/// `converse` stops reading stdout the instant it finds the point response —
+/// there is nothing left in the wire contract to parse — so anything the
+/// child writes after that sits in the OS pipe (about 64 KiB on Linux)
+/// nobody is draining. Before `settle` also drained stdout, a child that
+/// filled that pipe blocked in `write(2)` and could never reach `exit(2)`, so
+/// `child.wait()` hung until the outer budget below fired and the process
+/// group was killed — turning a plugin that had already answered correctly
+/// into a `Timeout`. The script writes comfortably past one pipe buffer
+/// (three times over) after its response, which is enough to reproduce the
+/// deadlock on the old code without needing anywhere near the capture
+/// ceiling.
+#[tokio::test]
+async fn a_plugin_that_talks_after_answering_does_not_wedge_the_exchange() {
+    let budget = Duration::from_secs(8);
+    let trailing_past_one_pipe_buffer = 3 * 64 * 1024;
+    let script = format!(
+        "printf '%s\\n' '{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\"context\":[]}}}}'\n\
+         yes stella | tr -d '\\n' | head -c {trailing_past_one_pipe_buffer}\n",
+    );
+
+    let started = Instant::now();
+    let response = plugin(&script, budget).before_turn(before()).await.expect(
+        "a plugin that answered correctly and then kept talking is not lost to a pipe \
+             deadlock",
+    );
+    let elapsed = started.elapsed();
+
+    assert!(
+        response.context.is_empty(),
+        "the point response itself is unaffected by what came after it"
+    );
+    // The old code did not fail differently here — it hung for the whole
+    // budget and then failed as `Timeout`. This bound is what tells the two
+    // apart: an exchange that drains the trailing output returns in well
+    // under a second, not most of an 8-second budget.
+    assert!(
+        elapsed < budget / 2,
+        "answered in {elapsed:?} of a {budget:?} budget — settle() waited on the child's exit \
+         without draining its trailing stdout, exactly the deadlock this test exists to catch",
+    );
+}

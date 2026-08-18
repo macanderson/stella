@@ -482,12 +482,21 @@ fn a_promotion_grant_does_not_arm_a_record_a_plugin_shipped() {
     let lineage = "ctx.acme.web.no-force-push";
     append_promotion(root.path(), grant(lineage, "measured over 30 days")).unwrap();
 
-    // A plugin ships that exact lineage, and the workspace ships none.
+    // A plugin ships that exact lineage, and the workspace ships none. The
+    // manifest must *declare* that record: a package whose directories exceed
+    // its declaration reconciles against nothing and contributes nothing
+    // (`plugin_cmd::package::reconciles_with_disk`), which would make this
+    // witness pass for the wrong reason — the record never loading at all,
+    // rather than loading unarmed.
     let plugin = stella_home::resolve_project_plugins_dir(root.path()).join("vera");
     std::fs::create_dir_all(plugin.join("rules")).unwrap();
     std::fs::write(
         plugin.join(crate::plugin_cmd::roster::MANIFEST_FILE),
-        "name = \"vera\"\n",
+        format!(
+            "name = \"vera\"\n\n\
+             [[records]]\nlineage = \"{lineage}\"\n\
+             statement = \"Never force-push to a shared branch.\"\n"
+        ),
     )
     .unwrap();
     std::fs::write(
