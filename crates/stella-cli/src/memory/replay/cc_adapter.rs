@@ -63,8 +63,8 @@ use std::path::{Path, PathBuf};
 use stella_core::redact::redact_secrets;
 
 use super::trace::{
-    Provenance, ScriptedReflection, TRACE_VERSION, Trace, TraceMessage, TraceRole, TraceSession,
-    TraceShell, TraceTurn, WorkspaceSeed,
+    Provenance, ScriptedReflection, TRACE_VERSION, Trace, TraceSession, TraceShell, TraceTurn,
+    WorkspaceSeed,
 };
 
 /// How a transcript line is shaped. Only the fields the adapter reads.
@@ -411,16 +411,6 @@ pub(crate) fn every_lesson_is_labelled(trace: &Trace) -> bool {
         ScriptedReflection::Lessons { provenance, .. } => *provenance == Provenance::Derived,
         _ => true,
     })
-}
-
-/// Unused under option (b); kept so a future option (a) has one obvious place to
-/// build a labelled lesson rather than inventing a second spelling.
-#[allow(dead_code)]
-pub(crate) fn derived_message(role: TraceRole, content: &str) -> TraceMessage {
-    TraceMessage {
-        role,
-        content: content.to_string(),
-    }
 }
 
 #[cfg(test)]
