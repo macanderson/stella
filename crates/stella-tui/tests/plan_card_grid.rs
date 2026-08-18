@@ -1,8 +1,7 @@
 //! Witness: the plan card renders the plan's operating envelope as a labeled
 //! grid — repo (with `⎇ branch`), write/read globs, budget with its cap, the
-//! `think` / `work` / `verify` model slots, the shell policy, and the literal
-//! done-when contract — over the readable step list, and flips to `locked`
-//! once the gate has approved.
+//! `think` / `work` / `verify` model slots, and the shell policy — over the
+//! readable step list, and flips to `locked` once the gate has approved.
 //!
 //! These rows used to be the `/scope` card's whole content, on a surface that
 //! showed the envelope and never the steps. The card now carries both; these
@@ -87,9 +86,6 @@ fn the_grid_carries_every_labeled_row() {
         "verify",
         "shell",
         "allowlisted",
-        "done when",
-        "oracle flips red → green",
-        "(confirmed from evidence, not self-report)",
     ] {
         assert!(text.contains(needle), "grid missing {needle:?}:\n{text}");
     }

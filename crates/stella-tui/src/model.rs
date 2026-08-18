@@ -95,10 +95,6 @@ pub struct SessionModel {
     file_touch_seq: u64,
     /// Live HUD numbers: spend/limit/mode, current stage, model.
     pub hud: Hud,
-    /// What this turn has established about its own work — the proof rail
-    /// ([`crate::proof`]). Per-turn: cleared when the next turn starts, not
-    /// when this one ends, so a finished proof stays readable.
-    pub proof: crate::proof::ProofState,
     /// **The plan** — the one surface for what stella said it would do and how
     /// far through it is ([`crate::plan`]).
     ///
@@ -129,7 +125,7 @@ pub struct SessionModel {
     /// Set only on the *approval* path (a non-`ScopeReview` stage, meaning the
     /// gate was answered and work proceeded). A turn that died at the gate
     /// leaves this `None`, because an abandoned proposal was never a plan.
-    /// Cleared when a new turn opens, alongside the proof rail.
+    /// Cleared when a new turn opens, alongside the plan.
     pub approved_scope: Option<ScopeProposal>,
     /// An `ask_user` question awaiting the user's answer. Set by an `AskUser`
     /// event; cleared purely by events — the answer returns as the tool call's
@@ -520,8 +516,8 @@ impl SessionModel {
     /// this session did to the tree — what `/clear` means
     /// (`Inbound::SessionReset`; `command_deck::session_clear`).
     ///
-    /// Everything conversational resets: transcript, HUD, plan, proof rail,
-    /// pending gates, streaming preview. The file-touch half
+    /// Everything conversational resets: transcript, HUD, plan, pending
+    /// gates, streaming preview. The file-touch half
     /// ([`Self::files`], [`Self::files_evicted`], `file_touch_seq`) survives,
     /// because those bytes are still on the user's disk after a clear and
     /// `/clear` changes no identity — the session, its store row, its sidecar
@@ -577,16 +573,7 @@ impl SessionModel {
                 // fresh (otherwise the bar stays frozen at full-green and
                 // `final_cost_usd` is stale). Within a single turn, complete
                 // is never set until the very end, so this is a no-op there.
-                //
-                // That same transition is the only honest reset point for the
-                // proof rail. Proof is per-turn — last turn's flip says nothing
-                // about this turn's work — but it must survive to be READ after
-                // the verdict lands, so it cannot clear on `Complete`. Clearing
-                // on the first stage of the NEXT turn keeps the finished rail on
-                // screen for as long as the turn it describes is the current
-                // one, and reconstructs identically on replay.
                 if self.hud.complete {
-                    self.proof = crate::proof::ProofState::default();
                     // The approved plan belongs to the turn that ran it. A new
                     // turn starting under the previous turn's scope would be
                     // the deck asserting consent that was never given for this
@@ -886,12 +873,7 @@ impl SessionModel {
                     kind: artifact.kind,
                 });
             }
-            // Folded into the rail as well as the transcript: the rail is the
-            // live view and scrolls away with nothing, the transcript is the
-            // record. Same event, two jobs.
-            AgentEvent::Proof { step } => self.proof.apply(step),
             AgentEvent::Verdict { passed, evidence } => {
-                self.proof.apply_verdict(*passed, evidence);
                 self.transcript.push(TranscriptEntry::Verdict {
                     passed: *passed,
                     summary: evidence.summary.clone(),
@@ -1040,17 +1022,18 @@ impl SessionModel {
             | AgentEvent::BlockRegistered { .. }
             // `CandidateDelivery` too: its files arrive as `FileChange`.
             | AgentEvent::CandidateDelivery { .. }
+            // `Proof` folded the PROOF rail, whose only emitter was
+            // `stella-pipeline`; the rail went with that crate's extraction
+            // (#3511). The step survives in the traces tab and the transcript
+            // export, which read the raw stream.
+            | AgentEvent::Proof { .. }
             | AgentEvent::StepManifest { .. } => {}
             AgentEvent::Error { message, retryable } => {
                 // A terminal error ends the turn without a `Complete`, so the
-                // rail has to close here too — an aborted run is exactly when
-                // a reader most needs to know what was and was not proven, and
-                // exactly when rows would otherwise hang on `pending` forever.
-                // A retryable error is a warning mid-flight; the turn goes on.
+                // plan has to close here too: a step left `working` on a turn
+                // that died reads as in-flight forever. A retryable error is a
+                // warning mid-flight; the turn goes on.
                 if !*retryable {
-                    self.proof.finish();
-                    // …and the plan, for the same reason: a step left
-                    // `working` on a turn that died reads as in-flight forever.
                     self.plan.finish();
                 }
                 self.pending_scope_review = None;
@@ -1076,9 +1059,9 @@ impl SessionModel {
             }
             // ONE turn ended (#3379). A wrapped run has several, so this must
             // not settle anything terminal: the cost and model are this turn's
-            // and are worth showing, but closing the proof rail or dropping a
-            // pending prompt here would discard a live approval gate the run is
-            // still waiting on. `RunComplete` below is the terminal one.
+            // and are worth showing, but dropping a pending prompt here would
+            // discard a live approval gate the run is still waiting on.
+            // `RunComplete` below is the terminal one.
             AgentEvent::TurnComplete { model, cost_usd } => {
                 self.hud.model = Some(model.clone());
                 self.streaming_text.clear();
@@ -1094,11 +1077,6 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.hud.final_cost_usd = Some(*cost_usd);
                 self.hud.complete = true;
-                // Close the proof rail: anything the run never reported now
-                // says so, rather than reading `pending` on a run that is
-                // over. See `crate::proof` — this is the half of the invariant
-                // that does not depend on the pipeline cooperating.
-                self.proof.finish();
                 self.plan.finish();
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -1223,9 +1201,6 @@ impl SessionModel {
     pub fn push_user_prompt(&mut self, text: &str) {
         self.hud.complete = false;
         self.hud.final_cost_usd = None;
-        // The rail belongs to one turn; a new prompt is the earliest moment the
-        // previous turn's proof stops describing anything on screen.
-        self.proof = crate::proof::ProofState::default();
         // Rebase the live turn-cost readout. `spent_usd` is cumulative for the
         // session, so without this the composer's cost cell would open every
         // turn already showing the session total.

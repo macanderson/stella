@@ -99,12 +99,15 @@ pub const DANGER: Color = palette::DANGER;
 pub const DANGER_BRIGHT: Color = palette::DANGER;
 
 /// The oracle's **pre-flip** state — the one place red carries meaning in the
-/// deck (D6): the `red` token in the witness panel's author line and its
-/// `red ──▸ green` result line. A healthy, *expected* state ("the test fails
-/// before the patch — good"), so it deliberately does not share a value with
-/// [`DANGER`]: a failure hue on the very state the pipeline is supposed to
-/// produce would teach readers to ignore the failure hue. Nothing else may
-/// take this role.
+/// deck (D6). A healthy, *expected* state ("the test fails before the patch —
+/// good"), so it deliberately does not share a value with [`DANGER`]: a failure
+/// hue on the very state a verification run is supposed to produce would teach
+/// readers to ignore the failure hue. Nothing else may take this role.
+///
+/// **No renderer claims it today.** Its only consumer was the witness panel,
+/// removed ahead of `stella-pipeline`'s extraction (#3511). The token is kept
+/// because [`palette`] mirrors the brand kit at `docs/brand/` and the contrast
+/// tables below are checked against it; retiring it is #3790.
 pub const ORACLE_PRE_FLIP: Color = palette::ORACLE_RED;
 
 // ── Categorical hues (deliberately NOT brand) ───────────────────────────────
@@ -805,7 +808,7 @@ pub fn rule() -> Style {
 }
 
 /// The border of a panel that *contains* something a reader works in — the
-/// transcript, PLAN, PROOF, the deck's section boxes.
+/// transcript, PLAN, the deck's section boxes.
 ///
 /// [`HAIRLINE_STRONG`], not [`RULE`]. The plain hairline is 1.26:1 and is
 /// documented as decoration that "may never be the only thing conveying

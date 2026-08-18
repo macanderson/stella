@@ -9,7 +9,7 @@
   EXECUTIONS  │  INSTALLED AGENTS   ←/→
 ┌ Executions — 3 active / 3 total ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Agent              Goal                 Status       Ctx%   Cost      $/hr      Elapsed  CPU%   MEM     In/Out         Cache  Warmth  Activity                │
-│  ? lead           web-app-2.0 · phase  needs input    4%   $0.04     $0.45     05:12     42%   148M    20.6k/1.5k     73%    —          ▅▃▅▄▃▁▁▅▅▅▅▅▆▆█▁▁▅▅▃▃│
+│  ? lead           web-app-2.0 · phase  needs input    4%   $0.04     $0.45     05:12     42%   148M    20.6k/1.5k     73%    —                ▅▃▅▄▃▁▁▅▆▆█▁▁▃▃│
 │> ? sub:auth       wire automations tri needs input    3%   $0.01     $0.13     05:12      8%   61M     5.1k/420       59%    —                        ▃▅▆█▁▁▃│
 │  ▶ sub:ci         watch CI + open PR   running        2%   $0.00     $0.05     05:12      0%   12M     3.0k/180       0%     —                          ▅▃▇▇▁│
 │                                                                                                                                                              │
