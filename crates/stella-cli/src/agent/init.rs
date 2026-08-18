@@ -11,6 +11,8 @@
 //! is spent or skipped — so what the user reads afterwards is a record of
 //! what ran.
 
+use std::path::PathBuf;
+
 use super::graph::build_code_graph;
 use super::*;
 use crate::domains::{cached_taxonomy, summarize_repo};
@@ -32,13 +34,24 @@ use crate::interactive::{AskUserIo, TtyAskUserIo};
 /// run. Init never derives that itself; the surface knows, and a second
 /// derivation is how two consumers end up disagreeing about whether anyone
 /// is listening.
+///
+/// `user_root` is the user-global config root (`~/.stella`) init is allowed to
+/// touch, and it rides here for the same reason `ask` does: init must not
+/// derive it. What this feeds — the first-session conversion offer — *writes
+/// files* into that root, so resolving it inside `init_workspace` made the
+/// blast radius an environment the caller inherits rather than a value it
+/// chooses, and no test could drive the accepting path without converting the
+/// developer's real `~/.stella/commands/` (#3641). The production constructors
+/// resolve it once, in the open; [`InitIo::scoped`] names it.
 pub(crate) struct InitIo<'a> {
     emit: Box<dyn FnMut(InitLine) + 'a>,
     ask: Option<&'a dyn AskUserIo>,
+    user_root: Option<PathBuf>,
 }
 
 impl<'a> InitIo<'a> {
-    /// An io over a caller-supplied transcript sink and question channel.
+    /// An io over a caller-supplied transcript sink and question channel,
+    /// against the real user-global config root.
     ///
     /// The sink takes an [`InitLine`], not a `String`: a surface has to render
     /// a live counter differently from a permanent step, and collapsing the
@@ -47,6 +60,26 @@ impl<'a> InitIo<'a> {
         Self {
             emit: Box::new(emit),
             ask,
+            user_root: crate::extensions::user_config_root(),
+        }
+    }
+
+    /// An io whose every root is named by the caller — nothing is read from
+    /// the environment.
+    ///
+    /// Test-only, and that is the point: it is what makes an end-to-end init
+    /// test possible at all, because the production constructors resolve a
+    /// real home no test run may write to (#3641).
+    #[cfg(test)]
+    pub(crate) fn scoped(
+        emit: impl FnMut(InitLine) + 'a,
+        ask: Option<&'a dyn AskUserIo>,
+        user_root: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            emit: Box::new(emit),
+            ask,
+            user_root,
         }
     }
 
@@ -81,10 +114,7 @@ impl<'a> InitIo<'a> {
     pub(crate) fn stdout_tty() -> InitIo<'static> {
         let ask: Option<&'static dyn AskUserIo> =
             crate::interactive::human_is_present(true).then_some(&TtyAskUserIo);
-        InitIo {
-            emit: Box::new(stdout_narrator()),
-            ask,
-        }
+        InitIo::new(stdout_narrator(), ask)
     }
 }
 
@@ -211,11 +241,12 @@ pub(crate) async fn init_workspace(
     // linked, and asking before they exist would spend the single ask this
     // workspace gets on an empty directory. It never converts on its own —
     // see `crate::commands_offer` for why that trade stays the user's.
-    let user_root = crate::extensions::user_config_root();
     {
-        // Read the question channel out before borrowing the sink: the offer
-        // needs both halves of the io at once, and only one of them mutably.
+        // Read the question channel and the user root out before borrowing
+        // the sink: the offer needs all three halves of the io at once, and
+        // only one of them mutably.
         let ask = io.ask;
+        let user_root = io.user_root.clone();
         let mut step = io.step_sink();
         crate::commands_offer::offer_conversion(
             workspace_root,
@@ -589,6 +620,84 @@ mod tests {
             seen.iter()
                 .any(|(step, text)| !*step && text == "· counter tick"),
             "a counter must stay a counter, not become a step: {seen:?}"
+        );
+    }
+
+    /// Scripted question io for the init-level offer test.
+    struct ScriptedIo {
+        answer: String,
+        asked: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl crate::interactive::AskUserIo for ScriptedIo {
+        async fn prompt(&self, question: &str, _options: &[String]) -> Result<String, String> {
+            self.asked.lock().unwrap().push(question.to_string());
+            Ok(self.answer.clone())
+        }
+    }
+
+    /// The end-to-end witness for #3641, and the one the offer's own unit
+    /// tests structurally cannot provide: a real `init_workspace` run adopts
+    /// a command authored in `.claude/commands/`, offers to convert it, and —
+    /// on a yes — writes the TOML.
+    ///
+    /// This is the *accepting* path through init, which had no automated
+    /// coverage: the only end-to-end evidence was a manual headless run, and
+    /// headless is precisely the branch that converts nothing.
+    ///
+    /// The user root is named rather than resolved, so the offer cannot reach
+    /// the developer's real `~/.stella` — the failure that made this test
+    /// unwritable before `user_root` moved onto [`InitIo`]. It is a second
+    /// temp directory rather than `None` so the plumbing is exercised, not
+    /// bypassed; being empty, it contributes nothing to convert.
+    #[tokio::test]
+    async fn init_adopts_a_claude_command_and_converts_it_when_the_offer_is_accepted() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let user = tempfile::tempdir().expect("tempdir");
+        let root = workspace.path();
+        std::fs::create_dir_all(root.join(".claude/commands")).expect("mkdir");
+        std::fs::write(
+            root.join(".claude/commands/demo.md"),
+            "---\nname: demo\ndescription: a demo command\n---\n\nDo the demo.\n",
+        )
+        .expect("write");
+
+        let io = ScriptedIo {
+            answer: "1".to_string(),
+            asked: std::sync::Mutex::new(Vec::new()),
+        };
+        let mut lines: Vec<String> = Vec::new();
+        let mut init_io = InitIo::scoped(
+            |line: InitLine| lines.push(line.text().to_string()),
+            Some(&io),
+            Some(user.path().to_path_buf()),
+        );
+
+        init_workspace(None, root, None, None, &mut init_io)
+            .await
+            .expect("init");
+        // The io holds the transcript sink's borrow until it is dropped.
+        drop(init_io);
+
+        assert_eq!(
+            io.asked.lock().unwrap().len(),
+            1,
+            "init asks about conversion exactly once: {lines:?}"
+        );
+        assert!(
+            root.join(".stella/commands/demo.toml").is_file(),
+            "accepting at init writes the TOML: {lines:?}"
+        );
+        assert!(
+            root.join(".stella/commands/demo.md").exists(),
+            "the adopted markdown definition is never removed"
+        );
+        // The whole point of the injected root: the offer wrote inside the
+        // temp tree and nowhere else.
+        assert!(
+            !user.path().join("commands").exists(),
+            "an empty user root gains nothing"
         );
     }
 
