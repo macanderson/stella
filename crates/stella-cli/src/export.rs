@@ -761,6 +761,12 @@ fn render_dashboard(
   .dx-line.add .sg {{ color: var(--ok); }}
   .dx-line.rem {{ background: rgba(255, 92, 122, .10); color: var(--text); }}
   .dx-line.rem .sg {{ color: var(--bad); }}
+  /* Word-level highlight: the exact changed tokens inside a paired
+     removal/addition, a stronger wash of the same hue the row already
+     carries — never a third colour, so the rule stays "the row's tint says
+     which side, the token's tint says which part". */
+  .dx-line.add .ww {{ background: rgba(74, 222, 128, .34); }}
+  .dx-line.rem .ww {{ background: rgba(255, 92, 122, .34); }}
   /* The elision sits between the hunks it replaces, so it has to read as
      unmistakably not a line of the file: raised ground, centred, no gutter. */
   .dx-fold {{ color: var(--text-3); background: var(--raised); text-align: center;

@@ -163,11 +163,32 @@ impl Chip {
     }
 }
 
+/// How roomy a turn's token/cost rollup renders.
+///
+/// The web surface has a whole chip pill to spend on it (`41.2k → 388 tok`);
+/// the character grid is budgeting fixed terminal columns and wants the same
+/// numbers as tight as they'll go (`41.2k→388`). One computation
+/// ([`format_tokens`]), two acceptable spellings of its output — never two
+/// different numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChipStyle {
+    /// `41.2k→388` — no spaces, no unit suffix.
+    Tight,
+    /// `41.2k → 388 tok` — spaced arrow, unit suffix.
+    Roomy,
+}
+
 /// The chips for one step's accounting.
 ///
-/// Order is fixed — duration, size, tokens, cost — because a right-aligned chip
-/// row whose columns move between steps is unreadable at a glance, which is the
-/// only reason to render chips rather than prose in the first place.
+/// Order is fixed — spec badge, duration, size, cost — because a right-aligned
+/// chip row whose columns move between steps is unreadable at a glance, which
+/// is the only reason to render chips rather than prose in the first place.
+///
+/// Deliberately **no token count here**: a step is one call, and a column of
+/// per-call token counts is noise a reader has to sum by hand to answer the
+/// only question it actually has — what did this turn cost. That rollup is
+/// [`turn_digest`]'s job; a step shows only its own operational facts plus its
+/// own slice of the cost.
 #[must_use]
 pub fn step_chips(step: &Step) -> Vec<Chip> {
     let mut chips = Vec::new();
@@ -183,27 +204,32 @@ pub fn step_chips(step: &Step) -> Vec<Chip> {
             chips.push(Chip::mute(format!("{lines} ln")));
         }
     }
-    chips.extend(accounting_chips(step.accounting));
+    chips.extend(cost_chip(step.accounting.micros));
     chips
 }
 
-/// The chips for a token/cost rollup.
+/// The single cost chip, when there is a cost to show.
 #[must_use]
-pub fn accounting_chips(acc: Accounting) -> Vec<Chip> {
+fn cost_chip(micros: u64) -> Option<Chip> {
+    (micros > 0).then(|| Chip::toned(format_cost(micros), "cost"))
+}
+
+/// The chips for a token/cost rollup — a turn's total, never a single step's.
+///
+/// No separate cache indicator: `cached_in` is a cost-accounting input, not a
+/// fact a reader needs held up on its own chip.
+#[must_use]
+pub fn accounting_chips(acc: Accounting, style: ChipStyle) -> Vec<Chip> {
     let mut chips = Vec::new();
     if acc.tokens_in > 0 || acc.tokens_out > 0 {
-        chips.push(Chip::mute(format!(
-            "in {} · out {}",
-            format_tokens(acc.tokens_in),
-            format_tokens(acc.tokens_out)
-        )));
+        let (tin, tout) = (format_tokens(acc.tokens_in), format_tokens(acc.tokens_out));
+        let text = match style {
+            ChipStyle::Tight => format!("{tin}→{tout}"),
+            ChipStyle::Roomy => format!("{tin} → {tout} tok"),
+        };
+        chips.push(Chip::mute(text));
     }
-    if acc.cached_in > 0 {
-        chips.push(Chip::toned("cache", "ok"));
-    }
-    if acc.micros > 0 {
-        chips.push(Chip::toned(format_cost(acc.micros), "cost"));
-    }
+    chips.extend(cost_chip(acc.micros));
     chips
 }
 
@@ -329,7 +355,7 @@ pub fn step_digest(step: &Step, object_width: usize) -> StepDigest {
             object: String::new(),
             status: Status::Ok,
             delta: None,
-            chips: accounting_chips(step.accounting),
+            chips: cost_chip(step.accounting.micros).into_iter().collect(),
             monogram: '·',
             class: "xx",
         };
@@ -413,7 +439,7 @@ pub struct TurnDigest {
 
 /// Build a turn's collapsed digest.
 #[must_use]
-pub fn turn_digest(turn: &crate::model::Turn, width: usize) -> TurnDigest {
+pub fn turn_digest(turn: &crate::model::Turn, width: usize, style: ChipStyle) -> TurnDigest {
     // A turn's wall time reads as `m:ss` rather than as a step's `1.4s`: turns
     // run for minutes, and a column of `41.0s`/`132.0s` is harder to compare at
     // a glance than `0:41`/`2:12`.
@@ -421,7 +447,7 @@ pub fn turn_digest(turn: &crate::model::Turn, width: usize) -> TurnDigest {
         Chip::mute(format!("{} steps", turn.steps.len())),
         Chip::mute(format_offset(turn.duration_ms)),
     ];
-    chips.extend(accounting_chips(turn.rollup()));
+    chips.extend(accounting_chips(turn.rollup(), style));
     TurnDigest {
         name: turn.name.clone(),
         status: turn.status,

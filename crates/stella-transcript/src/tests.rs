@@ -209,6 +209,39 @@ fn acceptance_toggling_a_fold_shifts_zero_columns() {
     assert_eq!(differing, vec![('▸', '▾')]);
 }
 
+/// An expanded turn's own content stands in for the fold affordance, so its
+/// header carries no marker; a collapsed turn's header is the only thing on
+/// screen and does carry one.
+#[test]
+fn a_turns_own_header_shows_a_fold_marker_only_when_collapsed() {
+    let run = run_with(vec![step(bash("ls", &["a"], Status::Ok), 0)]);
+    let turn = NodeId::Turn(0);
+
+    let mut open = FoldState::new();
+    open.open(turn);
+    let open_header = grid::to_plain(&grid::render(&run, &open, 100))
+        .lines()
+        .next()
+        .expect("turn frame top")
+        .to_string();
+    assert!(
+        !open_header.contains('▸') && !open_header.contains('▾'),
+        "an expanded turn header carried a fold marker: {open_header:?}"
+    );
+
+    let mut closed = FoldState::new();
+    closed.close(turn);
+    let closed_header = grid::to_plain(&grid::render(&run, &closed, 100))
+        .lines()
+        .next()
+        .expect("turn frame top")
+        .to_string();
+    assert!(
+        closed_header.contains('▸'),
+        "a collapsed turn header lost its fold marker: {closed_header:?}"
+    );
+}
+
 /// A failed step remains expanded after the run completes — the status pins it,
 /// so neither a zoom preset nor an explicit collapse closes it.
 #[test]
@@ -552,6 +585,57 @@ fn speculation_renders_as_a_badge_not_prose() {
     call.speculated = true;
     let chips = digest::step_chips(&step(call, 0));
     assert!(chips.iter().any(|c| c.text == "⚡ spec"));
+}
+
+/// A step is one call; the token rollup is a turn's job. Per-step chips carry
+/// only the step's own cost, never a token count or a cache indicator.
+#[test]
+fn a_step_digest_shows_cost_but_never_a_token_count() {
+    let chips = digest::step_chips(&step(bash("a", &[], Status::Ok), 0));
+    assert!(
+        chips.iter().any(|c| c.text == "$0.0008"),
+        "expected the step's own cost chip, got {chips:?}"
+    );
+    assert!(
+        chips.iter().all(|c| !c.text.contains('→')),
+        "a step chip carried a token rollup: {chips:?}"
+    );
+    assert!(
+        chips.iter().all(|c| c.text != "cache"),
+        "a step chip carried a cache indicator: {chips:?}"
+    );
+}
+
+#[test]
+fn a_turn_digest_carries_one_arrow_joined_token_chip_and_no_cache_chip() {
+    let run = run_with(vec![
+        step(bash("a", &[], Status::Ok), 0),
+        step(bash("b", &[], Status::Ok), 1),
+    ]);
+    let dig = digest::turn_digest(&run.turns[0], 64, digest::ChipStyle::Tight);
+    assert!(
+        dig.chips.iter().any(|c| c.text == "14.0k→68"),
+        "expected a tight arrow-joined token chip, got {:?}",
+        dig.chips
+    );
+    assert!(
+        dig.chips.iter().all(|c| c.text != "cache"),
+        "a turn chip carried a cache indicator: {:?}",
+        dig.chips
+    );
+}
+
+/// The web surface spends a whole chip pill on the same rollup the grid packs
+/// tight — same numbers, roomier punctuation.
+#[test]
+fn the_roomy_chip_style_spaces_the_arrow_and_labels_the_unit() {
+    let run = run_with(vec![step(bash("a", &[], Status::Ok), 0)]);
+    let dig = digest::turn_digest(&run.turns[0], 64, digest::ChipStyle::Roomy);
+    assert!(
+        dig.chips.iter().any(|c| c.text == "7.0k → 34 tok"),
+        "expected a roomy, unit-labelled token chip, got {:?}",
+        dig.chips
+    );
 }
 
 #[test]

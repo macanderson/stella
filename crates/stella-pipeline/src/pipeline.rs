@@ -1063,6 +1063,9 @@ impl<'a> Pipeline<'a> {
         if let Err(error) = self.roster_refusal() {
             return Err(PipelineRunError::new(error, total_cost));
         }
+        // Same rung, same reason: a variant whose `witness` condition this host
+        // cannot answer pre-execute is refused before the first paid call (#3408).
+        let variant = self.effective_variant(total_cost)?;
         self.report_roster_posture();
         if messages.is_empty() {
             messages.push(CompletionMessage::system(DEFAULT_SYSTEM_PROMPT));
@@ -1116,8 +1119,13 @@ impl<'a> Pipeline<'a> {
             p.task_class = Some(task_class);
             p.goal = Some(goal.to_string());
         });
-        let schedule_says =
-            self.begin_turn_schedule(budget, &assessment, research_questions.len(), total_cost)?;
+        let (schedule_says, schedule) = self.begin_turn_schedule(
+            &variant,
+            budget,
+            &assessment,
+            research_questions.len(),
+            total_cost,
+        )?;
         // The volatile recall+goal message rides AFTER the stable system prefix
         // (L-E8) — see assemble_user_message. The verification contract rides
         // only on turns that will actually be verified — a conversational turn
@@ -1127,10 +1135,8 @@ impl<'a> Pipeline<'a> {
             .test_command
             .as_deref()
             .filter(|_| !assessment.conversational && task_class.verifies_unconditionally());
-        // `schedule_says.authored_witness` was decided in `begin_turn_schedule`
-        // above, before this message is assembled, so a run with no oracle and
-        // no independent author tells the worker up front that its own failing
-        // test is the run's only deterministic evidence (#3408).
+        // `schedule_says.authored_witness` was decided above, pre-assembly, so a
+        // run with no oracle tells the worker test-first up front (#3408).
         let contract = match verified_by {
             Some(command) => VerificationContract::Oracle(command),
             None if !assessment.conversational
@@ -1228,7 +1234,8 @@ impl<'a> Pipeline<'a> {
             base_messages: &base_messages,
             plan: plan.as_deref(),
             assessment,
-            schedule_verifies: schedule_says.verify,
+            schedule,
+            witness_scheduled: schedule_says.witness_scheduled,
         };
         // Decided above, before the user message was assembled (the worker's
         // test-first contract keys off it) and before this single-shot/
@@ -1275,7 +1282,7 @@ impl<'a> Pipeline<'a> {
             }
             let mut single = self
                 .run_shared_candidates(
-                    frame,
+                    frame.clone(),
                     &worker,
                     1,
                     &mut Spend {
@@ -1292,7 +1299,7 @@ impl<'a> Pipeline<'a> {
         } else {
             match self
                 .run_best_of_n(
-                    frame,
+                    frame.clone(),
                     n,
                     &frames,
                     schedule_says.authored_witness,
@@ -1542,7 +1549,7 @@ impl<'a> Pipeline<'a> {
             // into and no pristine snapshot to author blind in, so it never
             // buys a witness. The ordinal is 1-based, like the start notice.
             results.push(
-                self.run_candidate(frame, None, &engine, surface, spend)
+                self.run_candidate(frame.clone(), None, &engine, surface, spend)
                     .await,
             );
         }
@@ -1851,23 +1858,19 @@ impl<'a> Pipeline<'a> {
             return CandidateResult::turn_aborted(state.messages, abort);
         }
 
-        // Decide whether to verify: `frame.schedule_verifies` for single/
-        // multi; for a simple lookup, ORed with the zero-diff guard (L-E2) —
-        // host-internal, manifest-inexpressible (#3408). "Touched files" =
-        // FileChange events observed OR a non-empty diff from a turn that
-        // dispatched something able to write. The second conjunct is #1553:
-        // the diff reads the WORKING TREE, and in a shared worktree the tree
-        // can move under a run — a human editing beside it. `mutating_actions`
-        // is counted off the calls this pipeline dispatched, not off any look
-        // at the world, so a lookup that dispatched nothing that could write
-        // cannot own the motion the diff shows, and must not be dragged into
-        // verification over someone else's edit.
+        // Decide whether to verify, per candidate (#3408, `decide_candidate_verify`) —
+        // real diff, not a placeholder — ORed with the zero-diff guard (L-E2, #1553).
         let probe = self.gather_diff(surface, &state.untracked_before).await;
         self.absorb_probe(&mut state, probe);
         let files_touched = state.signals.file_changes > 0
             || (state.signals.mutating_actions > 0 && !state.diff_text.trim().is_empty());
-        let should_verify = frame.schedule_verifies
-            || (frame.assessment.class == TaskClass::SimpleLookup && files_touched);
+        let should_verify = (frame.assessment.class == TaskClass::SimpleLookup && files_touched)
+            || self.decide_candidate_verify(
+                frame.schedule.clone(),
+                frame.witness_scheduled,
+                state.signals.mutating_actions,
+                state.diff_lines,
+            );
         if !should_verify {
             // A clean lookup: nothing to verify.
             return state.into_unverified();

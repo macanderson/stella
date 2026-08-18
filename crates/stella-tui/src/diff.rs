@@ -277,10 +277,19 @@ fn is_meta(line: &str) -> bool {
 /// Trimming the shared prefix and suffix off a `-`/`+` pair isolates the part
 /// that changed, which the body then paints brighter than the rest of the line.
 ///
-/// Pairing is deliberately conservative: only a run of removals immediately
-/// followed by an equally long run of additions pairs up, index for index.
-/// Unequal runs mean lines were added or dropped, so no positional pairing is
-/// trustworthy and the whole-line colouring is left to speak for itself.
+/// Pairing is deliberately conservative and strictly positional: the `k`th
+/// removal in a run pairs with the `k`th addition in the run that follows it,
+/// matching `stella_transcript::file_diff`'s rule for the same shape of
+/// problem — a similarity match was considered and rejected there for the
+/// same reason it is rejected here, because a reader who sees a `−`/`+` block
+/// top to bottom already assumes that ordering, and a clever re-pairing that
+/// highlighted line 1 against line 3 would be correct and unreadable.
+///
+/// A run-length mismatch does not disqualify the whole block: it means the
+/// edit added or dropped a line partway through, so pairing continues for the
+/// shorter run's length and the surplus lines — the ones with nothing on the
+/// other side to compare against — carry no emphasis, which is the honest
+/// answer for a line that has no counterpart.
 fn word_emphasis(raw: &[&str]) -> std::collections::HashMap<usize, (usize, usize)> {
     let mut out = std::collections::HashMap::new();
     // A headerless pseudo-diff — bare `+`/`-` lines with no `@@`, which the
@@ -309,15 +318,14 @@ fn word_emphasis(raw: &[&str]) -> std::collections::HashMap<usize, (usize, usize
         }
         let add_end = i;
         let (dn, an) = (del_end - del_start, add_end - add_start);
-        if dn > 0 && dn == an {
-            for k in 0..dn {
-                let (o, n) = (raw[del_start + k], raw[add_start + k]);
-                if let Some((os, oe, ns, ne)) = changed_span(&o[1..], &n[1..]) {
-                    // +1 on every offset: the `+`/`-` marker is one ASCII byte
-                    // that the caller's slice keeps in front of the code.
-                    out.insert(del_start + k, (os + 1, oe + 1));
-                    out.insert(add_start + k, (ns + 1, ne + 1));
-                }
+        let paired = dn.min(an);
+        for k in 0..paired {
+            let (o, n) = (raw[del_start + k], raw[add_start + k]);
+            if let Some((os, oe, ns, ne)) = changed_span(&o[1..], &n[1..]) {
+                // +1 on every offset: the `+`/`-` marker is one ASCII byte
+                // that the caller's slice keeps in front of the code.
+                out.insert(del_start + k, (os + 1, oe + 1));
+                out.insert(add_start + k, (ns + 1, ne + 1));
             }
         }
         if del_end == del_start && add_end == add_start {
@@ -1004,6 +1012,72 @@ mod tests {
             Some(Some(theme::DIFF_ADD_BG)),
             "and keep the add tint the context line lacks: {:?}",
             added.spans
+        );
+    }
+
+    #[test]
+    fn a_one_token_edit_gets_a_brighter_background_on_the_changed_middle() {
+        let diff = "@@ -1,1 +1,1 @@\n-let value = old_thing();\n+let value = new_thing();";
+        let lines = body_lines(diff, None);
+        // lines[0] is the "@@" hunk header.
+        let removed = &lines[1];
+        let added = &lines[2];
+        assert!(
+            removed
+                .spans
+                .iter()
+                .any(|s| s.style.bg == Some(theme::DIFF_DEL_BG_EMPH)),
+            "the removed line's differing middle should carry the brighter \
+             del background: {:?}",
+            removed.spans
+        );
+        assert!(
+            added
+                .spans
+                .iter()
+                .any(|s| s.style.bg == Some(theme::DIFF_ADD_BG_EMPH)),
+            "the added line's differing middle should carry the brighter \
+             add background: {:?}",
+            added.spans
+        );
+    }
+
+    /// The witness for extending `word_emphasis` past equal-length runs: a
+    /// two-removal, one-addition block used to skip emphasis entirely because
+    /// `dn == an` failed. Positional pairing continues for the shorter run's
+    /// length now, so the first removal still pairs with the addition; the
+    /// second removal — nothing on the other side to compare against — is
+    /// left with no emphasis, which is the honest answer for an unpaired line.
+    #[test]
+    fn an_unequal_length_block_still_emphasizes_the_pairable_prefix() {
+        let diff = "@@ -1,2 +1,1 @@\n-let x = old_value();\n-let y = 2;\n+let x = new_value();";
+        let lines = body_lines(diff, None);
+        // lines[0] is the "@@" hunk header.
+        let (paired_removal, dropped_removal, addition) = (&lines[1], &lines[2], &lines[3]);
+        assert!(
+            paired_removal
+                .spans
+                .iter()
+                .any(|s| s.style.bg == Some(theme::DIFF_DEL_BG_EMPH)),
+            "the first removal pairs with the addition and should emphasize: {:?}",
+            paired_removal.spans
+        );
+        assert!(
+            addition
+                .spans
+                .iter()
+                .any(|s| s.style.bg == Some(theme::DIFF_ADD_BG_EMPH)),
+            "the addition should emphasize against its paired removal: {:?}",
+            addition.spans
+        );
+        assert!(
+            dropped_removal
+                .spans
+                .iter()
+                .all(|s| s.style.bg != Some(theme::DIFF_DEL_BG_EMPH)),
+            "a removal with no counterpart on the other side gets no \
+             emphasis, never a mismatched pairing: {:?}",
+            dropped_removal.spans
         );
     }
 
