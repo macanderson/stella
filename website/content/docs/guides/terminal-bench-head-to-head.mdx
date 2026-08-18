@@ -159,8 +159,8 @@ price spread of more than 3x has been observed — and Claude Code proxied that 
 runs with reasoning **off**, which is not the tool anyone means to compare
 against.
 
-Hitting `api.anthropic.com` directly on a single model gives one backend, no
-routing lottery, and Claude Code on its home API where thinking engages
+Hitting `api.anthropic.com` directly on a single model gives one backend and no
+routing lottery — Claude Code on its home API, where thinking engages
 natively.
 
 ### Pin the upstream when either arm goes through a gateway
@@ -236,8 +236,8 @@ tier, asserting strictly greater) because *accepted* and *acted on* are
 different claims, and only one of them is the point.
 </Callout>
 
-Two traps that check hit on itself, both now encoded in it: a probe saturated at
-`max_tokens` compares the cap to itself and "passes" while proving nothing; and
+That check hit two traps on itself, both now encoded in it. A probe saturated at
+`max_tokens` compares the cap to itself and "passes" while proving nothing. And
 a non-streaming request with a large `max_tokens` dies on the read timeout
 before it returns.
 

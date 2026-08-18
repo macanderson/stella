@@ -50,11 +50,11 @@ complexity.
   synchronous functions over owned data, which is what makes it
   property-testable — and what makes its behavior *reproducible* at all.
 
-Where parallelism genuinely pays, stella provides it **without a shared
+Where parallelism pays, stella provides it **without a shared
 coordinator or shared engine state**: [fleets](/docs/agent-fleets) run N
 independent single-thread engines over one shared tree, coordinated only by
-cooperative file claims (dedicated git worktrees per task on opt-in) — parallel
-work, no swarm coordination, no inter-agent messages to degrade.
+cooperative file claims (dedicated git worktrees per task on opt-in).
+Parallel work, no swarm coordination, no inter-agent messages to degrade.
 
 The coordination is a lock table, not a conversation. Two workers that declare
 overlapping `claims` do not negotiate; the second dispatch fails by name,

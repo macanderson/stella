@@ -348,8 +348,8 @@ cargo run -p loop-bench -- --analyze-only --jobs-dir <dir> --job-name <name>   #
 It reads `stella-events.jsonl` per trial, produces exactly the verdict ladder
 above, and exits `1` if any trial is `loop_broken` — even when other trials
 passed. Exit `2` means the task list resolved to nothing (or an unwritable
-report path), `3` that no trial artifacts were found at all — an infrastructure
-failure, deliberately distinguished from a loop regression — and `4` that the
+report path). Exit `3` means no trial artifacts were found at all — an infrastructure
+failure, deliberately distinguished from a loop regression. Exit `4` means the
 loop was healthy but fewer trials passed than `--min-pass` demanded.
 
 stella runs it against itself nightly, not per-PR: it needs Docker, a task

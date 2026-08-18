@@ -81,8 +81,8 @@ servers. Type to send a prompt; slash commands open tabs and overlays.
 Click a tab below to see what's actually in it. This isn't an embedded
 terminal or a recording — each pane is trimmed straight from the deck's own
 golden render tests (`crates/stella-tui/tests/snapshots/deck/`), the fixtures
-that gate every pull request touching the TUI, so what you're clicking
-through is the deck's real output, not a redrawn approximation of it.
+that gate every TUI pull request. What you click through is the deck's real
+output, not a redrawn approximation.
 
 <CommandDeckExplorer />
 
@@ -165,8 +165,8 @@ named reason.
    progress toward the objective.
 2. **The verifier assesses from evidence.** The verifier is not a passive transcript
    reader — it runs as its own bounded engine turn with read-only access to the
-   same tools the worker used, actively inspecting the evidence the round
-   produced and rejecting claimed-but-unproven success.
+   worker's tools, inspecting the round's evidence and rejecting
+   claimed-but-unproven success.
 3. **Repeat or finish.** If the verifier is not satisfied, another round begins —
    until the verifier confirms or a backstop (round cap, budget, abort) ends the run.
 
@@ -231,8 +231,8 @@ objective.
 
 When the work is many tasks rather than one, [`stella fleet`](/docs/agent-fleets)
 fans a dependency-ordered task DAG out to parallel workers in one shared
-tree — cooperative file claims mean two agents never fight over the same
-file — with `isolation = "isolated"` opting a task into its own git worktree
+tree, where cooperative file claims keep two agents from fighting over the
+same file. `isolation = "isolated"` opts a task into its own git worktree
 on its own branch.
 
 ## Choosing

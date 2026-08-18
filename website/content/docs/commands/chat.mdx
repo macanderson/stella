@@ -258,7 +258,7 @@ Press **Ctrl-C** to quit the deck.
 
 #### `/models` with an argument
 
-`/models` also takes two arguments, and both are handled inside the deck without a model call — when the configured model is itself broken, `/models refresh` is how you dig out, and routing it through a turn would fail on the very error you are fixing:
+`/models` also takes two arguments, and both are handled inside the deck without a model call. When the configured model is itself broken, `/models refresh` is how you dig out — routing it through a turn would fail on the very error you are fixing:
 
 ```text
 /models refresh           re-sync the catalog
@@ -286,7 +286,7 @@ Run `/profile` with no argument to see which profile your current settings match
 
 The roles are not tuned identically. Triage stays below the worker in every profile — it is a short classification under a latency ceiling, and spending your best model on it buys nothing. Research sits on triage's rung for the same reason: it reads the tree and reports what it found, and it is a fan-out, so a tier chosen for the worker would be paid once per question. Neither research nor plan is given a model of its own — both ride the worker's, so a later `--model` moves all three together.
 
-The verifier is the interesting one, because two goals pull against each other: a verifier from the worker's own family lets a shared blind spot pass review twice, but a verifier well below the worker's tier cannot follow the work it grades and rubber-stamps. stella resolves it in the order that gives up least. A model that is both independent and at least as capable wins outright. If nothing clears that bar but the strongest independent model is only one rung down the price list, independence is worth the single rung. Only when the best independent option is further down than that does capability take over — and then the confirmation tells you the review is correlated with the work.
+The verifier is the interesting one, because two goals pull against each other: a verifier from the worker's own family lets a shared blind spot pass review twice, but a verifier well below the worker's tier cannot follow the work it grades and rubber-stamps. stella resolves it in the order that gives up least. A model that is both independent and at least as capable wins outright. If nothing clears that bar but the strongest independent model is only one rung down the price list, independence is worth the single rung. Only when the best independent option is further down does capability take over — and then the confirmation tells you the review is correlated with the work.
 
 **What it writes, and what it leaves alone.** A profile owns the per-role model, effort, thinking switch, verbosity, and service tier, saved to your user settings. It deliberately turns `effort_auto`, `reasoning_auto`, and `auto_mode` **off**: those switches override per-agent effort, so leaving them on would let `/profile ultra` print `max` and run `medium`. Everything else survives untouched — custom per-agent prompts, pinned providers, temperatures, seeds, and your `allowed_models` list.
 
@@ -294,7 +294,7 @@ The verifier is the interesting one, because two goals pull against each other: 
 
 **Effort, and the providers that cannot express it.** The five-rung ladder is stella's vocabulary, not every provider's: Gemini and Vertex offer only `low` and `high`, the OpenAI shapes stop at `high`, and Z.ai has no request-level effort control at all (its thinking switch is on/off). A pick whose provider cannot express the level the profile asked for is written at the highest rung it does support.
 
-Clamping alone would flatten the ladder — on a two-rung provider both `fast` and `balanced` land on `low` — so the missing rung is bought back on the axis that can still carry it: among models at the same price, the one whose provider *can* express the requested level wins. That is a tiebreak and nothing more. The search never leaves the price band, so a profile cannot overspend its tier to buy a knob, and it takes the cheapest qualifying model rather than the best. Where nothing at that price can express the level, the clamp stands and the confirmation says which levels moved.
+Clamping alone would flatten the ladder — on a two-rung provider both `fast` and `balanced` land on `low`. The missing rung is bought back on the axis that can still carry it: among models at the same price, the one whose provider *can* express the requested level wins. That is a tiebreak and nothing more. The search never leaves the price band, so a profile cannot overspend its tier to buy a knob, and it takes the cheapest qualifying model rather than the best. Where nothing at that price can express the level, the clamp stands and the confirmation says which levels moved.
 
 Like `/model`, the change applies to sessions started from now on; the running session keeps its current model.
 

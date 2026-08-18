@@ -140,7 +140,7 @@ Three specific traps:
 A base URL selects nothing. If `--base-url`, `STELLA_BASE_URL`, or a
 `settings.json` `base_url` points at one provider's host while the model chain
 resolved a *different* provider, that provider's key is sent to the other one's
-endpoint — and the rejection is reported by the adapter that sent it, so the
+endpoint. The rejection is reported by the adapter that sent it, so the
 error blames the wrong party.
 
 `stella doctor` detects the pairing and names both sides:
@@ -323,8 +323,8 @@ network and no key: `stella config`, `stella doctor`, `stella models` (listing),
 `stella scripts`, `stella storage`, `stella commands`,
 `stella stats`, `stella usage`, `stella inspect`, `stella context`,
 `stella proposals`, `stella memory`, and `stella observe`. `stella search` also
-works with no key configured — it degrades to symbol-name matching and a file
-scan instead of ranking by meaning — but with an embedder configured it makes
+works with no key configured, degrading to symbol-name matching and a file
+scan instead of ranking by meaning. With an embedder configured it makes
 network calls to embed the query and any files still pending.
 
 The one remaining automatic outbound call is the model-catalog refresh, at most
