@@ -34,6 +34,7 @@
 //! [`Resolution::Incomplete`], which names the missing piece rather than
 //! silently behaving as if nothing were configured at all.
 
+use std::fmt;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -75,7 +76,7 @@ const KNOWN_DIMS: &[(&str, usize)] = &[
 
 /// The environment [`resolve`] reads, captured as data so resolution is a pure
 /// function and its table of precedences is testable.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct EmbedderEnv {
     /// `STELLA_EMBED_URL`.
     pub url: Option<String>,
@@ -111,6 +112,39 @@ impl EmbedderEnv {
             voyage_api_key: read("VOYAGE_API_KEY"),
             openai_api_key: read("OPENAI_API_KEY"),
         }
+    }
+}
+
+/// A secret field's *presence*, never its value. Debug output is the one
+/// rendering of these structs that reaches a log line, a `dbg!()`, or a panic
+/// message without anyone deciding it should, so the key never travels in it —
+/// while whether a key was set at all is exactly what a reader is debugging.
+struct Redacted<'a>(&'a Option<String>);
+
+impl fmt::Debug for Redacted<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(_) => f.write_str("Some(<redacted>)"),
+            None => f.write_str("None"),
+        }
+    }
+}
+
+/// Hand-rolled so the three key fields cannot be printed. Deriving `Debug`
+/// here would put a live API key one `{:?}` away from a log file; this crate
+/// is a leaf and cannot borrow `stella-model`'s `ApiKey`, so it copies the
+/// shape of that type's redacting impl (`crates/stella-model/src/credential.rs`).
+impl fmt::Debug for EmbedderEnv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EmbedderEnv")
+            .field("url", &self.url)
+            .field("model", &self.model)
+            .field("api_key", &Redacted(&self.api_key))
+            .field("dims", &self.dims)
+            .field("floor", &self.floor)
+            .field("voyage_api_key", &Redacted(&self.voyage_api_key))
+            .field("openai_api_key", &Redacted(&self.openai_api_key))
+            .finish()
     }
 }
 
@@ -220,7 +254,6 @@ fn dims_for(model: &str, override_dims: Option<&str>) -> Result<usize, String> {
 }
 
 /// An embedder backed by an OpenAI-shaped `/embeddings` endpoint.
-#[derive(Debug)]
 pub struct HttpEmbedder {
     endpoint: String,
     model: String,
@@ -262,6 +295,22 @@ impl HttpEmbedder {
     /// user *where* its vectors came from without re-deriving the URL.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+}
+
+/// Hand-rolled for the same reason as [`EmbedderEnv`]'s: the bearer token this
+/// struct holds must not reach a log line through a derived `Debug`.
+/// [`Resolution`] keeps its derive, since the key is only reachable through
+/// here.
+impl fmt::Debug for HttpEmbedder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpEmbedder")
+            .field("endpoint", &self.endpoint)
+            .field("model", &self.model)
+            .field("api_key", &Redacted(&self.api_key))
+            .field("dims", &self.dims)
+            .field("admission_floor", &self.admission_floor)
+            .finish_non_exhaustive()
     }
 }
 
@@ -466,6 +515,69 @@ mod tests {
             panic!("expected a configured embedder");
         };
         assert_eq!(embedder.fingerprint().model_id, "voyage-code-3");
+    }
+
+    /// #3713: a derived `Debug` on either type put a live bearer token one
+    /// `{:?}` away from a log line. Fails on the derive, passes on the
+    /// hand-rolled impls.
+    #[test]
+    fn debug_never_prints_a_key_from_the_environment() {
+        let env = env_with(&[
+            ("STELLA_EMBED_API_KEY", "sk-secret-value"),
+            ("VOYAGE_API_KEY", "vk-secret-value"),
+            ("OPENAI_API_KEY", "os-secret-value"),
+            ("STELLA_EMBED_URL", "http://127.0.0.1:11434/v1"),
+        ]);
+        let debug = format!("{env:?}");
+        assert!(!debug.contains("sk-secret-value"), "{debug}");
+        assert!(!debug.contains("vk-secret-value"), "{debug}");
+        assert!(!debug.contains("os-secret-value"), "{debug}");
+        assert!(debug.contains("redacted"), "{debug}");
+        // Presence is not the secret, and it is the thing being debugged.
+        assert!(debug.contains("http://127.0.0.1:11434/v1"), "{debug}");
+    }
+
+    /// #3713, the transitive half: `Resolution` keeps a derived `Debug`, so
+    /// the embedder's own impl is what stops the key travelling with it.
+    #[test]
+    fn debug_never_prints_the_key_a_resolution_carries() {
+        let resolution = resolve(&env_with(&[("OPENAI_API_KEY", "sk-secret-value")]));
+        let debug = format!("{resolution:?}");
+        assert!(!debug.contains("sk-secret-value"), "{debug}");
+        assert!(debug.contains("redacted"), "{debug}");
+    }
+
+    /// #3714: `parse::<f32>` accepts `nan` and `inf`, so the `is_finite`
+    /// guard is the only thing rejecting them. Nothing exercised it.
+    #[test]
+    fn a_malformed_floor_is_rejected_rather_than_swallowed() {
+        for raw in ["not-a-number", "nan", "inf", "-inf"] {
+            let env = env_with(&[("STELLA_EMBED_FLOOR", raw), ("OPENAI_API_KEY", "sk")]);
+            let Resolution::Incomplete(message) = resolve(&env) else {
+                panic!("expected `{raw}` to be rejected");
+            };
+            assert!(message.contains("STELLA_EMBED_FLOOR"), "{message}");
+            assert!(message.contains(raw), "{message}");
+        }
+    }
+
+    /// #3714: the floor has to reach the embedder, not just parse. Compared
+    /// against `DEFAULT_ADMISSION_FLOOR` so a silently-ignored override fails
+    /// here rather than degrading retrieval quality in the field.
+    #[test]
+    fn a_parsed_floor_reaches_the_embedder() {
+        let env = env_with(&[("STELLA_EMBED_FLOOR", "0.6"), ("OPENAI_API_KEY", "sk")]);
+        let Resolution::Configured(embedder) = resolve(&env) else {
+            panic!("expected a configured embedder");
+        };
+        let SimilarityPosture::Semantic { admission_floor } = embedder.similarity_posture() else {
+            panic!("expected a semantic posture");
+        };
+        assert_eq!(admission_floor, 0.6);
+        assert_ne!(
+            admission_floor, DEFAULT_ADMISSION_FLOOR,
+            "the override must not collapse to the default"
+        );
     }
 
     #[test]
