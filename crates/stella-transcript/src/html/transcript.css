@@ -179,6 +179,34 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .prose-fold > summary .rest { color: var(--faint); }
 .answer { border-left: 2px solid var(--violet); padding-left: 14px; }
 
+/* note rows: recall, compaction, verdicts, delegation — every transcript row
+   that is neither a step nor prose. They share the role blocks' 86px gutter so
+   a note's summary starts on the same column as a step's object; the kind
+   supplies the gutter glyph and the colour, and a note carrying no detail
+   renders as a plain line with no disclosure control at all. */
+.note {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  padding: 4px 18px 4px 0;
+  font-size: 12px;
+}
+.notegut { text-align: right; padding-right: 16px; color: var(--faint); }
+.note-summary, .note-fold > summary { color: var(--dim); }
+.note-fold > summary:hover { color: var(--ink); }
+.note-detail {
+  margin-top: 4px;
+  padding-left: 14px;
+  border-left: 1px solid #1c1c1c;
+  color: var(--faint);
+}
+.note-stage .notegut, .note-stage .note-summary, .note-stage .note-fold > summary {
+  color: var(--violet);
+}
+/* the hunk-header blue, as a literal for the same reason it is one there */
+.note-context .notegut { color: #6f87a8; }
+.note-wait .notegut, .note-verdict .notegut { color: var(--amber); }
+.note-handoff .notegut { color: var(--cyan); }
+
 /* step — the three fixed gutters */
 .grid {
   display: grid;
