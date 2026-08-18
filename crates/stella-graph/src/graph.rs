@@ -37,6 +37,7 @@ use tokio::task::JoinHandle;
 use crate::error::GraphError;
 use crate::frames;
 use crate::import;
+use crate::lease;
 use crate::parse::Grammars;
 use crate::reconcile;
 use crate::store::{self, IndexStats};
@@ -214,13 +215,11 @@ impl CodeGraph {
             }
             // 2) Catch-up: diff stored hashes against the current tree. This
             //    is the correctness backstop — it catches every uncommitted
-            //    edit, which no git range can see.
+            //    edit, which no git range can see. Single-flight (#3650): a
+            //    concurrent session or graph-tool open walking the same tree
+            //    produces identical rows, so the second walk is waste.
             let catchup = inner.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                let mut conn = catchup.write_guard();
-                store::index_tree(&mut conn, &catchup.root, &catchup.grammars)
-            })
-            .await;
+            let _ = tokio::task::spawn_blocking(move || walk_single_flight(&catchup)).await;
 
             if inner.shutdown.load(Ordering::Relaxed) {
                 return;
@@ -303,6 +302,64 @@ impl CodeGraph {
     ) -> Result<IndexStats, GraphError> {
         let mut conn = self.inner.write_guard();
         store::index_tree_with_progress(&mut conn, &self.inner.root, &self.inner.grammars, progress)
+    }
+
+    /// [`index_all`](Self::index_all), but skipped entirely when another pass
+    /// is already walking this store (#3650). `None` means someone else holds
+    /// the walk lease and this caller has nothing useful to add.
+    ///
+    /// This is for **opportunistic** walks — a session mounting, a graph tool
+    /// opening the store — where a second concurrent walk produces identical
+    /// rows and is pure waste. An explicit user command keeps calling
+    /// [`index_all`](Self::index_all): someone who typed `stella init` is
+    /// owed the pass, and answering "another process was busy" to a direct
+    /// instruction is a worse failure than doing the work twice.
+    pub fn index_all_single_flight(&self) -> Result<Option<IndexStats>, GraphError> {
+        // The write connection, not the read one: taking a lease is a write,
+        // and `store::open_read`'s whole contract is that the read path never
+        // takes a write lock. Both holds are scoped so `index_all` can take
+        // the same mutex between them.
+        let lease = {
+            let conn = self.inner.write_guard();
+            match lease::acquire(&conn, lease::Purpose::IndexWalk) {
+                lease::Acquired::Held(lease) => lease,
+                lease::Acquired::Busy => return Ok(None),
+            }
+        };
+        let outcome = self.index_all();
+        // Released whether the pass succeeded or not: a failed walk holds no
+        // claim on the next one, and leaving the lease behind would stall
+        // indexing for the whole TTL over an error the caller already sees.
+        {
+            let conn = self.inner.write_guard();
+            lease::release(&conn, &lease);
+        }
+        outcome.map(Some)
+    }
+
+    /// Test seam: take the walk lease and hold it, standing in for another
+    /// process mid-pass. `None` when it is already held.
+    ///
+    /// Hidden from docs: test-facing only, `pub` so integration tests in
+    /// `tests/` can reach it — the same shape as
+    /// [`watch_pipeline_for_tests`](Self::watch_pipeline_for_tests). A real
+    /// caller has no business taking this lease without doing the work it
+    /// covers.
+    #[doc(hidden)]
+    pub fn hold_walk_lease_for_tests(&self) -> Option<lease::Lease> {
+        let conn = self.inner.write_guard();
+        match lease::acquire(&conn, lease::Purpose::IndexWalk) {
+            lease::Acquired::Held(lease) => Some(lease),
+            lease::Acquired::Busy => None,
+        }
+    }
+
+    /// Test seam: release a lease taken by
+    /// [`hold_walk_lease_for_tests`](Self::hold_walk_lease_for_tests).
+    #[doc(hidden)]
+    pub fn release_lease_for_tests(&self, lease: &lease::Lease) {
+        let conn = self.inner.write_guard();
+        lease::release(&conn, lease);
     }
 
     /// Number of files currently in the index.
@@ -677,6 +734,29 @@ impl CodeGraph {
         }
         import::rel_to_slash(path)
     }
+}
+
+/// A whole-tree walk that yields to any pass already doing one (#3650).
+///
+/// Over `&Inner` for the same reason [`reconcile_inner`] is — see its doc.
+/// `Ok(None)` means another pass holds the walk lease.
+fn walk_single_flight(inner: &Inner) -> Result<Option<IndexStats>, GraphError> {
+    let lease = {
+        let conn = inner.write_guard();
+        match lease::acquire(&conn, lease::Purpose::IndexWalk) {
+            lease::Acquired::Held(lease) => lease,
+            lease::Acquired::Busy => return Ok(None),
+        }
+    };
+    let outcome = {
+        let mut conn = inner.write_guard();
+        store::index_tree(&mut conn, &inner.root, &inner.grammars)
+    };
+    {
+        let conn = inner.write_guard();
+        lease::release(&conn, &lease);
+    }
+    outcome.map(Some)
 }
 
 /// The reconciliation pass, over the shared [`Inner`] rather than over a

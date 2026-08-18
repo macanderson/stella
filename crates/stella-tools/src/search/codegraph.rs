@@ -119,8 +119,16 @@ pub fn open_or_build(root: &Path) -> Result<OpenedGraph, IndexError> {
     // still answers from its last good state, and a brand-new one answers
     // empty rather than aborting the search. It is still reported —
     // returned to the caller, never printed over the frame.
+    //
+    // Single-flight (#3650). This pass fires on EVERY graph-tool open, so in a
+    // live session it is routinely racing the mount catch-up and any second
+    // `stella` process over the same tree — each walking and hashing every
+    // file to produce byte-identical rows, and the loser previously able to
+    // exhaust `busy_timeout` and surface here as a warning. Yielding to a walk
+    // already in progress costs this query nothing: the other pass is writing
+    // the very rows it would have written.
     let index_warning = graph
-        .index_all()
+        .index_all_single_flight()
         .err()
         .map(|error| format!("{INDEX_PASS_WARNING}: {error}"));
     Ok(OpenedGraph {
