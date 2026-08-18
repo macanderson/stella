@@ -194,8 +194,57 @@ fn require_verdict_demands_a_passing_judgement() {
     let failed = fold_journal(&journal(events));
     assert!(!is_accepted("completed", &failed, true));
 
-    assert!(!acceptance_predicate(false).contains("verdict"));
-    assert!(acceptance_predicate(true).contains("verdict"));
+    assert!(!acceptance_predicate(false, false).contains("verdict"));
+    assert!(acceptance_predicate(true, false).contains("verdict"));
+}
+
+/// `--include-unverified-transcripts` loosens the transcript clause rather
+/// than annotating it, so the manifest states the rule that actually ran
+/// (#2123) — and the two flags compose instead of overwriting each other.
+#[test]
+fn the_transcript_opt_in_rewrites_the_predicate_it_loosens() {
+    let strict = acceptance_predicate(false, false);
+    let loose = acceptance_predicate(false, true);
+
+    assert!(
+        strict.contains(
+            "AND at least one recorded model call, every one reconstructing \
+             digest-verified (Reconstruction::is_verified)"
+        ),
+        "the default states the transcript gate: {strict}"
+    );
+    assert!(
+        loose.contains("OR exported with transcript_verified=false and no calls"),
+        "the loosened rule names the non-default path: {loose}"
+    );
+    assert_ne!(
+        strict, loose,
+        "a flag that changed the selection must change the stated predicate"
+    );
+    assert!(
+        acceptance_predicate(true, true).contains("verdict"),
+        "loosening the transcript clause does not drop the verdict clause"
+    );
+}
+
+/// The severity carried on a record is the worst across the execution's
+/// calls, so a benign compaction rewrite cannot mask an integrity mismatch
+/// recorded a call later.
+#[test]
+fn the_reported_severity_is_the_gravest_one_not_the_first() {
+    use MismatchSeverity::{Compaction, Integrity, None as NoMismatch};
+
+    assert_eq!(worst_severity(NoMismatch, Compaction), Compaction);
+    assert_eq!(worst_severity(Compaction, NoMismatch), Compaction);
+    assert_eq!(worst_severity(Compaction, Integrity), Integrity);
+    assert_eq!(worst_severity(Integrity, Compaction), Integrity);
+    assert_eq!(worst_severity(NoMismatch, NoMismatch), NoMismatch);
+
+    // The wire spelling is `inspect`'s, not a second one: a dataset record and
+    // a `stella inspect --json` payload must not disagree about a verdict.
+    assert_eq!(crate::inspect::severity_tag(NoMismatch), "none");
+    assert_eq!(crate::inspect::severity_tag(Compaction), "compaction");
+    assert_eq!(crate::inspect::severity_tag(Integrity), "integrity");
 }
 
 /// A `Verdict` event whose evidence names a rung — or none, for the
@@ -346,6 +395,8 @@ fn redaction_runs_after_assembly_over_every_string_leaf() {
                 "content": "deploy with AKIAIOSFODNN7EXAMPLE",
             })],
         }],
+        transcript_verified: true,
+        transcript_mismatch_severity: "none".into(),
         tool_calls: vec![DatasetToolCall {
             seq: 1,
             turn_instance: 0,
@@ -382,7 +433,7 @@ fn redaction_runs_after_assembly_over_every_string_leaf() {
     // Serializing the STRUCT (not the intermediate Value) pins the key order
     // to the declaration order, whatever `serde_json::Map` happens to be.
     assert!(
-        line.starts_with(r#"{"schema":2,"execution_id":1,"session_id":"ses-fixture""#),
+        line.starts_with(r#"{"schema":3,"execution_id":1,"session_id":"ses-fixture""#),
         "declaration order is the wire order: {line}"
     );
     // The transcript is a string leaf like any other: the key planted in
@@ -413,6 +464,8 @@ fn a_clean_record_is_not_reported_as_redacted() {
         cost_usd: 0.0,
         prompt: "fix the failing test".into(),
         calls: Vec::new(),
+        transcript_verified: false,
+        transcript_mismatch_severity: "compaction".into(),
         tool_calls: Vec::new(),
         changes: Vec::new(),
         verdict: None,

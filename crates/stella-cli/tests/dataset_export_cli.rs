@@ -8,7 +8,10 @@
 //! Every assertion here fails on the pre-#872 tree, where the subcommand does
 //! not parse at all (clap exits 2 with "unrecognized subcommand"); the #2083
 //! assertions fail on the pre-#2083 tree, where records carry no `calls` or
-//! `reward` and the unvouched execution is exported instead of counted.
+//! `reward` and the unvouched execution is exported instead of counted; and
+//! the #2123 assertions fail on the pre-#2123 tree, where
+//! `--include-unverified-transcripts` is not an argument at all and the
+//! unvouched turn is unreachable by any invocation.
 
 use std::path::Path;
 use std::process::Command;
@@ -448,6 +451,11 @@ fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
     assert_eq!(call["role"], "worker");
     assert_eq!(call["turn_instance"], 0);
     assert_eq!(call["call_seq"], 0);
+    assert_eq!(
+        record["transcript_verified"], true,
+        "a default-filter record's transcript is the digest-verified one (#2123)"
+    );
+    assert_eq!(record["transcript_mismatch_severity"], "none");
     let messages = call["prompt_messages"].as_array().expect("messages");
     assert_eq!(messages.len(), 4, "system, goal, tool call, tool result");
     assert_eq!(messages[0]["role"], "system");
@@ -485,6 +493,7 @@ fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
     assert_eq!(manifest["records"], 2);
     assert_eq!(manifest["filter"]["executions_scanned"], 4);
     assert_eq!(manifest["filter"]["executions_transcripts_unverified"], 1);
+    assert_eq!(manifest["filter"]["include_unverified_transcripts"], false);
     assert_eq!(manifest["filter"]["executions_accepted"], 2);
     assert_eq!(
         manifest["filter"]["acceptance_predicate"],
@@ -583,6 +592,98 @@ fn the_date_window_and_require_verdict_are_reported_as_applied() {
             .is_some_and(|p| p.contains("verdict")),
         "the tightened predicate is what the manifest states: {manifest}"
     );
+}
+
+/// #2123: "excluded under the default filter" implies a non-default path, and
+/// this is it. The unvouched turn — the shape a whole store predating the
+/// receipts plane has — is absent by default and present under
+/// `--include-unverified-transcripts`, carrying its journal trajectory with
+/// its transcript honestly withheld rather than faked. The manifest states the
+/// loosened rule verbatim and keeps counting the same executions, so the two
+/// modes stay comparable.
+#[test]
+fn the_unvouched_turn_is_reachable_only_under_the_transcript_opt_in() {
+    let (dir, _, _) = seeded_workspace();
+
+    // The default is unchanged: the unvouched turn is still excluded.
+    export(&dir, "strict", &[]);
+    let strict = String::from_utf8(read(dir.path(), "strict", "dataset.jsonl")).expect("utf8");
+    assert_eq!(strict.lines().count(), 2, "the default still excludes it");
+
+    let summary = export(&dir, "loose", &["--include-unverified-transcripts"]);
+    assert!(
+        summary.contains("3 accepted turn(s) from 4 settled execution(s)"),
+        "the unvouched turn is now kept: {summary}"
+    );
+    assert!(
+        summary.contains("1 turn(s) exported with transcript_verified=false"),
+        "the summary says the transcripts were withheld, not that nothing happened: {summary}"
+    );
+
+    let jsonl = String::from_utf8(read(dir.path(), "loose", "dataset.jsonl")).expect("utf8");
+    assert_eq!(
+        jsonl.lines().count(),
+        3,
+        "the unvouched execution joins the two verified ones: {jsonl}"
+    );
+    let unvouched: serde_json::Value =
+        serde_json::from_str(jsonl.lines().nth(2).unwrap()).expect("record json");
+
+    // The trajectory the journal fold can still prove.
+    assert_eq!(unvouched["outcome"], "completed");
+    assert_eq!(unvouched["prompt"], "an unprovable transcript");
+    assert_eq!(unvouched["changes"].as_array().map(Vec::len), Some(1));
+    assert_eq!(unvouched["changes"][0]["path"], "src/lib.rs");
+
+    // ...and the transcript it cannot. Empty calls beside an explicit marker,
+    // never unverified bytes wearing a verified transcript's shape.
+    assert_eq!(unvouched["transcript_verified"], false);
+    assert_eq!(
+        unvouched["calls"].as_array().map(Vec::len),
+        Some(0),
+        "an unvouched transcript is withheld whole: {unvouched}"
+    );
+    assert_eq!(
+        unvouched["transcript_mismatch_severity"], "none",
+        "this fixture's receipt cites an unresolvable block; nothing mismatched"
+    );
+    // The verified records are unaffected by the flag.
+    let verified: serde_json::Value =
+        serde_json::from_str(jsonl.lines().next().unwrap()).expect("record json");
+    assert_eq!(verified["transcript_verified"], true);
+    assert_eq!(verified["calls"].as_array().map(Vec::len), Some(1));
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&read(dir.path(), "loose", "manifest.json")).expect("manifest json");
+    assert_eq!(
+        manifest["schema"], 3,
+        "the record shape changed, so did the schema"
+    );
+    assert_eq!(manifest["records"], 3);
+    assert_eq!(manifest["filter"]["include_unverified_transcripts"], true);
+    assert_eq!(
+        manifest["filter"]["executions_transcripts_unverified"], 1,
+        "the same count in both modes is what makes them comparable"
+    );
+    assert_eq!(manifest["filter"]["executions_accepted"], 3);
+    assert_eq!(
+        manifest["filter"]["acceptance_predicate"],
+        "executions.outcome in {completed, goal_met} AND at least one mutating \
+         file_change event AND (at least one recorded model call, every one \
+         reconstructing digest-verified (Reconstruction::is_verified) — OR exported \
+         with transcript_verified=false and no calls)",
+        "the manifest states the rule that actually ran, not the default one"
+    );
+
+    // Determinism survives the non-default path.
+    export(&dir, "loose-again", &["--include-unverified-transcripts"]);
+    for file in ["dataset.jsonl", "manifest.json"] {
+        assert_eq!(
+            read(dir.path(), "loose", file),
+            read(dir.path(), "loose-again", file),
+            "{file} is not byte-stable under --include-unverified-transcripts"
+        );
+    }
 }
 
 /// The dataset carries redacted prompts and full tool outputs, which is at
