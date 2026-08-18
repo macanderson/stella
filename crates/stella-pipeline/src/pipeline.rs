@@ -1179,7 +1179,7 @@ impl<'a> Pipeline<'a> {
         // saw no task signal to overrule it (triage::resolve_conversational).
         // Answer in one plain, tool-less completion and skip plan → execute →
         // witness → verify entirely. This is the fix for "typing `hi` authored
-        // a witness test": a non-task must never enter the work pipeline.
+        // a witness test": an early RETURN, not a skipped stage (#3408).
         if assessment.conversational {
             return self
                 .run_conversational(messages, budget, &mut total_cost)

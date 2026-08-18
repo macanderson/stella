@@ -72,7 +72,7 @@ pub(super) struct PreExecuteSchedule {
     /// `wants_witness`, the class verifying unconditionally, and an author
     /// independent of the worker actually being resolvable. `witness`'s own
     /// bare decision is not kept beside it — nothing outside this function
-    /// reads it unADORNED by those five conjuncts.
+    /// reads it unadorned by those five conjuncts.
     pub(super) authored_witness: bool,
 }
 
