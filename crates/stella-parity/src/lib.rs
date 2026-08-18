@@ -485,11 +485,15 @@ pub static CAPABILITIES: &[Capability] = &[
             mechanism: "settings + flags resolved field-by-field into EngineConfig",
             witness: "configured_settings_beat_the_baseline_field_by_field",
         },
-        api: SurfacePosture::Deferred {
-            waiting_on: "an engine-config block on turn/session create: of EngineConfig's ~15 \
-                         knobs only max_steps is settable over the wire — an embedding host \
-                         cannot pin effort, reasoning, output caps, timeouts, or budgets-in-time \
-                         from the API",
+        api: SurfacePosture::Shipped {
+            mechanism: "an `engine` block (#1167) on POST /v1/turns and POST /v1/sessions/{id}/turns: \
+                        max_output_tokens, temperature, effort, reasoning, params, \
+                        compaction_budget_tokens, summarize_overflow, summarize_keep_recent, \
+                        tool_result_horizon_steps and model_timeout_secs each lower onto the server \
+                        default for that turn; values past an operator ceiling are clamped and the \
+                        clamp is reported in the create response. max_steps and \
+                        reverse_request_timeout_ms ride the request top level and pre-date #1167",
+            witness: "engine_overrides_reach_the_provider_request_and_clamps_are_reported",
         },
     },
     Capability {

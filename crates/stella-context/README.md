@@ -97,9 +97,7 @@ crossing the limit fails the gate outright, and
 approaches the limit, split it before it crosses, the way
 [`src/store.rs`](src/store.rs) already fans out into
 [`src/store/schema.rs`](src/store/schema.rs), [`src/store/node.rs`](src/store/node.rs)
-and friends — and know that [`src/store/tests.rs`](src/store/tests.rs) sits at
-1498 lines today, so the very next test added there must instead start a new
-sibling test module.
+and friends.
 
 ## Layout
 

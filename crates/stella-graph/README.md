@@ -119,7 +119,7 @@ ratchet (`scripts/check-file-size.sh`), and none may appear — a new file
 crossing the limit fails the gate outright, and
 `scripts/file-size-baseline.txt` accepts no new entries. When a file
 approaches the limit, split it before it crosses — and
-[`src/parse.rs`](src/parse.rs) is approaching it at 1474 lines today, so a
+[`src/parse.rs`](src/parse.rs) is approaching it at 1494 lines today, so a
 new language's decoder arm and tests may be what pushes it over: plan to
 extract per-language decoding into a submodule rather than grow the file.
 
@@ -133,7 +133,7 @@ extract per-language decoding into a submodule rather than grow the file.
 | [`src/queries.rs`](src/queries.rs) | The tree-sitter S-expression queries as `const &str` compile-time data, one symbols/imports pair per language. |
 | [`src/parse.rs`](src/parse.rs) | `Grammars` (compiled once, shared by reference) and `parse_file`: tree → `Symbol`s + raw `ImportSpec`s. Pure and synchronous. |
 | [`src/symbol.rs`](src/symbol.rs) / [`src/import.rs`](src/import.rs) | `SymbolKind` (the cross-language superset, including SQL schema objects) and `ImportKind` plus the relative-specifier resolution ladder. |
-| [`src/store.rs`](src/store.rs) | SQLite: the `MIGRATION` DDL, `index_tree`, `apply_changes`, and every read query. The largest file and the one with the durability contract. |
+| [`src/store.rs`](src/store.rs) | SQLite: the `MIGRATION` DDL, `index_tree`, `apply_changes`, and every read query. The file with the durability contract. |
 | [`src/walk.rs`](src/walk.rs) | The directory walk and `DENY_DIRS` — the cheap structural half of generated-file exclusion. |
 | [`src/generated.rs`](src/generated.rs) | The per-file half: `.gitattributes linguist-generated`, `*.min.*`, and the minified-content heuristic (issue #272). |
 | [`src/watch.rs`](src/watch.rs) | The live re-index pipeline: `notify` event source → debounce → one transactional apply, plus the `WatchInjector` test seam. |

@@ -43,7 +43,7 @@
   - **The agent-systems architecture is the crown.** The agent loop, the
     staged pipeline, the context plane, and the port boundaries get more
     scrutiny than anything else in the tree. Determinism, replayability, and
-    "ports, not concretions" are not negotiable there for any deadline.
+    "ports, not direct dependencies" are not negotiable there for any deadline.
   - **"Now" vs. "right" is the maintainer's call, not yours.** When you truly
     cannot have both, state which one you are giving up and why, and let a
     human choose. Deciding it silently is how a reference implementation

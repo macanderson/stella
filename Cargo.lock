@@ -3011,7 +3011,6 @@ dependencies = [
  "serde_json",
  "stella-core",
  "stella-protocol",
- "thiserror 2.0.20",
  "tokio",
 ]
 

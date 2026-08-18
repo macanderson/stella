@@ -83,7 +83,6 @@ pub struct RedirectDecl {
 /// same entity.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct StorageManifest {
-    #[allow(dead_code)]
     pub version: Option<u32>,
     #[serde(default)]
     pub layers: BTreeMap<String, LayerDecl>,

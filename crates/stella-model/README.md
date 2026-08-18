@@ -37,11 +37,10 @@ Depends on exactly one workspace crate, `stella-protocol` (`Provider`,
 `CompletionRequest`/`CompletionResult`, `ProviderError`, `Attachment`); the rest
 are third-party — `reqwest`/`tokio`/`futures-util` for transport, `hmac`+`sha2`
 for Bedrock SigV4, `rpassword` for the credential prompt, `toml` for
-`~/.stella/credentials.toml`. Only `stella-cli` depends on it (`stella-core`
-never does, by design), and it constructs adapters in exactly one place:
-`build_provider_parts` in
-[`../stella-cli/src/agent/engine.rs`](../stella-cli/src/agent/engine.rs). No
-binary of its own.
+`~/.stella/credentials.toml`. `stella-cli` and `stella-runtime` depend on it
+(`stella-core` never does, by design), and both funnel into one construction
+site: `build_provider` in [`src/factory.rs`](src/factory.rs). No binary of
+its own.
 
 ## Boundary — does this change belong here?
 
@@ -208,9 +207,11 @@ make test-model          # or: cargo test -p stella-model
 ```
 
 Adapter tests are `wiremock`-based and live beside the code: inline
-`#[cfg(test)] mod tests` in `openai.rs`, `gemini.rs`, `bedrock.rs`, `vertex.rs`,
-out-of-line in [`src/anthropic/tests.rs`](src/anthropic/tests.rs) and
-[`src/zai/tests.rs`](src/zai/tests.rs). They assert both directions — the exact
+`#[cfg(test)] mod tests` in `openai.rs` and `vertex.rs`, out-of-line in
+[`src/anthropic/tests.rs`](src/anthropic/tests.rs),
+[`src/zai/tests.rs`](src/zai/tests.rs),
+[`src/gemini/tests.rs`](src/gemini/tests.rs) and
+[`src/bedrock/tests.rs`](src/bedrock/tests.rs). They assert both directions — the exact
 bytes that go out, and a `CompletionResult` reassembled from a canned SSE stream.
 No credential or network required.
 
@@ -259,10 +260,10 @@ Adding a provider. **Step 0 is the one most new providers stop at.**
      a model with no dial at all.
    - `OptIn`, `Implicit`, and `Controllable` must name a `witness` — the exact
      test function proving the behavior on the wire — and it must live in one of
-     the six files `adapter_sources()` embeds with `include_str!`
-     (`anthropic/tests.rs`, `bedrock.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`,
-     `zai/tests.rs`); a witness in a *new* adapter's own test module is invisible
-     until you add that file there too. No-control variants carry a `note` instead.
+     the files `adapter_sources()` embeds with `include_str!` (see
+     [`src/provider_parity.rs`](src/provider_parity.rs) for the current list);
+     a witness in a *new* adapter's own test module is invisible until you add
+     that file there too. No-control variants carry a `note` instead.
    - What fails if you skip it: `every_seeded_provider_declares_a_cache_posture`
      / `every_seeded_provider_declares_a_reasoning_posture` (in `stella-cli`) on
      a missing row, `both_axes_cover_the_same_provider_ids` if you add one axis
@@ -280,7 +281,7 @@ axis in `provider_parity.rs` — record it as a matrix, not as adapter folklore.
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions",
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies",
   invariant 8 ("Provider feature parity is declared, not assumed"), and the
   `stella-model` row in "Workspace layout — where a change goes".
 - [`../stella-protocol/src/provider.rs`](../stella-protocol/src/provider.rs) —
