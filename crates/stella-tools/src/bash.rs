@@ -66,6 +66,10 @@ use tokio::process::Command;
 
 use crate::registry::Tool;
 
+mod words;
+
+use words::{cd_escape_target, is_operator_word, shell_words};
+
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// Byte cap on one `bash` result before head+tail elision
 /// ([`crate::exec::truncate_middle_capped`]). [`crate::custom`] aliases this
@@ -92,103 +96,6 @@ pub(crate) const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 /// grep-family commands whose first positional arg is a search pattern.
 const GREP_CMDS: &[&str] = &["grep", "egrep", "fgrep", "rg", "ripgrep", "ag"];
 
-/// A quote-aware word split — enough to pull a `cd` target or a `grep`
-/// pattern out of the common command shapes, returning each word already
-/// unquoted. NOT a shell parser: it respects `'…'` and `"…"` (so a pattern or
-/// path with spaces stays one word) and preserves backslash escapes like
-/// `\|` (so an alternation survives into [`is_symbol_shaped`]); unquoted
-/// operators (`&&`, `||`, `|`, `;`, `&`) come back as their own words to
-/// bound a scan — including when attached to a word, so `cd /app; ls` yields
-/// the target `/app`, not the unresolvable `/app;` a paid bench trial saw
-/// warned about as an escape from its own session root.
-fn shell_words(command: &str) -> Vec<String> {
-    let mut words: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let mut has_word = false;
-    let (mut in_single, mut in_double) = (false, false);
-    let mut chars = command.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' if !in_double => {
-                in_single = !in_single;
-                has_word = true;
-            }
-            '"' if !in_single => {
-                in_double = !in_double;
-                has_word = true;
-            }
-            c @ (';' | '&' | '|') if !in_single && !in_double => {
-                if has_word {
-                    words.push(std::mem::take(&mut cur));
-                    has_word = false;
-                }
-                let mut op = String::from(c);
-                // `&&` / `||` are one operator; `;;` never appears in the
-                // shapes this scans, so `;` stays single.
-                if c != ';' && chars.peek() == Some(&c) {
-                    chars.next();
-                    op.push(c);
-                }
-                words.push(op);
-            }
-            '\\' if !in_single => {
-                // Keep the escape literal (covers `\|`, `\"`, …); we don't
-                // interpret it, just preserve it for the symbol test.
-                cur.push('\\');
-                if let Some(n) = chars.next() {
-                    cur.push(n);
-                }
-                has_word = true;
-            }
-            c if c.is_whitespace() && !in_single && !in_double => {
-                if has_word {
-                    words.push(std::mem::take(&mut cur));
-                    has_word = false;
-                }
-            }
-            c => {
-                cur.push(c);
-                has_word = true;
-            }
-        }
-    }
-    if has_word {
-        words.push(cur);
-    }
-    words
-}
-
-/// If the command `cd`s somewhere outside the workspace `root`, return that
-/// target — every other tool is confined to `root`, so an edit under a drifted
-/// tree is invisible to the file tools, the turn's diff, and verification (and
-/// ungraphed besides, the cross-tree gap the telemetry showed). Targets we
-/// can't resolve (`$VAR`, `~`, `-`, a flag) are skipped: better a missed note
-/// than a wrong one.
-fn cd_escape_target(command: &str, root: &Path) -> Option<String> {
-    let words = shell_words(command);
-    for pair in words.windows(2) {
-        if pair[0] != "cd" {
-            continue;
-        }
-        let target = pair[1].as_str();
-        // `-` (cd to previous dir) is caught by the `-` prefix below. An
-        // operator word means the `cd` had no target at all (`cd && make`):
-        // that goes to `$HOME`, which we skip for the same reason as `~`.
-        if target.is_empty()
-            || target.starts_with('$')
-            || target.starts_with('~')
-            || target.starts_with('-')
-            || matches!(target, ";" | "&" | "&&" | "|" | "||")
-        {
-            continue;
-        }
-        if crate::resolve_within_root(root, target).is_none() {
-            return Some(target.to_string());
-        }
-    }
-    None
-}
-
 /// Does the command run a grep-family search whose pattern is symbol-shaped —
 /// the `grep -rn "struct X"` that graph_query answers better? The dominant
 /// path in the telemetry (symbol searches ran through bash, not the native
@@ -202,7 +109,7 @@ fn bash_grep_is_symbol_shaped(command: &str) -> bool {
             continue;
         }
         for next in &words[i + 1..] {
-            if matches!(next.as_str(), "|" | "||" | "&&" | ";") {
+            if is_operator_word(next) {
                 break;
             }
             if next.starts_with('-') {
@@ -485,7 +392,7 @@ fn segment_args(words: &[String], command_index: usize) -> Vec<&str> {
     words[command_index + 1..]
         .iter()
         .map(String::as_str)
-        .take_while(|word| !matches!(*word, ";" | "&" | "&&" | "|" | "||"))
+        .take_while(|word| !is_operator_word(word))
         .collect()
 }
 
@@ -602,7 +509,7 @@ fn bare_sleep_seconds(command: &str) -> Option<u64> {
     let mut segments: Vec<&[String]> = Vec::new();
     let mut start = 0;
     for (i, w) in words.iter().enumerate() {
-        if matches!(w.as_str(), ";" | "&" | "&&" | "|" | "||") {
+        if is_operator_word(w) {
             segments.push(&words[start..i]);
             start = i + 1;
         }
@@ -1164,60 +1071,6 @@ mod tests {
             ToolOutput::Ok { content, .. } => content,
             ToolOutput::Error { message, .. } => message,
         }
-    }
-
-    #[test]
-    fn cd_escape_target_flags_out_of_root_only() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
-        // In-root cd — no drift.
-        assert_eq!(cd_escape_target("cd sub && ls", dir.path()), None);
-        assert_eq!(cd_escape_target("cd . && cargo build", dir.path()), None);
-        // Out-of-root — the target is returned.
-        assert_eq!(
-            cd_escape_target("cd / && grep -rn x .", dir.path()).as_deref(),
-            Some("/")
-        );
-        assert!(cd_escape_target("cd ../.. && ls", dir.path()).is_some());
-        // Unresolvable / no cd — skipped.
-        assert_eq!(cd_escape_target("cd $HOME && ls", dir.path()), None);
-        assert_eq!(cd_escape_target("cd ~/foo && ls", dir.path()), None);
-        assert_eq!(cd_escape_target("grep -rn x .", dir.path()), None);
-    }
-
-    #[test]
-    fn shell_words_splits_operators_attached_to_a_word() {
-        assert_eq!(shell_words("cd /app; ls"), ["cd", "/app", ";", "ls"]);
-        assert_eq!(shell_words("a&&b"), ["a", "&&", "b"]);
-        assert_eq!(
-            shell_words("a || b|c & d"),
-            ["a", "||", "b", "|", "c", "&", "d"]
-        );
-        // Quoted and escaped operators stay inside the word.
-        assert_eq!(shell_words("echo 'a;b'"), ["echo", "a;b"]);
-        assert_eq!(shell_words(r"grep x\|y ."), ["grep", r"x\|y", "."]);
-    }
-
-    /// The false positive a paid bench trial hit: `cd /app; …` with session
-    /// root `/app` drew the "work here is invisible to the diff and to
-    /// verification" warning, because the target parsed as the unresolvable
-    /// `/app;`.
-    #[test]
-    fn an_attached_separator_does_not_fake_a_cd_escape() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        std::fs::create_dir_all(root.join("sub")).unwrap();
-        // In-root cd with the separator attached — no drift, no warning.
-        assert_eq!(cd_escape_target("cd sub; ls", &root), None);
-        assert_eq!(
-            cd_escape_target(&format!("cd {}; ls", root.display()), &root),
-            None
-        );
-        // A real escape still warns, and names the clean target.
-        assert_eq!(cd_escape_target("cd /; ls", &root).as_deref(), Some("/"));
-        // A bare `cd` before an operator goes to `$HOME` — unresolvable
-        // here, so it is skipped rather than misnamed.
-        assert_eq!(cd_escape_target("cd && ls", &root), None);
     }
 
     #[test]
