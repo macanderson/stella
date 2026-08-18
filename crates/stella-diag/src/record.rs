@@ -3,7 +3,7 @@
 
 //! The envelope — `docs/spec/diagnostics.md` §5.1.
 //!
-//! One shape, shared by all seventeen crates:
+//! One shape, shared by every crate in the workspace:
 //!
 //! ```json
 //! {

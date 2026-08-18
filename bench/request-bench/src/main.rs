@@ -44,8 +44,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, CompletionRequestRef, MessageRole, ReasoningEffort,
-    ToolCall, ToolOutput, ToolResult, ToolSchema,
+    BYTES_PER_TOKEN, CompletionMessage, CompletionRequest, CompletionRequestRef, MessageRole,
+    ReasoningEffort, ToolCall, ToolOutput, ToolResult, ToolSchema,
 };
 
 /// Cumulative bytes handed out by [`Counting`] since the last reset.
@@ -111,11 +111,6 @@ fn measure<T>(body: impl FnOnce() -> T) -> (usize, usize) {
 // Fixture
 // ---------------------------------------------------------------------------
 
-/// `stella_core::estimator::CHARS_PER_TOKEN` — duplicated rather than depended
-/// on, because pulling `stella-core` in would make this harness link the whole
-/// engine to size a `String`.
-const CHARS_PER_TOKEN: f64 = 3.5;
-
 /// Transcript size the issue names as the realistic deep-session case.
 const TARGET_TOKENS: usize = 150_000;
 /// MCP-registered tool count the issue names.
@@ -127,7 +122,7 @@ const STEPS: usize = 200;
 /// user → assistant-with-tool-call → tool-result triples, grown until it
 /// estimates at [`TARGET_TOKENS`].
 fn transcript() -> Vec<CompletionMessage> {
-    let target_chars = (TARGET_TOKENS as f64 * CHARS_PER_TOKEN) as usize;
+    let target_bytes = (TARGET_TOKENS as f64 * BYTES_PER_TOKEN) as usize;
     let mut messages = vec![
         CompletionMessage::system(
             "You are Stella, an autonomous coding agent. Prefer small diffs. \
@@ -135,9 +130,9 @@ fn transcript() -> Vec<CompletionMessage> {
         ),
         CompletionMessage::user("Fix the failing integration test in the store crate."),
     ];
-    let mut chars = 0usize;
+    let mut bytes = 0usize;
     let mut turn = 0usize;
-    while chars < target_chars {
+    while bytes < target_bytes {
         let call_id = format!("call_{turn:04}");
         let input = serde_json::json!({
             "command": format!("cargo test -p stella-store --test integration_{turn}"),
@@ -148,7 +143,7 @@ fn transcript() -> Vec<CompletionMessage> {
             "running 42 tests\n{}\ntest result: FAILED. 41 passed; 1 failed\n",
             "test store::roundtrip::case ... ok\n".repeat(48)
         );
-        chars += output.len() + 256;
+        bytes += output.len() + 256;
         messages.push(CompletionMessage {
             role: MessageRole::Assistant,
             content: format!("Checking suite {turn} before touching the fold."),

@@ -357,7 +357,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// Append `bytes` to `out` as lowercase hex. Spelled out rather than
 /// `format!("{byte:02x}")` per byte: that allocates and drops a `String` for
 /// every byte of every digest, on a path that runs twice per saved artifact.
-fn push_hex(out: &mut String, bytes: &[u8]) {
+pub(crate) fn push_hex(out: &mut String, bytes: &[u8]) {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     for &byte in bytes {
         out.push(DIGITS[usize::from(byte >> 4)] as char);

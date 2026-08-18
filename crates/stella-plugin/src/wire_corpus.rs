@@ -12,8 +12,10 @@
 //! things that crossed the process boundary until the host-call channel landed
 //! (#3540, `doc:wrapper-socket` §6b); [`crate::HostCallRequest`] and
 //! [`crate::HostCallResponse`] are the other two, and they cross the same pipes
-//! in the same conversation. All four are roots this module publishes, and
-//! everything reachable from them is published with them.
+//! in the same conversation. The driver channel (#3599 B0) adds its own
+//! roots — [`crate::DriveRequest`]/[`crate::DriveResponse`] and
+//! [`crate::DriverCallRequest`]/[`crate::DriverCallResponse`]. Every root
+//! here is published along with everything reachable from it.
 //!
 //! # Why a corpus and not a JSON Schema
 //!
@@ -89,7 +91,8 @@ const NOTE: &str = "GENERATED FILE — DO NOT EDIT. Every message the wrapper \
      socket carries, serialized by the same impls stella_runtime's subprocess \
      transport uses. Regenerate with `bash scripts/export-agentevent-schema.sh`; \
      guarded by `scripts/check-wire-schema.sh` (`make wire-schema`). Source of \
-     truth: crates/stella-plugin/src/wire.rs and src/host_call.rs. A message \
+     truth: crates/stella-plugin/src/wire.rs, src/host_call.rs and \
+     src/driver.rs. A message \
      with an optional member appears twice — `full` populates every optional \
      field, `minimal` omits every one that may be omitted — so a field \
      changing between required and optional is a diff here. This is a corpus, not a JSON Schema: see \

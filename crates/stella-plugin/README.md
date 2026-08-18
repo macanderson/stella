@@ -225,6 +225,17 @@ before it crosses.
   corpus `bin/export_wrapper_wire.rs` prints, published under `docs/wire/` and
   gate-checked by `scripts/check-wire-schema.sh`; compiled into no default
   build.
+- `src/host_call.rs` — the channel that lets a plugin ask the host for
+  something (recall, a bounded child turn, a test re-run) and read the answer
+  before it replies. The host performs the call and applies
+  `LoopGrant::permits_call`, so the plugin never reaches anything itself.
+- `src/package.rs` — the `[[tools]]`, `[[skills]]` and `[[records]]` a package
+  ships, plus `PluginManifest::reconcile`, which compares what the manifest
+  declares against what the host actually found on disk and refuses any
+  disagreement in either direction.
+- `src/driver.rs` — the `[driver]` block and the drive-session wire shapes
+  (`DriverGrant`, `DriverCall`, `DriveRequest`/`DriveResponse`): a plugin that
+  starts turns rather than taking part in one.
 - `src/error.rs` — `ManifestError`, typed per rule (invariant 5).
 - `tests/manifest_grades.rs` + `tests/fixtures/*.toml` — slice A's
   acceptance: one fixture per grade, round-tripped through both TOML and
@@ -262,10 +273,12 @@ Three, and the count is the point — this crate's own README said "None
 shipping yet, deliberately" for as long as that was true, and it is not any
 more:
 
-- **`stella-runtime`** consumes the wire contract and the verdict rule. It
-  defines the `TurnWrapper` trait and the two host functions `judge` and
-  `again` over the types in `wire.rs`, and the subprocess transport that
-  speaks them to an out-of-process plugin (`doc:wrapper-socket`).
+- **`stella-runtime`** consumes the wire contract, the verdict rule, and the
+  driver channel. It defines the `TurnWrapper` trait and the two host
+  functions `judge` and `again` over the types in `wire.rs`, the subprocess
+  transport that speaks them to an out-of-process plugin
+  (`doc:wrapper-socket`), and `src/wrapper/driver_call.rs`, which consumes
+  `DriverGrant`/`DriverCall` from `driver.rs`.
 - **`stella-cli`** consumes the manifest and the consent surface. `stella
   plugin install|list|remove` resolves `.stella/plugins/` and
   `~/.stella/plugins/`, renders `consent_text` before anything executes, and

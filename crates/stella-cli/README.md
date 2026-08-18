@@ -336,7 +336,7 @@ unrecognized value is a hard parse error, never a silent fallback.
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions" (#7 is
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies" (#7 is
   the byte-stable-prompt rule this crate owns), "Workspace layout", and the
   `.stella/` directory table. [`../../README.md`](../../README.md) is the user-facing
   command and provider reference.

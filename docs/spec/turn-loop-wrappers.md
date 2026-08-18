@@ -304,7 +304,7 @@ Worth stating, so nobody reads this as bigger than it is.
   measuring stick instead of replacing it.
 - The witness protocol itself: a different model writes the test, blind to the
   change, with three tools, and tampering voids the credit.
-- Ports, not concretions. `stella-core` still imports no provider SDK, no
+- Ports, not direct dependencies. `stella-core` still imports no provider SDK, no
   filesystem API, and now also never learns that plugins exist.
 
 ---

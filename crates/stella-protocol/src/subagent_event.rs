@@ -84,7 +84,7 @@ pub enum SubAgentPhase {
     /// A child turn is about to start. Every event between this and the
     /// matching `Finished` with the same `agent_id` belongs to the child,
     /// not the parent — this bracket IS the attribution mechanism, which is
-    /// why no per-event agent field was added to the other 35 variants.
+    /// why no per-event agent field was added to the rest of the event vocabulary.
     Started {
         /// Stable id for this child, unique within the parent turn.
         agent_id: String,

@@ -2,7 +2,7 @@
 //! decision logic plus one narrow async driver — `stella-core` has zero I/O
 //! of its own, so even the async loop here drives through an injectable
 //! [`Sleeper`] port rather than calling `tokio::time::sleep` directly, the
-//! same "ports, not concretions" seam as [`crate::ports::Clock`].
+//! same "ports, not direct dependencies" seam as [`crate::ports::Clock`].
 //!
 //! Binding lessons this module encodes:
 //!
