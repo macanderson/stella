@@ -49,7 +49,7 @@ use crate::loop_detect::{CallRecord, LoopIdentity, LoopVerdict, detect_loop};
 use crate::ports::ToolExecutor;
 use crate::step::AbortKind;
 
-use super::loop_evidence::{ResultIdentities, recent_call_records};
+use super::loop_evidence::{ResultIdentities, recent_call_records, turn_start_index};
 use super::{EngineConfig, LOOP_STEER_PREFIX, TurnOutcome};
 
 /// How many stuck-loop steering warnings one turn may spend.
@@ -393,6 +393,11 @@ fn steer_text(
 /// ordinary one. It sits deliberately far above `bash`'s own 30s per-call
 /// advisory (`stella_tools::bash`): this is the escalation, not a second copy
 /// of that notice.
+///
+/// A `const` and not a `crate::loop_detect::LoopDetectionConfig` field, unlike
+/// every threshold beside it — a declared gap, tracked in #3623, not a
+/// silence: a session that legitimately waits cannot raise it and a bench
+/// harness cannot lower it to study the rung.
 pub(crate) const STALL_STEER_THRESHOLD_SECS: u64 = 120;
 
 /// The opening of the stalled-turn steer, for the warn-once scan below.
@@ -416,7 +421,13 @@ pub(crate) const STALL_STEER_PREFIX: &str = "[stuck-loop warning] this turn is s
 /// measured ones — deliberately, and in both directions: a static text-shape
 /// check keeps the same transcript classifying the same way every step (a
 /// timing here would make this rung nondeterministic), and the request is the
-/// thing the model chose and can be steered about. Any call carrying a
+/// thing the model chose and can be steered about. It follows that a call
+/// that never spent what it asked for — killed by the shell's own timeout,
+/// refused by policy, erroring before it slept — still contributes its full
+/// request, so this is an upper bound on wall clock and not a measurement of
+/// it. That is why [`stall_steer_text`] says "asked for" and claims nothing
+/// about what the clock was actually charged; whether the *threshold* should
+/// discount such a call is the open question in #3624. Any call carrying a
 /// `command` string counts, so the shell tool and the shell-shaped custom
 /// tools are covered without `stella-core` learning a tool's name; the
 /// classifier is strict enough (`stella_core::shell_text::bare_sleep_seconds`
@@ -444,7 +455,7 @@ fn turn_stall_seconds(records: &[CallRecord<'_>]) -> u64 {
         .fold(0u64, |total, secs| total.saturating_add(secs))
 }
 
-/// Steer a turn that is sleeping away its allowance — once.
+/// Steer a turn that is sleeping away its allowance — once *per turn*.
 ///
 /// Warn-once is read off the transcript rather than held in
 /// [`LoopSteerBudget`] or `crate::step::TurnState`: a steer the model can see
@@ -453,6 +464,19 @@ fn turn_stall_seconds(records: &[CallRecord<'_>]) -> u64 {
 /// consequence worth naming is that compaction can drop the marker, after
 /// which a still-sleeping turn earns a second warning — which is the right
 /// answer anyway, since the model can no longer see the first.
+///
+/// **The scan is bounded by [`turn_start_index`], and that is load-bearing.**
+/// A transcript is session-scoped — `run_turn` is handed the same `Vec` every
+/// turn, with each new user prompt appended and nothing trimmed — while the
+/// seconds this gates come from `super::loop_evidence::recent_call_records`,
+/// which *is* turn-bounded. Scanning the whole vector therefore made the rung
+/// fire at most once per **session**: turn 1 sleeps 130s and is steered, and
+/// turn 5 can sleep 1,089s in silence because turn 1's marker is still sitting
+/// upstream. That is precisely the shape #2022 is about, and it is why the
+/// same boundary the evidence uses is the one the marker scan has to use. The
+/// boundary rule already skips a `LOOP_STEER_PREFIX` message when it looks for
+/// the turn's opening prompt, so this turn's own steer stays inside the window
+/// it has to be visible in.
 ///
 /// No abort ladder here, on purpose. A loop detection proves the turn cannot
 /// make progress; a large `sleep` total proves only that the turn chose a
@@ -468,7 +492,8 @@ fn steer_stalled_turn(
     if stall_secs < STALL_STEER_THRESHOLD_SECS {
         return;
     }
-    if messages
+    let turn_start = turn_start_index(messages);
+    if messages[turn_start..]
         .iter()
         .any(|m| m.role == MessageRole::User && m.content.starts_with(STALL_STEER_PREFIX))
     {
@@ -497,8 +522,8 @@ fn stall_steer_text(stall_secs: u64) -> String {
     format!(
         "{LOOP_STEER_PREFIX}] this turn is stalling: you have asked for {stall_secs}s of pure \
          `sleep` in this turn — commands whose entire body is a sleep, doing no other work. A \
-         blind sleep charges the whole interval to the turn whether or not the thing you are \
-         waiting for finished in its first second, and that wall clock is the same one this \
+         blind sleep charges its whole interval to the turn whether or not the thing you are \
+         waiting for finished in its first second, and wall clock — not spend — is what this \
          task is measured against. If you are waiting on something, poll for the condition \
          instead of sleeping through it: a bounded retry loop that checks and exits as soon \
          as the check passes (for example `for i in $(seq 30); do <check> && break; sleep 1; \
@@ -1247,6 +1272,84 @@ mod tests {
             );
             assert!(outcome.is_none());
             assert_eq!(messages.len(), before, "the stalled turn is steered once");
+        }
+
+        /// Warn-once means once per **turn**, and the transcript it is read
+        /// off is session-scoped: `run_turn` is handed the same `Vec` every
+        /// turn, with each new prompt appended and nothing trimmed.
+        ///
+        /// So an unbounded marker scan silently downgrades this rung to once
+        /// per *session* — turn 1 is steered, and every later turn can sleep
+        /// its whole allowance away in silence because turn 1's marker is
+        /// still sitting upstream. That is the exact shape #2022 is about,
+        /// arrived at from the other end. The seconds were always turn-bounded
+        /// (`recent_call_records`); only the marker scan was not.
+        #[test]
+        fn a_later_turn_that_sleeps_away_its_budget_is_steered_on_its_own_account() {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let events = EventSender::new(tx);
+            let steer_once = |messages: &mut Vec<CompletionMessage>| {
+                check_loop_detection(
+                    &EngineConfig::default(),
+                    &StatusAndBash,
+                    messages,
+                    &ResultIdentities::default(),
+                    &mut LoopSteerBudget::default(),
+                    0.0,
+                    &events,
+                )
+            };
+
+            let mut messages = vec![
+                CompletionMessage::system("sys"),
+                CompletionMessage::user("optimize the portfolio"),
+            ];
+            messages.extend(call("a1", "sleep 300; echo done", "done"));
+            messages.extend(call("a2", "tail -n 5 build.log", "line A"));
+            assert!(steer_once(&mut messages).is_none());
+            assert!(
+                messages
+                    .last()
+                    .is_some_and(|m| m.content.starts_with(STALL_STEER_PREFIX)),
+                "turn 1 stalls and is steered: {:?}",
+                messages.last()
+            );
+
+            // The user answers; turn 2 opens on the same transcript and
+            // stalls just as badly.
+            messages.push(CompletionMessage::user("now try the hedged variant"));
+            messages.extend(call("b1", "sleep 300; echo done", "done"));
+            messages.extend(call("b2", "tail -n 5 build.log", "line B"));
+            let before = messages.len();
+            assert!(steer_once(&mut messages).is_none());
+
+            let steer = messages.last().expect("the transcript is not empty");
+            assert_eq!(
+                messages.len(),
+                before + 1,
+                "turn 2 stalled on its own account and must hear about it"
+            );
+            assert_eq!(steer.role, MessageRole::User);
+            assert!(
+                steer.content.starts_with(STALL_STEER_PREFIX),
+                "{:?}",
+                steer.content
+            );
+            assert!(
+                steer.content.contains("300s"),
+                "the steer names what THIS turn asked for, not the session total: {:?}",
+                steer.content
+            );
+
+            // Still once within turn 2: a second pass adds nothing.
+            let before = messages.len();
+            assert!(steer_once(&mut messages).is_none());
+            assert_eq!(messages.len(), before, "and still exactly once per turn");
+
+            let steers = std::iter::from_fn(|| rx.try_recv().ok())
+                .filter(|e| matches!(e, AgentEvent::Steered { .. }))
+                .count();
+            assert_eq!(steers, 2, "one steer per stalled turn, on the wire too");
         }
 
         /// The steer rides `LOOP_STEER_PREFIX` rather than minting a marker of

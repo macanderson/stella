@@ -116,6 +116,36 @@ pub fn shell_words(command: &str) -> Vec<String> {
     words
 }
 
+/// One `sleep` argument read as whole seconds, or `None` when it is not a
+/// duration at all.
+///
+/// GNU `sleep` takes an optional unit suffix — `s`, `m`, `h`, `d` — and
+/// `sleep 10m` asks for exactly the 600 seconds `sleep 600` does. Reading only
+/// the bare number made every suffixed form invisible to
+/// [`bare_sleep_seconds`], and invisible in the worst direction: the `?` below
+/// is a whole-command answer, so `sleep 10m; echo done` did not merely
+/// contribute zero, it classified as *not a sleep at all*.
+///
+/// **Saturating, never wrapping, in both directions.** The argument is
+/// model-authored text, so `sleep 99999999999999999999` is runtime data and
+/// must not be an arithmetic overflow panic (invariant 5). Rust's float→int
+/// cast already saturates, which puts an absurd request on `u64::MAX` and a
+/// negative or `NaN` one on `0` — and `sleep` itself rejects both of those,
+/// so contributing nothing is the honest reading.
+fn sleep_arg_seconds(arg: &str) -> Option<u64> {
+    // Byte-wise, so the slice below always lands on a char boundary: the
+    // suffixes are ASCII, and a multi-byte final char takes the default arm.
+    let (digits, per_unit_secs) = match arg.as_bytes().last()? {
+        b's' => (&arg[..arg.len() - 1], 1.0),
+        b'm' => (&arg[..arg.len() - 1], 60.0),
+        b'h' => (&arg[..arg.len() - 1], 3600.0),
+        b'd' => (&arg[..arg.len() - 1], 86400.0),
+        _ => (arg, 1.0),
+    };
+    let secs = digits.parse::<f64>().ok()?;
+    Some((secs * per_unit_secs).round() as u64)
+}
+
 /// The accumulated seconds a *bare* sleep command blocks for, or `None` if
 /// any segment does real work beyond sleeping and a harmless no-op.
 ///
@@ -128,6 +158,12 @@ pub fn shell_words(command: &str) -> Vec<String> {
 /// contain a sleep, and it is deliberately biased toward saying nothing: the
 /// expensive direction here is the false positive, because clamping or
 /// scolding a legitimate retry loop breaks real tasks.
+///
+/// The accumulation across segments saturates for the reason
+/// `sleep_arg_seconds` does: two absurd sleeps on one line
+/// (`sleep 99999999999999999999; sleep 99999999999999999999`) each saturate to
+/// `u64::MAX`, and a plain `+` on that pair is an overflow panic on model
+/// text in library code.
 pub fn bare_sleep_seconds(command: &str) -> Option<u64> {
     let words = shell_words(command);
     let mut segments: Vec<&[String]> = Vec::new();
@@ -146,8 +182,7 @@ pub fn bare_sleep_seconds(command: &str) -> Option<u64> {
         match segment {
             [] => {}
             [cmd, arg] if cmd == "sleep" => {
-                let secs = arg.parse::<f64>().ok()?;
-                total_secs += secs.round() as u64;
+                total_secs = total_secs.saturating_add(sleep_arg_seconds(arg)?);
                 saw_sleep = true;
             }
             [cmd, ..] if matches!(cmd.as_str(), "echo" | "printf" | "true") => {}
@@ -188,6 +223,44 @@ mod tests {
         assert_eq!(bare_sleep_seconds("sleep 120"), Some(120));
         assert_eq!(bare_sleep_seconds("sleep 30 && sleep 30"), Some(60));
         assert_eq!(bare_sleep_seconds("sleep 2.5"), Some(3));
+    }
+
+    /// Two absurd sleeps on ONE line, which is the pair the per-segment
+    /// accumulation adds. Both saturate to `u64::MAX` on the float→int cast,
+    /// so a plain `+` here panics `attempt to add with overflow` in every
+    /// overflow-checked build — on model-authored text, in library code
+    /// (invariant 5). The sibling assertion in `driver::loop_escalation`
+    /// cannot see this: its two sleeps are two separate calls, so it only
+    /// exercises the fold that already saturated.
+    #[test]
+    fn two_absurd_sleeps_in_one_command_saturate_rather_than_overflowing() {
+        assert_eq!(
+            bare_sleep_seconds("sleep 99999999999999999999"),
+            Some(u64::MAX)
+        );
+        assert_eq!(
+            bare_sleep_seconds("sleep 99999999999999999999; sleep 99999999999999999999"),
+            Some(u64::MAX)
+        );
+    }
+
+    /// GNU `sleep`'s suffix forms are the same wait spelled differently, and
+    /// the `?` made the unsuffixed reading fail *closed*: `sleep 10m` used to
+    /// answer `None` — not "a sleep worth 0s", but "not a sleep at all" —
+    /// so the pathological shape wearing a suffix bypassed the rung entirely.
+    #[test]
+    fn a_suffixed_sleep_is_read_in_seconds() {
+        assert_eq!(bare_sleep_seconds("sleep 300s"), Some(300));
+        assert_eq!(bare_sleep_seconds("sleep 5m"), Some(300));
+        assert_eq!(bare_sleep_seconds("sleep 10m; echo done"), Some(600));
+        assert_eq!(bare_sleep_seconds("sleep 1h"), Some(3600));
+        assert_eq!(bare_sleep_seconds("sleep 1d"), Some(86400));
+        assert_eq!(bare_sleep_seconds("sleep 2m && sleep 30"), Some(150));
+        // A suffix with no number is not a duration, and a duration this
+        // cannot read still disqualifies the whole command rather than
+        // silently counting as zero.
+        assert_eq!(bare_sleep_seconds("sleep m"), None);
+        assert_eq!(bare_sleep_seconds("sleep later"), None);
     }
 
     /// The expensive direction: anything doing real work beside the sleep
