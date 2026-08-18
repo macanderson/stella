@@ -82,13 +82,19 @@ fn a_wrapper_round_trips_through_json_byte_for_byte() {
     let json = serde_json::to_string(&wrapper).expect("a validated Wrapper always serializes");
     let restored: Wrapper =
         serde_json::from_str(&json).expect("what this crate just wrote, it can read back");
-    assert_eq!(restored, wrapper, "the round trip must reproduce the value exactly");
+    assert_eq!(
+        restored, wrapper,
+        "the round trip must reproduce the value exactly"
+    );
 
     // And the round trip is itself stable — serializing the restored value
     // again produces the identical bytes, not merely an equal value.
     let json_again =
         serde_json::to_string(&restored).expect("a value that just parsed always serializes");
-    assert_eq!(json_again, json, "re-serializing must reproduce the same bytes");
+    assert_eq!(
+        json_again, json,
+        "re-serializing must reproduce the same bytes"
+    );
 }
 
 #[test]

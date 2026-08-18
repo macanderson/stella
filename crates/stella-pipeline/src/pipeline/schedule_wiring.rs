@@ -24,7 +24,7 @@
 //!   its own failing test is the run's only deterministic evidence
 //!   ([`Pipeline::run`]'s `VerificationContract` assembly). So `witness` is
 //!   decided here, immediately once triage's real facts exist, and
-//!   [`refuse_witness_reading_post_triage`](crate::schedule::refuse_witness_reading_post_triage)
+//!   [`refuse_witness_reading_post_triage`]
 //!   rejects any variant whose `witness` condition could not honestly be
 //!   answered this early — one reading `execute`'s, `witness`'s own, or
 //!   `verify`'s published signals. `classic.toml`'s `if = "no-test-command"`
@@ -39,7 +39,7 @@
 //!   ([`super::task_frame::TaskFrame::schedule`]) and decides `execute`,
 //!   re-decides `witness` (asserted to agree with the answer computed here —
 //!   both read the same triage-boundary facts, so
-//!   [`refuse_witness_reading_post_triage`](crate::schedule::refuse_witness_reading_post_triage)
+//!   [`refuse_witness_reading_post_triage`]
 //!   having accepted the variant makes them the same computation run twice),
 //!   and only then decides `verify` against its own real diff —
 //!   [`Pipeline::decide_candidate_verify`], called from
@@ -189,7 +189,7 @@ impl Pipeline<'_> {
     /// authoring happens later in `run_candidate` than this decision does,
     /// so no shipped or tested variant may condition `verify` on
     /// `witness-authored` yet — closing that gap is
-    /// [#3915](https://github.com/macanderson/stella/issues/3915).
+    /// [#3682](https://github.com/macanderson/stella/issues/3682).
     ///
     /// # Panics
     /// `.expect()`s that `execute`/`witness`/`verify` resolve without a
