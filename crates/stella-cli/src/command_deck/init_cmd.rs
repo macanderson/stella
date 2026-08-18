@@ -23,24 +23,23 @@ use crate::interactive::AskUserIo;
 /// shared [`agent::init_workspace`] flow, and release the splash whatever
 /// happens.
 ///
-/// `say` writes the progress transcript behind the splash; `ask` is the
-/// deck's question channel, which init uses only for the one first-session
-/// conversion offer. Returns `Ok(())` when init completed, or the error
-/// message to surface.
-pub(super) async fn run<F>(
+/// Init narrates through the deck's own narrator — a step joins the
+/// transcript behind the splash, a counter rewrites the counter before it —
+/// and `ask` is the deck's question channel, which init uses only for the one
+/// first-session conversion offer. Returns `Ok(())` when init completed, or
+/// the error message to surface.
+pub(super) async fn run(
     provider: &dyn stella_protocol::Provider,
     workspace_root: &std::path::Path,
     model_id: &str,
     budget_limit: Option<f64>,
     ask: &dyn AskUserIo,
-    say: F,
-    splash: impl Fn(super::SplashCue),
-) -> Result<(), String>
-where
-    F: Fn(String) + Copy,
-{
+    in_tx: &UnboundedSender<super::Inbound>,
+    agent_name: &str,
+) -> Result<(), String> {
+    let splash = splash_sender(in_tx);
     splash(super::SplashCue::Replay);
-    let mut io = InitIo::new(|line: String| say(line), Some(ask));
+    let mut io = InitIo::new(agent::deck_narrator(in_tx.clone(), agent_name), Some(ask));
     let outcome = agent::init_workspace(
         Some(provider),
         workspace_root,
@@ -54,9 +53,7 @@ where
 }
 
 /// Send a splash cue on the deck's inbound channel.
-pub(super) fn splash_sender(
-    in_tx: &UnboundedSender<super::Inbound>,
-) -> impl Fn(super::SplashCue) + '_ {
+fn splash_sender(in_tx: &UnboundedSender<super::Inbound>) -> impl Fn(super::SplashCue) + '_ {
     move |cue| {
         let _ = in_tx.send(super::Inbound::Splash(cue));
     }
