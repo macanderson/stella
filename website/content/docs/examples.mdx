@@ -19,15 +19,22 @@ run, an unfamiliar repository, a budget you have to hold — see the
 | --- | --- | --- | --- | --- | --- |
 | [Single key](#single-key) | 1 | your model | same model | same model | varies |
 | [Dirt cheap](#dirt-cheap) | 2 | `deepseek-chat` | `glm-5.2` | `deepseek-chat` | $0.01 – $0.10 |
-| [Balanced](#balanced) | 3 | `glm-5.2` | `claude-fable-5` | `deepseek-chat` | $0.05 – $0.50 |
-| [Maximum quality](#maximum-quality) | 3 | `claude-fable-5` | `gpt-5.5` | `deepseek-chat` | $0.40 – $2.50 |
+| [Balanced](#balanced) | 3 | `glm-5.2` | `claude-fable-5` | `deepseek-chat` | $0.10 – $0.80 |
+| [Maximum quality](#maximum-quality) | 3 | `claude-fable-5` | `gpt-5.5` | `deepseek-chat` | $1.30 – $8.00 |
 | [One gateway key](#one-gateway-key-openrouter) | 1 | any vendor | any vendor | any vendor | as routed |
 | [Local / air-gapped](#local-and-air-gapped) | 0 | your server | your server | your server | $0 |
 | [Enterprise cloud](#enterprise-cloud-vertex-and-bedrock) | cloud creds | Vertex or Bedrock | same | same | contract rates |
 
 Estimates are for a medium task — a focused multi-file change with one revision — at
-catalog list prices with prompt caching working normally. Your real numbers are in
-[`stella stats`](/docs/commands/stats) and the [Observatory](/docs/telemetry/dashboard).
+catalog list prices with prompt caching working normally. They are illustrative, derived
+from list price and a typical token mix, **not** measured run data: your real numbers are
+in [`stella stats`](/docs/commands/stats) and the
+[Observatory](/docs/telemetry/dashboard).
+
+The two rows using `claude-fable-5` are the expensive ones because Fable lists at
+$10/$50 per Mtok. If those ranges are more than the task needs, `claude-opus-5` (half
+Fable's price) and `claude-sonnet-5` (roughly a third) are drop-in swaps on the same 1M
+window — see [the catalog](/docs/api-providers/models#the-catalog).
 
 ## Where the money goes
 
@@ -122,7 +129,7 @@ To use another provider, swap the four model strings and `allowed_models`:
 
 | Key you hold | Model string | Window | $/Mtok in/out | Effort honoured? |
 | --- | --- | --- | --- | --- |
-| Anthropic | `anthropic/claude-fable-5` | 200k | 3.00 / 15.00 | yes, all five tiers |
+| Anthropic | `anthropic/claude-fable-5` | 1M | 10.00 / 50.00 | yes, all five tiers |
 | OpenAI | `openai/gpt-5.5` | 400k | 1.25 / 10.00 | yes; `xhigh`/`max` → `high` |
 | Z.ai | `zai/glm-5.2` | 200k | 0.60 / 2.20 | **no — dropped on the wire** |
 | DeepSeek | `deepseek/deepseek-chat` | 128k | 0.27 / 1.10 | **no — dropped on the wire** |

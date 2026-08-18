@@ -47,12 +47,14 @@ script says so and prints the `export` line to add. Two env vars tune it:
 </CardGrid>
 
 ```bash
-STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.6.44 \
+STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.9.0 \
   sh -c "$(curl -fsSL https://stella.oxagen.sh/install.sh)"
 ```
 
-Pick the tag from the
-[releases page](https://github.com/macanderson/stella/releases).
+`v0.9.0` there is only a shape — every merge to `main` cuts a patch release, so
+pick the tag you actually want from the
+[releases page](https://github.com/macanderson/stella/releases) rather than from
+this page, which cannot stay current with a line that moves daily.
 
 ### Homebrew
 

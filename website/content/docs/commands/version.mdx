@@ -11,10 +11,11 @@ Print the version of the installed `stella` binary and exit.
 stella version
 ```
 
-A top-level flag prints the version too, in clap's default format (no `v` prefix):
+Two top-level flags print it too, and they do **not** print the same thing:
 
 ```bash
-stella --version
+stella -V         # one line, bare version
+stella --version  # three lines, with the build's target and profile
 ```
 
 ## Output
@@ -22,18 +23,27 @@ stella --version
 The `version` subcommand prints a `v`-prefixed line:
 
 ```text
-stella v0.6.44
+stella v0.9.86
 ```
 
-`stella --version` prints clap's default form instead — the binary name, a space, then the
-bare version:
+`stella -V` prints the short form — the binary name, a space, then the bare version, no
+`v`:
 
 ```text
-stella 0.6.44
+stella 0.9.86
+```
+
+`stella --version` prints the **long** form: the same first line, then the target triple
+and the build profile the binary was compiled with.
+
+```text
+stella 0.9.86
+target:  aarch64-apple-darwin
+profile: release
 ```
 
 The exact number tracks the release you installed. Binaries built in dev mode
-(`scripts/dev.sh`) append a git-sha stamp, e.g. `stella v0.6.44-dev.abc1234`; released
+(`scripts/dev.sh`) append a git-sha stamp, e.g. `stella v0.9.86-dev.abc1234`; released
 binaries print the bare semver.
 
 Use it to confirm an install or upgrade, or to capture the version in a CI log. This
@@ -47,11 +57,18 @@ Confirm what you just installed:
 stella version
 ```
 
-Capture the bare semver for a CI log or a build label — strip the `v` from the
-subcommand's form, or use the flag, which never emits one:
+Capture the bare semver for a CI log or a build label. Use `-V`, not `--version`:
+the long form's extra lines would each be fed through `cut` too, so you would get the
+version, a blank, and the profile.
 
 ```bash
-stella --version | cut -d' ' -f2
+stella -V | cut -d' ' -f2
+```
+
+Or take just the first line of either flag:
+
+```bash
+stella --version | head -1 | cut -d' ' -f2
 ```
 
 Check that a binary is on `PATH` at all before a script depends on it:

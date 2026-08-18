@@ -8,8 +8,8 @@ List every tool available to the agent for the current session — built-in tool
 ## Synopsis
 
 ```bash
-stella tools [--validate [DIR]] [--author [NAME]] [--adopt NAME]
-             [--enable NAME] [--disable NAME] [--foundry] [global flags]
+stella tools [--validate [DIR]] [--adopt NAME] [--enable NAME]
+             [--disable NAME] [--foundry] [global flags]
 ```
 
 ## What it does
@@ -33,11 +33,6 @@ Custom tools come from a `<name>.toml` manifest dropped in `<workspace>/.stella/
     `<name>.toml` in `.stella/tools/` and `~/.stella/tools/` — or in the given `DIR` —
     reports errors, warnings, and info per manifest, and exits non-zero if any manifest
     has errors.
-  </OptionCard>
-  <OptionCard name="--author [NAME]">
-    Author a tool-foundry proposal into a staged custom tool: writes `NAME.toml` +
-    `NAME.sh` under `.stella/tools/proposed/`, where discovery cannot see them. Omit
-    `NAME` to list the proposals currently mined from recent `bash` receipts.
   </OptionCard>
   <OptionCard name="--adopt NAME">
     Move a staged tool into `.stella/tools/` and run its **capability witness**: the same
@@ -79,11 +74,11 @@ Validate one directory of manifests before installing them:
 stella tools --validate ./contrib/stella-tools
 ```
 
-Take a tool-foundry proposal all the way from receipts to a usable tool:
+Take a staged tool all the way to a usable one:
 
 ```bash
-stella tools --author            # list current proposals
-stella tools --author jq         # stage jq.toml + jq.sh in .stella/tools/proposed/
+# Stage the pair by hand under .stella/tools/proposed/, where discovery
+# cannot see it: jq.toml (with a [foundry] table) + jq.sh.
 stella tools --validate .stella/tools/proposed
 stella tools --adopt jq          # run its witness; records the proof, stays disabled
 stella tools --enable jq         # the one human approval
@@ -92,14 +87,27 @@ stella tools --foundry           # what was adopted, and what it has been worth
 
 ## Self-authored tools
 
-When the agent keeps reconstructing the same shell shape by hand, the tool foundry
-proposes a reusable tool in `/inbox`. What qualifies is a shape that is genuinely
+A self-authored tool is a manifest + script pair staged under
+`.stella/tools/proposed/`, where tool discovery cannot see it, and promoted from
+there by the `--adopt` → `--enable` sequence above. The generated script expands
+every parameter as a quoted `"$STELLA_INPUT_*"` reference, so parameter values stay
+data rather than shell syntax.
+
+<Callout type="warn">
+  **Staging is manual today.** The gap detector that mines candidate shapes from
+  recent `bash` receipts ships in `stella-core`, and the authoring pass that turns
+  one candidate into a manifest + script pair ships in `stella-tools` — but nothing
+  in the CLI or the deck calls either one on a live session, so no command lists
+  proposals or writes the staged pair for you. `--adopt` onwards is fully wired and
+  is what the rest of this section describes. Tracked in
+  [#3629](https://github.com/macanderson/stella/issues/3629).
+</Callout>
+
+What the detector looks for, when it is wired up, is a shape that is genuinely
 *reused*: it must recur across at least two distinct argument sets, each of them
 retyped about three times over. A command whose arguments are different every single
-time — `sed -n '<expr>' <file>` across a thousand files — is the shell, not a tool, and
-never reaches the inbox. Proposals are listed most-reused-first, not most-run-first.
-`--author` turns one proposal into a reviewable manifest + script pair. The generated script expands every parameter as a quoted
-`"$STELLA_INPUT_*"` reference, so parameter values stay data rather than shell syntax.
+time — `sed -n '<expr>' <file>` across a thousand files — is the shell, not a tool.
+Proposals rank most-reused-first, not most-run-first.
 
 An authored tool carries a `[foundry]` table, and a manifest carrying one registers only
 while **all three** of these hold:
