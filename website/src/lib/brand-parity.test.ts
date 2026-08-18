@@ -125,7 +125,16 @@ test("no retired brand value survives anywhere in the site", () => {
     "#f4f1ea",
     "#f6f2e9",
     "#a37200",
+    // Both spellings of the channel triple. The space-separated form is the
+    // modern CSS `rgb(r g b / a)`; the comma form is what an `rgba()` literal
+    // and Satori (which has no cascade, so the OG card writes its washes out
+    // by hand) actually use. Only the first was listed, and the OG card's CTA
+    // shipped an `rgba(255,176,0,0.12)` wash straight through the v3.0
+    // recolour because a hex sweep cannot see a channel triple and this guard
+    // was not looking for one.
     "255 176 0",
+    "255,176,0",
+    "255, 176, 0",
     // v2.0 — bronze gold on warm ink, and its warm neutral ramp
     "#c58a32",
     "#8b5e1a",
@@ -139,6 +148,8 @@ test("no retired brand value survives anywhere in the site", () => {
     "#6f675b",
     "#ded5c6",
     "197 138 50",
+    "197,138,50",
+    "197, 138, 50",
     "--stella-gold",
   ];
 

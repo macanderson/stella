@@ -243,8 +243,10 @@ export default function OpengraphImage() {
               padding: "12px 26px",
               borderRadius: "34px",
               border: `2px solid ${BRAND}`,
-              // The one thing on the card a reader is meant to act on.
-              background: "rgba(255,176,0,0.12)",
+              // The one thing on the card a reader is meant to act on. The
+              // wash is the accent at 12%, written out because Satori has no
+              // cascade and cannot resolve a custom property.
+              background: "rgba(0,209,249,0.12)",
               color: BRAND,
             }}
           >
