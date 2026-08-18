@@ -756,9 +756,3 @@ fn encode(lines: &[Line], basic: bool) -> String {
     }
     out
 }
-
-/// The spans of a diff row, for a caller that wants to paint them itself.
-#[must_use]
-pub fn row_spans(row: &crate::file_diff::Row) -> &[Span] {
-    &row.spans
-}

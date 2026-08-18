@@ -31,11 +31,10 @@
 //! current disk bytes to attribute a failed match to an out-of-band change
 //! instead of a generic not-found. Reads are keyed by the file's normalized
 //! workspace-relative path (so `src/./a.rs` and `src/a.rs` count as one
-//! file). One ledger lives per registry, shared by `read_file`, `read_symbol`
-//! (which reads through this same tool), `edit_file`, and `write_file` — so
-//! the ledger tracks the content the model last *saw*, whichever surface
-//! showed (or produced) it. The audit-grade equivalent (one `R` event per
-//! read) lands in the registry's file-touch ledger.
+//! file). One ledger lives per registry, shared by `read_file`, `edit_file`,
+//! and `write_file` — so the ledger tracks the content the model last *saw*,
+//! whichever surface showed (or produced) it. The audit-grade equivalent (one
+//! `R` event per read) lands in the registry's file-touch ledger.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -50,9 +49,7 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
-/// Crate-visible so `read_symbol` (which reads through this tool) can name
-/// the cap honestly when a symbol's span exceeds it.
-pub(crate) const MAX_LINES: usize = 2000;
+const MAX_LINES: usize = 2000;
 
 /// Per-line width cap. Real source lines are far shorter; the cases this
 /// catches are machine-generated (minified JS, base64 blobs, one-line JSON),
@@ -126,7 +123,7 @@ struct ReadState {
 
 /// Session-scoped ledger of the last file content the model has *seen*.
 ///
-/// Updated by successful reads (`read_file` and `read_symbol`) and by the
+/// Updated by successful reads (`read_file`) and by the
 /// model's own successful mutations (`edit_file`, `write_file` — the model
 /// knows the content it just produced). A mismatch between an entry's hash
 /// and current disk bytes therefore means the file changed out-of-band since

@@ -209,15 +209,12 @@ pub fn resolve_self_driving_root(stella_home: Option<PathBuf>) -> Option<PathBuf
 /// reason to fall back to the working directory, because that would install
 /// third-party code into whatever repository happened to be open.
 ///
-/// **One consumer today, and that is stated rather than glossed** (see the
-/// crate README's bar for a new resolver). `stella-cli`'s loader is the only
-/// caller as of #3380; the second is the wrapper socket's other drivers —
-/// `stella-serve` and an embedded host linking `stella-engine` — which
-/// `doc:wrapper-socket` §6 makes an acceptance criterion rather than an
-/// aspiration, and which must find the same roster the CLI does without
-/// depending on the CLI to spell it. That is the `self_driving_root` shape
-/// (two parties that must not know each other, one answer), arriving one
-/// consumer early; if that second driver never lands, this belongs back in
+/// Nothing calls this wrapper yet. `stella-cli`'s plugin loader calls the
+/// pure half, [`resolve_user_plugins_dir`], with its own redirectable root
+/// instead. The expected first caller is the wrapper socket's other
+/// drivers — `stella-serve` or an embedded host — which need the same
+/// roster without depending on `stella-cli` to spell the path
+/// (`doc:wrapper-socket` §6). If that never lands, this belongs back in
 /// `stella-cli`.
 #[must_use]
 pub fn user_plugins_dir() -> Option<PathBuf> {

@@ -32,9 +32,9 @@ stream:
 ## Where it sits
 
 A **leaf**. It depends on `serde`/`serde_json` and **nothing else in the
-workspace**, which is the property that lets all twenty-three other crates depend
-on it without a cycle. Adding a `stella-*` path dependency here forecloses that
-for whichever crate it names — so don't.
+workspace**, which is the property that lets every other crate in the workspace
+depend on it without a cycle. Adding a `stella-*` path dependency here forecloses
+that for whichever crate it names — so don't.
 
 ## Direction — an embedded engine has no stdout to explain itself on
 

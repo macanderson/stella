@@ -15,6 +15,34 @@ const STOPWORDS: &[&str] = &[
     "would", "should", "did",
 ];
 
+/// Terms dropped by [`score_terms`] ONLY — the low-selectivity coding
+/// vocabulary that appears in nearly every prompt a coding agent ever sees and
+/// therefore discriminates between no two skills.
+///
+/// Deliberately **not** added to [`STOPWORDS`], because that constant is also
+/// consulted by [`terms`], which is the **id space**: every mined lesson's
+/// `<slug>-<hash8>` is derived from it, so widening it there would silently
+/// invalidate every stored id (see [`terms`]'s own doc comment, which names
+/// that migration as deliberate rather than drive-by). Scoring is ephemeral
+/// and carries no such contract, so the two vocabularies are allowed to differ
+/// and this is the one that may grow.
+///
+/// Born from a real misfire (#3688): in session `ses-1787071651715-48158` the
+/// prompt "find a problem with stellas turn loop code" selected the skill
+/// `source-command-remove-deadcode` on `terms: code, find` — two words that
+/// carry no information about the task, clearing
+/// `SelectionConfig`'s two-shared-term corroboration floor on their own and
+/// injecting a dead-code-removal skill into a turn-loop debugging turn. The
+/// floor was never the defect; what it counted was.
+const SCORING_STOPWORDS: &[&str] = &[
+    "code", "find", "fix", "add", "make", "use", "used", "using", "get", "set", "run", "check",
+    "problem", "issue", "bug", "error", "test", "tests", "file", "files", "function", "method",
+    "line", "lines", "change", "update", "new", "old", "work", "works", "need", "want", "help",
+    "please", "can", "could", "how", "what", "why", "does", "any", "all", "some", "more", "most",
+    "just", "also", "one", "two", "there", "here", "out", "off", "way", "thing", "things", "about",
+    "like", "look", "see", "show", "tell", "give", "take", "know", "think",
+];
+
 /// Split text into lowercased, de-stopped terms (>2 chars) for lexical
 /// scoring/clustering (TS: `terms`). Stopword checks scan the 43-item
 /// static slice directly — this runs inside the clustering loops, and a
@@ -78,6 +106,13 @@ fn is_unsegmented_cjk(ch: char) -> bool {
 /// reconciling them means the id migration, never editing one to match the
 /// other.
 ///
+/// The split has **two** axes now, not one. #3298 gave the scoring space a
+/// wider *alphabet* (Unicode, where the id space stays ASCII); #3688 gives it
+/// a narrower *vocabulary* — [`SCORING_STOPWORDS`] on top of [`STOPWORDS`], so
+/// the generic coding words that discriminate between no two skills stop
+/// counting as matches. Both axes point the same way: the scoring space is
+/// free to change because nothing durable derives from it.
+///
 /// Shape: space-separated scripts (Latin with diacritics, Cyrillic, Greek,
 /// Hangul, …) accumulate word characters (`char::is_alphanumeric` plus `_`)
 /// into words kept when longer than two **characters** (not bytes) and not
@@ -90,7 +125,10 @@ fn is_unsegmented_cjk(ch: char) -> bool {
 /// zero terms the ASCII tokenizer yields for them.
 pub(crate) fn score_terms(text: &str) -> Vec<String> {
     fn flush_word(word: &mut String, out: &mut Vec<String>) {
-        if word.chars().count() > 2 && !STOPWORDS.contains(&word.as_str()) {
+        if word.chars().count() > 2
+            && !STOPWORDS.contains(&word.as_str())
+            && !SCORING_STOPWORDS.contains(&word.as_str())
+        {
             out.push(std::mem::take(word));
         } else {
             word.clear();
@@ -298,10 +336,52 @@ mod tests {
         );
     }
 
+    /// The two spaces still agree on *tokenization* for ASCII text — the
+    /// property this has always pinned. The sample deliberately carries no
+    /// [`SCORING_STOPWORDS`] entry, so what it compares is the split, not the
+    /// vocabulary; the vocabulary divergence is pinned by
+    /// `score_terms_drops_generic_coding_words_that_the_id_space_keeps` below.
     #[test]
     fn score_terms_matches_terms_on_ascii() {
-        let text = "please format the sql_query for me in main.rs";
+        let text = "format the sql_query in main.rs";
         assert_eq!(score_terms(text), terms(text));
+    }
+
+    /// #3688: generic coding vocabulary is dropped from the *scoring* space
+    /// and kept in the *id* space. Both halves matter — dropping them from
+    /// `terms` would re-tokenize every minted `<slug>-<hash8>`.
+    #[test]
+    fn score_terms_drops_generic_coding_words_that_the_id_space_keeps() {
+        let text = "find a problem with stellas turn loop code";
+        assert_eq!(score_terms(text), vec!["stellas", "turn", "loop"]);
+        // The id space is untouched: it still keeps every one of them.
+        let id_space = terms(text);
+        for generic in ["find", "problem", "code"] {
+            assert!(
+                id_space.contains(&generic.to_string()),
+                "terms() is the id space and must not change: {id_space:?}"
+            );
+        }
+    }
+
+    /// The id space is a stored-artifact contract, so pin it directly rather
+    /// than only as the negative half of the test above: if this breaks, every
+    /// mined `<slug>-<hash8>` id has been silently re-tokenized.
+    #[test]
+    fn scoring_stopwords_do_not_reach_the_id_space() {
+        for word in SCORING_STOPWORDS {
+            assert!(
+                !STOPWORDS.contains(word),
+                "{word} belongs to exactly one vocabulary, never both"
+            );
+            if word.chars().count() > 2 {
+                assert_eq!(
+                    terms(word),
+                    vec![word.to_string()],
+                    "terms() must still keep {word}"
+                );
+            }
+        }
     }
 
     #[test]

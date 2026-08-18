@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! A real line-oriented unified diff — the shape a developer already knows how
 //! to read, because it is the shape `git diff` produces.
 //!
@@ -479,5 +482,24 @@ mod tests {
             !diff.changed(),
             "a trailing newline adds no line, so it is not a diff"
         );
+    }
+
+    #[test]
+    fn an_input_past_the_area_cap_degrades_to_replace_all_and_says_so() {
+        // 2001 * 2001 = 4,004,001, just over LCS_AREA_CAP (4,000,000), so this
+        // takes the replace-everything fallback instead of allocating the DP
+        // table. The fallback path never allocates the table, so this test
+        // runs instantly even though the inputs are thousands of lines long.
+        let old: Vec<String> = (0..2001).map(|i| format!("old-{i}")).collect();
+        let new: Vec<String> = (0..2001).map(|i| format!("new-{i}")).collect();
+        let old = old.join("\n");
+        let new = new.join("\n");
+
+        let diff = unified_diff(&old, &new, 3);
+
+        assert!(!diff.minimal);
+        assert_eq!(diff.added, 2001);
+        assert_eq!(diff.removed, 2001);
+        assert!(!diff.hunks.is_empty());
     }
 }

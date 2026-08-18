@@ -74,8 +74,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + diagnostic-codes
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
-                         #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
+                         #   + doc-warnings (rustdoc -D warnings)
                          #   + lint (clippy -D warnings)
                          #   + test (test --workspace)
                          #   + tool-docs (docs/tools/ vs the declarations)
@@ -224,7 +224,7 @@ rejects a new dependency, drop the dependency — do not widen the allow-list in
 
 ---
 
-## Architecture: ports, not concretions
+## Architecture: ports, not direct dependencies
 
 The central architectural invariant. Every design decision in the codebase
 flows from this. If a PR breaks one of these, it will be asked to restructure
@@ -238,7 +238,7 @@ comments, runtime error strings, and crate READMEs cite these by number, so
 inserting or reordering an entry silently repoints every one of those citations.
 Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
 
-1. **Ports, not concretions.** `stella-core` never imports a provider SDK, a
+1. **Ports, not direct dependencies.** `stella-core` never imports a provider SDK, a
    filesystem API, or a terminal library. Models go through the `Provider`
    trait (`stella-protocol`), tools through `ToolExecutor` (`stella-core::ports`).
    A new vendor or tool is an adapter, never a rewrite.
