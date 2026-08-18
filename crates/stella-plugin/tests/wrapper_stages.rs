@@ -15,7 +15,7 @@
 
 use stella_plugin::{
     CompareOp, Condition, ManifestError, PluginManifest, Signal, SignalKind, SignalValues,
-    StageName,
+    StageName, Wrapper,
 };
 use stella_protocol::StageKind;
 
@@ -63,6 +63,32 @@ fn todays_stage_order_loads_as_a_manifest() {
         ],
         "the order must match stage_rank in stella-pipeline's replay.rs"
     );
+}
+
+/// #3408 P2: `Wrapper` crosses a crate boundary on the wire — `stella-cli`'s
+/// `PipelineFrame::variant` persists it beside a killed run's checkpoint so a
+/// resume restores the same manifest, not the built-in `classic` fallback
+/// (invariant 4: serde-first, round-trip when a type crosses a boundary).
+/// `Wrapper`/`WrapperStage` already derive `Serialize`/`Deserialize`; this is
+/// the witness that the round-trip is actually byte-identical, not merely
+/// that the derive compiles.
+#[test]
+fn a_wrapper_round_trips_through_json_byte_for_byte() {
+    let wrapper = parse(STAGED_V1)
+        .expect("the shipped order must load")
+        .wrapper
+        .expect("[wrapper] must parse");
+
+    let json = serde_json::to_string(&wrapper).expect("a validated Wrapper always serializes");
+    let restored: Wrapper =
+        serde_json::from_str(&json).expect("what this crate just wrote, it can read back");
+    assert_eq!(restored, wrapper, "the round trip must reproduce the value exactly");
+
+    // And the round trip is itself stable — serializing the restored value
+    // again produces the identical bytes, not merely an equal value.
+    let json_again =
+        serde_json::to_string(&restored).expect("a value that just parsed always serializes");
+    assert_eq!(json_again, json, "re-serializing must reproduce the same bytes");
 }
 
 #[test]

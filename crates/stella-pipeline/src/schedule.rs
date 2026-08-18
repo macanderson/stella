@@ -50,7 +50,7 @@
 //! `pipeline/schedule_wiring.rs` for where the pipeline draws that line.
 
 use stella_plugin::{
-    ManifestError, ProgressiveResolver, SignalValues, StageDecision, StageName, Wrapper,
+    ManifestError, ProgressiveResolver, Signal, SignalValues, StageDecision, StageName, Wrapper,
 };
 
 /// The host facts known before triage runs — the seed every [`Schedule`]
@@ -92,6 +92,73 @@ pub enum ScheduleError {
     /// reached one boundary early instead of from a whole-program walk.
     #[error(transparent)]
     Resolve(#[from] ManifestError),
+    /// The `witness` stage's condition reads `signal`, published by
+    /// `publisher` (`execute`, `witness`, or `verify`) — but this host
+    /// decides `witness` PRE-execute, before any candidate has run, because
+    /// the decision shapes the worker's test-first `VerificationContract`
+    /// before the user message is assembled
+    /// (`crate::pipeline::Pipeline::run`). A condition here cannot honestly
+    /// wait for a stage that has not produced anything yet, so the run
+    /// refuses rather than resolve it against a placeholder. A host fact or a
+    /// signal `triage` publishes is fine — both exist by the time `witness`
+    /// is decided. See [`refuse_witness_reading_post_triage`] and #3408.
+    #[error(
+        "the witness stage's condition reads `{signal}`, published by `{publisher}` — witness \
+         is decided before execute runs (it shapes the worker's test-first contract before the \
+         user message is assembled), so it cannot read a signal that stage has not produced yet \
+         (#3408)"
+    )]
+    WitnessReadsPostTriageSignal {
+        /// The signal the `witness` stage's condition names.
+        signal: Signal,
+        /// Which stage publishes it.
+        publisher: StageName,
+    },
+}
+
+/// Refuse a variant whose `witness` stage condition reads a signal that
+/// `execute`, `witness`, or `verify` publish.
+///
+/// `witness` is a PRE-execute decision in this host (see this module's docs
+/// and `pipeline/schedule_wiring.rs`): it shapes the worker's test-first
+/// contract before the user message is assembled, so its condition may only
+/// read a host fact or a signal `triage` publishes — both exist by the time
+/// `witness` is decided. `verify` (and any other stage declared after
+/// `witness`) has no such restriction; it is decided per candidate, after
+/// `execute`'s real output exists.
+///
+/// A manifest with no `witness` stage at all, or an unconditional one, always
+/// passes — there is nothing to check. Unreachable for `classic.toml`
+/// (`if = "no-test-command"`, a host fact); asserted by
+/// `tests/variant_dispatch.rs` rather than assumed.
+///
+/// # Errors
+/// [`ScheduleError::WitnessReadsPostTriageSignal`], naming the offending
+/// signal and its publisher. [`ScheduleError::Resolve`] for a condition that
+/// does not even parse — the same failure loading this `Wrapper` would
+/// already have caught for a manifest that came from
+/// [`stella_plugin::PluginManifest::from_toml_str`].
+pub fn refuse_witness_reading_post_triage(variant: &Wrapper) -> Result<(), ScheduleError> {
+    let Some(witness_stage) = variant
+        .stages
+        .iter()
+        .find(|stage| stage.name == StageName::Witness)
+    else {
+        return Ok(());
+    };
+    let Some(condition) = witness_stage.condition()? else {
+        return Ok(());
+    };
+    let signal = condition.signal();
+    if let Some(publisher) = signal.publisher()
+        && matches!(
+            publisher,
+            StageName::Execute | StageName::Witness | StageName::Verify
+        )
+    {
+        return Err(ScheduleError::WitnessReadsPostTriageSignal { signal, publisher });
+    }
+    Ok(())
 }
 
 /// What [`ScheduleError::OutOfOrder`] found instead of the expected stage —
@@ -341,5 +408,54 @@ mod tests {
 
         assert!(winner.decide(StageName::Verify).unwrap());
         assert!(!loser.decide(StageName::Verify).unwrap());
+    }
+
+    /// #3408 P0/P1: a manifest whose `witness` condition reads `diff-lines`
+    /// — published by `execute`, which has not run when `witness` is decided
+    /// — is refused with the named error, not silently resolved against a
+    /// placeholder.
+    #[test]
+    fn a_witness_condition_reading_an_execute_signal_is_refused() {
+        let text = "name = \"probe\"\n\
+             [loop]\n\
+             participation = \"steering\"\n\
+             [wrapper]\n\
+             id = \"probe-v1\"\n\
+             [[wrapper.stages]]\n\
+             name = \"execute\"\n\
+             [[wrapper.stages]]\n\
+             name = \"witness\"\n\
+             if = \"diff-lines > 0\"\n";
+        let w = PluginManifest::from_toml_str(text)
+            .expect("fixture must load — this is a graph-valid manifest for a generic host")
+            .wrapper
+            .expect("[wrapper] declared");
+        let err = refuse_witness_reading_post_triage(&w)
+            .expect_err("execute-published diff-lines must be refused on witness");
+        assert!(
+            matches!(
+                err,
+                ScheduleError::WitnessReadsPostTriageSignal {
+                    signal: Signal::DiffLines,
+                    publisher: StageName::Execute,
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    /// The shipped shape (`classic.toml`'s `witness if = "no-test-command"`)
+    /// reads a host fact, not a stage-published signal — always accepted.
+    #[test]
+    fn a_witness_condition_reading_a_host_fact_is_accepted() {
+        let w = wrapper(vec![stage(StageName::Witness, Some("no-test-command"))]);
+        assert!(refuse_witness_reading_post_triage(&w).is_ok());
+    }
+
+    /// A manifest with no `witness` stage at all has nothing to refuse.
+    #[test]
+    fn a_manifest_with_no_witness_stage_is_accepted() {
+        let w = wrapper(vec![stage(StageName::Triage, None)]);
+        assert!(refuse_witness_reading_post_triage(&w).is_ok());
     }
 }

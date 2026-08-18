@@ -19,12 +19,21 @@
 use stella_protocol::CompletionMessage;
 
 use crate::plan::PlanStep;
+use crate::schedule::Schedule;
 use crate::triage::TaskAssessment;
 
 /// The immutable per-turn inputs of the execute/verify plane. Constructed
 /// once in `Pipeline::run` when the candidate stages begin; every stage from
 /// `run_best_of_n` down to `verify_candidate` reads the parts it needs.
-#[derive(Clone, Copy)]
+///
+/// `Clone`, not `Copy` (#3408): [`Self::schedule`] carries a
+/// [`stella_plugin::ProgressiveResolver`] underneath, which owns two small
+/// `Vec`s. A call site that needs the frame more than once — a fan-out loop,
+/// a shared/isolated split with a degrade-to-bare fallback — clones it
+/// explicitly at the point the frames diverge, the same discipline
+/// [`Schedule`] itself asks for and for the same reason: each candidate needs
+/// its own independent walk from there.
+#[derive(Clone)]
 pub(super) struct TaskFrame<'a> {
     /// The user's goal, verbatim — what triage classified and what the
     /// verifier is ultimately asked to judge the work against.
@@ -38,10 +47,19 @@ pub(super) struct TaskFrame<'a> {
     /// Triage's classification — which stages run at all, and how strictly
     /// the ladder verifies.
     pub(super) assessment: TaskAssessment,
-    /// Whether this turn's `[wrapper]` variant schedules `verify` to run
-    /// (#3408, `crate::schedule`) — `classic.toml`'s `if = "verifies"`,
-    /// decided once at the triage boundary since `Signal::Verifies` is
-    /// triage-published. ORed with the host-internal zero-diff guard at its
-    /// one call site, `Pipeline::run_candidate`.
-    pub(super) schedule_verifies: bool,
+    /// This turn's `[wrapper]` schedule, positioned right after the shared
+    /// pre-execute prefix (`triage` through `scope` — see
+    /// `Pipeline::begin_turn_schedule` and `crate::schedule`'s module docs).
+    /// `execute`, `witness`, and `verify` are NOT yet decided: each candidate
+    /// clones this and decides them independently, against its own real
+    /// outcome, in `Pipeline::run_candidate` (#3408).
+    pub(super) schedule: Schedule<'a>,
+    /// The manifest's bare `witness` decision, already made once against the
+    /// shared prefix's facts (`Pipeline::begin_turn_schedule`, needed there
+    /// to shape the worker's test-first contract before any candidate
+    /// exists). Carried so each candidate's own witness re-decision —
+    /// unavoidable to reach `verify` in [`Schedule`]'s declared-order walk —
+    /// can assert it agrees, rather than silently trusting two computations
+    /// of the same thing to stay in sync (#3408).
+    pub(super) witness_scheduled: bool,
 }
