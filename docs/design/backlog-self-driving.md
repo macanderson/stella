@@ -81,11 +81,11 @@ Nothing below proposes changing it.
 | The host-call channel: `recall`, `child_turn`, `run_test` | `crates/stella-plugin/src/host_call.rs`, `crates/stella-runtime/src/wrapper/host_call.rs` | **Built** (#3590), and reachable only from inside a turn. The capability self-driving needs exists and is out of its reach. |
 
 One correction to the record, because a design doc is a claim and not a fact:
-[`doc:agent-native-delivery`](agent-native-delivery.md) §11.1 lands the provider
-transports in `stella-tools` "generalizing `issue_ops.rs`". **There is no
-`issue_ops.rs` in this tree** — `find . -name 'issue_ops*'` is empty. That
-phase therefore starts from nothing, not from a refactor, which makes B1 below
-larger than §11.1 implies.
+[`doc:agent-native-delivery`](agent-native-delivery.md) §11.1 used to land the
+provider transports in `stella-tools` "generalizing `issue_ops.rs`", a file
+that has never existed in this tree — `find . -name 'issue_ops*'` is empty.
+That phase starts from nothing, not from a refactor, which makes B1 below
+larger than §11.1 implied. §11.1 and §4.5 now say so (#3600).
 
 ### 1.3 Never designed, and absent
 

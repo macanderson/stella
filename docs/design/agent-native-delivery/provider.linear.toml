@@ -4,14 +4,14 @@
 #
 # This file is the proof obligation of `docs/design/agent-native-delivery.md`
 # §4.5: if Linear cannot be expressed as a manifest, no customer's tracker can
-# be either, and the extension surface is decorative. Everything Stella
-# currently knows about Linear is compiled into `IssueBackend::Linear` and
-# `issue_ops.rs` — the GraphQL endpoint, that `ENG-123` is the identifier
-# shape, that Linear supplies a canonical branch name per issue, that a team
-# scopes creation. Every one of those facts appears below as data.
+# be either, and the extension surface is decorative. Stella ships no issue
+# toolset today, so none of what Linear needs is compiled in anywhere — the
+# GraphQL endpoint, that `ENG-123` is the identifier shape, that Linear
+# supplies a canonical branch name per issue, that a team scopes creation.
+# Every one of those facts appears below as data.
 #
-# Extracting Linear is therefore both the proof that the format is adequate
-# and the first migration onto it. It is filed as its own issue and is the
+# Expressing Linear is therefore both the proof that the format is adequate
+# and the first provider onto it. It is filed as its own issue and is the
 # Phase 1 deliverable (§11).
 #
 # WHAT THIS FILE MUST NOT NEED: a `linear = true` special case anywhere in the
