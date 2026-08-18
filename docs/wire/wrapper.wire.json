@@ -1,4 +1,79 @@
 {
+  "driver_calls": [
+    {
+      "case": "backlog_next",
+      "message": {
+        "call": "backlog_next",
+        "id": 1
+      }
+    }
+  ],
+  "driver_results": [
+    {
+      "case": "ok",
+      "message": {
+        "ok": {},
+        "result": 1
+      }
+    },
+    {
+      "case": "err/undeclared",
+      "message": {
+        "err": {
+          "detail": "this plugin's manifest does not declare \"deliver_merge\" in [driver] calls",
+          "refusal": "undeclared"
+        },
+        "result": 2
+      }
+    },
+    {
+      "case": "err/unsupported",
+      "message": {
+        "err": {
+          "detail": "B0 serves no capability yet",
+          "refusal": "unsupported"
+        },
+        "result": 3
+      }
+    }
+  ],
+  "driver_session": [
+    {
+      "case": "open",
+      "message": {
+        "body": {
+          "session": "cycle-7"
+        },
+        "point": "drive"
+      }
+    },
+    {
+      "case": "sleep",
+      "message": {
+        "body": {
+          "next": {
+            "sleep": {
+              "secs": 900
+            }
+          }
+        },
+        "point": "drive"
+      }
+    },
+    {
+      "case": "halt",
+      "message": {
+        "body": {
+          "next": {
+            "halt": {
+              "reason": "budget spent"
+            }
+          }
+        },
+        "point": "drive"
+      }
+    }
+  ],
   "host_calls": [
     {
       "case": "recall/full",
@@ -384,6 +459,26 @@
     }
   ],
   "vocabulary": {
+    "driver_call": [
+      "backlog_next",
+      "backlog_claim",
+      "backlog_file",
+      "backlog_close",
+      "backlog_link",
+      "work_start",
+      "work_status",
+      "work_abandon",
+      "deliver_open",
+      "deliver_observe",
+      "deliver_next",
+      "deliver_merge",
+      "sweep_audit",
+      "sweep_regress",
+      "sweep_meta",
+      "curate_propose",
+      "curate_list",
+      "curate_accept"
+    ],
     "flip_observation": [
       "not-attempted",
       "achieved",

@@ -1,19 +1,25 @@
 ---
 id: backlog-self-driving
 title: "Backlog Self-Driving — the loop that owns a queue, not a task"
-status: proposed
+status: living
 ---
 
 # Backlog Self-Driving — the loop that owns a queue, not a task
 
-Status: proposal, unbuilt. Phases in §9.
+Status: **B0 built, B1–B7 designed and unbuilt.** Phases in §9. The driver
+channel §3.0 specifies exists — `stella_plugin::driver` is its wire half,
+`stella_runtime::wrapper::DriverCallGate` its host half, and
+`plugins/stella-selfdriving/plugin.toml` declares the `[driver]` grant a human
+reads at install. **No capability on it is served yet**: every one of the
+eighteen verbs §3.1–§3.5 names answers `unsupported` and the driver degrades,
+which is what B1–B6 land family by family.
 
-**Reads on top of:** [`doc:pipeline-as-plugins`](../spec/pipeline-as-plugins.md) §10
+**Reads on top of:** [`doc:pipeline-as-plugins`](pipeline-as-plugins.md) §10
 (self-driving is a *host*, not a wrapper — that decision is upstream of this
-document and is not reopened here); [`doc:wrapper-socket`](../spec/wrapper-socket.md)
+document and is not reopened here); [`doc:wrapper-socket`](wrapper-socket.md)
 §6b (the host-call channel — *"a plugin may ask, never reach"* — whose second
 dispatch context is the mechanism this design turns on, §2.1); and
-[`doc:agent-native-delivery`](agent-native-delivery.md) (the issue kernel, the
+[`doc:agent-native-delivery`](../design/agent-native-delivery.md) (the issue kernel, the
 provider manifests, and the residue gate — designed, unbuilt, and a hard
 dependency of §3.1 and §5).
 
@@ -74,14 +80,15 @@ Nothing below proposes changing it.
 
 | Capability | Where | State |
 |---|---|---|
-| The `Issue` kernel, provider manifests, `kind = "exec"` | [`doc:agent-native-delivery`](agent-native-delivery.md) §3–§4 | Design only. Epic closed `not_planned` under a freeze that has since lifted. |
-| The residue gate — a prose follow-up becomes undischargeable | [`doc:agent-native-delivery`](agent-native-delivery.md) §7 | Design only. This is the mechanism that makes "file new tickets" a *guarantee* rather than a habit. |
-| Backlog dedup + decay | [`doc:agent-native-delivery`](agent-native-delivery.md) §10.1 | Design only. |
-| Self-driving as a plugin that actually drives | #3546, [`doc:pipeline-as-plugins`](../spec/pipeline-as-plugins.md) §10 D6 | Manifest exists (`plugins/stella-selfdriving/plugin.toml`); it starts nothing, and could not drive anything if it did — §2.1. |
-| The host-call channel: `recall`, `child_turn`, `run_test` | `crates/stella-plugin/src/host_call.rs`, `crates/stella-runtime/src/wrapper/host_call.rs` | **Built** (#3590), and reachable only from inside a turn. The capability self-driving needs exists and is out of its reach. |
+| The `Issue` kernel, provider manifests, `kind = "exec"` | [`doc:agent-native-delivery`](../design/agent-native-delivery.md) §3–§4 | Design only. Epic closed `not_planned` under a freeze that has since lifted. |
+| The residue gate — a prose follow-up becomes undischargeable | [`doc:agent-native-delivery`](../design/agent-native-delivery.md) §7 | Design only. This is the mechanism that makes "file new tickets" a *guarantee* rather than a habit. |
+| Backlog dedup + decay | [`doc:agent-native-delivery`](../design/agent-native-delivery.md) §10.1 | Design only. |
+| Self-driving as a plugin that actually drives | #3546, [`doc:pipeline-as-plugins`](pipeline-as-plugins.md) §10 D6 | Manifest exists (`plugins/stella-selfdriving/plugin.toml`) and now declares a `[driver]` grant a human reads at install. It still starts nothing (B2), and every capability it declares answers `unsupported` (B1–B6) — but it **can** hold one, which it could not before B0. |
+| The host-call channel: `recall`, `child_turn`, `run_test` | `crates/stella-plugin/src/host_call.rs`, `crates/stella-runtime/src/wrapper/host_call.rs` | **Built** (#3590), and reachable only from inside a turn. |
+| The driver channel: the same apparatus, opened by a driver session | `crates/stella-plugin/src/driver.rs`, `crates/stella-runtime/src/wrapper/driver_call.rs` | **Built** (B0). A driver at grade `none` holds capability through `[driver]`, and an undeclared ask is refused with a code rather than a death. Serves no verb yet. |
 
 One correction to the record, because a design doc is a claim and not a fact:
-[`doc:agent-native-delivery`](agent-native-delivery.md) §11.1 used to land the
+[`doc:agent-native-delivery`](../design/agent-native-delivery.md) §11.1 used to land the
 provider transports in `stella-tools` "generalizing `issue_ops.rs`", a file
 that has never existed in this tree — `find . -name 'issue_ops*'` is empty.
 That phase starts from nothing, not from a refactor, which makes B1 below
@@ -120,8 +127,15 @@ why.
 
 ### 2.1 The plugin platform grants capability only to *in-turn* plugins
 
+> **Resolved by B0.** This section is the diagnosis as it stood before the
+> driver channel existed, kept because the argument for the channel's shape is
+> the argument for why the `Participation` ladder was the wrong place to fix
+> it. What follows is now history for the first half — `[driver]` grants
+> capability to a plugin at grade `none` — and still live for the second: the
+> channel exists and serves nothing yet.
+
 Self-driving already **is** a plugin. `plugins/stella-selfdriving/plugin.toml`
-exists, [`doc:pipeline-as-plugins`](../spec/pipeline-as-plugins.md) §10 chose
+exists, [`doc:pipeline-as-plugins`](pipeline-as-plugins.md) §10 chose
 *host* over *wrapper*, and #3546 tracks finishing the move. So "it should be a
 plugin" cannot be the missing step. The useful question is the next one down:
 **a plugin gets capability from the host by what mechanism, and does
@@ -224,7 +238,7 @@ plugin→ { "call": "backlog_next", "id": 1, "args": { "limit": 5 } }
 host  → { "result": 1, "ok": { "issues": [ … ] } }
 plugin→ { "call": "work_start",   "id": 2, "args": { "issue": "…" } }
 host  → { "result": 2, "ok": { "verdict": "…", "diff": … } }
-plugin→ { "point": "drive", "body": { "next": "sleep", "secs": 900 } }   ← ends it
+plugin→ { "point": "drive", "body": { "next": { "sleep": { "secs": 900 } } } }  ← ends it
 ```
 
 Three properties carried over deliberately, because each already earned its
@@ -258,10 +272,20 @@ Each of the five below is a variant on the driver channel's call enum, declared
 in the manifest's `[driver] calls` list, and refused with a `HostCallRefusal`
 code the driver can branch on when undeclared.
 
+**The `args` and `ok` tables in the sketch above are illustrative, and B0 ships
+neither.** A call is `{"call": …, "id": …}` and a served answer is
+`{"result": …, "ok": {}}`, because no verb is implemented yet and an argument
+table written ahead of the code that reads it is a wire contract nothing can
+be checked against — it would also change at the phase that implemented it, so
+the channel would break once per family. Each verb brings its own arguments and
+its own result, typed, in the phase that serves it. What B0 fixes in place is
+the part consent depends on: which capabilities exist, which of them a driver
+declared, and what a driver is told when it asks for one it did not.
+
 ### 3.1 `backlog` — the issue port
 
 The provider-agnostic replacement for three hardcoded `gh` call sites. Built on
-[`doc:agent-native-delivery`](agent-native-delivery.md) §3–§4 without
+[`doc:agent-native-delivery`](../design/agent-native-delivery.md) §3–§4 without
 modification: four states, four classes, title, description, comments, parent
 edge, and everything else in a source-tracked TOML manifest under
 `.stella/issues/`.
@@ -449,7 +473,7 @@ lens ever meant.
 
 This is the half the user singled out — *"re-auditing and verifying work is
 super important"* — and it is the strongest available answer to the
-[`doc:agent-native-delivery`](agent-native-delivery.md) §10.1 objection that an
+[`doc:agent-native-delivery`](../design/agent-native-delivery.md) §10.1 objection that an
 agent inflates a backlog faster than it drains one.
 
 When the loop closes an issue it records a **receipt** naming the witness test
@@ -475,7 +499,7 @@ Three things fall out, and all three are worth more than the sweep costs:
 
 **Infinite supply is not infinite value, and this design can produce a very
 expensive make-work machine.** The failure mode is real, it is named in
-[`doc:agent-native-delivery`](agent-native-delivery.md) §10.1, and no mechanism
+[`doc:agent-native-delivery`](../design/agent-native-delivery.md) §10.1, and no mechanism
 above prevents it on its own. Three mitigations, none of which is a solved
 problem:
 
@@ -501,7 +525,7 @@ queue-only.
 ## 5. Re-audit, and what makes a `done` falsifiable later
 
 §4.3 covers regression of *fixed* work. The other direction — work claimed done
-that was never really done — is [`doc:agent-native-delivery`](agent-native-delivery.md)
+that was never really done — is [`doc:agent-native-delivery`](../design/agent-native-delivery.md)
 §7's residue gate, and this design depends on it rather than restating it.
 
 The one thing worth adding here is *why it matters more for an autonomous loop
@@ -539,7 +563,7 @@ all three recorded in the ledger so `metrics` can fold spend against yield.
 ### 6.3 Concurrency
 
 Issue claims extend the fleet ledger's cooperative lease from paths to issue
-keys, exactly as [`doc:agent-native-delivery`](agent-native-delivery.md) §10.4
+keys, exactly as [`doc:agent-native-delivery`](../design/agent-native-delivery.md) §10.4
 prescribes. A tracker's assignee field is not a lock; the ledger's lease is one,
 it is cross-process, and it expires on its own.
 
@@ -553,7 +577,7 @@ that runs the loop:
    reach but not attach to.
 3. **Tracker** — a declared label on a declared issue. This is the one that
    matters, and it follows from
-   [`doc:agent-native-delivery`](agent-native-delivery.md) §2.2: in an
+   [`doc:agent-native-delivery`](../design/agent-native-delivery.md) §2.2: in an
    agent-only shop the tracker is where a human steers, so it must be able to
    stop the loop, not merely describe work to it.
 
@@ -635,12 +659,12 @@ its witness — a test that fails on `main` and passes with the change.
 
 | Phase | Deliverable | Witness | Unblocks |
 |---|---|---|---|
-| **B0** | **The driver channel** (§3.0). A second dispatch context for the existing host-call machinery, opened by a driver session rather than a wrapper point; a `[driver]` block with its own `calls` list; `permits_call` extended to it *without* touching the `Participation` ladder. `plugins/stella-selfdriving` becomes a program the host actually runs. | A driver whose manifest omits a call is refused it with a `HostCallRefusal` code and **keeps running**; a driver that declares it is served. Both directions, because either alone is half a gate. | everything below |
+| **B0** — **built** | **The driver channel** (§3.0). A second dispatch context for the existing host-call machinery, opened by a driver session rather than a wrapper point; a `[driver]` block with its own `calls` list and its own `permits_call`, *without* touching the `Participation` ladder; the grant rendered at install consent. `stella-plugin/src/driver.rs` is the wire half and `stella-runtime/src/wrapper/driver_call.rs` the host half. **A call carries no arguments and returns no payload yet** — no verb is implemented, so no argument or result table can be written honestly; each lands with the verb that needs it. `plugins/stella-selfdriving` declares its `[driver]` grant but is still not a program the host runs, which is B2. | `an_undeclared_call_is_refused_and_the_session_keeps_running` (`stella-runtime/src/wrapper/driver_call.rs`): a driver whose manifest omits a call is refused it with a `HostCallRefusal` code, is not charged for it, and **keeps running**; a declared one is served. Both directions, because either alone is half a gate. Plus `a_driver_holds_capabilities_without_a_participation_grade` (`stella-plugin/src/manifest.rs`) — the defect itself, that `participation = "none"` made every capability unreachable. | everything below |
 | **B1** | **The issue port.** `Issue` kernel in `stella-protocol`; `IssueProvider` port; GitHub as a shipped manifest under `.stella/issues/`; the `backlog` calls on the channel; the CLI's `queue` row reshaped, `HOST_SURFACE_VERSION` → 2. | The ranked queue is produced against a fixture provider with **no `gh` on `PATH`**. | "any issue provider" |
 | **B2** | **`work` + the loop step machine.** `LoopStep`/`step` pure in `stella-autonomy`; `work_start`/`work_status`/`work_abandon` served over the channel from `stella-cli`, built on the existing `child_turn` dispatcher rather than a second one; the plugin becomes a policy loop over declared calls; the eight slash commands and `scripts/self-driving.sh` retire **only after** `scripts/test-self-driving.sh` is green against the new path with every assertion intact. | One issue goes from `backlog next` to a verified diff with no Claude Code and no human. | the headline |
 | **B3** | **`deliver`.** `PrState` pure; open/observe/next/merge; `Escalated` reachable and terminal; `CiRed` vs `BaseBroken` distinguished. | A PR whose CI is red *on its base branch* transitions to `BaseBroken`, and the loop does not push a fix. |  PR rhythm (#2374's named weakness) |
 | **B4** | **Supply.** Ladder re-arm on baseline delta; `sweep regress` over closed-issue receipts; `sweep meta`. Per-supply switch, default queue-only. | A lens dry at `HEAD` re-opens after the declared baseline delta and yields **only** digests absent from `seen.txt`. | never runs out |
-| **B5** | **The residue gate** ([`doc:agent-native-delivery`](agent-native-delivery.md) §7) in `warn`, plus fingerprint dedup and decay. | A run stating a follow-up in prose and claiming `done` fails the gate; the same run with the item `filed` passes. | filing is a guarantee |
+| **B5** | **The residue gate** ([`doc:agent-native-delivery`](../design/agent-native-delivery.md) §7) in `warn`, plus fingerprint dedup and decay. | A run stating a follow-up in prose and claiming `done` fails the gate; the same run with the item `filed` passes. | filing is a guarantee |
 | **B6** | **`curate`.** Proposals from ledger evidence; acceptance gated on declared authority; `regulated` keeps the human on context records. | A skill proposal reaching the recurrence threshold is *proposed* and, under `regulated`, **not** applied. | self-curation |
 | **B7** | **`release`,** opt-in, gated on green `main` + quiet canary + derivable changelog. | Deliberately deferred — see §6.4. | shipping |
 
@@ -676,7 +700,7 @@ land early if the residue gate is wanted sooner than the autonomy.
 | The loop pushes a bad fix repeatedly | Repeat-failure counting in `PrState`; `Escalated` terminal | Low |
 | Spend runs away overnight | §6.2 three-tier ceilings, ledger-recorded | Low, once built |
 | Two workers on one issue | §6.3 ledger lease | Low — the primitive exists |
-| Tracker text as instruction | Issue text enters as data, never `directive` ([`doc:agent-native-delivery`](agent-native-delivery.md) §10.2) | Low |
+| Tracker text as instruction | Issue text enters as data, never `directive` ([`doc:agent-native-delivery`](../design/agent-native-delivery.md) §10.2) | Low |
 | Gate-gaming — the loop stops saying the sentences that trip the residue gate | §10.5's structural Pass 2; suppression telemetry | **Partly mitigable only** |
 | The loop merges something that breaks `main` | `main-canary.yml` files an issue; `sweep regress` catches the witness | Medium — the canary is post-merge by construction |
 | A regression sweep that is mostly flaky tests | Flakes are a finding about the test suite, filed as such | Medium |

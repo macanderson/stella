@@ -86,3 +86,62 @@ scope = [
   "`stella run` once per cycle with the cycle prompt on stdin, under SELF_DRIVING_BUDGET_USD (default $10) per cycle — it does not ask before each one",
   "killing that cycle's whole process group on stop, so a `daemon stop` actually stops the spending",
 ]
+
+# ---------------------------------------------------------------------------
+# THE DRIVER GRANT — what this plugin may ask Stella to do while driving it.
+#
+# Everything above is a capability this plugin exercises ITSELF, as a process
+# on your machine holding your credentials. Everything below is the opposite
+# shape and the whole point of the driver channel: a capability Stella
+# performs ON REQUEST, having first checked this list. The plugin holds no
+# provider, no forge token and no worktree of its own — it asks, and it may
+# never reach (`doc:backlog-self-driving` §3.0, #3599 B0).
+#
+# This block is NOT a `[loop]` grade. Driving is a different axis from
+# in-turn influence: `participation = "none"` above stays the honest answer,
+# because this plugin still never runs inside a turn. It starts them.
+#
+# NOTHING BELOW IS SERVED YET. B0 is the channel; the capabilities land in
+# B1-B6, and until each one does, asking for it returns `unsupported` and the
+# loop degrades rather than dying. Declaring them here now is deliberate — a
+# grant is a consent document, and a user should read the whole shape of what
+# this loop will be permitted to do before any of it works, not discover it
+# one silent widening at a time.
+#
+# WHAT IS DELIBERATELY ABSENT, and why each is a decision rather than an
+# oversight:
+#   - `curate_accept` — this repository's governance mode is `regulated`, so a
+#     human stays on context-record promotion (§7). The loop may PROPOSE any
+#     authority and grant itself none.
+#   - any release verb — a release is the one action here that is
+#     irreversible, externally visible, and not fixable by another cycle
+#     (§6.4). It stays human by default and is not on the channel at all.
+[driver]
+calls = [
+  # backlog — the ranked queue, the claim, and filing what a cycle could not
+  # fix. This replaces three hardcoded `gh` call sites, which is why it is the
+  # first family built.
+  "backlog_next",
+  "backlog_claim",
+  "backlog_file",
+  "backlog_close",
+  "backlog_link",
+  # work — one issue through Stella's own staged pipeline, in an isolated
+  # worktree, with the pipeline's verdict as the definition of done.
+  "work_start",
+  "work_status",
+  "work_abandon",
+  # deliver — the PR rhythm. `deliver_merge` is gated on the pipeline's
+  # verdict, never on the loop's opinion of it.
+  "deliver_open",
+  "deliver_observe",
+  "deliver_next",
+  "deliver_merge",
+  # sweep — where the next question comes from when the queue runs dry.
+  "sweep_audit",
+  "sweep_regress",
+  "sweep_meta",
+  # curate — proposals only. See the note above on `curate_accept`.
+  "curate_propose",
+  "curate_list",
+]
