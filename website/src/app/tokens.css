@@ -8,7 +8,7 @@
  * it.
  *
  * That "verbatim" is now enforced rather than promised. This file sat on the
- * v1.0 ramp (Phosphor Gold #ffb000 on Ink #0b0b0c) for the whole life of the
+ * v1.0 ramp (Ion #ffb000 on Ink #0b0b0c) for the whole life of the
  * 2026-08-11 bronze rebrand while still carrying the sentence above, and the
  * thirteen logo SVGs under public/brand/ were stale with it — so the site
  * served a bronze wordmark beside phosphor chrome, and the paragraph claiming
@@ -36,7 +36,7 @@
 
 :root {
   /* ── brand core ─────────────────────────────────────────────────────── */
-  --stella-brand: #00d1f9; /* Ion — the comet's tail, the gold star */
+  --stella-brand: #00d1f9; /* Ion — the comet's tail, the ion star */
   --stella-brand-deep: #00778f; /* small brand text on light surfaces */
   --stella-ink: #070b10; /* Obsidian — the terminal, not pure black */
   --stella-paper: #e9edf2; /* Paper — cool text on dark */
@@ -106,8 +106,12 @@
   --stella-border: #cfd6dd;
   --stella-muted-fg: #61676f;
   --stella-accent: var(--stella-brand);
-  /* gold that holds its edge as TEXT on the light ground (kit rule) */
+  /* the ion stop that holds its edge as TEXT on the light ground (kit rule) */
   --stella-accent-text: var(--stella-brand-deep);
+  /* the stop the MARK takes on a light ground — shapes, not text. v3.0
+     retired the kit's "full strength on both grounds" rule: ion is 1.61:1 on
+     paper, a logotype nobody can see. */
+  --stella-mark-shape: var(--stella-brand-700);
 }
 
 /* ── semantic aliases — dark (ink) ───────────────────────────────────── */
@@ -119,4 +123,5 @@
   --stella-muted-fg: #9299a1;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand);
+  --stella-mark-shape: var(--stella-brand);
 }

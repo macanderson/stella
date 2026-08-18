@@ -178,12 +178,45 @@ _LINE = re.compile(
 _STAR = re.compile(r'<path d="(M64 26[^"]*)" fill="(#[0-9A-Fa-f]{6})"')
 
 
+def check_light_cut_colour() -> None:
+    """The light cuts paint the mark in `BRAND_ON_LIGHT`, not full `BRAND`.
+
+    v3.0 split the mark's colour by ground: ion measures 1.61:1 on paper,
+    below even the 3:1 non-text floor, so the light cuts step down the ramp
+    while the dark and adaptive ones keep full strength. That is a *rule*, and
+    a rule the kit only writes down is a rule the next recolour silently
+    breaks — the bronze era's own drift (a bronze wordmark shipped beside
+    phosphor chrome for the life of a rebrand) is what this file exists to
+    stop happening again. So it is checked rather than documented.
+
+    The adaptive cuts are deliberately not checked here: they carry BOTH
+    values, the dark one as the fill and the light one behind a
+    `prefers-color-scheme` override, so a fill-colour assertion is the wrong
+    shape for them.
+    """
+    for name in sorted(p.name for p in SVG_DIR.glob("*-color-light.svg")):
+        src = (SVG_DIR / name).read_text(encoding="utf-8")
+        for found in set(re.findall(r'(?:fill|stroke)="(#[0-9A-Fa-f]{6})"', src)):
+            if found.upper() == ck.BRAND:
+                raise SystemExit(
+                    f"{name} paints the mark in full BRAND ({ck.BRAND}), which "
+                    f"measures 1.61:1 on paper. Light cuts take BRAND_ON_LIGHT "
+                    f"({ck.BRAND_ON_LIGHT})."
+                )
+        if ck.BRAND_ON_LIGHT.upper() not in src.upper():
+            raise SystemExit(
+                f"{name} never paints {ck.BRAND_ON_LIGHT} — a colour cut with no "
+                f"brand colour in it is a mono cut wearing the wrong name."
+            )
+
+
 def check_svg_parity() -> None:
     """`cometkit`'s geometry must still be the committed artwork's geometry.
 
-    The kit has been recoloured twice, and both times the SVGs and the Python
-    copies had to move together. This is the test that they did.
+    The kit has been recoloured three times, and every time the SVGs and the
+    Python copies had to move together. This is the test that they did.
     """
+    check_light_cut_colour()
     src = (SVG_DIR / "logomark-color.svg").read_text(encoding="utf-8")
 
     star = _STAR.search(src)

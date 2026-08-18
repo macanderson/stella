@@ -6,8 +6,8 @@
    accent hue in the chrome. The only colour on the page is semantic** — a
    trial passed, or it did not.
 
-   That replaces the Phosphor Gold accent. On a scoreboard the cost of an
-   owned accent is specific rather than aesthetic: gold marked what was
+   That replaces the brand-hue accent. On a scoreboard the cost of an owned
+   accent is specific rather than aesthetic: the accent marked what was
    active, seat colours arrive as data, and pass/fail carry meaning, so three
    independent colour systems competed inside one table and the eye could not
    tell which one it was reading. "Active" is now an inversion of the page —
@@ -80,7 +80,7 @@
 
   /* NO --identity token here, deliberately. stella's other web surfaces —
      the observatory, the telemetry export, the loopback auth pages — carry
-     one, because the rule that governs them permits the brand's gold on
+     one, because the rule that governs them permits the brand hue on
      identity (wordmark, favicon mark, one primary action) and nowhere else.
      This surface carries no stella identity at all: the arena scores stella
      as one seat among several, so its mark does not belong in the chrome
@@ -238,7 +238,7 @@
 
   /* What sits on a fill. Two tokens because they are two different jobs that
      shared the name `ink` and diverged the moment the accent stopped being a
-     fixed gold:
+     fixed brand hue:
        --color-on-accent  flips with the scheme, because the accent fill IS
                           the text colour (ink page -> paper fill -> ink text)
        --color-on-seat    is fixed dark, because a seat colour is data from the

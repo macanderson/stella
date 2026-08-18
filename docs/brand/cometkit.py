@@ -44,7 +44,13 @@ REPO = HERE.parents[1]
 # These were `GOLD`/`GOLD_DEEP` through the bronze era. They are role-named now
 # for the same reason the CSS ramp was renamed: a hue in a name falsifies
 # itself the first time the hue moves, and this one has moved three times.
-BRAND = "#00D1F9"  # Ion — the comet, on every ground
+BRAND = "#00D1F9"  # Ion — the comet, on a dark ground
+# The mark on a LIGHT ground. v3.0 retires the kit's "shapes and marks stay
+# full strength on both grounds" rule: BRAND measures 1.61:1 on `PAPER_BG`,
+# which is a logotype nobody can see, while this stop holds 3.16:1. Bronze
+# never needed the split because it measured 2.98:1 against white. Enforced by
+# `check_svg_parity` in build_marks.py, not merely written down here.
+BRAND_ON_LIGHT = "#0094B1"
 BRAND_DEEP = "#00778F"  # small brand *text* on light surfaces only
 INK = "#070B10"
 PAPER = "#E9EDF2"  # cool text on dark

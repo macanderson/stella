@@ -12,7 +12,7 @@ librsvg does not evaluate CSS animation — it renders the initial state — so 
 GIF has to be built frame by frame, and the tempting shortcut is to reimplement
 the timeline in Python. The kit already paid for a version of that mistake:
 commit 10781aa31 recoloured the four spinner SVGs to Bronze Gold and left the
-four GIFs untouched, so the kit shipped `#C58A32` vector art beside `#FFB000`
+four GIFs untouched, so the kit once shipped `#C58A32` vector art beside `#FFB000`
 animations for as long as nobody opened them side by side. Anything restated is
 something that can drift; here the SVG is parsed, evaluated, and re-emitted per
 frame with the geometry untouched.

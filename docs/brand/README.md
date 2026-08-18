@@ -1,13 +1,13 @@
 ---
 id: brand
-title: "stella\* — brand kit v2.0"
+title: "stella\* — brand kit v3.0"
 status: living
 ---
 
-# stella\* — brand kit v2.0
+# stella\* — brand kit v3.0
 
 The comet: a four-point star moving fast enough to leave a trail.
-One shape, one color — Bronze Gold `#C58A32` on warm Ink `#10100F`.
+One shape, one color — Ion `#00D1F9` on Obsidian `#070B10`.
 
 **Start with `brand-guidelines.html`** — it explains everything below,
 adapts to light/dark, and works offline.

@@ -111,6 +111,11 @@
   --stella-muted-fg: #61676F;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand-deep); /* ion that passes on light */
+  /* The mark itself — shapes, not text. v3.0 retires the "full strength on
+     both grounds" rule: ion measures 1.61:1 on paper, which is a logotype
+     nobody can see, so on light the mark takes brand-700 (3.16:1). The
+     committed light lockups under logo/svg/ are cut to this value. */
+  --stella-mark-shape: var(--stella-brand-700);
 }
 .dark, [data-theme="dark"] {
   --stella-bg: var(--stella-ink);
@@ -120,6 +125,7 @@
   --stella-muted-fg: #9299A1;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand);
+  --stella-mark-shape: var(--stella-brand);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -130,5 +136,6 @@
     --stella-muted-fg: #9299A1;
     --stella-accent: var(--stella-brand);
     --stella-accent-text: var(--stella-brand);
+    --stella-mark-shape: var(--stella-brand);
   }
 }

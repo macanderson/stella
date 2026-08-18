@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! **Light mode, and the ink-on-gold fix it required.**
+//! **Light mode, and the ink-on-accent fix it required.**
 //!
 //! It lives in `tests/` rather than beside the unit tests because
 //! `src/tests.rs` sits exactly on the 1500-line ratchet (`make gate`'s

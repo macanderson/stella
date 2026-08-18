@@ -1,5 +1,5 @@
 import {
-  GOLD,
+  BRAND,
   STAR_PATH,
   TRAIL_RECTS,
   WORDMARK_LETTERS_PATH,
@@ -8,7 +8,7 @@ import {
 /**
  * The kit's animated lockup (docs/brand/brand-guidelines.html § motion),
  * played ONCE: the trails arrive left→right, the star pops, the letters type
- * on behind a gold cursor, the cursor blinks out. Same geometry, same
+ * on behind an ion cursor, the cursor blinks out. Same geometry, same
  * timeline, same easings as the kit's looping demo — the only difference is
  * `animation-iteration-count: 1` with `fill-mode: forwards`, which is safe
  * because every track's 100% keyframe is its resting state.
@@ -48,13 +48,13 @@ export function AnimatedLockup({ className }: { className?: string }) {
             key={r.y}
             {...r}
             className={`lp-lk-t${i}`}
-            fill={`var(--stella-brand, ${GOLD})`}
+            fill={`var(--stella-mark-shape, ${BRAND})`}
           />
         ))}
         <path
           d={STAR_PATH}
           className="lp-lk-star"
-          fill={`var(--stella-brand, ${GOLD})`}
+          fill={`var(--stella-mark-shape, ${BRAND})`}
         />
         <g transform="translate(100 0)" fill="currentColor">
           {LETTERS.map((d, i) => (
@@ -68,7 +68,7 @@ export function AnimatedLockup({ className }: { className?: string }) {
           width="20"
           height="55.8"
           rx="2"
-          fill={`var(--stella-brand, ${GOLD})`}
+          fill={`var(--stella-mark-shape, ${BRAND})`}
         />
       </g>
     </svg>

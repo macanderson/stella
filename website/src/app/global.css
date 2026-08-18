@@ -1,22 +1,22 @@
 /**
  * stella docs — the semantic layer.
  *
- * Brand system: brand kit v2.0, "the comet" — Bronze Gold on Ink, warm Paper
+ * Brand system: brand kit v3.0, "the comet" — Ion on Obsidian, cool Paper
  * on the light side, JetBrains Mono as the one and only face (docs/brand/ is
  * the normative source). The product lives in a terminal, so the brand speaks
  * in monospace; there is no second family to fall back to, on purpose.
  *
  * Three rules the rest of the file obeys:
  *
- * Gold is the signal, never the surface. It appears where attention belongs —
+ * Ion is the signal, never the surface. It appears where attention belongs —
  * the mark, the prompt, the active item, the primary action — and nowhere
- * else. If everything is gold, nothing is.
+ * else. If everything is ion, nothing is.
  *
- * Gold text is ground-aware. Full-strength #00D1F9 only earns its keep on the
- * dark ground (6.4:1 on ink); at small text sizes on paper it is 2.6:1 and
- * drops to gold-deep (#00778F, 5.0:1).
+ * Ion text is ground-aware. Full-strength #00D1F9 only earns its keep on the
+ * dark ground (10.8:1 on obsidian); on paper it is 1.6:1 and drops to
+ * brand-deep (#00778F, 4.6:1).
  * `--stella-accent-text` in tokens.css encodes exactly this flip — components
- * use it and never pick a gold by hand.
+ * use it and never pick an ion by hand.
  *
  * Semantic reservation: info/warn/error/success callouts keep their functional
  * hues (a warning must not read as decoration), always paired with a glyph or
@@ -70,30 +70,30 @@
    * custom property is invalid at computed-value time — it silently falls
    * back — so every token a component consumes is defined here for BOTH
    * grounds. */
-  --stella-rule: var(--stella-neutral-500); /* 3.3:1 on paper-bg */
-  --stella-faint: var(--stella-muted-fg); /* 4.9:1 on paper-bg */
-  --stella-mark: var(--stella-accent-text); /* small gold marks beside text */
+  --stella-rule: var(--stella-neutral-500); /* 3.5:1 on paper-bg */
+  --stella-faint: var(--stella-muted-fg); /* 5.0:1 on paper-bg */
+  --stella-mark: var(--stella-accent-text); /* small ion marks beside text */
 
-  /* The one primary action: a Bronze Gold fill with an ink label. Gold is
-   * the signal — the CTA is the signal, so it is the one gold surface. */
+  /* The one primary action: an ion fill with an obsidian label. Ion is
+   * the signal — the CTA is the signal, so it is the one ion surface. */
   --stella-cta-bg: var(--stella-brand);
   --stella-cta-fg: var(--stella-ink);
   --stella-cta-bg-hover: var(--stella-brand-400);
 
   --color-fd-background: var(--stella-bg);
   --color-fd-foreground: var(--stella-fg);
-  --color-fd-muted: #ede8db;
-  --color-fd-muted-foreground: var(--stella-muted-fg); /* 4.9:1 on paper-bg */
+  --color-fd-muted: #e2e7ee;
+  --color-fd-muted-foreground: var(--stella-muted-fg); /* 5.0:1 on paper-bg */
   --color-fd-card: var(--stella-surface);
   --color-fd-card-foreground: var(--stella-fg);
   --color-fd-popover: var(--stella-surface);
   --color-fd-popover-foreground: var(--stella-fg);
   --color-fd-border: var(--stella-border); /* decorative seam */
-  --color-fd-accent: #f0e9d6; /* hover/selected surface — warm cream */
+  --color-fd-accent: #e6ecf4; /* hover/selected surface — cool frost */
   --color-fd-accent-foreground: var(--stella-fg);
-  --color-fd-primary: var(--stella-accent-text); /* gold-deep, 4.9:1 on paper */
-  --color-fd-primary-foreground: var(--stella-ink); /* label on a gold fill */
-  --color-fd-secondary: #ede8db;
+  --color-fd-primary: var(--stella-accent-text); /* brand-deep, 4.6:1 on paper */
+  --color-fd-primary-foreground: var(--stella-ink); /* label on an ion fill */
+  --color-fd-secondary: #e2e7ee;
   --color-fd-secondary-foreground: var(--stella-fg);
   --color-fd-ring: var(--stella-accent-text);
 }
@@ -120,7 +120,7 @@
   --color-fd-popover: #12181d;
   --color-fd-popover-foreground: var(--stella-fg);
   --color-fd-border: var(--stella-border);
-  --color-fd-accent: #201d15; /* hover surface — ink warmed with gold */
+  --color-fd-accent: #101a20; /* hover surface — obsidian cooled with ion */
   --color-fd-accent-foreground: var(--stella-fg);
   --color-fd-primary: var(--stella-brand); /* 6.4:1 on ink */
   --color-fd-primary-foreground: var(--stella-ink);
@@ -230,7 +230,7 @@ figure.shiki ::selection,
   font-weight: 700;
 }
 
-/* Links read as links: the ground-aware gold plus an underline. Colour is
+/* Links read as links: the ground-aware ion plus an underline. Colour is
  * never the only cue. */
 .prose a {
   color: var(--color-fd-primary);
@@ -314,7 +314,7 @@ figure.shiki ::selection,
  *
  * The sidebar and header exist to be ignored until wanted. No borders on
  * items, no bold. The active page is the only thing in the tree that takes
- * colour, and it takes the ground-aware gold because it is the signal.
+ * colour, and it takes the ground-aware ion because it is the signal.
  *
  * The sidebar's ground is WHITE, not the page's warm paper. Fumadocs paints
  * the aside with `bg-fd-card` (#f7f9fc here), which sat within 1.02:1 of the
@@ -329,15 +329,15 @@ figure.shiki ::selection,
 #nd-sidebar {
   font-size: var(--stella-type-sm);
   --color-fd-card: #ffffff;
-  --color-fd-accent: #f0f0ee; /* hover/selected chip — neutral on white */
-  --color-fd-secondary: #f0f0ee;
-  --color-fd-muted: #f6f6f4;
+  --color-fd-accent: #eef0f3; /* hover/selected chip — neutral on white */
+  --color-fd-secondary: #eef0f3;
+  --color-fd-muted: #f4f6f8;
   background-color: #ffffff;
 }
 
 .dark #nd-sidebar {
   --color-fd-card: var(--stella-surface);
-  --color-fd-accent: #201d15; /* restore the ink-warmed hover on dark */
+  --color-fd-accent: #101a20; /* restore the obsidian-cooled hover on dark */
   --color-fd-secondary: #12181d;
   --color-fd-muted: var(--stella-surface);
   background-color: var(--stella-surface);
@@ -362,7 +362,7 @@ figure.shiki ::selection,
  * is quiet" instinct on purpose — the items recede as a field, and the thing
  * that has to survive that recession is the label telling you which part of the
  * tree you are in. Uppercase at 14.4px reads as a category rather than as a
- * page, and the tracking is what keeps uppercase from setting tight. The gold
+ * page, and the tracking is what keeps uppercase from setting tight. The ion
  * active pill still outranks all of it, which is the intended order:
  * item < category < where you are. */
 #nd-sidebar p {
@@ -373,9 +373,9 @@ figure.shiki ::selection,
   color: var(--color-fd-foreground);
 }
 
-/* The active page is a solid gold pill with ink text — the one gold surface
+/* The active page is a solid ion pill with ink text — the one ion surface
  * in the tree, because the current location IS the signal (same law as the
- * CTA). Identical in both modes: gold on white chrome, gold on ink. */
+ * CTA). Identical in both modes: ion on white chrome, ion on obsidian. */
 #nd-sidebar a[data-active="true"] {
   background: var(--stella-brand);
   color: var(--stella-ink);
@@ -610,7 +610,7 @@ figure.shiki ::selection,
  * page bottoming out into the terminal. The fd text tokens are re-scoped so
  * the light mode's ink text doesn't land on a near-black ground. */
 .lp-footer {
-  background: #0a0a09;
+  background: #05080c;
   border-top-color: #2a3036;
   --color-fd-foreground: var(--stella-paper);
   --color-fd-muted-foreground: #9299a1;
@@ -637,7 +637,7 @@ figure.shiki ::selection,
   mask-image: linear-gradient(to bottom, black, transparent 85%);
 }
 
-/* Overline: gold star + wide-tracked uppercase micro-type, per the kit. */
+/* Overline: ion star + wide-tracked uppercase micro-type, per the kit. */
 .lp-eyebrow {
   display: block;
   font-family: var(--font-mono);
@@ -674,7 +674,7 @@ figure.shiki ::selection,
   color: var(--color-fd-muted-foreground);
 }
 
-/* The comet paints its own gold; `lp-mark` only sizes and places it. */
+/* The comet paints its own ion; `lp-mark` only sizes and places it. */
 .lp-mark {
   color: var(--color-fd-foreground);
 }
@@ -709,8 +709,8 @@ html[data-home-nav="hidden"] #nd-nav {
   text-transform: lowercase;
 }
 
-/* Primary action: the one gold surface, with an ink label. On the dark
- * ground it glows — phosphor, not neon: only on hover, per "gold is the
+/* Primary action: the one ion surface, with an ink label. On the dark
+ * ground it glows — plasma, not neon: only on hover, per "ion is the
  * signal". */
 .lp-cta {
   background: var(--stella-cta-bg);
@@ -732,7 +732,7 @@ html[data-home-nav="hidden"] #nd-nav {
  *
  * The terminal is ALWAYS ink, in both themes: the product lives in a dark
  * terminal, and the transcript is a window into it, not a panel of the page.
- * This is also the one place full-strength Phosphor Gold text appears on the
+ * This is also the one place full-strength Ion text appears on the
  * light page — because inside the window, the ground is ink.
  * ═════════════════════════════════════════════════════════════════════════ */
 
@@ -819,7 +819,7 @@ html[data-home-nav="hidden"] #nd-nav {
 }
 
 .dke-tab[data-active="true"] {
-  background: #1d1608;
+  background: #08202a;
   color: var(--stella-brand);
 }
 
@@ -851,7 +851,7 @@ html[data-home-nav="hidden"] #nd-nav {
  *
  * A real surface, not a sticker: hovering lifts it on a spring (Motion-
  * generated linear() curve, ~6% overshoot, settles in 350ms — physical, not
- * cartoon), and a gold sheen sweeps left→right — the comet's direction —
+ * cartoon), and an ion sheen sweeps left→right — the comet's direction —
  * once on arrival and again every 10 seconds for as long as the pointer
  * stays. The 10s cycle is one keyframe track: the sweep occupies the first
  * 14% (1.4s), the rest holds off-screen, so `infinite` re-fires it on
@@ -892,7 +892,7 @@ html[data-home-nav="hidden"] #nd-nav {
   transform: scale(1.02);
 }
 
-/* The sheen. Ink ground in both themes, so one gold tint serves both. */
+/* The sheen. Ink ground in both themes, so one ion tint serves both. */
 .lp-install::after {
   content: "";
   position: absolute;
@@ -1352,7 +1352,7 @@ figure.shiki > div:has(figcaption) {
  *
  * Boxes and wires, one stroke weight, no animation, no fills except the
  * single accent node each diagram is actually about — which takes the
- * ground-aware gold.
+ * ground-aware ion.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .sdg {
@@ -1397,12 +1397,12 @@ figure.shiki > div:has(figcaption) {
   fill: var(--stella-accent-text);
 }
 /* A node in a structure the page is arguing *against*. Same mark, seam colour,
- * so the gold stays on the thing the reader is meant to look at. */
+ * so the the accent stays on the thing the reader is meant to look at. */
 .sdg .sdg-dot-muted {
   fill: var(--stella-rule);
 }
 /* The numeral inside a step circle. White in both themes, not the page ground:
- * on paper the ground is warm cream, which reads as a muted smudge on the gold
+ * on paper the ground is warm cream, which reads as a muted smudge on the accent
  * rather than as a legible number. */
 .sdg .sdg-dot-numeral {
   fill: #ffffff;
