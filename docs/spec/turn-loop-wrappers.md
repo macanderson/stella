@@ -454,8 +454,17 @@ Two things make that enforceable rather than aspirational:
 
 ### 9.4 The manifest needs two properties the sketch does not yet have
 
-§5's TOML sketch is the right shape. Two additions, both so that "a new variant
-is a manifest file" fails at load with a reason rather than at round three:
+**Landed (#3380/#3408), re-verified 2026-08-18.** Both additions below exist
+in `crates/stella-plugin/src/{manifest,wrapper,program}.rs`: the stage graph is
+load-checked on both axes (a condition reading a signal only a later stage
+publishes, or one only a conditionally-run earlier stage publishes, is a load
+error — `stella-plugin`'s README §"the stage graph is load-checked" states
+the rule this subsection asked for), and `if` is the closed grammar this
+subsection specified — `[no-]<boolean-signal>` or `<count-signal> <op>
+<number>` over a published `Signal`, never an expression language. The
+heading is kept as written, describing the gap at the commit this document
+was verified against; §5's TOML sketch is the right shape, and the two
+additions below are what closed it:
 
 - **Typed stage input/output, checked as a graph at load.** A stage whose input
   no prior stage produces is a load error. §5 already says each stage has a

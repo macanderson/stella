@@ -641,31 +641,29 @@ corrected, path-scoped wording.
 
 ## 7. Track B — extraction order
 
-**The flag inversion of #3381 shipped (PR #3694).** `--pipeline <variant>`
-replaced `--no-pipeline` as the sole opt-in on every door: the raw loop is
-the default, and `--no-pipeline` is a deprecated no-op. What has not fully
-shipped is the other half of this paragraph's plan — the wrapper id recorded
-on the executions row so two variants can be compared. That column and
-migration shipped (`crates/stella-store/src/ddl.rs:115`, `migrations.rs:29`),
-and the `classic` path writes it (`crates/stella-cli/src/agent/persistence.rs:26`,
-via `begin_pipeline_execution`) — but the raw loop's plugin path
-(`crates/stella-cli/src/agent/goal.rs`'s `run_raw_one_shot`, which handles
-both `PipelineChoice::Raw` and `PipelineChoice::Plugin`) still opens its
-execution row through a bare `TurnDoor::new("run")` with no `.wrapped_by(..)`
-call, so a `--pipeline <variant>` naming an installed plugin runs and is
-recorded exactly like the unwrapped raw loop. Wiring the resolved plugin's
-`Wrapper::id` onto that door is still a Track A tail item — without it the
-A/B comparison this whole plan is justified by cannot distinguish a plugin
-run from a raw one in the store.
+**The flag inversion of #3381 shipped (PR #3694), and so did the other half
+of this paragraph's plan.** `--pipeline <variant>` replaced `--no-pipeline`
+as the sole opt-in on every door: the raw loop is the default, and
+`--no-pipeline` is a deprecated no-op. The wrapper id recorded on the
+executions row so two variants can be compared shipped too: the column and
+migration (`crates/stella-store/src/ddl.rs:115`, `migrations.rs:29`), the
+`classic` path writing it (`crates/stella-cli/src/agent/persistence.rs:26`,
+via `begin_pipeline_execution`), and — landed alongside the wrapper-plugin
+driver (#3494) — the raw loop's named-plugin path writing it too:
+`crates/stella-cli/src/wrapper_plugin.rs`'s `RawTurnDriver::run_turn` opens
+its execution row through `TurnDoor::new("run").wrapped_by(self.variant)`,
+where `self.variant` is the resolved plugin's declared `[wrapper] id`
+(`bound.variant()`), so a `--pipeline <variant>` run is distinguishable from
+an unwrapped raw run by a `GROUP BY pipeline_variant` today.
 
 Order, easiest and least risky first:
 
 1. **stella-research** — `before_turn` only, read-only, no worktree. The safest
    possible first real plugin. **Landed** — `plugins/stella-research`
    (`doc:pipeline-as-plugins-execution` Phase 4), driven end-to-end by
-   `WrapperDispatch` and graded against committed vectors in
-   `crates/stella-runtime/tests/research_plugin_*.rs`. See the note above:
-   its runs are not yet distinguishable from a raw run in `pipeline_variant`.
+   `WrapperDispatch`, graded against committed vectors in
+   `crates/stella-runtime/tests/research_plugin_*.rs`, and distinguishable in
+   the store per the paragraph above.
 2. **stella-plan** — `before_turn`, needs the triage signals A8 publishes.
 3. **vera** — `after_turn` + `judge`. Needs A10 (worktrees) and A6 (structured
    verdicts). Ported, not copied: see §8.
