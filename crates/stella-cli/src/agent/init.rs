@@ -519,6 +519,79 @@ mod tests {
         );
     }
 
+    /// The witness for the two-design collision that broke the build: one
+    /// [`InitIo`] carries **both** halves of the seam at once — the question
+    /// channel and an [`InitLine`] sink that still tells a permanent step
+    /// from a live counter.
+    ///
+    /// The two PRs that landed for this seam each kept one half and dropped
+    /// the other, so anything asserting only one of them passes on a design
+    /// that lost the other. This asserts both against one call: the record
+    /// stages narrate through `step_sink()` (the ✓ domains line), the
+    /// code-graph build narrates through the raw `sink()` (its own step), and
+    /// the sink's two kinds stay distinguishable rather than collapsing to
+    /// `String` — which is what a re-collapse of `InitIo::emit` would undo.
+    #[tokio::test]
+    async fn init_narrates_both_line_kinds_through_one_io() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let root = root.path().canonicalize().expect("canonicalize");
+        std::fs::create_dir_all(root.join("api")).expect("mkdir");
+        std::fs::write(root.join("api/routes.rs"), "pub fn route() {}\n").expect("write");
+        let provider = CountingProvider {
+            calls: AtomicUsize::new(0),
+        };
+
+        // `(is_step, text)` — the kind is the half a `String` sink erases.
+        let seen: std::sync::Mutex<Vec<(bool, String)>> = std::sync::Mutex::new(Vec::new());
+        {
+            // `ask: None` is the no-human case, and the one an automated test
+            // may take: the conversion offer must never block on stdin here.
+            let mut io = InitIo::new(
+                |line: InitLine| {
+                    let step = matches!(line, InitLine::Step(_));
+                    seen.lock()
+                        .expect("sink lock")
+                        .push((step, line.text().to_string()));
+                },
+                None,
+            );
+            init_workspace(
+                Some(&provider),
+                &root,
+                Some("counting-model"),
+                None,
+                &mut io,
+            )
+            .await
+            .expect("init_workspace");
+
+            // The kinds survive the trip through the io rather than being
+            // flattened on the way in.
+            io.emit(InitLine::Progress("· counter tick".to_string()));
+            io.step("permanent".to_string());
+        }
+
+        let seen = seen.into_inner().expect("sink lock");
+        let steps: Vec<&str> = seen
+            .iter()
+            .filter(|(step, _)| *step)
+            .map(|(_, text)| text.as_str())
+            .collect();
+        assert!(
+            steps.iter().any(|l| l.contains("domains")),
+            "the record stages must narrate through the io: {seen:?}"
+        );
+        assert!(
+            steps.iter().any(|l| l.contains("code graph")),
+            "the code-graph build must narrate through the same io: {seen:?}"
+        );
+        assert!(
+            seen.iter()
+                .any(|(step, text)| !*step && text == "· counter tick"),
+            "a counter must stay a counter, not become a step: {seen:?}"
+        );
+    }
+
     /// The gate never hides a changed repo from the model: grow the tree's
     /// shape and the next run re-infers (and pays) again.
     #[tokio::test]
