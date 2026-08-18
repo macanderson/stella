@@ -47,8 +47,7 @@
 //! decides from facts every candidate shares) and hands each candidate its
 //! own [`Schedule::clone`] to carry forward: same position in the manifest,
 //! same facts up to that point, independent from there. See
-//! [`crate::pipeline::schedule_wiring`] for where the pipeline draws that
-//! line.
+//! `pipeline/schedule_wiring.rs` for where the pipeline draws that line.
 
 use stella_plugin::{
     ManifestError, ProgressiveResolver, SignalValues, StageDecision, StageName, Wrapper,

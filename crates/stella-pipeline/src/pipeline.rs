@@ -1118,32 +1118,24 @@ impl<'a> Pipeline<'a> {
         });
         let schedule_says =
             self.begin_turn_schedule(budget, &assessment, research_questions.len(), total_cost)?;
-        // The volatile recall+goal message rides AFTER the stable system
-        // prefix (L-E8) — see assemble_user_message. The verification
-        // contract rides only on turns that will actually be verified: a
-        // conversational turn has no oracle, and a simple lookup is verified
-        // only if it unexpectedly touches files — telling either "make this
-        // test pass" would invent work.
+        // The volatile recall+goal message rides AFTER the stable system prefix
+        // (L-E8) — see assemble_user_message. The verification contract rides
+        // only on turns that will actually be verified — a conversational turn
+        // has no oracle — so telling either "make this test pass" invents work.
         let verified_by = self
             .config
             .test_command
             .as_deref()
             .filter(|_| !assessment.conversational && task_class.verifies_unconditionally());
-        // The authored-witness decision, taken HERE — before the user message
-        // is assembled — so a run with no oracle and no independent author
-        // can tell the worker up front that its own failing test is the only
-        // deterministic evidence the run will carry (test-first is cheap
-        // exactly at the start and unaffordable after the diff exists). The
-        // conjunction short-circuits in the same order it did at the
-        // single-shot/best-of-N split below, so `can_author…` — which
-        // announces the degradation — is still never consulted for a turn
-        // that would not have authored a witness anyway.
-        let authored_witness = self.authored_witness(&schedule_says, &assessment, task_class);
+        // `schedule_says.authored_witness` was decided in `begin_turn_schedule`
+        // above, before this message is assembled, so a run with no oracle and
+        // no independent author tells the worker up front that its own failing
+        // test is the run's only deterministic evidence (#3408).
         let contract = match verified_by {
             Some(command) => VerificationContract::Oracle(command),
             None if !assessment.conversational
                 && task_class.verifies_unconditionally()
-                && !authored_witness =>
+                && !schedule_says.authored_witness =>
             {
                 VerificationContract::WorkerTestFirst
             }
@@ -1256,7 +1248,7 @@ impl<'a> Pipeline<'a> {
         // would put a question to the operator whose answer is then discarded,
         // which teaches them their choices do not matter. `false` is the safe
         // value in that case precisely because it is unreachable.
-        let isolate = if n == 1 && !authored_witness {
+        let isolate = if n == 1 && !schedule_says.authored_witness {
             self.isolate_in_worktree(task_class).await
         } else {
             false
@@ -1268,7 +1260,7 @@ impl<'a> Pipeline<'a> {
         // N=1, so authoring can never mutate the session tree.
         // Best-of-N runs every candidate in an isolated snapshot of the
         // current tree state and adopts only the winner's changes (L-E7).
-        let (best, candidates_run) = if n == 1 && !authored_witness && !isolate {
+        let (best, candidates_run) = if n == 1 && !schedule_says.authored_witness && !isolate {
             let worker = match self.resolve_provider(Role::Worker) {
                 Ok(worker) => worker,
                 Err(error) => {
@@ -1303,7 +1295,7 @@ impl<'a> Pipeline<'a> {
                     frame,
                     n,
                     &frames,
-                    authored_witness,
+                    schedule_says.authored_witness,
                     &mut Spend {
                         budget: &mut *budget,
                         total: &mut total_cost,

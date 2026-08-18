@@ -35,7 +35,7 @@
 //! [`Schedule::clone`] taken after this batch, fed that candidate's real
 //! diff. Nothing here does that yet: no shipped or configurable variant
 //! reads a post-execute signal, so wiring it is deferred rather than
-//! speculative — tracked in #3629. [`crate::schedule::Schedule`] and
+//! speculative — tracked in #3674. [`crate::schedule::Schedule`] and
 //! `tests/variant_dispatch.rs` already prove the mechanism handles it
 //! correctly; what remains is `Pipeline::run_candidate` actually asking.
 
@@ -60,15 +60,20 @@ pub(super) struct PreExecuteSchedule {
     /// variant that somehow disagreed between the two would still only ever
     /// gate the one branch the pipeline has to offer it.
     pub(super) plan: bool,
-    /// Whether `witness` runs — one of six conjuncts `authored_witness`
-    /// takes; the other five (conversational, the witness-author role, the
-    /// model's own `wants_witness`, the class's `verifies_unconditionally`,
-    /// and independence) are host-internal and stay ANDed at that call site.
-    pub(super) witness: bool,
     /// Whether `verify` runs — ORed at its call site with the host-internal
     /// zero-diff guard for a simple lookup that unexpectedly touched files,
     /// which no published signal names (#3408).
     pub(super) verify: bool,
+    /// Whether this turn authors its own witness test (L-E11 front half):
+    /// `witness`'s manifest decision (`classic.toml`'s `if = "no-test-
+    /// command"`) ANDed with five host-internal facts the closed condition
+    /// grammar has no conjunction to fold into one clause (#3408): not
+    /// conversational, the witness-author role enabled, the model's own
+    /// `wants_witness`, the class verifying unconditionally, and an author
+    /// independent of the worker actually being resolvable. `witness`'s own
+    /// bare decision is not kept beside it — nothing outside this function
+    /// reads it unADORNED by those five conjuncts.
+    pub(super) authored_witness: bool,
 }
 
 impl Pipeline<'_> {
@@ -82,7 +87,7 @@ impl Pipeline<'_> {
     fn effective_variant(&self) -> Result<Wrapper, VariantError> {
         match &self.config.variant {
             Some(wrapper) => Ok(wrapper.clone()),
-            None => variant::classic().map(Wrapper::clone),
+            None => variant::classic().cloned(),
         }
     }
 
@@ -130,35 +135,20 @@ impl Pipeline<'_> {
             schedule.decide(StageName::Execute)?;
             let witness = schedule.decide(StageName::Witness)?;
             let verify = schedule.decide(StageName::Verify)?;
+            let authored_witness = !assessment.conversational
+                && witness
+                && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
+                && assessment.wants_witness()
+                && task_class.verifies_unconditionally()
+                && self.can_author_independent_witness();
             Ok(PreExecuteSchedule {
                 research,
                 plan: plan && scope,
-                witness,
                 verify,
+                authored_witness,
             })
         })();
         decided.map_err(|source| variant_error(source, total_cost_usd))
-    }
-
-    /// Whether this turn authors its own witness test (L-E11 front half):
-    /// `schedule_says.witness` — the manifest's own half, `classic.toml`'s
-    /// `if = "no-test-command"` — ANDed with five host-internal facts the
-    /// closed condition grammar has no conjunction to fold into one clause
-    /// (#3408): not conversational, the witness-author role enabled, the
-    /// model's own `wants_witness`, the class verifying unconditionally, and
-    /// an author independent of the worker actually being resolvable.
-    pub(super) fn authored_witness(
-        &self,
-        schedule_says: &PreExecuteSchedule,
-        assessment: &TaskAssessment,
-        task_class: TaskClass,
-    ) -> bool {
-        !assessment.conversational
-            && schedule_says.witness
-            && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
-            && assessment.wants_witness()
-            && task_class.verifies_unconditionally()
-            && self.can_author_independent_witness()
     }
 }
 
