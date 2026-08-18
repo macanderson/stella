@@ -9,7 +9,7 @@
 //! ```
 //!
 //! The `◆` mark is [`theme::SUBAGENT`] — a categorical role deliberately
-//! distinct from the lead's ion `✦`. Focus stays on the existing
+//! distinct from the lead's gold `✦`. Focus stays on the existing
 //! focused-agent mechanism (`ui.focused` via the AGENTS tab / `⏎`); these
 //! rows render the *other* lanes under whichever agent is focused, so they
 //! only appear when the focused lane is not itself a subagent.

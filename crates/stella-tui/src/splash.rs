@@ -4,7 +4,7 @@
 //! When the frame affords it, the mark is the brand's assemble sequence
 //! (`docs/brand/spinners/spinner-lockup-*.svg`) translated to cells: the three
 //! comet trails slide in staggered, the four-point star pops with a brief
-//! bright flash, the wordmark types on letter by letter behind an ion block
+//! bright flash, the wordmark types on letter by letter behind a gold block
 //! cursor, and the cursor blinks until init hands off. The star is not stored
 //! art — it is the astroid `|x|^(2/3) + |y|^(2/3) <= r^(2/3)` rasterized into
 //! half-block pixels at whatever size ~30% of the frame height works out to,
@@ -375,7 +375,7 @@ fn render_large(
             } else {
                 CURSOR.to_string()
             };
-            spans.push(Span::styled(cursor, Style::new().fg(theme::IDENTITY)));
+            spans.push(Span::styled(cursor, Style::new().fg(theme::GOLD)));
         }
         let field_w = WORDMARK_FIELD_W.min(area.width);
         let word_rect = Rect {
@@ -454,11 +454,11 @@ fn sample(t: u64, x: f64, y: f64) -> Option<Color> {
             let dy = (y - STAR_CY).abs() / r;
             // The four-point star is the astroid |x|^(2/3) + |y|^(2/3) <= 1.
             if dx.powf(2.0 / 3.0) + dy.powf(2.0 / 3.0) <= 1.0 {
-                // Flash bright while the pop is still moving, settle to the identity.
+                // Flash bright while the pop is still moving, settle to gold.
                 return Some(if pop < 1.0 {
-                    theme::IDENTITY_BRIGHT
+                    theme::GOLD_BRIGHT
                 } else {
-                    theme::IDENTITY
+                    theme::GOLD
                 });
             }
         }
@@ -471,7 +471,7 @@ fn sample(t: u64, x: f64, y: f64) -> Option<Color> {
         let slid = ease_out_cubic(clamp01((t - start) as f64 / TRAIL_SLIDE_MS as f64));
         let off = TRAIL_FROM * (1.0 - slid);
         if (y - ty).abs() <= TRAIL_HALF && x >= x0 + off && x <= x1 + off {
-            return Some(theme::IDENTITY);
+            return Some(theme::GOLD);
         }
     }
     None
@@ -481,14 +481,14 @@ fn sample(t: u64, x: f64, y: f64) -> Option<Color> {
 fn render_compact(state: &SplashState, model: Option<&str>, area: Rect, buf: &mut Buffer) {
     // The lockup's three parts carry three different roles: the chevron is the
     // interactive/brand signal, the wordmark is ink, the cursor block is the
-    // the identity ion. All three are semantic theme tokens, so they follow the
+    // identity gold. All three are semantic theme tokens, so they follow the
     // identity and — unlike an interpolated RGB — still degrade through
     // `theme::degrade_buffer` on a 256- or 16-colour terminal.
     let (chev_style, ink_style, cursor_style, dim_style) = if state.lit() {
         (
             theme::accent(),
             Style::new().fg(theme::INK).add_modifier(Modifier::BOLD),
-            Style::new().fg(theme::IDENTITY),
+            Style::new().fg(theme::GOLD),
             theme::muted(),
         )
     } else {
