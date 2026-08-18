@@ -356,12 +356,12 @@ manifest of the same name shadows the shipped one.
 
 This is not tidiness. It is the only way to know the extension surface is
 adequate: if Linear cannot be expressed as a manifest, no customer's tracker
-can be either. Today `IssueBackend` is a three-variant enum with Linear's
-GraphQL, GitHub's REST, and `gh` shelling all interleaved through
-`issue_ops.rs`, and every one of Linear's semantics — that `ENG-123` is the
-identifier shape, that Linear supplies a canonical branch name, that a team id
-scopes creation — is compiled in. Extracting Linear is therefore both the
-proof and the first migration. **It is filed as its own issue and is the
+can be either. No issue toolset ships today — there is no `IssueBackend` enum
+and no issue module in the tree — so Linear's semantics are not code to be
+extracted but the first thing the format has to carry from zero: that
+`ENG-123` is the identifier shape, that Linear supplies a canonical branch
+name, that a team id scopes creation. Expressing Linear is therefore both the
+proof and the first provider. **It is filed as its own issue and is the
 Phase 1 deliverable (§11).**
 
 ### 4.6 Binding a workspace to a provider
@@ -763,7 +763,7 @@ P4 is the phase that pays for the document. P0–P3 are the substrate it needs.
 | `Issue`, `IssueState`, `IssueClass`, `ResidueItem` | `stella-protocol` (wire types) |
 | Residue detection Pass 1 + Pass 2, policy evaluation, discharge rules | `stella-core` (pure, proptestable, no I/O) |
 | The gate stage, Pass 3's verifier call | `stella-pipeline`, beside `verify` and `witness` |
-| Provider manifests, transports, the `exec` adapter | `stella-tools`, generalizing `issue_ops.rs` |
+| Provider manifests, transports, the `exec` adapter | `stella-tools`, as new code — no issue surface exists to generalize |
 | `[delivery]`, `.stella/issues/*.toml` discovery | `crates/stella-cli/src/settings` |
 | Issue claims | `stella-fleet` ledger |
 | Receipts carrying the issue key | `stella-core::receipts` |
