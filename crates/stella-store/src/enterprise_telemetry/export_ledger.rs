@@ -298,13 +298,13 @@ impl crate::Store {
     ) -> Result<Vec<PendingEnterpriseExport>> {
         validate_sink_fingerprint(sink_fingerprint)?;
         if limit == 0 || limit > MAX_EXPORT_PAGE_ROWS {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "enterprise export page limit must be 1..=256".into(),
             ));
         }
         let after = after_execution_id.unwrap_or(0);
         let sql_limit = i64::try_from(limit)
-            .map_err(|_| StoreError("invalid enterprise export page limit".into()))?;
+            .map_err(|_| StoreError::Other("invalid enterprise export page limit".into()))?;
         let mut conn = self.lock();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut pending = {
@@ -399,7 +399,7 @@ impl crate::Store {
                 params![sink_fingerprint, execution_id],
             )?;
             if deleted != 1 {
-                return Err(StoreError(
+                return Err(StoreError::Other(
                     "enterprise export skip did not consume exactly one pending row".into(),
                 ));
             }
@@ -470,12 +470,12 @@ impl crate::Store {
     ) -> Result<u64> {
         validate_sink_fingerprint(sink_fingerprint)?;
         if retain_completed == 0 || retain_completed > 10_000 {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "enterprise export retention must be 1..=10000 rows".into(),
             ));
         }
         let offset = i64::try_from(retain_completed)
-            .map_err(|_| StoreError("invalid enterprise export retention".into()))?;
+            .map_err(|_| StoreError::Other("invalid enterprise export retention".into()))?;
         let mut conn = self.lock();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let cutoff: Option<i64> = tx
@@ -514,17 +514,17 @@ impl crate::Store {
             params![sink_fingerprint, cutoff],
         )?;
         tx.commit()?;
-        let deleted = deleted_ledger
-            .checked_add(deleted_skips)
-            .ok_or_else(|| StoreError("enterprise export compaction count exceeds usize".into()))?;
+        let deleted = deleted_ledger.checked_add(deleted_skips).ok_or_else(|| {
+            StoreError::Other("enterprise export compaction count exceeds usize".into())
+        })?;
         u64::try_from(deleted)
-            .map_err(|_| StoreError("enterprise export compaction count exceeds u64".into()))
+            .map_err(|_| StoreError::Other("enterprise export compaction count exceeds u64".into()))
     }
 }
 
 fn checked_ledger_counter(label: &str, value: i64) -> Result<u64> {
     u64::try_from(value)
-        .map_err(|_| StoreError(format!("enterprise export {label} counter is negative")))
+        .map_err(|_| StoreError::Other(format!("enterprise export {label} counter is negative")))
 }
 
 /// One execution this store still owes a sink: which execution, and the nonce

@@ -46,15 +46,15 @@ fn read_committable_file(path: &Path) -> Result<Option<(Vec<u8>, u32)>> {
         // publisher as the `nlink() == 0` arm below, seen one instant earlier.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
-            return Err(StoreError(format!(
-                "cannot open committable file {}: {e}",
-                path.display()
-            )));
+            return Err(StoreError::io(
+                format!("cannot open committable file {}", path.display()),
+                e,
+            ));
         }
     };
     let metadata = file
         .metadata()
-        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot inspect {}", path.display()), e))?;
     // `nlink() == 0` is the one benign member of this family, and it must be
     // split out before the assertion below rather than folded into it: it says
     // the inode we are holding open was unlinked while we held it, which is
@@ -72,7 +72,7 @@ fn read_committable_file(path: &Path) -> Result<Option<(Vec<u8>, u32)>> {
     }
     if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } || metadata.nlink() != 1
     {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "committable file {} must be an owner-controlled single-link regular file",
             path.display()
         )));
@@ -80,7 +80,7 @@ fn read_committable_file(path: &Path) -> Result<Option<(Vec<u8>, u32)>> {
     let mode = metadata.permissions().mode() & 0o7777;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
-        .map_err(|e| StoreError(format!("cannot read {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot read {}", path.display()), e))?;
     Ok(Some((bytes, mode)))
 }
 
@@ -102,20 +102,20 @@ fn read_committable_file(path: &Path) -> Result<Option<(Vec<u8>, u32)>> {
         // judge yet, so the caller settles rather than concluding anything.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
-            return Err(StoreError(format!(
-                "cannot inspect {}: {e}",
-                path.display()
-            )));
+            return Err(StoreError::io(
+                format!("cannot inspect {}", path.display()),
+                e,
+            ));
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "committable file {} must be a regular file",
             path.display()
         )));
     }
     let bytes = std::fs::read(path)
-        .map_err(|e| StoreError(format!("cannot read {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot read {}", path.display()), e))?;
     Ok(Some((bytes, MODE_SHARED)))
 }
 
@@ -149,14 +149,14 @@ fn create_generated_ignore_exclusively(path: &Path) -> Result<bool> {
         Ok(mut file) => {
             file.write_all(WORKSPACE_GENERATED_IGNORE)
                 .and_then(|_| file.sync_all())
-                .map_err(|e| StoreError(format!("cannot write {}: {e}", path.display())))?;
+                .map_err(|e| StoreError::io(format!("cannot write {}", path.display()), e))?;
             Ok(true)
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(StoreError(format!(
-            "cannot create generated ignore {}: {error}",
-            path.display()
-        ))),
+        Err(error) => Err(StoreError::io(
+            format!("cannot create generated ignore {}", path.display()),
+            error,
+        )),
     }
 }
 
@@ -249,7 +249,7 @@ fn settled_generated_ignore(path: &Path) -> Result<(Vec<u8>, u32)> {
     // The budget is spent. An empty file we saw the whole way through is one
     // nobody is publishing, so it is ours to repair.
     last.ok_or_else(|| {
-        StoreError(format!(
+        StoreError::Other(format!(
             "generated ignore {} never settled: it was still being replaced \
              after {IGNORE_SETTLE_ATTEMPTS} attempts",
             path.display()
@@ -262,7 +262,7 @@ pub(crate) fn ensure_workspace_state_dir(workspace_root: &Path) -> Result<(PathB
     let created = match std::fs::symlink_metadata(&dir) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(StoreError(format!(
+                return Err(StoreError::Other(format!(
                     "workspace state path {} is not a real directory",
                     dir.display()
                 )));
@@ -279,14 +279,14 @@ pub(crate) fn ensure_workspace_state_dir(workspace_root: &Path) -> Result<(PathB
             }
             builder
                 .create(&dir)
-                .map_err(|e| StoreError(format!("cannot create {}: {e}", dir.display())))?;
+                .map_err(|e| StoreError::io(format!("cannot create {}", dir.display()), e))?;
             true
         }
         Err(error) => {
-            return Err(StoreError(format!(
-                "cannot inspect workspace state directory {}: {error}",
-                dir.display()
-            )));
+            return Err(StoreError::io(
+                format!("cannot inspect workspace state directory {}", dir.display()),
+                error,
+            ));
         }
     };
     Ok((dir, created))
@@ -297,7 +297,7 @@ fn validate_state_name(name: &str) -> Result<()> {
     if !matches!(components.next(), Some(std::path::Component::Normal(_)))
         || components.next().is_some()
     {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "private state name must be one filename, got {name:?}"
         )));
     }
@@ -308,10 +308,10 @@ fn path_entry_exists(path: &Path) -> Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(StoreError(format!(
-            "cannot inspect {}: {error}",
-            path.display()
-        ))),
+        Err(error) => Err(StoreError::io(
+            format!("cannot inspect {}", path.display()),
+            error,
+        )),
     }
 }
 
@@ -320,10 +320,7 @@ fn validate_safe_legacy(path: &Path, directory: bool) -> Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let metadata = std::fs::symlink_metadata(path).map_err(|e| {
-        StoreError(format!(
-            "cannot inspect legacy state {}: {e}",
-            path.display()
-        ))
+        StoreError::io(format!("cannot inspect legacy state {}", path.display()), e)
     })?;
     let expected_type = if directory {
         metadata.is_dir()
@@ -337,7 +334,7 @@ fn validate_safe_legacy(path: &Path, directory: bool) -> Result<()> {
     let owner_only = metadata.uid() == unsafe { libc::geteuid() }
         && (!directory || metadata.permissions().mode() & 0o077 == 0);
     if metadata.file_type().is_symlink() || !expected_type || !owner_only {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "legacy private state {} is not owner-only; left untouched. Restrict its parent to \
              0700 and file to 0600, then retry, or move it aside to create fresh private state",
             path.display()
@@ -348,7 +345,7 @@ fn validate_safe_legacy(path: &Path, directory: bool) -> Result<()> {
 
 #[cfg(not(unix))]
 fn validate_safe_legacy(path: &Path, _directory: bool) -> Result<()> {
-    Err(StoreError(format!(
+    Err(StoreError::Other(format!(
         "legacy private state migration is unsupported on this platform; left untouched: {}",
         path.display()
     )))
@@ -369,7 +366,7 @@ fn migrate_legacy_files(dot: &Path, private: &Path, names: &[String]) -> Result<
         let legacy = dot.join(name.as_str());
         validate_safe_legacy(&legacy, false)?;
         if path_entry_exists(&private.join(name.as_str()))? {
-            return Err(StoreError(format!(
+            return Err(StoreError::Other(format!(
                 "both legacy {} and private {} exist; refusing to choose or overwrite either",
                 legacy.display(),
                 private.join(name.as_str()).display()
@@ -381,11 +378,14 @@ fn migrate_legacy_files(dot: &Path, private: &Path, names: &[String]) -> Result<
         let legacy = dot.join(name.as_str());
         let target = private.join(name.as_str());
         std::fs::rename(&legacy, &target).map_err(|e| {
-            StoreError(format!(
-                "cannot migrate legacy private state {} to {}: {e}",
-                legacy.display(),
-                target.display()
-            ))
+            StoreError::io(
+                format!(
+                    "cannot migrate legacy private state {} to {}",
+                    legacy.display(),
+                    target.display()
+                ),
+                e,
+            )
         })?;
     }
     sync_directory(private)?;
@@ -419,7 +419,7 @@ pub fn append_workspace_private_line(
     options.create(true).append(true);
     let mut file = open_private_file(&path, options)?;
     writeln!(file, "{line}")
-        .map_err(|e| StoreError(format!("cannot append {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot append {}", path.display()), e))?;
     Ok(path)
 }
 
@@ -445,7 +445,7 @@ pub fn workspace_private_sqlite_path(workspace_root: &Path, name: &str) -> Resul
         if path_entry_exists(&dot.join(name))? {
             validate_safe_legacy(&dot.join(name), false)?;
         }
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "legacy SQLite state for {} has active WAL/SHM sidecars and was left untouched; \
              close and checkpoint the database, then retry migration into {}",
             dot.join(name).display(),
@@ -513,7 +513,7 @@ pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
     match std::fs::symlink_metadata(dir) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(StoreError(format!(
+                return Err(StoreError::Other(format!(
                     "private state directory {} is not a real directory",
                     dir.display()
                 )));
@@ -529,19 +529,19 @@ pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
             }
             builder
                 .create(dir)
-                .map_err(|e| StoreError(format!("cannot create {}: {e}", dir.display())))?;
+                .map_err(|e| StoreError::io(format!("cannot create {}", dir.display()), e))?;
         }
         Err(error) => {
-            return Err(StoreError(format!(
-                "cannot inspect private state directory {}: {error}",
-                dir.display()
-            )));
+            return Err(StoreError::io(
+                format!("cannot inspect private state directory {}", dir.display()),
+                error,
+            ));
         }
     }
     let metadata = std::fs::symlink_metadata(dir)
-        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", dir.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot inspect {}", dir.display()), e))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "private state directory {} changed while opening",
             dir.display()
         )));
@@ -550,10 +550,10 @@ pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
-            StoreError(format!(
-                "cannot restrict private directory {}: {e}",
-                dir.display()
-            ))
+            StoreError::io(
+                format!("cannot restrict private directory {}", dir.display()),
+                e,
+            )
         })?;
     }
     Ok(())
@@ -572,15 +572,12 @@ pub(crate) fn open_private_file(
     }
     let file = options
         .open(path)
-        .map_err(|e| StoreError(format!("cannot open private file {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot open private file {}", path.display()), e))?;
     let metadata = file.metadata().map_err(|e| {
-        StoreError(format!(
-            "cannot inspect private file {}: {e}",
-            path.display()
-        ))
+        StoreError::io(format!("cannot inspect private file {}", path.display()), e)
     })?;
     if !metadata.is_file() {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "private state path {} is not a regular file",
             path.display()
         )));
@@ -588,7 +585,7 @@ pub(crate) fn open_private_file(
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         if metadata.uid() != unsafe { libc::geteuid() } || metadata.nlink() != 1 {
-            return Err(StoreError(format!(
+            return Err(StoreError::Other(format!(
                 "private state file {} is not an owner-controlled single-link file (links: {}); \
                  refusing ambiguous ownership",
                 path.display(),
@@ -597,10 +594,10 @@ pub(crate) fn open_private_file(
         }
         file.set_permissions(std::fs::Permissions::from_mode(0o600))
             .map_err(|e| {
-                StoreError(format!(
-                    "cannot restrict private file {}: {e}",
-                    path.display()
-                ))
+                StoreError::io(
+                    format!("cannot restrict private file {}", path.display()),
+                    e,
+                )
             })?;
     }
     Ok(file)
@@ -623,15 +620,12 @@ pub(crate) fn open_private_file(
 ) -> Result<std::fs::File> {
     let file = options
         .open(path)
-        .map_err(|e| StoreError(format!("cannot open private file {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot open private file {}", path.display()), e))?;
     let metadata = file.metadata().map_err(|e| {
-        StoreError(format!(
-            "cannot inspect private file {}: {e}",
-            path.display()
-        ))
+        StoreError::io(format!("cannot inspect private file {}", path.display()), e)
     })?;
     if !metadata.is_file() {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "private state path {} is not a regular file",
             path.display()
         )));
@@ -646,24 +640,24 @@ pub(crate) fn read_private_to_string(path: &Path) -> Result<String> {
     let mut file = open_private_file(path, options)?;
     let mut text = String::new();
     file.read_to_string(&mut text)
-        .map_err(|e| StoreError(format!("cannot read {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot read {}", path.display()), e))?;
     Ok(text)
 }
 
 #[cfg(unix)]
 fn validate_owner_controlled_parent(path: &Path) -> Result<&Path> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let parent = path
-        .parent()
-        .ok_or_else(|| StoreError(format!("private file {} has no parent", path.display())))?;
+    let parent = path.parent().ok_or_else(|| {
+        StoreError::Other(format!("private file {} has no parent", path.display()))
+    })?;
     let metadata = std::fs::symlink_metadata(parent)
-        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", parent.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot inspect {}", parent.display()), e))?;
     if metadata.file_type().is_symlink()
         || !metadata.is_dir()
         || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.permissions().mode() & 0o022 != 0
     {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "sensitive file parent {} must be a real owner-controlled directory with no \
              group/other write permission",
             parent.display()
@@ -685,13 +679,13 @@ fn validate_owner_controlled_parent(path: &Path) -> Result<&Path> {
 /// somewhere Stella cannot protect at all (#617).
 #[cfg(not(unix))]
 fn validate_owner_controlled_parent(path: &Path) -> Result<&Path> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| StoreError(format!("private file {} has no parent", path.display())))?;
+    let parent = path.parent().ok_or_else(|| {
+        StoreError::Other(format!("private file {} has no parent", path.display()))
+    })?;
     let metadata = std::fs::symlink_metadata(parent)
-        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", parent.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot inspect {}", parent.display()), e))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "sensitive file parent {} must be a real directory",
             parent.display()
         )));
@@ -724,7 +718,7 @@ pub(crate) fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Ok(metadata) = std::fs::symlink_metadata(path)
         && (metadata.file_type().is_symlink() || !metadata.is_file())
     {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "private state target {} is not a regular file",
             path.display()
         )));
@@ -737,12 +731,14 @@ pub(crate) fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 pub(crate) fn prepare_private_sqlite_path(path: &Path) -> Result<PathBuf> {
     let parent = path
         .parent()
-        .ok_or_else(|| StoreError(format!("database path {} has no parent", path.display())))?
+        .ok_or_else(|| {
+            StoreError::Other(format!("database path {} has no parent", path.display()))
+        })?
         .canonicalize()
-        .map_err(|e| StoreError(format!("cannot canonicalize {}: {e}", path.display())))?;
-    let name = path
-        .file_name()
-        .ok_or_else(|| StoreError(format!("database path {} has no filename", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot canonicalize {}", path.display()), e))?;
+    let name = path.file_name().ok_or_else(|| {
+        StoreError::Other(format!("database path {} has no filename", path.display()))
+    })?;
     let path = parent.join(name);
     let mut options = std::fs::OpenOptions::new();
     options.read(true).write(true).create(true);
@@ -809,9 +805,9 @@ pub(crate) fn open_private_sqlite_read_only(path: &Path) -> Result<Connection> {
 /// spaces and non-ASCII included, is passed through as SQLite expects.
 fn immutable_uri(path: &Path) -> Result<String> {
     let absolute = std::path::absolute(path)
-        .map_err(|e| StoreError(format!("cannot absolutize {}: {e}", path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot absolutize {}", path.display()), e))?;
     let text = absolute.to_str().ok_or_else(|| {
-        StoreError(format!(
+        StoreError::Other(format!(
             "cannot read {} through a SQLite URI: the path is not valid UTF-8",
             absolute.display()
         ))
