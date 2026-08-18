@@ -86,16 +86,21 @@ use crate::{OutputFormat, config::Config};
 
 /// Which wrapper runs over a one-shot turn.
 ///
-/// `doc:pipeline-as-plugins` §7 plans `--pipeline <variant>` to *replace*
-/// `--no-pipeline`; this is the additive half of that inversion, so both flags
-/// exist and the third arm is the new capability. Making it an enum rather than
-/// a `bool` plus an `Option<&str>` is what keeps "the staged pipeline and a
-/// plugin both ran" unrepresentable.
+/// `doc:pipeline-as-plugins` §7 planned `--pipeline <variant>` to *replace*
+/// `--no-pipeline`; `docs/spec/turn-loop-wrappers.md` §5 "Flip the default"
+/// (#3381) is that replacement landing — the raw loop is now the default on
+/// every door this enum reaches, `--pipeline <variant>` is the sole opt-in,
+/// and `--no-pipeline` is a deprecated no-op kept parseable so no script
+/// breaks the day this ships (see [`resolve`](Self::resolve) and
+/// [`no_pipeline_deprecation_notice`]). Making this a three-way enum rather
+/// than a `bool` plus an `Option<&str>` is what keeps "the staged pipeline
+/// and a plugin both ran" unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PipelineChoice<'a> {
-    /// The built-in staged pipeline — today's default, recorded as `classic`.
+    /// The built-in staged pipeline, recorded as `classic`. Opt-in only,
+    /// since #3381 — `--pipeline classic` selects it by name.
     Classic,
-    /// The raw step-loop with nothing over it (`--no-pipeline`).
+    /// The raw step-loop with nothing over it — the default since #3381.
     Raw,
     /// The raw step-loop wrapped by an installed plugin whose `[wrapper] id` is
     /// this variant (`--pipeline <variant>`).
@@ -105,27 +110,23 @@ pub(crate) enum PipelineChoice<'a> {
 impl<'a> PipelineChoice<'a> {
     /// Read the two flags into one choice.
     ///
-    /// # Errors
-    ///
-    /// A message naming the conflict when both are given: `--no-pipeline`
-    /// asks for nothing over the turn and `--pipeline` names something, and
-    /// silently preferring one would make a user's explicit instruction a
-    /// no-op. `classic` is accepted by name so `--pipeline classic` means what
-    /// it says rather than looking for a plugin nobody installed.
-    pub(crate) fn resolve(no_pipeline: bool, pipeline: Option<&'a str>) -> Result<Self, String> {
-        match (no_pipeline, pipeline) {
-            (true, Some(variant)) => Err(format!(
-                "--no-pipeline runs nothing over the turn, but --pipeline {variant} names a \
-                 wrapper to run — pass one or the other"
-            )),
-            (true, None) => Ok(Self::Raw),
-            (false, None) => Ok(Self::Classic),
-            (false, Some(variant))
-                if variant == crate::agent::persistence::PIPELINE_VARIANT_CLASSIC =>
-            {
-                Ok(Self::Classic)
+    /// `no_pipeline` (`--no-pipeline`) is a deprecated no-op as of #3381: the
+    /// raw loop is the default with or without it, so it plays no part in the
+    /// match below and can no longer disagree with `--pipeline`. Passing both
+    /// flags together used to be a hard conflict (clap's `conflicts_with`,
+    /// removed in the same change); now the deprecated flag simply has
+    /// nothing left to veto, and `--pipeline <variant>` always wins. `classic`
+    /// is accepted by name so `--pipeline classic` means what it says rather
+    /// than looking for a plugin nobody installed. Infallible — the one case
+    /// that used to fail no longer can — so callers no longer need `?` here.
+    pub(crate) fn resolve(no_pipeline: bool, pipeline: Option<&'a str>) -> Self {
+        let _ = no_pipeline; // deprecated no-op (#3381) — see `no_pipeline_deprecation_notice`
+        match pipeline {
+            None => Self::Raw,
+            Some(variant) if variant == crate::agent::persistence::PIPELINE_VARIANT_CLASSIC => {
+                Self::Classic
             }
-            (false, Some(variant)) => Ok(Self::Plugin(variant)),
+            Some(variant) => Self::Plugin(variant),
         }
     }
 
@@ -153,6 +154,50 @@ impl<'a> PipelineChoice<'a> {
             Self::Plugin(variant) => Some(variant),
             Self::Classic | Self::Raw => None,
         }
+    }
+}
+
+/// The one-line deprecation notice owed when `--no-pipeline` was passed
+/// (#3381), or `None` when it was not.
+///
+/// A pure function returning data rather than printing directly, matching
+/// [`crate::engine_config::effort_notices`]'s shape: [`PipelineChoice::resolve`]
+/// stays a plain decision a unit test can call without capturing stderr, and
+/// each door — `main.rs`'s `Run`/`Goal`/`Fleet` arms, `arena.rs` — prints the
+/// line once, at the one place it already reads `no_pipeline` off its parsed
+/// args.
+pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'static str> {
+    no_pipeline.then_some(
+        "--no-pipeline is deprecated and does nothing: the raw step-loop is the default now. \
+         Pass --pipeline <variant> to run a wrapper (\"classic\" names the built-in staged \
+         pipeline).",
+    )
+}
+
+/// Refuse a named wrapper plugin variant on a door that cannot drive one yet.
+///
+/// `stella run` is the only door with a real [`TurnDriver`] implementation
+/// ([`WrapperDispatch`] over one raw turn): `goal` and `fleet` each drive
+/// their own **round loop** (a judged goal round, a fleet worker's attempt),
+/// and wiring a wrapper plugin through either is a real driver — not a
+/// formatting difference — that nothing in this crate implements (#3684).
+/// `--pipeline classic` and no `--pipeline` at all both resolve to
+/// [`PipelineChoice::Classic`]/[`PipelineChoice::Raw`], which is fine on
+/// every door; only a *named* plugin variant is out of reach here, and it is
+/// refused with a message naming `stella run` as the door that can run it —
+/// never silently downgraded to raw or to classic, which would run something
+/// other than what was asked for without saying so.
+pub(crate) fn reject_plugin_variant_for_door(
+    door: &str,
+    choice: PipelineChoice<'_>,
+) -> Result<(), String> {
+    match choice.plugin() {
+        Some(variant) => Err(format!(
+            "--pipeline {variant} is not supported on `stella {door}` yet — wrapper plugins \
+             run only on `stella run --pipeline {variant}` today (#3684). Pass `--pipeline \
+             classic` for the staged pipeline, or omit --pipeline for the raw loop."
+        )),
+        None => Ok(()),
     }
 }
 
@@ -605,29 +650,95 @@ name = "execute"
         bind_installed(roster, variant, no_recall(), warn)
     }
 
-    /// The two flags cannot both decide the turn, and `classic` by name is the
-    /// built-in rather than a plugin lookup that would always fail.
+    /// **Witness (#3381 "Flip the default").** No flag at all used to mean
+    /// `Classic` — the staged pipeline was the default. This assertion fails
+    /// on the pre-#3381 code (which resolves `(false, None)` to `Classic`)
+    /// and passes on this one: the raw loop is the default now, with or
+    /// without `--no-pipeline`.
     #[test]
-    fn the_pipeline_flags_resolve_into_exactly_one_choice() {
+    fn no_flag_at_all_resolves_to_the_raw_loop() {
+        assert_eq!(PipelineChoice::resolve(false, None), PipelineChoice::Raw);
         assert_eq!(
-            PipelineChoice::resolve(false, None),
-            Ok(PipelineChoice::Classic),
-            "no flag is exactly today's behaviour"
+            PipelineChoice::resolve(true, None),
+            PipelineChoice::Raw,
+            "--no-pipeline is a deprecated no-op: it names the same choice as no flag at all"
         );
-        assert_eq!(PipelineChoice::resolve(true, None), Ok(PipelineChoice::Raw));
+    }
+
+    /// `classic` is still selectable by the id it records, and an unknown
+    /// variant still binds a plugin lookup rather than the built-in.
+    #[test]
+    fn pipeline_variant_selects_classic_or_a_plugin_by_name() {
         assert_eq!(
             PipelineChoice::resolve(false, Some("classic")),
-            Ok(PipelineChoice::Classic),
+            PipelineChoice::Classic,
             "the built-in is selectable by the id it records"
         );
         assert_eq!(
             PipelineChoice::resolve(false, Some("budget-v1")),
-            Ok(PipelineChoice::Plugin("budget-v1"))
+            PipelineChoice::Plugin("budget-v1")
         );
-        let conflict = PipelineChoice::resolve(true, Some("budget-v1"))
-            .expect_err("both flags name different things");
-        assert!(conflict.contains("--no-pipeline"), "{conflict}");
-        assert!(conflict.contains("budget-v1"), "{conflict}");
+    }
+
+    /// **Witness (#3381).** `--no-pipeline` together with `--pipeline` used to
+    /// be a hard error (`conflicts_with` in clap, then an `Err` from
+    /// `resolve`). This assertion fails on the pre-#3381 code (which returns
+    /// `Err` here) and passes on this one: a deprecated no-op flag must not
+    /// veto an explicit `--pipeline` opt-in, on either variant arm.
+    #[test]
+    fn no_pipeline_no_longer_vetoes_an_explicit_pipeline_choice() {
+        assert_eq!(
+            PipelineChoice::resolve(true, Some("budget-v1")),
+            PipelineChoice::Plugin("budget-v1"),
+            "--pipeline wins outright; the deprecated flag has nothing left to veto"
+        );
+        assert_eq!(
+            PipelineChoice::resolve(true, Some("classic")),
+            PipelineChoice::Classic
+        );
+    }
+
+    /// The notice fires exactly when `--no-pipeline` was passed, regardless of
+    /// what `--pipeline` said alongside it, and says nothing when it was not.
+    #[test]
+    fn the_deprecation_notice_fires_only_when_no_pipeline_was_passed() {
+        assert!(no_pipeline_deprecation_notice(false).is_none());
+        let notice = no_pipeline_deprecation_notice(true).expect("flag was passed");
+        assert!(notice.contains("--no-pipeline"), "{notice}");
+        assert!(notice.contains("--pipeline"), "{notice}");
+    }
+
+    /// **Witness (#3684).** `stella goal`/`stella fleet` cannot drive a
+    /// wrapper plugin today — only `stella run` implements [`TurnDriver`] over
+    /// one — so a named `--pipeline <variant>` must be refused on those doors
+    /// rather than silently downgraded to raw or promoted to classic. This
+    /// assertion fails on code that has no such gate at all (every door would
+    /// accept-and-ignore the variant) and passes on this one.
+    #[test]
+    fn a_named_plugin_variant_is_refused_on_a_door_that_cannot_drive_one() {
+        let err = reject_plugin_variant_for_door("goal", PipelineChoice::Plugin("budget-v1"))
+            .expect_err("goal has no wrapper driver");
+        assert!(err.contains("budget-v1"), "{err}");
+        assert!(err.contains("stella goal"), "{err}");
+        assert!(
+            err.contains("stella run --pipeline budget-v1"),
+            "the refusal must name the door that CAN run it: {err}"
+        );
+
+        let err = reject_plugin_variant_for_door("fleet", PipelineChoice::Plugin("budget-v1"))
+            .expect_err("fleet has no wrapper driver either");
+        assert!(err.contains("stella fleet"), "{err}");
+    }
+
+    /// `classic` and no flag at all both resolve away from `Plugin` before
+    /// reaching the gate, so neither is refused on a door with no wrapper
+    /// driver — only a *named* variant is out of reach there.
+    #[test]
+    fn classic_and_raw_are_never_refused_on_a_door_with_no_wrapper_driver() {
+        reject_plugin_variant_for_door("goal", PipelineChoice::Classic)
+            .expect("classic has no plugin to drive — nothing to refuse");
+        reject_plugin_variant_for_door("goal", PipelineChoice::Raw)
+            .expect("raw has no plugin to drive — nothing to refuse");
     }
 
     /// A wrapper plugin is a child process the host starts, so the enterprise

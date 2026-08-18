@@ -427,17 +427,18 @@ pub async fn run_deck_session(
     // is durable now, so an exit with prompts waiting is a pause, not loss.
     let mut session_exit = stella_store::SessionStatus::Complete;
     let mut sidecar_dir = session_registry.sidecar_dir(&session_record.id);
-    // Persona matches the driver: the deck runs the staged pipeline by
-    // default, so the lead gets the pipeline worker persona (methodology
-    // ladder + `agents.worker.prompt` override) that only `stella run`
-    // carried before. Chosen ONCE per session from the same state
-    // `pipeline_init` reads — the prefix is byte-stable for the session
-    // (L-E8), so a mid-session `/pipeline` toggle changes the driver but
-    // keeps the persona until the next session.
+    // Persona matches the driver: a fresh deck session runs the raw engine
+    // loop by default since #3381, so it gets the plain REPL persona now,
+    // not the pipeline worker persona (methodology ladder +
+    // `agents.worker.prompt` override) — that applies only once `/pipeline`
+    // is on (invariant #7: this changes what a NEW session starts with, not
+    // a resumed one). Chosen ONCE per session from the same state
+    // `pipeline_init` reads — byte-stable (L-E8), so a mid-session toggle
+    // changes the driver but keeps the persona until the next session.
     let pipeline_persona = resume_state
         .as_ref()
         .and_then(|rs| rs.pipeline)
-        .unwrap_or(true);
+        .unwrap_or(false);
     let system_prompt = agent::with_session_hook_context(
         if pipeline_persona {
             // Assembled once per session, before any turn resolves wiring: no
@@ -683,11 +684,11 @@ pub async fn run_deck_session(
         Arc::new(ask_io.clone()),
     );
 
-    // The deck drives turns through the staged pipeline by default (triage →
-    // recall → plan → scope → execute → witness → verify → verdict); `/pipeline`
-    // toggles back to the raw `Engine::run_turn` loop (`run_lead_turn`). A
-    // resumed session keeps whatever it last had — the same state the persona
-    // choice above read, so driver and persona start the session agreeing.
+    // A fresh deck session drives turns through the raw `Engine::run_turn`
+    // loop (`run_lead_turn`) by default since #3381; `/pipeline` toggles it
+    // ON to route through the staged pipeline instead. A resumed session
+    // keeps whatever it last had — the same state the persona choice above
+    // read, so driver and persona start the session agreeing.
     let pipeline_init = pipeline_persona;
     // Honour the persisted colour theme (`ui.theme`) before the deck spawns its
     // render task, so the very first frame — the launch cinematic — is already
@@ -832,9 +833,9 @@ pub async fn run_deck_session(
     dispatch.held = resume_hold;
     // `/pipeline`: route lead turns through the staged pipeline (triage →
     // execute → witness → verify → verdict) instead of the raw engine loop.
-    // Session-local, ON at start (the deck loads with the pipeline active)
-    // unless a resumed session had toggled it — mirrored to the PIPELINE
-    // stat box via `Inbound::Pipeline`.
+    // Session-local, OFF at start since #3381 (a fresh deck session runs the
+    // raw loop) unless a resumed session had toggled it ON — mirrored to the
+    // PIPELINE stat box via `Inbound::Pipeline`.
     let mut pipeline_on = pipeline_init;
     // An agent-creation request that arrived mid-turn: drafting needs the
     // provider (borrowed by the running turn), so it parks here and runs
@@ -1231,7 +1232,8 @@ pub async fn run_deck_session(
                                     });
                                 }
                                 queue.adopt(sidecar_dir.clone(), restored);
-                                pipeline_on = rs.pipeline.unwrap_or(true);
+                                // Same default as the start-up read above (#3381).
+                                pipeline_on = rs.pipeline.unwrap_or(false);
                                 let _ = in_tx.send(Inbound::Pipeline(pipeline_on));
                                 // `--spend-limit` means THIS session, decided and
                                 // implemented on both resume paths: reseed

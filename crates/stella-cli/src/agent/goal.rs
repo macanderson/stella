@@ -1,9 +1,10 @@
 //! Goal-driven turns: judged rounds until a verifier confirms the goal is met.
 //!
-//! `run_goal_cmd` drives either the staged pipeline (default) or the raw
-//! `Engine::run_goal` step-loop. The goal verifier is independent of the worker
-//! model and answers "does the whole effort meet the goal?" — distinct from
-//! the pipeline's per-change verification verifier.
+//! `run_goal_cmd` drives either the raw `Engine::run_goal` step-loop (the
+//! default since #3381) or the staged pipeline, opted into with `--pipeline
+//! classic`. The goal verifier is independent of the worker model and
+//! answers "does the whole effort meet the goal?" — distinct from the
+//! pipeline's per-change verification verifier.
 
 use super::*;
 
@@ -366,15 +367,23 @@ pub(crate) async fn run_raw_one_shot(
 /// worker turns get the full tool stack (built-ins + MCP + custom), same as
 /// `run_one_shot`.
 ///
-/// `use_pipeline` (the default) runs each working round through the staged
-/// pipeline (triage → recall → plan → execute → witness → verify → verdict);
-/// `false` falls back to the raw `Engine::run_goal` step-loop.
+/// `pipeline` selects the driver for each working round (#3381): `Classic`
+/// (`--pipeline classic`) runs the staged pipeline (triage → recall → plan →
+/// execute → witness → verify → verdict); `Raw` — the default since #3381,
+/// with or without `--no-pipeline` — falls back to the raw `Engine::run_goal`
+/// step-loop. A named plugin `Variant` is refused before this is ever called
+/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Goal` arm) —
+/// this door only ever sees `Classic` or `Raw`.
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
     budget_limit: Option<f64>,
-    use_pipeline: bool,
+    pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
 ) -> Result<(), crate::failure::CliFailure> {
+    // Only `Classic`/`Raw` reach this door (see the doc above); either reads
+    // as one bool for the rest of this function's branching, same shape as
+    // before #3381.
+    let use_pipeline = pipeline.is_classic();
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
@@ -592,6 +601,10 @@ pub(crate) async fn run_goal_turn(
     session_memory: Option<&mut crate::memory::SessionMemory>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
+    // This function is the RAW arm — `run_goal_cmd` calls it only when
+    // `pipeline.is_classic()` is false — so `variant: None` is the honest
+    // answer every time, not a placeholder (#3381, #3388): nothing wrapped
+    // this round.
     let execution = begin_execution(store, "goal", goal, cfg, session, None);
     stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
 
@@ -753,7 +766,19 @@ async fn run_goal_pipeline_turn(
     session_memory: Option<&mut crate::memory::SessionMemory>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
-    let execution = begin_execution(store, "goal", goal, cfg, session, None);
+    // This function is the CLASSIC arm — `run_goal_cmd` calls it only when
+    // `pipeline.is_classic()` is true — so the row must name the wrapper that
+    // actually drove this round rather than leave `pipeline_variant` NULL
+    // (#3381, #3388, #3684): NULL on this path used to mean "raw OR classic",
+    // which made a per-variant comparison over `goal` rounds silently wrong.
+    let execution = begin_execution(
+        store,
+        "goal",
+        goal,
+        cfg,
+        session,
+        Some(persistence::PIPELINE_VARIANT_CLASSIC),
+    );
     // Rebound mutable and NOT consumed by the seam, so the same memory can
     // double as the pipeline's recall port below.
     let mut session_memory = session_memory;

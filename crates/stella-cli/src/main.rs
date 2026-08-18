@@ -1042,6 +1042,9 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             require_verified,
             output_format,
         } => {
+            if let Some(notice) = wrapper_plugin::no_pipeline_deprecation_notice(no_pipeline) {
+                eprintln!("⚠ {notice}");
+            }
             let prompt = prompt_source::resolve(
                 prompt,
                 std::io::stdin().is_terminal(),
@@ -1067,7 +1070,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &prompt,
                     cli.globals.spend_limit,
                     output_format,
-                    wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?,
+                    wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref()),
                     test_command.as_deref(),
                     keep_witness,
                     require_verified,
@@ -1097,7 +1100,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 ),
             )?;
         }
-        Command::Goal { goal, no_pipeline } => {
+        Command::Goal {
+            goal,
+            no_pipeline,
+            pipeline,
+        } => {
+            if let Some(notice) = wrapper_plugin::no_pipeline_deprecation_notice(no_pipeline) {
+                eprintln!("⚠ {notice}");
+            }
+            let pipeline_choice =
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
+            wrapper_plugin::reject_plugin_variant_for_door("goal", pipeline_choice)?;
             let goal = prompt_source::resolve(
                 goal,
                 std::io::stdin().is_terminal(),
@@ -1118,7 +1131,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             }
             signals::block_on_interruptible(
                 rt()?,
-                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, !no_pipeline),
+                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, pipeline_choice),
             )?;
         }
         Command::Fleet {
@@ -1137,9 +1150,16 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             base_ref,
             watch,
             no_pipeline,
+            pipeline,
             task_timeout,
             output_format,
         } => {
+            if let Some(notice) = wrapper_plugin::no_pipeline_deprecation_notice(no_pipeline) {
+                eprintln!("⚠ {notice}");
+            }
+            let pipeline_choice =
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
+            wrapper_plugin::reject_plugin_variant_for_door("fleet", pipeline_choice)?;
             let posture = supervision(&cli.globals);
             if posture.supervises() {
                 return daemon::supervise_this_invocation(
@@ -1167,7 +1187,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     max_concurrency,
                     cli.globals.spend_limit,
                     watch,
-                    !no_pipeline,
+                    pipeline_choice.is_classic(),
                     task_timeout.map(std::time::Duration::from_secs),
                     output_format,
                 ),
@@ -1198,9 +1218,20 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                  only when the latest CI run for `{target}` has completed with every check \
                  successful."
             );
+            // `monitor` takes no `--pipeline`/`--no-pipeline` of its own — it is
+            // `goal` with a fixed prompt, not a door #3381 named — so its
+            // driver stays pinned to the staged pipeline exactly as before the
+            // flip, deliberately: fixing CI is exactly the multi-file,
+            // verify-gated work the pipeline's ladder was built for, and
+            // nothing here reads a user flag for the flip to invert.
             signals::block_on_interruptible(
                 rt()?,
-                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, true),
+                agent::run_goal_cmd(
+                    &cfg,
+                    &goal,
+                    cli.globals.spend_limit,
+                    wrapper_plugin::PipelineChoice::Classic,
+                ),
             )?;
         }
         Command::Chat => {
