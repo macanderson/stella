@@ -24,11 +24,12 @@
 //!   its own failing test is the run's only deterministic evidence
 //!   ([`Pipeline::run`]'s `VerificationContract` assembly). So `witness` is
 //!   decided here, immediately once triage's real facts exist, and
-//!   [`refuse_witness_reading_post_triage`]
-//!   rejects any variant whose `witness` condition could not honestly be
-//!   answered this early — one reading `execute`'s, `witness`'s own, or
-//!   `verify`'s published signals. `classic.toml`'s `if = "no-test-command"`
-//!   is a host fact, so it always passes.
+//!   [`refuse_witness_reading_post_triage`] — run by
+//!   [`Pipeline::effective_variant`] on the pre-triage refusal rung, before
+//!   the first paid call — rejects any variant whose `witness` condition
+//!   could not honestly be answered this early: one reading `execute`'s,
+//!   `witness`'s own, or `verify`'s published signals. `classic.toml`'s
+//!   `if = "no-test-command"` is a host fact, so it always passes.
 //! - **`verify`, post-execute, per candidate.** A verify condition MAY read
 //!   what `execute` produced (`classic.toml`'s own `if = "verifies"` reads a
 //!   triage-published signal, but a leaner variant's need not) — and that
@@ -109,7 +110,15 @@ impl Pipeline<'_> {
             Some(wrapper) => Ok(wrapper.clone()),
             None => variant::classic().cloned(),
         };
-        resolved.map_err(|source| variant_error(source, total_cost_usd))
+        let wrapper = resolved.map_err(|source| variant_error(source, total_cost_usd))?;
+        // Refused HERE, on the pre-triage rung with the independence and
+        // roster refusals, so a variant this host cannot honestly answer is
+        // turned away before the first paid call — not after triage has
+        // already bought a trajectory the caller must throw away (#3408,
+        // same principle as #1147 above the sibling refusals).
+        refuse_witness_reading_post_triage(&wrapper)
+            .map_err(|source| variant_error(source, total_cost_usd))?;
+        Ok(wrapper)
     }
 
     /// Resolve the PRE-execute half of `variant`'s schedule against triage's
@@ -127,7 +136,6 @@ impl Pipeline<'_> {
     ) -> Result<(PreExecuteSchedule, Schedule<'v>), PipelineRunError> {
         let task_class = assessment.class;
         let decided: Result<(PreExecuteSchedule, Schedule<'v>), ScheduleError> = (|| {
-            refuse_witness_reading_post_triage(variant)?;
             let mut schedule = Schedule::new(
                 variant,
                 HostFacts {

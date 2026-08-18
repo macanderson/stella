@@ -1063,6 +1063,9 @@ impl<'a> Pipeline<'a> {
         if let Err(error) = self.roster_refusal() {
             return Err(PipelineRunError::new(error, total_cost));
         }
+        // Same rung, same reason: a variant whose `witness` condition this host
+        // cannot answer pre-execute is refused before the first paid call (#3408).
+        let variant = self.effective_variant(total_cost)?;
         self.report_roster_posture();
         if messages.is_empty() {
             messages.push(CompletionMessage::system(DEFAULT_SYSTEM_PROMPT));
@@ -1116,7 +1119,6 @@ impl<'a> Pipeline<'a> {
             p.task_class = Some(task_class);
             p.goal = Some(goal.to_string());
         });
-        let variant = self.effective_variant(total_cost)?;
         let (schedule_says, schedule) = self.begin_turn_schedule(
             &variant,
             budget,
@@ -1133,10 +1135,8 @@ impl<'a> Pipeline<'a> {
             .test_command
             .as_deref()
             .filter(|_| !assessment.conversational && task_class.verifies_unconditionally());
-        // `schedule_says.authored_witness` was decided in `begin_turn_schedule`
-        // above, before this message is assembled, so a run with no oracle and
-        // no independent author tells the worker up front that its own failing
-        // test is the run's only deterministic evidence (#3408).
+        // `schedule_says.authored_witness` was decided above, pre-assembly, so a
+        // run with no oracle tells the worker test-first up front (#3408).
         let contract = match verified_by {
             Some(command) => VerificationContract::Oracle(command),
             None if !assessment.conversational

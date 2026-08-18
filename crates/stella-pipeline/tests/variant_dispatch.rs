@@ -550,3 +550,87 @@ async fn verify_runs_or_not_by_the_real_diff() {
          manifest; events: {without_diff:#?}"
     );
 }
+
+/// The refusal fires on the pre-triage rung: a variant whose `witness`
+/// condition this host cannot answer is turned away before the FIRST paid
+/// call, with zero cost accrued and the provider's script untouched.
+///
+/// **What would fail on the pre-hoist code.** `refuse_witness_reading_post_triage`
+/// used to run inside `begin_turn_schedule`, which sits after triage — so the
+/// same refusal arrived with `total_cost_usd > 0` and one scripted response
+/// consumed. Both assertions below caught it (#3408; the sibling refusals'
+/// principle is #1147).
+#[tokio::test]
+async fn a_bad_variant_is_refused_before_the_first_paid_call() {
+    let bad = load(
+        "name = \"probe\"\n\
+         [loop]\n\
+         participation = \"steering\"\n\
+         [wrapper]\n\
+         id = \"bad-v1\"\n\
+         [[wrapper.stages]]\n\
+         name = \"execute\"\n\
+         [[wrapper.stages]]\n\
+         name = \"witness\"\n\
+         if = \"diff-lines > 0\"\n",
+    );
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
+    let resolver = OneProvider(&provider);
+    let tools = NoTools;
+    let diagnostics = ScriptedDiff {
+        diff: String::new(),
+    };
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AlwaysAbortGate;
+    let sleeper = NoSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let config = PipelineConfig {
+        variant: Some(bad),
+        test_command: None,
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        ..PipelineConfig::default()
+    };
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &diagnostics,
+            tests: &diagnostics,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        config,
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = stella_core::BudgetGuard::new(BudgetMode::Off, None, None);
+    let error = pipeline
+        .run("Fix the widget", &mut messages, &mut budget)
+        .await
+        .expect_err("a witness condition reading diff-lines must refuse the run");
+
+    assert_eq!(
+        error.total_cost_usd, 0.0,
+        "the refusal must precede the first paid call; cost says one ran: {error:?}"
+    );
+    assert_eq!(
+        provider.script.lock().unwrap().len(),
+        2,
+        "no scripted response may be consumed before the refusal"
+    );
+}
