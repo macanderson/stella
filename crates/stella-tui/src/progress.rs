@@ -28,9 +28,9 @@
 //!   never progress. It rides *on top of* the determinate fill and never
 //!   advances it; it is a scrubbed `theme::lighten` toward white, gated on
 //!   `no_anim`.
-//! - The fill rides the brand **gold** gradient (deep gold → Phosphor Gold)
-//!   — activity is the accent, so the deck's sole activity indicator is
-//!   unmistakable against the quiet warm-neutral chrome everywhere else.
+//! - The fill rides the brand **ion** gradient (`brand-600` → Ion) —
+//!   activity is the accent, so the deck's sole activity indicator is
+//!   unmistakable against the quiet graphite chrome everywhere else.
 //! - **tok/s** is the focused agent's *live turn* rate — output tokens since
 //!   the turn began over the turn's own elapsed; it is omitted (not guessed)
 //!   whenever there's nothing real to divide, including a running lane with

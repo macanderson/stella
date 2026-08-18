@@ -726,7 +726,7 @@ function Entry({
     // kind of thing was that" from the margin before a single name is read.
     // The `●` glyph itself stays neutral: arenabench carries no brand/identity
     // hue at all (the arena scores stella as one seat among several, so its
-    // gold does not belong in chrome every seat is judged under), so unlike
+    // the brand hue does not belong in chrome every seat is judged under), so unlike
     // the deck's `Rail::Call` — which paints the glyph `ACCENT_DEEP` — the
     // rail here is undyed and the class colour is spent on the one place a
     // reader actually scans: the tool's own name.

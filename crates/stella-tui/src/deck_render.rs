@@ -309,7 +309,7 @@ fn render_tab_bar(tab: DeckTab, area: Rect, buf: &mut Buffer) {
     if area.width >= 44 {
         block = block.title_top(
             Line::from(vec![
-                Span::styled("✦ ", Style::new().fg(theme::GOLD)),
+                Span::styled("✦ ", Style::new().fg(theme::IDENTITY)),
                 Span::styled("stella ", theme::muted()),
             ])
             .right_aligned(),

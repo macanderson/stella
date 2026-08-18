@@ -134,7 +134,7 @@ def icon_markup(icon: Icon) -> str:
     """A square of Ink with the mark centred on it."""
     c = icon.size / 2
     if icon.star_only:
-        art = ck.star(c, c, icon.size * icon.ink_frac, ck.GOLD)
+        art = ck.star(c, c, icon.size * icon.ink_frac, ck.BRAND)
     else:
         art = ck.mark(c, c, icon.size * icon.ink_frac)
     ground = f'<rect width="{icon.size}" height="{icon.size}" fill="{ck.INK}"/>'
@@ -178,12 +178,45 @@ _LINE = re.compile(
 _STAR = re.compile(r'<path d="(M64 26[^"]*)" fill="(#[0-9A-Fa-f]{6})"')
 
 
+def check_light_cut_colour() -> None:
+    """The light cuts paint the mark in `BRAND_ON_LIGHT`, not full `BRAND`.
+
+    v3.0 split the mark's colour by ground: ion measures 1.61:1 on paper,
+    below even the 3:1 non-text floor, so the light cuts step down the ramp
+    while the dark and adaptive ones keep full strength. That is a *rule*, and
+    a rule the kit only writes down is a rule the next recolour silently
+    breaks — the bronze era's own drift (a bronze wordmark shipped beside
+    phosphor chrome for the life of a rebrand) is what this file exists to
+    stop happening again. So it is checked rather than documented.
+
+    The adaptive cuts are deliberately not checked here: they carry BOTH
+    values, the dark one as the fill and the light one behind a
+    `prefers-color-scheme` override, so a fill-colour assertion is the wrong
+    shape for them.
+    """
+    for name in sorted(p.name for p in SVG_DIR.glob("*-color-light.svg")):
+        src = (SVG_DIR / name).read_text(encoding="utf-8")
+        for found in set(re.findall(r'(?:fill|stroke)="(#[0-9A-Fa-f]{6})"', src)):
+            if found.upper() == ck.BRAND:
+                raise SystemExit(
+                    f"{name} paints the mark in full BRAND ({ck.BRAND}), which "
+                    f"measures 1.61:1 on paper. Light cuts take BRAND_ON_LIGHT "
+                    f"({ck.BRAND_ON_LIGHT})."
+                )
+        if ck.BRAND_ON_LIGHT.upper() not in src.upper():
+            raise SystemExit(
+                f"{name} never paints {ck.BRAND_ON_LIGHT} — a colour cut with no "
+                f"brand colour in it is a mono cut wearing the wrong name."
+            )
+
+
 def check_svg_parity() -> None:
     """`cometkit`'s geometry must still be the committed artwork's geometry.
 
-    The kit has been recoloured twice, and both times the SVGs and the Python
-    copies had to move together. This is the test that they did.
+    The kit has been recoloured three times, and every time the SVGs and the
+    Python copies had to move together. This is the test that they did.
     """
+    check_light_cut_colour()
     src = (SVG_DIR / "logomark-color.svg").read_text(encoding="utf-8")
 
     star = _STAR.search(src)
@@ -194,13 +227,13 @@ def check_svg_parity() -> None:
             "STAR_PATH drift: cometkit.py and logo/svg/logomark-color.svg disagree.\n"
             f"  svg:      {star.group(1)}\n  cometkit: {ck.STAR_PATH}"
         )
-    if star.group(2).upper() != ck.GOLD:
-        raise SystemExit(f"star fill is {star.group(2)}, cometkit says {ck.GOLD}")
+    if star.group(2).upper() != ck.BRAND:
+        raise SystemExit(f"star fill is {star.group(2)}, cometkit says {ck.BRAND}")
 
     derived = []
     for x1, y1, x2, _y2, stroke, sw in _LINE.findall(src):
-        if stroke.upper() != ck.GOLD:
-            raise SystemExit(f"trail stroke is {stroke}, cometkit says {ck.GOLD}")
+        if stroke.upper() != ck.BRAND:
+            raise SystemExit(f"trail stroke is {stroke}, cometkit says {ck.BRAND}")
         x1, y1, x2, sw = float(x1), float(y1), float(x2), float(sw)
         derived.append((x1 - sw / 2, y1 - sw / 2, (x2 - x1) + sw, sw))
     if derived != [tuple(map(float, r)) for r in ck.TRAIL_RECTS]:

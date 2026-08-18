@@ -12,83 +12,90 @@
    the one worth restating here: **no accent hue in the chrome. The only colour
    on the page is semantic** — a thing passed, or it did not.
 
-   That replaced the Phosphor Gold accent this file carried since the comet
-   kit. Gold marked what was active, which meant an instrument's chrome
-   competed with its data for the eye; the ink/paper inversion says the same
-   thing (`background:var(--accent); color:var(--ink)`) and says it in the one
+   That replaced the accent hue this file carried since the comet kit. An
+   accent marked what was active, which meant an instrument's chrome competed
+   with its data for the eye; the ink/paper inversion says the same thing
+   (`background:var(--accent); color:var(--ink)`) and says it in the one
    dimension a reader cannot mistake for a measurement.
 
-   The rule now carries one carve-out, and the carve-out is measured rather
-   than tasteful: **gold is permitted on identity, and nowhere else** — the
-   wordmark, the favicon mark, and at most one primary action per page. It may
-   never encode a state. `--identity` #C58A32 against `--warn` #C9A227 is
-   1.23:1, so a reader told to separate "active" from "warning" by hue would be
-   reading a difference that is not there. Three jobs, three channels, no
-   overlap: `--identity` says whose instrument this is, `--accent` says what is
-   selected, `--ok`/`--warn`/`--bad` say what happened.
+   The rule carries one carve-out, and the carve-out is measured rather than
+   tasteful: **the brand hue is permitted on identity, and nowhere else** —
+   the wordmark, the favicon mark, and at most one primary action per page. It
+   may never encode a state. Under the bronze kit that was forced: `--identity`
+   #C58A32 against `--warn` #C9A227 was 1.23:1, an unreadable difference. The
+   v3.0 ion recolour separates them by hue (a cyan against an amber) but not
+   by weight — #00D1F9 against #D9A62E is still 1.22:1 — so the carve-out
+   stands on its own reasoning rather than on the collision: three jobs, three
+   channels, no overlap. `--identity` says whose instrument this is,
+   `--accent` says what is selected, `--ok`/`--warn`/`--bad` say what
+   happened.
 
    What that costs: the product no longer matches the marketing site, which
-   fills its nav, buttons and active states with gold. That is the intended
-   trade — a marketing page has no data for its chrome to compete with, and
-   this page is nothing but data.
+   fills its nav, buttons and active states with the brand hue. That is the
+   intended trade — a marketing page has no data for its chrome to compete
+   with, and this page is nothing but data.
 
-   Token NAMES are unchanged on purpose. Four hundred lines of component CSS
-   below reference them, and re-pointing values leaves every one of those rules
-   correct; renaming would have meant rewriting the document to change its
-   palette. Inlined rather than imported because this page is served as one
+   Token names were unchanged through the previous recolour on purpose: four
+   hundred lines of component CSS below reference them, and re-pointing values
+   leaves every rule correct. The v3.0 recolour broke that once, deliberately
+   — `--gold`/`--gold-bright`/`--gold-deep` had not been a gold for two
+   releases and are `--mark*` now — because a token that names a hue it does
+   not hold is a comment that lies in a place no reader thinks to check.
+   Inlined rather than imported because this page is served as one
    self-contained document — see `dashboard_html_has_no_external_references`
    in ../../tests.rs. */
 :root{
-  /* BEGIN palette — dark: ink ground, paper text, neutral ramp. The surfaces
-     step #0A0A0A → #0F0F0F → #111111 so a card reads as raised by a value
-     step of 1–2 rather than by a shadow. Do not prune this block to the
-     tokens currently referenced; it carries the full set. */
-  --void:#060606; --ground:#0A0A0A; --surface:#0F0F0F; --raised:#111111;
-  --hairline:#1F1F1F; --hairline-strong:#2E2E2E;
-  /* The accent ramp is now the text ramp: "active" is an inversion, not a
-     hue. The names survive so every existing rule keeps working. */
-  --gold:#EDEDED; --gold-bright:#FFFFFF; --gold-deep:#A1A1A1;
-  --text:#EDEDED; --text-2:#A1A1A1; --text-3:#6E6E6E;
+  /* BEGIN palette — dark: obsidian ground, cool paper text, graphite ramp.
+     The surfaces step #070B10 → #0D1319 → #11171D so a card reads as raised
+     by a value step of 1–2 rather than by a shadow. Do not prune this block
+     to the tokens currently referenced; it carries the full set. */
+  --void:#010306; --ground:#070B10; --surface:#0D1319; --raised:#11171D;
+  --hairline:#1F262D; --hairline-strong:#333B43;
+  /* The accent ramp is the text ramp: "active" is an inversion, not a hue.
+     These were `--mark*` until the v3.0 recolour, which is the naming bug the
+     brand kit warns about — a hue in a token name, on tokens that had not
+     been a hue for two releases. */
+  --mark:#E9EDF2; --mark-bright:#FFFFFF; --mark-deep:#A4ABB3;
+  --text:#E9EDF2; --text-2:#A4ABB3; --text-3:#737C88;
   /* Identity. The one hue outside --ok/--warn/--bad, and the header comment's
      carve-out: wordmark, favicon mark, one primary action. Never a state.
      Both values are taken from docs/brand/css/tokens.css rather than mixed
-     here — --stella-gold-500 on ink, --stella-gold-800 on paper. The light
-     value is NOT the brand's --stella-gold-deep (#8B5E1A), which is
-     documented for "small gold text on light surfaces": #2591 chose gold-800
-     because the deep token was under AA on --surface, and the bronze ramp
-     that landed on 2026-08-11 lifted it to 5.42:1, so that argument no longer
-     carries the choice on its own. Gold-800 stays, and now on the wider
-     margin it always had: 8.33:1 on --surface against the deep token's
-     5.42:1, and 8.70:1 as the fill pair against 5.65:1. Which ramp step
-     identity takes is a brand decision, not a follow-on edit. */
-  --identity:#C58A32; --identity-ink:#0B0B0C;
-  /* The three semantic colours, and the only colour anywhere. Desaturated to
-     the reference's own register (its --pass/--fail), so they read as marks on
-     an instrument rather than as UI chrome. --warn keeps a hue rather than
-     collapsing to neutral: it is a distinct state, and dropping it to grey
-     would throw the signal away to satisfy the palette. */
-  --ok:#4CC38A; --warn:#C9A227; --bad:#E5715F;
+     here — --stella-brand-500 on obsidian, --stella-brand-800 on paper. The
+     light value stays one stop below the dark one for the reason #2591 first
+     chose a deeper stop: identity has to clear contrast on --surface, not
+     only on the page ground. brand-800 measures 4.93:1 there and 5.20:1 as
+     the fill pair against white. Which ramp step identity takes is a brand
+     decision, not a follow-on edit. */
+  --identity:#00D1F9; --identity-ink:#070B10;
+  /* The three semantic colours, and the only colour anywhere besides the
+     identity. Held in the reference's own register so they read as marks on
+     an instrument rather than as UI chrome — but lifted with the rest of the
+     v3.0 palette, because an entirely cool page can carry a brighter mark
+     without it shouting. --warn keeps a hue rather than collapsing to
+     neutral: it is a distinct state, and dropping it to grey would throw the
+     signal away to satisfy the palette. */
+  --ok:#3FD99B; --warn:#D9A62E; --bad:#F2687A;
   /* Categorical data marks — a value ramp, not a hue wheel. Series are
      separated by lightness alone, which is the one channel that survives
      greyscale printing, colour-vision deficiency, and a projector. Ordered
      light → dark so --c1 is the most prominent series. */
-  --c1:#EDEDED; --c2:#A1A1A1; --c3:#6E6E6E; --c4:#4A4A4A;
-  --neutral-mark:#4A4A4A;          /* the "everything else" mark — recedes */
+  --c1:#E9EDF2; --c2:#A4ABB3; --c3:#737C88; --c4:#4A535D;
+  --neutral-mark:#4A535D;          /* the "everything else" mark — recedes */
   /* END palette */
 
   /* Semantic alias. One alias, for accent/active/focus. The accent is the
      text colour, so an active surface is an inversion of the page: the fill
-     takes --accent and whatever sits on it takes --ink. Unlike the gold
+     takes --accent and whatever sits on it takes --ink. Unlike a brand-hue
      system, --ink is NOT fixed — it is re-pointed by the light theme below,
      because inverting a light page yields dark chrome with light text. It
      stays a token of its own rather than reusing --ground: a selector that
      paints text in the page-background token is the coupling
      tests/light_mode.rs exists to forbid. */
-  --ink:#0A0A0A;
-  --accent:var(--gold);
-  --accent-wash:rgba(237,237,237,.08); /* paper @8%  — hover / selected fill  */
-  --accent-edge:rgba(237,237,237,.38); /* paper @38% — chip + badge edges     */
-  --sunken:#151515;                    /* inset wells — the reference's --code */
+  --ink:#070B10;
+  --accent:var(--mark);
+  --accent-wash:rgba(233,237,242,.08); /* paper @8%  — hover / selected fill  */
+  --accent-edge:rgba(233,237,242,.38); /* paper @38% — chip + badge edges     */
+  --sunken:#0B1116;                    /* inset wells — the reference's --code */
   /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
      an interactive component; no token in the ground ramp reaches it —
      --hairline-strong measures 1.48:1 on --surface. --text-3 does, so every
@@ -158,26 +165,27 @@
    bug in whichever moved last.
 
    Contrast, computed against WCAG 2.1 relative luminance rather than
-   estimated, worst case on --surface (#FAFAFA — the lightest surface a mark
+   estimated, worst case on --surface (#F7F9FC — the lightest surface a mark
    can land on, so the binding constraint):
 
-     --text 18.97:1   --text-2 7.49:1   --text-3 3.10:1
-     --ok    5.91:1   --warn   5.99:1   --bad    6.74:1
-     --identity 8.33:1 (#674415)
+     --text 18.71:1   --text-2 7.37:1   --text-3 3.24:1
+     --ok    6.25:1   --warn   6.56:1   --bad    6.81:1
+     --identity 4.93:1 (#00778F)
 
-   and on the dark side against --raised (#111111):
+   and on the dark side against --raised (#11171D):
 
-     --text 16.13:1   --text-2 7.31:1   --text-3 3.70:1
-     --ok    8.52:1   --warn   7.81:1   --bad    6.17:1
-     --identity 6.34:1 (#C58A32)
+     --text 15.34:1   --text-2 7.78:1   --text-3 4.27:1
+     --ok    9.97:1   --warn   8.11:1   --bad    6.04:1
+     --identity 9.87:1 (#00D1F9)
 
    Text and --text-2 clear AAA (7:1) on both; the three semantic colours clear
-   AA (4.5:1) on both. --text-3 clears neither and is not meant to, which is
-   the constraint to hold when editing: it carries non-essential labelling
-   only — a legend key, a units suffix — and never a value a reader must act
-   on. The inversion pair (--ink on --accent) is 19.80:1 light, 16.91:1 dark,
-   and the identity fill pair (--identity-ink on --identity) is 8.70:1 light,
-   6.61:1 dark — both clear AA for the one primary action the rule allows.
+   AA (4.5:1) on both. --text-3 clears AAA on neither and is not meant to,
+   which is the constraint to hold when editing: it carries non-essential
+   labelling only — a legend key, a units suffix — and never a value a reader
+   must act on. The inversion pair (--ink on --accent) is 19.73:1 light,
+   16.78:1 dark, and the identity fill pair (--identity-ink on --identity) is
+   5.20:1 light, 10.79:1 dark — both clear AA for the one primary action the
+   rule allows.
 
    The --c1..--c4 series ramp is lightness-ordered rather than
    contrast-matched on purpose: a series is identified by its position in the
@@ -193,34 +201,34 @@
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     color-scheme:light;
-    --void:#F0F0F0; --ground:#FFFFFF; --surface:#FAFAFA; --raised:#FFFFFF;
-    --hairline:#EAEAEA; --hairline-strong:#D4D4D4;
-    --gold:#0A0A0A; --gold-bright:#000000; --gold-deep:#525252;
-    --identity:#674415; --identity-ink:#FFFFFF;
-    --text:#0A0A0A; --text-2:#525252; --text-3:#8F8F8F;
-    --ok:#11703A; --warn:#7A5C00; --bad:#A32F1F;
-    --c1:#0A0A0A; --c2:#525252; --c3:#8F8F8F; --c4:#C4C4C4;
-    --neutral-mark:#C4C4C4;
+    --void:#E9EDF2; --ground:#FFFFFF; --surface:#F7F9FC; --raised:#FFFFFF;
+    --hairline:#E7EBF0; --hairline-strong:#CFD6DD;
+    --mark:#070B10; --mark-bright:#000000; --mark-deep:#4D535A;
+    --identity:#00778F; --identity-ink:#FFFFFF;
+    --text:#070B10; --text-2:#4D535A; --text-3:#828C97;
+    --ok:#0B6B3D; --warn:#7A5200; --bad:#A82036;
+    --c1:#070B10; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
+    --neutral-mark:#C2C9D1;
     --ink:#FFFFFF;                      /* the inversion flips with the page */
-    --accent-wash:rgba(10,10,10,.06);
-    --accent-edge:rgba(10,10,10,.28);
-    --sunken:#F6F6F6;                   /* inset wells */
+    --accent-wash:rgba(7,11,16,.06);
+    --accent-edge:rgba(7,11,16,.28);
+    --sunken:#F3F6F9;                   /* inset wells */
   }
 }
 :root[data-theme="light"]{
   color-scheme:light;
-  --void:#F0F0F0; --ground:#FFFFFF; --surface:#FAFAFA; --raised:#FFFFFF;
-  --hairline:#EAEAEA; --hairline-strong:#D4D4D4;
-  --gold:#0A0A0A; --gold-bright:#000000; --gold-deep:#525252;
-  --identity:#674415; --identity-ink:#FFFFFF;
-  --text:#0A0A0A; --text-2:#525252; --text-3:#8F8F8F;
-  --ok:#11703A; --warn:#7A5C00; --bad:#A32F1F;
-  --c1:#0A0A0A; --c2:#525252; --c3:#8F8F8F; --c4:#C4C4C4;
-  --neutral-mark:#C4C4C4;
+  --void:#E9EDF2; --ground:#FFFFFF; --surface:#F7F9FC; --raised:#FFFFFF;
+  --hairline:#E7EBF0; --hairline-strong:#CFD6DD;
+  --mark:#070B10; --mark-bright:#000000; --mark-deep:#4D535A;
+  --identity:#00778F; --identity-ink:#FFFFFF;
+  --text:#070B10; --text-2:#4D535A; --text-3:#828C97;
+  --ok:#0B6B3D; --warn:#7A5200; --bad:#A82036;
+  --c1:#070B10; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
+  --neutral-mark:#C2C9D1;
   --ink:#FFFFFF;
-  --accent-wash:rgba(10,10,10,.06);
-  --accent-edge:rgba(10,10,10,.28);
-  --sunken:#F6F6F6;
+  --accent-wash:rgba(7,11,16,.06);
+  --accent-edge:rgba(7,11,16,.28);
+  --sunken:#F3F6F9;
 }
 
 /* ── Reset & base ─────────────────────────────────────────────────────── */
@@ -253,7 +261,7 @@ body{
 
 /* ── Focus ────────────────────────────────────────────────────────────── */
 :focus{outline:none}
-:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:var(--radius-sm)}
+:focus-visible{outline:2px solid var(--mark);outline-offset:2px;border-radius:var(--radius-sm)}
 .skip{position:absolute;left:var(--sp2);top:-48px;z-index:60;background:var(--raised);
       color:var(--text);border:1px solid var(--hairline-strong);border-radius:var(--radius);
       padding:8px 14px;font:var(--fs-sm)/1 var(--mono);text-decoration:none;transition:top .12s}
@@ -277,24 +285,22 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
    the OS and ignore this page's own explicit toggle. Taken from
    docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
    /assets/wordmark{,-light}.svg (src/lib.rs). They were byte copies until
-   the 2026-08-11 rebrand, which moved Ink #0B0B0C → #10100F and Paper
-   #F4F1EA → #F2EEE5 alongside the gold; only the gold is propagated here,
-   because the text fills are what tests/light_mode.rs pins as the cut's
-   identity and moving them is a second decision (#2921).
+   the 2026-08-11 rebrand; the v3.0 ion recolour brings them back into step,
+   so both halves of each cut now carry the current kit values (Obsidian
+   #070B10, Paper #E9EDF2) rather than only the brand hue (#2921).
 
-   These are the *color* cuts — the comet star is Bronze Gold #C58A32 on
-   both grounds. This file shipped the mono cuts while this comment claimed
-   the color ones, which is the drift the identity carve-out above resolves:
-   the wordmark is the canonical case of identity, so it is the one place gold
-   is not merely allowed but expected. The star holds its full gold on paper
-   (2.98:1 against #FFFFFF) rather than dropping to the deep ramp, because
-   WCAG 1.4.11 exempts logotypes from contrast minima and the brand rule is
-   "shapes and marks stay full gold on both grounds"; the *text* half of the
-   lockup is baked Ink and carries the legibility. */
+   These are the *color* cuts. The comet star is Ion #00D1F9 on the dark cut
+   and kit `brand-700` #0094B1 on the light one — the v3.0 change to the
+   brand rule, which used to be "shapes and marks stay full brand on both
+   grounds". Bronze held 2.98:1 against #FFFFFF and ion holds 1.83:1, which
+   is a mark nobody can see; WCAG 1.4.11 exempts logotypes from contrast
+   minima, but an invisible logotype is a design defect whether or not a
+   standard forbids it. The deep stop measures 3.58:1 on white. The *text*
+   half of the lockup is baked Obsidian and carries the legibility. */
 /* `.bword-light` alone (one class, specificity 0,1,0) loses to `header
    .bword` above (element+class, 0,1,1), so a bare `display:none` here never
    actually applied — the light cut rendered unconditionally on every theme,
-   its baked-Ink text invisible against a dark ground but its full-gold star
+   its baked-Obsidian text invisible against a dark ground but its brand-hue star
    still visible beside the dark cut's own star. `.bword.bword-light` matches
    both classes already on the element (0,2,0), which beats `header .bword`
    on the class count alone, independent of source order. */
@@ -395,7 +401,7 @@ section[data-tab].on{display:block}
 .tile .v{font:600 var(--fs-xl)/1.15 var(--mono);letter-spacing:-.02em;margin-top:2px}
 .tile .v small{font-size:var(--fs-md);color:var(--text-3);font-weight:400}
 .tile .sub{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-2);margin-top:2px}
-.tile .v.accent{color:var(--gold)}
+.tile .v.accent{color:var(--mark)}
 
 /* ── Tables ───────────────────────────────────────────────────────────── */
 table{width:100%;border-collapse:collapse;font:var(--fs-sm)/1.5 var(--mono)}
@@ -412,14 +418,14 @@ tr.click,tr.drill{cursor:pointer}
 tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-visible td{background:var(--accent-wash)}
 /* A selected row was being marked with a class no stylesheet defined, so the
    sessions list looked identical before and after a click while a whole
-   detail card appeared below the fold. Selection is a gold edge plus a wash —
+   detail card appeared below the fold. Selection is an accent edge plus a wash —
    never hue alone, and never invisible. */
 tbody tr.sel > td{background:var(--accent-wash);color:var(--text)}
 tbody tr.sel > td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
-/* The affordance that says a row opens something. Gold, right-aligned, and
+/* The affordance that says a row opens something. Accent-toned, right-aligned, and
    present on every row rather than revealed on hover: the reason the turn
    list read as inert is that nothing on it looked like a link. */
-td.go{color:var(--gold);text-align:right}
+td.go{color:var(--mark);text-align:right}
 tr:hover td.go{text-decoration:underline}
 .scroll-x{overflow-x:auto}
 .scroll-y{max-height:340px;overflow-y:auto}
@@ -433,18 +439,18 @@ tr:hover td.go{text-decoration:underline}
 .badge.bad{color:var(--bad);border-color:rgba(255,92,122,.42)}
 .badge.warn{color:var(--warn);border-color:rgba(234,179,8,.42)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline-strong)}
-.badge.accent{color:var(--gold);border-color:var(--accent-edge)}
+.badge.accent{color:var(--mark);border-color:var(--accent-edge)}
 /* self-driving: the run list is a control, so it says so on hover and keeps a
    visible selection — the detail panes beside it are meaningless without
    knowing which row produced them. */
 #fa-runs tbody tr{cursor:pointer}
 #fa-runs tbody tr:hover{background:var(--raised)}
-#fa-runs tbody tr.sel{background:var(--raised);box-shadow:inset 2px 0 0 var(--gold)}
-.fa-live{color:var(--gold)}
+#fa-runs tbody tr.sel{background:var(--raised);box-shadow:inset 2px 0 0 var(--mark)}
+.fa-live{color:var(--mark)}
 .fa-sig{padding:var(--sp1) 0;border-bottom:1px solid var(--hairline)}
 .fa-sig:last-child{border-bottom:0}
 .fa-sig b{color:var(--warn)}
-.rowbtn{background:none;border:0;padding:0;font:inherit;color:var(--gold);
+.rowbtn{background:none;border:0;padding:0;font:inherit;color:var(--mark);
         cursor:pointer;text-align:left;font-variant-numeric:tabular-nums}
 .rowbtn:hover{text-decoration:underline}
 .chip{display:inline-block;font:var(--fs-micro)/1.7 var(--mono);color:var(--text-3);
@@ -2928,7 +2934,7 @@ function renderConfig(cfg) {
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const GP = [cssVar("--c1"), cssVar("--c2"), cssVar("--c3")];
 const G_OTHER = cssVar("--neutral-mark");
-const G_EDGE = cssVar("--neutral-mark"), G_EDGE_LIT = cssVar("--gold");
+const G_EDGE = cssVar("--neutral-mark"), G_EDGE_LIT = cssVar("--mark");
 const G_LABEL = cssVar("--text"), G_LABEL_DIM = cssVar("--text-2"), G_HALO = cssVar("--ground");
 const graph = {
   nodes: [], edges: [], groupColor: Object.create(null), adj: [],
@@ -3555,7 +3561,7 @@ $("fa-runs").addEventListener("click", (ev) => {
    the rows carried no cursor, no hover, and a `sel` class no stylesheet
    defined, while the panel a click revealed opened below the fold. Nothing on
    screen connected the click to its effect, so the descent was invisible past
-   its first step. Hence, here: `tr.click` on every row, a gold "turns ↓" /
+   its first step. Hence, here: `tr.click` on every row, an accent "turns ↓" /
    "open ↗" cell that names what the row does, and a scroll to the panel a
    click just revealed. */
 function sesBadge(s, crashed) {

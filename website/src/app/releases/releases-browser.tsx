@@ -35,8 +35,8 @@ import { REPO_URL } from "@/lib/site";
  * danger token: it is the one kind a reader must not skim past.
  */
 const KIND_TOKEN: Record<ChangeKind, string> = {
-  Added: "var(--stella-gold)",
-  Changed: "var(--stella-gold-600)",
+  Added: "var(--stella-brand)",
+  Changed: "var(--stella-brand-600)",
   Fixed: "var(--stella-success)",
   Removed: "var(--stella-neutral-500)",
   Security: "var(--stella-danger)",

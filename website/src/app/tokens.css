@@ -1,14 +1,14 @@
 /**
- * stella's raw palette — brand kit v2.0 ("the comet").
+ * stella's raw palette — brand kit v3.0 ("the comet").
  *
- * One color, owned: Bronze Gold #C58A32 on Ink #10100F, warm Paper for the
- * light ground, and a warm neutral ramp between them. The normative source is
+ * One color, owned: Ion #00d1f9 on Obsidian #070b10, cool Paper for the light
+ * ground, and a cool graphite ramp between them. The normative source is
  * docs/brand/ (css/tokens.css and brand-guidelines.html); every value below is
  * copied from it verbatim — do not tune a hex here, change the kit and mirror
  * it.
  *
  * That "verbatim" is now enforced rather than promised. This file sat on the
- * v1.0 ramp (Phosphor Gold #FFB000 on Ink #0B0B0C) for the whole life of the
+ * v1.0 ramp (Ion #ffb000 on Ink #0b0b0c) for the whole life of the
  * 2026-08-11 bronze rebrand while still carrying the sentence above, and the
  * thirteen logo SVGs under public/brand/ were stale with it — so the site
  * served a bronze wordmark beside phosphor chrome, and the paragraph claiming
@@ -17,10 +17,15 @@
  * website/src/lib/brand-parity.test.ts diffs this ramp and those assets
  * against docs/brand/ and fails when they part.
  *
+ * The token family is `--stella-brand-*`. It was `--stella-gold-*` until v3.0,
+ * which is exactly the failure the kit's own naming rule warns about: a hue in
+ * a token name falsifies itself the first time the hue moves, and this one has
+ * moved three times.
+ *
  * Quick rules from the kit that this site enforces downstream:
- *  - Gold is the signal, never the surface.
- *  - Small gold text on light grounds uses gold-deep (#8B5E1A); full-strength
- *    gold text is a dark-ground privilege.
+ *  - Ion is the signal, never the surface.
+ *  - Small ion text on light grounds uses brand-deep (#00778f); full-strength
+ *    ion text is a dark-ground privilege.
  *  - The comet flies left→right; lowercase always.
  *
  * The semantic aliases at the bottom flip on `.dark` because that is the class
@@ -31,48 +36,48 @@
 
 :root {
   /* ── brand core ─────────────────────────────────────────────────────── */
-  --stella-gold: #c58a32; /* Bronze Gold — CRT amber, gold star */
-  --stella-gold-deep: #8b5e1a; /* small gold text on light surfaces */
-  --stella-ink: #10100f; /* Ink — the terminal, not pure black */
-  --stella-paper: #f2eee5; /* Paper — warm text on dark */
-  --stella-paper-bg: #f5f0e6; /* Paper — light-mode surface */
+  --stella-brand: #00d1f9; /* Ion — the comet's tail, the ion star */
+  --stella-brand-deep: #00778f; /* small brand text on light surfaces */
+  --stella-ink: #070b10; /* Obsidian — the terminal, not pure black */
+  --stella-paper: #e9edf2; /* Paper — cool text on dark */
+  --stella-paper-bg: #eef1f5; /* Paper — light-mode surface */
 
-  /* ── gold ramp ──────────────────────────────────────────────────────── */
-  --stella-gold-50: #fbf3e3;
-  --stella-gold-100: #f3dec0;
-  --stella-gold-200: #ebcb9d;
-  --stella-gold-300: #dfb473;
-  --stella-gold-400: #d39f50;
-  --stella-gold-500: #c58a32; /* oklch(0.677 0.124 73.16) */
-  --stella-gold-600: #a97227;
-  --stella-gold-700: #8b5e1a;
-  --stella-gold-800: #674415;
-  --stella-gold-900: #462e10;
-  --stella-gold-950: #291b0d;
+  /* ── brand ramp ─────────────────────────────────────────────────────── */
+  --stella-brand-50: #eafaff;
+  --stella-brand-100: #c7f2ff;
+  --stella-brand-200: #9de9ff;
+  --stella-brand-300: #72e1ff;
+  --stella-brand-400: #46dbff;
+  --stella-brand-500: #00d1f9; /* oklch(0.795 0.139 218) */
+  --stella-brand-600: #00b0d2;
+  --stella-brand-700: #0094b1;
+  --stella-brand-800: #00778f;
+  --stella-brand-900: #005769;
+  --stella-brand-950: #003440;
 
-  /* ── warm neutrals ──────────────────────────────────────────────────── */
-  --stella-neutral-50: #faf7f1;
-  --stella-neutral-100: #e5e0d7;
-  --stella-neutral-200: #cec7bc;
-  --stella-neutral-300: #b7afa4;
-  --stella-neutral-400: #a1988d;
-  --stella-neutral-500: #8b8278;
-  --stella-neutral-600: #716963;
-  --stella-neutral-700: #554f4b;
-  --stella-neutral-800: #3b3735;
-  --stella-neutral-900: #24211f;
-  --stella-neutral-950: #10100f;
+  /* ── cool neutrals ──────────────────────────────────────────────────── */
+  --stella-neutral-50: #f1f8ff;
+  --stella-neutral-100: #dbe2ea;
+  --stella-neutral-200: #c0c8d0;
+  --stella-neutral-300: #a7aeb6;
+  --stella-neutral-400: #90979e;
+  --stella-neutral-500: #7a8088;
+  --stella-neutral-600: #60666d;
+  --stella-neutral-700: #474d54;
+  --stella-neutral-800: #2f353b;
+  --stella-neutral-900: #1a1f25;
+  --stella-neutral-950: #070b10;
 
   /* ── status. Not part of the brand kit's one-color law: these are
    *    FUNCTIONAL hues (a warning must not read as decoration), and each has
    *    an -ink variant that clears AA on the light ground. Hue is never the
    *    only cue — every use pairs with a glyph or a word. */
-  --stella-success: #4ade80;
-  --stella-success-ink: #16744f;
-  --stella-warning: #eab308;
-  --stella-warning-ink: #a16207;
-  --stella-danger: #ff5c7a;
-  --stella-danger-ink: #c81e3e;
+  --stella-success: #00e786;
+  --stella-success-ink: #007541;
+  --stella-warning: #f2b100;
+  --stella-warning-ink: #865400;
+  --stella-danger: #ff749b;
+  --stella-danger-ink: #a8004c;
 
   /* ── motion — assemble, don't spin ──────────────────────────────────── */
   --stella-ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);
@@ -87,8 +92,8 @@
   --stella-starfield-opacity: 0.16; /* max star opacity */
 
   /* ── elevation / glow ───────────────────────────────────────────────── */
-  --stella-glow-gold: 0 0 24px rgb(197 138 50 / 0.28),
-    0 0 96px rgb(197 138 50 / 0.12);
+  --stella-glow-brand: 0 0 24px rgb(0 209 249 / 0.28),
+    0 0 96px rgb(0 209 249 / 0.12);
   --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25),
     0 8px 28px rgb(0 0 0 / 0.35);
 }
@@ -97,21 +102,26 @@
 :root {
   --stella-bg: var(--stella-paper-bg);
   --stella-fg: var(--stella-ink);
-  --stella-surface: #fbf8f2;
-  --stella-border: #ded5c6;
-  --stella-muted-fg: #6f675b;
-  --stella-accent: var(--stella-gold);
-  /* gold that holds its edge as TEXT on the light ground (kit rule) */
-  --stella-accent-text: var(--stella-gold-deep);
+  --stella-surface: #f7f9fc;
+  --stella-border: #cfd6dd;
+  --stella-muted-fg: #61676f;
+  --stella-accent: var(--stella-brand);
+  /* the ion stop that holds its edge as TEXT on the light ground (kit rule) */
+  --stella-accent-text: var(--stella-brand-deep);
+  /* the stop the MARK takes on a light ground — shapes, not text. v3.0
+     retired the kit's "full strength on both grounds" rule: ion is 1.61:1 on
+     paper, a logotype nobody can see. */
+  --stella-mark-shape: var(--stella-brand-700);
 }
 
 /* ── semantic aliases — dark (ink) ───────────────────────────────────── */
 .dark {
   --stella-bg: var(--stella-ink);
   --stella-fg: var(--stella-paper);
-  --stella-surface: #171614;
-  --stella-border: #2c2924;
-  --stella-muted-fg: #a19a8e;
-  --stella-accent: var(--stella-gold);
-  --stella-accent-text: var(--stella-gold);
+  --stella-surface: #12181d;
+  --stella-border: #2a3036;
+  --stella-muted-fg: #9299a1;
+  --stella-accent: var(--stella-brand);
+  --stella-accent-text: var(--stella-brand);
+  --stella-mark-shape: var(--stella-brand);
 }
