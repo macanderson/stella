@@ -140,6 +140,22 @@ pub enum Inbound {
     /// auto-registers, because a lane that does not exist is precisely the
     /// case the synthetic fallback lane already covers.
     ShellEvent { agent: AgentId, event: AgentEvent },
+    /// One tick of a long host-side pass's live counter — `/init`'s code-graph
+    /// walk and its two embedding passes. Rewrites the counter it last wrote
+    /// ([`crate::model::SessionModel::set_progress_line`]) instead of appending,
+    /// so a pass that ticks two hundred times leaves **one** line behind, next
+    /// to the ✓ summaries that are init's actual record.
+    ///
+    /// Deliberately not [`Inbound::Event`] with an `AgentEvent::Text`: that path
+    /// coalesces every line into one fold, which is what buried those summaries
+    /// under a wall of near-identical repeats. It is also not
+    /// [`Inbound::Notice`] — a notice dwells three seconds and then is gone,
+    /// while a counter's final value is the thing worth keeping.
+    ///
+    /// Transcript only: no status, no counters, and no trace row (the strip
+    /// keeps naming the milestone the pass is inside). Folding an unknown id is
+    /// a no-op, exactly like [`Inbound::ShellEvent`].
+    Progress { agent: AgentId, text: String },
     /// A supervisor lifecycle transition not carried by the event stream.
     Status { agent: AgentId, status: AgentStatus },
     /// The dispatcher took the oldest queued prompt and handed it to an

@@ -15,6 +15,46 @@ use super::graph::build_code_graph;
 use super::*;
 use crate::domains::{cached_taxonomy, summarize_repo};
 
+/// One narrated line of init, carrying whether it is part of the **record** or
+/// part of the **liveness**.
+///
+/// Both used to be the same thing — a `String` appended wherever it landed —
+/// and the liveness half won: a large workspace ticks its three long passes
+/// (the code-graph walk, then the file and chunk embedding passes) once a
+/// second for minutes, so the ✓ summaries that say what init actually did
+/// arrived buried under a hundred near-identical `· chunk index: N files
+/// embedded…` lines. The counter still has to be *live* — that is the whole
+/// reason #3102 replaced the spinner with real counts — so it stays, and only
+/// its accumulation goes: each surface rewrites the previous tick.
+///
+/// The distinction is in the type rather than in a prefix a surface could
+/// sniff (`starts_with("· ")`), because a caller adding a fourth long pass
+/// should have to answer which kind of line it emits.
+pub(crate) enum InitLine {
+    /// A permanent line: appended, and read afterwards as the record of init.
+    Step(String),
+    /// A live counter: replaces the previous `Progress` line rather than
+    /// appending. The last tick of a pass stays on screen — a counter that
+    /// erased itself would leave nothing to read, which is the failure #3102
+    /// diagnosed in the cinematic it retired.
+    Progress(String),
+}
+
+impl InitLine {
+    /// The line's text, whichever kind it is — for a test asserting on what
+    /// was said rather than on how it was shown.
+    ///
+    /// Test-only on purpose: every shipping surface has to render the two
+    /// kinds differently, and an accessor that discards the distinction is
+    /// exactly the shortcut that would put the flood back.
+    #[cfg(test)]
+    pub(crate) fn text(&self) -> &str {
+        match self {
+            Self::Step(text) | Self::Progress(text) => text,
+        }
+    }
+}
+
 /// The domain step of init, wearing the #3102 inference-skip gate: a
 /// model-inferred taxonomy whose recorded repo-shape fingerprint still
 /// matches the tree is reused **without a model call** — the cost the gate
@@ -62,10 +102,22 @@ pub(crate) async fn init_workspace(
     workspace_root: &std::path::Path,
     model_hint: Option<&str>,
     budget_limit: Option<f64>,
-    emit: &mut dyn FnMut(String),
+    emit: &mut dyn FnMut(InitLine),
 ) -> Result<(Domains, f64), String> {
-    let (domains, inference_cost_usd) =
-        resolve_domains(provider, workspace_root, model_hint, budget_limit, emit).await;
+    // The two stages that narrate nothing live keep the plain `String` sink:
+    // every line they emit is part of the record, so the wrapper naming that
+    // once is better than making each call site repeat it.
+    let (domains, inference_cost_usd) = {
+        let mut step = |line: String| emit(InitLine::Step(line));
+        resolve_domains(
+            provider,
+            workspace_root,
+            model_hint,
+            budget_limit,
+            &mut step,
+        )
+        .await
+    };
 
     // The code graph needs no provider — build it regardless of how the
     // domains were inferred, so the index exists even fully offline.
@@ -74,7 +126,10 @@ pub(crate) async fn init_workspace(
     // Adopt commands/skills/agents other code agents keep in `.claude/` and
     // `.agents/` (workspace + user scope) as symlinks into stella's own
     // directories — idempotent, never clobbers, never fatal.
-    crate::extensions::sync_extensions(workspace_root, emit);
+    {
+        let mut step = |line: String| emit(InitLine::Step(line));
+        crate::extensions::sync_extensions(workspace_root, &mut step);
+    }
 
     let path = domains.save(workspace_root)?;
 
@@ -86,18 +141,78 @@ pub(crate) async fn init_workspace(
         m.record_taxonomy(&domains).await;
     }
 
-    emit(format!(
+    emit(InitLine::Step(format!(
         "✓ {} domains ({}) → {}",
         domains.domains.len(),
         domains.inferred_by,
         path.display()
-    ));
+    )));
     if inference_cost_usd > 0.0 {
-        emit(format!(
+        emit(InitLine::Step(format!(
             "domain inference model cost: ${inference_cost_usd:.6}"
-        ));
+        )));
     }
     Ok((domains, inference_cost_usd))
+}
+
+/// The plain-stdout narrator both non-deck init paths hand to
+/// [`init_workspace`] — `stella init` and the plain REPL's `/init`.
+///
+/// An [`InitLine::Progress`] counter rewrites its own line where the terminal
+/// can take one back, and is simply appended where it cannot: a redirected
+/// `stella init` log has to stay readable, and a `\r` in a file is not. Either
+/// way the last tick survives — nothing here erases what it drew, which is the
+/// failure #3102 diagnosed in the cinematic it retired.
+pub(crate) fn stdout_narrator() -> impl FnMut(InitLine) + Send {
+    narrator(false)
+}
+
+/// [`stdout_narrator`] against stderr — what the session-startup index build
+/// uses, so its progress never lands in a machine-readable stdout
+/// (`crate::agent::spawn_session_graph`).
+pub(crate) fn stderr_narrator() -> impl FnMut(InitLine) + Send {
+    narrator(true)
+}
+
+fn narrator(to_stderr: bool) -> impl FnMut(InitLine) + Send {
+    use std::io::IsTerminal;
+
+    let rewritable = if to_stderr {
+        std::io::stderr().is_terminal()
+    } else {
+        std::io::stdout().is_terminal()
+    };
+    // True while the cursor is parked on a counter line the next tick may
+    // overwrite; a step landing there has to close it first, or it would print
+    // on top of the count.
+    let mut counter_open = false;
+    move |line: InitLine| {
+        use std::io::Write;
+
+        let mut out: Box<dyn Write> = if to_stderr {
+            Box::new(std::io::stderr())
+        } else {
+            Box::new(std::io::stdout())
+        };
+        let _ = match line {
+            InitLine::Step(text) => {
+                let lead = if std::mem::take(&mut counter_open) {
+                    "\n"
+                } else {
+                    ""
+                };
+                writeln!(out, "{lead}  {text}")
+            }
+            InitLine::Progress(text) if rewritable => {
+                counter_open = true;
+                // Erase to end of line before parking the cursor back at the
+                // start: without it, a shorter count leaves the tail of the
+                // longer one it replaced.
+                write!(out, "\r  {text}\x1b[K").and_then(|()| out.flush())
+            }
+            InitLine::Progress(text) => writeln!(out, "  {text}"),
+        };
+    }
 }
 
 /// `stella init` — infer the workspace's domain taxonomy, build the code-graph
@@ -143,7 +258,7 @@ pub async fn run_init(
             }
         };
 
-    let mut emit = |line: String| println!("  {line}");
+    let mut emit = stdout_narrator();
     let (domains, _inference_cost_usd) = init_workspace(
         provider.as_deref(),
         &workspace_root,
