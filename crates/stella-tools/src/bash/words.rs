@@ -28,7 +28,14 @@
 //! to sit in **command position** before it will name a target. The audit in
 //! [`super::shell_write_audit`] deliberately does neither: it is a fence
 //! around what the shell may be about to overwrite, so a path appearing
-//! anywhere in the text is exactly what it wants to see.
+//! anywhere in the text is exactly what it wants to see. That is the right
+//! call for the write half and an open question for the read half, where the
+//! same data text can refuse a read the shell never performs (#3618).
+//!
+//! Command position is read from the word *before* the `cd`, so it is only as
+//! good as the splitter's word boundaries: `(` and `)` are ordinary word
+//! characters there, which is why the glued `(cd /outside; ls)` is still
+//! missed (#3619). Every miss here is silence, never a wrong note.
 
 use std::path::Path;
 
@@ -53,11 +60,16 @@ struct Heredoc {
 /// their text. Everything else is copied through byte for byte — this removes
 /// regions, it does not rewrite words.
 ///
+/// An arithmetic expansion is copied through whole, because the `<<` in
+/// `$((1 << 3))` is a left shift and not a heredoc opener — reading it as one
+/// registers a delimiter (`3))`) that never arrives and swallows every later
+/// line, silencing a real `cd`.
+///
 /// Deliberately partial, on the "better a missed note than a wrong one"
 /// posture this whole module holds: a delimiter produced by expansion
-/// (`<<$END`) is taken literally, and an unterminated heredoc swallows the
-/// rest of the command rather than guessing where it ended. Both directions
-/// lose a warning; neither invents one.
+/// (`<<$END`) is taken literally (#3620), and an unterminated heredoc
+/// swallows the rest of the command rather than guessing where it ended. Both
+/// directions lose a warning; neither invents one.
 fn strip_data_regions(command: &str) -> String {
     let chars: Vec<char> = command.chars().collect();
     let mut out = String::with_capacity(command.len());
@@ -92,6 +104,15 @@ fn strip_data_regions(command: &str) -> String {
                 while i < chars.len() && chars[i] != '\n' {
                     i += 1;
                 }
+            }
+            // `$(( … ))` is arithmetic, where `<<` is a shift operator. Copy
+            // the whole expansion through so the heredoc arm never sees it.
+            '$' if !in_single
+                && !in_double
+                && chars.get(i + 1) == Some(&'(')
+                && chars.get(i + 2) == Some(&'(') =>
+            {
+                i = copy_arithmetic_expansion(&chars, i, &mut out);
             }
             // `<<` opens a heredoc; `<<<` is a here-string, whose word is
             // ordinary text on the same line and needs no skipping.
@@ -135,6 +156,30 @@ fn strip_data_regions(command: &str) -> String {
         }
     }
     out
+}
+
+/// Copy the `$(( … ))` expansion beginning at `from` into `out` verbatim, and
+/// return the index just past its closing `))`.
+///
+/// Parentheses are counted rather than matched textually so a nested group
+/// (`$(( (1 << 3) + 2 ))`) closes where it really closes. An expansion that is
+/// never closed copies to the end of input, which loses nothing: the text is
+/// still scanned as ordinary words.
+fn copy_arithmetic_expansion(chars: &[char], from: usize, out: &mut String) -> usize {
+    let mut i = from;
+    out.push_str("$((");
+    i += 3;
+    let mut depth = 2usize;
+    while i < chars.len() && depth > 0 {
+        match chars[i] {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    i
 }
 
 /// Is the character at `at` the first of a word — start of input, or preceded
@@ -205,6 +250,61 @@ fn skip_heredoc_body(chars: &[char], from: usize, heredoc: &Heredoc) -> usize {
     i
 }
 
+/// Does the word *after* `word` sit in command position, given whether `word`
+/// itself does?
+///
+/// Command position is where the shell expects a command name, and it is
+/// reached three ways, not one. An operator word ends the previous command
+/// unconditionally. A reserved word introduces a command list (`then`, `do`,
+/// `{`, `!`, …) — but only when the reserved word is itself in command
+/// position, because `echo then cd /x` passes `then` to `echo` as an ordinary
+/// argument. A transparent prefix keeps the position open across itself: a
+/// variable assignment, or one of the three words that can precede the `cd`
+/// **builtin** (`time`, `command`, `builtin`) — `sudo`, `env` and `nohup` are
+/// deliberately absent, since none of them can execute a shell builtin.
+///
+/// The narrow rule this replaces — "right after an operator word" — silently
+/// stopped warning on `if …; then cd /outside; fi`, `for … do cd /outside`,
+/// `{ cd /outside; }`, `FOO=1 cd /outside` and `time cd /outside`, every one
+/// of which the `windows(2)` scan before #2301 did catch. Those are real
+/// escapes, and losing them was a regression, not a posture.
+fn next_word_is_a_command(word: &str, word_is_a_command: bool) -> bool {
+    if is_operator_word(word) {
+        return true;
+    }
+    word_is_a_command && (introduces_a_command(word) || is_transparent_prefix(word))
+}
+
+/// Reserved words after which the shell reads another command.
+///
+/// `for`, `select`, `case` and `in` are absent on purpose: what follows them
+/// is a name or a word list, not a command, and the command only starts at
+/// the `do`/`)` that closes the header.
+fn introduces_a_command(word: &str) -> bool {
+    matches!(
+        word,
+        "if" | "then" | "elif" | "else" | "while" | "until" | "do" | "{" | "(" | "!"
+    )
+}
+
+/// Words that may sit in front of a command without being one: a variable
+/// assignment (`FOO=1 cd /x`), and the prefixes that can still run a builtin.
+///
+/// An assignment is recognised structurally rather than by name — a leading
+/// `NAME=`, where `NAME` is a shell identifier. `=` alone, `1FOO=x` and
+/// `--flag=v` are not assignments and correctly leave command position.
+fn is_transparent_prefix(word: &str) -> bool {
+    if matches!(word, "time" | "command" | "builtin") {
+        return true;
+    }
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// If the command `cd`s somewhere outside the workspace `root`, return that
 /// target — every other tool is confined to `root`, so an edit under a drifted
 /// tree is invisible to the file tools, the turn's diff, and verification (and
@@ -214,14 +314,16 @@ fn skip_heredoc_body(chars: &[char], from: usize, heredoc: &Heredoc) -> usize {
 ///
 /// Two rules keep a `cd` that is *data* from being read as a directory change
 /// (#2301): the non-executed regions come off first
-/// ([`strip_data_regions`]), and the word must sit in **command position** —
-/// first in the text, or right after an operator word. `echo cd /outside`
-/// therefore says nothing, while `ls\ncd /outside` still warns, because the
-/// newline is an operator word.
+/// ([`strip_data_regions`]), and the word must sit in **command position**
+/// ([`next_word_is_a_command`]). `echo cd /outside` says nothing, while
+/// `ls\ncd /outside` still warns, because the newline is an operator word.
 pub(super) fn cd_escape_target(command: &str, root: &Path) -> Option<String> {
     let words = shell_words(&strip_data_regions(command));
+    let mut command_position = true;
     for (index, word) in words.iter().enumerate() {
-        if word != "cd" || (index > 0 && !is_operator_word(&words[index - 1])) {
+        let here = command_position;
+        command_position = next_word_is_a_command(word, here);
+        if word != "cd" || !here {
             continue;
         }
         let Some(target) = words.get(index + 1).map(String::as_str) else {
@@ -367,6 +469,76 @@ mod tests {
         assert_eq!(
             cd_escape_target("cat > s.sh <<'EOF'\necho hi\nEOF\ncd /", &root).as_deref(),
             Some("/")
+        );
+    }
+
+    /// Command position is not "right after an operator": a shell keyword, a
+    /// brace group and an assignment prefix all introduce a command too, and
+    /// the `windows(2)` scan this replaced caught every one of them.
+    #[test]
+    fn a_cd_after_a_keyword_or_a_prefix_is_still_an_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for command in [
+            "if [ -d /x ]; then cd /outside; fi",
+            "if [ -d /x ]; then :; else cd /outside; fi",
+            "for f in a b; do cd /outside; done",
+            "while read -r l; do cd /outside; done",
+            "{ cd /outside; }",
+            "( cd /outside )",
+            "FOO=1 BAR=2 cd /outside",
+            "time cd /outside",
+            "command cd /outside",
+            "! cd /outside",
+        ] {
+            assert_eq!(
+                cd_escape_target(command, &root).as_deref(),
+                Some("/outside"),
+                "{command} escapes the root and must still warn"
+            );
+        }
+    }
+
+    /// The other half of the rule above: a keyword or a prefix word that is
+    /// itself an *argument* introduces nothing, so the `cd` behind it is
+    /// still data.
+    #[test]
+    fn a_keyword_shaped_argument_does_not_promote_a_cd() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for command in [
+            "echo then cd /outside",
+            "echo time cd /outside",
+            "echo FOO=1 cd /outside",
+            "git commit -m do cd /outside",
+        ] {
+            assert_eq!(
+                cd_escape_target(command, &root),
+                None,
+                "{command} runs no cd and must stay silent"
+            );
+        }
+    }
+
+    /// `<<` inside an arithmetic expansion is a left shift, not a heredoc
+    /// opener — reading it as one swallows the rest of the command and
+    /// silences a real `cd`.
+    #[test]
+    fn an_arithmetic_shift_is_not_a_heredoc() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        assert_eq!(
+            cd_escape_target("echo $((1 << 3))\ncd /outside", &root).as_deref(),
+            Some("/outside")
+        );
+        assert_eq!(
+            cd_escape_target("n=$(( (1 << 3) + 2 ))\ncd /outside", &root).as_deref(),
+            Some("/outside")
+        );
+        // A real heredoc beside an arithmetic expansion still hides its body.
+        assert_eq!(
+            cd_escape_target("cat <<'EOF' $((1 << 3))\ncd /outside\nEOF", &root),
+            None
         );
     }
 
