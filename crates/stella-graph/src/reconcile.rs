@@ -30,7 +30,7 @@
 //!
 //! - [`Plan::Unchanged`] does **not** authorize skipping a pass. HEAD sitting
 //!   still is the normal state of a session that is editing files. The
-//!   content-hash skip in [`crate::store`] remains the truth about what needs
+//!   content-hash skip in the indexer remains the truth about what needs
 //!   re-parsing; this module only ever says *where to look first*.
 //! - [`Plan::Scoped`] is a **superset request, not a filter**. The paths it
 //!   names are known-dirty and worth doing eagerly; files it does not name may
@@ -97,7 +97,7 @@ pub enum FullWalkReason {
 ///
 /// Read every variant as advice about **ordering and eagerness**, never as
 /// permission to skip work — see this module's caveat. The index's
-/// correctness rests on the content hash in [`crate::store`] in all four.
+/// correctness rests on the indexer's content hash in all four.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Plan {
     /// Not a git repository (or git cannot be reached at all). There is no

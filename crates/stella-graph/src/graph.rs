@@ -204,10 +204,8 @@ impl CodeGraph {
             //    behaviour this step is an accelerator on top of.
             let reconciled = inner.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                let graph = CodeGraph {
-                    inner: reconciled.clone(),
-                };
-                graph.reconcile_with_head()
+                let oracle = reconcile::GitCli::new(&reconciled.root);
+                reconcile_inner(&reconciled, &oracle)
             })
             .await;
 
@@ -284,26 +282,7 @@ impl CodeGraph {
         &self,
         oracle: &dyn reconcile::RepoOracle,
     ) -> Result<(reconcile::Plan, IndexStats), GraphError> {
-        let mut conn = self.inner.write_guard();
-        let stored = reconcile::read_head(&conn)?;
-        let plan = reconcile::plan(stored.as_deref(), oracle);
-
-        let paths = reconcile::absolute_priority_paths(&self.inner.root, &plan);
-        let stats = if paths.is_empty() {
-            IndexStats::default()
-        } else {
-            store::apply_changes(&mut conn, &self.inner.root, &self.inner.grammars, &paths)?
-        };
-
-        // Recorded only after the work committed. Stamping first and dying
-        // mid-pass would leave the store claiming a commit it never indexed,
-        // and the next reconciliation would see an unmoved HEAD and scope
-        // nothing — the one way this design loses a file permanently rather
-        // than merely late.
-        if let Some(head) = plan.commit_to_record() {
-            reconcile::record_head(&conn, head)?;
-        }
-        Ok((plan, stats))
+        reconcile_inner(&self.inner, oracle)
     }
 
     /// Run a full incremental index pass now (walk, re-parse only changed
@@ -698,6 +677,43 @@ impl CodeGraph {
         }
         import::rel_to_slash(path)
     }
+}
+
+/// The reconciliation pass, over the shared [`Inner`] rather than over a
+/// [`CodeGraph`] handle.
+///
+/// It takes `&Inner` for a specific reason, and the shape is load-bearing:
+/// [`CodeGraph`]'s `Drop` calls `shutdown`, on the documented assumption that
+/// a handle going out of scope is the *last* public handle. Fabricating a
+/// second `CodeGraph` from a cloned `Arc<Inner>` — which is what the mount
+/// task would otherwise have to do to call a method — therefore tears the
+/// whole graph down when that temporary drops: the shutdown flag latches, and
+/// `set_watcher` then refuses to install the live watcher for the rest of the
+/// session. A free function over `&Inner` cannot make that mistake.
+fn reconcile_inner(
+    inner: &Inner,
+    oracle: &dyn reconcile::RepoOracle,
+) -> Result<(reconcile::Plan, IndexStats), GraphError> {
+    let mut conn = inner.write_guard();
+    let stored = reconcile::read_head(&conn)?;
+    let plan = reconcile::plan(stored.as_deref(), oracle);
+
+    let paths = reconcile::absolute_priority_paths(&inner.root, &plan);
+    let stats = if paths.is_empty() {
+        IndexStats::default()
+    } else {
+        store::apply_changes(&mut conn, &inner.root, &inner.grammars, &paths)?
+    };
+
+    // Recorded only after the work committed. Stamping first and dying
+    // mid-pass would leave the store claiming a commit it never indexed, and
+    // the next reconciliation would see an unmoved HEAD and scope nothing —
+    // the one way this design loses a file permanently rather than merely
+    // late.
+    if let Some(head) = plan.commit_to_record() {
+        reconcile::record_head(&conn, head)?;
+    }
+    Ok((plan, stats))
 }
 
 impl Drop for CodeGraph {
