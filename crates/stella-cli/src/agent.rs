@@ -72,7 +72,7 @@ pub(crate) use goal::*;
 pub(crate) use graph::spawn_session_graph;
 #[cfg(test)]
 use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
-pub(crate) use init::init_workspace;
+pub(crate) use init::{InitIo, init_workspace};
 pub use init::run_init;
 use outcome::{
     VerificationRequirement, pipeline_episode_outcome, pipeline_failure_reason,
@@ -832,13 +832,13 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         }
         if input == "/init" {
             println!();
-            let mut emit = |line: String| println!("  {line}");
+            let mut io = init::InitIo::stdout_tty();
             match init_workspace(
                 Some(&*provider),
                 &cfg.workspace_root,
                 Some(&cfg.model_id),
                 remaining_budget(&budget),
-                &mut emit,
+                &mut io,
             )
             .await
             {

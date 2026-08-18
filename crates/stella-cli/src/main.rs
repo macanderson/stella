@@ -36,6 +36,7 @@ mod cli;
 mod cloud_drain;
 mod command_deck;
 mod commands_cmd;
+mod commands_offer;
 mod config;
 mod config_wiring;
 mod context_cmd;
