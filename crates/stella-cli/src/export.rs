@@ -486,9 +486,9 @@ fn render_dashboard(
 
      The palette used to be interpolated from `stella_tui::theme`, which was
      right when the export's only sibling was the terminal. It is wrong now:
-     the TUI palette is gold-chromed by design (ACCENT == BRAND == #FFB81A,
-     and gold there marks a Running state), while a web instrument's chrome
-     must not carry a hue at all. Generating from the terminal guaranteed the
+     the TUI palette is accent-chromed by design (ACCENT == BRAND == Ion
+     #00D1F9, and that hue marks a Running state), while a web instrument's
+     chrome must not carry a hue at all. Generating from the terminal guaranteed the
      export matched the one surface it should no longer match. The parity
      test replaces that guarantee with the correct one.
 
