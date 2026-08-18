@@ -62,9 +62,7 @@ fn a_successful_result_previews_its_output_rather_than_one_line() {
 
 #[test]
 fn a_truncated_success_says_how_much_is_hidden_and_which_key_shows_it() {
-    let body = (1..=40)
-        .map(|i| format!("line {i}\n"))
-        .collect::<String>();
+    let body = (1..=40).map(|i| format!("line {i}\n")).collect::<String>();
     let rendered = text_of(&collapsed(&result(&body)));
 
     // Previously failure-only: a success stated its size in the metric column

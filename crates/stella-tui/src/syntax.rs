@@ -433,9 +433,7 @@ fn json_runs(code: &str) -> Runs {
             ));
             continue;
         }
-        if c.is_ascii_digit()
-            || (c == '-' && chars.get(i + 1).is_some_and(char::is_ascii_digit))
-        {
+        if c.is_ascii_digit() || (c == '-' && chars.get(i + 1).is_some_and(char::is_ascii_digit)) {
             let start = i;
             i += 1;
             while i < chars.len() {
@@ -889,7 +887,10 @@ mod tests {
     #[test]
     fn json_separates_keys_from_string_values() {
         let runs = tokenize(r#"  "query": "needle","#, Lang::Json);
-        assert_eq!(runs.iter().find(|(t, _)| t == "\"query\"").unwrap().1, Some(Tok::Keyword));
+        assert_eq!(
+            runs.iter().find(|(t, _)| t == "\"query\"").unwrap().1,
+            Some(Tok::Keyword)
+        );
         assert_eq!(
             runs.iter().find(|(t, _)| t == "\"needle\"").unwrap().1,
             Some(Tok::Str)

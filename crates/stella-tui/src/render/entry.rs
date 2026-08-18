@@ -51,7 +51,7 @@ const OK_PREVIEW: usize = FAIL_PREVIEW;
 /// Does this payload read as JSON, and so earn syntax coloring?
 ///
 /// Deliberately the opening delimiter rather than a parse: a tool result is
-/// middle-elided at [`OUTPUT_BUDGET`](crate::model::summarize) before it ever
+/// middle-elided at `OUTPUT_BUDGET` (`crate::model::summarize`) before it ever
 /// reaches here, so a large JSON body no longer parses and a parse test would
 /// color exactly the short results that need it least. The lexer degrades to
 /// untagged runs on anything it cannot classify, so the cost of a false
