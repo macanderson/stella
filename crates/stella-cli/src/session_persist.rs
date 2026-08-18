@@ -781,6 +781,63 @@ mod tests {
         );
     }
 
+    fn resume_state_with(records: Vec<JournalRecord>, pipeline: Option<bool>) -> ResumeState {
+        ResumeState {
+            record: SessionRecord::new("/tmp/ws", "t"),
+            records,
+            history: None,
+            queue: Vec::new(),
+            interrupted: Vec::new(),
+            pipeline,
+            spent_usd: None,
+        }
+    }
+
+    /// **Witness (#3381 audit finding 2).** A pre-flip session always ran the
+    /// then-default staged pipeline and never journaled a `Pipeline` record
+    /// (that record type postdates it) — so it has journal history but
+    /// `pipeline == None`. Resuming it must restore the pipeline persona,
+    /// not silently swap to the new raw default with no user action and no
+    /// record. This assertion fails on the pre-fix
+    /// `resume_state.and_then(|rs| rs.pipeline).unwrap_or(false)` derivation
+    /// (which reads `false` here) and passes on this one.
+    #[test]
+    fn a_resumed_session_with_history_but_no_pipeline_record_restores_on() {
+        let history = vec![JournalRecord::Register {
+            agent: "lead".into(),
+            title: "t".into(),
+            role: "lead".into(),
+            model: None,
+        }];
+        assert!(derive_pipeline_persona(true, None));
+        assert!(initial_pipeline_persona(Some(&resume_state_with(history, None))));
+    }
+
+    /// A genuinely fresh session — no resume state at all, or a resumed one
+    /// with an empty journal — starts under today's default: OFF.
+    #[test]
+    fn a_fresh_session_starts_off() {
+        assert!(!derive_pipeline_persona(false, None));
+        assert!(!initial_pipeline_persona(None));
+        assert!(!initial_pipeline_persona(Some(&resume_state_with(
+            Vec::new(),
+            None
+        ))));
+    }
+
+    /// An explicit `Pipeline` record always wins, in either direction,
+    /// regardless of whether the session also has prior history.
+    #[test]
+    fn an_explicit_pipeline_record_always_wins() {
+        assert!(!derive_pipeline_persona(true, Some(false)));
+        assert!(derive_pipeline_persona(false, Some(true)));
+        let history = vec![JournalRecord::Pipeline { on: false }];
+        assert!(!initial_pipeline_persona(Some(&resume_state_with(
+            history,
+            Some(false)
+        ))));
+    }
+
     #[test]
     fn journal_lanes_names_every_non_lead_lane_once_in_order() {
         let records = vec![
