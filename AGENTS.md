@@ -9,12 +9,15 @@ Stella is a fast, BYOK ("bring your own key"), model-agnostic terminal coding
 agent, written in Rust. Proving a task **done** with a **witness test** — one
 that fails on the old code and passes on the new — is what "verified done,
 not claimed done" means here, and that guarantee is **a property of the path
-that produced the evidence, not of the binary**: the built-in staged pipeline
-runs the check itself and watches the fail→pass flip, but verification
-supplied by an installed plugin is the plugin's own self-reported evidence,
-which Stella evaluates against a declared rule and does not re-run or
-re-check (#3511; `doc:pipeline-as-plugins` is the extraction plan moving the
-former into the latter). It is the open-source reference implementation of
+that produced the evidence, not of the binary**: opted into with `stella run
+--pipeline classic`, the built-in staged pipeline runs the check itself and
+watches the fail→pass flip, but verification supplied by an installed
+wrapper plugin (`stella run --pipeline <plugin-id>`) is the plugin's own
+self-reported evidence, which Stella evaluates against a declared rule and
+does not re-run or re-check (#3511; `doc:pipeline-as-plugins` is the
+extraction plan moving the former into the latter). Neither path runs by
+default — a plain `stella run` is the raw step-loop with no verification
+stage over it. It is the open-source reference implementation of
 Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---

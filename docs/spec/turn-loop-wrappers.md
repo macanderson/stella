@@ -6,7 +6,7 @@ status: living
 
 # One loop, six doors, and wrappers are plugins
 
-**Status:** living, updated 2026-08-17. Written 2026-08-16 from Mac's
+**Status:** living, updated 2026-08-18. Written 2026-08-16 from Mac's
 architecture review of the "Stella Turn Loop — Step by Step" deck
 (`website/public/presentations/turn-loop/`, landed in #3377); §9 was added the
 same week to resolve four places the vision below hit something already
@@ -15,18 +15,24 @@ actually shipped. **Move one (§3, the engine owns its ending) is landed.** Of
 move two (§4): the socket itself — the `TurnWrapper` trait, both transports,
 `judge`/`again`, and the wire contract — landed in `stella-runtime` and
 `stella-plugin` (#3479, `doc:wrapper-socket`, `doc:pipeline-as-plugins` Track
-A), but nothing yet drives a live turn through it, and neither the staged
-pipeline nor `goal.rs` has moved onto it (§9.1's subtraction from `stella-core`
-has not happened). Move three (§5) landed its manifest half — `[wrapper]`
-stages, the closed condition grammar, the `pipeline_variant` column — but the
-flag inversion (§5 "Flip the default") has not shipped. `doc:pipeline-as-plugins`
-is the completion plan and the current source of truth for exactly what has
-landed; this document is the vision it completes and the place §9's
-architecture-review corrections live.
+A), and the host sequence that drives a live turn through it has landed too
+(#3494, `stella_runtime::WrapperDispatch`, driven by `stella run --pipeline
+<variant>`) — but neither the staged pipeline nor `goal.rs` has moved *onto*
+this socket (§9.1's subtraction from `stella-core` has not happened; the
+staged pipeline instead grew its own, separate manifest-driven dispatch, §5
+below). Move three (§5) landed its manifest half — `[wrapper]` stages, the
+closed condition grammar, the `pipeline_variant` column — **and its flag
+inversion has now shipped too** (§5 "Flip the default", #3381, PR #3694): the
+raw loop is the default on every door and `--pipeline <variant>` is the sole
+opt-in. `doc:pipeline-as-plugins` is the completion plan and the current
+source of truth for exactly what has landed; this document is the vision it
+completes and the place §9's architecture-review corrections live.
 
 Everything this document says about today's code was read out of the tree at
-`main` `730f2286c`, not recalled. Where a claim comes from a file, the file is
-named so you can go check it.
+`main` `730f2286c` unless marked otherwise by a dated update note; a few
+claims below have been corrected against the tree at a later commit and are
+labelled with the date they were re-verified. Where a claim comes from a
+file, the file is named so you can go check it.
 
 ---
 
@@ -271,6 +277,18 @@ This is also a signal check. If inverting the flag feels wrong, one of the other
 two moves is not finished — because a raw loop that is not safe to be the
 default is a raw loop the wrappers are propping up.
 
+**Status, 2026-08-18: landed exactly as written (#3381, PR #3694).** Every
+door — `run`, `arena`, `goal`, `fleet`, `deck` — hits the raw step-loop by
+default; `--pipeline <variant>` is the sole opt-in (`classic` names the
+built-in staged pipeline, any other name resolves an installed plugin); and
+`--no-pipeline` is a deprecated no-op kept parseable so no script breaks,
+implemented as `PipelineChoice::resolve` in
+`crates/stella-cli/src/wrapper_plugin.rs`. It shipped as the signal check
+this section calls it: per the maintainer's explicit call (§9.6 below), the
+flip went out ungated by a side-by-side bench, on the grounds that both paths
+still coexist and the flip is one flag away from reversal — not because the
+other two moves were judged finished by a benchmark.
+
 ---
 
 ## 6. Order of work
@@ -319,6 +337,7 @@ Worth stating, so nobody reads this as bigger than it is.
 | #2701 | Signal-consumer ledger. Move one adds and re-homes an ending signal; the ledger is where that is declared. |
 | #2694 | Tool-first epic. Its "stages become tools" line and move two's "stages become manifest entries" are two different destinations; §4 of this document is the boundary. |
 | #2889 | Experiment plane. Move three's variant column is the cheap first cut. |
+| #2773, #2815 | Verification-ladder and candidate-workspace work. Both keep their outcomes; both land behind the wrapper contract rather than by growing `pipeline.rs`. |
 
 ---
 
@@ -459,6 +478,22 @@ authored twice (`doc:turn-lane-assembly` §9.3).
 
 ### 9.5 The door tag exists — and it already encodes the wrapper
 
+**Landed (#3388), re-verified 2026-08-18.** The precondition this subsection
+asks for is done: `crates/stella-store/src/ddl.rs`'s own module doc now states
+the rule this section derived — "`kind` is the door… nothing else" — as the
+schema's contract, and neither write site below still exists.
+`crates/stella-cli/src/agent.rs:282` calls
+`persistence::begin_pipeline_execution`, which opens a `TurnDoor::new("run")`
+`.wrapped_by(PIPELINE_VARIANT_CLASSIC)` — door `"run"`, variant `"classic"` —
+and `crates/stella-cli/src/command_deck.rs:1514` always writes door `"deck"`,
+passing `pipeline_on.then_some(PIPELINE_VARIANT_CLASSIC)` as the variant.
+Neither site writes `"pipeline"` or `"deck-pipeline"` any more. The rest of
+this subsection is kept for the record — it is the derivation that produced
+the fix, and its backfill note (point 3 below) still describes how to read a
+row written before #3388.
+
+*Original text, describing the state at `730f2286c`, before #3388:*
+
 §5 says every execution row is "tagged with the door it came in by". That is
 true: `executions.kind` (`crates/stella-store/src/ddl.rs:79`) carries `run`,
 `deck`, `deck-sub`, `goal`, `fleet`, and `pipeline`.
@@ -516,11 +551,27 @@ earlier, and the result gets reported even when the raw loop is worse. Whether
 to spend that bench, or to flip ungated and accept the unknown, is the
 maintainer's call — recorded here rather than decided.
 
-**The dependency cut stays gated on #2716.** Cutting `stella-cli`'s
-`stella-pipeline` dependency (169 references across 41 files) needs the
-authority vocabulary for the `granted` half of a plugin lane, per
-`doc:turn-lane-assembly` §9.4 and §10.4. Moves one through three all land
-without it.
+**Decided, 2026-08-18: flipped ungated.** The flag inversion (§5, #3381, PR
+#3694) shipped without the side-by-side bench this paragraph asked for,
+per the maintainer's explicit direction rather than an oversight — both paths
+still coexist behind `--pipeline classic`, so the flip is one flag away from
+reversal, and the maintainer judged that reversibility sufficient to ship
+ahead of a bench result. No bench number has been published against this
+flip as of this update; the gap this paragraph named is still open, and
+reporting it — flattering or not — remains CLAUDE.md's bench-honesty rule
+whenever that run happens.
+
+**The dependency cut stays gated on #2716, and it has not moved.** Cutting
+`stella-cli`'s `stella-pipeline` dependency needs the authority vocabulary for
+the `granted` half of a plugin lane, per `doc:turn-lane-assembly` §9.4 and
+§10.4. Moves one through three all landed without it, exactly as predicted —
+the flag inversion (§5) shipped and the dependency count grew rather than
+shrank in the same work (187 references across 45 files as of 2026-08-18,
+`grep -rn stella_pipeline:: crates/stella-cli/src crates/stella-cli/tests`,
+up from 169/41 when this paragraph was written), because the schedule-manifest
+wiring (`doc:pipeline-as-plugins` §7, #3408/#3672) and the wrapper-plugin
+driver (#3494) both added call sites into `stella-pipeline` rather than
+removing any.
 
 **One claim this document should not make.** "The diff deletes more
 loop-orchestration code than it adds" is a plausible outcome and not a property
@@ -528,4 +579,3 @@ assertable in advance. Move one and the `goal.rs` deletion are strongly
 net-negative; move three adds a manifest loader, a predicate grammar, and a
 stage-graph validator that do not exist today. It is a number to measure and
 report when the work lands, not a design property to promise now.
-| #2773, #2815 | Verification-ladder and candidate-workspace work. Both keep their outcomes; both land behind the wrapper contract rather than by growing `pipeline.rs`. |
