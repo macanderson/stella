@@ -71,9 +71,9 @@ pub trait ContextProvider: Send + Sync {
 ///
 /// The sort is not cosmetic: several node kinds map onto the same `FrameKind`,
 /// so the list is deduplicated through a `HashSet` whose drain order varies
-/// run to run. Advertised capabilities end up in `context status` output and in
-/// a host's routing table, and an order that reshuffles every process makes
-/// them impossible to diff.
+/// run to run. Advertised capabilities steer a host's routing table — it only
+/// asks a provider for what that provider says it can answer — and a list that
+/// reshuffles every process makes two runs impossible to diff.
 ///
 /// The list is a constant of the build, so it is computed once and cached:
 /// `capabilities()` runs per provider on every `query_all`/`verify_all`, and
