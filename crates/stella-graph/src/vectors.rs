@@ -93,7 +93,8 @@ pub struct PendingEmbed {
 /// when the reason was a file it could not read (#3016).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PendingScan {
-    /// Files ready to embed, ordered by path, at most `limit` of them.
+    /// Files ready to embed, most recently changed first (`path` breaking
+    /// ties), at most `limit` of them.
     pub files: Vec<PendingEmbed>,
     /// Indexed files stepped over because their content could not be read —
     /// deleted since the index pass, unreadable by this process, or not UTF-8.

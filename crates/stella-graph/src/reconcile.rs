@@ -433,6 +433,137 @@ mod tests {
         assert_eq!(decided.commit_to_record(), Some("new"));
     }
 
+    /// Everything above tests the decision against a fake. This tests the
+    /// part a fake cannot: that the flags handed to the real `git` binary
+    /// actually produce the change set claimed for them. The `-z` framing and
+    /// `--no-renames` are reasoning about git's behaviour, and reasoning about
+    /// a subprocess's output format is exactly the kind of claim that has to
+    /// be run rather than argued.
+    mod real_git {
+        use super::*;
+
+        fn git(root: &Path, args: &[&str]) {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .expect("git must be runnable in the test environment");
+            assert!(status.success(), "git {args:?} failed");
+        }
+
+        fn commit(root: &Path, message: &str) -> String {
+            git(root, &["add", "-A"]);
+            git(root, &["commit", "--quiet", "-m", message]);
+            GitCli::new(root).head().expect("head after commit")
+        }
+
+        fn repo() -> tempfile::TempDir {
+            let dir = tempfile::tempdir().expect("tempdir");
+            git(dir.path(), &["init", "--quiet"]);
+            git(dir.path(), &["config", "user.email", "test@example.com"]);
+            git(dir.path(), &["config", "user.name", "Test"]);
+            dir
+        }
+
+        #[test]
+        fn a_real_range_reports_added_modified_and_deleted_paths() {
+            let dir = repo();
+            let root = dir.path();
+            std::fs::create_dir_all(root.join("src")).expect("mkdir");
+            std::fs::write(root.join("src/keep.rs"), "fn keep() {}\n").expect("write");
+            std::fs::write(root.join("src/drop.rs"), "fn drop_me() {}\n").expect("write");
+            let first = commit(root, "one");
+
+            std::fs::write(root.join("src/keep.rs"), "fn keep() { () }\n").expect("write");
+            std::fs::remove_file(root.join("src/drop.rs")).expect("remove");
+            std::fs::write(root.join("src/added.rs"), "fn added() {}\n").expect("write");
+            let second = commit(root, "two");
+
+            let mut changed = GitCli::new(root)
+                .changed_between(&first, &second)
+                .expect("range resolves");
+            changed.sort();
+            assert_eq!(
+                changed,
+                vec![
+                    "src/added.rs".to_string(),
+                    "src/drop.rs".to_string(),
+                    "src/keep.rs".to_string(),
+                ],
+                "a deleted path must be in the set — it is the row to prune"
+            );
+        }
+
+        /// `--no-renames` is load-bearing: with rename detection on, git
+        /// reports only the destination, and the source path's rows would sit
+        /// in the index forever pointing at a file that no longer exists.
+        #[test]
+        fn a_rename_reports_both_sides_so_the_old_row_can_be_pruned() {
+            let dir = repo();
+            let root = dir.path();
+            std::fs::create_dir_all(root.join("src")).expect("mkdir");
+            std::fs::write(root.join("src/before.rs"), "fn subject() {}\n").expect("write");
+            let first = commit(root, "one");
+
+            git(root, &["mv", "src/before.rs", "src/after.rs"]);
+            let second = commit(root, "two");
+
+            let mut changed = GitCli::new(root)
+                .changed_between(&first, &second)
+                .expect("range resolves");
+            changed.sort();
+            assert_eq!(
+                changed,
+                vec!["src/after.rs".to_string(), "src/before.rs".to_string()]
+            );
+        }
+
+        /// A path git would C-quote in its default output must come back
+        /// verbatim, because a quoted path matches no row in the index and the
+        /// file would be silently dropped from every change set it appears in.
+        #[test]
+        fn an_unusual_path_survives_the_framing_unquoted() {
+            let dir = repo();
+            let root = dir.path();
+            let awkward = "src/a file—with spaces.rs";
+            std::fs::create_dir_all(root.join("src")).expect("mkdir");
+            std::fs::write(root.join(awkward), "fn odd() {}\n").expect("write");
+            let first = commit(root, "one");
+            std::fs::write(root.join(awkward), "fn odd() { () }\n").expect("write");
+            let second = commit(root, "two");
+
+            assert_eq!(
+                GitCli::new(root)
+                    .changed_between(&first, &second)
+                    .expect("range resolves"),
+                vec![awkward.to_string()]
+            );
+        }
+
+        /// An unresolvable range is `None` — the answer that widens to a full
+        /// walk — and emphatically not an empty change set.
+        #[test]
+        fn an_unknown_commit_yields_none_rather_than_an_empty_set() {
+            let dir = repo();
+            let root = dir.path();
+            std::fs::write(root.join("a.rs"), "fn a() {}\n").expect("write");
+            let head = commit(root, "one");
+            assert_eq!(
+                GitCli::new(root).changed_between("0".repeat(40).as_str(), &head),
+                None
+            );
+        }
+
+        /// Outside a repository every question answers `None`, which is what
+        /// makes [`Plan::NoRepo`] reachable rather than theoretical.
+        #[test]
+        fn a_directory_that_is_not_a_repository_has_no_head() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            assert_eq!(GitCli::new(dir.path()).head(), None);
+        }
+    }
+
     #[test]
     fn priority_paths_outside_the_workspace_are_dropped() {
         let root = Path::new("/ws");

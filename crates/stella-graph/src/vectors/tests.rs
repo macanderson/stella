@@ -68,7 +68,8 @@ fn every_indexed_file_is_pending_until_it_is_embedded() {
     assert_eq!(
         first.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
         vec!["a.rs", "b.rs"],
-        "pending is ordered by path so a capped pass is deterministic"
+        "one index pass stamps both files in the same second, so the path \
+         tiebreak decides the order and a capped pass stays deterministic"
     );
     assert!(
         first[0].text.contains("alpha"),
@@ -201,10 +202,12 @@ fn a_run_of_unreadable_files_does_not_consume_the_window() {
     );
 }
 
-/// The step-over keeps the path ordering, so the resume contract below still
-/// holds when unreadable files are interleaved with readable ones.
+/// The step-over preserves the scan's ordering, so the resume contract below
+/// still holds when unreadable files are interleaved with readable ones. One
+/// index pass stamps every file in the same second, so the order under test
+/// here is the `path` tiebreak.
 #[test]
-fn stepping_over_an_unreadable_file_keeps_the_pass_ordered_by_path() {
+fn stepping_over_an_unreadable_file_preserves_the_scan_ordering() {
     let (ws, mut conn) = indexed_workspace(&[
         ("a.rs", "fn a() {}\n"),
         ("b.rs", "fn b() {}\n"),

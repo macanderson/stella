@@ -38,6 +38,7 @@ use crate::error::GraphError;
 use crate::frames;
 use crate::import;
 use crate::parse::Grammars;
+use crate::reconcile;
 use crate::store::{self, IndexStats};
 use crate::vectors;
 use crate::watch;
@@ -192,7 +193,30 @@ impl CodeGraph {
         let inner = graph.inner.clone();
 
         let handle = tokio::spawn(async move {
-            // 1) Catch-up: diff stored hashes against the current tree.
+            // 1) Reconcile against HEAD: if committed history moved since this
+            //    store last looked — a merge, pull, rebase, checkout, or a
+            //    clone someone handed us — index that commit range first. It
+            //    is a small, bounded set, and doing it ahead of the walk is
+            //    what makes those files the newest entries in the store and so
+            //    the first ones the embedding passes pick up. Best-effort by
+            //    construction: no repository, no git, or an unresolvable range
+            //    all fall through to the full pass below, which is the
+            //    behaviour this step is an accelerator on top of.
+            let reconciled = inner.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                let graph = CodeGraph {
+                    inner: reconciled.clone(),
+                };
+                graph.reconcile_with_head()
+            })
+            .await;
+
+            if inner.shutdown.load(Ordering::Relaxed) {
+                return;
+            }
+            // 2) Catch-up: diff stored hashes against the current tree. This
+            //    is the correctness backstop — it catches every uncommitted
+            //    edit, which no git range can see.
             let catchup = inner.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 let mut conn = catchup.write_guard();
@@ -203,7 +227,7 @@ impl CodeGraph {
             if inner.shutdown.load(Ordering::Relaxed) {
                 return;
             }
-            // 2) Arm the live watcher. If it cannot be created, catch-up has
+            // 3) Arm the live watcher. If it cannot be created, catch-up has
             // already run; live updates simply degrade to manual re-index.
             if let Ok(watcher) = watch::spawn(inner.clone(), watch::DEBOUNCE) {
                 inner.set_watcher(watcher);
@@ -230,6 +254,56 @@ impl CodeGraph {
     #[doc(hidden)]
     pub fn watch_pipeline_for_tests(&self, debounce: std::time::Duration) -> watch::WatchInjector {
         watch::spawn_injectable(self.inner.clone(), debounce)
+    }
+
+    /// Reconcile the index against the repository's current HEAD, indexing
+    /// whatever committed history moved underneath it.
+    ///
+    /// This is the cheap, scoped half of a pass: on a merge, rebase, pull, or
+    /// checkout it indexes exactly the files that commit range touched, and
+    /// nothing else. A full [`index_all`](Self::index_all) is still the
+    /// correctness backstop and still runs — see [`crate::reconcile`] for why
+    /// git can only ever be an accelerator here — but running this first means
+    /// the files a commit actually changed are re-indexed *before* the walk,
+    /// so their `indexed_at` marks them as the newest work in the store and
+    /// the embedding passes reach them first (`vectors::pending` orders on
+    /// exactly that).
+    ///
+    /// Returns the [`Plan`](crate::reconcile::Plan) it acted on, so a caller
+    /// can report what happened. Errors only on a store failure: every
+    /// repository question that cannot be answered degrades to a full walk.
+    pub fn reconcile_with_head(&self) -> Result<(reconcile::Plan, IndexStats), GraphError> {
+        let oracle = reconcile::GitCli::new(&self.inner.root);
+        self.reconcile_with(&oracle)
+    }
+
+    /// [`reconcile_with_head`](Self::reconcile_with_head) against an injected
+    /// oracle — the seam that lets the wiring be tested without building a
+    /// repository whose history has the shape under test.
+    pub fn reconcile_with(
+        &self,
+        oracle: &dyn reconcile::RepoOracle,
+    ) -> Result<(reconcile::Plan, IndexStats), GraphError> {
+        let mut conn = self.inner.write_guard();
+        let stored = reconcile::read_head(&conn)?;
+        let plan = reconcile::plan(stored.as_deref(), oracle);
+
+        let paths = reconcile::absolute_priority_paths(&self.inner.root, &plan);
+        let stats = if paths.is_empty() {
+            IndexStats::default()
+        } else {
+            store::apply_changes(&mut conn, &self.inner.root, &self.inner.grammars, &paths)?
+        };
+
+        // Recorded only after the work committed. Stamping first and dying
+        // mid-pass would leave the store claiming a commit it never indexed,
+        // and the next reconciliation would see an unmoved HEAD and scope
+        // nothing — the one way this design loses a file permanently rather
+        // than merely late.
+        if let Some(head) = plan.commit_to_record() {
+            reconcile::record_head(&conn, head)?;
+        }
+        Ok((plan, stats))
     }
 
     /// Run a full incremental index pass now (walk, re-parse only changed
