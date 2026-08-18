@@ -205,6 +205,49 @@ test("the PWA icons are byte-identical to the kit's", () => {
   }
 });
 
+test("favicon.ico carries the kit's art in an RGBA encoding", () => {
+  // Two things have to hold at once, and they pull apart.
+  //
+  // The kit renders its favicons opaque — the mark on an Ink tile — so its
+  // `favicon.ico` embeds **RGB** PNGs (colour type 2). Next's image pipeline
+  // decodes `src/app/favicon.ico` through the `ico` crate, which accepts only
+  // RGBA, and fails the whole production build on anything else:
+  //
+  //     Error: Turbopack build failed with 1 errors:
+  //     ./website/src/app/favicon.ico
+  //     Processing image failed
+  //     Caused by: Format error decoding Ico: The PNG is not in RGBA format!
+  //
+  // So this one file is deliberately NOT a byte-copy of the kit's: it is the
+  // kit's pixels re-encoded with an opaque alpha channel. That is why it is
+  // absent from the PWA-icon byte-identity test above, and why the exception
+  // is asserted here rather than left as a silent difference someone would
+  // later "fix" by re-copying — which is exactly how the build broke.
+  const ico = readFileSync(join(SITE, "app", "favicon.ico"));
+  const count = ico.readUInt16LE(4);
+  assert.ok(count > 0, "favicon.ico declares at least one image");
+
+  const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  for (let i = 0; i < count; i++) {
+    const entry = 6 + i * 16;
+    const size = ico.readUInt32LE(entry + 8);
+    const offset = ico.readUInt32LE(entry + 12);
+    const blob = ico.subarray(offset, offset + size);
+    assert.ok(
+      blob.subarray(0, 8).equals(PNG_MAGIC),
+      `favicon.ico entry ${i} must be PNG-encoded`,
+    );
+    // IHDR runs length(4) + "IHDR"(4) + width(4) + height(4) + depth(1), so
+    // the colour-type byte sits at offset 25. Type 6 is truecolour + alpha.
+    assert.equal(
+      blob[25],
+      6,
+      `favicon.ico entry ${i} is PNG colour type ${blob[25]}, not 6 (RGBA) — ` +
+        `Next's ico decoder rejects it and the production build fails`,
+    );
+  }
+});
+
 test("every icon the manifest advertises exists", () => {
   // manifest.ts points at four files by path. A rename in the kit that this
   // site mirrors without updating the manifest is a 404 on install, which no
