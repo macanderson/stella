@@ -19,7 +19,7 @@ This reflects the live session: it accounts for custom tools discovered in `.ste
 
 Each tool is either **read-only** (it only observes — the workspace, session state, or the environment) or **mutating** (it writes a file, runs a command, changes the task board, writes scratch state, or dispatches work to a sub-agent). The read-only marker is the schema's `read_only: true` flag; anything else is treated as capable of side effects. The engine parallelizes on that flag, so a mutating tool marked read-only would race writes.
 
-A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a separate, narrower claim than read-only because a retried stream can run a speculated call twice, so only calls that are free to repeat opt in. A mutating tool is never speculated, and MCP-provided tools never opt in.
+A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a narrower claim than read-only: a retried stream can run a speculated call twice, so only calls that are free to repeat opt in. A mutating tool is never speculated, and MCP-provided tools never opt in.
 
 The speculation-safe subset is exactly: `read_file`, `task_list`, `get_state`, `list_state`, and `get_environment`.
 
@@ -37,7 +37,7 @@ All 18 tools register in every session — no configuration, no prerequisites. G
 
 <CardGrid size="md">
   <ToolCard name="bash" access="mutating">
-    Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop. The only built-in that runs something nobody bounded, which is why it is graded `high` risk and why a permission ceiling that withholds it still leaves the rest of the surface working.
+    Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop. The only built-in that runs something nobody bounded — hence its `high` risk grade. A permission ceiling that withholds it still leaves the rest of the surface working.
   </ToolCard>
 </CardGrid>
 

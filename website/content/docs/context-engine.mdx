@@ -66,7 +66,7 @@ earlier one *by rule id*, so a repository can replace a personal rule that share
 Both project directories are skipped entirely when the effective
 [managed authority](/docs/configuration/settings#managed-authority-ceilings) does not
 permit project prompts, leaving your user rules armed. Prompt-only (Tier-1) rules follow
-that plain latest-wins precedence; user-global **hard guards** are monotonic instead — a
+that plain latest-wins precedence. User-global **hard guards** are monotonic instead: a
 project rule with the same id can never disarm one, and a distinct project guard is added
 under a provenance-qualified id so both constraints stay in force.
 
@@ -226,9 +226,9 @@ Concretely, over a few sessions:
 
 ## Reflections: learning from every working turn
 
-After any turn that did real work (tool calls happened — a pure chat turn is
+After any turn that did real work (a pure chat turn is
 skipped to save the call), stella spends one cheap, deterministic model call
-to extract **0–3 lessons**, tagged with allowed domains, written to both the
+to extract **0–3 lessons**. Each is tagged with allowed domains and written to both the
 context store and `.stella/private/reflections.jsonl`. Failed turns get a dedicated
 root-cause prompt — failure is treated as the highest-value learning signal,
 not something to forget.
@@ -252,8 +252,8 @@ memory system accountable for real, measured lift.
 A control turn is frameless *everywhere*: the worker's recall block, the
 planner's context, and the witness author all see nothing, so the two arms
 differ by recall and nothing else. The schedule is counted per workspace in
-`context.db` rather than per session, which is what lets one-turn-per-process
-surfaces — `stella run`, a `/goal` run, a fleet task — take part in the same
+`context.db`, not per session. That lets one-turn-per-process
+surfaces — `stella run`, a `/goal` run, a fleet task — share the same
 interleaved sequence as a long chat session. Set
 `context.retrieval.ab_recall_rate` to change the rate, or to `0` to switch the
 experiment off.
