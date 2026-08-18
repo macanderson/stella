@@ -98,6 +98,7 @@ use crate::{agent, rules};
 mod add_dir;
 mod authoring;
 pub(crate) mod forwarder;
+mod init_cmd;
 mod lead_control;
 mod model_cmd;
 mod pr_observe;
@@ -740,9 +741,7 @@ pub async fn run_deck_session(
     let ready_root = cfg.workspace_root.clone();
     let (_session_graph, _graph_build) = agent::spawn_session_graph(
         &cfg.workspace_root,
-        Box::new(move |line| {
-            let _ = status_tx.send(system_notice(line));
-        }),
+        Box::new(agent::deck_notice_narrator(status_tx, LEAD)),
         Box::new(move || {
             // Populate the Graph tab now the index exists (it opened on the
             // "run stella init" hint), and assert the lead is idle — the
@@ -1393,6 +1392,7 @@ pub async fn run_deck_session(
             &mut pipeline_on,
             agent::remaining_budget(&budget),
             &session_record.id,
+            &ask_io,
         )
         .await;
         if matches!(command, DeckCommand::Handled | DeckCommand::InitCompleted) {
@@ -3598,6 +3598,9 @@ async fn run_deck_command(
     // This deck's session registry id — what scopes `/export` to the session
     // the user is actually in (#2558).
     session_id: &str,
+    // The deck's question channel, so `/init`'s first-session conversion
+    // offer raises a card instead of a TTY prompt through the render.
+    ask_io: &dyn AskUserIo,
 ) -> DeckCommand {
     let trimmed = prompt.trim();
     if !trimmed.starts_with('/') {
@@ -3657,25 +3660,20 @@ async fn run_deck_command(
             });
         }
         "/init" => {
-            // Replay the launch cinematic over the reindex: the battle loops
-            // for as long as init runs, then the wordmark reveal hands the
-            // frame back to the deck. The progress lines still land in the
-            // transcript behind the splash (and any key skips straight to
-            // them). Released on BOTH outcomes — a failed init must never
-            // strand a held splash.
-            let _ = in_tx.send(Inbound::Splash(SplashCue::Replay));
-            let mut emit = |line: String| say(line);
-            let outcome = agent::init_workspace(
-                Some(provider),
+            // The splash replay, the narrator, and the question channel all
+            // live in `init_cmd` — this file is closed to growth.
+            match init_cmd::run(
+                provider,
                 &cfg.workspace_root,
-                Some(&cfg.model_id),
+                &cfg.model_id,
                 budget_limit,
-                &mut emit,
+                ask_io,
+                in_tx,
+                LEAD,
             )
-            .await;
-            let _ = in_tx.send(Inbound::Splash(SplashCue::Release));
-            match outcome {
-                Ok((_domains, _cost_usd)) => return DeckCommand::InitCompleted,
+            .await
+            {
+                Ok(()) => return DeckCommand::InitCompleted,
                 Err(e) => say(format!("init failed: {e}")),
             }
         }

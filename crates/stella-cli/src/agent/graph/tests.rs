@@ -97,7 +97,10 @@ async fn init_embeds_the_index_without_any_semantic_query_being_issued() {
     let server = embeddings_server().await;
 
     let mut lines: Vec<String> = Vec::new();
-    build_code_graph_with(&root, &env_for(&server), &mut |line| lines.push(line)).await;
+    build_code_graph_with(&root, &env_for(&server), &mut |line| {
+        lines.push(line.text().to_string())
+    })
+    .await;
 
     let fingerprint = stella_embed::HttpEmbedder::new(
         &format!("{}/v1", server.uri()),
@@ -148,7 +151,7 @@ async fn init_still_builds_the_graph_with_no_embedder_configured() {
 
     let mut lines: Vec<String> = Vec::new();
     build_code_graph_with(&root, &stella_embed::EmbedderEnv::default(), &mut |line| {
-        lines.push(line)
+        lines.push(line.text().to_string())
     })
     .await;
 
@@ -180,7 +183,7 @@ async fn a_half_configured_embedder_names_what_is_missing_and_init_survives() {
         ..Default::default()
     };
     let mut lines: Vec<String> = Vec::new();
-    build_code_graph_with(&root, &env, &mut |line| lines.push(line)).await;
+    build_code_graph_with(&root, &env, &mut |line| lines.push(line.text().to_string())).await;
 
     let graph = open_graph(&root);
     let files = graph.file_count().expect("file count");
@@ -205,7 +208,10 @@ async fn a_broken_backend_reports_and_leaves_init_successful() {
         .await;
 
     let mut lines: Vec<String> = Vec::new();
-    build_code_graph_with(&root, &env_for(&server), &mut |line| lines.push(line)).await;
+    build_code_graph_with(&root, &env_for(&server), &mut |line| {
+        lines.push(line.text().to_string())
+    })
+    .await;
 
     let graph = open_graph(&root);
     let files = graph.file_count().expect("file count");
@@ -273,7 +279,10 @@ async fn init_embeds_every_chunk_without_any_semantic_query_being_issued() {
     let server = embeddings_server().await;
 
     let mut lines: Vec<String> = Vec::new();
-    build_code_graph_with(&root, &env_for(&server), &mut |line| lines.push(line)).await;
+    build_code_graph_with(&root, &env_for(&server), &mut |line| {
+        lines.push(line.text().to_string())
+    })
+    .await;
 
     let fingerprint = stella_embed::HttpEmbedder::new(
         &format!("{}/v1", server.uri()),
@@ -338,7 +347,7 @@ async fn a_running_index_pass_streams_progress_lines() {
 
     let mut lines: Vec<String> = Vec::new();
     let outcome = drive_index_blocking(root, std::time::Duration::ZERO, &mut |line| {
-        lines.push(line)
+        lines.push(line.text().to_string())
     })
     .await
     .expect("task completes")
@@ -359,6 +368,47 @@ async fn a_running_index_pass_streams_progress_lines() {
             .all(|line| line.contains("parsed") && line.contains("unchanged")),
         "each progress line carries the live counts: {progress:?}"
     );
+}
+
+/// Witness: a per-tick count is emitted as [`InitLine::Progress`] — the kind
+/// every surface rewrites in place — while the pass's summary is an
+/// [`InitLine::Step`] that joins the record.
+///
+/// Classification is the whole fix. Both used to be a bare `String`, so a
+/// large workspace's minutes of once-a-second ticks accumulated in the deck
+/// transcript and buried the `✓` summaries under them. A tick misfiled as a
+/// `Step` would restore exactly that, silently, which is why the two kinds are
+/// asserted here rather than left to the type checker.
+#[tokio::test]
+async fn a_tick_is_progress_and_the_summary_is_a_step() {
+    let ws = workspace();
+    let root = ws.path().canonicalize().expect("canonicalize");
+
+    let mut lines: Vec<InitLine> = Vec::new();
+    // A zero quiet interval makes every per-file callback past the first a tick.
+    drive_index_blocking(root, std::time::Duration::ZERO, &mut |line| {
+        lines.push(line)
+    })
+    .await
+    .expect("task completes")
+    .expect("index succeeds");
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| matches!(line, InitLine::Progress(_))),
+        "the pass must tick: {:?}",
+        lines.iter().map(InitLine::text).collect::<Vec<_>>()
+    );
+    for line in &lines {
+        let is_tick = line.text().contains("files walked");
+        assert_eq!(
+            is_tick,
+            matches!(line, InitLine::Progress(_)),
+            "a live count is Progress and everything else is a Step: {:?}",
+            line.text()
+        );
+    }
 }
 
 /// The throttle is what keeps liveness from becoming spam: the first tick

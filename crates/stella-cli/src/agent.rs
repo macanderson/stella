@@ -72,8 +72,8 @@ pub(crate) use goal::*;
 pub(crate) use graph::spawn_session_graph;
 #[cfg(test)]
 use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
-pub(crate) use init::init_workspace;
 pub use init::run_init;
+pub(crate) use init::{InitIo, InitLine, deck_narrator, deck_notice_narrator, init_workspace};
 use outcome::{
     VerificationRequirement, pipeline_episode_outcome, pipeline_failure_reason,
     pipeline_session_status, pipeline_status_label, pipeline_status_result,
@@ -250,7 +250,7 @@ async fn run_pipeline_one_shot(
     // machine-readable JSON.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        Box::new(|line| eprintln!("  {line}")),
+        Box::new(init::stderr_narrator()),
         Box::new(|| {}),
     );
     let mcp = connect_mcp(
@@ -701,7 +701,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     // watcher stops when it drops.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        Box::new(|line| eprintln!("  {line}")),
+        Box::new(init::stderr_narrator()),
         Box::new(|| {}),
     );
     let base_tools: &dyn ToolExecutor = match &mcp {
@@ -832,13 +832,13 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         }
         if input == "/init" {
             println!();
-            let mut emit = |line: String| println!("  {line}");
+            let mut io = init::InitIo::stdout_tty();
             match init_workspace(
                 Some(&*provider),
                 &cfg.workspace_root,
                 Some(&cfg.model_id),
                 remaining_budget(&budget),
-                &mut emit,
+                &mut io,
             )
             .await
             {

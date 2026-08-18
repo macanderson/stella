@@ -17,7 +17,7 @@ mod tests;
 ///
 pub(super) async fn build_code_graph(
     workspace_root: &std::path::Path,
-    emit: &mut dyn FnMut(String),
+    emit: &mut dyn FnMut(InitLine),
 ) {
     build_code_graph_with(
         workspace_root,
@@ -37,9 +37,9 @@ pub(super) async fn build_code_graph(
 async fn build_code_graph_with(
     workspace_root: &std::path::Path,
     embed_env: &stella_embed::EmbedderEnv,
-    emit: &mut dyn FnMut(String),
+    emit: &mut dyn FnMut(InitLine),
 ) {
-    emit("◈ indexing code graph…".to_string());
+    emit(InitLine::Step("◈ indexing code graph…".to_string()));
     // A full-tree tree-sitter index is seconds-to-minutes of blocking file
     // reads + parsing + SQLite on a large repo. Run it on the blocking pool
     // so it never pins a runtime worker — the deck driver awaits `/init`
@@ -50,11 +50,11 @@ async fn build_code_graph_with(
     let root = workspace_root.to_path_buf();
     let outcome = drive_index_blocking(root, INDEX_PROGRESS_INTERVAL, emit).await;
     match outcome {
-        Ok(Ok(stats)) => emit(format_graph_stats(&stats)),
-        Ok(Err(warning)) => emit(warning),
-        Err(e) => emit(format!(
+        Ok(Ok(stats)) => emit(InitLine::Step(format_graph_stats(&stats))),
+        Ok(Err(warning)) => emit(InitLine::Step(warning)),
+        Err(e) => emit(InitLine::Step(format!(
             "! code-graph indexing task failed: {e} — run `stella init` again to retry"
-        )),
+        ))),
     }
     warm_semantic_index(workspace_root, embed_env, emit).await;
 }
@@ -120,17 +120,17 @@ pub(super) fn format_index_progress(stats: &stella_graph::IndexStats) -> String 
 /// drained before the outcome is returned. Generic over the closure so the
 /// session builder's `Send` closure keeps its task spawnable while `stella
 /// init`'s plain printer needs no such bound.
-async fn drive_index_blocking<F: FnMut(String) + ?Sized>(
+async fn drive_index_blocking<F: FnMut(InitLine) + ?Sized>(
     root: std::path::PathBuf,
     interval: Duration,
     emit: &mut F,
 ) -> Result<Result<GraphSummary, String>, tokio::task::JoinError> {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InitLine>();
     let mut handle = tokio::task::spawn_blocking(move || {
         let mut ticker = ProgressTicker::new(interval);
         index_workspace_graph_blocking(&root, &mut |stats| {
             if ticker.ready(Instant::now()) {
-                let _ = tx.send(format_index_progress(stats));
+                let _ = tx.send(InitLine::Progress(format_index_progress(stats)));
             }
         })
     });
@@ -176,7 +176,7 @@ async fn drive_index_blocking<F: FnMut(String) + ?Sized>(
 async fn warm_semantic_index(
     workspace_root: &std::path::Path,
     embed_env: &stella_embed::EmbedderEnv,
-    emit: &mut dyn FnMut(String),
+    emit: &mut dyn FnMut(InitLine),
 ) {
     use stella_embed::Embedder;
 
@@ -188,23 +188,27 @@ async fn warm_semantic_index(
         // so it is the one moment a hint about an unused capability is help
         // instead of noise.
         stella_embed::Resolution::Unconfigured => {
-            emit(
+            emit(InitLine::Step(
                 "· semantic index: skipped — no embedding backend configured (set \
                  VOYAGE_API_KEY, OPENAI_API_KEY, or STELLA_EMBED_URL + STELLA_EMBED_MODEL to \
                  let `stella search` rank by meaning)"
                     .to_string(),
-            );
+            ));
             return;
         }
         // A half-configured backend is neither off nor working, and a typo
         // must not read as a deliberate opt-out.
         stella_embed::Resolution::Incomplete(reason) => {
-            emit(format!("! semantic index: not built — {reason}"));
+            emit(InitLine::Step(format!(
+                "! semantic index: not built — {reason}"
+            )));
             return;
         }
     };
 
-    emit("◈ embedding files for semantic search…".to_string());
+    emit(InitLine::Step(
+        "◈ embedding files for semantic search…".to_string(),
+    ));
     let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
     let outcome = crate::search_cmd::semantic::warm_file_vectors_with_progress(
         workspace_root,
@@ -212,22 +216,26 @@ async fn warm_semantic_index(
         MAX_FILES_PER_EAGER_PASS,
         &mut |embedded| {
             if ticker.ready(Instant::now()) {
-                emit(format!("· semantic index: {embedded} files embedded…"));
+                emit(InitLine::Progress(format!(
+                    "· semantic index: {embedded} files embedded…"
+                )));
             }
         },
     )
     .await;
-    emit(format_warm_outcome(
+    emit(InitLine::Step(format_warm_outcome(
         &outcome,
         &embedder.fingerprint().model_id,
-    ));
+    )));
 
     // The sharper rung the search ranks first (#3098): a file-level vector
     // exists but a query naming one function in a large multi-purpose file
     // loses to a file that happens to have complete per-symbol coverage,
     // regardless of which is the true answer. Same reasoning as the pass
     // above, one layer down.
-    emit("◈ embedding code chunks for search…".to_string());
+    emit(InitLine::Step(
+        "◈ embedding code chunks for search…".to_string(),
+    ));
     let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
     let chunk_outcome = crate::search_cmd::engine::warm_chunk_vectors_with_progress(
         workspace_root,
@@ -235,15 +243,17 @@ async fn warm_semantic_index(
         crate::search_cmd::engine::MAX_FILES_PER_CHUNK_EAGER_PASS,
         &mut |embedded| {
             if ticker.ready(Instant::now()) {
-                emit(format!("· chunk index: {embedded} files embedded…"));
+                emit(InitLine::Progress(format!(
+                    "· chunk index: {embedded} files embedded…"
+                )));
             }
         },
     )
     .await;
-    emit(format_chunk_warm_outcome(
+    emit(InitLine::Step(format_chunk_warm_outcome(
         &chunk_outcome,
         &embedder.fingerprint().model_id,
-    ));
+    )));
 }
 
 /// The one-line report of an eager embedding pass.
@@ -476,7 +486,7 @@ impl Drop for SessionGraph {
 /// there; other callers pass a no-op).
 pub(crate) fn spawn_session_graph(
     workspace_root: &std::path::Path,
-    mut status: Box<dyn FnMut(String) + Send>,
+    mut status: Box<dyn FnMut(InitLine) + Send>,
     on_ready: Box<dyn FnOnce() + Send>,
 ) -> (SessionGraph, tokio::task::JoinHandle<()>) {
     let slot: Arc<std::sync::Mutex<Option<stella_graph::CodeGraph>>> =
@@ -491,16 +501,16 @@ pub(crate) fn spawn_session_graph(
         //    and this task stays spawnable. (We drive the shared helper
         //    rather than `build_code_graph`, whose `&mut dyn FnMut` emit is
         //    not `Send` and whose embedding pass a session start skips.)
-        status("◈ indexing code graph…".to_string());
+        status(InitLine::Step("◈ indexing code graph…".to_string()));
         let outcome =
             drive_index_blocking(root.clone(), INDEX_PROGRESS_INTERVAL, &mut status).await;
         match outcome {
-            Ok(Ok(stats)) => status(format_graph_stats(&stats)),
-            Ok(Err(warning)) => status(warning),
-            Err(e) => status(format!(
+            Ok(Ok(stats)) => status(InitLine::Step(format_graph_stats(&stats))),
+            Ok(Err(warning)) => status(InitLine::Step(warning)),
+            Err(e) => status(InitLine::Step(format!(
                 "! code-graph indexing task failed: {e} — search ranks over the last good index \
                  this session"
-            )),
+            ))),
         }
         on_ready();
         // 2) Arm the live watcher on a mounted graph kept alive for the
@@ -511,9 +521,9 @@ pub(crate) fn spawn_session_graph(
             Ok(graph) => {
                 *slot_task.lock().unwrap_or_else(|p| p.into_inner()) = Some(graph);
             }
-            Err(e) => status(format!(
+            Err(e) => status(InitLine::Step(format!(
                 "! code-graph watcher unavailable: {e} — the index will refresh on the next launch"
-            )),
+            ))),
         }
     });
     (SessionGraph { graph: slot }, handle)

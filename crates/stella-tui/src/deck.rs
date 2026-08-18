@@ -593,6 +593,14 @@ impl WorkspaceModel {
                     self.agents[idx].last_activity_ms = self.now_ms;
                 }
             }
+            // One tick of a host-side pass's live counter: rewritten in place,
+            // no status change, no trace row. See `Inbound::Progress`.
+            Inbound::Progress { agent, text } => {
+                if let Some(idx) = self.index_of(agent) {
+                    self.agents[idx].model.set_progress_line(text);
+                    self.agents[idx].last_activity_ms = self.now_ms;
+                }
+            }
             Inbound::Status { agent, status } => {
                 // Auto-register an unknown id, exactly like `Event`:
                 // supervisor states (`Paused`, `Killed`, …) are not
