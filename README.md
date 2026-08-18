@@ -364,7 +364,7 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 
 | Command                                                                     | What it does                                                                                                      |
 | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run)                | Send a one-shot prompt, non-interactive — the staged pipeline by default                                          |
+| [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run)                | Send a one-shot prompt, non-interactive — the raw step-loop by default; `--pipeline classic` opts into the staged pipeline                                          |
 | [`chat`](https://stella.oxagen.sh/docs/commands/chat)                       | Interactive session: the Command Deck TUI (also what a bare `stella` opens)                                       |
 | [`resume [id]`](https://stella.oxagen.sh/docs/commands/resume)              | Reopen a durable past session exactly where it stood; `--list` browses them                                       |
 | [`daemon <cmd>`](https://stella.oxagen.sh/docs/commands/daemon)             | Find, watch, and stop runs that outlived the terminal that started them                                           |

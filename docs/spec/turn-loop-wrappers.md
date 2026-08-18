@@ -494,7 +494,7 @@ schema's contract, and neither write site below still exists.
 `crates/stella-cli/src/agent.rs:282` calls
 `persistence::begin_pipeline_execution`, which opens a `TurnDoor::new("run")`
 `.wrapped_by(PIPELINE_VARIANT_CLASSIC)` — door `"run"`, variant `"classic"` —
-and `crates/stella-cli/src/command_deck.rs:1514` always writes door `"deck"`,
+and `crates/stella-cli/src/command_deck.rs:1520` always writes door `"deck"`,
 passing `pipeline_on.then_some(PIPELINE_VARIANT_CLASSIC)` as the variant.
 Neither site writes `"pipeline"` or `"deck-pipeline"` any more. The rest of
 this subsection is kept for the record — it is the derivation that produced
@@ -575,7 +575,7 @@ whenever that run happens.
 the `granted` half of a plugin lane, per `doc:turn-lane-assembly` §9.4 and
 §10.4. Moves one through three all landed without it, exactly as predicted —
 the flag inversion (§5) shipped and the dependency count grew rather than
-shrank in the same work (187 references across 45 files as of 2026-08-18,
+shrank in the same work (174 references across 44 files as of 2026-08-18,
 `grep -rn stella_pipeline:: crates/stella-cli/src crates/stella-cli/tests`,
 up from 169/41 when this paragraph was written), because the schedule-manifest
 wiring (`doc:pipeline-as-plugins` §7, #3408/#3672) and the wrapper-plugin

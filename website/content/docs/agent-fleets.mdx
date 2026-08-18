@@ -43,12 +43,12 @@ stella fleet \
    unblock its dependents — they end the run as `skipped` — and nothing is
    retried automatically: the ledger records every attempt, but re-running
    is your call.
-4. **Work.** Each worker is a full engine run — the
-   [staged pipeline](/docs/inference-pipeline) with the standard toolbelt,
-   honoring your [agent-engine config](/docs/configuration/agent-engine-config).
+4. **Work.** Each worker is a full engine run — the raw step loop by
+   default, with the standard toolbelt, honoring your
+   [agent-engine config](/docs/configuration/agent-engine-config).
    Workers are headless by design: no MCP, no interactive prompts, nothing
-   that can block on stdin. Pass `--no-pipeline` to run the raw step loop
-   instead of the staged pipeline.
+   that can block on stdin. Pass `--pipeline classic` to route each worker
+   through the [staged pipeline](/docs/inference-pipeline) instead.
 5. **Record.** Every attempt, commit, and dollar lands in the fleet ledger
    at `.stella/private/fleet.db` — local SQLite, like all
    [stella telemetry](/docs/telemetry), with `runs`, `tasks`, `attempts`,
@@ -247,7 +247,8 @@ stella fleet --plan release-prep.toml --max-concurrency 2 --watch
     its PR status via `gh`. Exits non-zero if any watched branch ends red.
   </OptionCard>
   <OptionCard name="--no-pipeline">
-    Workers run the raw step loop instead of the staged pipeline.
+    Deprecated no-op: the raw step loop is already the default. Use
+    `--pipeline classic` to opt workers into the staged pipeline.
   </OptionCard>
 </CardGrid>
 

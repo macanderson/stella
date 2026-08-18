@@ -673,7 +673,7 @@ Order, easiest and least risky first:
 
 **The bar for each:** a side-by-side benchmark holds before the built-in path is
 deleted. The dependency cut — `stella-cli` no longer declaring
-`stella-pipeline`, 187 references across 45 files as of 2026-08-18 (`grep -rn
+`stella-pipeline`, 174 references across 44 files as of 2026-08-18 (`grep -rn
 stella_pipeline:: crates/stella-cli/src crates/stella-cli/tests`; it was 166/42
 when this section was written and has grown with the flag-inversion and
 schedule-manifest work, not shrunk) — is the **last** slice, never the first.

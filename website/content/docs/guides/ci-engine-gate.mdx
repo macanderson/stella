@@ -170,9 +170,10 @@ served the worker turns, which a
 [worker-model route](/docs/configuration/agent-engine-config) can change out from
 under your `--model` argument. Attribute spend to what the receipt says.
 
-**`files_touched` is not on the pipeline path.** The default run summarizes with
-`task_class`, `verdict`, `revisions`, and `candidates_run`; the top-level
-`files_touched` key appears only on `--no-pipeline` runs, and the array itself
+**`files_touched` is not on the pipeline path.** The default (raw) run
+summarizes with a top-level `files_touched` key; `task_class`, `verdict`,
+`revisions`, and `candidates_run` appear only on `--pipeline classic`
+runs, and the array itself
 sits one level in at `.files_touched.files_touched`. Counting `tool_start` events
 works on both paths, which is why the assertions below use events.
 
