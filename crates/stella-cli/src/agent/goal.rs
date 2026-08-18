@@ -114,14 +114,27 @@ pub(crate) async fn run_raw_one_shot(
 ) -> Result<(), crate::failure::CliFailure> {
     let bare = bare_loop_config(full_cfg);
     let cfg = &bare;
-    // Resolved before the provider is built and before a single paid call: a
-    // `--pipeline` that names nothing installed must fail as a typo, not after
-    // the run it was meant to shape. The grant is minted in the same breath and
-    // for the same reason — a `--test-command` the host's parser refuses must
-    // stop the run here, not after it is paid for.
+    let provider = build_provider(cfg)?;
+    // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
+    // registry's ledgers are reachable after the turn — the trait object
+    // hides them. It still coerces to `&dyn ToolExecutor` for the engine.
+    let registry: std::sync::Arc<ToolRegistry> =
+        std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
+
+    // Installed before the wrapper is resolved, not after: a bound wrapper's
+    // `child_turn` plane runs over this exact dispatcher (the one `task_assign`
+    // also runs on), so it has to exist before `wrapper_plugin::resolve` can
+    // hand it over. Still resolved before a single paid call — building a
+    // provider and a registry spends nothing over the wire, it only
+    // constructs local objects — so a `--pipeline` that names nothing
+    // installed still fails as a typo, not after the run it was meant to
+    // shape, exactly as before this reordering. The grant below is minted in
+    // the same breath and for the same reason — a `--test-command` the host's
+    // parser refuses must stop the run here, not after it is paid for.
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
     let bound = match pipeline.plugin() {
         Some(variant) => Some(
-            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
+            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, sub_agents, &mut |line| {
                 eprintln!("  ! {line}");
             })
             .map_err(crate::failure::CliFailure::from)?,
@@ -137,14 +150,6 @@ pub(crate) async fn run_raw_one_shot(
         ),
         None => None,
     };
-    let provider = build_provider(cfg)?;
-    // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
-    // registry's ledgers are reachable after the turn — the trait object
-    // hides them. It still coerces to `&dyn ToolExecutor` for the engine.
-    let registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
-
-    crate::subagent::install_for_session(cfg, &registry)?;
     // The one derivation of "a human is here to answer" — the #2676 approval
     // responder and the rules-enforcement prompt both read this value.
     let ask = human_is_present(format == OutputFormat::Text);

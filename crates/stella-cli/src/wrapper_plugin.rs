@@ -32,8 +32,8 @@
 //!
 //! # What a plugin is handed, and what it is told it cannot have
 //!
-//! The three holes this module shipped with are closed, and each closure names
-//! the limit that remains rather than implying there is none:
+//! The holes this module shipped with are closed, and each closure names the
+//! limit that remains rather than implying there is none:
 //!
 //! 1. **A real candidate grant and a real tamper finding** (#3553). The grant
 //!    names the **shared work tree** — the tree the turn actually runs in — and
@@ -55,6 +55,21 @@
 //!    with no plane still attaches the gate and answers with no frames: an
 //!    empty answer is something a plugin can degrade on, and an absent gate is
 //!    the one thing it cannot be told about.
+//! 4. **A child-turn plane, on this driver** (#3576, this door's slice of it).
+//!    `[loop] calls = ["child_turn"]` reaches
+//!    [`ChildTurns`](stella_runtime::wrapper::ChildTurns) over this session's
+//!    own sub-agent dispatcher — the same dispatcher `task_assign` runs
+//!    children on
+//!    ([`crate::subagent::SessionSubAgents`](crate::subagent::SessionSubAgents)),
+//!    shared rather than duplicated so budget carving, read-only tooling and
+//!    report clamping stay one implementation. `resolve` and `bind_installed`
+//!    now take that dispatcher as a parameter rather than opening one
+//!    themselves, which is why [`run_raw_one_shot`](crate::agent::goal::run_raw_one_shot)
+//!    builds the session's provider, registry and dispatcher *before* binding
+//!    the wrapper — see that function's own comment for why reordering it does
+//!    not weaken the "fails as a typo before a paid call" guarantee. The other
+//!    two drivers §6 asks for still assemble nothing (#3551), and `stella-serve`'s
+//!    and an embedded `stella-engine` host's own dispatchers are not this one.
 //!
 //! And two scope limits: `--pipeline` is on `stella run` alone and a plugin's
 //! `Unmet` does not fail the process (#3554), and only this driver of
@@ -67,12 +82,13 @@ use stella_core::budget::BudgetGuard;
 use stella_core::estimator::CalibrationMap;
 use stella_core::ports::ToolExecutor;
 use stella_core::router::Router;
+use stella_core::subagent::{SubAgentDispatcher, SubAgentOutcome, SubAgentSpec};
 use stella_model::provider::Provider;
 use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
-    DEFAULT_HOST_MAX_CALLS, DispatchReport, DrivenTurn, HostCallGate, HostPlanes, RoundInput,
-    SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
+    ChildTurns, DEFAULT_HOST_MAX_CALLS, DispatchReport, DrivenTurn, HostCallGate, HostPlanes,
+    RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -301,9 +317,16 @@ impl BoundWrapper {
 /// # Errors
 ///
 /// Whatever [`bind_installed`] refuses.
+///
+/// `sub_agents` is this session's own sub-agent dispatcher — the one
+/// `crate::subagent::install_for_session` already installed for the `task`
+/// tool — taken as a parameter rather than built here for the same reason
+/// `recall` is: the decision stays testable without a live provider, and the
+/// caller is the one that knows which dispatcher backs this session.
 pub(crate) fn resolve(
     workspace_root: &std::path::Path,
     variant: &str,
+    sub_agents: Arc<dyn SubAgentDispatcher>,
     warn: &mut dyn FnMut(String),
 ) -> Result<BoundWrapper, String> {
     let settings = crate::settings::Settings::load(workspace_root).unwrap_or_default();
@@ -319,8 +342,27 @@ pub(crate) fn resolve(
         Box::new(crate::wrapper_recall::SessionRecallHost::open(
             workspace_root,
         )),
+        sub_agents,
         warn,
     )
+}
+
+/// A shared handle on the session's sub-agent dispatcher, so [`ChildTurns`]
+/// can hold it by value.
+///
+/// [`ChildTurns::declare`] is generic over its dispatcher rather than taking a
+/// trait object, so a caller holding an `Arc<dyn SubAgentDispatcher>` — the
+/// shape [`crate::subagent::install_for_session`] hands back, shared with the
+/// `task` tool's own dispatcher — needs one line saying the handle itself
+/// dispatches. Mirrors [`crate::wrapper_recall::BoxedRecall`]'s reason
+/// exactly, for the sibling plane.
+struct ArcSubAgents(Arc<dyn SubAgentDispatcher>);
+
+#[async_trait]
+impl SubAgentDispatcher for ArcSubAgents {
+    async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome {
+        self.0.dispatch(spec).await
+    }
 }
 
 /// Find the installed wrapper plugin that declares `variant`, and bind it to
@@ -343,10 +385,17 @@ pub(crate) fn resolve(
 /// empty: a plugin that asks and is answered "no frames" degrades honestly,
 /// while a plugin that asks through a transport with *no* gate has its stdin
 /// shut and waits for an answer that never comes (#3561).
+///
+/// `sub_agents` is bound the same way, for `child_turn`: every wrapper gets a
+/// [`ChildTurns`] plane over it, declared from the manifest's own `[roles]`
+/// table, so a declared role intent spends a real bounded child turn and an
+/// undeclared one is refused `Undeclared` before anything runs — the gate does
+/// that refusing, this function only ever wires the plane behind it.
 pub(crate) fn bind_installed(
     roster: &PluginRoster,
     variant: &str,
     recall: Box<dyn stella_runtime::wrapper::RecallHost>,
+    sub_agents: Arc<dyn SubAgentDispatcher>,
     warn: &mut dyn FnMut(String),
 ) -> Result<BoundWrapper, String> {
     let installed = roster
@@ -417,12 +466,17 @@ pub(crate) fn bind_installed(
     // The manifest's own `[loop]` grant is the authoritative filter — an
     // undeclared capability is refused before this host performs anything —
     // and `DEFAULT_HOST_MAX_CALLS` clamps whatever allowance it asked for.
+    // `ChildTurns::declare` reads the same manifest's `[roles]` table and its
+    // own `[loop] max_calls` ask, so a plugin that named no role intents can
+    // ask for nothing here either.
+    let planes =
+        HostPlanes::recalling(crate::wrapper_recall::BoxedRecall(recall)).with_child_turns(
+            ChildTurns::declare(&installed.manifest, ArcSubAgents(sub_agents)),
+        );
     let gate = Arc::new(HostCallGate::declare(
         installed.manifest.loop_grant.clone(),
         DEFAULT_HOST_MAX_CALLS,
-        Box::new(HostPlanes::recalling(crate::wrapper_recall::BoxedRecall(
-            recall,
-        ))),
+        Box::new(planes),
     ));
     let dispatch = WrapperDispatch::bind(
         installed.manifest.clone(),
@@ -708,12 +762,46 @@ name = "execute"
         Box::new(crate::wrapper_recall::SessionRecallHost::none())
     }
 
+    /// A dispatcher that records every spec it was handed and answers with a
+    /// fixed report, so a test can tell "the gate reached this host's real
+    /// dispatcher" from "the gate refused" — the `child_turn` analogue of
+    /// [`OneFrame`] for recall.
+    #[derive(Default, Clone)]
+    struct RecordingSubAgents {
+        specs: Arc<std::sync::Mutex<Vec<SubAgentSpec>>>,
+    }
+
+    #[async_trait]
+    impl SubAgentDispatcher for RecordingSubAgents {
+        async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome {
+            let answer = format!("answered: {}", spec.instruction);
+            self.specs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(spec);
+            SubAgentOutcome::Completed(stella_core::subagent::SubAgentReport {
+                summary: answer,
+                truncated: false,
+                cost_usd: 0.0,
+                steps: 1,
+                absorbed_messages: 0,
+            })
+        }
+    }
+
+    /// A dispatcher no test below asks anything of — most fixtures only need
+    /// `bind_installed` to have *some* dispatcher to hand `ChildTurns`, the
+    /// same way most of them pass `no_recall()`.
+    fn stub_sub_agents() -> Arc<dyn SubAgentDispatcher> {
+        Arc::new(RecordingSubAgents::default())
+    }
+
     fn bound(
         roster: &PluginRoster,
         variant: &str,
         warn: &mut dyn FnMut(String),
     ) -> Result<BoundWrapper, String> {
-        bind_installed(roster, variant, no_recall(), warn)
+        bind_installed(roster, variant, no_recall(), stub_sub_agents(), warn)
     }
 
     /// **Witness (#3381 "Flip the default").** No flag at all used to mean
@@ -983,8 +1071,14 @@ name = "recall"
         use stella_runtime::wrapper::HostCallChannel;
 
         let roster = roster(vec![installed(RECALLING_MANIFEST, "/plugins/researcher")]);
-        let wrapper = bind_installed(&roster, "research-v1", Box::new(OneFrame), &mut |_| {})
-            .expect("the installed plugin declares this variant");
+        let wrapper = bind_installed(
+            &roster,
+            "research-v1",
+            Box::new(OneFrame),
+            stub_sub_agents(),
+            &mut |_| {},
+        )
+        .expect("the installed plugin declares this variant");
 
         let channel = wrapper.gate.open();
         let outcome = channel
@@ -1003,6 +1097,359 @@ name = "recall"
         assert!(
             wrapper.gate.refusals().is_empty(),
             "nothing was refused, so nothing is reported"
+        );
+    }
+
+    /// A manifest that declares `[loop] calls = ["child_turn"]` and one role
+    /// intent — `[roles]` requires `[subloop]` to validate
+    /// (`ManifestError::RolesRequireSubloop`), so this carries one even though
+    /// `child_turn` and `[subloop]`'s own bounded-turn stages are different
+    /// mechanisms that merely share the `[roles]` table.
+    const CHILD_TURN_MANIFEST: &str = r#"
+name = "reviewer"
+[loop]
+participation = "steering"
+points = ["after_turn"]
+calls = ["child_turn"]
+[runtime]
+argv = ["/bin/sh", "${plugin_dir}/main.sh"]
+timeout_secs = 30
+[wrapper]
+id = "reviewer-v1"
+[[wrapper.stages]]
+name = "execute"
+
+[subloop]
+stages = ["research"]
+
+[roles.reviewer]
+tier = "research"
+"#;
+
+    /// **Witness (this change).** Binding an installed wrapper attaches a
+    /// child-turn plane over this session's own sub-agent dispatcher, and a
+    /// declared role intent spends a real bounded child turn through it —
+    /// the `child_turn` analogue of `a_declared_recall_reaches_this_hosts_context_plane`.
+    ///
+    /// Before this, `bind_installed` built `HostPlanes::recalling(..)` with no
+    /// `.with_child_turns(..)` at all, so every `child_turn` ask answered
+    /// `Unavailable` regardless of what the manifest declared (#3576). This
+    /// assertion fails on that code (the match arm below would see `Err` with
+    /// `HostCallRefusal::Unavailable`, never `Ok`) and passes on this one.
+    #[tokio::test]
+    async fn a_declared_child_turn_reaches_this_hosts_dispatcher() {
+        use stella_plugin::{ChildTurnArgs, HostCallArgs, HostCallOk, HostCallOutcome};
+        use stella_runtime::wrapper::HostCallChannel;
+
+        let roster = roster(vec![installed(CHILD_TURN_MANIFEST, "/plugins/reviewer")]);
+        let sub_agents = RecordingSubAgents::default();
+        let wrapper = bind_installed(
+            &roster,
+            "reviewer-v1",
+            no_recall(),
+            Arc::new(sub_agents.clone()),
+            &mut |_| {},
+        )
+        .expect("the installed plugin declares this variant");
+
+        let channel = wrapper.gate.open();
+        let outcome = channel
+            .call(HostCallArgs::ChildTurn(ChildTurnArgs {
+                role: "reviewer".to_string(),
+                instruction: "does the diff drop the retry?".to_string(),
+            }))
+            .await;
+        match outcome {
+            HostCallOutcome::Ok(HostCallOk::ChildTurn(result)) => {
+                assert_eq!(result.role, "reviewer");
+                assert_eq!(result.seat, "research", "the declared tier's resolved seat");
+                assert_eq!(result.report, "answered: does the diff drop the retry?");
+                assert!(result.completed);
+            }
+            other => panic!("a declared child_turn must reach the dispatcher, got {other:?}"),
+        }
+        assert!(
+            wrapper.gate.refusals().is_empty(),
+            "nothing was refused, so nothing is reported"
+        );
+
+        let specs = sub_agents
+            .specs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            specs.len(),
+            1,
+            "exactly one call, and this session's real dispatcher made it"
+        );
+        assert!(
+            !specs[0].write_access,
+            "a plugin's child turn is read-only, enforced at execution"
+        );
+    }
+
+    /// A role the manifest never declared is refused before this host's
+    /// dispatcher is ever touched — `ChildTurns::resolve`'s own contract,
+    /// exercised here through the real gate this driver assembles rather than
+    /// through `stella-runtime`'s unit tests alone.
+    #[tokio::test]
+    async fn an_undeclared_role_intent_is_refused_before_the_dispatcher_runs() {
+        use stella_plugin::{ChildTurnArgs, HostCallArgs, HostCallOutcome, HostCallRefusal};
+        use stella_runtime::wrapper::HostCallChannel;
+
+        let roster = roster(vec![installed(CHILD_TURN_MANIFEST, "/plugins/reviewer")]);
+        let sub_agents = RecordingSubAgents::default();
+        let wrapper = bind_installed(
+            &roster,
+            "reviewer-v1",
+            no_recall(),
+            Arc::new(sub_agents.clone()),
+            &mut |_| {},
+        )
+        .expect("it binds");
+
+        let channel = wrapper.gate.open();
+        let refused = channel
+            .call(HostCallArgs::ChildTurn(ChildTurnArgs {
+                role: "auditor".to_string(),
+                instruction: "check it".to_string(),
+            }))
+            .await;
+        assert!(
+            matches!(
+                refused,
+                HostCallOutcome::Err(ref failure) if failure.refusal == HostCallRefusal::Undeclared
+            ),
+            "the manifest declares only [roles.reviewer], got {refused:?}"
+        );
+        assert!(
+            sub_agents
+                .specs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "a refusal the plugin could never have bought must not spend anything"
+        );
+    }
+
+    /// A host driver that records the prelude it was handed and completes
+    /// trivially — the same shape `research_plugin_dispatch.rs`'s
+    /// `RecordingDriver` uses, so a real subprocess conversation can be driven
+    /// through [`WrapperDispatch::run`] without spinning up a real engine
+    /// turn. Enough to answer this suite's only question: did the plugin's
+    /// real, spawned `child_turn` conversation reach the turn.
+    #[derive(Default)]
+    struct RecordingTurnDriver {
+        prelude: Option<TurnPrelude>,
+    }
+
+    #[async_trait(?Send)]
+    impl TurnDriver for RecordingTurnDriver {
+        async fn run_turn(&mut self, prelude: TurnPrelude) -> DrivenTurn {
+            self.prelude = Some(prelude);
+            DrivenTurn {
+                outcome: WrapperTurnOutcome {
+                    completed: true,
+                    answer: "done".to_string(),
+                    tools: Some(Vec::new()),
+                    changed_files: Some(Vec::new()),
+                },
+                tamper: stella_plugin::TamperFinding::NotChecked,
+            }
+        }
+    }
+
+    /// A `/bin/sh` fixture plugin's `main.sh`: asks the host for `child_turn`
+    /// at role `reviewer`, then reports what it read back. No JSON library —
+    /// `wrapper_child_turn.rs`'s reason (`doc:pipeline-as-plugins` §5
+    /// commitment 2): a capability only Rust can reach is a Rust API with
+    /// extra steps.
+    const CHILD_TURN_SUBPROCESS_SCRIPT: &str = r#"#!/bin/sh
+read -r request
+printf '%s\n' '{"call":"child_turn","id":1,"args":{"role":"reviewer","instruction":"does the diff drop the retry?"}}'
+read -r answer
+case "$answer" in
+  *'"seat":"research"'*) seat="research" ;;
+  *'"refusal":"undeclared"'*) seat="refused" ;;
+  *) seat="unknown" ;;
+esac
+case "$seat" in
+  research) finding="the reviewer (research) confirms the retry is dropped" ;;
+  refused) finding="the host refused an undeclared role intent; degrading" ;;
+  *) finding="no assessment was available" ;;
+esac
+printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"reviewer","text":"%s"}]}}\n' "$finding"
+"#;
+
+    /// Write `CHILD_TURN_SUBPROCESS_SCRIPT` into a fresh temp directory and
+    /// build the `[runtime]`/`[wrapper]` manifest text around it — `roles` is
+    /// the only thing that differs between the declared and undeclared cases
+    /// below, so it is the one parameter.
+    fn subprocess_plugin(roles_and_subloop: &str, wrapper_id: &str) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().expect("a scratch plugin dir");
+        std::fs::write(dir.path().join("main.sh"), CHILD_TURN_SUBPROCESS_SCRIPT)
+            .expect("write the fixture script");
+        let manifest = format!(
+            "name = \"reviewer\"\n[loop]\nparticipation = \"steering\"\npoints = \
+             [\"before_turn\"]\ncalls = [\"child_turn\"]\n[runtime]\nargv = [\"/bin/sh\", \
+             \"${{plugin_dir}}/main.sh\"]\ntimeout_secs = 10\n[wrapper]\nid = \"{wrapper_id}\"\n\
+             [[wrapper.stages]]\nname = \"execute\"\n\n{roles_and_subloop}"
+        );
+        (dir, manifest)
+    }
+
+    /// **Witness (this change, full subprocess conversation).** A real
+    /// `/bin/sh` process is spawned through [`bind_installed`]'s own transport
+    /// — the exact object graph `stella run --pipeline <variant>` assembles —
+    /// asks this host for `child_turn` over stdio, and the answer it reads back
+    /// carries this session's own dispatcher's report.
+    ///
+    /// Fails before this change for the reason the whole task does: `bind_installed`
+    /// built `HostPlanes::recalling(..)` with no `.with_child_turns(..)`, so the
+    /// spawned plugin's ask would have read back `{"refusal":"unavailable",...}`
+    /// regardless of what its manifest declared, and the finding below would
+    /// never appear in the turn's messages.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_declared_child_turn_survives_the_real_subprocess_conversation() {
+        let (plugin_dir, manifest_text) = subprocess_plugin(
+            "[subloop]\nstages = [\"research\"]\n\n[roles.reviewer]\ntier = \"research\"\n",
+            "reviewer-subprocess-v1",
+        );
+        let roster = roster(vec![installed(
+            &manifest_text,
+            plugin_dir.path().to_str().expect("a utf-8 temp path"),
+        )]);
+        let sub_agents = RecordingSubAgents::default();
+        let wrapper = bind_installed(
+            &roster,
+            "reviewer-subprocess-v1",
+            no_recall(),
+            Arc::new(sub_agents.clone()),
+            &mut |_| {},
+        )
+        .expect("the installed plugin declares this variant");
+
+        let mut driver = RecordingTurnDriver::default();
+        let report = wrapper
+            .dispatch
+            .run(
+                RoundInput {
+                    goal: "the retry is dropped on a 429".to_string(),
+                    signals: pre_turn_signals(false, false),
+                    candidate: None,
+                },
+                &mut driver,
+            )
+            .await
+            .expect("the declared stage order resolves");
+
+        assert!(
+            report.faults.is_empty(),
+            "the real subprocess conversation must complete cleanly: {:?}",
+            report.faults
+        );
+        let prelude = driver.prelude.expect("the host was asked to run a turn");
+        let messages = prelude.into_messages();
+        assert!(
+            messages.iter().any(|message| message
+                .content
+                .contains("the reviewer (research) confirms the retry is dropped")),
+            "the plugin's contribution must carry the real child turn's answer: {messages:?}"
+        );
+
+        let specs = sub_agents
+            .specs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            specs.len(),
+            1,
+            "this session's own dispatcher made exactly one real call"
+        );
+        assert!(
+            !specs[0].write_access,
+            "a plugin's child turn is read-only, enforced at execution"
+        );
+        assert!(
+            wrapper.gate.refusals().is_empty(),
+            "a declared call inside the allowance is performed, not refused"
+        );
+    }
+
+    /// **Witness, the other half.** The identical spawned plugin, bound to a
+    /// manifest that still declares `calls = ["child_turn"]` — so the
+    /// transport still offers the conversation, matching
+    /// [`HostCallGate::offers_calls`]'s contract that a plugin declaring no
+    /// calls at all never has its stdin held open in the first place — but
+    /// names no `[roles.reviewer]`: [`ChildTurns::resolve`] refuses before
+    /// this host's dispatcher is ever touched, the plugin reads that refusal
+    /// back over the same stdio conversation, and degrades — exactly the
+    /// contract `crates/stella-runtime/tests/wrapper_child_turn.rs`'s
+    /// `an_undeclared_role_intent_is_refused_to_the_plugin_and_reported_to_the_host`
+    /// proves at the generic host layer, reproduced here through this driver's
+    /// own real subprocess wiring.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_undeclared_child_turn_is_refused_through_the_real_subprocess_conversation() {
+        // No `[roles]`/`[subloop]` at all — a plugin that declared the
+        // capability but named no role intent for it.
+        let (plugin_dir, manifest_text) = subprocess_plugin("", "reviewer-no-roles-v1");
+        let roster = roster(vec![installed(
+            &manifest_text,
+            plugin_dir.path().to_str().expect("a utf-8 temp path"),
+        )]);
+        let sub_agents = RecordingSubAgents::default();
+        let wrapper = bind_installed(
+            &roster,
+            "reviewer-no-roles-v1",
+            no_recall(),
+            Arc::new(sub_agents.clone()),
+            &mut |_| {},
+        )
+        .expect("the installed plugin declares this variant");
+
+        let mut driver = RecordingTurnDriver::default();
+        let report = wrapper
+            .dispatch
+            .run(
+                RoundInput {
+                    goal: "the retry is dropped on a 429".to_string(),
+                    signals: pre_turn_signals(false, false),
+                    candidate: None,
+                },
+                &mut driver,
+            )
+            .await
+            .expect("the declared stage order resolves");
+
+        assert!(
+            report.faults.is_empty(),
+            "a refused call is a value the plugin reads, never a death: {:?}",
+            report.faults
+        );
+        let prelude = driver.prelude.expect("the host was asked to run a turn");
+        let messages = prelude.into_messages();
+        assert!(
+            messages.iter().any(|message| message
+                .content
+                .contains("the host refused an undeclared role intent; degrading")),
+            "the plugin must read back its own refusal and degrade honestly: {messages:?}"
+        );
+
+        assert!(
+            sub_agents
+                .specs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "an undeclared ask must never reach this host's dispatcher"
+        );
+        let refusals = wrapper.gate.refusals();
+        assert_eq!(refusals.len(), 1, "the refusal is reported, never silent");
+        assert_eq!(
+            refusals[0].refusal,
+            stella_plugin::HostCallRefusal::Undeclared
         );
     }
 
