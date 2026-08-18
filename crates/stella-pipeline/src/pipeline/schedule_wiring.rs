@@ -10,41 +10,46 @@
 //! God files), so the machinery — and the error-handling boilerplate around
 //! it — lives here, and `run` is left with two plain calls (#3408).
 //!
-//! # Why the pre-execute batch exists
+//! # Why every declared stage is decided in one batch
 //!
 //! [`stella_plugin::ProgressiveResolver`] must be asked about each declared
 //! stage in the manifest's own order — `triage`, `recall`, `research`,
 //! `plan`, `scope`, `execute`, `witness`, `verify` for the shipped `classic`
 //! variant. `Pipeline::run`'s *own* control flow does not visit those
 //! decisions in that order: it needs the `witness` answer (`authored_witness`)
-//! before it has run `research` or `plan` for real, because that answer
-//! drives the single-shot/best-of-N and isolation choices research and plan
-//! sit in front of. [`Pipeline::begin_turn_schedule`] resolves the resolver's
-//! whole walk through `witness` in one batch, immediately once triage's real
-//! facts are known — decoupling *when the schedule decides* a stage from
-//! *when the pipeline does that stage's real work*, which stays exactly
-//! where it always was. Nothing about the manifest's conditions changes this
-//! — `research`/`plan`/`scope`/`witness` read only host facts or signals
-//! `triage` publishes, so deciding them before `research_stage` or
-//! `plan_with_review` ever runs answers them no differently than deciding
-//! them in place would (asserted for the shipped variant by
-//! `tests/variant_dispatch.rs`).
+//! before it has run `research` or `plan` for real, and it needs `verify`'s
+//! answer before a single candidate has executed. [`Pipeline::begin_turn_schedule`]
+//! resolves the resolver's whole declared walk in one batch, immediately once
+//! triage's real facts are known — decoupling *when the schedule decides* a
+//! stage from *when the pipeline does that stage's real work*, which stays
+//! exactly where it always was. This is sound because **every one of
+//! `classic.toml`'s conditions reads only a host fact or a signal `triage`
+//! itself publishes** — `verify`'s `if = "verifies"` included, since
+//! [`Signal::Verifies`](stella_plugin::Signal::Verifies) is triage-published,
+//! not execute-published — asserted for the shipped variant by
+//! `tests/variant_dispatch.rs` rather than assumed.
 //!
-//! `verify` is the one exception, and deliberately not part of the batch: its
-//! condition may read `execute`'s real output, which does not exist until
-//! this turn's candidate(s) have actually run — see [`crate::schedule`]'s
-//! module docs for why that makes [`decide_verify`] a **per-candidate**
-//! decision against a clone rather than a fourth batched one.
+//! A variant whose `verify` (or any stage) instead reads what `execute`
+//! actually produced — [`crate::schedule`]'s module docs use exactly that
+//! example — needs a **second**, per-candidate decision against a
+//! [`Schedule::clone`] taken after this batch, fed that candidate's real
+//! diff. Nothing here does that yet: no shipped or configurable variant
+//! reads a post-execute signal, so wiring it is deferred rather than
+//! speculative — tracked in #3629. [`crate::schedule::Schedule`] and
+//! `tests/variant_dispatch.rs` already prove the mechanism handles it
+//! correctly; what remains is `Pipeline::run_candidate` actually asking.
 
 use stella_plugin::{StageName, Wrapper};
 
 use crate::schedule::{HostFacts, Schedule, ScheduleError};
-use crate::variant;
+use crate::variant::{self, VariantError};
 
 use super::*;
 
 /// The manifest's answer to every stage decision `Pipeline::run` needs before
-/// a single candidate executes.
+/// any candidate executes — every declared stage the shipped `classic`
+/// variant has, since none of its conditions read what `execute` produces
+/// (see this module's docs).
 pub(super) struct PreExecuteSchedule {
     /// Whether `research` runs — ANDed with the roster's own resolution of
     /// [`ModelCallRole::Research`] at its call site (host-internal, #3408).
@@ -60,54 +65,51 @@ pub(super) struct PreExecuteSchedule {
     /// model's own `wants_witness`, the class's `verifies_unconditionally`,
     /// and independence) are host-internal and stay ANDed at that call site.
     pub(super) witness: bool,
+    /// Whether `verify` runs — ORed at its call site with the host-internal
+    /// zero-diff guard for a simple lookup that unexpectedly touched files,
+    /// which no published signal names (#3408).
+    pub(super) verify: bool,
 }
 
 impl Pipeline<'_> {
     /// The manifest this run follows: the configured variant, or the
     /// built-in `classic` order when none was configured.
     ///
-    /// # Errors
-    ///
-    /// A [`PipelineError::InvalidVariant`] if the *built-in* fallback
-    /// manifest fails to load — a build-time defect in the shipped
-    /// `variants/classic.toml`, not a runtime condition, and asserted
-    /// unreachable by `tests/variant_program.rs`. A configured variant is
-    /// already a parsed, validated [`Wrapper`] by the time it reaches
-    /// [`PipelineConfig`], so it cannot fail here at all.
-    pub(super) fn effective_variant(
-        &self,
-        total_cost_usd: f64,
-    ) -> Result<Wrapper, PipelineRunError> {
+    /// Build-time defect only: unreachable for a configured variant (already
+    /// a parsed, validated [`Wrapper`] by the time it reaches
+    /// [`PipelineConfig`]) and asserted unreachable for the built-in
+    /// fallback by `tests/variant_program.rs`.
+    fn effective_variant(&self) -> Result<Wrapper, VariantError> {
         match &self.config.variant {
             Some(wrapper) => Ok(wrapper.clone()),
-            None => variant::classic()
-                .map(Wrapper::clone)
-                .map_err(|source| variant_error(source, total_cost_usd)),
+            None => variant::classic().map(Wrapper::clone),
         }
     }
 
-    /// Begin this turn's [`Schedule`] against `variant` and resolve every
-    /// stage decision `run` needs before any candidate executes — see this
-    /// module's docs for why they are batched here rather than decided where
-    /// each stage's real work happens.
-    pub(super) fn begin_turn_schedule<'v>(
+    /// Resolve every stage decision `run` needs, against this turn's
+    /// effective variant and triage's real facts — see this module's docs
+    /// for why one batch, right here, answers every declared stage rather
+    /// than only some of them.
+    pub(super) fn begin_turn_schedule(
         &self,
-        variant: &'v Wrapper,
         budget: &BudgetGuard,
         assessment: &TaskAssessment,
         research_questions: usize,
         total_cost_usd: f64,
-    ) -> Result<(Schedule<'v>, PreExecuteSchedule), PipelineRunError> {
+    ) -> Result<PreExecuteSchedule, PipelineRunError> {
+        let variant = self
+            .effective_variant()
+            .map_err(|source| variant_error(source, total_cost_usd))?;
         let task_class = assessment.class;
-        let mut schedule = Schedule::new(
-            variant,
-            HostFacts {
-                test_command: self.config.test_command.is_some(),
-                candidates: self.config.candidate_count(),
-                budget_metered: budget.headroom_usd().is_some(),
-            },
-        );
         let decided: Result<PreExecuteSchedule, ScheduleError> = (|| {
+            let mut schedule = Schedule::new(
+                &variant,
+                HostFacts {
+                    test_command: self.config.test_command.is_some(),
+                    candidates: self.config.candidate_count(),
+                    budget_metered: budget.headroom_usd().is_some(),
+                },
+            );
             schedule.decide(StageName::Triage)?;
             schedule.decide(StageName::Recall)?;
             schedule.update(|v| {
@@ -122,52 +124,41 @@ impl Pipeline<'_> {
             let research = schedule.decide(StageName::Research)?;
             let plan = schedule.decide(StageName::Plan)?;
             let scope = schedule.decide(StageName::Scope)?;
-            // Unconditional in every shipped manifest. Deciding it here,
-            // before the real execution this turn will do, is what lets
-            // `witness` — declared right after it — be decided at all: the
-            // resolver walks the manifest in order, and `witness`'s own
-            // condition never reads execute's output for the shipped variant
-            // (asserted, not assumed, by `tests/variant_dispatch.rs`).
+            // Unconditional in every shipped manifest — decided here, before
+            // this turn's real execution, purely so `witness` and `verify`
+            // (declared after it) can be reached at all.
             schedule.decide(StageName::Execute)?;
             let witness = schedule.decide(StageName::Witness)?;
+            let verify = schedule.decide(StageName::Verify)?;
             Ok(PreExecuteSchedule {
                 research,
                 plan: plan && scope,
                 witness,
+                verify,
             })
         })();
-        match decided {
-            Ok(pre) => Ok((schedule, pre)),
-            Err(source) => Err(variant_error(source, total_cost_usd)),
-        }
+        decided.map_err(|source| variant_error(source, total_cost_usd))
     }
-}
 
-/// This candidate's `verify` decision (#3408): update the running schedule
-/// with what `execute` actually produced for THIS candidate, then decide.
-/// Kept a free function, not a `Pipeline` method — it touches no pipeline
-/// state, only the candidate's own [`Schedule`] clone and its [`CandidateState`].
-pub(super) fn decide_verify(
-    schedule: &mut Schedule<'_>,
-    state: &CandidateState,
-) -> Result<bool, ScheduleError> {
-    schedule.update(|v| {
-        v.mutating_actions = u64::from(state.signals.mutating_actions);
-        v.diff_lines = u64::from(state.diff_lines);
-    });
-    schedule.decide(StageName::Verify)
-}
-
-impl ScheduleError {
-    /// Turn a per-candidate schedule failure into the aborted result its
-    /// call site returns, so `pipeline.rs` — closed to growth — spends one
-    /// line on this rather than a whole match arm.
-    pub(super) fn into_candidate_abort(self, messages: Vec<CompletionMessage>) -> CandidateResult {
-        CandidateResult::aborted(
-            messages,
-            format!("this turn's wrapper variant could not schedule verify: {self}"),
-            AbortKind::Failure,
-        )
+    /// Whether this turn authors its own witness test (L-E11 front half):
+    /// `schedule_says.witness` — the manifest's own half, `classic.toml`'s
+    /// `if = "no-test-command"` — ANDed with five host-internal facts the
+    /// closed condition grammar has no conjunction to fold into one clause
+    /// (#3408): not conversational, the witness-author role enabled, the
+    /// model's own `wants_witness`, the class verifying unconditionally, and
+    /// an author independent of the worker actually being resolvable.
+    pub(super) fn authored_witness(
+        &self,
+        schedule_says: &PreExecuteSchedule,
+        assessment: &TaskAssessment,
+        task_class: TaskClass,
+    ) -> bool {
+        !assessment.conversational
+            && schedule_says.witness
+            && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
+            && assessment.wants_witness()
+            && task_class.verifies_unconditionally()
+            && self.can_author_independent_witness()
     }
 }
 

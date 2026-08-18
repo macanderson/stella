@@ -412,28 +412,19 @@ impl<'a> Pipeline<'a> {
             diff_lines: state.diff_lines,
         });
 
-        // This resumed leg's schedule (#3408): rebuilt from the class the
-        // crashed run committed to `FrameProgress`, since a resume has no
-        // triage boundary of its own left to observe. Unused below —
-        // `should_verify` above is still this file's own pre-#3408
-        // computation, not `Schedule::decide` — carried only so `TaskFrame`
-        // has the field every other construction site supplies; migrating
-        // this path's own gate is tracked in #3628.
-        let variant = self.effective_variant(total_cost)?;
-        let (schedule, _) = self.begin_turn_schedule(
-            &variant,
-            &budget,
-            &TaskAssessment::from_class(task_class),
-            0,
-            total_cost,
-        )?;
         let base_messages: Vec<CompletionMessage> = Vec::new();
         let frame = TaskFrame {
             goal,
             base_messages: &base_messages,
             plan: resume.plan.as_deref(),
             assessment: TaskAssessment::from_class(task_class),
-            schedule: &schedule,
+            // `verify_candidate` (called directly below, not through
+            // `run_candidate`) never reads this field — `should_verify`
+            // above is this file's own pre-#3408 computation. Filled in
+            // anyway so `TaskFrame` has the field every construction site
+            // supplies, with the value the shipped manifest's triage-
+            // published `verifies` signal would carry for this class.
+            schedule_verifies: task_class.verifies_unconditionally(),
         };
         let best = {
             let mut spend = Spend {

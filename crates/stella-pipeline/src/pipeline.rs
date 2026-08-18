@@ -88,7 +88,6 @@ use crate::triage::{
     resolve_witness, triage_prompt,
 };
 use stella_core::driver::TurnHalt;
-use stella_plugin::Wrapper;
 use stella_protocol::ToolOutput;
 
 use crate::flip_halt::{FlipHalt, command_of};
@@ -131,7 +130,6 @@ mod roster_wiring;
 use roster_wiring::Assigned;
 mod run_error;
 mod schedule_wiring;
-use schedule_wiring::decide_verify;
 mod scope_stage;
 mod stage_budget;
 mod task_frame;
@@ -531,9 +529,8 @@ pub struct PipelineConfig {
     /// workspace with no candidate isolation cannot offer it (and an `Always`
     /// that cannot be honoured says so); only then does this policy decide.
     pub create_worktrees: crate::ports::WorktreePolicy,
-    /// The `[wrapper]` variant scheduling this run's stages (#3408, see
-    /// `crate::schedule`). `None` uses the built-in `classic` order.
-    pub variant: Option<Wrapper>,
+    /// The `[wrapper]` variant scheduling this run (#3408, `crate::schedule`); `None` = `classic`.
+    pub variant: Option<stella_plugin::Wrapper>,
 }
 
 impl Default for PipelineConfig {
@@ -1119,15 +1116,8 @@ impl<'a> Pipeline<'a> {
             p.task_class = Some(task_class);
             p.goal = Some(goal.to_string());
         });
-        // This turn's schedule (#3408, `crate::schedule`).
-        let variant = self.effective_variant(total_cost)?;
-        let (schedule, schedule_says) = self.begin_turn_schedule(
-            &variant,
-            budget,
-            &assessment,
-            research_questions.len(),
-            total_cost,
-        )?;
+        let schedule_says =
+            self.begin_turn_schedule(budget, &assessment, research_questions.len(), total_cost)?;
         // The volatile recall+goal message rides AFTER the stable system
         // prefix (L-E8) — see assemble_user_message. The verification
         // contract rides only on turns that will actually be verified: a
@@ -1148,8 +1138,6 @@ impl<'a> Pipeline<'a> {
         // single-shot/best-of-N split below, so `can_author…` — which
         // announces the degradation — is still never consulted for a turn
         // that would not have authored a witness anyway.
-        // `schedule_says.witness` is the manifest's half; the rest stay
-        // host-internal (#3408).
         let authored_witness = !assessment.conversational
             && schedule_says.witness
             && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
@@ -1179,15 +1167,12 @@ impl<'a> Pipeline<'a> {
         // the planner alone, so a fact a read-only sub-agent verified against
         // this workspace survived to the worker only as whatever residue of
         // it the planner encoded into a step string.
-        let research = self
-            .research_stage(
-                goal,
-                &research_questions,
-                schedule_says.research,
-                budget,
-                &mut total_cost,
-            )
-            .await;
+        let research = if schedule_says.research {
+            self.research_stage(goal, &research_questions, budget, &mut total_cost)
+                .await
+        } else {
+            Vec::new()
+        };
         // Recall rides as its OWN marked message, ahead of the goal — the
         // shape the interactive path has always used, and the only one the
         // receipts plane can attribute (#3243 D4). Folded into the goal
@@ -1256,7 +1241,7 @@ impl<'a> Pipeline<'a> {
             base_messages: &base_messages,
             plan: plan.as_deref(),
             assessment,
-            schedule: &schedule,
+            schedule_verifies: schedule_says.verify,
         };
         // Decided above, before the user message was assembled (the worker's
         // test-first contract keys off it) and before this single-shot/
@@ -1741,8 +1726,6 @@ impl<'a> Pipeline<'a> {
         surface: CandidateSurface<'_>,
         spend: &mut Spend<'_>,
     ) -> CandidateResult {
-        // This candidate's own continuation of the shared prefix (#3408).
-        let mut schedule = frame.schedule.clone();
         // Flip oracle: for classes we always verify, take a pre-execute
         // baseline of the test command so a later pass counts as a genuine
         // fail→pass flip (L-E11). Simple lookups skip the baseline — they are
@@ -1896,12 +1879,7 @@ impl<'a> Pipeline<'a> {
         self.absorb_probe(&mut state, probe);
         let files_touched = state.signals.file_changes > 0
             || (state.signals.mutating_actions > 0 && !state.diff_text.trim().is_empty());
-        // `verify`'s manifest half, against this candidate's real diff (#3408).
-        let schedule_says_verify = match decide_verify(&mut schedule, &state) {
-            Ok(runs) => runs,
-            Err(source) => return source.into_candidate_abort(state.messages),
-        };
-        let should_verify = schedule_says_verify
+        let should_verify = frame.schedule_verifies
             || (frame.assessment.class == TaskClass::SimpleLookup && files_touched);
         if !should_verify {
             // A clean lookup: nothing to verify.
