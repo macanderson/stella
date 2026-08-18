@@ -663,21 +663,22 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         &transcript::render(&Default::default(), &Default::default()),
     );
 
-    // Dark: the instrument ramp, achromatic chrome, gold only as identity.
+    // Dark: the instrument ramp, achromatic chrome, the brand hue only as
+    // identity.
     for declaration in [
-        "--ground: #0A0A0A;",
-        "--surface: #0F0F0F;",
-        "--raised: #111111;",
-        "--hairline: #1F1F1F;",
-        "--text: #EDEDED;",
-        "--text-2: #A1A1A1;",
-        "--text-3: #6E6E6E;",
-        "--accent: #EDEDED;",
-        "--identity: #C58A32;",
-        "--ok: #4CC38A;",
-        "--warn: #C9A227;",
-        "--bad: #E5715F;",
-        "--c1: #EDEDED;",
+        "--ground: #070B10;",
+        "--surface: #0D1319;",
+        "--raised: #11171D;",
+        "--hairline: #1F262D;",
+        "--text: #E9EDF2;",
+        "--text-2: #A4ABB3;",
+        "--text-3: #737C88;",
+        "--accent: #E9EDF2;",
+        "--identity: #00D1F9;",
+        "--ok: #3FD99B;",
+        "--warn: #D9A62E;",
+        "--bad: #F2687A;",
+        "--c1: #E9EDF2;",
     ] {
         assert!(
             html.contains(declaration),
@@ -690,6 +691,8 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
     // block no longer defines.
     for retired in [
         "#7dd3fc", "#38bdf8", "#a78bfa", "#6c7b90", "#4d9fff", "--sky", "--azure",
+        // The bronze instrument palette the v3.0 ion recolour retired.
+        "#0A0A0A", "#EDEDED", "#C58A32", "#4CC38A", "#C9A227", "#E5715F", "#674415",
     ] {
         assert!(
             !html.contains(retired),

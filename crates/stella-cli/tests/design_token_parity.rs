@@ -607,24 +607,29 @@ fn the_observatory_defines_every_token_it_references() {
     );
 }
 
-/// Identity gold is the brand's own value, not one mixed at the call site.
+/// The identity hue is the brand's own value, not one mixed at the call site.
 ///
-/// The rule permits gold on identity; it does not permit *a* gold. Both values
-/// have to come from `docs/brand/css/tokens.css`, or the system grows a fourth
-/// gold the way it grew a fourth look. The marketing mock this system was
-/// drawn from had already invented `#C99A22`, which is 1.07:1 against `--warn`
-/// — indistinguishable from it, and the reason the shipped value is not that.
+/// The rule permits the brand hue on identity; it does not permit *a* cyan.
+/// Both values have to come from `docs/brand/css/tokens.css`, or the system
+/// grows a fourth accent the way it grew a fourth look. The marketing mock the
+/// bronze system was drawn from had already invented `#C99A22`, which was
+/// 1.07:1 against `--warn` — indistinguishable from it, and the reason the
+/// shipped value was not that.
+///
+/// The token family is `--stella-brand-*` since the v3.0 ion recolour; it was
+/// `--stella-gold-*` before, which is why this test reads role names rather
+/// than hue names now.
 #[test]
-fn identity_gold_comes_from_the_brand_ramp() {
+fn identity_comes_from_the_brand_ramp() {
     let brand = read("docs/brand/css/tokens.css");
     let ramp = declarations(&brand);
 
-    let phosphor = ramp
-        .get("--stella-gold-500")
-        .expect("brand tokens define --stella-gold-500");
+    let ion = ramp
+        .get("--stella-brand-500")
+        .expect("brand tokens define --stella-brand-500");
     let deep = ramp
-        .get("--stella-gold-800")
-        .expect("brand tokens define --stella-gold-800");
+        .get("--stella-brand-800")
+        .expect("brand tokens define --stella-brand-800");
 
     let observatory = read("crates/stella-observatory/src/assets/index.html");
     let dark = declarations(between(&observatory, "BEGIN palette", "END palette"));
@@ -632,16 +637,16 @@ fn identity_gold_comes_from_the_brand_ramp() {
 
     assert_eq!(
         dark.get("--identity"),
-        Some(phosphor),
-        "dark identity must be the brand's Phosphor Gold (--stella-gold-500)"
+        Some(ion),
+        "dark identity must be the brand's Ion (--stella-brand-500)"
     );
     assert_eq!(
         light.get("--identity"),
         Some(deep),
-        "light identity must be --stella-gold-800. NOT --stella-gold-deep \
-         (#8b5e1a): that token is documented for small gold text on light \
-         surfaces, and gold-800 outmeasures it on --surface (8.33:1 against \
-         5.42:1) and as the identity fill pair (8.70:1 against 5.65:1) \
+        "light identity must be --stella-brand-800. NOT --stella-brand-deep, \
+         which is documented for small brand text on light surfaces: identity \
+         has to clear contrast on --surface, not only on the page ground, and \
+         brand-800 measures 4.93:1 there and 5.20:1 as the identity fill pair \
          (#2591)."
     );
 }

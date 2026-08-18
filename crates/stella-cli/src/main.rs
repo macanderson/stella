@@ -976,13 +976,14 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
 
     // `init` works offline (heuristic fallback), so config resolution
     // failure downgrades rather than aborting.
-    if let Some(Command::Init) = cli.command {
+    if let Some(Command::Init { prune_vectors }) = cli.command {
         return signals::block_on_interruptible(
             rt()?,
             agent::run_init(
                 cli.globals.model.as_deref(),
                 cli.globals.api_key.as_deref(),
                 cli.globals.base_url.as_deref(),
+                prune_vectors,
             ),
         )
         .map_err(failure::CliFailure::from);
@@ -1287,7 +1288,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         // Models/Version (and Tools) short-circuit in the first match at the
         // top of `run` before a provider is resolved; Init is handled by the
         // caller. Reaching any of them here is impossible.
-        Command::Init
+        Command::Init { .. }
         | Command::Daemon { .. }
         | Command::Tools { .. }
         | Command::Search { .. }

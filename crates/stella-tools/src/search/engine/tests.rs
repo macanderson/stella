@@ -24,6 +24,7 @@ use crate::search::semantic::{
 };
 use crate::search::{codegraph, scan};
 
+mod refresh;
 mod shims;
 
 use shims as uncached;

@@ -49,13 +49,13 @@ REPO = HERE.parents[2]
 # brand tokens — docs/brand/css/tokens.css is normative; these mirror it
 # ---------------------------------------------------------------------------
 
-GOLD = "#C58A32"  # Bronze Gold — the comet, on every ground
-GOLD_DEEP = "#8B5E1A"  # small gold *text* on light surfaces only
-INK = "#10100F"
-PAPER = "#F2EEE5"  # warm text on dark
-PAPER_BG = "#F5F0E6"  # light-mode surface
-MUTED_ON_DARK = "#A19A8E"
-MUTED_ON_LIGHT = "#6F675B"
+BRAND = "#00D1F9"  # Ion — the comet, on every ground
+BRAND_DEEP = "#00778F"  # small brand *text* on light surfaces only
+INK = "#070B10"
+PAPER = "#E9EDF2"  # cool text on dark
+PAPER_BG = "#EEF1F5"  # light-mode surface
+MUTED_ON_DARK = "#9299A1"
+MUTED_ON_LIGHT = "#61676F"
 
 # The repo this art advertises, and the one command that installs it.
 REPO_SLUG = "macanderson/stella"
@@ -144,16 +144,19 @@ GITHUB_BOX = 24.0
 class Theme:
     """One ground and everything that has to change with it.
 
-    Note what does *not* change: the comet stays #C58A32 on both grounds. The
-    kit's rule is that the mark is a shape, not small text, so it never drops
-    to gold-deep — only gold *lettering* does, and only on light.
+    Note what does *not* change: the comet stays #00D1F9 on both grounds.
+    These are banners, always rendered on the ground the theme names, so the
+    v3.0 light-lockup rule (the mark drops to brand-700 on paper, because ion
+    holds 1.83:1 against white) does not reach here — a social canvas paints
+    its own ground, and this one is #EEF1F5, where the mark reads. Only
+    brand-coloured *lettering* drops, and only on light.
     """
 
     name: str
     bg: str
     fg: str
     muted: str
-    gold_text: str  # gold that passes contrast as small text on this ground
+    brand_text: str  # brand tone that passes as small text on this ground
     surface: str  # terminal body
     surface_top: str  # terminal title bar
     border: str
@@ -175,10 +178,10 @@ DARK = Theme(
     bg=INK,
     fg=PAPER,
     muted=MUTED_ON_DARK,
-    gold_text=GOLD,
-    surface="#151412",
-    surface_top="#1B1916",
-    border="#302C27",
+    brand_text=BRAND,
+    surface="#0D1319",
+    surface_top="#141B22",
+    border="#2A3036",
     grid="#FFFFFF",
     grid_op=0.045,
     sweep_dark="#000000",
@@ -193,17 +196,17 @@ LIGHT = Theme(
     bg=PAPER_BG,
     fg=INK,
     muted=MUTED_ON_LIGHT,
-    gold_text=GOLD_DEEP,
-    surface="#FCF9F3",
-    surface_top="#EEE6D8",
-    border="#D9CFBF",
-    grid="#10100F",
+    brand_text=BRAND_DEEP,
+    surface="#F7F9FC",
+    surface_top="#E3E8EE",
+    border="#CFD6DD",
+    grid="#070B10",
     grid_op=0.05,
-    sweep_dark="#C4B69F",
+    sweep_dark="#B4BCC6",
     sweep_dark_op=0.22,
     sweep_warm_op=0.10,
     glow_op=0.10,
-    band="#EFE8DC",
+    band="#E7EBF0",
 )
 
 
@@ -373,13 +376,13 @@ def lockup(cx: float, cy: float, height: float, letters: str) -> str:
     tx = cx - (LOCKUP_W * k) / 2
     ty = cy - height / 2
     trails = "".join(
-        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="3.5" fill="{GOLD}"/>'
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="3.5" fill="{BRAND}"/>'
         for x, y, w, h in TRAIL_RECTS
     )
     return (
         f'<g transform="translate({tx:.3f} {ty:.3f}) scale({k:.5f})">'
         f"{trails}"
-        f'<path d="{STAR_PATH}" fill="{GOLD}"/>'
+        f'<path d="{STAR_PATH}" fill="{BRAND}"/>'
         f'<path d="{WORDMARK_PATH}" fill="{letters}"/>'
         f"</g>"
     )
@@ -399,12 +402,12 @@ def mark(cx: float, cy: float, ink_w: float) -> str:
     tx = cx - (ix + iw / 2) * k
     ty = cy - (iy + ih / 2) * k
     trails = "".join(
-        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="3.5" fill="{GOLD}"/>'
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="3.5" fill="{BRAND}"/>'
         for x, y, w, h in TRAIL_RECTS
     )
     return (
         f'<g transform="translate({tx:.3f} {ty:.3f}) scale({k:.5f})">'
-        f'{trails}<path d="{STAR_PATH}" fill="{GOLD}"/></g>'
+        f'{trails}<path d="{STAR_PATH}" fill="{BRAND}"/></g>'
     )
 
 
@@ -458,7 +461,7 @@ def background(lo: Layout, th: Theme, keep_out: tuple[float, float, float, float
     # Two sweeps: the same star again, past canvas scale, one receding and one
     # warm, hung off opposite corners so the eye reads a diagonal not a pair.
     out.append(sweep(lo, (0.03, 0.36), 2.00, -1, th.sweep_dark, th.sweep_dark_op))
-    out.append(sweep(lo, (0.97, 0.64), 1.90, +1, GOLD, th.sweep_warm_op))
+    out.append(sweep(lo, (0.97, 0.64), 1.90, +1, BRAND, th.sweep_warm_op))
 
     out.append(starfield(lo, th, keep_out))
 
@@ -499,7 +502,7 @@ def starfield(lo: Layout, th: Theme, keep_out: tuple[float, float, float, float]
         if kx - pad < x < kx + kw + pad and ky - pad < y < ky + kh + pad:
             continue
         warm = rng.random() < 0.42
-        fill = GOLD if warm else (PAPER if th.is_dark else "#6F675B")
+        fill = BRAND if warm else (PAPER if th.is_dark else "#61676F")
         # Gold reads quieter than paper on ink, so it carries the higher cap;
         # a paper speck at full strength competes with the wordmark.
         top = 0.42 if warm else 0.26
@@ -563,7 +566,7 @@ def terminal(x: float, y: float, fs: float, th: Theme) -> str:
     dx = x + pad * 0.78
     dy = y + top_h / 2
     for i, (col, op) in enumerate(
-        ((GOLD, 0.95), (th.muted, 0.45), (th.muted, 0.28))
+        ((BRAND, 0.95), (th.muted, 0.45), (th.muted, 0.28))
     ):
         out.append(
             f'<circle cx="{dx + i * dr * 3.1:.2f}" cy="{dy:.2f}" r="{dr:.2f}" '
@@ -585,7 +588,7 @@ def terminal(x: float, y: float, fs: float, th: Theme) -> str:
 
     # The line itself: gold prompt, then the command in full contrast.
     base = y + top_h + body_h * 0.62
-    out.append(label(x + pad, base, "$", fs, th.gold_text, weight=700))
+    out.append(label(x + pad, base, "$", fs, th.brand_text, weight=700))
     cmd_x = x + pad + tw("$ ", fs)
     out.append(label(cmd_x, base, INSTALL_CMD, fs, th.fg, weight=500))
 
@@ -594,7 +597,7 @@ def terminal(x: float, y: float, fs: float, th: Theme) -> str:
     out.append(
         f'<rect x="{cur_x:.2f}" y="{base - fs * 0.72:.2f}" '
         f'width="{fs * ADVANCE:.2f}" height="{fs * 0.95:.2f}" '
-        f'fill="{th.gold_text}" opacity="0.9"/>'
+        f'fill="{th.brand_text}" opacity="0.9"/>'
     )
     return "".join(out)
 
@@ -633,17 +636,17 @@ def action_row(x: float, y: float, w: float, fs: float, th: Theme) -> str:
     px = x + w - pill_w
     out.append(
         f'<rect x="{px:.2f}" y="{y:.2f}" width="{pill_w:.2f}" height="{h:.2f}" '
-        f'rx="{h / 2:.2f}" fill="{GOLD}" fill-opacity="{0.12 if th.is_dark else 0.16:g}" '
-        f'stroke="{th.gold_text}" stroke-opacity="0.55" stroke-width="1.5"/>'
+        f'rx="{h / 2:.2f}" fill="{BRAND}" fill-opacity="{0.12 if th.is_dark else 0.16:g}" '
+        f'stroke="{th.brand_text}" stroke-opacity="0.55" stroke-width="1.5"/>'
     )
-    out.append(star(px + pad + sstar / 2, cy, sstar, GOLD))
+    out.append(star(px + pad + sstar / 2, cy, sstar, BRAND))
     out.append(
         label(
             px + pad + sstar + fs * 0.6,
             cy + fs * 0.36,
             STAR_CTA,
             fs,
-            th.gold_text,
+            th.brand_text,
             weight=700,
         )
     )
@@ -657,8 +660,8 @@ def action_row(x: float, y: float, w: float, fs: float, th: Theme) -> str:
 
 def compose(lo: Layout, th: Theme) -> str:
     defs = (
-        f'<defs><radialGradient id="glow"><stop offset="0" stop-color="{GOLD}" '
-        f'stop-opacity="{th.glow_op:g}"/><stop offset="1" stop-color="{GOLD}" '
+        f'<defs><radialGradient id="glow"><stop offset="0" stop-color="{BRAND}" '
+        f'stop-opacity="{th.glow_op:g}"/><stop offset="1" stop-color="{BRAND}" '
         f'stop-opacity="0"/></radialGradient>' + grain_defs() + "</defs>"
     )
 
