@@ -120,37 +120,37 @@ class Ground:
 
 DARK = Ground(
     name="dark",
-    sky_top="#08080A",
-    sky_bottom="#16130F",
-    haze="#C58A32",
+    sky_top="#04070B",
+    sky_bottom="#101821",
+    haze="#00D1F9",
     haze_op=0.11,
-    bloom="#F0C070",
+    bloom="#7FE6FF",
     bloom_op=0.30,
-    speck="#F2EEE5",
+    speck="#E9EDF2",
     speck_op=0.55,
-    warm_speck="#C58A32",
-    streak_core="#FFE9C2",
-    grid="#F2EEE5",
+    warm_speck="#00D1F9",
+    streak_core="#D6F6FF",
+    grid="#E9EDF2",
     grid_op=0.022,
     vignette_op=0.55,
 )
 
 LIGHT = Ground(
     name="light",
-    sky_top="#FBF7EF",
-    sky_bottom="#EFE6D6",
-    haze="#C58A32",
+    sky_top="#F7FAFD",
+    sky_bottom="#E3EAF2",
+    haze="#00D1F9",
     haze_op=0.12,
-    bloom="#E0A44A",
+    bloom="#3FBEDC",
     bloom_op=0.20,
-    speck="#8A8073",
+    speck="#7A8492",
     speck_op=0.34,
-    warm_speck="#8B5E1A",
+    warm_speck="#00778F",
     # On paper the head cannot be the *lightest* point — white on warm white is
     # nothing, and the trail loses its direction of travel. It deepens instead:
     # the same ramp, run toward saturation rather than toward light.
-    streak_core="#8B5E1A",
-    grid="#10100F",
+    streak_core="#00778F",
+    grid="#070B10",
     grid_op=0.030,
     vignette_op=0.16,
 )
@@ -323,9 +323,9 @@ def streak_gradient(gid: str, tail: tuple[float, float], head: tuple[float, floa
     makes the eye run along the curve in the right direction.
     """
     stops = (
-        f'<stop offset="0" stop-color="{ck.GOLD}" stop-opacity="0"/>'
-        f'<stop offset="0.30" stop-color="{ck.GOLD}" stop-opacity="0.18"/>'
-        f'<stop offset="0.62" stop-color="{ck.GOLD}" stop-opacity="0.60"/>'
+        f'<stop offset="0" stop-color="{ck.BRAND}" stop-opacity="0"/>'
+        f'<stop offset="0.30" stop-color="{ck.BRAND}" stop-opacity="0.18"/>'
+        f'<stop offset="0.62" stop-color="{ck.BRAND}" stop-opacity="0.60"/>'
         f'<stop offset="0.88" stop-color="{g.streak_core}" stop-opacity="0.92"/>'
         f'<stop offset="1" stop-color="{g.streak_core}" stop-opacity="1"/>'
     )
@@ -420,7 +420,7 @@ def debris(c: Canvas, g: Ground, p: Plot, pts: tuple) -> str:
         else:
             out.append(
                 f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{size:.2f}" '
-                f'fill="{ck.GOLD}" opacity="{a:.3f}"/>'
+                f'fill="{ck.BRAND}" opacity="{a:.3f}"/>'
             )
     return "".join(out)
 
@@ -506,7 +506,7 @@ def compose(c: Canvas, g: Ground) -> str:
         f'<g opacity="{0.55 if g.name == "dark" else 0.70:g}">'
         + streak("fartrail", (far_tail, far_bend, far_head), short * p.streak_frac * p.far_scale)
         + glow_rect("farbloom", c.w, c.h)
-        + ck.star(far_head[0], far_head[1], mark_w * p.far_scale * 0.85, ck.GOLD)
+        + ck.star(far_head[0], far_head[1], mark_w * p.far_scale * 0.85, ck.BRAND)
         + "</g>",
         streak("trail", (tail, bend, head), short * p.streak_frac),
         debris(c, g, p, (tail, bend, head)),
@@ -515,7 +515,7 @@ def compose(c: Canvas, g: Ground) -> str:
         # the mark's own three bars would be a second trail pointing the same
         # way — read once as duplication and once as debris stuck to the
         # nucleus. The bottom lockup is where the whole mark gets its say.
-        ck.star(head[0], head[1], mark_w * 0.62, ck.GOLD),
+        ck.star(head[0], head[1], mark_w * 0.62, ck.BRAND),
         # The name, small and quiet, near the bottom edge. A wallpaper that
         # shouts its own brand is a poster; this is meant to be lived on.
         ck.lockup(

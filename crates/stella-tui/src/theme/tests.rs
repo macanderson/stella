@@ -43,8 +43,8 @@ fn trace_kind_color_covers_every_variant_without_panic() {
 /// moment a new truecolor token lands without a [`FALLBACKS`] entry. Role
 /// aliases (`INK`, `OK`, `DANGER`, …) share a value with a palette token, so
 /// they are intentionally not re-listed — under the comet kit that includes
-/// `ACCENT_FILL` and `GOLD` (one Phosphor Gold with `ACCENT`) and
-/// `SYNTAX_COMMENT` (the caption tier, `TEXT_TERTIARY`).
+/// `ACCENT_FILL` and `IDENTITY` (one Ion with `ACCENT`) and `SYNTAX_COMMENT`
+/// (the caption tier, `TEXT_TERTIARY`).
 const ALL_RGB_TOKENS: &[Color] = &[
     VOID,
     GROUND,
@@ -56,16 +56,16 @@ const ALL_RGB_TOKENS: &[Color] = &[
     TEXT_SECONDARY,
     TEXT_TERTIARY,
     ACCENT,
-    GOLD_BRIGHT,
+    IDENTITY_BRIGHT,
     ACCENT_DEEP,
-    GOLD_DEEP,
+    IDENTITY_DEEP,
     SUCCESS,
     WARNING,
     DANGER,
     ORACLE_PRE_FLIP,
     VIOLET,
     AMBER,
-    TEAL,
+    JADE,
     MAGENTA,
     CITRON,
     ORCHID,
@@ -85,7 +85,7 @@ const ALL_RGB_TOKENS: &[Color] = &[
 const LIGHT_ONLY_PALETTE_TOKENS: &[&str] = &[
     "brand-ink",
     "brand-ink-deep",
-    "gold-ink",
+    "identity-ink",
     "success-ink",
     "warning-ink",
     "danger-ink",
@@ -157,20 +157,20 @@ fn every_named_token_has_a_fallback() {
 #[test]
 fn role_aliases_track_their_palette_token() {
     // Brand roles resolve to the generated palette, not to a local literal.
-    // Under the comet kit the accent IS the gold: one Phosphor Gold serves
-    // text, rules and fills (11.36:1 on ground), so ACCENT, ACCENT_FILL and
-    // GOLD are one value on purpose.
+    // Under the comet kit the accent IS the identity: one Ion serves text,
+    // rules and fills (10.79:1 on ground), so ACCENT, ACCENT_FILL and
+    // IDENTITY are one value on purpose.
     assert_eq!(ACCENT, palette::BRAND);
     assert_eq!(ACCENT_FILL, ACCENT);
-    assert_eq!(GOLD, ACCENT);
-    assert_eq!(palette::BRAND, palette::GOLD);
-    assert_eq!(palette::BRAND_BRIGHT, palette::GOLD_BRIGHT);
+    assert_eq!(IDENTITY, ACCENT);
+    assert_eq!(palette::BRAND, palette::IDENTITY);
+    assert_eq!(palette::BRAND_BRIGHT, palette::IDENTITY_BRIGHT);
     assert_eq!(ACCENT_DEEP, palette::BRAND_DEEP);
-    assert_eq!(GOLD_BRIGHT, palette::GOLD_BRIGHT);
-    assert_eq!(GOLD_DEEP, palette::GOLD_DEEP);
+    assert_eq!(IDENTITY_BRIGHT, palette::IDENTITY_BRIGHT);
+    assert_eq!(IDENTITY_DEEP, palette::IDENTITY_DEEP);
     // The identity sweep and the progress fill lead with different deep
     // stops on purpose: chrome may run quiet, the fill's tail must hold AA.
-    assert_ne!(GOLD_DEEP, ACCENT_DEEP);
+    assert_ne!(IDENTITY_DEEP, ACCENT_DEEP);
     assert_eq!(VOID, palette::VOID);
     assert_eq!(HAIRLINE_STRONG, palette::HAIRLINE_STRONG);
     assert_eq!(GROUND, palette::GROUND);
@@ -191,23 +191,27 @@ fn role_aliases_track_their_palette_token() {
     assert_eq!(AMBER, palette::DATA_1);
     assert_eq!(VIOLET, palette::DATA_2);
     assert_eq!(MAGENTA, palette::DATA_3);
-    assert_eq!(TEAL, palette::DATA_4);
+    assert_eq!(JADE, palette::DATA_4);
 }
 
-/// The kit's one hard prohibition, restated for a gold accent: **gold never
-/// carries a verdict.** Gold and [`WARNING`] are 4.0° apart in hue — the
-/// same brass at a glance — so a reader must never be asked to tell an
-/// *outcome* (ok / warn / bad, done / failed) from chrome by hue. The one
-/// status gold does carry is activity: active/running IS the accent, by kit
-/// rule ("gold is the signal"), and that pairing is asserted here so it
-/// cannot silently regress to a lesser hue either. This is the test that
-/// would fail if someone reached for the prettier colour in a verdict
-/// mapping.
+/// The kit's one hard prohibition, restated for an ion accent: **the identity
+/// never carries a verdict.** Under the bronze kit the argument was a hue
+/// collision — gold and [`WARNING`] were 4.0° apart, the same brass at a
+/// glance. At hue 190 the nearest status is 35° away, so the collision is
+/// gone and the rule is not: a reader must never be asked to tell an
+/// *outcome* (ok / warn / bad, done / failed) from chrome, because chrome and
+/// verdict are different jobs and a chrome recolour must never silently
+/// become a semantic change. The one status the identity does carry is
+/// activity: active/running IS the accent, by kit rule ("ion is the signal"),
+/// and that pairing is asserted here so it cannot silently regress to a
+/// lesser hue either. This is the test that would fail if someone reached for
+/// the prettier colour in a verdict mapping.
 #[test]
-fn gold_never_carries_a_verdict() {
-    // Activity is gold — the one permitted (required, even) status use.
+fn identity_never_carries_a_verdict() {
+    // Activity is the identity — the one permitted (required, even) status
+    // use.
     assert_eq!(status_color(AgentStatus::Running), ACCENT);
-    for gold in [GOLD, GOLD_BRIGHT, GOLD_DEEP] {
+    for identity in [IDENTITY, IDENTITY_BRIGHT, IDENTITY_DEEP] {
         for (status, name) in [
             (OK, "OK"),
             (WARN, "WARN"),
@@ -215,7 +219,7 @@ fn gold_never_carries_a_verdict() {
             (HELD, "HELD"),
             (RUN, "RUN"),
         ] {
-            assert_ne!(gold, status, "{name} must not be a gold");
+            assert_ne!(identity, status, "{name} must not be an identity tone");
         }
         for status in [
             AgentStatus::Queued,
@@ -227,8 +231,8 @@ fn gold_never_carries_a_verdict() {
         ] {
             assert_ne!(
                 status_color(status),
-                gold,
-                "status_color({status:?}) returned a gold"
+                identity,
+                "status_color({status:?}) returned an identity tone"
             );
         }
         for kind in [
@@ -248,21 +252,25 @@ fn gold_never_carries_a_verdict() {
         ] {
             assert_ne!(
                 trace_kind_color(kind),
-                gold,
-                "trace_kind_color({kind:?}) returned a gold"
+                identity,
+                "trace_kind_color({kind:?}) returned an identity tone"
             );
         }
         for i in 0..=20 {
-            assert_ne!(gauge_color(f64::from(i) / 20.0), gold);
+            assert_ne!(gauge_color(f64::from(i) / 20.0), identity);
         }
         for id in ["lead", "sub:auth", "", "agent-42"] {
-            assert_ne!(agent_color(id), gold, "agent_color({id:?}) returned a gold");
+            assert_ne!(
+                agent_color(id),
+                identity,
+                "agent_color({id:?}) returned an identity tone"
+            );
         }
         // And it is not a graph node kind either — a node is a category.
         for kind in [
             "function", "method", "struct", "enum", "trait", "file", "module", "?",
         ] {
-            assert_ne!(graph_kind_color(kind), gold);
+            assert_ne!(graph_kind_color(kind), identity);
         }
     }
 }
@@ -309,100 +317,117 @@ fn hue_separation(a: Color, b: Color) -> f64 {
 
 /// The palette law, in the form a future edit would actually break.
 ///
-/// The guard has outlived five recolours now (aurora → gold → sky → green →
-/// blue → gold again), which is the point: each time, the *shape* of the law
+/// The guard has outlived six recolours now (aurora → gold → sky → green →
+/// blue → gold → ion), which is the point: each time, the *shape* of the law
 /// survived and only the hue it names changed. Keep rewriting it rather than
 /// deleting it.
 ///
-/// The comet recolour changed the law in three real ways. First, the exact
-/// values are load-bearing: Phosphor Gold `#FFB81A` and Ink `#0B0B0C` are
-/// the brand, so clause 1 pins the hex rather than merely the dominance.
-/// Second, the ground lost its cast: ink is a warm-neutral near-black, so
-/// the old "the canvas must carry the blue cast" clause inverts back into
-/// "the canvas may carry (almost) no cast" — and the same warmth law now
-/// covers the text ramp, because the owner banned cool grays outright.
-/// Third, the reservation has *named neighbours* again: a gold accent lives
-/// 4.0° from warning amber and 0.8° from the amber data mark, so instead of
-/// "no exceptions" the law says exactly which two hues may sit close and
-/// what confines each of them.
+/// The ion recolour changed the law in four real ways. First, the exact
+/// values are load-bearing, as they were for bronze: Ion `#00D1F9` and
+/// Obsidian `#070B10` are the brand, so clause 1 pins the hex. Second, the
+/// warmth clause inverts: ink was a warm-neutral near-black with warm text
+/// above it, and obsidian is a *cool* blue-black with a graphite ramp, so the
+/// clause that used to ban cool grays now requires them (b ≥ g ≥ r) and bans
+/// warm ones. Third, the ground carries a real cast for the first time since
+/// the deep-space era — a cool one — so the near-neutral clause loosens from
+/// "≤ 5 channel spread" to "cool-leaning, and never true black". Fourth, and
+/// most usefully, the reservation has **no named neighbours left**: a gold
+/// accent had two hues sitting inside 5° of it, and every chromatic role is
+/// now ≥ 30° from ion with the closest at 34.8° (success). The exception list
+/// is empty and clause 5 says so explicitly, so re-adding one is a visible
+/// edit rather than a quiet loosening.
 ///
 /// What must hold now:
-///   1. The accent is the kit's Phosphor Gold, exactly; the ground is Ink,
-///      exactly. Brand and gold are one family (the collapse IS the
-///      rebrand).
-///   2. Every retired hue is gone — the whole electric-blue family, the old
-///      warm-tinted gold, and the cool gray text ramp with them.
-///   3. Grounds are near-neutral and never true black; text is warm.
+///   1. The accent is the kit's Ion, exactly; the ground is Obsidian,
+///      exactly. Brand and identity are one family (the collapse survives the
+///      recolour).
+///   2. Every retired hue is gone — the whole bronze/gold family, the
+///      electric blue before it, and the warm neutral text ramp with them.
+///   3. Grounds lean cool and are never true black; text is a cool graphite.
 ///   4. Warning ramps warm, success ramps green, danger ramps red.
-///   5. Gold is reserved. Every chromatic role sits ≥ 30° of hue away,
-///      except the two named neighbours: WARN (always glyph-paired) and
-///      AMBER (confined to syntax keywords in code bodies).
+///   5. Ion is reserved. Every chromatic role sits ≥ 30° of hue away, with no
+///      exceptions at all.
 #[test]
-fn palette_law_gold_is_the_brand() {
+fn palette_law_ion_is_the_brand() {
     const RETIRED_AURORA_CYAN: Color = Color::Rgb(0x3F, 0xE0, 0xFF);
     const RETIRED_EMBER_FLAME: Color = Color::Rgb(0xFF, 0x7E, 0x5F);
     const RETIRED_EMBER_CRIMSON: Color = Color::Rgb(0xC2, 0x18, 0x5B);
     const RETIRED_GOLD: Color = Color::Rgb(0xFF, 0xDD, 0x00);
     const RETIRED_GOLD_DEEP: Color = Color::Rgb(0xE0, 0xB8, 0x00);
     /// The old glacier blue, retired *because* it collided with the sky
-    /// accent — and doubly banned now: the owner hates ice blue.
+    /// accent — and still banned: the owner hates ice blue, and ion is a
+    /// saturated azure-cyan, not a washed-out one.
     const RETIRED_AGENT_ICE: Color = Color::Rgb(0xA8, 0xC7, 0xF0);
-    /// The sky blue of three recolours ago.
+    /// The sky blue of four recolours ago.
     const RETIRED_SKY: Color = Color::Rgb(0x7D, 0xD3, 0xFC);
     const RETIRED_SKY_DEEP: Color = Color::Rgb(0x38, 0xBD, 0xF8);
     /// The warning orange the "get rid of the orange" pass removed; warning
     /// is amber-yellow now and must not slide back to it.
     const RETIRED_WARNING_ORANGE: Color = Color::Rgb(0xFF, 0x8A, 0x1F);
-    /// The terminal green of two identities ago, and its deep stop.
+    /// The terminal green of three identities ago, and its deep stop.
     const RETIRED_PHOSPHOR_GREEN: Color = Color::Rgb(0x00, 0xE6, 0x76);
     const RETIRED_PHOSPHOR_GREEN_DEEP: Color = Color::Rgb(0x00, 0xB2, 0x5A);
     /// The vermilion light-theme brand ("ember") and its deep stop.
     const RETIRED_EMBER: Color = Color::Rgb(0xFF, 0x3D, 0x1F);
     const RETIRED_EMBER_DEEP: Color = Color::Rgb(0xD6, 0x2E, 0x0E);
-    /// The electric blue this recolour retired: brand, bright, deep, and the
-    /// two paper blues. The comet kit has no blue anywhere.
+    /// The electric blue of two recolours ago: brand, bright, deep, and the
+    /// two paper blues. Ion is a cyan-azure at hue 190; this family sat at
+    /// 220 and must not creep back.
     const RETIRED_ELECTRIC_BLUE: Color = Color::Rgb(0x2E, 0x7B, 0xFF);
     const RETIRED_ELECTRIC_BLUE_BRIGHT: Color = Color::Rgb(0x5A, 0xA0, 0xFF);
     const RETIRED_ELECTRIC_BLUE_DEEP: Color = Color::Rgb(0x1A, 0x5F, 0xE0);
     const RETIRED_BLUE_INK: Color = Color::Rgb(0x15, 0x50, 0xC8);
     const RETIRED_BLUE_INK_DEEP: Color = Color::Rgb(0x0F, 0x3A, 0x94);
     /// The warm-tinted gold that shipped beside the blue (`#F5C145` family).
-    /// The comet gold is `#FFB81A` exactly; the old tint may not resurface.
     const RETIRED_WARM_GOLD: Color = Color::Rgb(0xF5, 0xC1, 0x45);
     const RETIRED_WARM_GOLD_BRIGHT: Color = Color::Rgb(0xFF, 0xD8, 0x73);
     const RETIRED_WARM_GOLD_DEEP: Color = Color::Rgb(0xC9, 0x94, 0x20);
-    /// The cool, blue-leaning gray text ramp — the "cool grays" the comet
-    /// kit's warm neutral ramp replaces.
-    const RETIRED_COOL_TEXT: Color = Color::Rgb(0xF2, 0xF5, 0xFA);
-    const RETIRED_COOL_TEXT_2: Color = Color::Rgb(0x8E, 0x97, 0xA8);
-    const RETIRED_COOL_TEXT_3: Color = Color::Rgb(0x73, 0x7D, 0x92);
-    /// The blue-cast "deep space" ground the ink ramp replaces.
-    const RETIRED_DEEP_SPACE: Color = Color::Rgb(0x08, 0x0A, 0x0F);
+    /// The Phosphor Gold this recolour retired, and its sweep — the identity
+    /// for the whole life of the comet kit's v1/v2. Brand, bright, deep, and
+    /// the two paper golds.
+    const RETIRED_PHOSPHOR_GOLD: Color = Color::Rgb(0xFF, 0xB8, 0x1A);
+    const RETIRED_PHOSPHOR_GOLD_BRIGHT: Color = Color::Rgb(0xFD, 0xC1, 0x54);
+    const RETIRED_PHOSPHOR_GOLD_DEEP: Color = Color::Rgb(0xE5, 0xA0, 0x00);
+    const RETIRED_GOLD_INK: Color = Color::Rgb(0xA3, 0x72, 0x00);
+    const RETIRED_GOLD_INK_DEEP: Color = Color::Rgb(0x5A, 0x3F, 0x00);
+    const RETIRED_BRAND_INK_GOLD: Color = Color::Rgb(0x85, 0x5E, 0x00);
+    /// The bronze the web kit carried beside it, and its deep stop.
+    const RETIRED_BRONZE: Color = Color::Rgb(0xC5, 0x8A, 0x32);
+    const RETIRED_BRONZE_DEEP: Color = Color::Rgb(0x8B, 0x5E, 0x1A);
+    /// The warm-neutral text ramp the graphite one replaces — the "warm
+    /// paper" tiers of the bronze kit.
+    const RETIRED_WARM_TEXT: Color = Color::Rgb(0xF4, 0xF1, 0xEA);
+    const RETIRED_WARM_TEXT_2: Color = Color::Rgb(0x9B, 0x98, 0x90);
+    const RETIRED_WARM_TEXT_3: Color = Color::Rgb(0x8D, 0x8A, 0x82);
+    /// The warm ink ground and warm paper the obsidian/frost pair replaces.
+    const RETIRED_INK_GROUND: Color = Color::Rgb(0x0B, 0x0B, 0x0C);
+    const RETIRED_WARM_PAPER: Color = Color::Rgb(0xF6, 0xF2, 0xE9);
+    /// The teal categorical that a cyan accent made untenable (24° from ion).
+    const RETIRED_TEAL_MARK: Color = Color::Rgb(0x2F, 0xD3, 0xC6);
 
-    // 1. The accent is Phosphor Gold and the ground is Ink — the exact kit
-    //    values, pinned by hex so the brand cannot silently drift. This is
-    //    the one clause that names numbers: `#FFB81A` on `#0B0B0C` is the
-    //    identity.
+    // 1. The accent is Ion and the ground is Obsidian — the exact kit values,
+    //    pinned by hex so the brand cannot silently drift. This is the one
+    //    clause that names numbers: `#00D1F9` on `#070B10` is the identity.
     assert_eq!(
         ACCENT,
-        Color::Rgb(0xFF, 0xB8, 0x1A),
-        "the accent must be Phosphor Gold #FFB81A, exactly"
+        Color::Rgb(0x00, 0xD1, 0xF9),
+        "the accent must be Ion #00D1F9, exactly"
     );
     assert_eq!(
         GROUND,
-        Color::Rgb(0x0B, 0x0B, 0x0C),
-        "the ground must be Ink #0B0B0C, exactly"
+        Color::Rgb(0x07, 0x0B, 0x10),
+        "the ground must be Obsidian #070B10, exactly"
     );
     assert_eq!(ACCENT, palette::BRAND, "the accent comes from the palette");
     assert_eq!(
-        GOLD, ACCENT,
-        "brand and gold are one family under the comet"
+        IDENTITY, ACCENT,
+        "brand and identity are one family under the comet"
     );
-    for (gold, name) in [(ACCENT, "ACCENT"), (ACCENT_FILL, "ACCENT_FILL")] {
-        let Color::Rgb(r, g, b) = gold else {
+    for (ion, name) in [(ACCENT, "ACCENT"), (ACCENT_FILL, "ACCENT_FILL")] {
+        let Color::Rgb(r, g, b) = ion else {
             panic!("{name} must be a truecolor token");
         };
-        assert!(r > g && g > b, "{name} must be warm-dominant (r > g > b)");
+        assert!(b > g && g > r, "{name} must be cool-dominant (b > g > r)");
     }
 
     // 2. The retired hues are gone from every token and alias.
@@ -418,7 +443,7 @@ fn palette_law_gold_is_the_brand() {
         OK,
         ACCENT_DEEP,
         CODE,
-        GOLD,
+        IDENTITY,
     ]);
     all.extend(BRAND_STOPS);
     all.extend(LIGHT_REMAP.iter().map(|(_, to)| *to));
@@ -445,19 +470,29 @@ fn palette_law_gold_is_the_brand() {
             (RETIRED_WARM_GOLD, "the warm-tinted gold"),
             (RETIRED_WARM_GOLD_BRIGHT, "the warm-tinted bright gold"),
             (RETIRED_WARM_GOLD_DEEP, "the warm-tinted deep gold"),
-            (RETIRED_COOL_TEXT, "the cool primary gray"),
-            (RETIRED_COOL_TEXT_2, "the cool secondary gray"),
-            (RETIRED_COOL_TEXT_3, "the cool tertiary gray"),
-            (RETIRED_DEEP_SPACE, "the deep-space ground"),
+            (RETIRED_PHOSPHOR_GOLD, "Phosphor Gold"),
+            (RETIRED_PHOSPHOR_GOLD_BRIGHT, "bright Phosphor Gold"),
+            (RETIRED_PHOSPHOR_GOLD_DEEP, "deep Phosphor Gold"),
+            (RETIRED_GOLD_INK, "the paper gold"),
+            (RETIRED_GOLD_INK_DEEP, "the deep paper gold"),
+            (RETIRED_BRAND_INK_GOLD, "the paper brand gold"),
+            (RETIRED_BRONZE, "Bronze Gold"),
+            (RETIRED_BRONZE_DEEP, "deep Bronze Gold"),
+            (RETIRED_WARM_TEXT, "the warm primary paper"),
+            (RETIRED_WARM_TEXT_2, "the warm secondary neutral"),
+            (RETIRED_WARM_TEXT_3, "the warm tertiary neutral"),
+            (RETIRED_INK_GROUND, "the warm ink ground"),
+            (RETIRED_WARM_PAPER, "the warm paper ground"),
+            (RETIRED_TEAL_MARK, "the teal categorical"),
         ] {
             assert_ne!(*token, retired, "a token still holds {name}");
         }
     }
 
-    // 3. The ground is ink: near-neutral (a whisper of cast at most, in
-    //    either temperature), and never true black — pure black makes the
-    //    accent scream; ink lets it speak. The text ramp is warm: the owner
-    //    banned cool grays, so no text tier may lean blue.
+    // 3. The ground is obsidian: cool-leaning (b ≥ g ≥ r) and never true
+    //    black — pure black makes the accent scream; obsidian lets it speak.
+    //    The text ramp is the same graphite: the warm neutrals the bronze kit
+    //    required are banned in turn, so no text tier may lean warm.
     for (ground, name) in [
         (VOID, "VOID"),
         (GROUND, "GROUND"),
@@ -469,10 +504,10 @@ fn palette_law_gold_is_the_brand() {
         let Color::Rgb(r, g, b) = ground else {
             panic!("{name} must be a truecolor token");
         };
-        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         assert!(
-            max - min <= 5,
-            "{name} ({ground:?}) must be near-neutral ink, not a cast"
+            b >= g && g >= r,
+            "{name} ({ground:?}) must be a cool near-black (b ≥ g ≥ r) — \
+             warm grounds are banned"
         );
         assert_ne!(ground, Color::Rgb(0, 0, 0), "{name} must not be true black");
     }
@@ -485,14 +520,16 @@ fn palette_law_gold_is_the_brand() {
             panic!("{name} must be a truecolor token");
         };
         assert!(
-            r >= g && g >= b,
-            "{name} ({text:?}) must be a warm neutral (r ≥ g ≥ b) — cool \
-             grays are banned"
+            b >= g && g >= r,
+            "{name} ({text:?}) must be a cool graphite (b ≥ g ≥ r) — warm \
+             neutrals are banned"
         );
     }
 
-    // 4. Warning ramps warm (r > g > b — amber, no longer the orange that
+    // 4. Warning ramps warm (r > g > b — amber, not the orange that once
     //    dominated the transcript), success ramps green, danger ramps red.
+    //    These are the only warm hues the system still holds, which is what
+    //    makes them read as functional against entirely cool chrome.
     let Color::Rgb(wr, wg, wb) = WARNING else {
         panic!("WARNING must be a truecolor token");
     };
@@ -506,49 +543,50 @@ fn palette_law_gold_is_the_brand() {
     };
     assert!(dr > dg && dr > db, "danger must be red-dominant");
 
-    // 5. Gold is reserved for brand / active / focus / selection / progress.
+    // 5. Ion is reserved for brand / active / focus / selection / progress.
     //    Every chromatic role sits ≥ 30° of hue away — which is how
-    //    `AGENT_ICE` died — except the two *named* neighbours below.
+    //    `AGENT_ICE` died, and how the bronze kit's teal categorical died in
+    //    this recolour. There is no exception list: the gold accent needed
+    //    one (WARN at 4.0°, AMBER at 0.8°) and a cool accent does not, so
+    //    re-introducing a named neighbour has to be a visible edit here.
     for (role, name) in [
         (BAD, "BAD"),
         (OK, "OK"),
+        (WARN, "WARN"),
         (RUN, "RUN"),
         (HELD, "HELD"),
         (VIOLET, "VIOLET"),
-        (TEAL, "TEAL"),
+        (JADE, "JADE"),
         (MAGENTA, "MAGENTA"),
+        (AMBER, "AMBER"),
         (CODE, "CODE"),
         (SYNTAX_STRING, "SYNTAX_STRING"),
         (SYNTAX_NUMBER, "SYNTAX_NUMBER"),
         (CITRON, "CITRON"),
         (ORCHID, "ORCHID"),
+        (ORACLE_PRE_FLIP, "ORACLE_PRE_FLIP"),
     ] {
-        assert_ne!(role, ACCENT, "{name} must not be the reserved gold");
+        assert_ne!(role, ACCENT, "{name} must not be the reserved ion");
         let sep = hue_separation(role, ACCENT);
         assert!(
             sep >= 30.0,
-            "{name} ({role:?}) is {sep:.1}° from the gold accent; \
+            "{name} ({role:?}) is {sep:.1}° from the ion accent; \
              30° is the floor for two hues to be told apart in a cell"
         );
     }
-    // The named neighbours. WARN sits 4.0° from gold: permitted because a
-    // status never appears without its glyph (`status_glyph`), so the hue is
-    // never the only carrier. AMBER sits 0.8° away: permitted because it
-    // paints syntax keywords inside code bodies and nothing else — the
-    // observatory stands the same mark down from every plotted surface, and
-    // the deck stands it down from every chip, node and agent.
-    for (neighbour, name) in [(WARN, "WARN"), (AMBER, "AMBER")] {
-        assert_ne!(neighbour, ACCENT, "{name} may neighbour gold, not BE it");
-        let sep = hue_separation(neighbour, ACCENT);
-        assert!(
-            sep < 30.0,
-            "{name} is a *named* hue-neighbour of gold ({sep:.1}°); if it \
-             has moved ≥ 30° away, promote it to the reserved list above"
-        );
-    }
+
+    // The apricot mark stays stood down from chips, nodes and agents. Its
+    // reason moved with the recolour — it is 170° from the accent now, but
+    // 24° from WARN at 1.08:1 — so the confinement to code bodies is asserted
+    // on its own terms rather than as a corollary of the reservation above.
+    assert!(
+        hue_separation(AMBER, WARN) < 30.0,
+        "AMBER is no longer a hue-neighbour of WARN; if it has moved ≥ 30° \
+         away, the stand-down below can be lifted — do it deliberately"
+    );
     assert!(
         !AGENT_PALETTE.contains(&AMBER),
-        "the amber mark is stood down: no agent chip may wear it"
+        "the apricot mark is stood down: no agent chip may wear it"
     );
     for kind in [
         "function", "method", "struct", "enum", "trait", "file", "module", "?",
@@ -556,7 +594,7 @@ fn palette_law_gold_is_the_brand() {
         assert_ne!(
             graph_kind_color(kind),
             AMBER,
-            "the amber mark is stood down: no graph node may wear it"
+            "the apricot mark is stood down: no graph node may wear it"
         );
     }
     for kind in [
@@ -577,16 +615,16 @@ fn palette_law_gold_is_the_brand() {
         assert_ne!(
             trace_kind_color(kind),
             AMBER,
-            "the amber mark is stood down: no trace chip may wear it"
+            "the apricot mark is stood down: no trace chip may wear it"
         );
     }
 
     // 6. The brand's own tones are the only things allowed near it, and the
-    //    accent/fill pair really is one value now.
+    //    accent/fill pair really is one value.
     assert_eq!(ACCENT_FILL, ACCENT);
     assert!(hue_separation(ACCENT_DEEP, ACCENT) < 10.0);
-    assert!(hue_separation(GOLD_DEEP, ACCENT) < 10.0);
-    assert!(hue_separation(GOLD_BRIGHT, ACCENT) < 10.0);
+    assert!(hue_separation(IDENTITY_DEEP, ACCENT) < 10.0);
+    assert!(hue_separation(IDENTITY_BRIGHT, ACCENT) < 10.0);
 }
 
 #[test]
@@ -695,11 +733,11 @@ fn degrade_buffer_is_noop_when_truecolor() {
 #[test]
 fn degrade_buffer_resolves_every_cell_when_degraded() {
     let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-    buf.content[0].fg = ACCENT; // → 214 (256) / 11 (16)
-    buf.content[0].bg = VIOLET; // → 98 (256) / 13 (16)
+    buf.content[0].fg = ACCENT; // → 45 (256) / 14 (16)
+    buf.content[0].bg = VIOLET; // → 105 (256) / 12 (16)
     degrade_buffer(&mut buf, ColorMode::Ansi256);
-    assert_eq!(buf.content[0].fg, Color::Indexed(214));
-    assert_eq!(buf.content[0].bg, Color::Indexed(98));
+    assert_eq!(buf.content[0].fg, Color::Indexed(45));
+    assert_eq!(buf.content[0].bg, Color::Indexed(105));
 }
 
 /// The two degraded paths must still separate the things a reader has to
@@ -731,13 +769,15 @@ fn degraded_paths_keep_meaningful_pairs_distinguishable() {
                 "{mode:?}: accent collapsed onto {name}"
             );
         }
-        // Gold is brand chrome and warning is a status; they may never
-        // become the same cell, at any depth.
-        for gold in [GOLD, GOLD_BRIGHT, GOLD_DEEP] {
+        // The identity is brand chrome and warning is a status; they may
+        // never become the same cell, at any depth. Under the gold kit this
+        // was hard-won (both were yellows); under ion they are a cyan and an
+        // amber, so it is the collapse itself the assertion guards against.
+        for identity in [IDENTITY, IDENTITY_BRIGHT, IDENTITY_DEEP] {
             assert_ne!(
-                idx(gold, mode),
+                idx(identity, mode),
                 idx(WARN, mode),
-                "{mode:?}: {gold:?} collapsed onto warning"
+                "{mode:?}: {identity:?} collapsed onto warning"
             );
         }
         // The progress fill keeps a head-to-tail ramp.
@@ -763,11 +803,14 @@ fn apply_theme_is_identity_for_dark_and_remaps_for_light() {
         remap_theme(ACCENT_DEEP, LIGHT_REMAP),
         palette::BRAND_INK_DEEP
     );
-    // Flat gold cells are accent cells now, so they take the accent's paper
-    // text tone; the kit's own light-ground gold (`gold-ink`) survives in the
-    // graphical `gold_stops` sweep only.
-    assert_eq!(remap_theme(GOLD, LIGHT_REMAP), palette::BRAND_INK);
-    assert_eq!(remap_theme(GOLD_DEEP, LIGHT_REMAP), palette::GOLD_INK);
+    // Flat identity cells are accent cells, so they take the accent's paper
+    // text tone; the kit's own light-ground graphical ion (`identity-ink`)
+    // survives in the `identity_stops` sweep only.
+    assert_eq!(remap_theme(IDENTITY, LIGHT_REMAP), palette::BRAND_INK);
+    assert_eq!(
+        remap_theme(IDENTITY_DEEP, LIGHT_REMAP),
+        palette::IDENTITY_INK
+    );
     assert_eq!(remap_theme(VOID, LIGHT_REMAP), palette::PAPER);
     assert_eq!(remap_theme(GROUND, LIGHT_REMAP), palette::PAPER);
     assert_eq!(remap_theme(TEXT_PRIMARY, LIGHT_REMAP), palette::INK);
@@ -844,14 +887,14 @@ fn brand_gradient_spans_deep_to_bright_accent() {
 }
 
 #[test]
-fn gold_gradient_spans_deep_to_bright_gold() {
-    assert_eq!(gold_gradient(0.0), GOLD_DEEP);
-    assert_eq!(gold_gradient(1.0), GOLD_BRIGHT);
+fn identity_gradient_spans_deep_to_bright_identity() {
+    assert_eq!(identity_gradient(0.0), IDENTITY_DEEP);
+    assert_eq!(identity_gradient(1.0), IDENTITY_BRIGHT);
     for i in 0..=20 {
-        let _ = gold_gradient(f64::from(i) / 20.0);
+        let _ = identity_gradient(f64::from(i) / 20.0);
     }
-    assert_eq!(gold_gradient(-1.0), GOLD_DEEP);
-    assert_eq!(gold_gradient(2.0), GOLD_BRIGHT);
+    assert_eq!(identity_gradient(-1.0), IDENTITY_DEEP);
+    assert_eq!(identity_gradient(2.0), IDENTITY_BRIGHT);
 }
 
 #[test]

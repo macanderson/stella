@@ -6,8 +6,8 @@
    accent hue in the chrome. The only colour on the page is semantic** — a
    trial passed, or it did not.
 
-   That replaces the Phosphor Gold accent. On a scoreboard the cost of an
-   owned accent is specific rather than aesthetic: gold marked what was
+   That replaces the brand-hue accent. On a scoreboard the cost of an owned
+   accent is specific rather than aesthetic: the accent marked what was
    active, seat colours arrive as data, and pass/fail carry meaning, so three
    independent colour systems competed inside one table and the eye could not
    tell which one it was reading. "Active" is now an inversion of the page —
@@ -53,12 +53,12 @@
 :root {
   --background: #ffffff;   /* Paper */
   --panel:      #ffffff;
-  --panel-2:    #fafafa;
-  --line:       #eaeaea;
+  --panel-2:    #F7F9FC;
+  --line:       #E7EBF0;
   --line-soft:  #f2f2f2;
-  --foreground: #0a0a0a;
-  --muted:      #525252;
-  --dim:        #8f8f8f;
+  --foreground: #070B10;
+  --muted:      #4D535A;
+  --dim:        #828C97;
 
   /* --accent is the foreground: "active" is an inversion (ink fill, paper
      text), not a hue. Every component that fills with --accent must put
@@ -66,21 +66,21 @@
      breaks the moment a scheme flips.
 
      The three semantic colours are the only colour on the page. Computed
-     against WCAG 2.1 relative luminance on --panel-2 (#fafafa), the lightest
+     against WCAG 2.1 relative luminance on --panel-2 (#F7F9FC), the lightest
      surface a mark can land on and so the binding constraint:
      --ok 5.91:1, --bad 6.74:1, --warn 5.99:1 — all clear AA (4.5:1).
      --foreground 18.97:1 and --muted 7.49:1 clear AAA (7:1); --dim is 3.10:1
      and clears neither, which is the constraint to hold when editing: it
      carries labelling only, never a value a reader has to act on. */
-  --accent:     #0a0a0a;
+  --accent:     #070B10;
   --on-accent:  #ffffff;
-  --ok:         #11703a;
-  --bad:        #a32f1f;
-  --warn:       #7a5c00;
+  --ok:         #0B6B3D;
+  --bad:        #A82036;
+  --warn:       #7A5200;
 
   /* NO --identity token here, deliberately. stella's other web surfaces —
      the observatory, the telemetry export, the loopback auth pages — carry
-     one, because the rule that governs them permits the brand's gold on
+     one, because the rule that governs them permits the brand hue on
      identity (wordmark, favicon mark, one primary action) and nowhere else.
      This surface carries no stella identity at all: the arena scores stella
      as one seat among several, so its mark does not belong in the chrome
@@ -97,10 +97,10 @@
      one channel that survives greyscale printing, colour-vision deficiency
      and a projector. Named for their old slots so components keep compiling;
      ordered here by prominence. */
-  --acc-cyan:   #0a0a0a;
-  --acc-violet: #525252;
-  --acc-rose:   #8f8f8f;
-  --acc-citron: #c4c4c4;
+  --acc-cyan:   #070B10;
+  --acc-violet: #4D535A;
+  --acc-rose:   #828C97;
+  --acc-citron: #C2C9D1;
 
   /* Tool-class hues — the transcript reader's one deliberate exception to the
      lightness-only rule above. A tool call's CLASS (read/write/run/verify/
@@ -135,7 +135,7 @@
      substituted on the element the declaration applies to — here the root,
      where --seat does not exist — and descendants inherit the already
      resolved literal. Setting --seat deeper cannot change it (#3223). */
-  --seat-fg: #0a0a0a;
+  --seat-fg: #070B10;
 }
 
 /* Keyed off the inline --seat that `seatStyle()` writes, rather than off a
@@ -165,32 +165,32 @@
    headroom for an arbitrary seat hex, which is data a user supplies and not a
    value from this palette. */
 [style*="--seat"] {
-  --seat-fg: color-mix(in srgb, var(--seat, #0a0a0a) 50%, #0a0a0a);
+  --seat-fg: color-mix(in srgb, var(--seat, #070B10) 50%, #070B10);
 }
 
 .dark {
-  --background: #0a0a0a;   /* Ink: the terminal, not pure black */
-  --panel:      #111111;
-  --panel-2:    #0f0f0f;
-  --line:       #1f1f1f;
-  --line-soft:  #151515;
-  --foreground: #ededed;   /* Paper, as text */
-  --muted:      #a1a1a1;
-  --dim:        #6e6e6e;
+  --background: #070B10;   /* Ink: the terminal, not pure black */
+  --panel:      #11171D;
+  --panel-2:    #0D1319;
+  --line:       #1F262D;
+  --line-soft:  #0B1116;
+  --foreground: #E9EDF2;   /* Paper, as text */
+  --muted:      #A4ABB3;
+  --dim:        #737C88;
 
-  /* Same measurement on --panel (#111111), the darkest surface here:
+  /* Same measurement on --panel (#11171D), the darkest surface here:
      --ok 8.52:1, --bad 6.17:1, --warn 7.81:1 clear AA; --foreground 16.13:1
      and --muted 7.31:1 clear AAA; --dim is 3.70:1 and clears neither. */
-  --accent:     #ededed;
-  --on-accent:  #0a0a0a;
-  --ok:         #4cc38a;
-  --bad:        #e5715f;
-  --warn:       #c9a227;
+  --accent:     #E9EDF2;
+  --on-accent:  #070B10;
+  --ok:         #3FD99B;
+  --bad:        #F2687A;
+  --warn:       #D9A62E;
 
-  --acc-cyan:   #ededed;
-  --acc-violet: #a1a1a1;
-  --acc-rose:   #6e6e6e;
-  --acc-citron: #4a4a4a;
+  --acc-cyan:   #E9EDF2;
+  --acc-violet: #A4ABB3;
+  --acc-rose:   #737C88;
+  --acc-citron: #4A535D;
 
   /* The deck's dark-side categorical values (`palette::DATA_1..6` on Ink) —
      see the `:root` block above for why the transcript reader carries these
@@ -202,13 +202,13 @@
   --tool-repo:     #a3d14b; /* repo — citron */
   --tool-delegate: #d46fe8; /* delegate — orchid */
 
-  --seat-fg: #ededed;
+  --seat-fg: #E9EDF2;
 }
 
 /* The ink-scheme half of the pair above. On this side the seat hue is used
    raw: the palette's seat colours are chosen to read on --panel already. */
 .dark [style*="--seat"] {
-  --seat-fg: var(--seat, #ededed);
+  --seat-fg: var(--seat, #E9EDF2);
 }
 
 @theme inline {
@@ -238,14 +238,14 @@
 
   /* What sits on a fill. Two tokens because they are two different jobs that
      shared the name `ink` and diverged the moment the accent stopped being a
-     fixed gold:
+     fixed brand hue:
        --color-on-accent  flips with the scheme, because the accent fill IS
                           the text colour (ink page -> paper fill -> ink text)
        --color-on-seat    is fixed dark, because a seat colour is data from the
                           match file and is always light and saturated; a
                           theme-flipping value would put white text on pink. */
   --color-on-accent: var(--on-accent);
-  --color-on-seat: #0a0a0a;
+  --color-on-seat: #070B10;
 
   /* Square, everywhere. Zeroing the scale means a future `rounded-md` added
      without thinking is a no-op rather than a visual regression; the

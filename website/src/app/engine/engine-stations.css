@@ -38,7 +38,7 @@
   border: 1px solid var(--eng-accent-dim);
   border-radius: 0.5rem;
   background: var(--eng-surface-warm);
-  box-shadow: var(--stella-glow-gold);
+  box-shadow: var(--stella-glow-brand);
   max-width: 46rem;
 }
 .eng-goal-line {
@@ -74,12 +74,12 @@
   0%,
   100% {
     opacity: 1;
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--stella-gold) 55%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--stella-brand) 55%, transparent);
   }
   50% {
     opacity: 0.65;
     box-shadow: 0 0 0 0.35rem
-      color-mix(in srgb, var(--stella-gold) 0%, transparent);
+      color-mix(in srgb, var(--stella-brand) 0%, transparent);
   }
 }
 
@@ -127,9 +127,9 @@
     box-shadow var(--stella-duration-base) var(--stella-ease-arrive);
 }
 .eng-cta:hover {
-  background: var(--stella-gold-400);
+  background: var(--stella-brand-400);
   color: var(--stella-ink);
-  box-shadow: var(--stella-glow-gold);
+  box-shadow: var(--stella-glow-brand);
   text-decoration: none;
 }
 
@@ -184,7 +184,7 @@
   margin-inline-start: -0.3rem;
   border-radius: 50%;
   background: var(--eng-accent);
-  box-shadow: var(--stella-glow-gold);
+  box-shadow: var(--stella-glow-brand);
 }
 @keyframes eng-orbit {
   to {

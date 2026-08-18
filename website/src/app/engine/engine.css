@@ -56,14 +56,14 @@
   /* Ink warmed with gold — the hover/attention ground, as in global.css. */
   --eng-surface-warm: color-mix(
     in srgb,
-    var(--stella-gold) 8%,
+    var(--stella-brand) 8%,
     var(--stella-ink)
   );
 
-  --eng-accent: var(--stella-gold);
+  --eng-accent: var(--stella-brand);
   --eng-accent-dim: color-mix(
     in srgb,
-    var(--stella-gold) 45%,
+    var(--stella-brand) 45%,
     var(--stella-ink)
   );
 
@@ -88,7 +88,7 @@
    * body text. Opacity has to ride the element, not the colour. */
   background-image: radial-gradient(
     ellipse 80% 50% at 50% 0%,
-    color-mix(in srgb, var(--stella-gold) 6%, transparent),
+    color-mix(in srgb, var(--stella-brand) 6%, transparent),
     transparent 70%
   );
   background-attachment: fixed;
@@ -283,7 +283,7 @@
   color: var(--stella-ink);
 }
 .eng-rail-stop[aria-current="true"]:hover {
-  background: var(--stella-gold-400);
+  background: var(--stella-brand-400);
   color: var(--stella-ink);
 }
 
@@ -340,7 +340,7 @@
   background:
     radial-gradient(
       ellipse 70% 60% at 50% 45%,
-      color-mix(in srgb, var(--stella-gold) 7%, transparent),
+      color-mix(in srgb, var(--stella-brand) 7%, transparent),
       transparent 72%
     );
 }
