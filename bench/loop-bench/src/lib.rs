@@ -469,19 +469,6 @@ pub fn fold_steps(steps: &[TrialReport]) -> TrialReport {
     folded
 }
 
-/// Read the verifier's reward for one trial. Returns the reward and, when the
-/// file exists but cannot be used, a problem description for `last_error` —
-/// a corrupt reward must not silently downgrade a passing task to `None`
-/// (#611). A *missing* file stays a quiet `None`: the trial simply never
-/// reached the verifier.
-///
-/// See [`artifacts::read_reward`] for the sources and their order; this is the
-/// path-only form, for a caller that has not already read `result.json`.
-pub fn read_reward(trial_dir: &Path) -> (Option<f64>, Option<String>) {
-    let found = artifacts::read_trial(trial_dir);
-    (found.reward, found.reward_problem)
-}
-
 /// The heart of the tool: turn one event stream into loop + context signals.
 pub fn distill_events(task: &str, raw: &str) -> TrialReport {
     let mut r = TrialReport {

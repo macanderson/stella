@@ -295,19 +295,11 @@ fn is_valid_job_id(id: &str) -> bool {
 /// Deterministically derive our artifact id from the provider's job id, so a
 /// resume after a restart reconstructs the same identity for events and the
 /// final file.
-///
-/// The hex is spelled out rather than `format!("{byte:02x}")` per byte for the
-/// same reason `artifact::push_hex` is: the per-byte form allocates and drops
-/// a `String` for every byte of the digest.
 fn artifact_id_for(provider_job_id: &str) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let digest = Sha256::digest(provider_job_id.as_bytes());
     let mut id = String::with_capacity("med_".len() + 12);
     id.push_str("med_");
-    for &byte in &digest[..6] {
-        id.push(DIGITS[usize::from(byte >> 4)] as char);
-        id.push(DIGITS[usize::from(byte & 0x0f)] as char);
-    }
+    crate::artifact::push_hex(&mut id, &digest[..6]);
     id
 }
 

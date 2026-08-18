@@ -3338,7 +3338,7 @@
       "description": "One point in a sub-agent's lifecycle. Exactly one `Started` and exactly\none `Finished` are emitted per spawn, in that order, even when the child\nis refused before its first model call (a refusal still brackets, so a\nconsumer folding these never sees an unclosed child).",
       "oneOf": [
         {
-          "description": "A child turn is about to start. Every event between this and the\nmatching `Finished` with the same `agent_id` belongs to the child,\nnot the parent — this bracket IS the attribution mechanism, which is\nwhy no per-event agent field was added to the other 35 variants.",
+          "description": "A child turn is about to start. Every event between this and the\nmatching `Finished` with the same `agent_id` belongs to the child,\nnot the parent — this bracket IS the attribution mechanism, which is\nwhy no per-event agent field was added to the rest of the event vocabulary.",
           "properties": {
             "agent_id": {
               "description": "Stable id for this child, unique within the parent turn.",

@@ -27,7 +27,7 @@ available_for_speculation = false
 risk_level = "high"
 
 description = '''
-Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop. You can READ anything on this machine — system headers, the toolchain, a dependency's source. You can only CHANGE things inside this session's directories (get_environment reports the workspace root), so a command that creates, edits, deletes or moves a file elsewhere is refused before it runs. Prefer write_file/edit_file/delete_file over shell equivalents for files in the workspace: their changes are what this turn's diff and verification are computed from.
+Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop. You can READ anything on this machine — system headers, the toolchain, a dependency's source. You can only CHANGE things inside this session's directories (get_environment reports the workspace root), so a command that creates, edits, deletes or moves a file elsewhere is refused before it runs. Prefer write_file/edit_file/delete_file over shell equivalents for files in the workspace: their changes are what this turn's diff and verification are computed from. Redirect working files that are NOT deliverables — a captured log, a compiled shim, a scratch script — to $STELLA_SCRATCH, which is already exported into your shell: `apt-get update > $STELLA_SCRATCH/apt.log` needs no lookup. It is writable, nothing there lands in this turn's diff, and it is deleted when the session ends. (get_environment reports its absolute path if a file tool needs one.)
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.

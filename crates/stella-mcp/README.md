@@ -34,12 +34,14 @@ to `stella-cli`.
 
 ## Where it sits
 
-It depends on `stella-protocol` (`ToolOutput`, `ToolSchema`) and `stella-core`
+It depends on `stella-protocol` (`ToolOutput`, `ToolSchema`), `stella-core`
 (the [`ports::ToolExecutor`](../stella-core/src/ports.rs) trait it implements
 and the [`mcp_usage`](../stella-core/src/mcp_usage.rs) ledger it records calls
-into) — nothing else in the workspace. Only `stella-cli` depends on it. It also
-builds its own binary, `mcp-fixture-server`, which exists purely for
-`tests/` and is excluded from dist (`[package.metadata.dist] dist = false`).
+into), and `stella-store` (for the one shared atomic file-write helper,
+`stella_store::durable::write_atomic`) — nothing else in the workspace.
+`stella-cli` and `stella-runtime` depend on it. It also builds its own binary,
+`mcp-fixture-server`, which exists purely for `tests/` and is excluded from
+dist (`[package.metadata.dist] dist = false`).
 
 ## Layout
 
@@ -296,7 +298,7 @@ the flag in both the binary's `//!` header and the `[[bin]]` comment in
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions"
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies"
   (why `ToolExecutor` is the only seam), "The `.stella/` directory" (where
   `mcp.toml` and `mcp_oauth.json` live), and "Testing approach".
 - [`../../website/content/docs/agent-tools/mcp.mdx`](../../website/content/docs/agent-tools/mcp.mdx)

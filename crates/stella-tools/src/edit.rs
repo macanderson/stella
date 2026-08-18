@@ -3,7 +3,7 @@
 //!
 //! The tool shares the session's read-state ledger (#331): when `old_string`
 //! fails to match, it compares current disk bytes against the hash of what
-//! the model last saw (recorded by `read_file`/`read_symbol` and by the
+//! the model last saw (recorded by `read_file` and by the
 //! model's own edits/writes) and *attributes* the failure — a drifted file
 //! gets a drift-named error carrying the fresh content so the model can
 //! re-issue the edit against current bytes, instead of a generic not-found

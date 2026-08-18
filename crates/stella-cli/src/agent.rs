@@ -106,12 +106,11 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
     }
 }
 
-/// Run a one-shot prompt. [`PipelineChoice`](crate::wrapper_plugin::PipelineChoice)
-/// selects which wrapper runs over the turn (`Raw` by default, #3381).
-/// `test_command`, when given, arms the pipeline's deterministic verification
-/// ladder (the fail→pass flip oracle); without it, verification falls back to
-/// the model verifier on every iteration. `keep_witness` promotes an authored
-/// witness into the working tree instead of letting it die with the candidate workspace.
+/// Run a one-shot prompt. [`PipelineChoice`](crate::wrapper_plugin::PipelineChoice) selects which
+/// wrapper runs over the turn (`Raw` by default, #3381). `test_command`, when given, arms the
+/// pipeline's deterministic verification ladder (the fail→pass flip oracle); without it,
+/// verification falls back to the model verifier on every iteration. `keep_witness` promotes an
+/// authored witness into the working tree instead of letting it die with the candidate workspace.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_one_shot(
     cfg: &Config,
@@ -126,6 +125,7 @@ pub async fn run_one_shot(
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
     preflight_durable_stream(format)?;
+    // #3381 made Raw the default, so this now admits the common no-flag `stella run` case too.
     crate::enterprise_telemetry::authorize_one_shot(!pipeline.is_raw())?;
     if pipeline.is_classic() {
         run_pipeline_one_shot(

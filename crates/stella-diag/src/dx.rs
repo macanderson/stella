@@ -443,6 +443,28 @@ mod tests {
         assert_eq!(dx.counters().warn, 1);
     }
 
+    /// Pins the level-to-field mapping in [`CounterSnapshot::at`] — nothing
+    /// else in the workspace calls it, so a mis-wired arm would otherwise
+    /// ship green.
+    #[test]
+    fn counter_snapshot_at_matches_the_level_it_was_emitted_at() {
+        let (dx, _records) = Dx::capturing();
+        for level in Level::ALL {
+            match level {
+                Level::Error => diag!(&dx, error, "test.at"),
+                Level::Warn => diag!(&dx, warn, "test.at"),
+                Level::Info => diag!(&dx, info, "test.at"),
+                Level::Debug => diag!(&dx, debug, "test.at"),
+                Level::Trace => diag!(&dx, trace, "test.at"),
+            }
+        }
+        let snapshot = dx.counters();
+        for level in Level::ALL {
+            assert_eq!(snapshot.at(level), 1, "{level:?}");
+        }
+        assert_eq!(snapshot.total(), 5);
+    }
+
     #[test]
     fn a_facet_renders_itself_into_the_envelope() {
         struct Migrated {

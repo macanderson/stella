@@ -22,8 +22,7 @@
 //! `Shift-Tab` only — digits deliberately never switch tabs, because they
 //! quick-pick `ask_user` answers and must stay typeable as a prompt's first
 //! character. Agent controls (`p`/`s`/`r`) only fire when the composer is
-//! empty, so they never eat a keystroke meant for a prompt (the same
-//! "quick-pick only when nothing typed" gate `crate::ui` already uses).
+//! empty, so they never eat a keystroke meant for a prompt.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -342,15 +341,6 @@ impl IssueField {
 
     pub fn prev(self) -> IssueField {
         IssueField::ALL[(self.index() + IssueField::ALL.len() - 1) % IssueField::ALL.len()]
-    }
-
-    /// The type-ahead vocabulary this field searches, if any.
-    pub fn entity_field(self) -> Option<EntityField> {
-        match self {
-            IssueField::Labels => Some(EntityField::Label),
-            IssueField::Assignee => Some(EntityField::Assignee),
-            IssueField::Title | IssueField::Body => None,
-        }
     }
 }
 
@@ -683,8 +673,7 @@ pub struct DeckUi {
     /// gate clears only when the ENGINE's follow-on event lands, so without
     /// this latch the decision keys stay live for the whole round-trip and a
     /// second press re-sends the decision. Cleared by [`ingest_inbound`] on a
-    /// fresh `ScopeReview` — the per-agent mirror of the single-session
-    /// shell's `scope_answered` (see `crate::ui`).
+    /// fresh `ScopeReview`.
     pub scope_answered: std::collections::HashSet<String>,
     /// The plan-review dialog's text input: `Some` while `r` (refine note) or
     /// `!` (shell line) has switched the dialog out of its one-keypress
@@ -1382,7 +1371,7 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
         return;
     }
     // A fresh gate re-arms its decision keys: the answered latch guards the
-    // CURRENT card only (the deck mirror of `crate::ui::ingest`'s reset).
+    // CURRENT card only.
     if let Inbound::Event { agent, event } = inbound {
         match event {
             stella_protocol::AgentEvent::ScopeReview { .. } => {
@@ -2034,9 +2023,8 @@ fn slash_matches(ui: &DeckUi) -> Vec<String> {
 
 /// Slash-popup navigation: ↑/↓ choose, Tab completes into the buffer, Enter
 /// dispatches the selection (as an enqueue, like any prompt), Esc dismisses.
-/// Returns `None` for keys the popup doesn't claim. Shared with the
-/// single-session REPL (`crate::ui`) via `crate::composer` so both surfaces
-/// stay consistent by construction.
+/// Returns `None` for keys the popup doesn't claim. The matching and
+/// navigation logic lives in `crate::composer`.
 ///
 /// Deck-local commands (tab switches, the help overlay) are intercepted here
 /// and act on the UI directly; everything else is enqueued for the driver,

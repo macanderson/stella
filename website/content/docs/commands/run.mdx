@@ -50,12 +50,16 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
     `"cargo test -p my-crate"`. Arms the fail→pass flip oracle: a change that flips a
     failing test to passing is proven done. Omitted, the pipeline's witness stage is the
     remaining oracle, and a turn that reaches neither is reported unverified — not passed.
+    Refused on the raw loop (pass `--pipeline classic` or `--pipeline <variant>` — a
+    wrapper plugin's own oracle can arm it too).
   </OptionCard>
   <OptionCard name="--keep-witness">
     Keep the authored witness test as a file in your working tree. By default the witness
     is scaffolding — it proves this run's goal inside the candidate workspace and is
     discarded with it, so an already-satisfied test is never left behind in your test
-    tree. Pass this to promote it to a real test you can commit.
+    tree. Pass this to promote it to a real test you can commit. Pipeline-only: refused
+    on the raw loop and on a named `--pipeline <variant>` alike — pass `--pipeline
+    classic`.
   </OptionCard>
   <OptionCard name="--require-verified">
     Exit non-zero unless the run was actually verified. A run that finished but that
@@ -63,7 +67,7 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
     with no `--test-command` that is the ordinary outcome, so failing on it by default
     would break every existing script. Pass this in a delivery gate that must not ship
     unproven work: it turns "completed but unproven" into a failure exactly like a
-    refuted verification.
+    refuted verification. Pipeline-only, same refusal as `--keep-witness`.
   </OptionCard>
 </CardGrid>
 
@@ -127,7 +131,8 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 \
 
 `--test-command`, `--keep-witness`, and `--require-verified` all belong to the staged
 pipeline's verify/witness machinery, so pair them with `--pipeline classic` — on the
-raw loop (the default) there is no ladder for them to arm.
+raw loop (the default) there is no ladder for them to arm, and `stella run` refuses
+the combination outright rather than silently ignoring the flag.
 
 Hand the verify stage a deterministic oracle, so a fixed test can submit without a
 model-verifier call:

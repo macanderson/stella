@@ -112,6 +112,8 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //   enterprise_telemetry
 //               the closed operational event schema, its bounded at-least-once
 //               spool, and the per-store export ledger
+//   error       (crate-private module, `StoreError` re-exported) every
+//               failure this crate returns, as named variants
 //   export      the `/export` telemetry dump and `stella stats`' usage
 //               aggregate, plus the `ExportScope` that decides whether either
 //               covers one session or the whole workspace (#2558)
@@ -130,6 +132,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //               execution-level paid-call accounting gate
 //   usage       `usage.db` — user-tier cross-project telemetry aggregate
 mod ddl;
+mod error;
 mod migrations;
 mod private;
 mod receipts;
@@ -185,6 +188,7 @@ pub use drain::{
     RejectionClass, drain_org, schema_version_supported,
 };
 pub use efficacy::FinishedExecution;
+pub use error::StoreError;
 pub use export::ExportExclusions;
 pub use forget::{ContextSurface, SurfaceSuppression, is_restatement, is_suppressed};
 pub use foundry::{AdoptedTool, FoundryReuse};
@@ -233,27 +237,11 @@ pub(crate) fn fnv_hex(s: &str) -> String {
     format!("{hash:016x}")
 }
 
-/// Wrapper error: everything the store can fail with, rendered.
-#[derive(Debug)]
-pub struct StoreError(pub String);
-
-impl std::fmt::Display for StoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "store: {}", self.0)
-    }
-}
-impl std::error::Error for StoreError {}
-
-impl From<rusqlite::Error> for StoreError {
-    fn from(e: rusqlite::Error) -> Self {
-        StoreError(e.to_string())
-    }
-}
-
 type Result<T> = std::result::Result<T, StoreError>;
 
 fn sqlite_i64(name: &str, value: u64) -> Result<i64> {
-    i64::try_from(value).map_err(|_| StoreError(format!("{name} exceeds SQLite INTEGER range")))
+    i64::try_from(value)
+        .map_err(|_| StoreError::Other(format!("{name} exceeds SQLite INTEGER range")))
 }
 
 /// One session-level file-touch record, ready to persist: the normalized
@@ -514,10 +502,10 @@ pub struct SessionJournal {
 fn task_status_to_string(status: TaskStatus) -> Result<String> {
     match serde_json::to_value(status) {
         Ok(serde_json::Value::String(s)) => Ok(s),
-        Ok(other) => Err(StoreError(format!(
+        Ok(other) => Err(StoreError::Other(format!(
             "task status serialized to non-string JSON: {other}"
         ))),
-        Err(e) => Err(StoreError(format!("cannot serialize task status: {e}"))),
+        Err(e) => Err(StoreError::serde("cannot serialize task status", e)),
     }
 }
 
@@ -525,7 +513,7 @@ fn task_status_to_string(status: TaskStatus) -> Result<String> {
 /// back into the protocol enum.
 fn task_status_from_string(s: &str) -> Result<TaskStatus> {
     serde_json::from_value(serde_json::Value::String(s.to_string()))
-        .map_err(|e| StoreError(format!("unknown task status `{s}`: {e}")))
+        .map_err(|e| StoreError::serde(format!("unknown task status `{s}`"), e))
 }
 
 /// One aggregated analytics row per (provider, model): the numbers behind
@@ -598,9 +586,9 @@ impl UsageStatsRow {
 ///   away from publishing a session's transcripts.
 fn harden_workspace_dir(dir: &Path, created: bool) -> Result<()> {
     let metadata = std::fs::symlink_metadata(dir)
-        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", dir.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot inspect {}", dir.display()), e))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "workspace state path {} is not a real directory",
             dir.display()
         )));
@@ -609,10 +597,10 @@ fn harden_workspace_dir(dir: &Path, created: bool) -> Result<()> {
     if created {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
-            StoreError(format!(
-                "could not restrict freshly created {}: {e}",
-                dir.display()
-            ))
+            StoreError::io(
+                format!("could not restrict freshly created {}", dir.display()),
+                e,
+            )
         })?;
     }
     ensure_workspace_generated_ignore(dir)?;
@@ -754,25 +742,16 @@ impl Store {
             // with a wrapped `usize` and panic, taking the session down with
             // it. Persistence failing is observability loss (the CLI warns and
             // runs on); persistence PANICKING is a work stoppage.
-            return Err(StoreError(format!(
-                "store.db carries a negative schema version ({version}), so it is not a \
-                 stella store or its header was overwritten. Move \
-                 .stella/private/store.db aside and reopen this workspace to start a \
-                 fresh one."
-            )));
+            return Err(StoreError::NegativeSchemaVersion { version });
         }
         if version > SCHEMA_VERSION {
             // A downgrade guard, not a formality: older code writing into a
             // newer shape would silently violate whatever invariants the
             // newer schema added.
-            return Err(StoreError(format!(
-                "store.db is at schema version {version}, but this build only \
-                 knows {SCHEMA_VERSION} — your stella binary is out of date, not \
-                 the workspace. Upgrade with `brew upgrade stella`, re-run \
-                 install.sh, or grab a newer build from \
-                 https://github.com/macanderson/stella/releases, then reopen \
-                 this workspace."
-            )));
+            return Err(StoreError::SchemaTooNew {
+                file_version: version,
+                build_version: SCHEMA_VERSION,
+            });
         }
         if version == 0 && !any_store_table_exists(&bootstrap)? {
             create_latest_schema(&bootstrap)?;
@@ -864,7 +843,7 @@ impl Store {
     /// now the repair path rather than the only writer, for the full account.
     pub fn record_event(&self, execution_id: i64, seq: u64, event: &AgentEvent) -> Result<()> {
         let seq = sqlite_i64("event sequence", seq)?;
-        let payload = serde_json::to_string(event).map_err(|e| StoreError(e.to_string()))?;
+        let payload = serde_json::to_string(event).map_err(|e| StoreError::Other(e.to_string()))?;
         // Read the internally-tagged `type` by DESERIALIZING it, never by
         // string-scanning for the first `"type":"` literal — the scan silently
         // yields the wrong tag (or "unknown") if serialization is ever
@@ -1638,7 +1617,7 @@ impl Store {
     pub fn count(&self, table: &str) -> Result<i64> {
         // Table names can't be bound parameters; allowlist them.
         if !TABLES.contains(&table) {
-            return Err(StoreError(format!("unknown table `{table}`")));
+            return Err(StoreError::Other(format!("unknown table `{table}`")));
         }
         let count: i64 =
             self.lock()

@@ -44,7 +44,7 @@ not any individual property — constitutes the moat.
 
 1. [The convergence problem](#1-the-convergence-problem)
 2. [The seven defensible properties](#2-the-seven-defensible-properties)
-3. [Property I: Ports, not concretions — the adapter boundary](#3-property-i-ports-not-concretions--the-adapter-boundary)
+3. [Property I: Ports, not direct dependencies — the adapter boundary](#3-property-i-ports-not-direct-dependencies--the-adapter-boundary)
 4. [Property II: No I/O in the engine — decision logic is pure](#4-property-ii-no-io-in-the-engine--decision-logic-is-pure)
 5. [Property III: The witness-test contract — verified done](#5-property-iii-the-witness-test-contract--verified-done)
 6. [Property IV: BYOK + zero telemetry egress by default — the trust perimeter](#6-property-iv-byok--zero-telemetry-egress-by-default--the-trust-perimeter)
@@ -95,7 +95,7 @@ We identify seven such properties in Stella's design.
 
 | # | Property | Core invariant | Enforced by |
 |---|---|---|---|
-| I | Ports, not concretions | The engine (`stella-core`) never imports a provider SDK, filesystem API, or terminal library | Crate-level dependency boundary; `Provider` trait (`stella-protocol`) and `ToolExecutor` trait (`stella-core::ports`) |
+| I | Ports, not direct dependencies | The engine (`stella-core`) never imports a provider SDK, filesystem API, or terminal library | Crate-level dependency boundary; `Provider` trait (`stella-protocol`) and `ToolExecutor` trait (`stella-core::ports`) |
 | II | No I/O in the engine | All decision logic is synchronous functions over owned data | Architectural discipline; property-tested in `stella-core` |
 | III | Witness-test contract | A task is done only when a test fails on old code and passes on new | The pipeline's witness stage and flip oracle (`stella-pipeline`) |
 | IV | BYOK + zero telemetry egress by default | Community/default telemetry is local; only an explicitly enrolled Oxagen Enterprise managed deployment may send a signed-policy-authorized, content-free operational rollup | Architectural invariant; local SQLite (`stella-store`) plus the [managed enrollment boundary](../../website/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export) |
@@ -107,7 +107,7 @@ Each property is examined below.
 
 ---
 
-## 3. Property I: Ports, not concretions — the adapter boundary
+## 3. Property I: Ports, not direct dependencies — the adapter boundary
 
 ### The invariant
 
@@ -206,10 +206,20 @@ loops on your API budget).
 
 ### The invariant
 
-Stella refuses to call a task done until a **witness test** proves it: a test
+Opted into the staged pipeline (`stella run --pipeline classic`), Stella
+refuses to call a task done until a **witness test** proves it: a test
 that **fails on the old code** (the feature is genuinely absent) and **passes
-on the new code** (the feature is genuinely present). This is enforced by the
-staged pipeline's witness stage (`stella-pipeline`):
+on the new code** (the feature is genuinely present). This is a **property of
+the path that produced the evidence, not of the binary**: the built-in staged
+pipeline's witness stage (`stella-pipeline`) runs the check itself and watches
+the fail→pass flip, as described below; verification supplied by an installed
+wrapper plugin on `--pipeline <other-variant>` is that plugin's own
+**self-reported** evidence, which Stella evaluates against a declared rule
+rather than re-running or re-checking. The raw step loop (the default on
+every door) makes no witness-test claim at all — it has no verification
+stage.
+
+The staged-pipeline mechanism, `--pipeline classic` specifically:
 
 1. The worker executes the change.
 2. When no `--test-command` is configured, an independent model — the
@@ -634,7 +644,7 @@ A rigorous analysis must consider what could erode Stella's position:
 ## 13. Conclusion
 
 Stella's defensible technology position is not a feature list. It is a set of
-**architectural invariants** — ports not concretions, no I/O in the engine,
+**architectural invariants** — ports not direct dependencies, no I/O in the engine,
 witness-test definition of done, BYOK with zero Community/default telemetry
 egress and one explicit signed Oxagen Enterprise operational exception,
 prompt-cache-native memory, budget enforcement at safe boundaries, and the Open

@@ -145,6 +145,8 @@ fn process_nonce() -> u64 {
 /// Insert a fact edge. `supersedes` links to the edge this one replaced (the
 /// `SUPERSEDES` relation of), or `None` for a
 /// fresh assertion. Returns the new edge's rowid.
+// The parameters are the edge row's own columns; a struct would just move
+// the same list up one level.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn insert_edge(
     conn: &Connection,

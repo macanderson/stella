@@ -107,15 +107,12 @@ const MAX_SESSIONS: usize = 64;
 /// reads the live turn id in its own scope before touching the turn registry.
 pub(crate) struct SessionRegistry {
     sessions: Mutex<HashMap<String, Arc<SessionEntry>>>,
-    /// Registration order for [`SessionEntry::seq`] — diagnostics only.
-    counter: AtomicU64,
 }
 
 impl SessionRegistry {
     pub(crate) fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
-            counter: AtomicU64::new(0),
         }
     }
 
@@ -144,7 +141,6 @@ impl SessionRegistry {
             } else {
                 let id = new_session_id();
                 let entry = Arc::new(SessionEntry {
-                    seq: self.counter.fetch_add(1, Ordering::Relaxed),
                     idle_since: Mutex::new(Instant::now()),
                     live: Mutex::new(None),
                     next_token: AtomicU64::new(0),
@@ -236,9 +232,6 @@ fn reclaim_idle_expired(
 
 /// One retained conversation.
 pub(crate) struct SessionEntry {
-    /// Registration order. Diagnostics only — eviction is by idle time.
-    #[allow(dead_code)]
-    seq: u64,
     /// When this session last started or settled a turn. Reads (`GET`) do not
     /// touch it: observation must not extend a lease, or a dashboard polling
     /// its sessions would make every one of them immortal.

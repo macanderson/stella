@@ -105,8 +105,9 @@ fn management_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffor
         // cap. Plan's output contract is three to eight short strings; that
         // does not need session-level deliberation to produce.
         ModelCallRole::Plan | ModelCallRole::PlanRepair => (Some(4096), Some(ReasoningEffort::Low)),
-        // "PASS or FAIL, then one line" / "at most 6 lines" by their own
-        // prompts. Effort inherited: both are judgment calls on evidence.
+        // Verdict and DistressGuidance are no longer dispatched at all
+        // (#2584). The numbers below are kept only so this match stays
+        // exhaustive over ModelCallRole; no call ever reaches them.
         ModelCallRole::Verdict | ModelCallRole::DistressGuidance => (Some(1024), None),
         // The only raw `Worker` call is the conversational fast path, whose
         // instructions say "reply briefly and warmly in plain prose".
@@ -463,7 +464,10 @@ mod tests {
     /// wire with reasoning headroom above its written output contract, so a
     /// reasoning model has room to think before its first answer token. The
     /// old caps (512 triage, 1024 verdict) are exactly the numbers that came
-    /// back empty across a whole benchmark match.
+    /// back empty across a whole benchmark match. The Verdict and
+    /// DistressGuidance rows here cover roles that are no longer dispatched
+    /// (#2584) — they stay in the table only to prove the caps would still
+    /// be correct if that ever changed.
     #[test]
     fn every_capped_role_carries_reasoning_headroom() {
         let none = RoleCallOverrides::default();
