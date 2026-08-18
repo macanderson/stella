@@ -37,13 +37,16 @@ Most agents decide they are *done* when a test suite passes. That accepts two
 failure modes silently: a suite that was already green, and an edit that doesn't
 actually exercise the fix. Stella rejects both.
 
-The staged pipeline (`stella run`, on by default) demands a **witness test**:
-one that must **fail on the previous code** and **pass on your change**. A
-green suite alone is never accepted — the fail → pass
+Opt into the staged pipeline with `stella run --pipeline classic` and it demands
+a **witness test**: one that must **fail on the previous code** and **pass on
+your change**. A green suite alone is never accepted — the fail → pass
 transition *is* the evidence. Hand it your own test with `--test-command`, or
 the pipeline spawns an independent **witness author** that
 writes the failing test, tamper-excluded from the code under change, so the flip
-cannot be gamed. Deterministic definition of done, enforced by construction —
+cannot be gamed. That guarantee is host-run and belongs to the `--pipeline
+classic` path specifically — a wrapper plugin's own verification is
+self-reported evidence Stella evaluates against a declared rule rather than
+re-running itself. Deterministic definition of done, enforced by construction —
 see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline).
 
 ## An engine you can actually reason about

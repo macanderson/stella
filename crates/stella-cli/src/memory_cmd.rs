@@ -24,6 +24,10 @@ use crate::query_format::{QueryFormat, Rows};
 use stella_core::rules::{self, PromoteStatus, RuleCandidate};
 use stella_store::{ContextSurface, MemoryCitationStats, PROMOTION_CITATIONS_REQUIRED, Store};
 
+mod restore;
+
+pub use restore::run_memory_restore;
+
 /// `stella memory` subcommands — the inspection and promotion surface of the
 /// memory-citation loop (recorded citations of the memories that informed a
 /// turn aggregate into the eligibility gate `promote` enforces).
@@ -712,34 +716,6 @@ pub fn run_memory_edit(id: &str, text: &str) -> Result<(), String> {
         )
         .dimmed()
     );
-    Ok(())
-}
-
-/// Entry point for `stella memory restore <id>`.
-pub fn run_memory_restore(id: &str) -> Result<(), String> {
-    let workspace_root =
-        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    let store = Store::open(&workspace_root).map_err(|e| format!("cannot open store: {e}"))?;
-    let lifted = store
-        .restore(ContextSurface::Memory, id)
-        .map_err(|e| format!("cannot lift tombstone: {e}"))?;
-    // The exact inverse of what `forget` projected. Run unconditionally rather
-    // than only when `lifted`: the two writes can disagree if a forget failed
-    // halfway, and a restore that refuses to fix that is a memory no command
-    // can bring back.
-    if let Some(context) = open_context(&workspace_root)? {
-        context
-            .restore_node(id)
-            .map_err(|e| format!("cannot lift `{id}` in the context plane: {e}"))?;
-    }
-    if lifted {
-        println!("  {} restored {id}", "✓".green());
-    } else {
-        println!(
-            "  {} `{id}` was not forgotten — nothing to restore",
-            "·".dimmed()
-        );
-    }
     Ok(())
 }
 

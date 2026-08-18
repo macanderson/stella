@@ -206,10 +206,20 @@ loops on your API budget).
 
 ### The invariant
 
-Stella refuses to call a task done until a **witness test** proves it: a test
+Opted into the staged pipeline (`stella run --pipeline classic`), Stella
+refuses to call a task done until a **witness test** proves it: a test
 that **fails on the old code** (the feature is genuinely absent) and **passes
-on the new code** (the feature is genuinely present). This is enforced by the
-staged pipeline's witness stage (`stella-pipeline`):
+on the new code** (the feature is genuinely present). This is a **property of
+the path that produced the evidence, not of the binary**: the built-in staged
+pipeline's witness stage (`stella-pipeline`) runs the check itself and watches
+the fail→pass flip, as described below; verification supplied by an installed
+wrapper plugin on `--pipeline <other-variant>` is that plugin's own
+**self-reported** evidence, which Stella evaluates against a declared rule
+rather than re-running or re-checking. The raw step loop (the default on
+every door) makes no witness-test claim at all — it has no verification
+stage.
+
+The staged-pipeline mechanism, `--pipeline classic` specifically:
 
 1. The worker executes the change.
 2. When no `--test-command` is configured, an independent model — the

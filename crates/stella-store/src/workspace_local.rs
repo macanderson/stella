@@ -119,7 +119,7 @@ fn write_marker(workspace_root: &Path, marker: &Marker) -> Result<()> {
         .join(crate::private::WORKSPACE_PRIVATE_DIR);
     crate::ensure_private_dir(&dir)?;
     let body = serde_json::to_string(marker)
-        .map_err(|e| crate::StoreError(format!("cannot serialize {LOCAL_ID_FILE}: {e}")))?;
+        .map_err(|e| crate::StoreError::serde(format!("cannot serialize {LOCAL_ID_FILE}"), e))?;
     crate::private::write_private_atomic(&dir.join(LOCAL_ID_FILE), body.as_bytes())
 }
 
