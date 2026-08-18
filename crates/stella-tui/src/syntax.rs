@@ -32,6 +32,11 @@ pub enum Lang {
     /// skills/agents definition format.
     Markdown,
     Toml,
+    /// JSON — tool-call arguments and tool results, which the transcript
+    /// renders verbatim ([`crate::render`]). Unlike the other languages here
+    /// this one is read far more than it is edited, and it arrives already
+    /// pretty-printed.
+    Json,
 }
 
 /// A token class we give a syntax color; `None` runs stay the base color.
@@ -73,6 +78,7 @@ pub fn lang_from_ext(ext: &str) -> Option<Lang> {
         "py" | "pyi" => Some(Lang::Python),
         "md" | "markdown" => Some(Lang::Markdown),
         "toml" => Some(Lang::Toml),
+        "json" | "jsonl" | "ndjson" => Some(Lang::Json),
         _ => None,
     }
 }
@@ -104,6 +110,7 @@ pub fn lang_from_fence(tag: &str) -> Option<Lang> {
         "py" | "python" | "python3" => Some(Lang::Python),
         "md" | "markdown" => Some(Lang::Markdown),
         "toml" => Some(Lang::Toml),
+        "json" | "jsonl" | "ndjson" => Some(Lang::Json),
         _ => None,
     }
 }
@@ -117,6 +124,7 @@ pub fn tokenize(code: &str, lang: Lang) -> Runs {
     match lang {
         Lang::Markdown => md_line(code).0,
         Lang::Toml => toml_runs(code),
+        Lang::Json => json_runs(code),
         Lang::Rust | Lang::TsJs | Lang::Python => code_runs(code, lang),
     }
 }
@@ -364,6 +372,107 @@ fn split_ordered_marker(lead: &str) -> Option<(&str, &str)> {
 /// headers and the key of a `key = value` pair as structure, and values via
 /// the generic scan (strings, numbers, booleans). Array/inline-table
 /// continuation lines fall through to the generic scan.
+/// One line of JSON, tokenized left to right.
+///
+/// A key and a string value are the same lexical thing — a quoted string — and
+/// only what follows separates them, so a closed string looks ahead to the next
+/// non-space character and takes [`Tok::Keyword`] when that is a `:`. That is
+/// the same call [`toml_runs`] makes for a bare key, and it keeps the two
+/// object-shaped formats reading alike: the shape in one hue, the data in
+/// another.
+///
+/// `true`/`false`/`null` take [`Tok::Number`] rather than a keyword hue: they
+/// are scalar constants standing where a number could stand, and coloring them
+/// like keys would make an object's shape unreadable at a glance — which is the
+/// whole reason this line is colored at all.
+///
+/// Stateless and lossless like every other lexer here. A line sliced out of a
+/// larger document (the middle-elided body of a capped tool result) simply
+/// classifies what it can see; an unterminated string runs to end of line
+/// rather than panicking or swallowing the rest of the render.
+fn json_runs(code: &str) -> Runs {
+    let chars: Vec<char> = code.chars().collect();
+    let mut runs: Runs = Vec::new();
+    let mut plain = String::new();
+    let mut i = 0;
+
+    // Punctuation and whitespace accumulate untagged until a classified token
+    // interrupts them, so the run list stays as short as the coloring needs.
+    fn flush(plain: &mut String, runs: &mut Runs) {
+        if !plain.is_empty() {
+            runs.push((std::mem::take(plain), None));
+        }
+    }
+
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' {
+            let start = i;
+            i += 1;
+            while i < chars.len() {
+                match chars[i] {
+                    // A backslash escapes the next char, including a quote —
+                    // clamp so a trailing lone backslash cannot step past the
+                    // end.
+                    '\\' => i = (i + 2).min(chars.len()),
+                    '"' => {
+                        i += 1;
+                        break;
+                    }
+                    _ => i += 1,
+                }
+            }
+            let key = chars[i..]
+                .iter()
+                .find(|c| !c.is_whitespace())
+                .is_some_and(|c| *c == ':');
+            flush(&mut plain, &mut runs);
+            runs.push((
+                chars[start..i].iter().collect(),
+                Some(if key { Tok::Keyword } else { Tok::Str }),
+            ));
+            continue;
+        }
+        if c.is_ascii_digit() || (c == '-' && chars.get(i + 1).is_some_and(char::is_ascii_digit)) {
+            let start = i;
+            i += 1;
+            while i < chars.len() {
+                let d = chars[i];
+                if d.is_ascii_digit() || d == '.' {
+                    i += 1;
+                } else if matches!(d, 'e' | 'E') {
+                    // Only an exponent may carry a sign, and only right after
+                    // the `e` — otherwise `1-2` would lex as one number.
+                    i += 1;
+                    if chars.get(i).is_some_and(|s| matches!(s, '+' | '-')) {
+                        i += 1;
+                    }
+                } else {
+                    break;
+                }
+            }
+            flush(&mut plain, &mut runs);
+            runs.push((chars[start..i].iter().collect(), Some(Tok::Number)));
+            continue;
+        }
+        if c.is_ascii_alphabetic() {
+            let start = i;
+            while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let tok = matches!(word.as_str(), "true" | "false" | "null").then_some(Tok::Number);
+            flush(&mut plain, &mut runs);
+            runs.push((word, tok));
+            continue;
+        }
+        plain.push(c);
+        i += 1;
+    }
+    flush(&mut plain, &mut runs);
+    runs
+}
+
 fn toml_runs(code: &str) -> Runs {
     let lead = code.trim_start();
     let indent = &code[..code.len() - lead.len()];
@@ -514,9 +623,10 @@ fn is_comment_start(chars: &[char], i: usize, lang: Lang) -> bool {
     match lang {
         Lang::Python | Lang::Toml => chars[i] == '#',
         Lang::Rust | Lang::TsJs => chars[i] == '/' && chars.get(i + 1) == Some(&'/'),
-        // Markdown never reaches the generic scan ([`tokenize`] dispatches it
-        // to [`md_line`]); the arm exists for exhaustiveness only.
-        Lang::Markdown => false,
+        // Markdown and JSON never reach the generic scan ([`tokenize`]
+        // dispatches them to [`md_line`] and [`json_runs`]); the arms exist for
+        // exhaustiveness only. JSON has no comment syntax in any case.
+        Lang::Markdown | Lang::Json => false,
     }
 }
 
@@ -599,7 +709,9 @@ fn is_keyword(word: &str, lang: Lang) -> bool {
         Lang::TsJs => &TSJS_KEYWORDS,
         Lang::Python => &PYTHON_KEYWORDS,
         Lang::Toml => &TOML_KEYWORDS,
-        Lang::Markdown => &[],
+        // Neither reaches the generic scan; JSON's three bare words are
+        // classified by [`json_runs`] as the scalar constants they are.
+        Lang::Markdown | Lang::Json => &[],
     };
     table.contains(&word)
 }
@@ -773,7 +885,57 @@ mod tests {
     }
 
     #[test]
+    fn json_separates_keys_from_string_values() {
+        let runs = tokenize(r#"  "query": "needle","#, Lang::Json);
+        assert_eq!(
+            runs.iter().find(|(t, _)| t == "\"query\"").unwrap().1,
+            Some(Tok::Keyword)
+        );
+        assert_eq!(
+            runs.iter().find(|(t, _)| t == "\"needle\"").unwrap().1,
+            Some(Tok::Str)
+        );
+    }
+
+    #[test]
+    fn json_scalars_are_numbers_not_structure() {
+        for (src, lit) in [
+            ("{\"n\": -12.5e+3}", "-12.5e+3"),
+            ("{\"n\": true}", "true"),
+            ("{\"n\": null}", "null"),
+        ] {
+            let runs = tokenize(src, Lang::Json);
+            assert_eq!(
+                runs.iter().find(|(t, _)| t == lit).map(|r| r.1),
+                Some(Some(Tok::Number)),
+                "{src} mis-classified {lit}: {runs:?}"
+            );
+        }
+    }
+
+    /// The module's stated contract: concatenating the runs reproduces the
+    /// input exactly, for any line, including malformed ones.
+    #[test]
+    fn json_tokenizing_is_lossless_and_panic_free() {
+        for src in [
+            r#"{"a": 1, "b": [true, null], "c": "x\"y"}"#,
+            r#"  "unterminated"#,
+            r#""trailing backslash\"#,
+            "",
+            "   ",
+            "}}}],,,",
+            "{\"emoji\": \"⋯ ✓ 🚀\"}",
+        ] {
+            let runs = tokenize(src, Lang::Json);
+            let rebuilt: String = runs.iter().map(|(t, _)| t.as_str()).collect();
+            assert_eq!(rebuilt, src, "lossy on {src:?}: {runs:?}");
+        }
+    }
+
+    #[test]
     fn markdown_and_toml_map_from_extensions_and_fence_tags() {
+        assert_eq!(lang_from_fence("json"), Some(Lang::Json));
+        assert_eq!(lang_from_path("docs/wire/schema.json"), Some(Lang::Json));
         assert_eq!(
             lang_from_path("skills/review/SKILL.md"),
             Some(Lang::Markdown)
