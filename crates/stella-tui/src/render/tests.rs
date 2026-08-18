@@ -28,6 +28,7 @@ mod inline_diff;
 mod palette;
 mod slash;
 mod thinking;
+mod tool_output;
 
 /// Flatten a `Buffer` to one `String` per row (styling stripped — content is
 /// what we assert on, never raw ANSI, per L-T6).
