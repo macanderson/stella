@@ -42,7 +42,9 @@ use crate::interactive::{AskUserIo, TtyAskUserIo};
 /// blast radius an environment the caller inherits rather than a value it
 /// chooses, and no test could drive the accepting path without converting the
 /// developer's real `~/.stella/commands/` (#3641). The production constructors
-/// resolve it once, in the open; [`InitIo::scoped`] names it.
+/// resolve it once, in the open; the test-only `InitIo::scoped` names it.
+/// (Deliberately not an intra-doc link: `scoped` is `#[cfg(test)]`, so
+/// rustdoc cannot resolve it and `-D warnings` fails the doc gate on it.)
 pub(crate) struct InitIo<'a> {
     emit: Box<dyn FnMut(InitLine) + 'a>,
     ask: Option<&'a dyn AskUserIo>,
