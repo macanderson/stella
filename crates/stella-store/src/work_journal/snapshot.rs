@@ -119,7 +119,7 @@ impl WorkJournal {
         self.git_snapshot(&["add", "-A", "--"])?;
         let tree = self.git_snapshot(&["write-tree"])?.trim().to_string();
         if tree.is_empty() {
-            return Err(StoreError("git write-tree named no tree".into()));
+            return Err(StoreError::Other("git write-tree named no tree".into()));
         }
 
         let parent_tree = parent

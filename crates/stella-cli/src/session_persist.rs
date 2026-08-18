@@ -514,6 +514,42 @@ pub fn load_resume(
     })
 }
 
+/// Whether a session's driver/persona default is the staged pipeline ("on"),
+/// given whether it has any prior journal history and its last explicit
+/// `Pipeline` record, if any (#3381 audit finding 2).
+///
+/// Three cases, in order:
+/// - An explicit record always wins — a previous session (or this one, via
+///   `/pipeline`) already decided.
+/// - No record, but `has_prior_records` is true: this session predates the
+///   #3381 default flip (or simply never toggled) and the staged pipeline
+///   WAS the only default when it last ran, so resuming it must restore ON —
+///   silently swapping a session's persona out from under it on a mere
+///   resume, with no user action and no record, is exactly the invariant #7
+///   breach a byte-stable prompt exists to prevent.
+/// - No record and no prior history at all: a genuinely fresh session starts
+///   under today's default, OFF.
+///
+/// One function so both call sites in `command_deck.rs` — the persona choice
+/// at session start and the SESSIONS-overlay resume-switch — derive the same
+/// answer from the same rule rather than each encoding it inline.
+pub(crate) fn derive_pipeline_persona(
+    has_prior_records: bool,
+    pipeline_record: Option<bool>,
+) -> bool {
+    pipeline_record.unwrap_or(has_prior_records)
+}
+
+/// [`derive_pipeline_persona`] applied directly to a session's loaded
+/// [`ResumeState`] (`None` for a session with no resume state at all — a
+/// brand-new session, which has no prior records by construction).
+pub(crate) fn initial_pipeline_persona(resume_state: Option<&ResumeState>) -> bool {
+    derive_pipeline_persona(
+        resume_state.is_some_and(|rs| !rs.records.is_empty()),
+        resume_state.and_then(|rs| rs.pipeline),
+    )
+}
+
 /// Replay a loaded journal straight into the deck (bypassing the tee — a
 /// replay must never re-journal itself, or every resume would double the
 /// file). The caller replays BEFORE its first live send so ordering is the
@@ -743,6 +779,65 @@ mod tests {
             })
             .is_none()
         );
+    }
+
+    fn resume_state_with(records: Vec<JournalRecord>, pipeline: Option<bool>) -> ResumeState {
+        ResumeState {
+            record: SessionRecord::new("/tmp/ws", "t"),
+            records,
+            history: None,
+            queue: Vec::new(),
+            interrupted: Vec::new(),
+            pipeline,
+            spent_usd: None,
+        }
+    }
+
+    /// **Witness (#3381 audit finding 2).** A pre-flip session always ran the
+    /// then-default staged pipeline and never journaled a `Pipeline` record
+    /// (that record type postdates it) — so it has journal history but
+    /// `pipeline == None`. Resuming it must restore the pipeline persona,
+    /// not silently swap to the new raw default with no user action and no
+    /// record. This assertion fails on the pre-fix
+    /// `resume_state.and_then(|rs| rs.pipeline).unwrap_or(false)` derivation
+    /// (which reads `false` here) and passes on this one.
+    #[test]
+    fn a_resumed_session_with_history_but_no_pipeline_record_restores_on() {
+        let history = vec![JournalRecord::Register {
+            agent: "lead".into(),
+            title: "t".into(),
+            role: "lead".into(),
+            model: None,
+        }];
+        assert!(derive_pipeline_persona(true, None));
+        assert!(initial_pipeline_persona(Some(&resume_state_with(
+            history, None
+        ))));
+    }
+
+    /// A genuinely fresh session — no resume state at all, or a resumed one
+    /// with an empty journal — starts under today's default: OFF.
+    #[test]
+    fn a_fresh_session_starts_off() {
+        assert!(!derive_pipeline_persona(false, None));
+        assert!(!initial_pipeline_persona(None));
+        assert!(!initial_pipeline_persona(Some(&resume_state_with(
+            Vec::new(),
+            None
+        ))));
+    }
+
+    /// An explicit `Pipeline` record always wins, in either direction,
+    /// regardless of whether the session also has prior history.
+    #[test]
+    fn an_explicit_pipeline_record_always_wins() {
+        assert!(!derive_pipeline_persona(true, Some(false)));
+        assert!(derive_pipeline_persona(false, Some(true)));
+        let history = vec![JournalRecord::Pipeline { on: false }];
+        assert!(!initial_pipeline_persona(Some(&resume_state_with(
+            history,
+            Some(false)
+        ))));
     }
 
     #[test]
