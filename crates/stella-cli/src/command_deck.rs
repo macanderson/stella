@@ -741,9 +741,7 @@ pub async fn run_deck_session(
     let ready_root = cfg.workspace_root.clone();
     let (_session_graph, _graph_build) = agent::spawn_session_graph(
         &cfg.workspace_root,
-        Box::new(move |line| {
-            let _ = status_tx.send(system_notice(line));
-        }),
+        Box::new(agent::deck_notice_narrator(status_tx, LEAD)),
         Box::new(move || {
             // Populate the Graph tab now the index exists (it opened on the
             // "run stella init" hint), and assert the lead is idle — the
@@ -3662,8 +3660,16 @@ async fn run_deck_command(
             });
         }
         "/init" => {
-            match init_cmd::run(
-                provider,
+            // Replay the launch cinematic over the reindex: the battle loops
+            // for as long as init runs, then the wordmark reveal hands the
+            // frame back to the deck. The progress lines still land in the
+            // transcript behind the splash (and any key skips straight to
+            // them). Released on BOTH outcomes — a failed init must never
+            // strand a held splash.
+            let _ = in_tx.send(Inbound::Splash(SplashCue::Replay));
+            let mut emit = agent::deck_narrator(in_tx.clone(), LEAD);
+            let outcome = agent::init_workspace(
+                Some(provider),
                 &cfg.workspace_root,
                 &cfg.model_id,
                 budget_limit,

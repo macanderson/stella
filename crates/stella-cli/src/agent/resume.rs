@@ -93,7 +93,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     );
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        Box::new(|line| eprintln!("  {line}")),
+        Box::new(crate::agent::init::stderr_narrator()),
         Box::new(|| {}),
     );
     let mcp = connect_mcp(

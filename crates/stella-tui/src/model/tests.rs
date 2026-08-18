@@ -1118,3 +1118,75 @@ fn replay_of_the_same_log_yields_identical_models() {
     let b = SessionModel::replay(&log);
     assert_eq!(a, b);
 }
+
+/// Witness: a long pass's live counter occupies ONE transcript line however
+/// many times it ticks, and its last value survives the milestone that follows.
+///
+/// The defect it pins: `/init`'s three long passes (the code-graph walk, then
+/// the file and chunk embedding passes) narrate once a second, and every tick
+/// arrived as an `AgentEvent::Text` that [`SessionModel::push_text`] coalesced
+/// into the trailing buffer. A large workspace therefore buried the `✓`
+/// summaries — the actual record of what init did — under a hundred
+/// near-identical `· chunk index: N files embedded…` lines.
+#[test]
+fn a_progress_counter_rewrites_its_line_instead_of_stacking_them() {
+    let mut model = SessionModel::new();
+    model.apply(&text("◈ embedding code chunks for search…\n"));
+    for embedded in [2, 3, 37] {
+        model.set_progress_line(&format!("· chunk index: {embedded} files embedded…"));
+    }
+    model.apply(&text(
+        "✓ chunk index: 37 file(s) embedded by voyage-code-3\n",
+    ));
+
+    let TranscriptEntry::Text(rendered) = &model.transcript[0] else {
+        panic!(
+            "expected one coalesced text entry, got {:?}",
+            model.transcript
+        );
+    };
+    assert_eq!(
+        rendered.lines().collect::<Vec<_>>(),
+        vec![
+            "◈ embedding code chunks for search…",
+            // Exactly one counter line, holding the LAST count — the earlier
+            // ticks were rewritten, not appended.
+            "· chunk index: 37 files embedded…",
+            "✓ chunk index: 37 file(s) embedded by voyage-code-3",
+        ],
+        "{rendered}"
+    );
+}
+
+/// The counter is rewritable only while it is still the end of the transcript:
+/// once anything else has been folded, the tick it wrote is ordinary
+/// scrollback, and the next pass starts a line of its own rather than
+/// overwriting a finished pass's final count.
+#[test]
+fn a_settled_progress_line_is_never_overwritten_by_a_later_pass() {
+    let mut model = SessionModel::new();
+    model.set_progress_line("· semantic index: 12 files embedded…");
+    model.apply(&AgentEvent::Stage {
+        name: StageKind::Execute,
+        scope: stella_protocol::StageScope::Run,
+    });
+    model.set_progress_line("· chunk index: 4 files embedded…");
+
+    let rendered: Vec<&str> = model
+        .transcript
+        .iter()
+        .filter_map(|entry| match entry {
+            TranscriptEntry::Text(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        rendered,
+        vec![
+            "· semantic index: 12 files embedded…\n",
+            "· chunk index: 4 files embedded…\n",
+        ],
+        "{:?}",
+        model.transcript
+    );
+}
