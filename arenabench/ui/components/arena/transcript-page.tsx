@@ -3,6 +3,7 @@
 import * as React from "react";
 import { api } from "@/lib/api";
 import { INLINE_DIFF_CAP, selectDiffLines } from "@/lib/diff-view";
+import { highlightChangeBlock, type Span } from "@/lib/word-highlight";
 import type { Cell, Snapshot, TranscriptEntry } from "@/lib/types";
 import { fmtClock, fmtDuration, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
@@ -86,7 +87,11 @@ function fileDiffFromRaw(
  *  red one, each with its `+`/`-` sign. Line-level tint (not just glyph colour)
  *  so a scroll of edits reads at a glance the way `git diff` does. An
  *  `apply_edits` batch spanning several files renders one hunk per file so a
- *  multi-file change is never flattened into one anonymous block. */
+ *  multi-file change is never flattened into one anonymous block.
+ *
+ *  Within a change block the *changed tokens* of a paired removal/addition are
+ *  washed harder still ({@link withWordSpans}), so an `edit_file` that moved
+ *  one number does not read as a whole line rewritten. */
 function FileDiffBlock({
   hunks,
 }: {
@@ -105,16 +110,30 @@ function FileDiffBlock({
             </div>
           )}
           <div className="font-mono leading-[1.4]">
-            {hunk.lines.map((ln, i) => (
+            {withWordSpans(
+              hunk.lines.map((ln) => ({
+                text: ln.text,
+                tone: ln.sign === "+" ? ("add" as const) : ("remove" as const),
+                no: null,
+              })),
+              false,
+            ).map((ln, i) => (
               <div
                 key={i}
                 className={cn(
                   "whitespace-pre-wrap break-words px-2",
-                  ln.sign === "+" ? "bg-ok/10 text-ok" : "bg-bad/10 text-bad",
+                  ln.tone === "add" ? "bg-ok/10 text-ok" : "bg-bad/10 text-bad",
                 )}
               >
-                <span className="select-none opacity-60">{ln.sign} </span>
-                {ln.text}
+                <span className="select-none opacity-60">
+                  {ln.tone === "add" ? "+" : "-"}{" "}
+                </span>
+                <WordSpans
+                  text={ln.text}
+                  spans={ln.spans}
+                  tone={ln.tone === "add" ? "add" : "remove"}
+                  query=""
+                />
               </div>
             ))}
           </div>
@@ -387,7 +406,109 @@ type DiffRow = {
    * new side, removed lines on the old side — or `null` for hunk headers,
    * file metadata, and lines outside any hunk. */
   no: number | null;
+  /** Word-level spans for `text` *without* its `+`/`-` marker, when this row
+   * was paired with one on the other side of a change block. `undefined` on
+   * every unpaired, context, hunk and meta row — the honest answer, since
+   * there is nothing to compare those against. */
+  spans?: Span[];
 };
+
+/**
+ * The stronger wash a changed span gets inside an already-tinted line.
+ *
+ * Deliberately the *same* `--ok`/`--bad` tokens as the line tint, at a heavier
+ * alpha, rather than a new hue: the Instrument palette carries exactly one
+ * colour outside the semantic triad and it is identity, never a state. This is
+ * also what `crates/stella-cli/src/export/transcript.rs` paints its `.ww`
+ * word-tint with, so the exported HTML and this page agree by construction, and
+ * it deliberately does not preempt #3630's open categorical-hue question — no
+ * cyan, no violet.
+ */
+const WORD_TINT: Record<"add" | "remove", string> = {
+  add: "bg-ok/25",
+  remove: "bg-bad/25",
+};
+
+/**
+ * One diff line's text as word-level spans, the changed runs washed harder.
+ *
+ * Falls back to the plain line whenever there are no spans — an unpaired line,
+ * a context line, or a pair `highlight` judged too dissimilar to annotate.
+ * Search highlighting still runs *inside* each span, which means a query
+ * straddling a span boundary is matched per-span rather than whole; that is the
+ * same tradeoff the Rust export makes, and the alternative is re-implementing
+ * the search matcher over a span list.
+ */
+function WordSpans({
+  text,
+  spans,
+  tone,
+  query,
+}: {
+  text: string;
+  spans: Span[] | undefined;
+  tone: "add" | "remove";
+  query: string;
+}) {
+  if (!spans || spans.length === 0 || !spans.some((s) => s.changed)) {
+    return <Highlight text={text} query={query} />;
+  }
+  return (
+    <>
+      {spans.map((span, i) =>
+        span.changed ? (
+          <span key={i} className={cn("rounded-[1px]", WORD_TINT[tone])}>
+            <Highlight text={span.text} query={query} />
+          </span>
+        ) : (
+          <Highlight key={i} text={span.text} query={query} />
+        ),
+      )}
+    </>
+  );
+}
+
+/**
+ * Attach word-level spans to every paired removal/addition in a row list.
+ *
+ * A port of `crates/stella-transcript/src/file_diff.rs::emit_change_block`'s
+ * caller: a change block is a maximal run of removals followed by a maximal run
+ * of additions, and pairing inside it is positional. The rows are returned as
+ * new objects rather than mutated, because `parseDiff`'s output is also indexed
+ * by the fold plan.
+ *
+ * `sign` says whether the row texts carry a leading `+`/`-` that must come off
+ * before comparison and go back on for rendering.
+ */
+function withWordSpans(rows: DiffRow[], sign: boolean): DiffRow[] {
+  const out = rows.map((row) => ({ ...row }));
+  const body = (row: DiffRow) => (sign ? row.text.slice(1) : row.text);
+  let i = 0;
+  while (i < out.length) {
+    if (out[i].tone !== "remove" && out[i].tone !== "add") {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    while (i < out.length && out[i].tone === "remove") i += 1;
+    const removals = out.slice(start, i);
+    const addStart = i;
+    while (i < out.length && out[i].tone === "add") i += 1;
+    const additions = out.slice(addStart, i);
+    if (removals.length === 0 || additions.length === 0) continue;
+    const { removed, added } = highlightChangeBlock(
+      removals.map(body),
+      additions.map(body),
+    );
+    removals.forEach((row, k) => {
+      row.spans = removed[k];
+    });
+    additions.forEach((row, k) => {
+      row.spans = added[k];
+    });
+  }
+  return out;
+}
 
 /** Diff metadata rather than source content (`crates/stella-tui/src/diff.rs::is_meta`). */
 function isDiffMeta(line: string): boolean {
@@ -405,9 +526,12 @@ function isDiffMeta(line: string): boolean {
  * `crates/stella-tui/src/diff.rs::body_lines`' numbering walk. Tones do not
  * depend on hunk state (the event path can emit a headerless pseudo-diff of
  * bare `+`/`-` lines); only the numbers do, so malformed input degrades to
- * unnumbered coloured text, never a crash. Deliberately *not* ported: the
- * deck's syntax colouring and intra-line word emphasis, which lean on its
- * terminal theme machinery.
+ * unnumbered coloured text, never a crash.
+ *
+ * Intra-line word emphasis is **not** applied here — {@link withWordSpans} is a
+ * second pass over the result, because pairing needs the whole row list and
+ * this walk sees one line at a time. Deliberately still not ported: the deck's
+ * syntax colouring, which leans on its terminal theme machinery.
  */
 function parseDiff(diff: string): DiffRow[] {
   let oldNo: number | null = null;
@@ -807,7 +931,7 @@ function Entry({
     // coincides with a diff.
     const diffText = typeof meta.diff === "string" ? meta.diff : "";
     const hasDiff = diffText.length > 0;
-    const diffAll = hasDiff ? parseDiff(diffText) : [];
+    const diffAll = hasDiff ? withWordSpans(parseDiff(diffText), true) : [];
     const diffPlan = resultOpen
       ? { keep: diffAll.map(() => true), hidden: 0, foldBefore: -1 }
       : selectDiffLines(
@@ -930,7 +1054,19 @@ function Entry({
                     DIFF_TONE_TEXT[row.tone],
                   )}
                 >
-                  <Highlight text={row.text} query={query} />
+                  {row.tone === "add" || row.tone === "remove" ? (
+                    <>
+                      <span className="select-none opacity-60">{row.text.charAt(0)}</span>
+                      <WordSpans
+                        text={row.text.slice(1)}
+                        spans={row.spans}
+                        tone={row.tone}
+                        query={query}
+                      />
+                    </>
+                  ) : (
+                    <Highlight text={row.text} query={query} />
+                  )}
                 </span>
               </div>
             ))}
