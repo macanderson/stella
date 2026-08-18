@@ -8,7 +8,7 @@
 
 use serde_json::json;
 use stella_protocol::{
-    AgentEvent, ContextFrameRef, FileChangeKind, ModelCallRole, PrStatus, ProofStep, ProviderShare,
+    AgentEvent, ContextFrameRef, FileChangeKind, ModelCallRole, PrStatus, ProviderShare,
     ScopeProposal, StageKind, ToolCall, ToolOutput, VerdictEvidence,
 };
 
@@ -276,50 +276,6 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 deadline_remaining_ms: None,
             },
         ),
-        // ── the witness is authored before the worker executes ──────────
-        // The proof events the witness panel folds: triage bought a witness,
-        // an independent model authored the failing test, and the oracle
-        // confirmed it red on the untouched tree. Fixed seed/fingerprint so
-        // the goldens stay byte-stable.
-        ev(
-            lead,
-            AgentEvent::Stage {
-                name: StageKind::Witness,
-                scope: stella_protocol::StageScope::Run,
-            },
-        ),
-        ev(
-            lead,
-            AgentEvent::Proof {
-                step: ProofStep::Assurance {
-                    witness: true,
-                    verifier: false,
-                },
-            },
-        ),
-        ev(
-            lead,
-            AgentEvent::Proof {
-                step: ProofStep::WitnessAuthored {
-                    path: "apps/app/automations/triggers.test.ts".into(),
-                    command: "pnpm --filter app test:unit triggers".into(),
-                    fingerprint: "sha256:9f3c1d2e4a5b6c7d8e9f".into(),
-                },
-            },
-        ),
-        ev(
-            lead,
-            AgentEvent::Proof {
-                step: ProofStep::Oracle {
-                    command: "pnpm --filter app test:unit triggers".into(),
-                    passed: false,
-                    tree: stella_protocol::ProofTree::Baseline,
-                    run: None,
-                    runs_required: Some(3),
-                    seed: Some(7741),
-                },
-            },
-        ),
         // ── two subagents are dispatched ────────────────────────────────
         reg(auth, "wire automations triggers API", "subagent"),
         reg(ci, "watch CI + open PR", "subagent"),
@@ -403,36 +359,6 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 session_spent_usd: Some(0.039),
                 session_limit_usd: Some(7.50),
                 deadline_remaining_ms: None,
-            },
-        ),
-        // ── the oracle replays against the patched tree ─────────────────
-        // Two of the three required deterministic replays have passed — the
-        // witness panel's `execute` record is live at `run 2 of 3` with the
-        // pinned seed.
-        ev(
-            lead,
-            AgentEvent::Proof {
-                step: ProofStep::Oracle {
-                    command: "pnpm --filter app test:unit triggers".into(),
-                    passed: true,
-                    tree: stella_protocol::ProofTree::Candidate,
-                    run: Some(1),
-                    runs_required: Some(3),
-                    seed: Some(7741),
-                },
-            },
-        ),
-        ev(
-            lead,
-            AgentEvent::Proof {
-                step: ProofStep::Oracle {
-                    command: "pnpm --filter app test:unit triggers".into(),
-                    passed: true,
-                    tree: stella_protocol::ProofTree::Candidate,
-                    run: Some(2),
-                    runs_required: Some(3),
-                    seed: Some(7741),
-                },
             },
         ),
         // The board moves: the triggers task completes, the workflows task
@@ -705,7 +631,7 @@ pub fn demo_tasks(tasks_done: usize) -> Vec<stella_protocol::TaskItem> {
         ("4", "Persist automation drafts"),
         ("5", "Wire the triggers API"),
         ("6", "Workflows canvas"),
-        ("7", "Verify: witness suite green"),
+        ("7", "Verify: automations suite green"),
     ];
     rows.iter()
         .enumerate()

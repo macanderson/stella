@@ -60,22 +60,16 @@ Command Deck) and the raw step loop above is wrapped in stages:
 
 <PipelineFlowDiagram />
 
-This order is not hardcoded in the pipeline crate — it is declared in the
-`[wrapper]` block of the `classic` variant manifest
-(`crates/stella-pipeline/variants/classic.toml`) and driven stage-by-stage
-through the same `Schedule` a plugin's own manifest would use
-(`src/schedule.rs`, `src/pipeline/schedule_wiring.rs`). In full: triage →
-recall → research → plan → scope review → execute → witness → verify, with a
-bounded revise loop, then reflection and context write-back after the verdict
-settles. Recall runs concurrently with triage
-but emits after it; research, plan, scope review, and witness are conditional
-— a simple lookup skips them, research runs only when triage names questions
-for a multi-step task (parallel read-only sub-agents answer them before
-anything is prompted; their findings ride both the planner's prompt and the
-worker's), scope review fires only above thresholds, and the
-witness is authored only without `--test-command`, on demand *after*
-execution, once the warrant has read the diff and confirmed the change
-needs a test at all.
+In full: triage → recall → research → plan → scope review → execute → witness
+→ verify, with a bounded revise loop, then reflection and context
+write-back after the verdict settles. Recall runs concurrently with triage
+but emits after it. Research, plan, scope review, and witness are conditional:
+a simple lookup skips them; research runs only when triage names questions
+for a multi-step task (parallel read-only sub-agents answer them, and their
+findings ride both the planner's prompt and the worker's); scope review fires
+only above thresholds; and the witness is authored only without
+`--test-command`, after execution, once the warrant has read the diff and
+confirmed the change needs a test.
 
 ### 1. Triage
 
@@ -265,8 +259,8 @@ Neither is a finding that the work is wrong.
 </Callout>
 
 The last rung is where a second model used to be asked for a `PASS`/`FAIL`. It
-no longer is, and the reason is a measurement rather than a preference: over an
-89-task Terminal-Bench run that verdict agreed with the benchmark's grader 46%
+no longer is, for a measured reason: over an
+89-task Terminal-Bench run that verdict agreed with the benchmark's grader only 46%
 of the time — a coin flip — and 17 of its false passes cost 5 tasks outright.
 The evidence that reaches this rung is by construction the evidence no oracle
 could settle, so a model handed it is guessing too, only with a verdict's
@@ -314,7 +308,7 @@ loss.
 
 A deterministic failure sends the worker back with the evidence — up to a
 bounded number of revision turns (2 by default). What it gets is the sealed,
-redacted **failure brief** for the test that went red, disclosed at a grain that
+redacted **failure brief** for the test that went red. Its detail
 *tightens* as the same failure repeats: a reproduction, then a closed-vocabulary
 symptom sentence, then just the command, then only that it failed. A worker that
 has seen the same brief twice is not helped by a third copy, only given more
@@ -486,9 +480,9 @@ One thing is legal but never silent:
 ### What it deliberately cannot do
 
 The roster cannot **reorder** stages or rewire the graph. The ordering is not a
-workflow; it is what makes the witness a proof — the test is authored in a
-pristine snapshot of the pre-execution tree, by a model that is not the worker,
-and its fail→pass flip counts only if the worker never touched it. A config
+workflow; it is what makes the witness a proof. The test is authored in a
+pristine snapshot of the pre-execution tree by a non-worker model, and its
+fail→pass flip counts only if the worker never touched it. A config
 file that could move authoring after the diff would still report a flip; the
 flip would simply have stopped meaning anything.
 

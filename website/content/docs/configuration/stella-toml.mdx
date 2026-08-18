@@ -181,7 +181,7 @@ default_model = "n-5.2"
 
 <Callout type="warn">
   **A literal `api_key` is refused at project scope.** `<repo>/stella.toml` sits next to
-  `README.md` and is committed and reviewed like source, so a plaintext secret in it leaks
+  `README.md` and is committed and reviewed like source. A plaintext secret in it leaks
   into version control the moment someone runs `git add .` — unlike `.stella/settings.json`,
   which was at least one gitignore line away from that mistake. The refusal is enforced on
   both the load path and `stella migrate config`'s write path, from one check, so a key

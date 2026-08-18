@@ -123,11 +123,10 @@ never inferred from what happens to be on disk.
 - **Materialize** writes the session's files out first. The cross-machine case.
 
 Materialize has a limit worth stating plainly: the artifact holds *the files the
-agent touched*, not your whole repository. stella records the base commit it was
-captured against so a caller can name it, but it does not carry the base and
-will not — bundling your entire tree into a session artifact would move files
-the agent never read, and that is an egress decision stella has no standing to
-make on your behalf.
+agent touched*, not your whole repository. stella records the base commit so a
+caller can name it, but does not carry the base and never will. Bundling your
+tree into an artifact would move files the agent never read — an egress
+decision stella has no standing to make for you.
 
 Fetching the base is exactly the kind of thing a control plane is for. It has
 the repository, the credentials, and the policy about who may use them.

@@ -66,9 +66,9 @@ stella fleet \
    ```
 
    Under the shared tree the `commits` table records the commits each worker
-   was **observed** making: a commit runs while its worker holds a
+   was **observed** making. A commit runs while its worker holds a
    workspace-wide commit lane, so no sibling can move `HEAD` inside that
-   window and the advance across it belongs to exactly one task. The trade is
+   window; the advance belongs to exactly one task. The trade is
    deliberate — a commit made some other way in a shared tree (through the
    shell, which is off by default) is left out of the table rather than
    stamped onto whichever task happened to be open. An isolated task has one
@@ -172,8 +172,8 @@ isolation = "isolated"
 stella --spend-limit 6 fleet --plan feature-buildout.toml
 ```
 
-`schema` runs alone in wave one; `reader` and `writer` run together in wave two
-with disjoint claims; `docs` runs last in wave three, in its own worktree on its
+`schema` runs alone in wave one. `reader` and `writer` run together in wave two
+with disjoint claims. `docs` runs last in wave three, in its own worktree on its
 own `fleet/docs-<hash>` branch — divergent work, so isolation rather than
 claims. Had `reader` and `writer` both claimed `src/store/schema.rs`, the second
 dispatch would have failed by name instead of racing.
@@ -198,9 +198,9 @@ stella --spend-limit 5 fleet --plan release-prep.toml
 # equivalently: STELLA_SPEND_LIMIT=5 stella fleet --plan release-prep.toml
 ```
 
-It is enforced twice: each child runs under its own guard — the aggregate cap
-divided across the concurrency width (`spend limit ÷ max-concurrency`), so one
-wave's in-flight children can't collectively overshoot — and the fleet stops
+It is enforced twice. Each child runs under its own guard — the aggregate cap
+divided across the concurrency width (`spend limit ÷ max-concurrency`) — so one
+wave's in-flight children can't collectively overshoot, and the fleet stops
 launching new waves once total metered spend crosses the cap. In-flight
 siblings settle cleanly — never a mid-tool kill.
 

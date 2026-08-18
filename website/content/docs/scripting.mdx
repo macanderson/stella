@@ -46,7 +46,7 @@ In particular, `text_delta` lines stream the answer token by token as a best-eff
 preview — the `text` event that follows carries the full step text and is authoritative
 (replace any accumulated deltas with it; a retried model call re-streams its deltas).
 The fragment rides in `text_delta`'s `delta` field and the full body in `text`'s `text`
-field; streams recorded by older stellas spell the two fields crossed, so a reader that
+field. Older stellas recorded streams with the two fields crossed, so a reader that
 also processes archives should accept either spelling on either event.
 
 ```bash
@@ -106,8 +106,8 @@ run reports one of four:
 above, with `text` and the pipeline-only keys (`task_class`, `verdict`, `revisions`,
 `candidates_run`) as explicit `null` rather than missing — so a strict deserializer written against the
 success shape still parses. A failure *before* the agent is constructed — no API key
-configured, an unknown provider or model, a malformed `settings.json` — cannot report a
-model or an event log, so it emits the minimal envelope on stdout alongside the `stella: …`
+configured, an unknown provider or model, a malformed `settings.json` — has no
+model or event log to report, so it emits the minimal envelope on stdout alongside the `stella: …`
 line on stderr:
 
 ```json

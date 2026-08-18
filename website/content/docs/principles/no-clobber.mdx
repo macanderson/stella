@@ -88,9 +88,9 @@ session that died took the whole guarantee with it.
 
 That is worse than it sounds. The resumed session was not merely back to
 square one — it was *less safe than an honest fresh start*. Its restored
-transcript still said the agent had read the file, so the model went on acting
-on content it believed it knew, while the guard, having forgotten the read
-ever happened, waved the overwrite through. Precisely the combination the
+transcript still said the agent had read the file, so the model kept acting
+on content it believed it knew, while the guard — having forgotten the read —
+waved the overwrite through. Precisely the combination the
 guard exists to prevent.
 
 So the map is now written down. It lives in stella's durable work record — a

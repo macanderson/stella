@@ -37,7 +37,7 @@ Two consequences matter for a real product:
 
 **The engine cannot leak what it never has.** `stella-serve` depends on two
 crates, `stella-protocol` and `stella-core`. It has no HTTP client, no TLS
-stack, and no provider adapters. It is not able to reach the network or read a
+stack, and no provider adapters. It cannot reach the network or read a
 provider credential, so a bug in it cannot exfiltrate your keys. That is a
 property of the dependency graph, not a promise.
 

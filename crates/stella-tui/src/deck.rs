@@ -21,9 +21,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use stella_protocol::{
-    AgentEvent, CiStatus, FileChangeKind, PrStatus, ProofStep, ProofTree, StageKind, TaskStatus,
-};
+use stella_protocol::{AgentEvent, CiStatus, FileChangeKind, PrStatus, TaskStatus};
 
 use crate::envelope::{AgentId, AgentMeta, AgentStatus, Inbound};
 use crate::model::{OpenPark, SessionModel};
@@ -212,12 +210,6 @@ pub struct AgentEntry {
     /// Derived from `Inbound` + [`WorkspaceModel::now_ms`], so replay
     /// reconstructs it.
     pub active_task: Option<ActiveTaskStamp>,
-    /// Wall-clock ms each witness phase was entered, stamped as the proof
-    /// events fold through: author on `Stage::Witness` / `WitnessAuthored`,
-    /// execute on the first candidate oracle run, result when the flip
-    /// resolves. Folded from `Inbound` + `now_ms` like [`Self::active_task`];
-    /// the witness panel derives per-phase elapsed from consecutive stamps.
-    pub witness_phase_ms: WitnessPhaseStamps,
 }
 
 /// The stamp behind the task card's live `elapsed · $cost` readout — see
@@ -230,14 +222,6 @@ pub struct ActiveTaskStamp {
     pub started_ms: u64,
     /// The agent's spend at that moment — cost since is the difference.
     pub cost_at_start_usd: f64,
-}
-
-/// When each witness phase began — see [`AgentEntry::witness_phase_ms`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct WitnessPhaseStamps {
-    pub author_ms: Option<u64>,
-    pub execute_ms: Option<u64>,
-    pub result_ms: Option<u64>,
 }
 
 impl AgentEntry {
@@ -269,7 +253,6 @@ impl AgentEntry {
             parked_since_ms: None,
             turn_start_tokens_out: 0,
             active_task: None,
-            witness_phase_ms: WitnessPhaseStamps::default(),
         }
     }
 
@@ -664,9 +647,6 @@ impl WorkspaceModel {
                     self.agents[idx].turn_started_ms = Some(ts);
                     self.agents[idx].last_turn_ms = None;
                     self.agents[idx].turn_start_tokens_out = self.agents[idx].tokens_out;
-                    // The witness clocks belong to one turn, like the proof
-                    // rail they annotate (`push_user_prompt` just reset it).
-                    self.agents[idx].witness_phase_ms = WitnessPhaseStamps::default();
                     // Flip to Running now so the progress bar reads in-progress
                     // from the instant of submission — a driver command (e.g.
                     // `/init`) emits no stage events, and the prior turn may have
@@ -716,7 +696,6 @@ impl WorkspaceModel {
                     entry.last_turn_ms = None;
                     entry.turn_start_tokens_out = 0;
                     entry.active_task = None;
-                    entry.witness_phase_ms = WitnessPhaseStamps::default();
                 }
             }
             // The driver flipped staged-pipeline routing (`/pipeline`) — the
@@ -913,35 +892,6 @@ impl WorkspaceModel {
                         }
                         (None, _) => entry.active_task = None,
                     }
-                }
-                // Witness phase entry stamps (the witness panel's per-phase
-                // clocks). `get_or_insert` keeps the FIRST observation — a
-                // re-emitted step must not restart a phase clock.
-                AgentEvent::Stage {
-                    name: StageKind::Witness,
-                    scope: stella_protocol::StageScope::Run,
-                } => {
-                    entry.witness_phase_ms.author_ms.get_or_insert(now);
-                }
-                AgentEvent::Proof { step } => match step {
-                    ProofStep::WitnessAuthored { .. } => {
-                        entry.witness_phase_ms.author_ms.get_or_insert(now);
-                    }
-                    ProofStep::Oracle {
-                        tree: ProofTree::Candidate,
-                        passed,
-                        ..
-                    } => {
-                        entry.witness_phase_ms.execute_ms.get_or_insert(now);
-                        if *passed {
-                            entry.witness_phase_ms.result_ms.get_or_insert(now);
-                        }
-                    }
-                    _ => {}
-                },
-                // A verdict closes the witness run whichever way it went.
-                AgentEvent::Verdict { .. } if entry.witness_phase_ms.execute_ms.is_some() => {
-                    entry.witness_phase_ms.result_ms.get_or_insert(now);
                 }
                 _ => {}
             }

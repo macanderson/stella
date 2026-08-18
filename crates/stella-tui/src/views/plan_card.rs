@@ -43,12 +43,6 @@ use crate::plan::{Plan, PlanState};
 use crate::theme;
 use crate::views::cards;
 
-/// The literal done-when contract — product copy, verbatim (D5), split at its
-/// natural break because the whole line is wider than the card.
-const DONE_WHEN_FLIP: &str = "oracle flips red → green";
-/// The contract's second half, on the continuation row.
-const DONE_WHEN_PROOF: &str = "(confirmed from evidence, not self-report)";
-
 /// Width of the dimmed left label column.
 const LABEL_W: usize = 10;
 
@@ -239,22 +233,6 @@ pub fn grid_rows(
         val(proposal.shell_policy.clone().unwrap_or(dash)),
         accessible,
     ));
-    // The done-when contract is wider than the card, so it wraps at its natural
-    // break onto a labeled row plus an indented continuation, never a mid-token
-    // elision.
-    rows.push(grid_row(
-        "done when",
-        vec![Span::styled(DONE_WHEN_FLIP, dim)],
-        accessible,
-    ));
-    rows.push(if accessible {
-        Line::from(Span::styled(format!("· {DONE_WHEN_PROOF}"), dim))
-    } else {
-        Line::from(vec![
-            Span::raw(" ".repeat(LABEL_W)),
-            Span::styled(DONE_WHEN_PROOF, dim),
-        ])
-    });
     rows
 }
 
