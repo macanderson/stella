@@ -117,11 +117,60 @@ perl -0pi -e 's/^version = "0\.1\.0"$/version = "0.2.0"/m' "$tmp/red/Cargo.toml"
 expect "a broken composition fails" 1 "FAIL — main is red" --manifest-dir "$tmp/red"
 expect "and it names the failing check" 1 "lockfile-sync" --manifest-dir "$tmp/red"
 
+# ── red: the 2026-08-18 incident — a tree that does not COMPILE ───────────
+# The witness for #3660. The shared cell here is not a file but a seam: two
+# PRs each redesigned how one function talks to its surface, both green, and
+# git reported no conflict because neither side contained the other's lines.
+# The composed tree was not parseable Rust (#3659). Before the `compile` row,
+# THIS CASE PASSED — the canary read files and compiled nothing, so it ran on
+# the broken commit and reported ok. A monitor blind to "does it build" is not
+# a monitor.
+make_workspace "$tmp/nocompile"
+echo 'pub fn demo() { let x: u32 = "not a u32"; }' >"$tmp/nocompile/crates/demo/src/lib.rs"
+expect "a tree that does not compile fails" 1 "FAIL — main is red" \
+  --manifest-dir "$tmp/nocompile"
+expect "and the compile row is named as the cause" 1 "compile" \
+  --manifest-dir "$tmp/nocompile"
+# The lock and the ceilings are fine here — only the code is broken. Without
+# this the case above could pass for the wrong reason.
+expect "while the file-reading checks still pass" 1 "ok   lockfile-sync" \
+  --manifest-dir "$tmp/nocompile"
+# The compiler's own diagnostic has to reach the issue: "compile failed" with
+# no error in it sends the reader back to the Actions tab this canary exists
+# to keep them out of.
+expect "the issue carries the compiler's diagnostic" 1 "mismatched types" \
+  --announce --dry-run --manifest-dir "$tmp/nocompile"
+
+# A break confined to a test target is the one no other post-merge check sees,
+# which is what `--all-targets` is for. `cargo check` alone would pass here.
+make_workspace "$tmp/badtest"
+cat >>"$tmp/badtest/crates/demo/src/lib.rs" <<'RS'
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn t() {
+        let _: u32 = "not a u32";
+    }
+}
+RS
+expect "a break confined to a test target is caught" 1 "compile" \
+  --manifest-dir "$tmp/badtest"
+
 # ── red + announce ────────────────────────────────────────────────────────
 expect "a red run opens an issue" 1 "gh issue create" \
   --announce --dry-run --manifest-dir "$tmp/red"
 expect "the issue carries the remediation" 1 "cargo metadata --format-version 1" \
   --announce --dry-run --manifest-dir "$tmp/red"
+
+# The remedy must match the check that failed. It used to be one hardcoded
+# lockfile recipe printed whatever had broken, so #3655 — a file-size failure —
+# told its reader to regenerate `Cargo.lock`, which fixes nothing. An issue
+# that misdirects costs more than one that only names the check.
+expect "a compile failure gets the compile remedy" 1 "cargo check --workspace --all-targets" \
+  --announce --dry-run --manifest-dir "$tmp/nocompile"
+refute "and not the lockfile recipe that fixes nothing here" "git add Cargo.lock" \
+  --announce --dry-run --manifest-dir "$tmp/nocompile"
 expect "the issue explains the pre-merge blind spot" 1 "shared cell" \
   --announce --dry-run --manifest-dir "$tmp/red"
 expect "the issue is labelled so only one stays open" 1 "main-red" \
