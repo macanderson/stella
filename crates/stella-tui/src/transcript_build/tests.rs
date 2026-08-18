@@ -224,3 +224,101 @@ fn a_diffless_file_change_still_records_the_file() {
     assert_eq!(call.files.len(), 1);
     assert_eq!(call.files[0].path, "a.txt");
 }
+
+// -------------------------------------------------- naming and wall clock
+
+/// The header rail names the turn. It shares one line with the status word
+/// and the chips, so the name is terse — the prompt itself is rendered in
+/// full on the `you` row below it.
+#[test]
+fn a_turn_is_named_from_its_prompt() {
+    let mut b = RunBuilder::new("run", "m");
+    b.start_turn("Fix the overfull hbox warnings in main.tex");
+    b.finish_turn(Status::Ok);
+    assert_eq!(b.snapshot().turns[0].name, "fix-the-overfull-hbox");
+}
+
+#[test]
+fn a_name_survives_punctuation_and_an_empty_prompt() {
+    let mut b = RunBuilder::new("run", "m");
+    b.start_turn("  ***  ");
+    b.finish_turn(Status::Ok);
+    assert_eq!(b.snapshot().turns[0].name, "");
+
+    let mut b = RunBuilder::new("run", "m");
+    b.start_turn("re-run CI, please!");
+    b.finish_turn(Status::Ok);
+    assert_eq!(b.snapshot().turns[0].name, "re-run-ci-please");
+}
+
+/// Elapsed time is summed from the durations the events themselves report.
+/// The fold reads no clock — one would stop it being a pure fold, and would
+/// stop a replay reproducing the same frame.
+#[test]
+fn wall_clock_is_summed_from_the_events_not_read_from_a_clock() {
+    let mut b = RunBuilder::new("run", "m");
+    b.start_turn("go");
+    b.push(&call("c1", "bash", json!({"command": "one"})));
+    b.push(&AgentEvent::ToolResult {
+        call_id: "c1".to_string(),
+        output: ToolOutput::Ok {
+            content: "ok".to_string(),
+            data: None,
+        },
+        duration_ms: 7_000,
+        speculated: false,
+    });
+    b.push(&call("c2", "bash", json!({"command": "two"})));
+    b.push(&AgentEvent::ToolResult {
+        call_id: "c2".to_string(),
+        output: ToolOutput::Ok {
+            content: "ok".to_string(),
+            data: None,
+        },
+        duration_ms: 3_000,
+        speculated: false,
+    });
+    b.finish_turn(Status::Ok);
+
+    let turn = &b.snapshot().turns[0];
+    assert_eq!(turn.steps[0].offset_ms, 0, "the first step starts at zero");
+    assert_eq!(
+        turn.steps[1].offset_ms, 7_000,
+        "the second step starts when the first finished"
+    );
+    assert_eq!(turn.duration_ms, 10_000, "the turn is as long as its steps");
+}
+
+/// A second turn starts its clock again rather than continuing the first's.
+#[test]
+fn each_turn_starts_its_own_clock() {
+    let mut b = RunBuilder::new("run", "m");
+    b.start_turn("first");
+    b.push(&call("c1", "bash", json!({"command": "x"})));
+    b.push(&AgentEvent::ToolResult {
+        call_id: "c1".to_string(),
+        output: ToolOutput::Ok {
+            content: "ok".to_string(),
+            data: None,
+        },
+        duration_ms: 5_000,
+        speculated: false,
+    });
+    b.start_turn("second");
+    b.push(&call("c2", "bash", json!({"command": "y"})));
+    b.push(&AgentEvent::ToolResult {
+        call_id: "c2".to_string(),
+        output: ToolOutput::Ok {
+            content: "ok".to_string(),
+            data: None,
+        },
+        duration_ms: 2_000,
+        speculated: false,
+    });
+    b.finish_turn(Status::Ok);
+
+    let run = b.snapshot();
+    assert_eq!(run.turns[0].duration_ms, 5_000);
+    assert_eq!(run.turns[1].duration_ms, 2_000, "the clock leaked across turns");
+    assert_eq!(run.turns[1].steps[0].offset_ms, 0);
+}

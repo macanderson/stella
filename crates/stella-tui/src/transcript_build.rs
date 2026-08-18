@@ -45,6 +45,11 @@ pub struct RunBuilder {
     /// matched by `call_id` rather than by position, because speculative
     /// execution lets results arrive out of order.
     pending: Vec<(String, Call)>,
+    /// Wall time attributed to the open turn so far. The stream carries no
+    /// clock — a renderer that read one would stop being a pure fold — so the
+    /// turn's elapsed time is summed from the durations the events themselves
+    /// report, which is also what makes it replay identically.
+    elapsed_ms: u64,
 }
 
 impl RunBuilder {
@@ -60,6 +65,7 @@ impl RunBuilder {
             },
             turn: None,
             pending: Vec::new(),
+            elapsed_ms: 0,
         }
     }
 
@@ -71,9 +77,11 @@ impl RunBuilder {
     /// is closed first.
     pub fn start_turn(&mut self, prompt: impl Into<String>) {
         self.finish_turn(Status::Ok);
+        let prompt = prompt.into();
+        self.elapsed_ms = 0;
         self.turn = Some(Turn {
-            name: String::new(),
-            prompt: prompt.into(),
+            name: slug(&prompt),
+            prompt,
             prose: Vec::new(),
             notes: Vec::new(),
             steps: Vec::new(),
@@ -109,8 +117,15 @@ impl RunBuilder {
                 output_tokens,
                 cached_input_tokens,
                 cost_usd,
+                duration_ms,
                 ..
-            } => self.charge(*input_tokens, *output_tokens, *cached_input_tokens, *cost_usd),
+            } => self.charge(
+                *input_tokens,
+                *output_tokens,
+                *cached_input_tokens,
+                *cost_usd,
+                *duration_ms,
+            ),
             AgentEvent::FileChange {
                 path,
                 added,
@@ -163,6 +178,8 @@ impl RunBuilder {
                 offset_ms: 0,
             });
         }
+        turn.duration_ms = self.elapsed_ms;
+        self.elapsed_ms = 0;
         if turn.status == Status::Running {
             turn.status = if turn.steps.iter().any(|s| s.status() == Status::Error) {
                 Status::Error
@@ -234,15 +251,15 @@ impl RunBuilder {
         call.speculated = spec;
         call.output = Output::from_text(text);
 
-        let step = self.turn.as_ref().map_or(0, |t| t.steps.len());
+        let offset_ms = self.elapsed_ms;
+        self.elapsed_ms += duration_ms;
         if let Some(turn) = self.turn.as_mut() {
             turn.steps.push(Step {
                 call: Some(call),
                 accounting: Accounting::default(),
-                offset_ms: 0,
+                offset_ms,
             });
         }
-        let _ = step;
     }
 
     /// Bill a model call to the step it paid for.
@@ -252,7 +269,8 @@ impl RunBuilder {
     /// answer with no tool calls) has nowhere to put it and would otherwise
     /// lose the turn's whole cost, so it opens a call-less step — which is
     /// exactly what `Step::call: Option<Call>` is for.
-    fn charge(&mut self, input: u64, output: u64, cached: u64, cost_usd: f64) {
+    fn charge(&mut self, input: u64, output: u64, cached: u64, cost_usd: f64, duration_ms: u64) {
+        self.elapsed_ms += duration_ms;
         let accounting = Accounting {
             tokens_in: input,
             tokens_out: output,
@@ -319,6 +337,33 @@ impl RunBuilder {
             });
         }
     }
+}
+
+/// A short turn name from its prompt — the `fix-overfull` in the reference
+/// frames. The header rail is one line shared with the status word and the
+/// chips, so this is deliberately terse; the prompt itself is rendered in full
+/// on the `you` row directly below and is never what this replaces.
+fn slug(prompt: &str) -> String {
+    const MAX_WORDS: usize = 4;
+    const MAX_CHARS: usize = 28;
+    let mut out = String::new();
+    for word in prompt.split_whitespace().take(MAX_WORDS) {
+        let word: String = word
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if word.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('-');
+        }
+        out.push_str(&word.to_lowercase());
+        if out.chars().count() >= MAX_CHARS {
+            break;
+        }
+    }
+    out.chars().take(MAX_CHARS).collect()
 }
 
 /// Which visual class an event's note belongs to.
