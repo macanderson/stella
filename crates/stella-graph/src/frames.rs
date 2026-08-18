@@ -493,7 +493,7 @@ fn edge_frame(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // the nine params are the only ContextFrame fields the two callers vary; the rest are defaulted below
 fn frame(
     id: String,
     kind: FrameKind,

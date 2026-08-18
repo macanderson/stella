@@ -13,7 +13,6 @@ stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 # `sync` only, deliberately: this crate inherits stella-core's I/O-free
 # posture and must never reach for `net`/`fs`/`process` itself.
 tokio = { workspace = true, features = ["sync"] }

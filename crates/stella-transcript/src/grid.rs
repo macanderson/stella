@@ -18,7 +18,6 @@ use crate::digest::{self, Chip};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::FoldState;
 use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, ToolKind, Turn};
-use crate::word::Span;
 
 /// Width of the elapsed-offset gutter, including its trailing space.
 pub const OFFSET_W: usize = 5;
@@ -719,10 +718,4 @@ fn encode(lines: &[Line], basic: bool) -> String {
         }
     }
     out
-}
-
-/// The spans of a diff row, for a caller that wants to paint them itself.
-#[must_use]
-pub fn row_spans(row: &crate::file_diff::Row) -> &[Span] {
-    &row.spans
 }

@@ -10,9 +10,10 @@ homepage.workspace = true
 publish.workspace = true
 
 # A LEAF crate, deliberately. It depends on `serde`/`serde_json` and nothing
-# else in this workspace, which is the property that lets all seventeen crates
-# depend on it without a cycle (docs/spec/diagnostics.md §5.1). Adding a
-# `stella-*` path dependency here forecloses that for whichever crate it names.
+# else in this workspace, which is the property that lets every other crate in
+# the workspace depend on it without a cycle (docs/spec/diagnostics.md §5.1).
+# Adding a `stella-*` path dependency here forecloses that for whichever crate
+# it names.
 [dependencies]
 serde.workspace = true
 # `float_roundtrip` is declared HERE rather than inherited, and it is load-bearing

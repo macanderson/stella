@@ -10,7 +10,7 @@
 //! ## Why this needs no new architecture
 //!
 //! Every learner already sits below the model boundary or behind a port —
-//! invariant 1 ("ports, not concretions") and invariant 2 ("no I/O in the
+//! invariant 1 ("ports, not specific implementations") and invariant 2 ("no I/O in the
 //! engine") paying out. Of the five learners, four make **no** model call at all
 //! and the fifth makes exactly one, through the `Provider` port. So the whole
 //! harness is one test double and a clock:

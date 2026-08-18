@@ -209,7 +209,7 @@ Two shape decisions worth stating:
 
 ## 5. Layer 2 — the `Observer` port
 
-Invariant 1's grain, applied to logging: ports, not concretions.
+Invariant 1's grain, applied to logging: ports, not direct dependencies.
 
 ```rust
 pub trait Observer: Send + Sync + 'static {

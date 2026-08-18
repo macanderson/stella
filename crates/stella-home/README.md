@@ -67,13 +67,16 @@ which is the test — not "is it about the home directory". They still answer
 "where" and never "make it so": the lazy migration those legacy roots exist for
 is I/O with failure modes, and it stays in the CLI.
 
-`user_plugins_dir` / `resolve_project_plugins_dir` (#3380) are the same shape
-arriving **one consumer early**, and that is said out loud rather than glossed:
-`stella-cli`'s plugin loader is their only caller today. The second is the
-wrapper socket's other drivers — `stella-serve` and an embedded host — which
-`doc:wrapper-socket` §6 makes an acceptance criterion, and which must find the
-same two-tier roster without depending on the CLI to spell `.stella/plugins`.
-If that driver never lands, these belong back in `stella-cli`.
+`resolve_user_plugins_dir` / `resolve_project_plugins_dir` (#3380) are the same
+shape arriving **one consumer early**, and that is said out loud rather than
+glossed: `stella-cli`'s plugin loader is their only caller today, and it calls
+the pure `resolve_*` half directly with its own redirectable root — not the
+ambient `user_plugins_dir()` wrapper, which nothing calls yet. The second
+consumer is the wrapper socket's other drivers — `stella-serve` and an
+embedded host — which `doc:wrapper-socket` §6 makes an acceptance criterion,
+and which must find the same two-tier roster without depending on the CLI to
+spell `.stella/plugins`. If that driver never lands, these belong back in
+`stella-cli`.
 
 This crate is also the workspace's worked example of when a new crate is
 justified. The rule: a new crate is warranted only when functionality (a) sits
