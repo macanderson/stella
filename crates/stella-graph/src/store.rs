@@ -81,6 +81,7 @@ const SCHEMA_TABLES: &[&str] = &[
     "code_graph_storage_objects",
     "code_graph_vectors",
     "code_graph_chunk_vectors",
+    "code_graph_index_state",
 ];
 
 /// DDL for the code graph's tables. `IF NOT EXISTS` throughout so opening an
@@ -233,6 +234,20 @@ CREATE TABLE IF NOT EXISTS code_graph_chunk_vectors (
 -- pass does.
 CREATE INDEX IF NOT EXISTS code_graph_chunk_vectors_fp
     ON code_graph_chunk_vectors(fingerprint);
+-- The commit this store last reconciled against (see `crate::reconcile`).
+-- Exactly one row, enforced by the CHECK rather than by every writer
+-- remembering to: this is a singleton, and a second row would silently make
+-- "what did we last see" ambiguous in a table nothing else constrains.
+--
+-- Deliberately NOT a claim that the index matches that commit. The working
+-- tree moves without HEAD, so the recorded sha answers one narrow question —
+-- "which committed range still needs looking at" — and the content hash on
+-- `code_graph_files` remains the truth about what is actually indexed.
+CREATE TABLE IF NOT EXISTS code_graph_index_state (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    head_sha      TEXT NOT NULL,
+    reconciled_at INTEGER NOT NULL
+);
 "#;
 
 /// Largest source file this index will read, in bytes.

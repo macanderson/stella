@@ -156,8 +156,31 @@ pub fn render_file_text(rel_path: &str, symbol_names: &[String], content: &str) 
 ///
 /// "No usable vector" is either no row at all or a row whose `content_sha256`
 /// no longer matches the file's — the same `(content, fingerprint)` skip the
-/// parser uses, applied to embedding. Ordered by path so a capped pass is
-/// deterministic and a second pass resumes rather than re-rolling the dice.
+/// parser uses, applied to embedding.
+///
+/// # Ordering: most recently changed first
+///
+/// Ordered by `(indexed_at DESC, path ASC)` — **not** by path alone, which is
+/// what it used to be and which had a defect this cap makes severe. A pass
+/// embeds at most `limit` files; under path ordering those are the
+/// alphabetically first pending files, forever. A merge that touched
+/// `src/zone.rs` in a workspace with thousands of pending files near the front
+/// of the alphabet therefore left that file unembedded across an unbounded
+/// number of queries — semantically invisible, with nothing reporting it as
+/// missing beyond a `PARTIAL INDEX` note that named the cap rather than the
+/// file.
+///
+/// `indexed_at` is written by `upsert_file` and the byte-compat skip means it
+/// moves only when a file's **content** actually changed. So this ordering is
+/// "what changed most recently, first" — which is exactly the set a commit,
+/// merge, or checkout just produced, derived from state the index already
+/// keeps rather than from a priority queue that could disagree with it. There
+/// is no queue to drain, invalidate, or leak.
+///
+/// The `path ASC` tiebreak is load-bearing, not decoration: a fresh
+/// `stella init` stamps a whole tree within the same second, so without it the
+/// order inside a timestamp would be SQLite's choice and a capped pass could
+/// revisit files it already did instead of resuming past them.
 ///
 /// A file the index knows about but that has since vanished from disk is
 /// skipped, not an error: the next `index_all` prunes its row. The window
@@ -176,36 +199,47 @@ pub fn pending(
     limit: usize,
 ) -> Result<PendingScan, GraphError> {
     let mut stmt = conn.prepare(
-        "SELECT f.path, f.content_sha256 \
+        "SELECT f.path, f.content_sha256, f.indexed_at \
          FROM code_graph_files f \
          LEFT JOIN code_graph_vectors v \
            ON v.file_id = f.id AND v.fingerprint = ?1 \
          WHERE (v.file_id IS NULL OR v.content_sha256 <> f.content_sha256) \
-           AND f.path > ?2 \
-         ORDER BY f.path \
-         LIMIT ?3",
+           AND (f.indexed_at < ?2 OR (f.indexed_at = ?2 AND f.path > ?3)) \
+         ORDER BY f.indexed_at DESC, f.path ASC \
+         LIMIT ?4",
     )?;
 
     let mut scan = PendingScan::default();
-    // The empty string sorts before every non-empty path under SQLite's BINARY
-    // collation — the same ordering `ORDER BY f.path` uses — so the first round
-    // starts at the beginning of the pending set.
-    let mut cursor = String::new();
+    // The cursor is the (indexed_at, path) of the last row handed out, and it
+    // starts past the end of the ordering in both components: `i64::MAX` is
+    // above every timestamp the indexer can write, and the empty string sorts
+    // before every non-empty path under SQLite's BINARY collation — the same
+    // collation `ORDER BY f.path` uses. So the first round starts at the
+    // newest pending file and walks backwards through time.
+    let mut cursor_indexed_at = i64::MAX;
+    let mut cursor_path = String::new();
     while scan.files.len() < limit {
         let want = limit - scan.files.len();
-        let rows: Vec<(String, String)> = stmt
-            .query_map(params![fingerprint, cursor, want as i64], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })?
+        let rows: Vec<(String, String, i64)> = stmt
+            .query_map(
+                params![
+                    fingerprint,
+                    cursor_indexed_at,
+                    cursor_path,
+                    want as i64
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?
             .collect::<Result<_, _>>()?;
         // No rows past the cursor: the pending set is exhausted, and whatever
         // is still unembedded is what this scan stepped over.
-        let Some((last, _)) = rows.last() else {
+        let Some((last_path, _, last_indexed_at)) = rows.last() else {
             break;
         };
-        cursor = last.clone();
+        cursor_path = last_path.clone();
+        cursor_indexed_at = *last_indexed_at;
 
-        for (path, content_sha256) in rows {
+        for (path, content_sha256, _) in rows {
             let Ok(content) = std::fs::read_to_string(root.join(&path)) else {
                 scan.unreadable += 1;
                 continue;
