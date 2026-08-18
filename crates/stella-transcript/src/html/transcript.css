@@ -10,15 +10,26 @@
  * The ground, the neutral ramp and the three semantic colours are the web
  * instrument palette, whose single definition is the delimited block in
  * `crates/stella-observatory/src/assets/index.html`. They are not a separate
- * system that happens to look similar: the Observatory renders this page
- * (`render_transcript` in `crates/stella-observatory/src/lib.rs` serves
- * `html::render_page`), so a reader clicking a run in the dashboard lands
- * here. It used to land on a different ground — `#000` against the
- * instrument's `#0A0A0A` — with "passed" a different green in the two views of
- * the same run, which is the drift `crates/stella-cli/tests/design_token_parity.rs`
- * exists to prevent everywhere it can see. It cannot see this file yet: that
- * matrix requires a dark *and* a light scheme per surface and this page has
- * only the one. Adding both is #3630.
+ * system that happens to look similar: the Observatory renders this page (its
+ * `render_transcript` route serves `html::render_page`), so a reader clicking
+ * a run in the dashboard lands here. It used to land on a different ground —
+ * `#000` against the instrument's `#0A0A0A` — with "passed" a different green
+ * in the two views of the same run, which is the drift
+ * `crates/stella-cli/tests/design_token_parity.rs` exists to prevent
+ * everywhere it can see. It cannot see this file yet: that matrix requires a
+ * dark *and* a light scheme per surface and this page has only the one.
+ * Adding both is #3630.
+ *
+ * **Comments here are page content.** This file is `include_str!`-ed and
+ * inlined into every rendered transcript, so anything written in it ships to
+ * the reader and is visible to any assertion made over the whole document.
+ * The Observatory proves a tool call states its argument exactly once by
+ * counting that argument's occurrences across the page — and the seeded
+ * fixture's argument is a crate-relative Rust path. An earlier draft of the
+ * paragraph above cited a module by exactly that shape of path, which made
+ * the count 2 and failed a test about the transcript's *structure* from a
+ * comment about its *colours*. So: cite modules and routes by name here, and
+ * never by source path.
  *
  * `--cyan` and `--violet` are deliberately NOT instrument values. They encode
  * tool *kind* and speaker, and the instrument system separates categories by
