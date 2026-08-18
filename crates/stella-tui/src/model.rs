@@ -172,6 +172,15 @@ pub struct SessionModel {
     /// timestamp is stamped outside, from the deck's injected clock
     /// (`deck::AgentEntry::parked_since_ms`), exactly as `turn_started_ms` is.
     pub parked: Option<OpenPark>,
+    /// Where the live progress counter [`Self::set_progress_line`] last wrote
+    /// begins: `(transcript index, byte offset into that entry's text)`.
+    ///
+    /// Positional rather than a bare flag so it invalidates itself: the counter
+    /// is rewritable only while it is still the very end of the transcript, and
+    /// every entry pushed after it makes the recorded index stale. That is what
+    /// makes the last tick of a pass permanent — nothing has to remember to
+    /// clear this, so no new transcript-pushing branch can forget to.
+    progress: Option<(usize, usize)>,
 }
 
 /// A parked wait that has not woken yet — the live half of the ⏳ chip.
@@ -1123,7 +1132,57 @@ impl SessionModel {
 
     /// Append a streaming text delta, coalescing into the trailing `Text`
     /// entry when the last thing emitted was also assistant text.
+    /// Write one live progress counter into the transcript **in place**: the
+    /// previous counter this wrote is replaced, not appended to.
+    ///
+    /// # Why the fold owns this rather than the emitter
+    ///
+    /// A long pass (`/init`'s code-graph walk and its two embedding passes)
+    /// narrates once a second so it cannot be mistaken for a wedge. Sent as
+    /// ordinary `Text`, a two-hundred-tick pass leaves two hundred near-identical
+    /// lines in the scrollback and buries the ✓ summaries that are the actual
+    /// record of what init did. Only the fold can rewrite what it already wrote,
+    /// so the replacement lives here and the emitter just says the number.
+    ///
+    /// Still a pure fold: the result is a function of the sequence of calls, and
+    /// the last tick of a pass survives as an ordinary line the moment anything
+    /// else is pushed — so the counter reads as history afterwards, not as a
+    /// spinner that erased itself.
+    pub fn set_progress_line(&mut self, line: &str) {
+        // Rewritable only while the counter is still the tail of the last
+        // entry; anything appended since makes it ordinary scrollback.
+        let last = self.transcript.len().wrapping_sub(1);
+        let open_at = match (self.progress, self.transcript.last()) {
+            (Some((idx, at)), Some(TranscriptEntry::Text(buf)))
+                if idx == last && at <= buf.len() =>
+            {
+                Some(at)
+            }
+            _ => None,
+        };
+        match self.transcript.last_mut() {
+            Some(TranscriptEntry::Text(buf)) => {
+                let at = open_at.unwrap_or(buf.len());
+                buf.truncate(at);
+                buf.push_str(line);
+                // The counter terminates its own line: emitters send lines
+                // without one, and the next milestone appends straight onto
+                // this buffer — so without it the ✓ summary lands ON the final
+                // count rather than under it. Inside the rewritten region, so a
+                // later tick replaces it along with the count.
+                buf.push('\n');
+                self.progress = Some((last, at));
+            }
+            _ => {
+                self.transcript
+                    .push(TranscriptEntry::Text(format!("{line}\n")));
+                self.progress = Some((self.transcript.len() - 1, 0));
+            }
+        }
+    }
+
     fn push_text(&mut self, delta: &str) {
+        self.progress = None;
         if let Some(TranscriptEntry::Text(buf)) = self.transcript.last_mut() {
             buf.push_str(delta);
         } else {

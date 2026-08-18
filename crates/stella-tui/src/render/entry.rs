@@ -26,7 +26,7 @@ use crate::textline::{
 // list and `INLINE_DIFF_CAP` bounds it. A child module may reach a private
 // parent item, so the move needed no visibility change.
 use super::{INLINE_DIFF_CAP, resolve_inline_diff};
-use crate::{diff, theme};
+use crate::{diff, syntax, theme};
 
 // The context-recall table. Split out rather than grown here: it is the one
 // entry kind that lays out a *grid* — fitted columns, a heading, a rule, a
@@ -37,6 +37,47 @@ use crate::{diff, theme};
 // widening anything, exactly as `entry` itself reaches `render`'s.
 mod recall;
 use recall::recall_lines;
+
+/// How many lines of a *successful* tool result the collapsed fold shows.
+///
+/// This was 1, on the argument that a successful call's output is chatter and
+/// its size belongs in the metric column. That is wrong for the calls whose
+/// output *is* the answer — a `search`, a `read_file`, a `get_state` — where
+/// one line plus a count told a reader only that something had been found, and
+/// left the finding itself behind a keystroke they had no reason to press.
+/// Matching [`FAIL_PREVIEW`] keeps one preview rule instead of two.
+const OK_PREVIEW: usize = FAIL_PREVIEW;
+
+/// Does this payload read as JSON, and so earn syntax coloring?
+///
+/// Deliberately the opening delimiter rather than a parse: a tool result is
+/// middle-elided at `OUTPUT_BUDGET` (`crate::model::summarize`) before it ever
+/// reaches here, so a large JSON body no longer parses and a parse test would
+/// color exactly the short results that need it least. The lexer degrades to
+/// untagged runs on anything it cannot classify, so the cost of a false
+/// positive is a line that renders plain — not one that renders wrong.
+fn reads_as_json(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with('{') || t.starts_with('[')
+}
+
+/// Emit one body line, syntax-colored when `json`, at the detail column.
+fn push_body_line(line: &str, json: bool, width: usize, out: &mut Vec<Line<'static>>) {
+    if !json {
+        push_detail_line(line, width, out);
+        return;
+    }
+    let spans: Vec<Span<'static>> = syntax::tokenize(line, syntax::Lang::Json)
+        .into_iter()
+        .map(|(text, tok)| match tok {
+            Some(t) => Span::styled(text, syntax::tok_style(t)),
+            // Punctuation and whitespace keep the body's muted base tone, so
+            // the colored tokens are what the eye lands on.
+            None => Span::styled(text, Style::new().fg(theme::MUTED)),
+        })
+        .collect();
+    push_detail_spans(spans, width, out);
+}
 
 // Pure content builders (unit-tested directly)
 
@@ -334,11 +375,15 @@ fn entry_body(
                 // ctrl+o: the full argument object, pretty-printed and dim.
                 // An over-budget argument may not parse (char-capped raw) —
                 // show it wrapped rather than clipped at the pane edge.
+                // Pretty-printing is what makes the coloring worth having: a
+                // compact one-line object has no shape for a key hue to mark.
+                // A body that failed to re-parse is still lexed — it is capped
+                // JSON, not another format.
                 let pretty = serde_json::from_str::<serde_json::Value>(raw)
                     .and_then(|v| serde_json::to_string_pretty(&v))
                     .unwrap_or_else(|_| raw.clone());
                 for l in pretty.lines() {
-                    push_detail_line(l, width, out);
+                    push_body_line(l, true, width, out);
                 }
             }
         }
@@ -386,12 +431,10 @@ fn entry_body(
                     Style::new().fg(theme::BAD),
                 ));
                 metric.push(Span::styled(" · ".to_string(), dim));
-            } else if total > 1 && !expanded {
-                // `⋯` is the one glyph this UI uses for "there is more behind
-                // this", so it carries the ctrl+o affordance the removed hint
-                // row used to spell out — at no extra row.
-                metric.push(Span::styled(format!("⋯ {} · ", plural_lines(total)), dim));
             }
+            // The size chip that used to sit here stated the same count as the
+            // hint row below, one of them without the affordance. Now the count
+            // is stated once, in the row that also says which key reveals it.
             metric.push(Span::styled(dur, dim));
 
             if expanded {
@@ -401,26 +444,38 @@ fn entry_body(
                     width,
                     out,
                 );
+                let json = reads_as_json(full);
                 for l in full.lines() {
-                    push_detail_line(l, width, out);
+                    push_body_line(l, json, width, out);
                 }
             } else {
                 // With a diff below, a prose summary ("Applied edit to
                 // src/agent.rs") would restate the call row above it and the
                 // diff under it in the same breath. The row carries only its
                 // metrics and gets out of the way.
+                let json = reads_as_json(full);
                 let shown: Vec<&str> = if inline.is_some() {
                     Vec::new()
                 } else {
                     // A failure never collapses to a single line. The point of
                     // reading a transcript at the moment something breaks is to
                     // see *why*, and a one-line preview of a stack trace is a
-                    // prompt to go hunting rather than an answer.
-                    let budget = if *ok { 1 } else { FAIL_PREVIEW };
-                    full.lines().skip(salient_line(full)).take(budget).collect()
+                    // prompt to go hunting rather than an answer. A success now
+                    // gets the same window, for the reason on [`OK_PREVIEW`].
+                    let budget = if *ok { OK_PREVIEW } else { FAIL_PREVIEW };
+                    // `salient_line` skips a tool's preamble to the line worth
+                    // reading. A JSON body has no preamble — its first line is
+                    // the opening delimiter, and starting anywhere else shows
+                    // an object with its shape cut off.
+                    let skip = if json { 0 } else { salient_line(full) };
+                    full.lines().skip(skip).take(budget).collect()
                 };
+                // A JSON preview stays whole in the body column. Promoting its
+                // first line to the result row would strip that line's coloring
+                // (the row is one flat style) and split an object across two
+                // different columns.
                 let head: Vec<Span<'static>> = match shown.first() {
-                    Some(l) => vec![Span::styled(
+                    Some(l) if !json => vec![Span::styled(
                         l.trim_end().to_owned(),
                         if *ok {
                             dim
@@ -428,7 +483,7 @@ fn entry_body(
                             Style::new().fg(theme::BAD)
                         },
                     )],
-                    None => Vec::new(),
+                    _ => Vec::new(),
                 };
                 push_row(
                     rail,
@@ -436,16 +491,16 @@ fn entry_body(
                     width,
                     out,
                 );
-                for l in shown.iter().skip(1) {
-                    push_detail_line(l.trim_end(), width, out);
+                for l in shown.iter().skip(usize::from(!json)) {
+                    push_body_line(l.trim_end(), json, width, out);
                 }
-                // Only a failure earns the "there is more" row: a successful
-                // result already states its size in the metric column, and
-                // saying it twice is how a dense layout turns back into a
-                // sparse one. Anchoring mid-output also means the count is
-                // "everything but the window", not "everything after it".
+                // The "there is more" row, for a success as well as a failure —
+                // it is the only place the hidden count is stated now, and the
+                // only place the ctrl+o affordance appears. Not under an inline
+                // diff: there the rendered hunk is the result, and the tool's
+                // own chatter is what would be counted.
                 let hidden = total.saturating_sub(shown.len());
-                if hidden > 0 && !*ok {
+                if hidden > 0 && inline.is_none() {
                     push_detail_line(&format!("⋯ {} · ctrl+o", plural_lines(hidden)), width, out);
                 }
             }

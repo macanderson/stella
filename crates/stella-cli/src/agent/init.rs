@@ -14,6 +14,119 @@
 use super::graph::build_code_graph;
 use super::*;
 use crate::domains::{cached_taxonomy, summarize_repo};
+use crate::interactive::{AskUserIo, TtyAskUserIo};
+
+/// How init talks to the user: the progress transcript it writes, and the
+/// questions it is allowed to ask.
+///
+/// These travel together because they are two halves of one thing — the
+/// surface the human is looking at — and every surface answers both at once.
+/// The plain CLI prints to stdout and reads stdin; the Command Deck routes
+/// both through its own channels, and a `TtyAskUserIo` there would print
+/// straight through the full-screen render. Passing them as one injected
+/// seam is also what keeps `init_workspace`'s arity fixed, which matters
+/// concretely: both of its interactive call sites live in files closed to
+/// growth (`agent.rs`, `command_deck.rs`).
+///
+/// `ask` is `None` exactly when nobody can answer — a piped or redirected
+/// run. Init never derives that itself; the surface knows, and a second
+/// derivation is how two consumers end up disagreeing about whether anyone
+/// is listening.
+pub(crate) struct InitIo<'a> {
+    emit: Box<dyn FnMut(InitLine) + 'a>,
+    ask: Option<&'a dyn AskUserIo>,
+}
+
+impl<'a> InitIo<'a> {
+    /// An io over a caller-supplied transcript sink and question channel.
+    ///
+    /// The sink takes an [`InitLine`], not a `String`: a surface has to render
+    /// a live counter differently from a permanent step, and collapsing the
+    /// two here would put back the flood [`InitLine`] exists to stop.
+    pub(crate) fn new(emit: impl FnMut(InitLine) + 'a, ask: Option<&'a dyn AskUserIo>) -> Self {
+        Self {
+            emit: Box::new(emit),
+            ask,
+        }
+    }
+
+    /// Narrate one line, whichever kind it is.
+    pub(crate) fn emit(&mut self, line: InitLine) {
+        (self.emit)(line);
+    }
+
+    /// Narrate one permanent line of the record.
+    pub(crate) fn step(&mut self, text: String) {
+        self.emit(InitLine::Step(text));
+    }
+
+    /// The raw sink, for a stage that narrates both kinds itself — the
+    /// code-graph build is the only one, and its counters are the reason the
+    /// distinction exists.
+    pub(crate) fn sink(&mut self) -> &mut (dyn FnMut(InitLine) + 'a) {
+        &mut *self.emit
+    }
+
+    /// A plain `FnMut(String)` view for the stages whose every line is part
+    /// of the record. Naming that once here beats making each of the three
+    /// call sites wrap its own closure.
+    pub(crate) fn step_sink(&mut self) -> impl FnMut(String) + '_ {
+        move |text: String| (self.emit)(InitLine::Step(text))
+    }
+
+    /// The plain-CLI io: the indented stdout transcript both `stella init`
+    /// and the non-deck REPL's `/init` print, with TTY questions enabled
+    /// only when [`crate::interactive::human_is_present`] says someone can
+    /// answer them.
+    pub(crate) fn stdout_tty() -> InitIo<'static> {
+        let ask: Option<&'static dyn AskUserIo> =
+            crate::interactive::human_is_present(true).then_some(&TtyAskUserIo);
+        InitIo {
+            emit: Box::new(stdout_narrator()),
+            ask,
+        }
+    }
+}
+
+/// One narrated line of init, carrying whether it is part of the **record** or
+/// part of the **liveness**.
+///
+/// Both used to be the same thing — a `String` appended wherever it landed —
+/// and the liveness half won: a large workspace ticks its three long passes
+/// (the code-graph walk, then the file and chunk embedding passes) once a
+/// second for minutes, so the ✓ summaries that say what init actually did
+/// arrived buried under a hundred near-identical `· chunk index: N files
+/// embedded…` lines. The counter still has to be *live* — that is the whole
+/// reason #3102 replaced the spinner with real counts — so it stays, and only
+/// its accumulation goes: each surface rewrites the previous tick.
+///
+/// The distinction is in the type rather than in a prefix a surface could
+/// sniff (`starts_with("· ")`), because a caller adding a fourth long pass
+/// should have to answer which kind of line it emits.
+pub(crate) enum InitLine {
+    /// A permanent line: appended, and read afterwards as the record of init.
+    Step(String),
+    /// A live counter: replaces the previous `Progress` line rather than
+    /// appending. The last tick of a pass stays on screen — a counter that
+    /// erased itself would leave nothing to read, which is the failure #3102
+    /// diagnosed in the cinematic it retired.
+    Progress(String),
+}
+
+impl InitLine {
+    /// The line's text, whichever kind it is — for a test asserting on what
+    /// was said rather than on how it was shown.
+    ///
+    /// Test-only on purpose: every shipping surface has to render the two
+    /// kinds differently, and an accessor that discards the distinction is
+    /// exactly the shortcut that would put the flood back.
+    #[cfg(test)]
+    pub(crate) fn text(&self) -> &str {
+        match self {
+            Self::Step(text) | Self::Progress(text) => text,
+        }
+    }
+}
 
 /// The domain step of init, wearing the #3102 inference-skip gate: a
 /// model-inferred taxonomy whose recorded repo-shape fingerprint still
@@ -62,19 +175,56 @@ pub(crate) async fn init_workspace(
     workspace_root: &std::path::Path,
     model_hint: Option<&str>,
     budget_limit: Option<f64>,
-    emit: &mut dyn FnMut(String),
+    io: &mut InitIo<'_>,
 ) -> Result<(Domains, f64), String> {
-    let (domains, inference_cost_usd) =
-        resolve_domains(provider, workspace_root, model_hint, budget_limit, emit).await;
+    // The stages that narrate nothing live keep the plain `String` sink:
+    // every line they emit is part of the record, so the wrapper naming that
+    // once is better than making each call site repeat it.
+    let (domains, inference_cost_usd) = {
+        let mut step = io.step_sink();
+        resolve_domains(
+            provider,
+            workspace_root,
+            model_hint,
+            budget_limit,
+            &mut step,
+        )
+        .await
+    };
 
     // The code graph needs no provider — build it regardless of how the
     // domains were inferred, so the index exists even fully offline.
-    build_code_graph(workspace_root, emit).await;
+    build_code_graph(workspace_root, io.sink()).await;
 
     // Adopt commands/skills/agents other code agents keep in `.claude/` and
     // `.agents/` (workspace + user scope) as symlinks into stella's own
     // directories — idempotent, never clobbers, never fatal.
-    crate::extensions::sync_extensions(workspace_root, emit);
+    {
+        let mut step = io.step_sink();
+        crate::extensions::sync_extensions(workspace_root, &mut step);
+    }
+
+    // Then, once — and only once per workspace — offer to convert the
+    // markdown definitions just adopted into TOML, the format the rest of
+    // stella's config speaks. This runs AFTER the sync deliberately: the
+    // definitions worth converting are largely the ones the sync just
+    // linked, and asking before they exist would spend the single ask this
+    // workspace gets on an empty directory. It never converts on its own —
+    // see `crate::commands_offer` for why that trade stays the user's.
+    let user_root = crate::extensions::user_config_root();
+    {
+        // Read the question channel out before borrowing the sink: the offer
+        // needs both halves of the io at once, and only one of them mutably.
+        let ask = io.ask;
+        let mut step = io.step_sink();
+        crate::commands_offer::offer_conversion(
+            workspace_root,
+            user_root.as_deref(),
+            ask,
+            &mut step,
+        )
+        .await;
+    }
 
     let path = domains.save(workspace_root)?;
 
@@ -86,18 +236,125 @@ pub(crate) async fn init_workspace(
         m.record_taxonomy(&domains).await;
     }
 
-    emit(format!(
+    io.step(format!(
         "✓ {} domains ({}) → {}",
         domains.domains.len(),
         domains.inferred_by,
         path.display()
     ));
     if inference_cost_usd > 0.0 {
-        emit(format!(
+        io.step(format!(
             "domain inference model cost: ${inference_cost_usd:.6}"
         ));
     }
     Ok((domains, inference_cost_usd))
+}
+
+/// The plain-stdout narrator both non-deck init paths hand to
+/// [`init_workspace`] — `stella init` and the plain REPL's `/init`.
+///
+/// An [`InitLine::Progress`] counter rewrites its own line where the terminal
+/// can take one back, and is simply appended where it cannot: a redirected
+/// `stella init` log has to stay readable, and a `\r` in a file is not. Either
+/// way the last tick survives — nothing here erases what it drew, which is the
+/// failure #3102 diagnosed in the cinematic it retired.
+pub(crate) fn stdout_narrator() -> impl FnMut(InitLine) + Send {
+    narrator(false)
+}
+
+/// [`stdout_narrator`] against stderr — what the session-startup index build
+/// uses, so its progress never lands in a machine-readable stdout
+/// (`crate::agent::spawn_session_graph`).
+pub(crate) fn stderr_narrator() -> impl FnMut(InitLine) + Send {
+    narrator(true)
+}
+
+/// The Command Deck's narrator for `/init`: a step joins `agent`'s transcript,
+/// a counter rewrites the counter before it.
+///
+/// A step carries its own terminator because the transcript fold coalesces
+/// consecutive `Text` verbatim — without one, init's stages run together into a
+/// single paragraph.
+pub(crate) fn deck_narrator(
+    tx: tokio::sync::mpsc::UnboundedSender<stella_tui::Inbound>,
+    agent: &str,
+) -> impl FnMut(InitLine) {
+    let agent = agent.to_string();
+    move |line| {
+        let _ = tx.send(match line {
+            InitLine::Step(text) => stella_tui::Inbound::Event {
+                agent: agent.clone(),
+                event: AgentEvent::Text {
+                    text: format!("{text}\n"),
+                },
+            },
+            InitLine::Progress(text) => stella_tui::Inbound::Progress {
+                agent: agent.clone(),
+                text,
+            },
+        });
+    }
+}
+
+/// [`deck_narrator`] for the deck's session-startup index build, whose
+/// milestones are chrome rather than session speech: a step is a dwell notice,
+/// while a counter still rewrites in place rather than stacking another
+/// near-identical row in that dialog.
+pub(crate) fn deck_notice_narrator(
+    tx: tokio::sync::mpsc::UnboundedSender<stella_tui::Inbound>,
+    agent: &str,
+) -> impl FnMut(InitLine) + Send {
+    let agent = agent.to_string();
+    move |line| {
+        let _ = tx.send(match line {
+            InitLine::Step(text) => stella_tui::Inbound::Notice(text),
+            InitLine::Progress(text) => stella_tui::Inbound::Progress {
+                agent: agent.clone(),
+                text,
+            },
+        });
+    }
+}
+
+fn narrator(to_stderr: bool) -> impl FnMut(InitLine) + Send {
+    use std::io::IsTerminal;
+
+    let rewritable = if to_stderr {
+        std::io::stderr().is_terminal()
+    } else {
+        std::io::stdout().is_terminal()
+    };
+    // True while the cursor is parked on a counter line the next tick may
+    // overwrite; a step landing there has to close it first, or it would print
+    // on top of the count.
+    let mut counter_open = false;
+    move |line: InitLine| {
+        use std::io::Write;
+
+        let mut out: Box<dyn Write> = if to_stderr {
+            Box::new(std::io::stderr())
+        } else {
+            Box::new(std::io::stdout())
+        };
+        let _ = match line {
+            InitLine::Step(text) => {
+                let lead = if std::mem::take(&mut counter_open) {
+                    "\n"
+                } else {
+                    ""
+                };
+                writeln!(out, "{lead}  {text}")
+            }
+            InitLine::Progress(text) if rewritable => {
+                counter_open = true;
+                // Erase to end of line before parking the cursor back at the
+                // start: without it, a shorter count leaves the tail of the
+                // longer one it replaced.
+                write!(out, "\r  {text}\x1b[K").and_then(|()| out.flush())
+            }
+            InitLine::Progress(text) => writeln!(out, "  {text}"),
+        };
+    }
 }
 
 /// `stella init` — infer the workspace's domain taxonomy, build the code-graph
@@ -143,13 +400,13 @@ pub async fn run_init(
             }
         };
 
-    let mut emit = |line: String| println!("  {line}");
+    let mut io = InitIo::stdout_tty();
     let (domains, _inference_cost_usd) = init_workspace(
         provider.as_deref(),
         &workspace_root,
         model_hint.as_deref(),
         None,
-        &mut emit,
+        &mut io,
     )
     .await?;
 
@@ -259,6 +516,79 @@ mod tests {
         assert!(
             lines.iter().any(|l| l.contains("no model call")),
             "the skip must be stated in the transcript, not silent: {lines:?}"
+        );
+    }
+
+    /// The witness for the two-design collision that broke the build: one
+    /// [`InitIo`] carries **both** halves of the seam at once — the question
+    /// channel and an [`InitLine`] sink that still tells a permanent step
+    /// from a live counter.
+    ///
+    /// The two PRs that landed for this seam each kept one half and dropped
+    /// the other, so anything asserting only one of them passes on a design
+    /// that lost the other. This asserts both against one call: the record
+    /// stages narrate through `step_sink()` (the ✓ domains line), the
+    /// code-graph build narrates through the raw `sink()` (its own step), and
+    /// the sink's two kinds stay distinguishable rather than collapsing to
+    /// `String` — which is what a re-collapse of `InitIo::emit` would undo.
+    #[tokio::test]
+    async fn init_narrates_both_line_kinds_through_one_io() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let root = root.path().canonicalize().expect("canonicalize");
+        std::fs::create_dir_all(root.join("api")).expect("mkdir");
+        std::fs::write(root.join("api/routes.rs"), "pub fn route() {}\n").expect("write");
+        let provider = CountingProvider {
+            calls: AtomicUsize::new(0),
+        };
+
+        // `(is_step, text)` — the kind is the half a `String` sink erases.
+        let seen: std::sync::Mutex<Vec<(bool, String)>> = std::sync::Mutex::new(Vec::new());
+        {
+            // `ask: None` is the no-human case, and the one an automated test
+            // may take: the conversion offer must never block on stdin here.
+            let mut io = InitIo::new(
+                |line: InitLine| {
+                    let step = matches!(line, InitLine::Step(_));
+                    seen.lock()
+                        .expect("sink lock")
+                        .push((step, line.text().to_string()));
+                },
+                None,
+            );
+            init_workspace(
+                Some(&provider),
+                &root,
+                Some("counting-model"),
+                None,
+                &mut io,
+            )
+            .await
+            .expect("init_workspace");
+
+            // The kinds survive the trip through the io rather than being
+            // flattened on the way in.
+            io.emit(InitLine::Progress("· counter tick".to_string()));
+            io.step("permanent".to_string());
+        }
+
+        let seen = seen.into_inner().expect("sink lock");
+        let steps: Vec<&str> = seen
+            .iter()
+            .filter(|(step, _)| *step)
+            .map(|(_, text)| text.as_str())
+            .collect();
+        assert!(
+            steps.iter().any(|l| l.contains("domains")),
+            "the record stages must narrate through the io: {seen:?}"
+        );
+        assert!(
+            steps.iter().any(|l| l.contains("code graph")),
+            "the code-graph build must narrate through the same io: {seen:?}"
+        );
+        assert!(
+            seen.iter()
+                .any(|(step, text)| !*step && text == "· counter tick"),
+            "a counter must stay a counter, not become a step: {seen:?}"
         );
     }
 

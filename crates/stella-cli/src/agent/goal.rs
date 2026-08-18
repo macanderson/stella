@@ -154,7 +154,7 @@ pub(crate) async fn run_raw_one_shot(
     // goes to stderr — stdout may be machine-readable JSON.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        Box::new(|line| eprintln!("  {line}")),
+        Box::new(crate::agent::init::stderr_narrator()),
         Box::new(|| {}),
     );
     let process_free = crate::enterprise_telemetry::process_free_authority_active();
@@ -394,7 +394,7 @@ pub async fn run_goal_cmd(
     // goal returns.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        Box::new(|line| eprintln!("  {line}")),
+        Box::new(crate::agent::init::stderr_narrator()),
         Box::new(|| {}),
     );
     let mcp = connect_mcp(
