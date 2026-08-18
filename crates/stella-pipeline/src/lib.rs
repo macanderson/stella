@@ -112,6 +112,7 @@ pub mod replay;
 pub mod research;
 pub mod reward;
 pub mod roster;
+pub mod schedule;
 pub mod scope;
 pub mod scratch;
 pub mod triage;

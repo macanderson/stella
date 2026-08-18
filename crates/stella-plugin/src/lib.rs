@@ -100,6 +100,7 @@ mod manifest;
 mod observed;
 mod package;
 mod program;
+mod progressive;
 mod runtime;
 mod wire;
 /// The generated description of the wrapper socket's wire contract, published
@@ -135,6 +136,7 @@ pub use package::{
     RecordEnforcement, SkillContribution, ToolContribution,
 };
 pub use program::{SignalValues, StageProgram};
+pub use progressive::{ProgressiveResolver, StageDecision};
 pub use runtime::Runtime;
 pub use wire::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,

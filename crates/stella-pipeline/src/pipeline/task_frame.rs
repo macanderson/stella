@@ -38,4 +38,10 @@ pub(super) struct TaskFrame<'a> {
     /// Triage's classification — which stages run at all, and how strictly
     /// the ladder verifies.
     pub(super) assessment: TaskAssessment,
+    /// Whether this turn's `[wrapper]` variant schedules `verify` to run
+    /// (#3408, `crate::schedule`) — `classic.toml`'s `if = "verifies"`,
+    /// decided once at the triage boundary since `Signal::Verifies` is
+    /// triage-published. ORed with the host-internal zero-diff guard at its
+    /// one call site, `Pipeline::run_candidate`.
+    pub(super) schedule_verifies: bool,
 }

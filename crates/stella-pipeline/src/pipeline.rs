@@ -129,6 +129,7 @@ mod role_pace;
 mod roster_wiring;
 use roster_wiring::Assigned;
 mod run_error;
+mod schedule_wiring;
 mod scope_stage;
 mod stage_budget;
 mod task_frame;
@@ -528,6 +529,8 @@ pub struct PipelineConfig {
     /// workspace with no candidate isolation cannot offer it (and an `Always`
     /// that cannot be honoured says so); only then does this policy decide.
     pub create_worktrees: crate::ports::WorktreePolicy,
+    /// The `[wrapper]` variant scheduling this run (#3408, `crate::schedule`); `None` = `classic`.
+    pub variant: Option<stella_plugin::Wrapper>,
 }
 
 impl Default for PipelineConfig {
@@ -574,6 +577,7 @@ impl Default for PipelineConfig {
             candidates: None,
             candidate_concurrency: None,
             create_worktrees: crate::ports::WorktreePolicy::default(),
+            variant: None,
         }
     }
 }
@@ -1112,37 +1116,26 @@ impl<'a> Pipeline<'a> {
             p.task_class = Some(task_class);
             p.goal = Some(goal.to_string());
         });
-        // The volatile recall+goal message rides AFTER the stable system
-        // prefix (L-E8) — see assemble_user_message. The verification
-        // contract rides only on turns that will actually be verified: a
-        // conversational turn has no oracle, and a simple lookup is verified
-        // only if it unexpectedly touches files — telling either "make this
-        // test pass" would invent work.
+        let schedule_says =
+            self.begin_turn_schedule(budget, &assessment, research_questions.len(), total_cost)?;
+        // The volatile recall+goal message rides AFTER the stable system prefix
+        // (L-E8) — see assemble_user_message. The verification contract rides
+        // only on turns that will actually be verified — a conversational turn
+        // has no oracle — so telling either "make this test pass" invents work.
         let verified_by = self
             .config
             .test_command
             .as_deref()
             .filter(|_| !assessment.conversational && task_class.verifies_unconditionally());
-        // The authored-witness decision, taken HERE — before the user message
-        // is assembled — so a run with no oracle and no independent author
-        // can tell the worker up front that its own failing test is the only
-        // deterministic evidence the run will carry (test-first is cheap
-        // exactly at the start and unaffordable after the diff exists). The
-        // conjunction short-circuits in the same order it did at the
-        // single-shot/best-of-N split below, so `can_author…` — which
-        // announces the degradation — is still never consulted for a turn
-        // that would not have authored a witness anyway.
-        let authored_witness = !assessment.conversational
-            && self.config.test_command.is_none()
-            && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
-            && assessment.wants_witness()
-            && task_class.verifies_unconditionally()
-            && self.can_author_independent_witness();
+        // `schedule_says.authored_witness` was decided in `begin_turn_schedule`
+        // above, before this message is assembled, so a run with no oracle and
+        // no independent author tells the worker up front that its own failing
+        // test is the run's only deterministic evidence (#3408).
         let contract = match verified_by {
             Some(command) => VerificationContract::Oracle(command),
             None if !assessment.conversational
                 && task_class.verifies_unconditionally()
-                && !authored_witness =>
+                && !schedule_says.authored_witness =>
             {
                 VerificationContract::WorkerTestFirst
             }
@@ -1161,9 +1154,12 @@ impl<'a> Pipeline<'a> {
         // the planner alone, so a fact a read-only sub-agent verified against
         // this workspace survived to the worker only as whatever residue of
         // it the planner encoded into a step string.
-        let research = self
-            .research_stage(goal, &research_questions, budget, &mut total_cost)
-            .await;
+        let research = if schedule_says.research {
+            self.research_stage(goal, &research_questions, budget, &mut total_cost)
+                .await
+        } else {
+            Vec::new()
+        };
         // Recall rides as its OWN marked message, ahead of the goal — the
         // shape the interactive path has always used, and the only one the
         // receipts plane can attribute (#3243 D4). Folded into the goal
@@ -1183,7 +1179,7 @@ impl<'a> Pipeline<'a> {
         // saw no task signal to overrule it (triage::resolve_conversational).
         // Answer in one plain, tool-less completion and skip plan → execute →
         // witness → verify entirely. This is the fix for "typing `hi` authored
-        // a witness test": a non-task must never enter the work pipeline.
+        // a witness test": an early RETURN, not a skipped stage (#3408).
         if assessment.conversational {
             return self
                 .run_conversational(messages, budget, &mut total_cost)
@@ -1195,7 +1191,7 @@ impl<'a> Pipeline<'a> {
         // A withheld `plan` takes the branch a non-planning class takes — no
         // frame, no call ([`Pipeline::responsibility_enabled`], #2381).
         let plan: Option<Vec<PlanStep>> =
-            if task_class.plans() && self.responsibility_enabled(ModelCallRole::Plan) {
+            if schedule_says.plan && self.responsibility_enabled(ModelCallRole::Plan) {
                 match self
                     .plan_with_review(goal, &frames, &research, budget, &mut total_cost)
                     .await
@@ -1232,6 +1228,7 @@ impl<'a> Pipeline<'a> {
             base_messages: &base_messages,
             plan: plan.as_deref(),
             assessment,
+            schedule_verifies: schedule_says.verify,
         };
         // Decided above, before the user message was assembled (the worker's
         // test-first contract keys off it) and before this single-shot/
@@ -1251,7 +1248,7 @@ impl<'a> Pipeline<'a> {
         // would put a question to the operator whose answer is then discarded,
         // which teaches them their choices do not matter. `false` is the safe
         // value in that case precisely because it is unreachable.
-        let isolate = if n == 1 && !authored_witness {
+        let isolate = if n == 1 && !schedule_says.authored_witness {
             self.isolate_in_worktree(task_class).await
         } else {
             false
@@ -1263,7 +1260,7 @@ impl<'a> Pipeline<'a> {
         // N=1, so authoring can never mutate the session tree.
         // Best-of-N runs every candidate in an isolated snapshot of the
         // current tree state and adopts only the winner's changes (L-E7).
-        let (best, candidates_run) = if n == 1 && !authored_witness && !isolate {
+        let (best, candidates_run) = if n == 1 && !schedule_says.authored_witness && !isolate {
             let worker = match self.resolve_provider(Role::Worker) {
                 Ok(worker) => worker,
                 Err(error) => {
@@ -1298,7 +1295,7 @@ impl<'a> Pipeline<'a> {
                     frame,
                     n,
                     &frames,
-                    authored_witness,
+                    schedule_says.authored_witness,
                     &mut Spend {
                         budget: &mut *budget,
                         total: &mut total_cost,
@@ -1854,22 +1851,22 @@ impl<'a> Pipeline<'a> {
             return CandidateResult::turn_aborted(state.messages, abort);
         }
 
-        // Decide whether to verify: unconditional for single/multi; for a
-        // simple lookup, only if the turn unexpectedly touched files (the
-        // zero-diff guard, L-E2). "Touched files" = FileChange events observed
-        // OR a non-empty diff from a turn that dispatched something able to
-        // write. The second conjunct is #1553: the diff reads the WORKING
-        // TREE, and in a shared worktree the tree can move under a run —
-        // a human editing beside it. `mutating_actions` is counted off the
-        // calls this pipeline dispatched, not off any look at the world, so
-        // a lookup that dispatched nothing that could write cannot own the
-        // motion the diff shows, and must not be dragged into verification
-        // over someone else's edit.
+        // Decide whether to verify: `frame.schedule_verifies` for single/
+        // multi; for a simple lookup, ORed with the zero-diff guard (L-E2) —
+        // host-internal, manifest-inexpressible (#3408). "Touched files" =
+        // FileChange events observed OR a non-empty diff from a turn that
+        // dispatched something able to write. The second conjunct is #1553:
+        // the diff reads the WORKING TREE, and in a shared worktree the tree
+        // can move under a run — a human editing beside it. `mutating_actions`
+        // is counted off the calls this pipeline dispatched, not off any look
+        // at the world, so a lookup that dispatched nothing that could write
+        // cannot own the motion the diff shows, and must not be dragged into
+        // verification over someone else's edit.
         let probe = self.gather_diff(surface, &state.untracked_before).await;
         self.absorb_probe(&mut state, probe);
         let files_touched = state.signals.file_changes > 0
             || (state.signals.mutating_actions > 0 && !state.diff_text.trim().is_empty());
-        let should_verify = frame.assessment.class.verifies_unconditionally()
+        let should_verify = frame.schedule_verifies
             || (frame.assessment.class == TaskClass::SimpleLookup && files_touched);
         if !should_verify {
             // A clean lookup: nothing to verify.

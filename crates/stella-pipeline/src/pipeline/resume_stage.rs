@@ -418,6 +418,13 @@ impl<'a> Pipeline<'a> {
             base_messages: &base_messages,
             plan: resume.plan.as_deref(),
             assessment: TaskAssessment::from_class(task_class),
+            // `verify_candidate` (called directly below, not through
+            // `run_candidate`) never reads this field — `should_verify`
+            // above is this file's own pre-#3408 computation. Filled in
+            // anyway so `TaskFrame` has the field every construction site
+            // supplies, with the value the shipped manifest's triage-
+            // published `verifies` signal would carry for this class.
+            schedule_verifies: task_class.verifies_unconditionally(),
         };
         let best = {
             let mut spend = Spend {
