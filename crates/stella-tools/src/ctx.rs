@@ -336,11 +336,22 @@ impl ToolCtx {
                     .map(|root| root.display().to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
+                // Naming `$STELLA_SCRATCH` matters more than naming the path.
+                // Measured on `financial-document-processor`: refused at
+                // `/tmp/apt.log`, the agent read "a scratch directory" off the
+                // roots list, spent a whole turn on `get_environment` to learn
+                // its absolute path, and only then retried — two steps to
+                // rediscover a variable already exported into its shell. The
+                // earlier shape of this failure was worse: with no scratch
+                // named at all, an agent fell back to writing build artifacts
+                // into the graded workspace.
                 format!(
                     "`{}` is outside this session's writable directories ({roots}). \
                      Reading anywhere is fine; creating, editing, deleting or running \
-                     a script outside those directories is not. Put the file inside one \
-                     of them.",
+                     a script outside those directories is not. For a working file \
+                     that is not a deliverable, redirect to $STELLA_SCRATCH — it is \
+                     already exported into your shell, so `> $STELLA_SCRATCH/out.log` \
+                     works with no lookup, and nothing there lands in this turn's diff.",
                     path.display()
                 )
             }

@@ -34,8 +34,7 @@
 //! deleted. So the scan looks only for the names that actually bite: the
 //! retired ones, declared in [`catalog::RETIRED_TOOL_NAMES`] with the two
 //! ambiguous exclusions recorded beside them. A name that never existed is
-//! not caught, and that is the deliberate trade — the same posture
-//! `bash.rs`'s `is_symbol_shaped` takes.
+//! not caught, and that is the deliberate trade.
 //!
 //! # Doc comments stay legal
 //!

@@ -42,7 +42,7 @@ pub fn is_operator_word(word: &str) -> bool {
 /// pattern out of the common command shapes, returning each word already
 /// unquoted. NOT a shell parser: it respects `'…'` and `"…"` (so a pattern or
 /// path with spaces stays one word) and preserves backslash escapes like
-/// `\|` (so an alternation survives into `stella-tools`' `is_symbol_shaped`);
+/// `\|` (so an alternation survives to whatever inspects the pattern);
 /// unquoted operators (`&&`, `||`, `|`, `;`, `&`, and a bare newline) come
 /// back as their own words to bound a scan — including when attached to a
 /// word, so `cd /app; ls` yields the target `/app`, not the unresolvable
