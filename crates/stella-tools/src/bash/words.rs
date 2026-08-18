@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The command-text splitter every `bash` advisory reads, and the one
-//! advisory that needs more than words: the `cd`-escape detector.
+//! Where a word is *data* rather than a command: the `cd`-escape detector,
+//! the one `bash` advisory that needs more than words.
 //!
 //! It lives beside [`super`] rather than inside it because `bash.rs` sits
-//! against the 1500-line ceiling, and because these three concerns — how a
-//! command is split, what counts as an operator, and where a word is *data*
-//! rather than a command — are one subject that the tool's spawn/timeout/
-//! policy body is not.
+//! against the 1500-line ceiling, and because this concern — which parts of a
+//! command text are never executed — is one subject that the tool's
+//! spawn/timeout/policy body is not.
+//!
+//! The splitter itself moved out of this crate entirely (#2022): the engine's
+//! stall rung reads the same command strings out of the transcript that the
+//! `bash` advisories read out of one call, so [`shell_words`] and
+//! [`is_operator_word`] now live in [`stella_core::shell_text`] and are
+//! re-exported here for the scans below. Two copies of that operator list is
+//! the exact drift this module was created to end.
 //!
 //! # What "data" means here, and why only `cd` pays for it
 //!
@@ -26,100 +32,10 @@
 
 use std::path::Path;
 
-/// Words the tokenizer emits as command separators, and the one predicate
-/// every consumer of [`shell_words`] asks about them.
-///
-/// Four near-copies of this list had accumulated in `bash.rs` — the `cd` skip
-/// list, the grep-scan boundary, [`super::segment_args`] and
-/// [`super::bare_sleep_seconds`] — and they had already diverged: the grep
-/// boundary omitted `&`, so `ls & grep -rn "struct X" .` scanned past the
-/// background operator (#2301).
-///
-/// A newline is an operator here for the same reason `;` is: it ends one
-/// command and begins the next. Redirection tokens (`2>&1`, `>>`, `<`) are
-/// deliberately **not** operator words — they neither end a command nor start
-/// one, and [`super::redirect_target`] reads them as ordinary words.
-pub(super) fn is_operator_word(word: &str) -> bool {
-    matches!(word, ";" | "&" | "&&" | "|" | "||" | "\n")
-}
-
-/// A quote-aware word split — enough to pull a `cd` target or a `grep`
-/// pattern out of the common command shapes, returning each word already
-/// unquoted. NOT a shell parser: it respects `'…'` and `"…"` (so a pattern or
-/// path with spaces stays one word) and preserves backslash escapes like
-/// `\|` (so an alternation survives into [`super::is_symbol_shaped`]);
-/// unquoted operators (`&&`, `||`, `|`, `;`, `&`, and a bare newline) come
-/// back as their own words to bound a scan — including when attached to a
-/// word, so `cd /app; ls` yields the target `/app`, not the unresolvable
-/// `/app;` a paid bench trial saw warned about as an escape from its own
-/// session root.
-pub(super) fn shell_words(command: &str) -> Vec<String> {
-    let mut words: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let mut has_word = false;
-    let (mut in_single, mut in_double) = (false, false);
-    let mut chars = command.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' if !in_double => {
-                in_single = !in_single;
-                has_word = true;
-            }
-            '"' if !in_single => {
-                in_double = !in_double;
-                has_word = true;
-            }
-            c @ (';' | '&' | '|') if !in_single && !in_double => {
-                if has_word {
-                    words.push(std::mem::take(&mut cur));
-                    has_word = false;
-                }
-                let mut op = String::from(c);
-                // `&&` / `||` are one operator; `;;` never appears in the
-                // shapes this scans, so `;` stays single.
-                if c != ';' && chars.peek() == Some(&c) {
-                    chars.next();
-                    op.push(c);
-                }
-                words.push(op);
-            }
-            '\\' if !in_single => {
-                // Keep the escape literal (covers `\|`, `\"`, …); we don't
-                // interpret it, just preserve it for the symbol test.
-                cur.push('\\');
-                if let Some(n) = chars.next() {
-                    cur.push(n);
-                }
-                has_word = true;
-            }
-            // A newline separates two commands as surely as `;` does, so it
-            // is an operator word rather than plain whitespace. Without it a
-            // command-position rule cannot see the second line of
-            // `ls\ncd /outside` as a command at all.
-            '\n' if !in_single && !in_double => {
-                if has_word {
-                    words.push(std::mem::take(&mut cur));
-                    has_word = false;
-                }
-                words.push(String::from('\n'));
-            }
-            c if c.is_whitespace() && !in_single && !in_double => {
-                if has_word {
-                    words.push(std::mem::take(&mut cur));
-                    has_word = false;
-                }
-            }
-            c => {
-                cur.push(c);
-                has_word = true;
-            }
-        }
-    }
-    if has_word {
-        words.push(cur);
-    }
-    words
-}
+/// The command-text splitter and its operator predicate, re-exported from
+/// [`stella_core::shell_text`] where they now live so the engine's stall rung
+/// and these advisories read one implementation (#2022).
+pub(super) use stella_core::shell_text::{is_operator_word, shell_words};
 
 /// One pending heredoc: the delimiter that ends its body, and whether `<<-`
 /// asked for leading tabs to be ignored on that terminator line.

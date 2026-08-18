@@ -27,15 +27,25 @@
 //! `EngineConfig::max_steps`, which is the exact outcome loop detection
 //! exists to prevent. [`MAX_LOOP_STEERS`] is the bound.
 //!
+//! # The stall rung
+//!
+//! One more thing lives here, on the arm where the detector found nothing: a
+//! turn that has asked to `sleep` away its allowance (#2022). It is the same
+//! claim — this turn is stuck — reached by the one route loop detection
+//! structurally cannot take, because sleeps separated by any other call read
+//! as a progressing window and idling costs $0 against a spend-based budget.
+//! It rides the same seam ([`STALL_STEER_PREFIX`] extends `LOOP_STEER_PREFIX`)
+//! and deliberately carries no abort: see [`steer_stalled_turn`].
+//!
 //! Split out of `driver.rs` the same way `super::settlement` was: the parent
 //! file sits at its file-size ceiling. The module is `pub(crate)` so
 //! `crate::step::TurnState` can hold the budget it checkpoints; the ladder's
 //! policy belongs beside the ladder, not in the state container.
 
-use stella_protocol::{AgentEvent, CompletionMessage};
+use stella_protocol::{AgentEvent, CompletionMessage, MessageRole};
 
 use crate::event_sender::EventSender;
-use crate::loop_detect::{LoopIdentity, LoopVerdict, detect_loop};
+use crate::loop_detect::{CallRecord, LoopIdentity, LoopVerdict, detect_loop};
 use crate::ports::ToolExecutor;
 use crate::step::AbortKind;
 
@@ -212,7 +222,12 @@ pub(super) fn check_loop_detection(
     // verdict is also the healthy-turn early return, so there is exactly
     // one place that decides "is this a loop".
     let (kind, pattern, repeats) = match &verdict {
-        LoopVerdict::NoLoop => return None,
+        // No loop is not the same as no trouble: the stall rung is exactly
+        // the turn the detector above cannot see (#2022).
+        LoopVerdict::NoLoop => {
+            steer_stalled_turn(messages, turn_stall_seconds(&records), events);
+            return None;
+        }
         LoopVerdict::ExactRepeat { tool, count, .. } => {
             ("exact_repeat", vec![tool.clone()], *count)
         }
@@ -357,6 +372,138 @@ fn steer_text(
          checking it differently cannot change it. Instead, {sizing}; then check once. \
          If nothing lets you wait, report what you are blocked on and stop. \
          {consequence}"
+    )
+}
+
+/// The seconds of *pure* `sleep` one turn may ask for before the engine says
+/// something about it (#2022).
+///
+/// The rung this bounds is the one no loop detector can reach. The measured
+/// shape — `sleep 300; echo done` ×3 with a poll between each, 1,089s of a
+/// 900s allowance — trips nothing: exact repeat needs the calls adjacent, the
+/// interleaved rung is suppressed because the polls answer differently and the
+/// window therefore "progresses", and the budget guard is spend-based, so
+/// idling costs $0.
+///
+/// 120s, from the fleet-wide census in that issue rather than from taste: 6 of
+/// 51 trials slept more than 30s, and the distribution splits cleanly — 47s,
+/// 73s and 114s for trials that sleep incidentally, then 307s and 1,089s for
+/// the two that sleep instead of working. A threshold above the first group
+/// and below the second buys the pathological shape and pays nothing for the
+/// ordinary one. It sits deliberately far above `bash`'s own 30s per-call
+/// advisory (`stella_tools::bash`): this is the escalation, not a second copy
+/// of that notice.
+pub(crate) const STALL_STEER_THRESHOLD_SECS: u64 = 120;
+
+/// The opening of the stalled-turn steer, for the warn-once scan below.
+///
+/// A qualifier on `LOOP_STEER_PREFIX`, not a marker of its own. `crate::engine_markers`
+/// is a closed table: a genuinely new marker has to join it, be classified by
+/// `crate::receipts::user_block_kind`, and be taught verbatim by both static
+/// system prompts — real cost, and for nothing here, because a stalled turn is
+/// the same claim the loop steer makes ("this turn is stuck") arrived at by a
+/// different route. Riding the existing prefix means every consumer that
+/// already handles a loop steer — the receipt classifier, the injection-defense
+/// contract, and `super::loop_evidence::turn_start_index`, which must not read
+/// an engine injection as a user turn boundary — handles this one unchanged.
+/// `stall_steer_prefix_extends_the_loop_steer_marker` is what keeps that true.
+pub(crate) const STALL_STEER_PREFIX: &str = "[stuck-loop warning] this turn is stalling";
+
+/// The seconds of pure `sleep` this turn has asked for, summed over every
+/// call in the window.
+///
+/// Reads the calls' own text, so it is *requested* seconds rather than
+/// measured ones — deliberately, and in both directions: a static text-shape
+/// check keeps the same transcript classifying the same way every step (a
+/// timing here would make this rung nondeterministic), and the request is the
+/// thing the model chose and can be steered about. Any call carrying a
+/// `command` string counts, so the shell tool and the shell-shaped custom
+/// tools are covered without `stella-core` learning a tool's name; the
+/// classifier is strict enough (`stella_core::shell_text::bare_sleep_seconds`
+/// answers `None` the moment a segment does real work) that a non-shell tool
+/// would have to carry a `command` field whose entire value is a sleep before
+/// it could contribute.
+///
+/// Saturating, never wrapping: the seconds come from model-authored text, and
+/// `sleep 99999999999999999999` must not be an arithmetic overflow panic
+/// (invariant 5).
+///
+/// The `contains` is a fast path, not a second classifier: this window is
+/// rebuilt on every step and a `bash` command can carry a whole heredoc, so
+/// tokenizing every command every step would be quadratic across a long turn
+/// (the same cost `super::loop_evidence` borrows its records to avoid). A
+/// command with no `sleep` anywhere in its bytes cannot be a bare sleep, so
+/// the scan is exact — it only skips work the tokenizer would have thrown
+/// away.
+fn turn_stall_seconds(records: &[CallRecord<'_>]) -> u64 {
+    records
+        .iter()
+        .filter_map(|record| record.call.input.get("command")?.as_str())
+        .filter(|command| command.contains("sleep"))
+        .filter_map(crate::shell_text::bare_sleep_seconds)
+        .fold(0u64, |total, secs| total.saturating_add(secs))
+}
+
+/// Steer a turn that is sleeping away its allowance — once.
+///
+/// Warn-once is read off the transcript rather than held in
+/// [`LoopSteerBudget`] or `crate::step::TurnState`: a steer the model can see
+/// is the only state this rung needs, and no checkpoint field, wire change or
+/// resume-reconciliation rule has to be invented to carry it. The one
+/// consequence worth naming is that compaction can drop the marker, after
+/// which a still-sleeping turn earns a second warning — which is the right
+/// answer anyway, since the model can no longer see the first.
+///
+/// No abort ladder here, on purpose. A loop detection proves the turn cannot
+/// make progress; a large `sleep` total proves only that the turn chose a
+/// costly way to wait, and killing a turn for that would spend resolve rate on
+/// a shape that is sometimes merely wasteful. Steer, and let the wall-clock
+/// deadline (`crate::budget::BudgetGuard::check_deadline`) be the thing that
+/// ends a turn.
+fn steer_stalled_turn(
+    messages: &mut Vec<CompletionMessage>,
+    stall_secs: u64,
+    events: &EventSender,
+) {
+    if stall_secs < STALL_STEER_THRESHOLD_SECS {
+        return;
+    }
+    if messages
+        .iter()
+        .any(|m| m.role == MessageRole::User && m.content.starts_with(STALL_STEER_PREFIX))
+    {
+        return;
+    }
+    let text = stall_steer_text(stall_secs);
+    let _ = events.send(AgentEvent::Steered { text: text.clone() });
+    messages.push(CompletionMessage::user(text));
+}
+
+/// What the stalled-turn steer says.
+///
+/// It prescribes a bounded polling loop the shell can run unaided, and names
+/// **no** tool the catalog does not carry. That constraint is the scar from
+/// #3555: the sibling `bash` advisory spent months telling the model to use
+/// `read_output`/`wait_for`, deleted in #3244, and an instruction that cannot
+/// be followed teaches the model to discount the next one too. The parked wait
+/// (`crate::waiting`) is the mechanism this shape is a worse version of, but it
+/// is deposited by a *tool*, not requested by the model, and no built-in
+/// deposits one today — so naming it here would repeat that defect exactly.
+///
+/// It also does not say "vary the arguments": #1473 established that the
+/// generic loop steer made a waiting model strictly worse, and blind `sleep`
+/// calls were the behaviour it produced.
+fn stall_steer_text(stall_secs: u64) -> String {
+    format!(
+        "{LOOP_STEER_PREFIX}] this turn is stalling: you have asked for {stall_secs}s of pure \
+         `sleep` in this turn — commands whose entire body is a sleep, doing no other work. A \
+         blind sleep charges the whole interval to the turn whether or not the thing you are \
+         waiting for finished in its first second, and that wall clock is the same one this \
+         task is measured against. If you are waiting on something, poll for the condition \
+         instead of sleeping through it: a bounded retry loop that checks and exits as soon \
+         as the check passes (for example `for i in $(seq 30); do <check> && break; sleep 1; \
+         done`) costs a fraction of a blind wait. If you are not waiting on anything, stop \
+         sleeping and do the work — or report what you are blocked on and stop."
     )
 }
 
@@ -959,6 +1106,252 @@ mod tests {
                     prop_assert_eq!(Some(&warned), budget.warned());
                 }
                 prop_assert!(budget.warned().is_some());
+            }
+        }
+    }
+
+    mod stall {
+        use super::StatusAndBash;
+        use crate::driver::config::EngineConfig;
+        use crate::driver::loop_escalation::{
+            LOOP_STEER_PREFIX, LoopSteerBudget, STALL_STEER_PREFIX, STALL_STEER_THRESHOLD_SECS,
+            check_loop_detection, steer_stalled_turn, turn_stall_seconds,
+        };
+        use crate::driver::loop_evidence::ResultIdentities;
+        use crate::event_sender::EventSender;
+        use crate::loop_detect::CallRecord;
+        use proptest::prelude::*;
+        use std::borrow::Cow;
+        use stella_protocol::tool::{ToolCall, ToolOutput, ToolResult};
+        use stella_protocol::{AgentEvent, CompletionMessage, MessageRole};
+
+        /// One resolved `bash` call and the bytes it produced, as the pair of
+        /// transcript messages the driver would have accumulated.
+        fn call(id: &str, command: &str, output: &str) -> [CompletionMessage; 2] {
+            let mut assistant = CompletionMessage::assistant("");
+            assistant.tool_calls = vec![ToolCall {
+                call_id: id.to_string(),
+                name: "bash".to_string(),
+                input: serde_json::json!({ "command": command }),
+            }];
+            let mut result = CompletionMessage {
+                role: MessageRole::Tool,
+                content: String::new(),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                attachments: Vec::new(),
+            };
+            result.tool_results = vec![ToolResult {
+                call_id: id.to_string(),
+                output: ToolOutput::ok(output),
+            }];
+            [assistant, result]
+        }
+
+        /// A window of `bash` calls, as [`CallRecord`]s — the shape
+        /// [`turn_stall_seconds`] reads, without a transcript around it.
+        fn records(commands: &[&str]) -> Vec<CallRecord<'static>> {
+            commands
+                .iter()
+                .enumerate()
+                .map(|(i, command)| CallRecord {
+                    call: Cow::Owned(ToolCall {
+                        call_id: format!("c{i}"),
+                        name: "bash".to_string(),
+                        input: serde_json::json!({ "command": command }),
+                    }),
+                    output: Some(Cow::Owned(ToolOutput::ok("done"))),
+                    identity: None,
+                })
+                .collect()
+        }
+
+        /// #2022's witness, in the shape the trace recorded: three
+        /// `sleep 300; echo done` calls with a poll between each, 900s of a
+        /// 900s allowance spent waiting.
+        ///
+        /// Every loop rung is silent on it *correctly*, which is why nothing
+        /// caught it for months — exact repeat needs the sleeps adjacent and
+        /// they are not; the interleaved rung counts all three but is
+        /// suppressed because the polls answer differently, so the window
+        /// reads as progressing; stagnation needs one tool's output to stop
+        /// changing and the polls' does not; and the budget guard is
+        /// spend-based, so none of this costs a cent. The turn is steered
+        /// anyway.
+        #[test]
+        fn a_turn_that_sleeps_away_its_budget_is_steered_though_no_loop_fires() {
+            let mut messages = vec![
+                CompletionMessage::system("sys"),
+                CompletionMessage::user("optimize the portfolio"),
+            ];
+            messages.extend(call("c1", "sleep 300; echo done", "done"));
+            messages.extend(call("c2", "tail -n 5 build.log", "line A"));
+            messages.extend(call("c3", "sleep 300; echo done", "done"));
+            messages.extend(call("c4", "tail -n 5 build.log", "line B"));
+            messages.extend(call("c5", "sleep 300; echo done", "done"));
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let events = EventSender::new(tx);
+            let outcome = check_loop_detection(
+                &EngineConfig::default(),
+                &StatusAndBash,
+                &mut messages,
+                &ResultIdentities::default(),
+                &mut LoopSteerBudget::default(),
+                0.0,
+                &events,
+            );
+
+            assert!(outcome.is_none(), "a stalled turn is steered, never killed");
+            let drained: Vec<AgentEvent> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+            assert!(
+                !drained
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::LoopDetected { .. })),
+                "no loop rung fires on this window — that is the whole point: {drained:?}"
+            );
+
+            let steer = messages
+                .last()
+                .expect("the transcript is not empty")
+                .clone();
+            assert_eq!(steer.role, MessageRole::User);
+            assert!(
+                steer.content.starts_with(STALL_STEER_PREFIX),
+                "the turn must carry the stalled-turn steer: {:?}",
+                steer.content
+            );
+            assert!(
+                steer.content.contains("900s"),
+                "the steer names what the turn asked for: {:?}",
+                steer.content
+            );
+            assert!(
+                drained
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::Steered { text } if text == &steer.content)),
+                "the steer is on the transcript AND on the wire: {drained:?}"
+            );
+
+            // Warn once: a second pass over the same (still stalling) window
+            // adds nothing, because the marker it would add is already there.
+            let before = messages.len();
+            let outcome = check_loop_detection(
+                &EngineConfig::default(),
+                &StatusAndBash,
+                &mut messages,
+                &ResultIdentities::default(),
+                &mut LoopSteerBudget::default(),
+                0.0,
+                &events,
+            );
+            assert!(outcome.is_none());
+            assert_eq!(messages.len(), before, "the stalled turn is steered once");
+        }
+
+        /// The steer rides `LOOP_STEER_PREFIX` rather than minting a marker of
+        /// its own, which is what lets every existing consumer — the receipt
+        /// classifier, the prompt's injection-defense contract, and the turn
+        /// boundary scan that must not read an engine injection as a user turn
+        /// — handle it unchanged. If these ever come apart, a stalled turn's
+        /// steer starts reading as the user speaking.
+        #[test]
+        fn stall_steer_prefix_extends_the_loop_steer_marker() {
+            assert!(
+                STALL_STEER_PREFIX.starts_with(LOOP_STEER_PREFIX),
+                "{STALL_STEER_PREFIX:?} must extend {LOOP_STEER_PREFIX:?}"
+            );
+            assert!(crate::engine_markers::ENGINE_MARKERS.contains(&LOOP_STEER_PREFIX));
+        }
+
+        /// The remedy has to be one the agent can actually perform. The
+        /// sibling `bash` advisory spent months naming `read_output` /
+        /// `wait_for` / `start_process`, deleted in #3244 (#3555) — and the
+        /// parked wait, which this shape really is a worse version of, is
+        /// deposited by a tool and cannot be asked for by the model at all.
+        #[test]
+        fn the_stall_steer_names_no_instrument_the_model_cannot_reach() {
+            let text = super::super::stall_steer_text(900);
+            assert!(text.contains("poll"), "{text}");
+            for gone in [
+                "read_output",
+                "wait_for",
+                "start_process",
+                "parked wait",
+                "vary the arguments",
+            ] {
+                assert!(
+                    !text.contains(gone),
+                    "the steer names `{gone}`, which the model cannot reach: {text}"
+                );
+            }
+        }
+
+        /// The threshold is a turn-level escalation, not a second copy of
+        /// `bash`'s 30s per-call advisory.
+        #[test]
+        fn a_turn_under_the_threshold_is_left_alone() {
+            let quiet = records(&["sleep 60", "cargo test"]);
+            let secs = turn_stall_seconds(&quiet);
+            assert_eq!(secs, 60, "only the bare sleep counts, not the test run");
+            assert!(secs < STALL_STEER_THRESHOLD_SECS);
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let events = EventSender::new(tx);
+            let mut messages = vec![CompletionMessage::user("build it")];
+            steer_stalled_turn(&mut messages, secs, &events);
+            assert_eq!(
+                messages.len(),
+                1,
+                "60s is `bash`'s per-call advisory territory, not the turn rung's"
+            );
+            assert!(
+                rx.try_recv().is_err(),
+                "and nothing goes on the wire either"
+            );
+        }
+
+        /// Model-authored seconds are runtime data: an absurd request
+        /// saturates rather than overflowing (invariant 5).
+        #[test]
+        fn an_absurd_sleep_request_saturates() {
+            let absurd = records(&["sleep 99999999999999999999", "sleep 99999999999999999999"]);
+            assert_eq!(turn_stall_seconds(&absurd), u64::MAX);
+        }
+
+        proptest! {
+            /// The expensive direction. A sleep beside real work is an
+            /// ordinary retry backoff, and however long the backoff or however
+            /// many of them a turn makes, it can never earn a stall steer —
+            /// clamping or scolding a legitimate retry loop breaks real tasks,
+            /// which is why the classifier is biased toward silence.
+            #[test]
+            fn a_sleep_beside_real_work_never_stalls_a_turn(
+                secs in proptest::collection::vec(1u64..600, 1..12),
+                work in proptest::collection::vec(
+                    proptest::sample::select(vec![
+                        "curl -sf http://localhost:8080/health",
+                        "cargo test -p stella-core",
+                        "tail -n 20 build.log",
+                        "git status --porcelain",
+                    ]),
+                    1..12,
+                ),
+            ) {
+                let commands: Vec<String> = secs
+                    .iter()
+                    .zip(work.iter().cycle())
+                    .enumerate()
+                    .map(|(i, (s, cmd))| {
+                        if i % 2 == 0 {
+                            format!("sleep {s} && {cmd}")
+                        } else {
+                            format!("{cmd}; sleep {s}")
+                        }
+                    })
+                    .collect();
+                let borrowed: Vec<&str> = commands.iter().map(String::as_str).collect();
+                prop_assert_eq!(turn_stall_seconds(&records(&borrowed)), 0);
             }
         }
     }

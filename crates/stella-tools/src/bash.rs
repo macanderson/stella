@@ -68,6 +68,7 @@ use crate::registry::Tool;
 
 mod words;
 
+use stella_core::shell_text::bare_sleep_seconds;
 use words::{cd_escape_target, is_operator_word, shell_words};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -484,54 +485,22 @@ fn drift_advisory(command: &str, root: &Path) -> Option<String> {
     None
 }
 
-/// A bare `sleep` blocking the whole trial budget goes undetected today:
-/// loop detection sees other calls between the sleeps, so the
-/// interleaved-repeat rung reads the window as progressing, and the budget
-/// guard is spend-based, so idling costs $0. (The shape #2022 observed
-/// interleaved `read_output` polls; that tool is gone, but any interleaved
-/// call produces the same blind spot, so the reasoning is unchanged.) #2022's first step is honest
-/// visibility, not a refusal — a static text-shape check on the command, not
-/// a measured elapsed time, so it stays deterministic for the loop detector
-/// (never embed a timing here; see `stella-tool-timings-must-not-ride-tooloutput`).
+/// The per-call half of #2022: a bare `sleep` long enough to be worth naming
+/// in the result the model reads.
 ///
-/// Only a *bare* sleep is worth naming: `sleep 2 && curl` retry backoffs are
-/// ordinary and must stay unflagged, so this requires every segment of the
-/// command to be `sleep N` or an inert no-op (`echo`, `printf`, `true`) —
-/// anything else (a real command sharing the line) disqualifies the whole
-/// command, matching the observed pathological shape (`sleep 300; echo
-/// done`) rather than a compound one that happens to contain a sleep.
+/// Deliberately the cheap rung, and deliberately low — 30s catches the shape
+/// on the very call that made it, before any accumulation. What it cannot see
+/// is the *turn*: loop detection reads interleaved calls as progress and the
+/// budget guard is spend-based, so idling costs $0. That blind spot is the
+/// engine's to close, over the seconds a whole turn has asked for
+/// (`stella_core`'s stall rung, `driver::loop_escalation`), and this advisory
+/// is not it.
+///
+/// Honest visibility, not a refusal, on either rung: a static text-shape check
+/// on the command ([`bare_sleep_seconds`]), never a measured elapsed time, so
+/// it stays deterministic for the loop detector (never embed a timing here;
+/// see `stella-tool-timings-must-not-ride-tooloutput`).
 const SLEEP_ADVISORY_THRESHOLD_SECS: u64 = 30;
-
-/// The accumulated seconds a *bare* sleep command blocks for, or `None` if
-/// any segment does real work beyond sleeping and a harmless no-op.
-fn bare_sleep_seconds(command: &str) -> Option<u64> {
-    let words = shell_words(command);
-    let mut segments: Vec<&[String]> = Vec::new();
-    let mut start = 0;
-    for (i, w) in words.iter().enumerate() {
-        if is_operator_word(w) {
-            segments.push(&words[start..i]);
-            start = i + 1;
-        }
-    }
-    segments.push(&words[start..]);
-
-    let mut total_secs = 0u64;
-    let mut saw_sleep = false;
-    for segment in &segments {
-        match segment {
-            [] => {}
-            [cmd, arg] if cmd == "sleep" => {
-                let secs = arg.parse::<f64>().ok()?;
-                total_secs += secs.round() as u64;
-                saw_sleep = true;
-            }
-            [cmd, ..] if matches!(cmd.as_str(), "echo" | "printf" | "true") => {}
-            _ => return None,
-        }
-    }
-    saw_sleep.then_some(total_secs)
-}
 
 /// A footer naming a bare `sleep` that crossed the advisory threshold, and a
 /// remedy the agent can actually perform.

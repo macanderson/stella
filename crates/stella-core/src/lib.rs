@@ -42,6 +42,7 @@ pub mod rules;
 pub mod scoreboard;
 pub mod search;
 pub mod self_tuning;
+pub mod shell_text;
 pub mod skills;
 pub(crate) mod speculation;
 pub mod starvation;

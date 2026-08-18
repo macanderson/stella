@@ -141,6 +141,7 @@ lib.rs), never as a planning assumption.
 | [`src/compaction.rs`](src/compaction.rs) | `compact()` — dedup, supersession, aging, eviction. Open when the conversation is being rewritten wrongly. |
 | [`src/estimator.rs`](src/estimator.rs) | Conservative token estimate plus `Calibration`/`CalibrationMap`, the per-model drift correction fed by reported usage. |
 | [`src/loop_detect.rs`](src/loop_detect.rs) | `detect_loop()` — exact repeats and short cycles over `CallRecord`s. |
+| [`src/shell_text.rs`](src/shell_text.rs) | Reading a shell command as *text*: the quote-aware `shell_words` splitter, `is_operator_word`, and `bare_sleep_seconds` — the stall classifier the `bash` advisory and the engine's stall rung ([`src/driver/loop_escalation.rs`](src/driver/loop_escalation.rs)) share, so one operator list serves both (#2022). |
 | [`src/retry.rs`](src/retry.rs) | `RetryPolicy`, backoff computation, `retry_with_backoff*`, and the `Sleeper` port. |
 | [`src/starvation.rs`](src/starvation.rs) | Reasoning-starvation arithmetic: output-contract headroom, the empty-`length` signature, and the retry cap. Shared by `stella-pipeline`'s management chokepoint and `stella-cli`'s standalone-call chokepoint, because one copy is what makes a fix reach both (#2128, #2174). |
 | [`src/repair.rs`](src/repair.rs) | `plan_repair()` — whether a verdict that refuted the model's success claim earns another attempt, bounded by an explicit cap and by the budget/wall-clock headroom the caller measured. |
