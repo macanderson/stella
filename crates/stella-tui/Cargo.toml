@@ -19,6 +19,10 @@ stella-diag = { path = "../stella-diag" }
 # policy, so the deck, the plain surface, the Observatory and an export all
 # elide one edit identically. Also a dependency-free leaf, so no cycle.
 stella-diff = { path = "../stella-diff" }
+# The shared transcript model + character-grid renderer (#3578). This crate
+# owns the fold from `AgentEvent` into `stella_transcript::Run`, because
+# stella-transcript is a near-leaf that must not learn about the protocol.
+stella-transcript = { path = "../stella-transcript" }
 arboard.workspace = true
 png.workspace = true
 serde_json.workspace = true
