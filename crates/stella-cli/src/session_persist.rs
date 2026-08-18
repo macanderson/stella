@@ -514,6 +514,42 @@ pub fn load_resume(
     })
 }
 
+/// Whether a session's driver/persona default is the staged pipeline ("on"),
+/// given whether it has any prior journal history and its last explicit
+/// `Pipeline` record, if any (#3381 audit finding 2).
+///
+/// Three cases, in order:
+/// - An explicit record always wins — a previous session (or this one, via
+///   `/pipeline`) already decided.
+/// - No record, but `has_prior_records` is true: this session predates the
+///   #3381 default flip (or simply never toggled) and the staged pipeline
+///   WAS the only default when it last ran, so resuming it must restore ON —
+///   silently swapping a session's persona out from under it on a mere
+///   resume, with no user action and no record, is exactly the invariant #7
+///   breach a byte-stable prompt exists to prevent.
+/// - No record and no prior history at all: a genuinely fresh session starts
+///   under today's default, OFF.
+///
+/// One function so both call sites in `command_deck.rs` — the persona choice
+/// at session start and the SESSIONS-overlay resume-switch — derive the same
+/// answer from the same rule rather than each encoding it inline.
+pub(crate) fn derive_pipeline_persona(
+    has_prior_records: bool,
+    pipeline_record: Option<bool>,
+) -> bool {
+    pipeline_record.unwrap_or(has_prior_records)
+}
+
+/// [`derive_pipeline_persona`] applied directly to a session's loaded
+/// [`ResumeState`] (`None` for a session with no resume state at all — a
+/// brand-new session, which has no prior records by construction).
+pub(crate) fn initial_pipeline_persona(resume_state: Option<&ResumeState>) -> bool {
+    derive_pipeline_persona(
+        resume_state.is_some_and(|rs| !rs.records.is_empty()),
+        resume_state.and_then(|rs| rs.pipeline),
+    )
+}
+
 /// Replay a loaded journal straight into the deck (bypassing the tee — a
 /// replay must never re-journal itself, or every resume would double the
 /// file). The caller replays BEFORE its first live send so ordering is the

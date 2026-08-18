@@ -653,7 +653,7 @@ pub(crate) enum Command {
         /// plan → witness → execute → verify); omitted, the raw step-loop
         /// runs with nothing over it (the default since #3381). A named
         /// plugin variant is refused today — wrapper plugins run only on
-        /// `stella run --pipeline <variant>` (#3684 tracks driving them
+        /// `stella run --pipeline <variant>` (#3695 tracks driving them
         /// through a judged round).
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
@@ -852,7 +852,7 @@ pub(crate) enum Command {
         /// witness, execute, verify); omitted, the raw step-loop runs with
         /// nothing over it (the default since #3381). A named plugin variant
         /// is refused today — wrapper plugins run only on `stella run
-        /// --pipeline <variant>` (#3684 tracks driving them through a fleet
+        /// --pipeline <variant>` (#3695 tracks driving them through a fleet
         /// worker).
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,

@@ -351,6 +351,26 @@ fn supervision(globals: &cli::GlobalArgs) -> daemon::detach::Posture {
     )
 }
 
+/// Print `--no-pipeline`'s deprecation notice, if owed, once — from whichever
+/// process actually goes on to run the turn.
+///
+/// The one mechanism [`wrapper_plugin::no_pipeline_deprecation_notice`]'s doc
+/// asks every supervising door to share: call this *after* the
+/// `posture.supervises()` early-return, never before it. An `Attached`/
+/// `Detached` launch re-execs the same argv into a supervised child, which
+/// reaches this exact call site again in its own process — its own posture
+/// never supervises (the recursion backstop) — so printing here rather than
+/// before the re-exec means exactly one process ever calls it: the child
+/// under supervision, or this same process when there is no child at all.
+/// Printing before the early-return double-printed the line for every
+/// `Attached` launch, because `Supervised::follow` then relays the child's
+/// own copy back over the same stream the parent already wrote to.
+fn print_no_pipeline_notice_if_owed(no_pipeline: bool) {
+    if let Some(notice) = wrapper_plugin::no_pipeline_deprecation_notice(no_pipeline) {
+        eprintln!("⚠ {notice}");
+    }
+}
+
 /// The registry title for a supervised run: the same
 /// `<workspace>: <prompt…>` shape a session announces for itself, so a run
 /// reads identically in `stella daemon list` and in the deck's SESSIONS view.
@@ -1042,9 +1062,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             require_verified,
             output_format,
         } => {
-            if let Some(notice) = wrapper_plugin::no_pipeline_deprecation_notice(no_pipeline) {
-                eprintln!("⚠ {notice}");
-            }
+            let pipeline_choice =
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
+            // A verification flag with nowhere to land is refused before the
+            // prompt is even resolved, not silently dropped after a paid call
+            // starts (#3696).
+            wrapper_plugin::reject_verification_flags_without_pipeline(
+                pipeline_choice,
+                test_command.as_deref(),
+                keep_witness,
+                require_verified,
+            )?;
             let prompt = prompt_source::resolve(
                 prompt,
                 std::io::stdin().is_terminal(),
@@ -1063,6 +1091,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     output_format,
                 ).map_err(failure::CliFailure::from);
             }
+            print_no_pipeline_notice_if_owed(no_pipeline);
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_one_shot(
@@ -1070,7 +1099,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &prompt,
                     cli.globals.spend_limit,
                     output_format,
-                    wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref()),
+                    pipeline_choice,
                     test_command.as_deref(),
                     keep_witness,
                     require_verified,
@@ -1105,9 +1134,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             no_pipeline,
             pipeline,
         } => {
-            if let Some(notice) = wrapper_plugin::no_pipeline_deprecation_notice(no_pipeline) {
-                eprintln!("⚠ {notice}");
-            }
             let pipeline_choice =
                 wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
             wrapper_plugin::reject_plugin_variant_for_door("goal", pipeline_choice)?;
@@ -1129,6 +1155,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     OutputFormat::Text,
                 ).map_err(failure::CliFailure::from);
             }
+            print_no_pipeline_notice_if_owed(no_pipeline);
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, pipeline_choice),
@@ -1154,9 +1181,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             task_timeout,
             output_format,
         } => {
-            if let Some(notice) = wrapper_plugin::no_pipeline_deprecation_notice(no_pipeline) {
-                eprintln!("⚠ {notice}");
-            }
             let pipeline_choice =
                 wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
             wrapper_plugin::reject_plugin_variant_for_door("fleet", pipeline_choice)?;
@@ -1177,6 +1201,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     output_format,
                 ).map_err(failure::CliFailure::from);
             }
+            print_no_pipeline_notice_if_owed(no_pipeline);
             signals::block_on_interruptible(
                 rt()?,
                 fleet_cmd::run_fleet(
