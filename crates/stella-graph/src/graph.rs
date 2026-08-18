@@ -337,27 +337,25 @@ impl CodeGraph {
         outcome.map(Some)
     }
 
-    /// Test seam: take the walk lease and hold it, standing in for another
-    /// process mid-pass. `None` when it is already held.
+    /// Take the single-flight lease for `purpose` (#3650), or `None` when
+    /// another pass already holds it and this caller should stand down.
     ///
-    /// Hidden from docs: test-facing only, `pub` so integration tests in
-    /// `tests/` can reach it — the same shape as
-    /// [`watch_pipeline_for_tests`](Self::watch_pipeline_for_tests). A real
-    /// caller has no business taking this lease without doing the work it
-    /// covers.
-    #[doc(hidden)]
-    pub fn hold_walk_lease_for_tests(&self) -> Option<lease::Lease> {
+    /// The caller must [`release_lease`](Self::release_lease) when it is
+    /// done — including on the failure path, since a lease left behind stalls
+    /// the next pass for the whole TTL. Callers that own a pass end to end
+    /// should prefer [`index_all_single_flight`](Self::index_all_single_flight),
+    /// which handles both sides; this pair exists for a pass whose work lives
+    /// in another crate, like the embedding passes in `stella-tools`.
+    pub fn acquire_lease(&self, purpose: lease::Purpose) -> Option<lease::Lease> {
         let conn = self.inner.write_guard();
-        match lease::acquire(&conn, lease::Purpose::IndexWalk) {
+        match lease::acquire(&conn, purpose) {
             lease::Acquired::Held(lease) => Some(lease),
             lease::Acquired::Busy => None,
         }
     }
 
-    /// Test seam: release a lease taken by
-    /// [`hold_walk_lease_for_tests`](Self::hold_walk_lease_for_tests).
-    #[doc(hidden)]
-    pub fn release_lease_for_tests(&self, lease: &lease::Lease) {
+    /// Give up a lease taken by [`acquire_lease`](Self::acquire_lease).
+    pub fn release_lease(&self, lease: &lease::Lease) {
         let conn = self.inner.write_guard();
         lease::release(&conn, lease);
     }

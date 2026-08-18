@@ -484,6 +484,47 @@ impl Drop for SessionGraph {
 /// stderr or the deck transcript, never to a machine-readable stdout);
 /// `on_ready` fires once after the build (the deck refreshes its Graph tab
 /// there; other callers pass a no-op).
+/// Session-start vector top-up (#3649), reporting only what a user can act on.
+///
+/// Deliberately quieter than `stella init`'s pass. Init is where a workspace
+/// is *configured*, so naming an absent embedder there is help; naming it on
+/// every session start is nagging about a capability the user has already
+/// chosen not to use. So an unconfigured or not-opted-in workspace says
+/// nothing at all, and only a pass that actually embedded something — or
+/// failed while trying — is worth a line.
+/// `status` keeps its `Send` bound deliberately: this runs inside the
+/// `tokio::spawn`ed session task, and a bare `&mut dyn FnMut(String)` would
+/// make the whole future non-`Send` — the same trap `drive_index_blocking`
+/// documents two functions up.
+async fn refresh_recent_vectors_quietly(
+    root: &std::path::Path,
+    status: &mut (dyn FnMut(String) + Send),
+) {
+    use crate::search_cmd::semantic::{RefreshOutcome, WarmOutcome, refresh_recent_vectors};
+
+    let stella_embed::Resolution::Configured(embedder) =
+        stella_embed::resolve(&stella_embed::EmbedderEnv::from_process())
+    else {
+        return;
+    };
+    match refresh_recent_vectors(root, embedder.as_ref(), stella_graph::MAX_FILES_PER_PASS).await {
+        RefreshOutcome::Refreshed(WarmOutcome::Warmed { embedded, .. }) if embedded > 0 => {
+            status(format!(
+                "· semantic index: {embedded} changed file(s) re-embedded"
+            ));
+        }
+        RefreshOutcome::Refreshed(WarmOutcome::Failed { reason, .. }) => {
+            status(format!(
+                "! semantic index: refresh stopped — {reason} (search still ranks over the \
+                 vectors already stored)"
+            ));
+        }
+        // Nothing changed, no vectors to maintain, or another pass has it.
+        // None of the three is news.
+        _ => {}
+    }
+}
+
 pub(crate) fn spawn_session_graph(
     workspace_root: &std::path::Path,
     mut status: Box<dyn FnMut(InitLine) + Send>,
@@ -513,7 +554,20 @@ pub(crate) fn spawn_session_graph(
             ))),
         }
         on_ready();
-        // 2) Arm the live watcher on a mounted graph kept alive for the
+        // 2) Top up semantic vectors for whatever changed (#3649). The index
+        //    pass above has just stamped every changed file's `indexed_at`,
+        //    and `vectors::pending` orders on exactly that, so one bounded
+        //    pass here covers the commit or merge this session started after.
+        //    Without it the ordering has nothing pulling it: a session that
+        //    merges and then never runs a semantic search leaves those files
+        //    unembedded indefinitely.
+        //
+        //    After `on_ready` on purpose — this must never delay the first
+        //    turn. It is opt-in (a workspace with no vectors is left alone),
+        //    single-flight, and bounded; every one of those is checked inside
+        //    `refresh_recent_vectors`.
+        refresh_recent_vectors_quietly(&root, &mut status).await;
+        // 3) Arm the live watcher on a mounted graph kept alive for the
         //    session. Best-effort: a mount failure only loses live refresh, it
         //    never loses the index built in step 1.
         let db_path = crate::search_cmd::codegraph::graph_db_path(&root);

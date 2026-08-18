@@ -33,7 +33,7 @@ fn a_walk_yields_to_a_pass_already_in_progress() {
     let graph = open(&ws);
 
     let held = graph
-        .hold_walk_lease_for_tests()
+        .acquire_lease(stella_graph::lease::Purpose::IndexWalk)
         .expect("the lease is free on a fresh store");
 
     assert_eq!(
@@ -49,7 +49,7 @@ fn a_walk_yields_to_a_pass_already_in_progress() {
     );
 
     // Once the other pass finishes, the next walk proceeds normally.
-    graph.release_lease_for_tests(&held);
+    graph.release_lease(&held);
     let stats = graph
         .index_all_single_flight()
         .expect("no store error")
@@ -66,7 +66,7 @@ fn an_explicit_index_all_ignores_the_lease() {
     let ws = workspace();
     let graph = open(&ws);
     let _held = graph
-        .hold_walk_lease_for_tests()
+        .acquire_lease(stella_graph::lease::Purpose::IndexWalk)
         .expect("the lease is free on a fresh store");
 
     let stats = graph.index_all().expect("an explicit pass always runs");
