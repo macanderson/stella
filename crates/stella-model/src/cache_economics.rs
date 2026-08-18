@@ -269,16 +269,43 @@ pub fn hit_rate(input_tokens: u64, cached_input_tokens: u64) -> f64 {
 /// the same provider's `anthropic/*` routes reported 10.9M writes over the
 /// same period. Reading the first as a missing marker put "likely a bug" on a
 /// route that was caching 89% of its input.
+/// Bedrock is the same shape one vendor over: its `cachePoint` blocks are
+/// gated to the model families that support them, so a Converse call to any
+/// other family carries no marker **by design** and can never report a write.
+/// The parity matrix already says so — "gated to supporting model families" —
+/// and this is that sentence made executable.
 #[must_use]
 pub fn route_cache_is_opt_in(provider: &str, model: &str) -> bool {
-    if provider == "openrouter" {
+    match provider {
         // The upstream vendor owns the posture; only Anthropic routes opt in.
         // An unrecognized upstream is treated as implicit — i.e. no claim —
-        // for the same reason the token floor above rounds down.
-        return model.starts_with("anthropic/");
+        // the same conservative direction the prompt floor below takes.
+        "openrouter" => model.starts_with("anthropic/"),
+        // Bedrock namespaces its families in the model id (`anthropic.claude-…`,
+        // `zai.glm-4.7`); only the Claude families get cachePoints.
+        "bedrock" => model.starts_with("anthropic.") || model.contains("claude"),
+        _ => matches!(cache_posture(provider), Some(CachePosture::OptIn { .. })),
     }
-    matches!(cache_posture(provider), Some(CachePosture::OptIn { .. }))
 }
+
+/// The smallest prompt an opt-in cache will store. Below it the provider
+/// caches nothing however correct the marker is, so zero traffic says nothing
+/// about whether the marker engaged — which is the whole content of
+/// [`CacheCause::OptInNeverEngaged`].
+///
+/// Anthropic's documented floor is 1024 tokens (2048 on the smallest models);
+/// this takes the lower of the two, because the constant only ever *withholds*
+/// a claim — being wrong low costs a diagnosis that was already uncertain,
+/// being wrong high restores a false positive.
+///
+/// Witnessed on the opt-in routes in a real store, bucketed by **full prompt**
+/// ([`CacheRoute::largest_prompt_tokens`] — see there for why that is not
+/// `input_tokens`): of 1274 calls at or over the floor, 1240 wrote; of 29
+/// calls under it, **zero** wrote and zero read. Measuring `input_tokens`
+/// alone instead put a 4543-token prompt in the "under 1024" bucket — it
+/// reported `input_tokens: 2` and 4541 write tokens — and that single
+/// mis-bucketed row was enough to make this floor look refuted.
+pub const MIN_CACHEABLE_PROMPT_TOKENS: u64 = 1024;
 
 /// The route a diagnosis is about, plus the one size fact it needs. Grouped
 /// rather than passed as three more positional arguments to two functions:
@@ -292,6 +319,17 @@ pub struct CacheRoute<'a> {
     /// route, which is what decides the cache posture
     /// ([`route_cache_is_opt_in`]).
     pub model: &'a str,
+    /// The largest **full prompt** the session presented to this route:
+    /// `input_tokens + cache_write_tokens` for the single largest call, not
+    /// the running sum and not `input_tokens` alone.
+    ///
+    /// Both corrections are load-bearing. Caching is decided per call against
+    /// [`MIN_CACHEABLE_PROMPT_TOKENS`], so summing a hundred small calls would
+    /// claim they should have cached; and the Anthropic family reports cache
+    /// *writes* outside `input_tokens`, so a large first call arrives here as
+    /// a tiny `input_tokens` beside a large `cache_write_tokens` and reads as
+    /// sub-floor unless the two are added back together.
+    pub largest_prompt_tokens: u64,
 }
 
 /// Name the probable cause of a low cache hit rate, or `None` when there is
@@ -302,13 +340,15 @@ pub struct CacheRoute<'a> {
 /// have *established* a cache to hit (`turns > MIN_TURNS`) and the hit rate is
 /// genuinely under `threshold`. The discriminator between the two opt-in
 /// failure modes is **cache traffic**, not the hit rate:
-///  - opt-in route that over the turns wrote nothing *and read nothing* →
-///    the marker never reached the wire ([`CacheCause::OptInNeverEngaged`]);
-///  - otherwise (any traffic at all, or an implicit-cache route) a low hit
-///    rate is the prefix being rewritten or expiring between turns
-///    ([`CacheCause::PrefixInstability`]).
+///  - opt-in route that over the turns wrote nothing *and read nothing*,
+///    having presented a prompt big enough to cache → the marker never
+///    reached the wire ([`CacheCause::OptInNeverEngaged`]);
+///  - otherwise (any traffic at all, an implicit-cache route, or nothing over
+///    the cacheable floor) a low hit rate is the prefix being rewritten or
+///    expiring between turns ([`CacheCause::PrefixInstability`]).
 ///
-/// Both halves of "no traffic" are required — see the inline note at the
+/// All three conditions are required, and each was added after the missing
+/// one produced a confident wrong answer — see the inline notes at the
 /// discriminator.
 ///
 /// This token-only form cannot see wall-clock gaps, so it never returns
@@ -337,7 +377,8 @@ pub fn diagnose_cache(
     }
 
     let is_opt_in = route_cache_is_opt_in(route.provider, route.model);
-    if is_opt_in && cache_write_tokens == 0 && cached_input_tokens == 0 {
+    let could_have_cached = route.largest_prompt_tokens >= MIN_CACHEABLE_PROMPT_TOKENS;
+    if is_opt_in && could_have_cached && cache_write_tokens == 0 && cached_input_tokens == 0 {
         // The provider caches nothing without an explicit marker, nothing was
         // ever written, AND nothing was ever read — the opt-in never engaged.
         //
@@ -362,8 +403,11 @@ pub fn diagnose_cache(
         // ([`route_cache_is_opt_in`]) — it was true forever on a route whose
         // gateway reports no writes at all, and the deck told its reader the
         // marker was missing and every token billing at the full input rate,
-        // of a route with a lifetime 89% hit rate. Evidence that cannot
-        // distinguish a claim from its opposite is not evidence for either.
+        // of a route with a lifetime 89% hit rate. Nor does it say anything
+        // about a session that never presented a prompt the provider would
+        // store ([`MIN_CACHEABLE_PROMPT_TOKENS`]), where zero traffic is what
+        // a CORRECTLY sent marker produces. Evidence that cannot distinguish
+        // a claim from its opposite is not evidence for either.
         return Some(CacheCause::OptInNeverEngaged);
     }
     Some(CacheCause::PrefixInstability)
@@ -620,6 +664,7 @@ mod tests {
         CacheRoute {
             provider,
             model: "a-model",
+            largest_prompt_tokens: 40_000,
         }
     }
 
@@ -727,6 +772,7 @@ mod tests {
         let kimi = CacheRoute {
             provider: "openrouter",
             model: "moonshotai/kimi-k3",
+            largest_prompt_tokens: 40_000,
         };
         assert_eq!(
             diagnose_cache(kimi, 6, 120_000, 0, 0, 0.20),
@@ -740,6 +786,7 @@ mod tests {
         let claude = CacheRoute {
             provider: "openrouter",
             model: "anthropic/claude-sonnet-5",
+            largest_prompt_tokens: 40_000,
         };
         assert_eq!(
             diagnose_cache(claude, 6, 120_000, 0, 0, 0.20),
@@ -756,6 +803,44 @@ mod tests {
         // A direct vendor's own posture is untouched by the gateway rule.
         assert!(route_cache_is_opt_in("anthropic", "claude-sonnet-5"));
         assert!(!route_cache_is_opt_in("zai", "glm-5.2"));
+        // Bedrock is the same shape: cachePoints are gated to the Claude
+        // families, so a Converse call to any other one carries no marker BY
+        // DESIGN and can never report a write. Two `bedrock` / `zai.glm-4.7`
+        // calls in a real store confirm it: 1742 and 1699 tokens, no writes.
+        assert!(route_cache_is_opt_in(
+            "bedrock",
+            "anthropic.claude-sonnet-5-v1:0"
+        ));
+        assert!(!route_cache_is_opt_in("bedrock", "zai.glm-4.7"));
+    }
+
+    #[test]
+    fn a_session_under_the_cacheable_floor_cannot_witness_a_missing_marker() {
+        // Nothing this small is stored by any opt-in cache, so zero traffic is
+        // exactly what a CORRECTLY sent marker produces — the strong claim is
+        // not available. Witnessed on the opt-in routes of a real store: 29
+        // calls under the floor, zero writes and zero reads between them.
+        let young = CacheRoute {
+            provider: "anthropic",
+            model: "claude-sonnet-5",
+            largest_prompt_tokens: MIN_CACHEABLE_PROMPT_TOKENS - 1,
+        };
+        assert_eq!(
+            diagnose_cache(young, 6, 6_600, 0, 0, 0.20),
+            Some(CacheCause::PrefixInstability),
+        );
+
+        // One call at the floor restores it: something cacheable was
+        // presented and an opt-in route reported no traffic at all. Of 1274
+        // such calls in that same store, 1240 wrote.
+        let cacheable = CacheRoute {
+            largest_prompt_tokens: MIN_CACHEABLE_PROMPT_TOKENS,
+            ..young
+        };
+        assert_eq!(
+            diagnose_cache(cacheable, 6, 6_600, 0, 0, 0.20),
+            Some(CacheCause::OptInNeverEngaged)
+        );
     }
 
     #[test]

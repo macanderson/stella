@@ -139,6 +139,14 @@ pub struct AgentEntry {
     /// `turns` a low-hit-rate diagnosis needs enough of before a 0% hit rate
     /// is meaningful (turn 1 always writes, never reads).
     pub cache_call_count: u64,
+    /// The largest **full prompt** this agent has presented —
+    /// `input_tokens + cache_write_tokens` of one call, maximized over the
+    /// session. Below the cacheable floor an opt-in provider stores nothing,
+    /// so zero cache traffic is what a CORRECTLY sent marker produces and
+    /// [`Self::cache_diagnosis`] must not read it as a missing one. Mirrors
+    /// `stella_model::cache_economics::CacheRoute::largest_prompt_tokens`,
+    /// which carries the reasoning for both corrections.
+    pub largest_prompt_tokens: u64,
     /// Wall-clock ms of the agent's most recent metered model call (a
     /// `StepUsage`) — the anchor the cache-warmth countdown measures idle from.
     /// `None` before any call has landed.
@@ -247,6 +255,7 @@ impl AgentEntry {
             cache_ttl_secs: 0,
             cache_is_opt_in_provider: false,
             cache_call_count: 0,
+            largest_prompt_tokens: 0,
             last_provider_call_ms: None,
             max_idle_gap_secs: 0,
             context_tokens: 0,
@@ -689,6 +698,7 @@ impl WorkspaceModel {
                     entry.cache_ttl_secs = 0;
                     entry.cache_is_opt_in_provider = false;
                     entry.cache_call_count = 0;
+                    entry.largest_prompt_tokens = 0;
                     entry.last_provider_call_ms = None;
                     entry.max_idle_gap_secs = 0;
                     entry.context_tokens = 0;
@@ -823,6 +833,14 @@ impl WorkspaceModel {
                     entry.cache_read_tokens += cached_input_tokens;
                     entry.cache_write_tokens += cache_write_tokens;
                     entry.cache_call_count += 1;
+                    // The FULL prompt of this call — writes are reported
+                    // outside `input_tokens` on the Anthropic family, so a
+                    // large first call arrives as a tiny input beside a large
+                    // write. Maximized, never summed: the cacheable floor is a
+                    // per-call question. See `cache_diagnosis`.
+                    entry.largest_prompt_tokens = entry
+                        .largest_prompt_tokens
+                        .max(input_tokens + cache_write_tokens);
                     // A metered call just landed — fold the idle it closes
                     // (the gap the diagnosis reads), then anchor the
                     // cache-warmth countdown here (the prefix is warmest

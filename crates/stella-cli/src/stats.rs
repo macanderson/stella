@@ -72,7 +72,7 @@ use crate::usage_cmd::parse_age_window;
 /// hit) a row earns a diagnosis line — matches
 /// `stella_model::cache_economics::diagnose_cache`'s own "~20%" acceptance
 /// bar.
-const LOW_HIT_RATE_THRESHOLD: f64 = 0.20;
+pub(crate) const LOW_HIT_RATE_THRESHOLD: f64 = 0.20;
 
 /// Subcommands under `stella stats`. Bare `stella stats` (no subcommand) is
 /// still the report — this only adds verbs that *write*.
@@ -276,6 +276,7 @@ fn session_diagnosis_lines(
                 CacheRoute {
                     provider: &s.provider,
                     model: &s.model,
+                    largest_prompt_tokens: s.largest_prompt_tokens.max(0) as u64,
                 },
                 s.turns.max(0) as u64,
                 s.input_tokens.max(0) as u64,
@@ -988,6 +989,11 @@ mod tests {
             provider: provider.into(),
             model: "a-model".into(),
             input_tokens: input,
+            // Over the cacheable floor: every case here is about the traffic
+            // counts, and a sub-floor prompt would (correctly) withhold the
+            // diagnosis before they were read — the case
+            // `a_sub_floor_session_earns_no_marker_claim` varies.
+            largest_prompt_tokens: 40_000,
             cache_read_tokens: cache_read,
             cache_write_tokens: cache_write,
         }
@@ -1005,6 +1011,22 @@ mod tests {
         assert!(
             lines[0].contains("cache opt-in never engaged"),
             "{}",
+            lines[0]
+        );
+    }
+
+    #[test]
+    fn a_sub_floor_session_earns_no_marker_claim() {
+        // `stella stats` reads the same shape the deck banner did: many turns,
+        // 0% hit, no traffic — but nothing the provider would have stored. The
+        // honest answer is the weaker one.
+        let mut small = trend_row("s-small", "anthropic", 6, 6_600, 0, 0);
+        small.largest_prompt_tokens = 900;
+        let lines = session_diagnosis_lines(&[small], &HashMap::new());
+        assert_eq!(lines.len(), 1);
+        assert!(
+            !lines[0].contains("cache opt-in never engaged"),
+            "a sub-floor session cannot witness a missing marker: {}",
             lines[0]
         );
     }

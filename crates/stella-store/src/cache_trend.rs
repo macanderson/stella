@@ -39,6 +39,14 @@ pub struct SessionCacheTrendRow {
     /// the diagnosis cannot resolve it from the provider alone.
     pub model: String,
     pub input_tokens: i64,
+    /// The largest single call's **full prompt** in the session —
+    /// `input_tokens + cache_write_tokens` for one telemetry row, maximized
+    /// over the session, never summed. The cache floor is a per-call
+    /// question, and the Anthropic family reports writes outside
+    /// `input_tokens`, so neither the sum nor `input_tokens` alone answers
+    /// it. Policy (what the floor *is*) stays in `stella-model`; this is the
+    /// fact it needs.
+    pub largest_prompt_tokens: i64,
     pub cache_read_tokens: i64,
     pub cache_write_tokens: i64,
 }
@@ -68,6 +76,8 @@ impl Store {
                        WHERE ex.session_id = e.session_id
                        ORDER BY ex.id ASC LIMIT 1) AS model,
                     CAST(coalesce(sum(t.input_tokens), 0) AS INTEGER) AS input_tokens,
+                    CAST(coalesce(max(t.largest_prompt_tokens), 0) AS INTEGER)
+                      AS largest_prompt_tokens,
                     CAST(coalesce(sum(t.cache_read_tokens), 0) AS INTEGER) AS cache_read_tokens,
                     CAST(coalesce(sum(t.cache_write_tokens), 0) AS INTEGER) AS cache_write_tokens,
                     min(e.id) AS first_id
@@ -75,6 +85,7 @@ impl Store {
              LEFT JOIN (
                SELECT execution_id,
                       sum(input_tokens) AS input_tokens,
+                      max(input_tokens + cache_write_tokens) AS largest_prompt_tokens,
                       sum(cache_read_tokens) AS cache_read_tokens,
                       sum(cache_write_tokens) AS cache_write_tokens
                FROM telemetry
@@ -92,8 +103,9 @@ impl Store {
                 provider: row.get(3)?,
                 model: row.get(4)?,
                 input_tokens: row.get(5)?,
-                cache_read_tokens: row.get(6)?,
-                cache_write_tokens: row.get(7)?,
+                largest_prompt_tokens: row.get(6)?,
+                cache_read_tokens: row.get(7)?,
+                cache_write_tokens: row.get(8)?,
             })
         })?;
         let mut out = Vec::new();
@@ -126,6 +138,43 @@ mod tests {
             tool_calls: 0,
             usage_complete: true,
         }
+    }
+
+    #[test]
+    fn largest_prompt_is_one_calls_input_plus_its_writes_never_a_sum() {
+        // Both halves of this matter to the cache-floor question upstream, and
+        // both were got wrong once. A hundred small calls must not add up to a
+        // large prompt (the floor is per call), and a call reporting a tiny
+        // `input_tokens` beside a large `cache_write_tokens` IS a large
+        // prompt — the Anthropic family reports writes outside the input
+        // count, which is how a 4543-token prompt reads as 2 tokens.
+        let store = Store::in_memory().unwrap();
+        let e1 = store
+            .begin_execution("run", "p", "anthropic", "claude")
+            .unwrap();
+        store.set_execution_session(e1, "s").unwrap();
+        // Three ordinary small calls: input 1_000 each (the helper's shape).
+        for step in 0..3 {
+            let mut call = telemetry(0, 0);
+            call.step = step;
+            store.record_telemetry(e1, &call).unwrap();
+        }
+        // One call whose prompt lives almost entirely in the write column.
+        let mut mostly_written = telemetry(0, 4_541);
+        mostly_written.step = 3;
+        mostly_written.input_tokens = 2;
+        store.record_telemetry(e1, &mostly_written).unwrap();
+
+        let rows = store.session_cache_trend().unwrap();
+        let row = rows.iter().find(|r| r.session_id == "s").unwrap();
+        assert_eq!(
+            row.largest_prompt_tokens, 4_543,
+            "the full prompt of the single largest call: 2 input + 4541 written"
+        );
+        assert!(
+            row.largest_prompt_tokens < row.input_tokens + row.cache_write_tokens,
+            "and it is a maximum, not the session's summed traffic"
+        );
     }
 
     #[test]

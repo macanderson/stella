@@ -24,6 +24,14 @@ use crate::theme;
 /// `stella stats`.
 pub const LOW_HIT_RATE_THRESHOLD: f64 = 0.20;
 
+/// The smallest prompt an opt-in cache stores — mirrors
+/// `stella_model::cache_economics::MIN_CACHEABLE_PROMPT_TOKENS`, which carries
+/// the evidence. Duplicated for the same reason the threshold above is: the
+/// deck cannot link the model-tier crate. The two must move together, and
+/// `stella-cli` (which links both) holds them to it in
+/// `the_decks_copies_of_the_diagnosis_constants_match_the_model_tiers`.
+pub const MIN_CACHEABLE_PROMPT_TOKENS: u64 = 1024;
+
 impl AgentEntry {
     /// Seconds of prompt-cache warmth remaining: how long until this agent's
     /// cached prefix expires, from its provider TTL minus the idle since the
@@ -78,7 +86,13 @@ impl AgentEntry {
         // printed beside it is worse than silence: it sends the reader
         // hunting for a defect that is not there, and teaches them to
         // disregard the next one.
+        //
+        // And nothing under the cacheable floor is stored by any opt-in
+        // provider, so zero traffic there is what a CORRECTLY sent marker
+        // produces — the reading that put this banner under a live session
+        // whose route was caching 89% of its input.
         if self.cache_is_opt_in_provider
+            && self.largest_prompt_tokens >= MIN_CACHEABLE_PROMPT_TOKENS
             && self.cache_write_tokens == 0
             && self.cache_read_tokens == 0
         {
@@ -238,7 +252,79 @@ mod tests {
         a.cache_write_tokens = cache_write_tokens;
         a.cache_call_count = cache_call_count;
         a.cache_is_opt_in_provider = is_opt_in;
+        // Comfortably cacheable unless a case says otherwise — every legacy
+        // case here is about the traffic counts, and a sub-floor prompt
+        // (correctly) withholds the marker claim before they are read.
+        a.largest_prompt_tokens = 40_000;
         m.agents.remove(0)
+    }
+
+    #[test]
+    fn a_sub_floor_fan_out_is_not_accused_of_a_missing_marker() {
+        // The reported session, replayed: seven calls, none of whose prompts
+        // any opt-in cache would store, zero reads and zero writes. That is
+        // what a CORRECTLY sent marker produces at this size, so the banner
+        // must not claim the marker was missing.
+        let mut small = entry(7_000, 0, 0, 7, true);
+        small.largest_prompt_tokens = 1_000;
+        assert_eq!(
+            small.cache_diagnosis(0.20),
+            Some(CacheCause::PrefixInstability)
+        );
+
+        // The same session once one call clears the floor: an opt-in route
+        // that stored nothing is a marker that never engaged.
+        let mut cacheable = entry(7_000, 0, 0, 7, true);
+        cacheable.largest_prompt_tokens = MIN_CACHEABLE_PROMPT_TOKENS;
+        assert_eq!(
+            cacheable.cache_diagnosis(0.20),
+            Some(CacheCause::OptInNeverEngaged)
+        );
+    }
+
+    #[test]
+    fn the_fold_takes_the_largest_full_prompt_not_the_running_sum() {
+        // Writes ride outside `input_tokens` on the Anthropic family, so the
+        // fold must add them back per call — and must maximize, since the
+        // floor is a per-call question. Three 1000-token calls are not a
+        // 3000-token prompt.
+        let mut m = WorkspaceModel::new();
+        m.apply_inbound(&crate::envelope::Inbound::Register(
+            crate::envelope::AgentMeta::new("lead", "goal", 0),
+        ));
+        let step = |input: u64, write: u64| crate::envelope::Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::StepUsage {
+                upstream_provider: None,
+                reasoning_tokens: None,
+                output_text: None,
+                step: 1,
+                role: stella_protocol::event::ModelCallRole::Worker,
+                provider: "anthropic".into(),
+                model: "claude-sonnet-5".into(),
+                input_tokens: input,
+                output_tokens: 0,
+                cached_input_tokens: 0,
+                cache_write_tokens: write,
+                estimated_input_tokens: 0,
+                cost_usd: 0.0,
+                duration_ms: 1,
+                retries: 0,
+                tool_calls: 0,
+                complete: true,
+                finish_reason: None,
+            },
+        };
+        m.apply_inbound(&step(1_000, 0));
+        m.apply_inbound(&step(1_000, 0));
+        m.apply_inbound(&step(1_000, 0));
+        assert_eq!(
+            m.agents[0].largest_prompt_tokens, 1_000,
+            "maximum, not the 3000-token sum"
+        );
+        // One call reporting almost its whole prompt in the write column.
+        m.apply_inbound(&step(2, 4_541));
+        assert_eq!(m.agents[0].largest_prompt_tokens, 4_543);
     }
 
     #[test]
@@ -397,6 +483,10 @@ mod tests {
             a.tokens_in = 40_000;
             a.cache_call_count = 5;
             a.cache_is_opt_in_provider = true;
+            // A prompt the provider would have stored — without it the honest
+            // answer is the weaker `PrefixInstability`, and this row is about
+            // the marker claim specifically.
+            a.largest_prompt_tokens = 40_000;
         }
         let ui = DeckUi::default();
         // Three rows: the label/value pair, then the earned diagnosis — the
