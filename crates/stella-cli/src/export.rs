@@ -486,9 +486,9 @@ fn render_dashboard(
 
      The palette used to be interpolated from `stella_tui::theme`, which was
      right when the export's only sibling was the terminal. It is wrong now:
-     the TUI palette is gold-chromed by design (ACCENT == BRAND == #FFB81A,
-     and gold there marks a Running state), while a web instrument's chrome
-     must not carry a hue at all. Generating from the terminal guaranteed the
+     the TUI palette is accent-chromed by design (ACCENT == BRAND == Ion
+     #00D1F9, and that hue marks a Running state), while a web instrument's
+     chrome must not carry a hue at all. Generating from the terminal guaranteed the
      export matched the one surface it should no longer match. The parity
      test replaces that guarantee with the correct one.
 
@@ -499,8 +499,8 @@ fn render_dashboard(
                                hue, so a series survives greyscale printing,
                                colour-vision deficiency and a projector.
        --identity              the wordmark and at most one primary action.
-                               Never a state: --identity #C58A32 against
-                               --warn #C9A227 is 1.23:1, so a reader cannot
+                               Never a state: --identity #00D1F9 against
+                               --warn #D9A62E is 1.23:1, so a reader cannot
                                tell them apart by hue.
        --accent                what is selected. It IS the text colour, so
                                "active" is an ink/paper inversion rather than
@@ -510,19 +510,19 @@ fn render_dashboard(
      verdicts; the old block painted cost in --warn, which told every reader
      that spending money was a fault condition. */
   :root {{
-    --void: #060606; --ground: #0A0A0A; --surface: #0F0F0F; --raised: #111111;
-    --hairline: #1F1F1F; --hairline-strong: #2E2E2E;
-    --identity: #C58A32; --identity-ink: #0B0B0C;
-    --text: #EDEDED; --text-2: #A1A1A1; --text-3: #6E6E6E;
-    --ok: #4CC38A; --warn: #C9A227; --bad: #E5715F;
-    --c1: #EDEDED; --c2: #A1A1A1; --c3: #6E6E6E; --c4: #4A4A4A;
-    --neutral-mark: #4A4A4A;
-    --ink: #0A0A0A;
-    --accent: #EDEDED;
-    --accent-wash: rgba(237,237,237,.08);
-    --accent-edge: rgba(237,237,237,.38);
-    --sunken: #151515;
-    --control-edge: #6E6E6E;
+    --void: #010306; --ground: #070B10; --surface: #0D1319; --raised: #11171D;
+    --hairline: #1F262D; --hairline-strong: #333B43;
+    --identity: #00D1F9; --identity-ink: #070B10;
+    --text: #E9EDF2; --text-2: #A4ABB3; --text-3: #737C88;
+    --ok: #3FD99B; --warn: #D9A62E; --bad: #F2687A;
+    --c1: #E9EDF2; --c2: #A4ABB3; --c3: #737C88; --c4: #4A535D;
+    --neutral-mark: #4A535D;
+    --ink: #070B10;
+    --accent: #E9EDF2;
+    --accent-wash: rgba(233,237,242,.08);
+    --accent-edge: rgba(233,237,242,.38);
+    --sunken: #0B1116;
+    --control-edge: #737C88;
 
     /* One face. The product lives in a terminal, so the brand speaks in
        monospace — and this artifact is a measurement, where a proportional
@@ -562,12 +562,12 @@ fn render_dashboard(
      black page on a white desktop.
 
      Contrast, computed against WCAG 2.1 relative luminance, worst case on
-     --surface (#FAFAFA):
+     --surface (#F7F9FC):
 
        --text 18.97:1  --text-2 7.49:1  --text-3 3.10:1
        --ok 5.91:1     --warn 5.99:1    --bad 6.74:1    --identity 8.33:1
 
-     and dark against --raised (#111111):
+     and dark against --raised (#11171D):
 
        --text 16.13:1  --text-2 7.31:1  --text-3 3.70:1
        --ok 8.52:1     --warn 7.81:1    --bad 6.17:1    --identity 6.34:1
@@ -584,36 +584,36 @@ fn render_dashboard(
   @media (prefers-color-scheme: light) {{
     :root:not([data-theme="dark"]) {{
       color-scheme: light;
-      --void: #F0F0F0; --ground: #FFFFFF; --surface: #FAFAFA; --raised: #FFFFFF;
-      --hairline: #EAEAEA; --hairline-strong: #D4D4D4;
-      --identity: #674415; --identity-ink: #FFFFFF;
-      --text: #0A0A0A; --text-2: #525252; --text-3: #8F8F8F;
-      --ok: #11703A; --warn: #7A5C00; --bad: #A32F1F;
-      --c1: #0A0A0A; --c2: #525252; --c3: #8F8F8F; --c4: #C4C4C4;
-      --neutral-mark: #C4C4C4;
+      --void: #E9EDF2; --ground: #FFFFFF; --surface: #F7F9FC; --raised: #FFFFFF;
+      --hairline: #E7EBF0; --hairline-strong: #CFD6DD;
+      --identity: #00778F; --identity-ink: #FFFFFF;
+      --text: #070B10; --text-2: #4D535A; --text-3: #828C97;
+      --ok: #0B6B3D; --warn: #7A5200; --bad: #A82036;
+      --c1: #070B10; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
+      --neutral-mark: #C2C9D1;
       --ink: #FFFFFF;
-      --accent: #0A0A0A;
-      --accent-wash: rgba(10,10,10,.06);
-      --accent-edge: rgba(10,10,10,.28);
-      --sunken: #F6F6F6;
-      --control-edge: #8F8F8F;
+      --accent: #070B10;
+      --accent-wash: rgba(7,11,16,.06);
+      --accent-edge: rgba(7,11,16,.28);
+      --sunken: #F3F6F9;
+      --control-edge: #828C97;
     }}
   }}
   :root[data-theme="light"] {{
     color-scheme: light;
-    --void: #F0F0F0; --ground: #FFFFFF; --surface: #FAFAFA; --raised: #FFFFFF;
-    --hairline: #EAEAEA; --hairline-strong: #D4D4D4;
-    --identity: #674415; --identity-ink: #FFFFFF;
-    --text: #0A0A0A; --text-2: #525252; --text-3: #8F8F8F;
-    --ok: #11703A; --warn: #7A5C00; --bad: #A32F1F;
-    --c1: #0A0A0A; --c2: #525252; --c3: #8F8F8F; --c4: #C4C4C4;
-    --neutral-mark: #C4C4C4;
+    --void: #E9EDF2; --ground: #FFFFFF; --surface: #F7F9FC; --raised: #FFFFFF;
+    --hairline: #E7EBF0; --hairline-strong: #CFD6DD;
+    --identity: #00778F; --identity-ink: #FFFFFF;
+    --text: #070B10; --text-2: #4D535A; --text-3: #828C97;
+    --ok: #0B6B3D; --warn: #7A5200; --bad: #A82036;
+    --c1: #070B10; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
+    --neutral-mark: #C2C9D1;
     --ink: #FFFFFF;
-    --accent: #0A0A0A;
-    --accent-wash: rgba(10,10,10,.06);
-    --accent-edge: rgba(10,10,10,.28);
-    --sunken: #F6F6F6;
-    --control-edge: #8F8F8F;
+    --accent: #070B10;
+    --accent-wash: rgba(7,11,16,.06);
+    --accent-edge: rgba(7,11,16,.28);
+    --sunken: #F3F6F9;
+    --control-edge: #828C97;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   html {{ color-scheme: dark; }}
@@ -791,9 +791,9 @@ fn render_dashboard(
   @media print {{
     :root {{
       --ground: #FFFFFF; --surface: #FFFFFF; --raised: #FFFFFF; --sunken: #FFFFFF;
-      --hairline: #D4D4D4; --hairline-strong: #8F8F8F;
-      --text: #0A0A0A; --text-2: #333333; --text-3: #555555;
-      --accent: #0A0A0A; --ink: #FFFFFF; --identity: #674415;
+      --hairline: #CFD6DD; --hairline-strong: #828C97;
+      --text: #070B10; --text-2: #333333; --text-3: #555555;
+      --accent: #070B10; --ink: #FFFFFF; --identity: #00778F;
       --accent-wash: transparent;
     }}
     body {{ padding: 0; }}

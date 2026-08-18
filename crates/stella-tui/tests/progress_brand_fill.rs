@@ -7,9 +7,9 @@
 //! painted fill cell carries the brand accent, which pins the fill to whatever
 //! `theme::BRAND_STOPS` currently is rather than to a hue this file names.
 //!
-//! Deliberately *not* a hue predicate. The previous version asserted `r > b`
-//! ("gold is warm"), and inverting that by hand on every recolour is exactly
-//! how an assertion drifts away from the palette it is meant to guard. The
+//! Deliberately *not* a hue predicate. An earlier version asserted `r > b`
+//! ("gold is warm") — a predicate the ion recolour would have inverted, which
+//! is exactly how an assertion drifts away from the palette it guards. The
 //! gradient interpolates between the two brand stops, so a fill cell is
 //! correct iff it lies on the segment between them.
 
@@ -94,7 +94,8 @@ fn progress_bar_fill_rides_the_brand_gradient() {
         //
         // Both are read off `BRAND_STOPS`, so the next recolour re-derives them
         // instead of needing this file edited. That is the whole point: the
-        // version this replaced hardcoded "gold is warm, so r > b", which would
+        // version this replaced hardcoded "gold is warm, so r > b", which the
+        // ion recolour would
         // have had to be inverted by hand — and an assertion maintained by hand
         // against a palette is one that eventually disagrees with it.
         for (got, lo, chan) in [

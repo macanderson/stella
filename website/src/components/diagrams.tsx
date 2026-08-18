@@ -865,7 +865,7 @@ export function SingleThreadDiagram() {
       <Wire d="M66 124 L232 150" arrow={false} />
       <Wire d="M128 150 L294 124" arrow={false} />
       <Wire d="M66 124 L294 124" arrow={false} />
-      {/* seam-coloured, not gold: the accent belongs to the panel on the right */}
+      {/* seam-coloured, not the accent: the accent belongs to the panel on the right */}
       <circle className="sdg-dot-muted" cx={180} cy={68} r={5} />
       <circle className="sdg-dot-muted" cx={66} cy={124} r={5} />
       <circle className="sdg-dot-muted" cx={128} cy={150} r={5} />
