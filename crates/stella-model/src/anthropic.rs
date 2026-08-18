@@ -10,12 +10,15 @@ use stella_protocol::{
     MessageRole, ProviderError, ToolCall,
 };
 
+mod context_edit;
+
 use crate::cache_economics::CacheTtl;
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
 use crate::provider::{Provider, ToolCallObserver};
 use crate::sse::SseDecoder;
+use context_edit::{CONTEXT_MANAGEMENT_BETA, ContextManagement};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -38,6 +41,13 @@ pub struct AnthropicProvider {
     /// pipeline's management roles). Contention is one pointer write per
     /// request.
     previous_tail: std::sync::Mutex<Option<TailPosition>>,
+    /// The session's context-editing policy, or `None` to send no
+    /// `context_management` and behave exactly as before the feature existed.
+    ///
+    /// Session-scoped like `cache_ttl`, and for the same reason: the field is
+    /// part of the request prefix the cache is keyed on, so changing it
+    /// mid-session would pay a re-write for a prefix the next turn cannot use.
+    context_management: Option<ContextManagement>,
     /// The prompt-cache window this session asks for (#1839): the default
     /// 5-minute window sends today's exact bytes; the 1-hour opt-in adds
     /// `ttl: "1h"` to every breakpoint plus the [`EXTENDED_CACHE_TTL_BETA`]
@@ -69,7 +79,33 @@ impl AnthropicProvider {
             pricing,
             previous_tail: std::sync::Mutex::new(None),
             cache_ttl: CacheTtl::default(),
+            // Off by default. Context editing trades prompt cache for context
+            // room, and a session that never outgrows its window would pay the
+            // invalidation and get nothing; the caller who knows the shape of
+            // its conversation opts in.
+            context_management: None,
         }
+    }
+
+    /// Opt this session into server-side context editing.
+    ///
+    /// `trigger_tokens` is the input size below which nothing is cleared —
+    /// the floor that keeps short conversations fully cached and therefore the
+    /// reason enabling this cannot make them more expensive. `thinking_turns`
+    /// is `None` to keep every thinking block (cache-optimal, and what a
+    /// current model does anyway) or `Some(n)` to keep only the last `n` and
+    /// accept the cache invalidation in exchange for the room.
+    ///
+    /// Session-scoped by construction: the policy is part of the request
+    /// prefix the cache is keyed on, so it must not change mid-session.
+    #[must_use]
+    pub fn with_context_editing(
+        mut self,
+        trigger_tokens: u32,
+        thinking_turns: Option<u32>,
+    ) -> Self {
+        self.context_management = Some(ContextManagement::new(trigger_tokens, thinking_turns));
+        self
     }
 
     /// Override the base URL — used by conformance tests against a mock
@@ -137,6 +173,13 @@ struct AnthropicRequest<'a> {
     /// legacy models, which reject the field. See [`AnthropicOutputConfig`].
     #[serde(skip_serializing_if = "Option::is_none")]
     output_config: Option<AnthropicOutputConfig>,
+    /// Server-side context editing — clearing stale thinking blocks and tool
+    /// results before the model reads them. Omitted unless the session opted
+    /// in, because clearing invalidates the prompt cache from the point of the
+    /// edit and a session that never grows past the trigger would pay that
+    /// invalidation for nothing. See [`context_edit`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_management: Option<ContextManagement>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<AnthropicToolSchema>,
 }
@@ -930,6 +973,7 @@ impl AnthropicProvider {
             top_k,
             thinking,
             output_config,
+            context_management: self.context_management.clone(),
             tools: req
                 .tools
                 .iter()
@@ -947,11 +991,22 @@ impl AnthropicProvider {
             .header("x-api-key", self.api_key.reveal())
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json");
-        // The `ttl` field is beta-gated; the header rides only when a marker
-        // actually carries the field, so default-window requests keep today's
-        // exact header set.
+        // Beta flags are accumulated into ONE comma-joined `anthropic-beta`
+        // header rather than several headers, and each rides only when the
+        // request actually carries the field it gates — so a session using
+        // neither feature sends byte-identical headers to before either
+        // existed, which is what keeps the prompt-cache prefix stable.
+        let mut betas: Vec<&str> = Vec::new();
+        // The `ttl` field is beta-gated; it rides only when a marker actually
+        // carries the field.
         if self.cache_ttl == CacheTtl::OneHour {
-            request = request.header("anthropic-beta", EXTENDED_CACHE_TTL_BETA);
+            betas.push(EXTENDED_CACHE_TTL_BETA);
+        }
+        if body.context_management.is_some() {
+            betas.push(CONTEXT_MANAGEMENT_BETA);
+        }
+        if !betas.is_empty() {
+            request = request.header("anthropic-beta", betas.join(","));
         }
         let response = request
             .json(&body)

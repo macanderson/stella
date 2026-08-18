@@ -126,7 +126,7 @@ tests with them.
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate's flat re-export surface, and the statement of the one-directional wire-compatibility rule. Read it first. |
-| [`src/event.rs`](src/event.rs) | `AgentEvent` and its supporting types — the stream-json vocabulary, 34 wire variants plus the tagless `Unknown` fallback. Open it to add or change anything a renderer, the journal, or a receipt consumes. |
+| [`src/event.rs`](src/event.rs) | `AgentEvent` and its supporting types — the stream-json vocabulary: every wire variant plus the tagless `Unknown` fallback. Open it to add or change anything a renderer, the journal, or a receipt consumes. |
 | [`src/journal.rs`](src/journal.rs) | `StampedEvent` / `stamped_line` — one *line* of the event stream: an `AgentEvent` plus the optional wall-clock `ts` its sink stamps at the write boundary (#2111). Deliberately not a field of the enum: a stamp is a fact about a write, the same event reaches more than one sink, and this crate owns no clock. |
 | [`src/context_event.rs`](src/context_event.rs) | `LifecycleEventEnvelope` / `LifecycleEvent` — the *other* event channel, the one an older binary can still read. Open it when a new event must survive replay by an older reader. |
 | [`src/completion.rs`](src/completion.rs) | `CompletionRequest` / `CompletionResult` / `CompletionUsage`, `GenerationParams`, `FinishReason`. The one envelope every provider adapter translates to and from. |
@@ -347,7 +347,7 @@ knob, it also needs a row in `crates/stella-model/src/provider_parity.rs`.
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions"
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies"
   (invariants 1 and 4), and the "Glossary" table, which disambiguates
   `turn_instance` / `(step, call_seq)` from the store's `execution_id` and the
   fleet's `run_id`.

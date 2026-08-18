@@ -99,6 +99,7 @@ const SHARED_CONTRACTS: &[(&str, &str)] = &[
     ),
     ("faithful_reporting", faithful_reporting!()),
     ("complexity_discipline", complexity_discipline!()),
+    ("hypothesis_falsification", hypothesis_falsification!()),
     ("action_care", action_care!()),
     ("injection_defense", injection_defense!()),
 ];
@@ -557,6 +558,79 @@ fn both_prompts_name_the_sanctioned_scratch_space_and_still_forbid_the_workspace
         assert!(
             prompt.contains(shared),
             "{label} does not embed the shared tool-steering block verbatim"
+        );
+    }
+}
+
+/// Witness for the investigation-economy gap (#3687). `tool_steering!` already
+/// led with `search`, and that was necessary without being sufficient: in
+/// session `ses-1787071651715-48158` the turn's one `search` call hit the
+/// 200-row rank ceiling and the model abandoned the tool for 66 straight
+/// `bash`/`read_file` calls, twelve of them grepping two files it had already
+/// read end to end. Both clauses pinned separately, in the established
+/// `both_prompts_*` shape.
+#[test]
+fn both_prompts_teach_search_recovery_and_forbid_re_reading() {
+    let shared = tool_steering!();
+    for claim in [
+        // A ceiling is a verdict on the QUERY, not on the tool — the clause
+        // that keeps one disappointing result from costing the whole turn.
+        "means your query was too broad, not that search failed",
+        // The bytes are already in context; grepping them again buys nothing.
+        "Never grep or sed a file you already read in full this turn",
+        // The escape hatch, so the rule cannot be read as "never look again":
+        // re-anchoring on a range is still allowed.
+        "read_file offset and limit only if you need to re-anchor",
+    ] {
+        assert!(
+            shared.contains(claim),
+            "the shared literal must keep the search-economy claim {claim:?} — \
+             without it a rank ceiling reads as a broken tool and a read file \
+             gets grepped again anyway (#3687)"
+        );
+    }
+    for (label, prompt) in STATIC_PROMPTS {
+        assert!(
+            prompt.contains(shared),
+            "{label} does not embed the shared tool-steering block verbatim"
+        );
+    }
+}
+
+/// Witness for the missing investigation rung (#3693). The pipeline
+/// methodology ladder covers ORIENT → REPRODUCE → LOCALIZE → MINIMAL FIX →
+/// VERIFY, every rung of which presumes a *known* defect being *fixed*; an
+/// investigative prompt ("find a problem with…") has no failing test to run
+/// and no bug to reproduce, so it fell through into unstructured source
+/// reading — 87 steps and $3.77 to rediscover what 278 passing tests already
+/// said. Each clause pinned separately so a trim cannot reduce this to the
+/// change-shaped half it already had.
+#[test]
+fn both_prompts_make_the_test_suite_the_first_instrument() {
+    let shared = hypothesis_falsification!();
+    for claim in [
+        // The rung the ladder lacked: investigation runs the suite EARLY,
+        // because a pass is evidence against the hypothesis.
+        "find, diagnose, or assess rather than to change",
+        "evidence against your hypothesis",
+        // The change-shaped half, stated as ordering rather than as a PR
+        // submission requirement: the test exists before the edit does.
+        "write the failing test before the edit and watch it fail",
+        // The load-bearing sentence — completion is observed, not argued.
+        "let the test decide you are done",
+        "reasoning about whether the work is complete is not a substitute",
+    ] {
+        assert!(
+            shared.contains(claim),
+            "the shared literal must keep the falsification claim {claim:?} — \
+             without it an investigative prompt has no cheap first move and \
+             reads source until it runs out of budget (#3693)"
+        );
+    }
+    for (label, prompt) in STATIC_PROMPTS {
+        assert!(
+            prompt.contains(shared),
+            "{label} does not embed the shared falsification block verbatim"
         );
     }
 }

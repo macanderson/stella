@@ -181,7 +181,7 @@ lib.rs), never as a planning assumption.
 ## Key concepts
 
 **The step loop is a fixed phase sequence.** `run_turn`
-([`src/driver.rs:673`](src/driver.rs)) iterates up to `EngineConfig::max_steps`,
+([`src/driver.rs:618`](src/driver.rs)) iterates up to `EngineConfig::max_steps`,
 and each step runs the same phases in the same order: pause gate → drain
 steering / check soft stop → budget check → snapshot tool-result identities →
 compaction pass → loop detection → model call (wrapped in retry+backoff) →
@@ -229,7 +229,7 @@ its I/O behind generation.
 speculation pump. A mutating tool call runs *outside* the retried closure, after
 a model call has already succeeded, so a retried step structurally cannot
 re-execute it — proved by `retry_never_re_executes_a_tool_call`
-([`src/driver/tests.rs:1194`](src/driver/tests.rs)), which counts real executions
+([`src/driver/tests.rs:1618`](src/driver/tests.rs)), which counts real executions
 against a flaky scripted provider. Read-only calls carry no such guarantee: they
 run inside the retried closure and inside speculation, so one can execute several
 times in a step. Do not assume a `read_only` tool with an observable side channel
@@ -247,7 +247,7 @@ anything else is discarded and reported as an
 (#370).
 
 **Compaction's four mechanisms pull in opposite directions on purpose.**
-`compact()` ([`src/compaction.rs:203`](src/compaction.rs)) applies, least-lossy
+`compact()` ([`src/compaction.rs:356`](src/compaction.rs)) applies, least-lossy
 first: dedup of byte-identical tool outputs, supersession of re-run calls, aging
 (middle-out truncation of old large outputs), then eviction. Dedup keeps the
 **earliest** copy — byte-identical content is position-independent, so stubbing
@@ -261,7 +261,7 @@ system message and the latest user message are never touched.
 - **Two unrelated things are called `HookEvent`.** `hooks::HookEvent` is the
   settings-declared shell-hook lifecycle enum; `bus::HookEvent` is the
   extension-bus envelope. Only the first is re-exported at the crate root; the
-  second stays module-qualified on purpose ([`src/lib.rs:41`](src/lib.rs)).
+  second stays module-qualified on purpose ([`src/lib.rs:59`](src/lib.rs)).
 - **Loop detection ignores `ToolCall::call_id`.** `ToolCall` derives `PartialEq`
   over all fields including the id, which providers mint fresh per call — using
   derived equality here would mean the detector silently never fires.
@@ -351,7 +351,7 @@ built the mid-tool abort this crate exists to prevent.
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions"
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies"
   (invariants 1, 2 and 6 are this crate's contract) and "Testing approach".
 - [`../stella-protocol`](../stella-protocol) — `Provider`, `AgentEvent`,
   `CompletionMessage`, `ToolCall`/`ToolOutput`. [`../stella-tools`](../stella-tools)

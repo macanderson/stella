@@ -19,8 +19,9 @@
 //!
 //! ## The two renderers
 //!
-//! [`html`] emits the jet-black web surface; [`grid`] emits a character grid for
-//! the TUI. They share [`model`], [`fold`], [`digest`], [`file_diff`] and
+//! [`html`] emits the jet-black web surface; [`grid`] emits a character grid in
+//! the same shape a TUI needs, though nothing in the shipping TUI reads it yet.
+//! They share [`model`], [`fold`], [`digest`], [`file_diff`] and
 //! [`word`] — which is the point. The previous arrangement had the Observatory
 //! re-implementing the TUI's renderer in JavaScript, and that copy had silently
 //! drifted to the point of having no diff rendering at all.

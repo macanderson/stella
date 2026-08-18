@@ -9,7 +9,7 @@ name: wire-schema
 # (a job-level prose filter since #1892; a trigger-level `paths-ignore` before
 # that), so a pull request that touches *only* `docs/wire/` never runs it.
 # Nothing else covered the
-# gap: docs-guards.yml is deliberately toolchain-free (four shell/python guards,
+# gap: docs-guards.yml is deliberately toolchain-free (shell and python guards only,
 # five-minute timeout) and adding a Rust build to it would cost every prose PR a
 # toolchain it has no use for.
 #

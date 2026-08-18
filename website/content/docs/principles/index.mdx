@@ -44,8 +44,10 @@ You can see the rule everywhere in the product:
     fails before the change and passes after — plus the zero-diff guard and a
     400-line diff budget.
 
-    **Model, as fallback:** the verifier is consulted only when the deterministic
-    evidence is unavailable or inconclusive.
+    **Model, as fallback:** none. The ladder is terminal at every rung — when
+    the evidence does not add up it reports `Unverified`, not a guess. (Goal
+    mode's standing verifier is a different mechanism: it runs every round,
+    unconditionally, never as an inconclusive-evidence fallback.)
   </SpecCard>
   <SpecCard title="What proves the change?">
     **Mechanism:** the [witness stage](/docs/inference-pipeline) replays the

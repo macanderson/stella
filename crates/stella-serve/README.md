@@ -18,9 +18,12 @@ not depend on `stella-store`.
 
 ## Where it sits
 
-It depends on exactly two workspace crates — [`stella-protocol`](../stella-protocol)
-for the wire types and [`stella-core`](../stella-core) for the engine — and
-**nothing in the workspace depends on it**. It is a leaf that builds its own
+It depends on four workspace crates: [`stella-protocol`](../stella-protocol)
+for the wire types, [`stella-core`](../stella-core) for the engine,
+[`stella-engine`](../stella-engine) for the step facade (#971), and
+[`stella-pipeline`](../stella-pipeline) for the verification pipeline (#1288).
+It is not a leaf either: [`stella-parity`](../stella-parity) depends on it, to
+check that every HTTP route is claimed by a parity row. It builds its own
 binary from [`src/main.rs`](src/main.rs); `stella-cli` does not link it, and
 `make build-release` builds `-p stella-cli` only, so a change here never reaches a
 `stella` user. The corollary: `make smoke` runs the CLI and never exercises this
@@ -40,8 +43,8 @@ What that means for this crate as the plugin architecture lands:
 
 - **The engine here does not verify its own work.** The staged verification flow is
   a wrapper around the loop, and it is leaving the workspace to become a plugin
-  (#3246, `doc:turn-loop-wrappers`); nothing in this crate links
-  [`stella-pipeline`](../stella-pipeline) and nothing here ever did. A host wanting
+  (#3246, `doc:turn-loop-wrappers`); today the pipeline runs inside this crate,
+  driven over the same remoted ports as every other turn. A host wanting
   adjudication supplies it — its own test command, its own oracle, or, once the
   wrapper contract lands (#3380), the plugin — and the answer arrives as evidence
   the host owns, exactly like a tool result does today.
@@ -383,7 +386,7 @@ the wire would be silently reclassified.
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions" (why the
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies" (why the
   remoted ports are adapters, not a rewrite) and the "Workspace layout" row for
   this crate, which states the own-binary/not-linked rule.
 - [`../../docs/spec/serve-surface.md`](../../docs/spec/serve-surface.md) — the full

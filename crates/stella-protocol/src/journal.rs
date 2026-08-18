@@ -19,7 +19,7 @@
 //! The same event is written to more than one sink (the durable JSONL file and
 //! stdout), the engine that produced it is a pure, replayable, clock-free fold,
 //! and `stella-protocol` carries no time source by charter. Putting `ts` inside
-//! the enum would have meant a field on all 39 variants, a clock reachable from
+//! the enum would have meant a field on every variant, a clock reachable from
 //! `stella-core`, and a stamp baked into every replay fixture.
 //!
 //! So the event vocabulary is untouched and the stamp rides in an envelope
@@ -54,7 +54,7 @@ use crate::event::AgentEvent;
 /// contract a consumer reads and the contract this module documents cannot
 /// drift apart.
 ///
-/// Deliberately terse — it is repeated on all 39 variants of a generated
+/// Deliberately terse — it is repeated on every variant of a generated
 /// artifact, and the reasoning behind each clause belongs in this module's docs
 /// and in the `.d.ts` banner, which a reader meets exactly once.
 pub const TS_DESCRIPTION: &str = "\

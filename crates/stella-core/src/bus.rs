@@ -192,6 +192,8 @@ pub struct ExtensionFailure {
 pub type ObserverResult = Result<(), String>;
 
 type ObserverFn = dyn Fn(&HookEvent) -> ObserverResult + Send + Sync;
+// One matching observer's dispatch state, snapshotted before running handlers.
+type MatchingObserver = (String, Arc<ObserverFn>, Arc<AtomicU32>, Arc<AtomicBool>);
 type BlockingFn = dyn Fn(&HookEvent) -> HookDecision + Send + Sync;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -591,8 +593,7 @@ impl HookBus {
     /// a handler unsubscribed *during* a dispatch may still receive the
     /// in-flight event.
     fn dispatch(&self, event: &HookEvent) {
-        #[allow(clippy::type_complexity)]
-        let matching: Vec<(String, Arc<ObserverFn>, Arc<AtomicU32>, Arc<AtomicBool>)> = {
+        let matching: Vec<MatchingObserver> = {
             let observers = self
                 .inner
                 .observers
