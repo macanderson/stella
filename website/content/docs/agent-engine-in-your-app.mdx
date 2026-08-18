@@ -90,7 +90,7 @@ Confirm what you built:
 
 ```bash
 ./target/release/stella-serve --version
-# stella-serve 0.6.44
+# stella-serve <version>   — the program name, one space, a bare semver
 ```
 
 Record that version in your repo next to the client code. The wire format is
@@ -403,26 +403,34 @@ Reporting a rate limit as `terminal` silently disables the backoff you wanted.
 
 ## What is not built yet
 
-Re-verified absent as of 0.6.10, so design around them rather than discovering them:
+Re-verified against 0.9.86, so design around them rather than discovering them:
 
-- **No stream resumption.** Frames carry no sequence number and no history is
-  retained. A dropped connection loses whatever streamed while it was down.
-  Persist frames on receipt if you need durability.
-- **No server-side conversation state.** One turn per request. Your app owns
-  history and replays it.
-- **No approval route.** Steering and pause/resume *have* shipped since this
-  list was written — `POST /v1/turns/{id}/steer`, `/pause` and `/resume`, with
-  the hold announced on the stream as `turn_held` / `turn_released` so a
-  client that reconnects mid-hold still knows the turn is waiting on it. What
-  is still absent is `/approve`: the `scope_review` event has no reverse
-  endpoint, so an approval gate has to live in your app, in front of the turn.
-- **No token-level streaming from the engine.** It forwards whole completions.
-  To stream tokens to your users, stream them from your own provider call, which
-  you already control.
-- **No SIGTERM drain**, no `/readyz`, and no `/metrics`.
-- **Most engine knobs are fixed.** Only `max_steps` and
-  `reverse_request_timeout_ms` are settable per turn. Temperature, output token
-  cap, reasoning effort, and the compaction budget come from the engine defaults.
+- **A resume point can expire.** Frames *are* sequenced and replayable — see
+  below — but retention is a bounded ring (4096 frames per live turn). Ask to
+  resume from a `seq` older than the window and you are told the point is gone
+  rather than handed a stream with a silent hole in it. Persist frames on
+  receipt if you need durability beyond that window.
+- **No `/approve` bypass.** The route exists, but a turn that raises
+  `scope_review` blocks until something answers it. A caller running unattended
+  sets `auto_approve` on the turn; otherwise your app must answer, and a client
+  that never does leaves the turn parked until its deadline.
+- **`retry_policy` and `loop_detection` are operator policy**, not caller
+  policy. They bound what one request can cost the process, so no per-turn
+  override widens them. Unknown keys in the `engine` object are refused rather
+  than ignored — a typoed knob that parsed would be a knob silently not honored.
+
+Several entries that stood here through the 0.6 line have since shipped, and are
+worth naming because a client written against the old list is leaving them on the
+floor:
+
+| Was listed absent | Now |
+| --- | --- |
+| Stream resumption | `?after=<seq>`, or an `EventSource`'s automatic `Last-Event-ID` — every frame carries a monotonic `seq` and each SSE frame an `id:` |
+| Server-side conversation state | `POST /v1/sessions`, then `POST /v1/sessions/{id}/turns` — the server threads one transcript, so the byte-stable prefix earns its cache discount and compaction becomes reachable |
+| The approval route | `POST /v1/turns/{id}/approve`, answering a `scope_review` by `request_id` |
+| Token-level streaming | `POST /v1/turns/{id}/provider-delta` — batched `text` / `reasoning` fragments for an in-flight completion, advisory exactly like `text_delta` |
+| SIGTERM drain, `/readyz`, `/metrics` | All three: `SIGTERM`/`SIGINT` start a graceful drain bounded by `STELLA_SERVE_SHUTDOWN_GRACE_SECS`, and both endpoints route |
+| Per-turn engine knobs | An optional `engine` object on turn create sets output cap, temperature, effort and the rest, each clamped to an operator ceiling |
 
 ## Licensing: AGPL or commercial
 

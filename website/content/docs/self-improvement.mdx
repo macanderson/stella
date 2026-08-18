@@ -122,8 +122,11 @@ The load-bearing edge is **dataset → eval**. #836's own stated first slice is 
   <SpecCard title="Shipped in slices — the Tool Foundry">
     #830. The capability-gap detector is `stella-core`'s `tool_foundry`; authoring, the witness,
     and the adoption gate are `stella-tools`' `foundry_author` / `foundry_witness` /
-    `foundry_gate`, driven by `stella tools --author`, `--adopt` and `--enable`. A proposed tool
-    is inert until it is **both** adopted and enabled.
+    `foundry_gate`. The promotion half ships as [`stella tools --adopt`, `--enable`,
+    `--disable` and `--foundry`](/docs/commands/tools), and a proposed tool is inert until it is
+    **both** adopted and enabled. The detection and authoring half has no live caller yet — no
+    command mines proposals from a running session or writes the staged pair, so staging is by
+    hand ([#3629](https://github.com/macanderson/stella/issues/3629)).
   </SpecCard>
 </CardGrid>
 

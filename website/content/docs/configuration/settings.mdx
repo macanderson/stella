@@ -755,12 +755,16 @@ cannot silently become permissive.
   "authority": {
     "project_prompts": "off",
     "project_custom_tools": "off",
-    "bash": "off",
-    "web": "off",
     "media_requires_host_approval": "on"
   }
 }
 ```
+
+Those three are the whole section — it takes no others, and because the block is
+`deny_unknown_fields`, adding one is the hard load error described above rather than a
+key that is quietly ignored. In particular it is deliberately **not** a second tool
+table: to pin a tool or a group off from the managed scope, use the managed `"tools"`
+table, which addresses any tool, group, or `*`.
 
 An `"off"` capability is a non-overridable ceiling. `"on"` only permits a later explicit
 grant; it never enables a capability by itself. For example, `project_custom_tools: "on"`

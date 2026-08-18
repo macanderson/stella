@@ -41,28 +41,43 @@ That holds in both directions:
     An unknown event must survive the round trip, not abort the parse.
   </SpecCard>
   <SpecCard
-    title="A renamed or removed event type"
+    title="A renamed event type"
     meta={[
-      { label: "Older client", value: "does not happen", mono: false },
-      { label: "Newer client", value: "does not happen", mono: false },
+      { label: "Older client", value: "stops seeing it", mono: false },
+      { label: "Newer client", value: "never sees the old name", mono: false },
     ]}
   >
-    The vocabulary is **additive only** — this row exists to say the case is ruled out,
-    not handled.
+    Rare, and it has happened once — see the rename below. A rename is a breaking
+    change, announced as one, not a routine event.
   </SpecCard>
 </CardGrid>
 
-Event type names and field names are never renamed or repurposed once shipped.
-Growth is by addition.
+Field names are never repurposed once shipped: a field that is renamed keeps the
+old spelling as an accepted alias, so a recorded stream never stops parsing. `text`
+carries `#[serde(alias = "delta")]` for exactly this reason, and `text_delta`
+accepts the reverse.
 
-A worked example of that rule holding under pressure: stella needed a way to say
-"one turn of this run finished", and a run can be several turns. The tempting
-move was to let `complete` mean that — it would have fired several times per run,
-fired early, and fired on runs that ultimately failed, breaking every client that
-had believed the promise above. Instead the new fact got a new name,
-`turn_complete`, and `complete` still means exactly what it always meant: the run
-is over, once, last, on success. Clients that ignore unknown types were unaffected;
-clients that want per-turn boundaries read the new event.
+**Event type names are a weaker promise, and one rename has happened.** The
+terminal event was `complete` until [#3379](https://github.com/macanderson/stella/issues/3379).
+The problem it fixed: one word meant "this turn is over" when the engine said it
+and "the whole job is over" when a wrapper — the staged pipeline, goal mode — said
+it, and nothing reading the journal could tell which contract it was holding. So
+the word was split in two:
+
+| Today | Means | Fires |
+| --- | --- | --- |
+| `turn_complete` | One turn finished | Once per turn, several times in a wrapped run |
+| `run_complete` | The run finished — the stream's terminator | Exactly once, last, on success |
+
+`complete` is **not** aliased to either; every call site was moved. A client
+written before #3379 that waits for `{"type":"complete"}` will read the whole
+stream, treat the terminator as an unrecognized event under rule 1 below, and
+then wait forever. Match on `run_complete` for "nothing more is coming", and on
+`turn_complete` if you want per-turn boundaries.
+
+This is the case the vocabulary tries hard to avoid, and the reason the row above
+says "rare" rather than "ruled out": the honest contract is that new facts get new
+names, and that a rename is a breaking change announced as one.
 
 ## The two rules that matter
 
@@ -112,7 +127,10 @@ occurrence, not an exceptional one.
 
 ```ts
 // TypeScript: the shape the contract asks for.
-const KNOWN = new Set(["stage", "text", "text_delta", "tool_start", "tool_result", "complete", /* … */]);
+const KNOWN = new Set([
+  "stage", "text", "text_delta", "tool_start", "tool_result",
+  "turn_complete", "run_complete", /* … */
+]);
 
 for (const line of stream) {
   if (!line.trim()) continue;
@@ -139,19 +157,23 @@ for (const line of stream) {
 
 ## Unrecognized events in practice
 
-Suppose a future stella adds a `spline_reticulated` event. A client built before
+Suppose a future stella adds a `quantum_reticulation` event. A client built before
 it existed sees:
 
 ```json
-{"type":"stage","name":"execute"}
-{"type":"spline_reticulated","call_id":"q_1","splines":["alpha","beta"]}
+{"type":"stage","name":"execute","scope":"run"}
+{"type":"quantum_reticulation","call_id":"q_1","splines":["alpha","beta"]}
 {"type":"text","text":"Done."}
-{"type":"complete","model":"m","cost_usd":0.002}
+{"type":"run_complete","model":"m","cost_usd":0.002}
 ```
 
-It processes `stage`, `text`, and `complete` exactly as before, and treats line 2
-as inert. The run is fully usable. Nothing is lost that the client could have
-understood anyway.
+It processes `stage`, `text`, and `run_complete` exactly as before, and treats
+line 2 as inert. The run is fully usable. Nothing is lost that the client could
+have understood anyway.
+
+That is not a hypothetical spelling: `quantum_reticulation` is one of the two
+invented types in the conformance fixture below, so this snippet is a slice of a
+file you can actually run your client against.
 
 If your client re-emits or stores events, keep unrecognized ones **whole**. A
 proxy or recorder that drops them silently degrades the stream for whatever reads
@@ -192,6 +214,13 @@ anchor.
 
 - **Ordering between event types** beyond what the pipeline documents. `text_delta`
   lines interleave with other events.
+- **That `stage` events form one sequence.** Two disjoint authorities emit them,
+  and `scope` says which: the engine emits its own vocabulary once per turn with
+  `"scope":"turn"`, while a wrapper — the staged pipeline, a goal loop — emits its
+  own once per run with `"scope":"run"`. A client that branches on stage
+  transitions must select on `scope` first, or it reads two interleaved
+  vocabularies as one and sees a wrapper's backwards-looking boundary as an engine
+  regression.
 - **A monotonic `ts`.** See above: it is a wall clock, and it can repeat or move
   backwards.
 - **That every event has a stable meaning to you.** `text_delta` is an explicit
