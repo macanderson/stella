@@ -57,9 +57,9 @@ pub mod vertex;
 pub mod zai;
 
 pub use cache_economics::{
-    CacheTtl, CacheWarmth, cache_write_premium_multiplier, configured_cache_ttl_secs,
+    CacheRoute, CacheTtl, CacheWarmth, cache_write_premium_multiplier, configured_cache_ttl_secs,
     diagnose_cache, diagnose_cache_with_idle, hit_rate as cache_hit_rate, is_cache_expired_rewrite,
-    provider_cache_ttl_secs, provider_honors_cache_ttl,
+    provider_cache_ttl_secs, provider_honors_cache_ttl, route_cache_is_opt_in,
 };
 pub use catalog::{Catalog, CatalogEntry, Pricing, ToolDialect};
 pub use credential::{ApiKey, AuxCredentials, CredentialError};

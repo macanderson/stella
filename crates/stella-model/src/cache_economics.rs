@@ -251,6 +251,49 @@ pub fn hit_rate(input_tokens: u64, cached_input_tokens: u64) -> f64 {
     (cached_input_tokens as f64 / input_tokens as f64).clamp(0.0, 1.0)
 }
 
+/// Whether the cache actually reached by `(provider, model)` is the explicit
+/// opt-in kind — the question [`CacheCause::OptInNeverEngaged`] answers, which
+/// [`cache_posture`] answers only for direct vendors.
+///
+/// A **gateway's posture is per route, not per provider.** `openrouter`
+/// declares [`CachePosture::OptIn`] because that is what its Claude routes
+/// need (the root `cache_control` marker), but the same gateway fronts
+/// upstreams whose caches are implicit — Moonshot, OpenAI, GLM. On those
+/// routes OpenRouter normalizes the marker away, reports **no write tokens at
+/// all**, and bills reads it never announces as writes. So `writes == 0` is
+/// the permanent shape of a *working* cache there, and the opt-in
+/// discriminator has nothing left to discriminate on.
+///
+/// Measured, not assumed: 1708 calls on `openrouter` / `moonshotai/kimi-k3`
+/// recorded 102.7M input tokens, 91.5M cache reads, and **zero** writes, while
+/// the same provider's `anthropic/*` routes reported 10.9M writes over the
+/// same period. Reading the first as a missing marker put "likely a bug" on a
+/// route that was caching 89% of its input.
+#[must_use]
+pub fn route_cache_is_opt_in(provider: &str, model: &str) -> bool {
+    if provider == "openrouter" {
+        // The upstream vendor owns the posture; only Anthropic routes opt in.
+        // An unrecognized upstream is treated as implicit — i.e. no claim —
+        // for the same reason the token floor above rounds down.
+        return model.starts_with("anthropic/");
+    }
+    matches!(cache_posture(provider), Some(CachePosture::OptIn { .. }))
+}
+
+/// The route a diagnosis is about, plus the one size fact it needs. Grouped
+/// rather than passed as three more positional arguments to two functions:
+/// `provider`, `model`, and the prompt floor are asked exactly one question
+/// together — *could this route have cached anything at all?*
+#[derive(Debug, Clone, Copy)]
+pub struct CacheRoute<'a> {
+    /// Provider id, as the parity matrix keys it.
+    pub provider: &'a str,
+    /// Model slug as the provider names it — for a gateway, the upstream
+    /// route, which is what decides the cache posture
+    /// ([`route_cache_is_opt_in`]).
+    pub model: &'a str,
+}
+
 /// Name the probable cause of a low cache hit rate, or `None` when there is
 /// nothing to diagnose. Pure over its inputs (the posture lookup is static
 /// data), so it is table-testable without a runtime.
@@ -259,15 +302,14 @@ pub fn hit_rate(input_tokens: u64, cached_input_tokens: u64) -> f64 {
 /// have *established* a cache to hit (`turns > MIN_TURNS`) and the hit rate is
 /// genuinely under `threshold`. The discriminator between the two opt-in
 /// failure modes is **cache traffic**, not the hit rate:
-///  - opt-in provider that over the turns wrote nothing *and read nothing* →
+///  - opt-in route that over the turns wrote nothing *and read nothing* →
 ///    the marker never reached the wire ([`CacheCause::OptInNeverEngaged`]);
-///  - otherwise (any traffic at all, or an implicit-cache provider) a low hit
+///  - otherwise (any traffic at all, or an implicit-cache route) a low hit
 ///    rate is the prefix being rewritten or expiring between turns
 ///    ([`CacheCause::PrefixInstability`]).
 ///
-/// Both halves of "no traffic" are required. Reads and writes land on
-/// different turns, so zero writes alone is the ordinary shape of a warm
-/// cache — see the inline note at the discriminator.
+/// Both halves of "no traffic" are required — see the inline note at the
+/// discriminator.
 ///
 /// This token-only form cannot see wall-clock gaps, so it never returns
 /// [`CacheCause::IdleBeyondTtl`] — a caller that has the session's idle gaps
@@ -276,7 +318,7 @@ pub fn hit_rate(input_tokens: u64, cached_input_tokens: u64) -> f64 {
 /// this function is blind to.
 #[must_use]
 pub fn diagnose_cache(
-    provider: &str,
+    route: CacheRoute<'_>,
     turns: u64,
     input_tokens: u64,
     cached_input_tokens: u64,
@@ -294,7 +336,7 @@ pub fn diagnose_cache(
         return None;
     }
 
-    let is_opt_in = matches!(cache_posture(provider), Some(CachePosture::OptIn { .. }));
+    let is_opt_in = route_cache_is_opt_in(route.provider, route.model);
     if is_opt_in && cache_write_tokens == 0 && cached_input_tokens == 0 {
         // The provider caches nothing without an explicit marker, nothing was
         // ever written, AND nothing was ever read — the opt-in never engaged.
@@ -313,6 +355,15 @@ pub fn diagnose_cache(
         // condition; this one did not, so `stella stats` and the deck's CACHE
         // cell disagreed on exactly the warm-cache case. That divergence is
         // what the module docs meant by "nothing cross-checks the two".
+        //
+        // The other two conditions were added for the same reason one axis
+        // out. `writes == 0` says nothing on a gateway route whose upstream
+        // caches implicitly and reports no writes ever
+        // ([`route_cache_is_opt_in`]) — it was true forever on a route whose
+        // gateway reports no writes at all, and the deck told its reader the
+        // marker was missing and every token billing at the full input rate,
+        // of a route with a lifetime 89% hit rate. Evidence that cannot
+        // distinguish a claim from its opposite is not evidence for either.
         return Some(CacheCause::OptInNeverEngaged);
     }
     Some(CacheCause::PrefixInstability)
@@ -334,7 +385,7 @@ pub fn diagnose_cache(
 /// chain), which honestly leaves the token-only answer.
 #[must_use]
 pub fn diagnose_cache_with_idle(
-    provider: &str,
+    route: CacheRoute<'_>,
     turns: u64,
     input_tokens: u64,
     cached_input_tokens: u64,
@@ -343,7 +394,7 @@ pub fn diagnose_cache_with_idle(
     max_idle_gap_secs: Option<u64>,
 ) -> Option<CacheCause> {
     let cause = diagnose_cache(
-        provider,
+        route,
         turns,
         input_tokens,
         cached_input_tokens,
@@ -351,7 +402,7 @@ pub fn diagnose_cache_with_idle(
         threshold,
     )?;
     if cause == CacheCause::PrefixInstability
-        && let (Some(gap), Some(ttl)) = (max_idle_gap_secs, provider_cache_ttl_secs(provider))
+        && let (Some(gap), Some(ttl)) = (max_idle_gap_secs, provider_cache_ttl_secs(route.provider))
         && gap >= ttl
     {
         return Some(CacheCause::IdleBeyondTtl);
@@ -562,12 +613,22 @@ mod tests {
         );
     }
 
+    /// A direct-vendor route that has presented a comfortably cacheable
+    /// prompt — the shape every pre-existing diagnosis case assumed, now that
+    /// the route and the prompt floor are inputs rather than assumptions.
+    fn direct(provider: &str) -> CacheRoute<'_> {
+        CacheRoute {
+            provider,
+            model: "a-model",
+        }
+    }
+
     #[test]
     fn diagnosis_names_opt_in_never_engaged_on_a_zero_hit_multi_turn_session() {
         // The acceptance case: an opt-in provider (Anthropic), N>3 turns, 0%
         // hit, and NOTHING written → the marker never engaged. Discriminated
         // on cache_write_tokens == 0, not on the hit rate alone.
-        let cause = diagnose_cache("anthropic", 6, 120_000, 0, 0, 0.20);
+        let cause = diagnose_cache(direct("anthropic"), 6, 120_000, 0, 0, 0.20);
         assert_eq!(cause, Some(CacheCause::OptInNeverEngaged));
     }
 
@@ -576,7 +637,7 @@ mod tests {
         // Same opt-in provider and low hit rate, but the cache WAS written —
         // the marker engaged; the prefix is churning. Must NOT be confused
         // with the opt-in-absent cause.
-        let cause = diagnose_cache("anthropic", 6, 120_000, 1_000, 90_000, 0.20);
+        let cause = diagnose_cache(direct("anthropic"), 6, 120_000, 1_000, 90_000, 0.20);
         assert_eq!(cause, Some(CacheCause::PrefixInstability));
     }
 
@@ -593,7 +654,7 @@ mod tests {
         // "likely a bug" printed next to a real read count and real savings.
         // `stella-tui`'s copy of this gate already got this right, so the two
         // surfaces disagreed on the same session.
-        let cause = diagnose_cache("anthropic", 6, 120_000, 9_600, 0, 0.20);
+        let cause = diagnose_cache(direct("anthropic"), 6, 120_000, 9_600, 0, 0.20);
         assert_eq!(cause, Some(CacheCause::PrefixInstability));
     }
 
@@ -602,7 +663,7 @@ mod tests {
         // An implicit-cache provider (zai) can never have an opt-in-marker
         // bug — a low hit rate there is prefix instability regardless of the
         // (always zero) write count.
-        let cause = diagnose_cache("zai", 8, 200_000, 5_000, 0, 0.20);
+        let cause = diagnose_cache(direct("zai"), 8, 200_000, 5_000, 0, 0.20);
         assert_eq!(cause, Some(CacheCause::PrefixInstability));
     }
 
@@ -614,7 +675,7 @@ mod tests {
     fn an_idle_gap_at_or_past_the_ttl_names_idle_beyond_ttl_not_instability() {
         // Anthropic TTL is 300s. Writes happened, reads stayed low.
         let diagnose = |gap: Option<u64>| {
-            diagnose_cache_with_idle("anthropic", 6, 120_000, 1_000, 90_000, 0.20, gap)
+            diagnose_cache_with_idle(direct("anthropic"), 6, 120_000, 1_000, 90_000, 0.20, gap)
         };
         // gap >= ttl, writes > 0, low reads → the idle explains it.
         assert_eq!(diagnose(Some(360)), Some(CacheCause::IdleBeyondTtl));
@@ -632,28 +693,81 @@ mod tests {
         // A marker that never engaged is not explained by idling: the
         // opt-in diagnosis passes through whatever the gap says.
         assert_eq!(
-            diagnose_cache_with_idle("anthropic", 6, 120_000, 0, 0, 0.20, Some(600)),
+            diagnose_cache_with_idle(direct("anthropic"), 6, 120_000, 0, 0, 0.20, Some(600)),
             Some(CacheCause::OptInNeverEngaged)
         );
         // A provider with no documented TTL has no window to have outlived.
         assert_eq!(
-            diagnose_cache_with_idle("zai", 8, 200_000, 5_000, 0, 0.20, Some(6_000)),
+            diagnose_cache_with_idle(direct("zai"), 8, 200_000, 5_000, 0, 0.20, Some(6_000)),
             Some(CacheCause::PrefixInstability)
         );
         // And a healthy session has nothing to refine.
         assert_eq!(
-            diagnose_cache_with_idle("anthropic", 10, 100_000, 50_000, 10_000, 0.20, Some(600)),
+            diagnose_cache_with_idle(
+                direct("anthropic"),
+                10,
+                100_000,
+                50_000,
+                10_000,
+                0.20,
+                Some(600)
+            ),
             None
         );
     }
 
     #[test]
+    fn a_gateway_route_to_an_implicit_upstream_is_never_opt_in_never_engaged() {
+        // The reported incident. `openrouter` declares CachePosture::OptIn for
+        // its Claude routes, but this route's upstream (Moonshot) caches
+        // implicitly: the gateway reports reads and NEVER a write, so
+        // `writes == 0` here is the permanent shape of a working cache and
+        // cannot witness a missing marker. Measured on this exact route: 1708
+        // calls, 102.7M input, 91.5M reads, 0 writes.
+        let kimi = CacheRoute {
+            provider: "openrouter",
+            model: "moonshotai/kimi-k3",
+        };
+        assert_eq!(
+            diagnose_cache(kimi, 6, 120_000, 0, 0, 0.20),
+            Some(CacheCause::PrefixInstability),
+            "an implicit upstream behind the gateway must not be accused of a \
+             marker bug — the write count there is uninformative, not zero-because-broken"
+        );
+
+        // The gateway's Claude routes keep the claim: those DO opt in, and
+        // their writes are reported, so no-traffic really is no-traffic.
+        let claude = CacheRoute {
+            provider: "openrouter",
+            model: "anthropic/claude-sonnet-5",
+        };
+        assert_eq!(
+            diagnose_cache(claude, 6, 120_000, 0, 0, 0.20),
+            Some(CacheCause::OptInNeverEngaged)
+        );
+        assert!(route_cache_is_opt_in(
+            "openrouter",
+            "anthropic/claude-opus-5"
+        ));
+        assert!(!route_cache_is_opt_in(
+            "openrouter",
+            "openai/gpt-5.6-sol-pro"
+        ));
+        // A direct vendor's own posture is untouched by the gateway rule.
+        assert!(route_cache_is_opt_in("anthropic", "claude-sonnet-5"));
+        assert!(!route_cache_is_opt_in("zai", "glm-5.2"));
+    }
+
+    #[test]
     fn diagnosis_stays_quiet_until_enough_turns_and_only_below_threshold() {
         // Too few turns: no cache established yet, nothing to diagnose.
-        assert_eq!(diagnose_cache("anthropic", 3, 50_000, 0, 0, 0.20), None);
+        assert_eq!(
+            diagnose_cache(direct("anthropic"), 3, 50_000, 0, 0, 0.20),
+            None
+        );
         // Healthy hit rate (50% >= 20%): no diagnosis even over many turns.
         assert_eq!(
-            diagnose_cache("anthropic", 10, 100_000, 50_000, 10_000, 0.20),
+            diagnose_cache(direct("anthropic"), 10, 100_000, 50_000, 10_000, 0.20),
             None
         );
     }
