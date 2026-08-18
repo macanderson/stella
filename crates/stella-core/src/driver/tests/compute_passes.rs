@@ -212,10 +212,6 @@ async fn per_step_hashing_grows_with_the_turn_not_with_its_square() {
 
     let short = hashes_for(4).await;
     let long = hashes_for(8).await;
-    eprintln!(
-        "DBG short={short} long={long} ratio={:.2}",
-        long as f64 / short as f64
-    );
 
     // Quadratic would put `long` at roughly 4x `short`. Linear puts it near 2x;
     // allow real slack for the fixed system/user blocks, which are hashed once in

@@ -210,31 +210,36 @@ gathered first:
 - **The diff budget.** A small diff (≤ 400 changed lines by default) backed by
   deterministic evidence submits on the evidence alone.
 
-From those, the ladder picks one of **five** outcomes, in this order. Every one
+From those, the ladder picks one of **six** outcomes, in this order. Every one
 of them is **terminal** — the ladder is the whole decision, and no model is
 consulted at any rung:
 
 <CardGrid size="md">
-  <OptionCard name="1 · Revise">
+  <OptionCard name="1 · Witness unsatisfiable">
+    The authored witness failed **the same way** before and after the work, so its red
+    says nothing about the change. This is a claim about the test, not the work — and
+    no revision can fix an instrument, which is why it is ranked above **Revise**.
+  </OptionCard>
+  <OptionCard name="2 · Revise">
     Touched tests are **red**. That is already a deterministic failure, so the evidence
     goes straight back into a revision turn. Nothing is spent confirming a
     failure that is not in doubt.
   </OptionCard>
-  <OptionCard name="2 · Nothing attempted">
+  <OptionCard name="3 · Nothing attempted">
     The turn dispatched no call capable of changing the workspace, and nothing that
     *could* look saw a change. A determinate finding about the turn — and the one
     place the ladder reads an absence as evidence.
   </OptionCard>
-  <OptionCard name="3 · Unverifiable">
+  <OptionCard name="4 · Unverifiable">
     **Every** channel was blind — no flip, no test result, an unreadable working tree,
     and no recorded file touch. The ladder **abstains**: nothing is claimed about the
     work, in particular not that it failed.
   </OptionCard>
-  <OptionCard name="4 · Submit fast">
+  <OptionCard name="5 · Submit fast">
     Flip achieved, touched tests green, diff within budget, no fresh diagnostics.
     The full deterministic pass.
   </OptionCard>
-  <OptionCard name="5 · Unverified">
+  <OptionCard name="6 · Unverified">
     The probes looked and what they returned did not amount to a proof — no flip, or a
     diff over budget, or tests that could not run. The ladder's honest *I do not know*.
   </OptionCard>
@@ -255,7 +260,7 @@ The evidence that reaches this rung is by construction the evidence no oracle
 could settle, so a model handed it is guessing too, only with a verdict's
 authority attached. The run reports `UNVERIFIED` and says what was missing.
 
-There is one narrow case where a sixth rung, **waived**, is recorded instead: the
+There is one narrow case where a seventh rung, **waived**, is recorded instead: the
 warrant read the diff and found nothing a test could prove (a docs-only edit, a
 pure removal), or triage waived independent review and the warrant agreed from
 the change itself. A waived pass carries no evidence either way and is scored

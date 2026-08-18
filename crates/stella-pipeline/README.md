@@ -21,8 +21,10 @@ over owned data in a sibling module (`triage`, `plan`, `scope`, `verify`, `witne
 
 Depends on `stella-protocol` (wire types and `AgentEvent`) and `stella-core` (`Engine`,
 `Router`, `BudgetGuard`, `ToolExecutor`, `Sleeper`), plus `tokio`, `async-trait`, `serde`,
-`serde_json` and `thiserror`. Nothing in the workspace depends on it except `stella-cli`,
-which owns the port implementations and the `Router` itself. It builds no binary.
+`serde_json` and `thiserror`. Two crates depend on it: `stella-cli`, which owns the port
+implementations and the `Router`, and `stella-serve`, which runs `Pipeline::run` behind
+`POST /v1/turns` over its own remoted ports (for example its `RemoteApprovalGate` in
+place of the CLI's stdio gate). It builds no binary.
 
 ## Direction — this crate becomes a plugin
 
@@ -384,7 +386,7 @@ contract.
 ## See also
 
 - [`../../AGENTS.md`](../../AGENTS.md) — "The definition of done: witness tests" for the contract
-  this crate enforces at runtime; "Architecture: ports, not concretions" for the inherited
+  this crate enforces at runtime; "Architecture: ports, not direct dependencies" for the inherited
   no-I/O and byte-stable-prompt rules.
 - [`../../website/content/docs/inference-pipeline.mdx`](../../website/content/docs/inference-pipeline.mdx)
   — the full stage flow, the terminal ladder outcomes, and the `/pipeline` deck toggle.

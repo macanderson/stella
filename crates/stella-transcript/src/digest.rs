@@ -9,6 +9,7 @@
 //! place raw content appears is inside an expanded body.
 
 use crate::model::{Accounting, Call, Output, Status, Step, ToolKind};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Lines of a result body shown before the fold control.
 pub const HEAD_LINES: usize = 3;
@@ -389,19 +390,46 @@ pub fn step_digest(step: &Step, object_width: usize) -> StepDigest {
 /// Middle rather than trailing because the two ends of an invocation are the
 /// informative parts: `pdflatex … | grep Overfull` says what ran and what was
 /// looked for, while a trailing cut says only `pdflatex -interaction=nonst…`.
+///
+/// Cells, not characters — a path with CJK in it is twice as wide as its
+/// character count says, and the column it lands in is fixed (#3740). A cut
+/// that would split a double-width character keeps the narrower side, so the
+/// result can come back one cell under `width` but never one over.
 #[must_use]
 pub fn elide(text: &str, width: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= width || width < 5 {
+    if UnicodeWidthStr::width(text) <= width || width < 5 {
         return text.to_string();
     }
     let keep = width - 3;
     let head = keep.div_ceil(2);
-    let tail = keep - head;
-    let mut out: String = chars[..head].iter().collect();
+    let mut out = prefix_cells(text, head).to_string();
     out.push_str(" … ");
-    out.extend(&chars[chars.len() - tail..]);
+    out.push_str(suffix_cells(text, keep - head));
     out
+}
+
+/// The longest prefix of `text` that fits in `budget` display cells.
+fn prefix_cells(text: &str, budget: usize) -> &str {
+    let mut used = 0;
+    for (i, ch) in text.char_indices() {
+        used += UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used > budget {
+            return &text[..i];
+        }
+    }
+    text
+}
+
+/// The longest suffix of `text` that fits in `budget` display cells.
+fn suffix_cells(text: &str, budget: usize) -> &str {
+    let mut used = 0;
+    for (i, ch) in text.char_indices().rev() {
+        used += UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used > budget {
+            return &text[i + ch.len_utf8()..];
+        }
+    }
+    text
 }
 
 /// The first sentence of a prose block — what it folds to.

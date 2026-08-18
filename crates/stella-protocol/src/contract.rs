@@ -175,14 +175,6 @@ impl std::fmt::Display for ContractError {
 
 impl std::error::Error for ContractError {}
 
-/// One tool's complete declaration: what the model may send
-/// ([`ToolSchema`]), plus what an authorization plane needs to decide whether
-/// this caller may send it at all.
-///
-/// Serde-first (invariant #4) because it crosses crate boundaries — the
-/// engine's [`crate::ToolSchema`] half already does, and the governance half
-/// is what an embedding host reads to authorize a remoted call from metadata
-/// instead of maintaining its own name → capability side-table.
 /// The contract revision this build writes — see [`ToolContract::version`].
 pub const CONTRACT_VERSION: u32 = 1;
 
@@ -192,6 +184,14 @@ fn default_contract_version() -> u32 {
     CONTRACT_VERSION
 }
 
+/// One tool's complete declaration: what the model may send
+/// ([`ToolSchema`]), plus what an authorization plane needs to decide whether
+/// this caller may send it at all.
+///
+/// Serde-first (AGENTS.md rule #4) because it crosses crate boundaries — the
+/// engine's [`crate::ToolSchema`] half already does, and the governance half
+/// is what an embedding host reads to authorize a remoted call from metadata
+/// instead of maintaining its own name → capability side-table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ToolContract {

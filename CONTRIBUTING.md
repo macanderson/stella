@@ -72,7 +72,7 @@ A red gate is an automatic "not yet":
 ./scripts/check-cargo-install-pins.sh
 ./scripts/check-license-allowlist-parity.sh
 ./scripts/check-repro-wiring.sh
-shellcheck install.sh scripts/*.sh .githooks/*
+shellcheck install.sh scripts/*.sh scripts/lib/*.sh .githooks/*
 ./scripts/check-invariants.sh
 python3 ./scripts/check-doc-links.py check
 ./scripts/check-command-docs.sh
@@ -88,8 +88,8 @@ python3 ./scripts/check-typed-errors.py
 ./scripts/check-diagnostic-codes.sh
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --keep-going
 cargo fmt --check
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --keep-going
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ./scripts/check-tool-docs.sh
@@ -178,7 +178,7 @@ chasing the citations in the same PR.
 
 ## Where does my change go? — a workspace tour
 
-Twenty crates — all under the `crates/` directory — sounds like a lot; the
+Twenty-six crates — all under the `crates/` directory — sounds like a lot; the
 rule of thumb is one sentence each:
 
 | You want to… | Go to |
@@ -200,6 +200,10 @@ rule of thumb is one sentence each:
 | Multi-agent fan-out, worktree isolation | `stella-fleet` |
 | The Observatory telemetry dashboard (`stella observe`) | `stella-observatory` |
 | The headless engine server a host process drives over the wire | `stella-serve` (its own binary, not linked into the CLI) |
+| Parse or validate a plugin manifest | `stella-plugin` |
+| Decide whether a human is present to answer a prompt | `stella-tty` |
+| Compute a unified diff | `stella-diff` |
+| Turn text into a vector, or compare two vectors | `stella-embed` |
 | The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) |
 
 `stella-pipeline` drives the default
@@ -217,7 +221,7 @@ These are the architectural invariants the whole design hangs on. PRs that
 break them will be asked to restructure, no matter how good the feature is.
 
 **They are stated once, normatively, in
-[AGENTS.md § Architecture: ports, not concretions](AGENTS.md#architecture-ports-not-concretions)
+[AGENTS.md § Architecture: ports, not direct dependencies](AGENTS.md#architecture-ports-not-direct-dependencies)
 — read them there before your first PR.**
 
 That list is the single source, and its numbering is part of the contract:

@@ -74,19 +74,6 @@ pub enum NodeId {
 }
 
 impl NodeId {
-    /// The turn this node lives in — every node has exactly one.
-    #[must_use]
-    pub fn turn(self) -> usize {
-        match self {
-            NodeId::Turn(t)
-            | NodeId::Step { turn: t, .. }
-            | NodeId::Output { turn: t, .. }
-            | NodeId::Prose { turn: t, .. }
-            | NodeId::File { turn: t, .. }
-            | NodeId::Hunk { turn: t, .. } => t,
-        }
-    }
-
     /// A DOM-safe / stable string form, used as an HTML `id` and as the key a
     /// TUI cursor round-trips through a saved session.
     #[must_use]
@@ -306,12 +293,6 @@ impl Accounting {
             micros: self.micros + other.micros,
         }
     }
-
-    /// Whether there is anything worth rendering a chip for.
-    #[must_use]
-    pub fn is_empty(self) -> bool {
-        self == Self::default()
-    }
 }
 
 /// A tool call's result body, before folding.
@@ -339,12 +320,6 @@ impl Output {
     #[must_use]
     pub fn line_count(&self) -> usize {
         self.lines.len() + self.clipped
-    }
-
-    /// Whether there is nothing at all to show.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.lines.iter().all(|l| l.trim().is_empty()) && self.clipped == 0
     }
 }
 

@@ -1,6 +1,6 @@
 //! The `MediaProvider` port and its request/response types
 //! One trait, many vendor adapters behind it —
-//! the same ports-not-concretions discipline the chat `Provider` uses.
+//! the same ports-not-direct-dependencies discipline the chat `Provider` uses.
 //!
 //! `generate_image` is sync-ish (one HTTP round trip, bytes back);
 //! `generate_video` submits an async job and returns a [`MediaJob`] handle
