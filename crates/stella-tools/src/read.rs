@@ -49,6 +49,10 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
+/// The default window and the ceiling on an explicit `limit`. Private: it was
+/// `pub(crate)` for `read_symbol`, which read through this tool and named the
+/// cap in its own output, and that tool is retired
+/// ([`crate::catalog::RETIRED_TOOL_NAMES`]).
 const MAX_LINES: usize = 2000;
 
 /// Per-line width cap. Real source lines are far shorter; the cases this
@@ -123,11 +127,11 @@ struct ReadState {
 
 /// Session-scoped ledger of the last file content the model has *seen*.
 ///
-/// Updated by successful reads (`read_file`) and by the
-/// model's own successful mutations (`edit_file`, `write_file` — the model
-/// knows the content it just produced). A mismatch between an entry's hash
-/// and current disk bytes therefore means the file changed out-of-band since
-/// the model last looked — the read→edit drift signal (#331).
+/// Updated by successful reads (`read_file`) and by the model's own
+/// successful mutations (`edit_file`, `write_file` — the model knows the
+/// content it just produced). A mismatch between an entry's hash and current
+/// disk bytes therefore means the file changed out-of-band since the model
+/// last looked — the read→edit drift signal (#331).
 #[derive(Default)]
 pub struct ReadLedger {
     states: Mutex<HashMap<String, ReadState>>,
@@ -164,10 +168,10 @@ impl ReadLedger {
     /// recent read. `false` for a file never read, a ranged read, a read that
     /// hit the payload cap, and a read whose lines were clipped.
     ///
-    /// The no-clobber guard keys on this: a belief is only as good as what the
-    /// agent actually saw, and recording one for bytes it never looked at is
-    /// worse than recording none — it converts a caught clobber into a silent
-    /// one.
+    /// [`crate::write::WriteFile`]'s no-clobber guard keys on this: a belief
+    /// is only as good as what the agent actually saw, and recording one for
+    /// bytes it never looked at is worse than recording none — it converts a
+    /// caught clobber into a silent one.
     pub fn saw_whole_file(&self, root: &std::path::Path, path: &str) -> bool {
         self.states
             .lock()
