@@ -232,6 +232,15 @@ fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
         }
         step_lines(out, ctx, step, index, si, &offsets[si]);
     }
+    // Prose the step loop cannot reach: reasoning emitted after the last step,
+    // and — the case that has no step at all — a turn that produced only prose.
+    // Mirrors the trailing pass in `steps_and_prose` in html.rs; without it the
+    // two renderers disagree about which prose exists.
+    for (pi, prose) in turn.prose.iter().enumerate() {
+        if prose.before_step >= turn.steps.len() {
+            prose_lines(out, ctx, prose, index, pi);
+        }
+    }
 
     if let Some(answer) = &turn.answer {
         out.push(spine_blank());

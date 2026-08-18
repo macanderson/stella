@@ -611,6 +611,32 @@ fn unpunctuated_prose_expands_to_its_full_body() {
     );
 }
 
+/// Reasoning emitted *after* the last step belongs to no `before_step` the step
+/// loop visits. Both renderers must still carry it, and for the same reason:
+/// one model, two renderers — a fact that exists for one and not the other is a
+/// defect in whichever is missing it, never a rendering choice.
+#[test]
+fn prose_after_the_last_step_reaches_both_renderers() {
+    let mut run = run_with(vec![step(bash("ls", &["a.txt"], Status::Ok), 0)]);
+    run.turns[0].prose = vec![Prose {
+        text: "now checking the bibliography wrapping".to_string(),
+        before_step: 1, // == turn.steps.len(), so the step loop never reaches it
+    }];
+
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Everything);
+
+    assert!(
+        html::render_run(&run, &state).contains("bibliography"),
+        "HTML dropped prose sitting after the last step"
+    );
+    let grid = grid::render(&run, &state, 100);
+    assert!(
+        grid::to_ansi256(&grid).contains("bibliography"),
+        "grid dropped prose sitting after the last step"
+    );
+}
+
 // ------------------------------------------------------------------ render
 
 #[test]
