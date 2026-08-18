@@ -2315,11 +2315,15 @@ async function openTranscript(id, full = false) {
       <button type="button" class="tx-step" id="tx-download"
         title="Everything on this page — journal, metadata and the call receipt index — as one JSON file">
         ⬇ download transcript JSON</button>
-      <!-- The rendered view (`/transcript`), served by `stella-transcript` —
+      <!-- The rendered view (/transcript), served by stella-transcript —
            the same renderer the TUI draws from, with folds, digests and real
            diffs. Opens in its own tab because it is a standalone page: it
            carries its own styles and shares nothing with this one. The rows
-           below remain the flat journal until the two are reconciled. -->
+           below remain the flat journal until the two are reconciled.
+           No backticks in this comment: it sits inside a JS template
+           literal, so one would close the template early and take the whole
+           script down with it. Guarded by inline_script_template_literals_
+           are_balanced in lib.rs. -->
       <a class="tx-step" id="tx-rendered" target="_blank" rel="noopener"
          href="/transcript?id=${encodeURIComponent(d.id)}"
          title="Folds, digests and file diffs — the same renderer the TUI uses">
