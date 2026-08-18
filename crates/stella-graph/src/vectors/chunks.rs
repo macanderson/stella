@@ -114,7 +114,8 @@ impl PendingChunkFile {
 /// What one [`pending_chunks`] scan found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PendingChunkScan {
-    /// Files with work to do, ordered by path, at most `limit` of them.
+    /// Files with work to do, most recently changed first (`path` breaking
+    /// ties), at most `limit` of them.
     pub files: Vec<PendingChunkFile>,
     /// Indexed files stepped over because their content could not be read.
     /// Counted over the rows this scan walked, matching
@@ -237,9 +238,18 @@ const NEEDS_CHUNK_PASS: &str = "EXISTS (SELECT 1 FROM code_graph_symbols s WHERE
 /// workspace from re-reading every file on disk to discover there is nothing
 /// to do.
 ///
-/// Ordered by path and resumed through a path cursor, filling **past**
-/// unreadable files rather than spending the window on them — the same
-/// discipline [`super::pending`] uses, and for the same reason (#3016).
+/// Ordered **most recently changed first**, `path` breaking ties, and resumed
+/// through a cursor over that whole tuple — filling **past** unreadable files
+/// rather than spending the window on them, the same discipline
+/// [`super::pending`] uses and for the same reason (#3016).
+///
+/// The ordering matters more here than it does for file vectors, not less:
+/// this pass is capped at [`MAX_FILES_PER_CHUNK_PASS`] files, a quarter of the
+/// file-vector window, so under the previous path ordering the symbols of a
+/// file late in the alphabet waited behind proportionally more of the tree.
+/// A commit or merge is precisely the event that should jump that queue, and
+/// `indexed_at` already records it — the byte-compat skip means the column
+/// moves only when a file's content actually changed.
 pub fn pending_chunks(
     conn: &Connection,
     root: &Path,
@@ -247,30 +257,36 @@ pub fn pending_chunks(
     limit: usize,
 ) -> Result<PendingChunkScan, GraphError> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT f.id, f.path, f.content_sha256 \
+        "SELECT f.id, f.path, f.content_sha256, f.indexed_at \
          FROM code_graph_files f \
-         WHERE f.path > ?2 AND {NEEDS_CHUNK_PASS} \
-         ORDER BY f.path \
-         LIMIT ?3"
+         WHERE (f.indexed_at < ?2 OR (f.indexed_at = ?2 AND f.path > ?3)) \
+           AND {NEEDS_CHUNK_PASS} \
+         ORDER BY f.indexed_at DESC, f.path ASC \
+         LIMIT ?4"
     ))?;
 
     let mut scan = PendingChunkScan::default();
-    // The empty string sorts before every non-empty path under SQLite's
-    // BINARY collation, so the first round starts at the beginning.
-    let mut cursor = String::new();
+    // Past the end of the ordering in both components: `i64::MAX` is above
+    // every timestamp the indexer writes, and the empty string sorts before
+    // every non-empty path under SQLite's BINARY collation. So the first round
+    // starts at the newest pending file and walks backwards through time.
+    let mut cursor_indexed_at = i64::MAX;
+    let mut cursor_path = String::new();
     while scan.files.len() < limit {
         let want = limit - scan.files.len();
-        let rows: Vec<(i64, String, String)> = stmt
-            .query_map(params![fingerprint, cursor, want as i64], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })?
+        let rows: Vec<(i64, String, String, i64)> = stmt
+            .query_map(
+                params![fingerprint, cursor_indexed_at, cursor_path, want as i64],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?
             .collect::<Result<_, _>>()?;
-        let Some((_, last, _)) = rows.last() else {
+        let Some((_, last_path, _, last_indexed_at)) = rows.last() else {
             break;
         };
-        cursor = last.clone();
+        cursor_path = last_path.clone();
+        cursor_indexed_at = *last_indexed_at;
 
-        for (file_id, path, file_sha256) in rows {
+        for (file_id, path, file_sha256, _) in rows {
             let Ok(content) = std::fs::read_to_string(root.join(&path)) else {
                 scan.unreadable += 1;
                 continue;

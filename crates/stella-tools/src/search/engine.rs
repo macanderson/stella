@@ -525,10 +525,10 @@ fn lead_with(exact: Vec<Hit>, ranked: Vec<Hit>) -> Vec<Hit> {
 /// **Both rungs, merged — not chunks-then-files.** Ranking chunks and
 /// returning early whenever they produced anything lets a *partially filled*
 /// chunk index shadow a better-covered file index: the chunk pass fills in
-/// `ORDER BY path` a window per call, so its frontier can sit alphabetically
-/// short of the directories a query is about while the file rung already
-/// covers most of the tree — a confident answer assembled entirely from the
-/// wrong corner.
+/// change-recency order a window per call, so its frontier can sit short of
+/// the directories a query is about — a stable, long-untouched subsystem is
+/// exactly what sorts last — while the file rung already covers most of the
+/// tree: a confident answer assembled entirely from the wrong corner.
 ///
 /// Merging is legitimate here and *only* here: chunk and file vectors are
 /// written by the same embedder under the same `fingerprint`, so they are one
@@ -709,10 +709,11 @@ fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
     }
     Some(format!(
         "PARTIAL INDEX — this ranking saw {files} of {total_files} files, and {chunks_pending} \
-         indexed file(s) still have symbols with no vector. Embedding fills in path order a \
-         batch per call, so the remainder is NOT a random sample: it is the tail of the tree \
-         alphabetically. Run `stella init` to finish it; until then treat a miss as \
-         inconclusive and grep directly for anything exact."
+         indexed file(s) still have symbols with no vector. Embedding fills a batch per call, \
+         most recently changed first, so the remainder is NOT a random sample: it is the code \
+         that has sat unmodified longest. Recent work is covered; a long-stable subsystem may \
+         not be. Run `stella init` to finish it; until then treat a miss as inconclusive and \
+         grep directly for anything exact."
     ))
 }
 
