@@ -481,3 +481,120 @@ async fn a_driver_that_cannot_be_started_names_the_program() {
         other => panic!("the failure is named, not collapsed into another one: {other}"),
     }
 }
+
+/// **The child is the oracle.** A driver does not get the credential that pays
+/// for the agent, and it does not inherit one from the host process either —
+/// asked of the spawned process itself, not of the constructor.
+///
+/// Inspecting `AdmittedDriver::refused` proves only that the constructor agrees
+/// with itself, which is the trap `tests/wrapper_env_refusal.rs` names in so
+/// many words. It matters more here than the symmetry suggests: `declare`'s
+/// filter runs over the pairs the *host* passed, and those never held the host
+/// process's own environment. `Command::env_clear` is the entire mechanism that
+/// stops a driver inheriting `ANTHROPIC_API_KEY` from the shell that started
+/// Stella, and nothing but a child reading its own environment can see it.
+///
+/// A driver is the plugin with the most reason to want a model key — it exists
+/// to get work done — and invariant 3's "every model call is made by the host"
+/// is what `work_start` will be for.
+#[tokio::test]
+async fn a_driver_is_denied_the_model_credential_and_inherits_none_from_the_host() {
+    // Set in *this* process, and never passed to `declare`. A child that reports
+    // seeing it is a child that inherited it.
+    //
+    // SAFETY: `set_var` is unsound only against concurrent readers of the
+    // environment in another thread. Nothing in this crate reads the process
+    // environment at all — `tests/no_ambient_reads.rs` enforces exactly that —
+    // and this test's own reader is a separate process reading its own copy,
+    // taken at `spawn`.
+    unsafe {
+        std::env::set_var("STELLA_DRIVER_INHERITANCE_PROBE", "leaked");
+    }
+
+    // `${NAME:+1}0` is `10` when the child can see `NAME` and `0` when it
+    // cannot — the same probe `tests/wrapper_env_refusal.rs` uses, and it
+    // reports the *absence* of a variable without ever putting its value on
+    // the wire.
+    let probe = r#"
+read -r request
+printf '{"point":"drive","body":{"next":{"halt":{"reason":"key=%s inherited=%s ordinary=%s"}}}}\n' \
+  "${ANTHROPIC_API_KEY:+1}0" "${STELLA_DRIVER_INHERITANCE_PROBE:+1}0" "${STELLA_DRIVER_ROLE:+1}0"
+"#;
+
+    let admitted = SubprocessDriver::declare(
+        vec!["/bin/sh".into(), "-c".into(), probe.into()],
+        vec![
+            // Declared by the manifest, and refused: a credential.
+            ("ANTHROPIC_API_KEY".into(), "sk-must-not-arrive".into()),
+            // Declared by the manifest, and admitted: an ordinary name.
+            ("STELLA_DRIVER_ROLE".into(), "selfdriving".into()),
+        ],
+        Duration::from_secs(10),
+    )
+    .expect("the transport is declared with a program and a budget");
+    assert_eq!(
+        admitted.refused,
+        vec!["ANTHROPIC_API_KEY".to_string()],
+        "the refusal is reported to the host as well as enforced on the child"
+    );
+
+    let response = admitted
+        .driver
+        .drive(DriveRequest::new("cycle-27"))
+        .await
+        .expect("a driver denied a credential still runs");
+
+    assert_eq!(
+        response.next,
+        DriveNext::Halt {
+            reason: "key=0 inherited=0 ordinary=10".to_string()
+        },
+        "the child saw the name its manifest declared, saw neither the refused \
+         credential nor anything inherited from this process"
+    );
+}
+
+/// A driver that keeps writing to stdout after it has already ended its session
+/// does not wedge the session.
+///
+/// `converse` stops reading stdout the instant it finds the `next` — there is
+/// nothing left in the wire contract to parse — so anything written after that
+/// sits in an OS pipe (about 64 KiB on Linux) nobody is draining. Without
+/// `settle` draining stdout too, such a child blocks in `write(2)`, never
+/// reaches `exit(2)`, and `child.wait()` hangs until the session budget fires —
+/// turning a driver that decided correctly into a `Timeout`, which a loop would
+/// read as a driver to retire or restart rather than one to wake on schedule.
+///
+/// The script writes three pipe buffers past its answer, which reproduces the
+/// deadlock without going anywhere near the capture ceiling. The elapsed bound
+/// is what tells "drained" from "hung until the budget": the two are otherwise
+/// indistinguishable from the answer alone.
+#[tokio::test]
+async fn a_driver_that_talks_after_deciding_does_not_wedge_the_session() {
+    let budget = Duration::from_secs(8);
+    let trailing_past_one_pipe_buffer = 3 * 64 * 1024;
+    let script = format!(
+        "read -r request\n\
+         printf '%s\\n' '{{\"point\":\"drive\",\"body\":{{\"next\":{{\"sleep\":{{\"secs\":60}}}}}}}}'\n\
+         yes stella | tr -d '\\n' | head -c {trailing_past_one_pipe_buffer}\n",
+    );
+
+    let started = Instant::now();
+    let response = ungated(&script, budget)
+        .drive(DriveRequest::new("cycle-28"))
+        .await
+        .expect(
+            "a driver that decided correctly and then kept talking is not lost to a pipe deadlock",
+        );
+    let elapsed = started.elapsed();
+
+    assert_eq!(
+        response.next,
+        DriveNext::Sleep { secs: 60 },
+        "the decision itself is unaffected by what came after it"
+    );
+    assert!(
+        elapsed < budget / 2,
+        "the trailing output was drained rather than waited out: {elapsed:?}"
+    );
+}
