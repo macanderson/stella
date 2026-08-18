@@ -3288,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "stella-transcript"
-version = "0.9.77"
+version = "0.9.83"
 dependencies = [
  "proptest",
  "serde",
