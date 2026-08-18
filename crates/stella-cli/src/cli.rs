@@ -625,7 +625,21 @@ pub(crate) enum Command {
         #[arg(long, hide = true)]
         no_pipeline: bool,
 
+        /// Run each episode under a wrapper, by the `[wrapper] id` its
+        /// manifest declares (`stella plugin list`). `classic` names the
+        /// built-in staged pipeline; omitted, the raw step-loop runs with
+        /// nothing over it (the default since #3381). The same flag
+        /// [`stella run`](crate::cli::Command::Run) takes, so a panel can
+        /// measure either driver rather than only the one the default
+        /// happens to name.
+        #[arg(long, value_name = "VARIANT")]
+        pipeline: Option<String>,
+
         /// Test command for the pipeline's deterministic verify ladder.
+        ///
+        /// Belongs to the staged pipeline's verify machinery, so it is
+        /// refused rather than silently ignored unless `--pipeline` selects
+        /// a driver that can honor it.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
     },

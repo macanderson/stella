@@ -131,3 +131,65 @@ fn a_bare_raw_run_never_prints_the_verification_refusal() {
         "a bare run must never hit the verification-flag refusal: {stderr}"
     );
 }
+
+/// **Witness (#3696, arena door).** `stella arena` inherited the same gap:
+/// it resolved `PipelineChoice::resolve(no_pipeline, None)` — always `Raw`
+/// after #3381 — and handed `--test-command` to a driver with no verify
+/// ladder to arm, so a benchmark runner asking for an oracle got a number
+/// measured without one and no way to tell. Fails on the pre-fix tree (the
+/// flag was accepted and inert; `--pipeline` did not even parse), passes on
+/// this one.
+#[test]
+fn arena_test_command_is_refused_without_pipeline() {
+    let (workspace, data) = fresh_dirs();
+    let out = run_stella(
+        workspace.path(),
+        data.path(),
+        &[
+            "arena",
+            "--task-dir",
+            ".",
+            "--journal",
+            "journal.jsonl",
+            "--state-dir",
+            "state",
+            "--test-command",
+            "pytest",
+        ],
+    );
+    assert!(!out.status.success(), "expected a non-zero exit");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--test-command"), "{stderr}");
+    assert!(stderr.contains("--pipeline classic"), "{stderr}");
+}
+
+/// The companion half: `--pipeline classic` gives the flag a ladder to arm,
+/// so the same invocation is no longer refused. It fails later for its own
+/// reasons (no `TASK.md`, no reachable provider) — what this proves is that
+/// the refusal is scoped to the resolution that cannot honor the flag.
+#[test]
+fn arena_test_command_is_accepted_with_pipeline_classic() {
+    let (workspace, data) = fresh_dirs();
+    let out = run_stella(
+        workspace.path(),
+        data.path(),
+        &[
+            "arena",
+            "--task-dir",
+            ".",
+            "--journal",
+            "journal.jsonl",
+            "--state-dir",
+            "state",
+            "--pipeline",
+            "classic",
+            "--test-command",
+            "pytest",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("staged pipeline's verification machinery"),
+        "--pipeline classic must accept --test-command: {stderr}"
+    );
+}

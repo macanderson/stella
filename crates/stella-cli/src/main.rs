@@ -1112,8 +1112,18 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             state_dir,
             resume,
             no_pipeline,
+            pipeline,
             test_command,
         } => {
+            // The same gate `run` applies, for the same reason: a benchmark
+            // adapter that silently ignores `--test-command` reports a number
+            // measured without the oracle the runner asked for.
+            wrapper_plugin::reject_verification_flags_without_pipeline(
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref()),
+                test_command.as_deref(),
+                false,
+                false,
+            )?;
             signals::block_on_interruptible(
                 rt()?,
                 arena::run_arena(
@@ -1124,6 +1134,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                         state_dir,
                         resume,
                         no_pipeline,
+                        pipeline,
                         test_command,
                     },
                 ),
