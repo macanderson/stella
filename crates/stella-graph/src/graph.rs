@@ -768,7 +768,7 @@ fn walk_single_flight(inner: &Inner) -> Result<Option<IndexStats>, GraphError> {
 /// whole graph down when that temporary drops: the shutdown flag latches, and
 /// `set_watcher` then refuses to install the live watcher for the rest of the
 /// session. A free function over `&Inner` cannot make that mistake.
-fn reconcile_inner(
+pub(crate) fn reconcile_inner(
     inner: &Inner,
     oracle: &dyn reconcile::RepoOracle,
 ) -> Result<(reconcile::Plan, IndexStats), GraphError> {
