@@ -65,11 +65,13 @@ the art was still correct, and a guard that cries wolf gets ignored. Each one
 asserts what a broken build actually violates instead: that every file exists,
 decodes, inflates, and has the size its name promises; that `cometkit`'s
 geometry still matches the committed SVGs; that the three wallpaper tiers draw
-the same picture; and that the spinner GIFs carry the current gold.
+the same picture; and that the spinner GIFs carry the current brand hue.
 
-Quick rules: lowercase always. Comet flies left→right. Gold is the signal,
-never the surface. On light backgrounds use gold-deep `#8B5E1A` for small
-gold text. Assemble, don't spin.
+Quick rules: lowercase always. Comet flies left→right. Ion is the signal,
+never the surface. On light backgrounds use brand-deep `#00778F` for small
+ion text and brand-700 `#0094B1` for the mark itself — v3.0 retired the "full
+strength on both grounds" rule, because ion measures 1.61:1 on paper. Assemble,
+don't spin.
 
 ```
 site/              one-page desktop mock + mobile mock with the star-fan

@@ -16,30 +16,30 @@ button{font:inherit;color:inherit} table{border-collapse:collapse}</style>
 /* Neutral monochrome, per the docs house style: no accent hue in the chrome.
    The only colour on this page is semantic — a task passed or it did not. */
 :root{
-  --bg:#FFFFFF; --sub:#FAFAFA; --panel:#FFFFFF;
-  --ink:#0A0A0A; --ink-2:#525252; --ink-3:#8F8F8F;
-  --rule:#EAEAEA; --rule-2:#D4D4D4;
-  --pass:#11703A; --fail:#A32F1F; --pass-bg:#EDF6F0; --fail-bg:#FBF0EE;
-  --code:#F6F6F6;
+  --bg:#FFFFFF; --sub:#F7F9FC; --panel:#FFFFFF;
+  --ink:#070B10; --ink-2:#4D535A; --ink-3:#828C97;
+  --rule:#E7EBF0; --rule-2:#CFD6DD;
+  --pass:#0B6B3D; --fail:#A82036; --pass-bg:#EDF6F0; --fail-bg:#FBF0EE;
+  --code:#F3F6F9;
 }
 @media (prefers-color-scheme:dark){:root{
-  --bg:#0A0A0A; --sub:#0F0F0F; --panel:#111111;
-  --ink:#EDEDED; --ink-2:#A1A1A1; --ink-3:#6E6E6E;
-  --rule:#1F1F1F; --rule-2:#2E2E2E;
-  --pass:#4CC38A; --fail:#E5715F; --pass-bg:#10201A; --fail-bg:#221312;
-  --code:#151515;}}
+  --bg:#070B10; --sub:#0D1319; --panel:#11171D;
+  --ink:#E9EDF2; --ink-2:#A4ABB3; --ink-3:#737C88;
+  --rule:#1F262D; --rule-2:#333B43;
+  --pass:#3FD99B; --fail:#F2687A; --pass-bg:#10201A; --fail-bg:#221312;
+  --code:#0B1116;}}
 :root[data-theme="dark"]{
-  --bg:#0A0A0A; --sub:#0F0F0F; --panel:#111111;
-  --ink:#EDEDED; --ink-2:#A1A1A1; --ink-3:#6E6E6E;
-  --rule:#1F1F1F; --rule-2:#2E2E2E;
-  --pass:#4CC38A; --fail:#E5715F; --pass-bg:#10201A; --fail-bg:#221312;
-  --code:#151515;}
+  --bg:#070B10; --sub:#0D1319; --panel:#11171D;
+  --ink:#E9EDF2; --ink-2:#A4ABB3; --ink-3:#737C88;
+  --rule:#1F262D; --rule-2:#333B43;
+  --pass:#3FD99B; --fail:#F2687A; --pass-bg:#10201A; --fail-bg:#221312;
+  --code:#0B1116;}
 :root[data-theme="light"]{
-  --bg:#FFFFFF; --sub:#FAFAFA; --panel:#FFFFFF;
-  --ink:#0A0A0A; --ink-2:#525252; --ink-3:#8F8F8F;
-  --rule:#EAEAEA; --rule-2:#D4D4D4;
-  --pass:#11703A; --fail:#A32F1F; --pass-bg:#EDF6F0; --fail-bg:#FBF0EE;
-  --code:#F6F6F6;}
+  --bg:#FFFFFF; --sub:#F7F9FC; --panel:#FFFFFF;
+  --ink:#070B10; --ink-2:#4D535A; --ink-3:#828C97;
+  --rule:#E7EBF0; --rule-2:#CFD6DD;
+  --pass:#0B6B3D; --fail:#A82036; --pass-bg:#EDF6F0; --fail-bg:#FBF0EE;
+  --code:#F3F6F9;}
 *{box-sizing:border-box}
 body{margin:0; background:var(--bg); color:var(--ink);
   font:400 16px/1.65 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;

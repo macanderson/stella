@@ -76,7 +76,7 @@ impl ToolClass {
     /// palette law test walks these values.
     pub fn color(self) -> Color {
         match self {
-            ToolClass::Inspect => theme::TEAL,
+            ToolClass::Inspect => theme::JADE,
             ToolClass::Mutate => theme::MAGENTA,
             ToolClass::Execute => theme::VIOLET,
             ToolClass::Delegate => theme::ORCHID,

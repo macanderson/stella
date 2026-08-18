@@ -5,9 +5,9 @@ Everything visual in `docs/brand/` is the same four-point comet at a different
 scale, so the paths that draw it live here and nowhere else. Three builders
 import this module — `build_marks.py` (logo exports, PWA icons),
 `wallpapers/build_wallpapers.py`, and `social/build_social.py` — and a fourth
-copy of `STAR_PATH` in any of them is a bug, not a convenience: the kit was
-recoloured twice in its history, and a stray copy is how one surface keeps the
-old palette while every other moves.
+copy of `STAR_PATH` in any of them is a bug, not a convenience: the kit has
+been recoloured three times in its history, and a stray copy is how one surface
+keeps the old palette while every other moves.
 
 `docs/brand/css/tokens.css` is normative for colour; the constants here mirror
 it. `docs/brand/logo/svg/` is normative for shape; the paths here are those
@@ -41,13 +41,16 @@ REPO = HERE.parents[1]
 # brand tokens — docs/brand/css/tokens.css is normative; these mirror it
 # ---------------------------------------------------------------------------
 
-GOLD = "#C58A32"  # Bronze Gold — the comet, on every ground
-GOLD_DEEP = "#8B5E1A"  # small gold *text* on light surfaces only
-INK = "#10100F"
-PAPER = "#F2EEE5"  # warm text on dark
-PAPER_BG = "#F5F0E6"  # light-mode surface
-MUTED_ON_DARK = "#A19A8E"
-MUTED_ON_LIGHT = "#6F675B"
+# These were `GOLD`/`GOLD_DEEP` through the bronze era. They are role-named now
+# for the same reason the CSS ramp was renamed: a hue in a name falsifies
+# itself the first time the hue moves, and this one has moved three times.
+BRAND = "#00D1F9"  # Ion — the comet, on every ground
+BRAND_DEEP = "#00778F"  # small brand *text* on light surfaces only
+INK = "#070B10"
+PAPER = "#E9EDF2"  # cool text on dark
+PAPER_BG = "#EEF1F5"  # light-mode surface
+MUTED_ON_DARK = "#9299A1"
+MUTED_ON_LIGHT = "#61676F"
 
 # JetBrains Mono advances 0.6em per glyph, which is what lets every string's
 # width be known before it is drawn.
@@ -214,13 +217,13 @@ def lockup(cx: float, cy: float, height: float, letters: str) -> str:
     tx = cx - (LOCKUP_W * k) / 2
     ty = cy - height / 2
     trails = "".join(
-        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="3.5" fill="{GOLD}"/>'
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="3.5" fill="{BRAND}"/>'
         for x, y, w, h in TRAIL_RECTS
     )
     return (
         f'<g transform="translate({tx:.3f} {ty:.3f}) scale({k:.5f})">'
         f"{trails}"
-        f'<path d="{STAR_PATH}" fill="{GOLD}"/>'
+        f'<path d="{STAR_PATH}" fill="{BRAND}"/>'
         f'<path d="{WORDMARK_PATH}" fill="{letters}"/>'
         f"</g>"
     )
@@ -239,12 +242,12 @@ def mark(cx: float, cy: float, ink_w: float) -> str:
     tx = cx - (ix + iw / 2) * k
     ty = cy - (iy + ih / 2) * k
     trails = "".join(
-        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="3.5" fill="{GOLD}"/>'
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="3.5" fill="{BRAND}"/>'
         for x, y, w, h in TRAIL_RECTS
     )
     return (
         f'<g transform="translate({tx:.3f} {ty:.3f}) scale({k:.5f})">'
-        f'{trails}<path d="{STAR_PATH}" fill="{GOLD}"/></g>'
+        f'{trails}<path d="{STAR_PATH}" fill="{BRAND}"/></g>'
     )
 
 

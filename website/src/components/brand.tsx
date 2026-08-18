@@ -8,7 +8,7 @@
  * Colour rules (docs/brand/BRAND.md):
  *  - The comet is ALWAYS Bronze Gold, on every ground — it is a shape, not
  *    small text, so it never drops to gold-deep. The kit's color-light lockup
- *    keeps #C58A32 verbatim; so do we, via `--stella-gold`.
+ *    keeps #00D1F9 verbatim; so do we, via `--stella-brand`.
  *  - The wordmark letters take `currentColor`, so the name inverts with the
  *    theme (Paper on ink, Ink on paper).
  *  - The sparkle — the `*` in "stella*" — is gold, same law as the comet.
@@ -21,7 +21,7 @@
  */
 
 /** Bronze Gold. Inline fallback for contexts with no cascade (Satori). */
-export const GOLD = "#c58a32";
+export const GOLD = "#00d1f9";
 
 /** The comet on its own — docs/brand/logo/svg/logomark-color.svg. */
 export const MARK_VIEW_BOX = "0 0 96 96";
@@ -81,9 +81,9 @@ export function Mark({
   return (
     <svg viewBox={MARK_VIEW_BOX} className={className} {...a11y}>
       {TRAIL_RECTS.map((r) => (
-        <rect key={r.y} {...r} fill={`var(--stella-gold, ${GOLD})`} />
+        <rect key={r.y} {...r} fill={`var(--stella-brand, ${GOLD})`} />
       ))}
-      <path d={STAR_PATH} fill={`var(--stella-gold, ${GOLD})`} />
+      <path d={STAR_PATH} fill={`var(--stella-brand, ${GOLD})`} />
     </svg>
   );
 }
@@ -112,7 +112,7 @@ export function Wordmark({
       {sparkle ? (
         <path
           d={WORDMARK_SPARKLE_PATH}
-          fill={`var(--stella-gold, ${GOLD})`}
+          fill={`var(--stella-brand, ${GOLD})`}
         />
       ) : null}
     </svg>

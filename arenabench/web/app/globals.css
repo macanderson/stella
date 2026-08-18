@@ -21,29 +21,29 @@
    `identity` among them. */
 :root {
   color-scheme: dark;
-  --bg: #0a0a0a;
-  --panel: #111111;
-  --line: #1f1f1f;
-  --text: #ededed;
-  --dim: #6e6e6e;
-  --accent: #ededed;
-  --on-accent: #0a0a0a;
-  --ok: #4cc38a;
-  --bad: #e5715f;
+  --bg: #070B10;
+  --panel: #11171D;
+  --line: #1F262D;
+  --text: #E9EDF2;
+  --dim: #737C88;
+  --accent: #E9EDF2;
+  --on-accent: #070B10;
+  --ok: #3FD99B;
+  --bad: #F2687A;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
     --bg: #ffffff;
-    --panel: #fafafa;
-    --line: #eaeaea;
-    --text: #0a0a0a;
-    --dim: #8f8f8f;
-    --accent: #0a0a0a;
+    --panel: #F7F9FC;
+    --line: #E7EBF0;
+    --text: #070B10;
+    --dim: #828C97;
+    --accent: #070B10;
     --on-accent: #ffffff;
-    --ok: #11703a;
-    --bad: #a32f1f;
+    --ok: #0B6B3D;
+    --bad: #A82036;
   }
 }
 

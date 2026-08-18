@@ -134,7 +134,7 @@ def icon_markup(icon: Icon) -> str:
     """A square of Ink with the mark centred on it."""
     c = icon.size / 2
     if icon.star_only:
-        art = ck.star(c, c, icon.size * icon.ink_frac, ck.GOLD)
+        art = ck.star(c, c, icon.size * icon.ink_frac, ck.BRAND)
     else:
         art = ck.mark(c, c, icon.size * icon.ink_frac)
     ground = f'<rect width="{icon.size}" height="{icon.size}" fill="{ck.INK}"/>'
@@ -194,13 +194,13 @@ def check_svg_parity() -> None:
             "STAR_PATH drift: cometkit.py and logo/svg/logomark-color.svg disagree.\n"
             f"  svg:      {star.group(1)}\n  cometkit: {ck.STAR_PATH}"
         )
-    if star.group(2).upper() != ck.GOLD:
-        raise SystemExit(f"star fill is {star.group(2)}, cometkit says {ck.GOLD}")
+    if star.group(2).upper() != ck.BRAND:
+        raise SystemExit(f"star fill is {star.group(2)}, cometkit says {ck.BRAND}")
 
     derived = []
     for x1, y1, x2, _y2, stroke, sw in _LINE.findall(src):
-        if stroke.upper() != ck.GOLD:
-            raise SystemExit(f"trail stroke is {stroke}, cometkit says {ck.GOLD}")
+        if stroke.upper() != ck.BRAND:
+            raise SystemExit(f"trail stroke is {stroke}, cometkit says {ck.BRAND}")
         x1, y1, x2, sw = float(x1), float(y1), float(x2), float(sw)
         derived.append((x1 - sw / 2, y1 - sw / 2, (x2 - x1) + sw, sw))
     if derived != [tuple(map(float, r)) for r in ck.TRAIL_RECTS]:

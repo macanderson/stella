@@ -14,8 +14,8 @@ import { test } from "node:test";
  *
  * `src/app/tokens.css` carried the sentence "every value below is copied from
  * it verbatim — do not tune a hex here, change the kit and mirror it" while
- * sitting a whole brand version behind: the kit moved to Bronze Gold #C58A32
- * on Ink #10100F in the 2026-08-11 rebrand and this site stayed on v1.0's
+ * sitting a whole brand version behind: the kit moved to Bronze Gold #00D1F9
+ * on Ink #070B10 in the 2026-08-11 rebrand and this site stayed on v1.0's
  * Phosphor Gold #FFB000 on Ink #0B0B0C. All thirteen SVGs under
  * `public/brand/` were stale with it, as were seven of the eight PWA icons,
  * `src/app/icon.svg`, the favicon and the OG card's literals — so the site
@@ -48,7 +48,7 @@ import { test } from "node:test";
  * about a copy rather than about a design.
  *
  * The comparison is textual and case-insensitive because the kit writes
- * `#C58A32` and CSS convention here writes `#c58a32`. That is the one
+ * `#00D1F9` and CSS convention here writes `#00d1f9`. That is the one
  * difference allowed between the two files.
  */
 
@@ -83,13 +83,13 @@ function tokens(css: string): Map<string, string> {
 
 /** The tokens the kit owns and the site must mirror exactly. */
 const MIRRORED = [
-  "--stella-gold",
-  "--stella-gold-deep",
+  "--stella-brand",
+  "--stella-brand-deep",
   "--stella-ink",
   "--stella-paper",
   "--stella-paper-bg",
   ...[50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map(
-    (stop) => `--stella-gold-${stop}`,
+    (stop) => `--stella-brand-${stop}`,
   ),
   ...[50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map(
     (stop) => `--stella-neutral-${stop}`,
@@ -112,16 +112,34 @@ test("the site's brand tokens are the kit's, value for value", () => {
   }
 });
 
-test("no v1.0 phosphor value survives anywhere in the site", () => {
-  // The rebrand's own regression, asserted directly: these are the exact
-  // values that shipped beside bronze assets for the life of the drift.
+test("no retired brand value survives anywhere in the site", () => {
+  // Two rebrands' own regressions, asserted directly. The first block is the
+  // v1.0 phosphor gold that shipped beside bronze assets for the life of the
+  // 2026-08-11 drift; the second is the v2.0 bronze itself, retired by the
+  // v3.0 ion recolour. A value only leaves this list if it comes back, which
+  // it must not.
   const RETIRED = [
+    // v1.0 — phosphor gold on ink
     "#ffb000",
     "#0b0b0c",
     "#f4f1ea",
     "#f6f2e9",
     "#a37200",
     "255 176 0",
+    // v2.0 — bronze gold on warm ink, and its warm neutral ramp
+    "#c58a32",
+    "#8b5e1a",
+    "#10100f",
+    "#f2eee5",
+    "#f5f0e6",
+    "#a97227",
+    "#d39f50",
+    "#674415",
+    "#a19a8e",
+    "#6f675b",
+    "#ded5c6",
+    "197 138 50",
+    "--stella-gold",
   ];
 
   const offenders: string[] = [];
@@ -133,9 +151,9 @@ test("no v1.0 phosphor value survives anywhere in the site", () => {
         continue;
       }
       if (!/\.(css|tsx?|svg|html)$/.test(entry.name)) continue;
-      // Two files name the retired ramp on purpose: tokens.css in the comment
-      // recording why this test exists, and this test in the list above.
-      // Naming the defect is not committing it.
+      // Two files name the retired ramps on purpose: tokens.css in the
+      // comment recording why this test exists, and this test in the list
+      // above. Naming the defect is not committing it.
       if (path.endsWith("app/tokens.css") || path === TEST_FILE) continue;
       const text = read(path).toLowerCase();
       for (const value of RETIRED) {

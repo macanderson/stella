@@ -360,7 +360,7 @@ def check() -> int:
         # The defect this whole script exists for: a GIF whose gold is not the
         # SVG's gold. Any table in the file carrying the old amber fails here.
         if not gold_matches(raw):
-            print(f"{sp.out.name}: carries no colour near {ck.GOLD} — stale palette?")
+            print(f"{sp.out.name}: carries no colour near {ck.BRAND} — stale palette?")
             bad += 1
     return bad
 

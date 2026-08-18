@@ -31,7 +31,8 @@
 //!    The page's accent is now the *text* colour, so "selected" is an
 //!    inversion of the page rather than a hue: the fill takes `--accent` and
 //!    `--ink` is whatever the page's ground is, which necessarily flips with
-//!    the theme (`#0A0A0A` on the ink page, `#FFFFFF` on the paper one).
+//!    the theme (`#070B10` on the obsidian page, `#FFFFFF` on the paper
+//!    one).
 //!    Pinning the old literal here would pin the old design, so this now
 //!    asserts the *invariant* the literal was standing in for: `--ink` is
 //!    declared in the dark root and re-pointed in both light gates, and the
@@ -53,8 +54,10 @@ fn both_wordmark_cuts_are_served_and_referenced() {
     assert_eq!(light.content_type, "image/svg+xml");
     let light_body = String::from_utf8(light.body).unwrap();
     assert!(light_body.contains("<svg"));
-    // Ink text, not Paper — this cut is for the Paper ground, not the Ink one.
-    assert!(light_body.contains("#0B0B0C"));
+    // Obsidian text, not Paper — this cut is for the Paper ground, not the
+    // dark one. The literal moves with the brand kit; it was `#0B0B0C` under
+    // v1.0 and is the v3.0 ground.
+    assert!(light_body.contains("#070B10"));
 
     let page = String::from_utf8(respond(ws.path(), "/").body).unwrap();
     for needle in [
@@ -86,7 +89,7 @@ fn no_selector_recolors_the_page_background_as_text() {
         // would paint dark text on the dark selected fill, which is the same
         // unreadable pair this test was written to catch, arrived at from the
         // other direction.
-        "--ink:#0A0A0A",
+        "--ink:#070B10",
         "--ink:#FFFFFF",
         ".tf button[aria-checked=\"true\"]{color:var(--ink)",
         // Was .ctx-row button.on before the call inspector replaced each

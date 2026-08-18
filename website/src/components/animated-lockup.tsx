@@ -48,13 +48,13 @@ export function AnimatedLockup({ className }: { className?: string }) {
             key={r.y}
             {...r}
             className={`lp-lk-t${i}`}
-            fill={`var(--stella-gold, ${GOLD})`}
+            fill={`var(--stella-brand, ${GOLD})`}
           />
         ))}
         <path
           d={STAR_PATH}
           className="lp-lk-star"
-          fill={`var(--stella-gold, ${GOLD})`}
+          fill={`var(--stella-brand, ${GOLD})`}
         />
         <g transform="translate(100 0)" fill="currentColor">
           {LETTERS.map((d, i) => (
@@ -68,7 +68,7 @@ export function AnimatedLockup({ className }: { className?: string }) {
           width="20"
           height="55.8"
           rx="2"
-          fill={`var(--stella-gold, ${GOLD})`}
+          fill={`var(--stella-brand, ${GOLD})`}
         />
       </g>
     </svg>

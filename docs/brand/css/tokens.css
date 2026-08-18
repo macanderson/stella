@@ -1,43 +1,51 @@
 /* ==========================================================================
    stella — design tokens
-   One color, owned: Bronze Gold on Ink. Everything else is restraint.
+   One color, owned: Ion on Obsidian. Everything else is restraint.
    Drop this file in before any component styles. Pure CSS custom properties;
    no build step required. Pair with globals.css for shadcn/ui + Tailwind v4.
+
+   v3.0 ("the ion tail") replaces v2.0's Bronze Gold on warm neutrals. The
+   token family is `--stella-brand-*`, not `--stella-gold-*`: a hue in a token
+   name falsifies itself the first time the hue moves, and this ramp has now
+   moved three times. Name the role; put the hue in the value.
+
+   Both ramps are generated in OKLCH — the brand at hue 218, the neutrals at
+   hue 250 — so the steps are perceptually even rather than eyeballed in sRGB.
    ========================================================================== */
 
 :root {
   /* ---- brand core ------------------------------------------------------ */
-  --stella-gold: #C58A32;        /* Bronze Gold — CRT amber, gold star */
-  --stella-gold-deep: #8B5E1A;   /* small gold text on light surfaces */
-  --stella-ink: #10100F;         /* Ink — the terminal, not pure black */
-  --stella-paper: #F2EEE5;       /* Paper — warm text on dark */
-  --stella-paper-bg: #F5F0E6;    /* Paper — light-mode surface */
+  --stella-brand: #00D1F9;       /* Ion — the comet's tail, the gold star */
+  --stella-brand-deep: #00778F;  /* small brand text on light surfaces */
+  --stella-ink: #070B10;         /* Obsidian — the terminal, not pure black */
+  --stella-paper: #E9EDF2;       /* Paper — cool text on dark */
+  --stella-paper-bg: #EEF1F5;    /* Paper — light-mode surface */
 
-  /* ---- gold ramp ------------------------------------------------------- */
-  --stella-gold-50: #FBF3E3;
-  --stella-gold-100: #F3DEC0;
-  --stella-gold-200: #EBCB9D;
-  --stella-gold-300: #DFB473;
-  --stella-gold-400: #D39F50;
-  --stella-gold-500: #C58A32;   /* oklch(0.677 0.124 73.16) */
-  --stella-gold-600: #A97227;
-  --stella-gold-700: #8B5E1A;
-  --stella-gold-800: #674415;
-  --stella-gold-900: #462E10;
-  --stella-gold-950: #291B0D;
+  /* ---- brand ramp ------------------------------------------------------ */
+  --stella-brand-50: #EAFAFF;
+  --stella-brand-100: #C7F2FF;
+  --stella-brand-200: #9DE9FF;
+  --stella-brand-300: #72E1FF;
+  --stella-brand-400: #46DBFF;
+  --stella-brand-500: #00D1F9;  /* oklch(0.795 0.139 218) */
+  --stella-brand-600: #00B0D2;
+  --stella-brand-700: #0094B1;
+  --stella-brand-800: #00778F;
+  --stella-brand-900: #005769;
+  --stella-brand-950: #003440;
 
-  /* ---- warm neutrals --------------------------------------------------- */
-  --stella-neutral-50: #FAF7F1;
-  --stella-neutral-100: #E5E0D7;
-  --stella-neutral-200: #CEC7BC;
-  --stella-neutral-300: #B7AFA4;
-  --stella-neutral-400: #A1988D;
-  --stella-neutral-500: #8B8278;
-  --stella-neutral-600: #716963;
-  --stella-neutral-700: #554F4B;
-  --stella-neutral-800: #3B3735;
-  --stella-neutral-900: #24211F;
-  --stella-neutral-950: #10100F;
+  /* ---- cool neutrals --------------------------------------------------- */
+  --stella-neutral-50: #F1F8FF;
+  --stella-neutral-100: #DBE2EA;
+  --stella-neutral-200: #C0C8D0;
+  --stella-neutral-300: #A7AEB6;
+  --stella-neutral-400: #90979E;
+  --stella-neutral-500: #7A8088;
+  --stella-neutral-600: #60666D;
+  --stella-neutral-700: #474D54;
+  --stella-neutral-800: #2F353B;
+  --stella-neutral-900: #1A1F25;
+  --stella-neutral-950: #070B10;
 
   /* ---- typography ------------------------------------------------------ */
   /* JetBrains Mono is the brand voice — the product lives in a terminal,
@@ -88,8 +96,8 @@
   --stella-grain-opacity: 0.045;     /* film grain overlay */
 
   /* ---- elevation / glow ------------------------------------------------ */
-  --stella-glow-gold: 0 0 24px rgb(197 138 50 / 0.28),
-      0 0 96px rgb(197 138 50 / 0.12);
+  --stella-glow-brand: 0 0 24px rgb(0 209 249 / 0.28),
+      0 0 96px rgb(0 209 249 / 0.12);
   --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25),
       0 8px 28px rgb(0 0 0 / 0.35);
 }
@@ -98,29 +106,29 @@
 :root {
   --stella-bg: var(--stella-paper-bg);
   --stella-fg: var(--stella-ink);
-  --stella-surface: #FBF8F2;
-  --stella-border: #DED5C6;
-  --stella-muted-fg: #6F675B;
-  --stella-accent: var(--stella-gold);
-  --stella-accent-text: var(--stella-gold-deep); /* gold that passes on light */
+  --stella-surface: #F7F9FC;
+  --stella-border: #CFD6DD;
+  --stella-muted-fg: #61676F;
+  --stella-accent: var(--stella-brand);
+  --stella-accent-text: var(--stella-brand-deep); /* ion that passes on light */
 }
 .dark, [data-theme="dark"] {
   --stella-bg: var(--stella-ink);
   --stella-fg: var(--stella-paper);
-  --stella-surface: #171614;
-  --stella-border: #2C2924;
-  --stella-muted-fg: #A19A8E;
-  --stella-accent: var(--stella-gold);
-  --stella-accent-text: var(--stella-gold);
+  --stella-surface: #12181D;
+  --stella-border: #2A3036;
+  --stella-muted-fg: #9299A1;
+  --stella-accent: var(--stella-brand);
+  --stella-accent-text: var(--stella-brand);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --stella-bg: var(--stella-ink);
     --stella-fg: var(--stella-paper);
-    --stella-surface: #171614;
-    --stella-border: #2C2924;
-    --stella-muted-fg: #A19A8E;
-    --stella-accent: var(--stella-gold);
-    --stella-accent-text: var(--stella-gold);
+    --stella-surface: #12181D;
+    --stella-border: #2A3036;
+    --stella-muted-fg: #9299A1;
+    --stella-accent: var(--stella-brand);
+    --stella-accent-text: var(--stella-brand);
   }
 }

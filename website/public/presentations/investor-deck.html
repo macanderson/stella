@@ -29,20 +29,20 @@
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 800; font-display: swap; src: url("../brand/fonts/jetbrains-mono-latin-800-normal.woff2") format("woff2"); }
 
 :root {
-  --gold: #D6A526;
-  --gold-deep: #8B6720;
-  --gold-300: #E6C76A;
-  --ink: #10100F;
-  --ink-soft: #181714;
-  --paper: #F2EEE5;
-  --sheet: #F4EFE4;
-  --sheet-deep: #E9E0D0;
-  --sheet-line: #C8BDAA;
-  --surface: #171614;
-  --border: #232327;
-  --muted: #9B9890;
-  --pass: #2FD3C6;
-  --fail: #E4408F;
+  --gold: #00D1F9;
+  --gold-deep: #00778F;
+  --gold-300: #72E1FF;
+  --ink: #070B10;
+  --ink-soft: #12181D;
+  --paper: #E9EDF2;
+  --sheet: #E9EDF2;
+  --sheet-deep: #DBE2EA;
+  --sheet-line: #A7AEB6;
+  --surface: #12181d;
+  --border: #1F262D;
+  --muted: #9299A1;
+  --pass: #54D14F;
+  --fail: #E25DC2;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --display: "Space Grotesk", "Avenir Next", "Helvetica Neue", Arial, sans-serif;
   --ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);
@@ -141,10 +141,10 @@ body {
   --paper: var(--ink-soft);
   --surface: var(--sheet-deep);
   --border: var(--sheet-line);
-  --muted: #6C6458;
-  --gold: #865D08;
-  --gold-deep: #654500;
-  --gold-300: #865D08;
+  --muted: #60666D;
+  --gold: #00778F;
+  --gold-deep: #005769;
+  --gold-300: #00778F;
 }
 .slide.tone-paper::before {
   content: "";
@@ -168,13 +168,13 @@ body {
   pointer-events: none;
 }
 .slide.tone-paper .term {
-  color: #F2EEE5;
-  --paper: #F2EEE5;
-  --surface: #171614;
-  --border: #403B34;
-  --muted: #AAA398;
-  --gold: #D6A526;
-  --gold-deep: #8B6720;
+  color: #E9EDF2;
+  --paper: #E9EDF2;
+  --surface: #12181d;
+  --border: #2F353B;
+  --muted: #90979E;
+  --gold: #00D1F9;
+  --gold-deep: #00778F;
 }
 
 .overline { font-size: 0.8rem; font-weight: 500; letter-spacing: 0.18em; color: var(--gold); margin-bottom: 14px; }
@@ -443,7 +443,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
 
 <div class="texture" aria-hidden="true"></div>
 <svg class="starfield" aria-hidden="true" viewBox="0 0 1600 900" preserveAspectRatio="none">
-  <g fill="#F2EEE5">
+  <g fill="#E9EDF2">
     <circle cx="140" cy="120" r="1.2" style="--o:.16"/><circle cx="420" cy="80" r="0.9" style="--o:.10;animation-delay:-1s"/>
     <circle cx="820" cy="150" r="1.1" style="--o:.13;animation-delay:-2s"/><circle cx="1240" cy="90" r="0.8" style="--o:.10;animation-delay:-3s"/>
     <circle cx="1520" cy="210" r="1.2" style="--o:.14;animation-delay:-4s"/><circle cx="240" cy="520" r="0.9" style="--o:.09;animation-delay:-5s"/>
@@ -451,7 +451,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
     <circle cx="1100" cy="740" r="0.9" style="--o:.10;animation-delay:-3.5s"/><circle cx="1460" cy="600" r="1.2" style="--o:.15;animation-delay:-4.5s"/>
     <circle cx="980" cy="420" r="0.8" style="--o:.08;animation-delay:-0.5s"/><circle cx="1330" cy="380" r="0.9" style="--o:.10;animation-delay:-5.5s"/>
   </g>
-  <g fill="#D6A526">
+  <g fill="#00D1F9">
     <circle cx="560" cy="260" r="1.1" style="--o:.14;animation-delay:-2.2s"/><circle cx="1560" cy="820" r="1.0" style="--o:.12;animation-delay:-3.8s"/>
     <circle cx="60" cy="360" r="0.9" style="--o:.10;animation-delay:-1.2s"/>
   </g>
@@ -461,10 +461,10 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
 
 <div class="chrome brand">
   <svg width="22" height="22" viewBox="0 0 96 96" fill="none" aria-hidden="true">
-    <line x1="10" y1="48" x2="30" y2="48" stroke="#D6A526" stroke-width="7" stroke-linecap="round"/>
-    <line x1="18" y1="34" x2="30" y2="34" stroke="#D6A526" stroke-width="7" stroke-linecap="round"/>
-    <line x1="18" y1="62" x2="30" y2="62" stroke="#D6A526" stroke-width="7" stroke-linecap="round"/>
-    <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#D6A526"/>
+    <line x1="10" y1="48" x2="30" y2="48" stroke="#00D1F9" stroke-width="7" stroke-linecap="round"/>
+    <line x1="18" y1="34" x2="30" y2="34" stroke="#00D1F9" stroke-width="7" stroke-linecap="round"/>
+    <line x1="18" y1="62" x2="30" y2="62" stroke="#00D1F9" stroke-width="7" stroke-linecap="round"/>
+    <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#00D1F9"/>
   </svg>
   <span>stella · oxagen</span>
 </div>
@@ -483,10 +483,10 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
         <p class="overline rise">oxagen · investor briefing · august 2026</p>
         <div class="lockup rise" style="--d:1">
           <svg class="comet" width="80" height="80" viewBox="0 0 96 96" fill="none" aria-hidden="true">
-            <line x1="10" y1="48" x2="30" y2="48" stroke="#D6A526" stroke-width="7" stroke-linecap="round"/>
-            <line x1="18" y1="34" x2="30" y2="34" stroke="#D6A526" stroke-width="7" stroke-linecap="round"/>
-            <line x1="18" y1="62" x2="30" y2="62" stroke="#D6A526" stroke-width="7" stroke-linecap="round"/>
-            <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#D6A526"/>
+            <line x1="10" y1="48" x2="30" y2="48" stroke="#00D1F9" stroke-width="7" stroke-linecap="round"/>
+            <line x1="18" y1="34" x2="30" y2="34" stroke="#00D1F9" stroke-width="7" stroke-linecap="round"/>
+            <line x1="18" y1="62" x2="30" y2="62" stroke="#00D1F9" stroke-width="7" stroke-linecap="round"/>
+            <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#00D1F9"/>
           </svg>
           <div class="wordmark">stella<sup>*</sup></div>
         </div>
@@ -575,7 +575,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
     <p class="lead rise" style="--d:2">The most valuable thing your team makes with a coding tool is not the code. It is the traces: every step, every fix, every decision. Today they vanish into someone else's model.</p>
     <div class="body cols c-2">
       <svg class="dia rise" style="--d:3" viewBox="0 0 660 232" role="img" aria-label="diagram: today, your engineers' traces flow out of your network into a frontier lab's shared model, which every competitor also rents">
-        <text class="lbl" x="0" y="14" fill="#9B9890">TODAY</text>
+        <text class="lbl" x="0" y="14" fill="#9299A1">TODAY</text>
         <rect class="box" x="0" y="34" width="240" height="182" rx="12" stroke-dasharray="5 5"/>
         <text class="sm" x="120" y="58" text-anchor="middle">your network</text>
         <rect class="box" x="28" y="80" width="184" height="44" rx="8"/><text class="lbl" x="120" y="108" text-anchor="middle">your engineers</text>
@@ -589,18 +589,18 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
         <text class="sm ff" x="306" y="162" text-anchor="middle">your asset, leaving</text>
       </svg>
       <svg class="dia rise" style="--d:4" viewBox="0 0 660 232" role="img" aria-label="diagram: with stella, traces are verified and stay inside your network and train a private model that is yours alone; nothing crosses the boundary">
-        <text class="lbl" x="0" y="14" fill="#D6A526">WITH STELLA</text>
+        <text class="lbl" x="0" y="14" fill="#00D1F9">WITH STELLA</text>
         <rect class="boxg" x="0" y="34" width="470" height="182" rx="12" stroke-width="1.5"/>
         <text class="sm" x="235" y="58" text-anchor="middle">your network</text>
         <rect class="box" x="28" y="80" width="180" height="44" rx="8"/><text class="lbl" x="118" y="108" text-anchor="middle">your engineers</text>
         <rect class="box" x="28" y="150" width="180" height="44" rx="8"/><text class="lbl" x="118" y="178" text-anchor="middle">verified traces</text>
         <path class="ln lng" d="M118 124 V150" stroke-width="1.5"/>
         <path class="lng flow" d="M208 172 H262" stroke-width="2" marker-end="url(#ar-gold)"/>
-        <rect class="box" x="272" y="116" width="172" height="94" rx="10" stroke="#D6A526"/>
+        <rect class="box" x="272" y="116" width="172" height="94" rx="10" stroke="#00D1F9"/>
         <text class="lbl gd" x="358" y="152" text-anchor="middle">your model</text>
         <text class="sm" x="358" y="174" text-anchor="middle">yours alone</text>
         <path class="lnf" d="M480 149 H560" stroke-width="2" stroke-dasharray="5 5"/>
-        <g stroke="#E4408F" stroke-width="2.5"><line x1="510" y1="134" x2="534" y2="164"/><line x1="534" y1="134" x2="510" y2="164"/></g>
+        <g stroke="#E25DC2" stroke-width="2.5"><line x1="510" y1="134" x2="534" y2="164"/><line x1="534" y1="134" x2="510" y2="164"/></g>
         <text class="sm ff" x="600" y="154" text-anchor="middle">0 bytes</text>
       </svg>
     </div>
@@ -619,7 +619,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
     <p class="lead rise" style="--d:2">Oxagen replaced the judge with an oracle. A task is done only when a witness test proves it — failing on the old code, passing on the new. Not an opinion. A flip.</p>
     <div class="body cols c-5-7">
       <svg class="dia rise" style="--d:3" viewBox="0 0 560 340" role="img" aria-label="diagram: an independent verifier writes one witness test in a shadow sandbox; run against the old code it must fail, run against the new code it must pass; if the worker touched the witness, the flip is void">
-        <rect class="box" x="150" y="0" width="260" height="52" rx="10" stroke="#D6A526"/>
+        <rect class="box" x="150" y="0" width="260" height="52" rx="10" stroke="#00D1F9"/>
         <text class="lbl gd" x="280" y="24" text-anchor="middle">independent verifier</text>
         <text class="sm" x="280" y="42" text-anchor="middle">separate model · shadow sandbox</text>
         <path class="ln lng draw" d="M280 52 V96" stroke-width="1.5" marker-end="url(#ar-gold)"/>
@@ -627,10 +627,10 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
         <text class="lbl" x="280" y="124" text-anchor="middle">one witness test</text>
         <path class="ln draw" d="M280 140 V168 H92 V196" stroke-width="1.5" marker-end="url(#ar-mute)"/>
         <path class="ln draw" d="M280 140 V168 H468 V196" stroke-width="1.5" marker-end="url(#ar-mute)"/>
-        <rect class="box" x="12" y="196" width="160" height="76" rx="10" stroke="#E4408F"/>
+        <rect class="box" x="12" y="196" width="160" height="76" rx="10" stroke="#E25DC2"/>
         <text class="lbl" x="92" y="222" text-anchor="middle">old code</text>
         <text class="lbl ff" x="92" y="250" text-anchor="middle">&#10007; must fail</text>
-        <rect class="box" x="388" y="196" width="160" height="76" rx="10" stroke="#2FD3C6"/>
+        <rect class="box" x="388" y="196" width="160" height="76" rx="10" stroke="#54D14F"/>
         <text class="lbl" x="468" y="222" text-anchor="middle">new code</text>
         <text class="lbl fp" x="468" y="250" text-anchor="middle">&#10003; must pass</text>
         <path class="lng flow" d="M172 234 H388" stroke-width="2" marker-end="url(#ar-gold)"/>
@@ -727,7 +727,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
       <path class="ln lng draw" d="M510 30 H770" stroke-width="1.5" marker-end="url(#ar-gold)"/>
       <path class="ln lng draw" d="M910 30 H1170" stroke-width="1.5" marker-end="url(#ar-gold)"/>
       <path class="ln lng draw" d="M1310 46 C1370 104 50 104 110 46" stroke-width="1.5" stroke-dasharray="6 6" marker-end="url(#ar-gold)"/>
-      <g class="sm" text-anchor="middle" fill="#F2EEE5" font-weight="700">
+      <g class="sm" text-anchor="middle" fill="#E9EDF2" font-weight="700">
         <text x="55" y="35">work</text><text x="440" y="35">witness</text><text x="840" y="35">lesson</text><text x="1240" y="35">next cycle</text>
       </g>
       <text class="sm" x="710" y="70" text-anchor="middle">the commit history is the audit trail</text>
@@ -767,8 +767,8 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
       </svg>
       <div class="rise" style="--d:4">
         <svg class="dia" viewBox="0 0 420 230" role="img" aria-label="venn diagram of the 89 task panel: 36 tasks solved by both arms, 22 solved only by stella, 8 solved only by Claude Code, 23 solved by neither">
-          <circle cx="165" cy="110" r="86" fill="rgb(214 165 38 / 0.12)" stroke="#D6A526" stroke-width="1.5"/>
-          <circle cx="255" cy="110" r="86" fill="rgb(155 152 144 / 0.10)" stroke="#232327" stroke-width="1.5"/>
+          <circle cx="165" cy="110" r="86" fill="rgb(214 165 38 / 0.12)" stroke="#00D1F9" stroke-width="1.5"/>
+          <circle cx="255" cy="110" r="86" fill="rgb(155 152 144 / 0.10)" stroke="#1F262D" stroke-width="1.5"/>
           <text class="lbl gd" x="100" y="106" text-anchor="middle" font-size="22" font-weight="800">22</text>
           <text class="sm" x="100" y="126" text-anchor="middle">stella only</text>
           <text class="lbl" x="210" y="106" text-anchor="middle" font-size="18" font-weight="800">36</text>
@@ -807,17 +807,17 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
       <svg class="dia rise" style="--d:3" viewBox="0 0 700 348" role="img" aria-label="diagram: a closed loop of run, verify, learn and compound; steps one to three ship today and step four is what this raise builds">
         <circle cx="350" cy="174" r="104" class="ln lng spin" stroke-width="1.5" stroke-dasharray="10 12" fill="none"/>
         <g>
-          <rect class="box" x="190" y="8" width="320" height="56" rx="10" stroke="#D6A526"/>
+          <rect class="box" x="190" y="8" width="320" height="56" rx="10" stroke="#00D1F9"/>
           <text class="lbl gd" x="350" y="32" text-anchor="middle">1 · RUN</text>
           <text class="sm" x="350" y="52" text-anchor="middle">real work in your environment, under RBAC</text>
         </g>
         <g>
-          <rect class="box" x="470" y="146" width="230" height="56" rx="10" stroke="#D6A526"/>
+          <rect class="box" x="470" y="146" width="230" height="56" rx="10" stroke="#00D1F9"/>
           <text class="lbl gd" x="585" y="170" text-anchor="middle">2 · VERIFY</text>
           <text class="sm" x="585" y="190" text-anchor="middle">deterministic gates, not guesses</text>
         </g>
         <g>
-          <rect class="box" x="190" y="284" width="320" height="56" rx="10" stroke="#D6A526"/>
+          <rect class="box" x="190" y="284" width="320" height="56" rx="10" stroke="#00D1F9"/>
           <text class="lbl gd" x="350" y="308" text-anchor="middle">3 · LEARN</text>
           <text class="sm" x="350" y="328" text-anchor="middle">goal · diff · proof land in your store</text>
         </g>
@@ -882,7 +882,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
     <div class="body cols c-6-4">
       <svg class="dia rise" style="--d:3" viewBox="0 0 700 250" role="img" aria-label="diagram of the routing thesis: deterministic tools do deterministic work at zero inference cost, a model tuned on your traces does the routine work, and frontier models are called only where novelty earns them">
         <text class="sm" x="0" y="12">THE ROUTING THESIS &mdash; cheapest capable layer first</text>
-        <rect class="box" x="0" y="30" width="700" height="58" rx="10" stroke="#D6A526"/>
+        <rect class="box" x="0" y="30" width="700" height="58" rx="10" stroke="#00D1F9"/>
         <text class="lbl gd" x="20" y="56">deterministic tools</text>
         <text class="sm" x="20" y="76">parse, edit, search, run, diff — a strict IO contract, no model in the loop</text>
         <text class="lbl gd" x="680" y="64" text-anchor="end">$0</text>
@@ -920,7 +920,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
         <path class="ln lng" d="M42 282 V22" stroke-width="1.5" marker-end="url(#ar-gold)"/>
         <text class="sm gd" transform="rotate(-90 22 152)" x="22" y="152" text-anchor="middle">cost of the oracle</text>
         <path class="ln lng draw" d="M60 268 H440 V186 H860 V104 H1300" stroke-width="2"/>
-        <rect class="box" x="82" y="188" width="340" height="72" rx="10" stroke="#D6A526"/>
+        <rect class="box" x="82" y="188" width="340" height="72" rx="10" stroke="#00D1F9"/>
         <text class="lbl gd" x="102" y="214">1 · WEDGE &mdash; software engineering</text>
         <text class="sm" x="102" y="236">free, instant, already running: tests,</text>
         <text class="sm" x="102" y="252">compilers, type checkers, benchmarks</text>
@@ -950,7 +950,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
     <div class="body cols c-7-5">
       <svg class="dia rise" style="--d:3" viewBox="0 0 820 390" role="img" aria-label="three forces converge on a market window: open-model capability, falling inference cost, and enterprise demand">
         <defs>
-          <marker id="ar-now" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#D6A526"/></marker>
+          <marker id="ar-now" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#00D1F9"/></marker>
         </defs>
         <text class="sm" x="12" y="26">THE CONVERGENCE</text>
         <rect class="box" x="12" y="52" width="258" height="82" rx="12"/>
@@ -968,8 +968,8 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
         <path class="lng draw" d="M282 93 C430 93 430 190 570 190" stroke-width="2" marker-end="url(#ar-now)"/>
         <path class="lng draw" d="M282 195 H570" stroke-width="2" marker-end="url(#ar-now)"/>
         <path class="lng draw" d="M282 297 C430 297 430 200 570 200" stroke-width="2" marker-end="url(#ar-now)"/>
-        <circle cx="650" cy="195" r="108" fill="#171614" stroke="#8B5E1A" stroke-width="1"/>
-        <circle class="pulse" cx="650" cy="195" r="78" fill="none" stroke="#D6A526" stroke-width="2"/>
+        <circle cx="650" cy="195" r="108" fill="#12181d" stroke="#00778F" stroke-width="1"/>
+        <circle class="pulse" cx="650" cy="195" r="78" fill="none" stroke="#00D1F9" stroke-width="2"/>
         <text class="sm gd" x="650" y="166" text-anchor="middle">THE WINDOW</text>
         <text class="lbl" x="650" y="194" text-anchor="middle">verified, private</text>
         <text class="lbl" x="650" y="218" text-anchor="middle">AI infrastructure</text>
@@ -996,7 +996,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
     <div class="body">
       <svg class="dia rise" style="--d:3; max-height: 210px;" viewBox="0 0 1420 210" role="img" aria-label="diagram: land on verification with one team, expand to governing every agent in the organization, anchor on a private model trained on the customer's own data">
         <path class="lng flow" d="M40 172 H1380" stroke-width="2" marker-end="url(#ar-gold)"/>
-        <rect class="box" x="40" y="18" width="410" height="128" rx="12" stroke="#D6A526"/>
+        <rect class="box" x="40" y="18" width="410" height="128" rx="12" stroke="#00D1F9"/>
         <text class="lbl gd" x="64" y="48">LAND</text>
         <text class="lbl" x="64" y="76" font-size="17">Verification</text>
         <text class="sm" x="64" y="100">prove trust on one team — the sharpest</text>
@@ -1107,10 +1107,10 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
     <div style="margin: auto 0;">
       <div class="lockup rise">
         <svg class="comet" width="72" height="72" viewBox="0 0 96 96" fill="none" aria-hidden="true">
-          <line x1="10" y1="48" x2="30" y2="48" stroke="#D6A526" stroke-width="7" stroke-linecap="round"/>
-          <line x1="18" y1="34" x2="30" y2="34" stroke="#D6A526" stroke-width="7" stroke-linecap="round"/>
-          <line x1="18" y1="62" x2="30" y2="62" stroke="#D6A526" stroke-width="7" stroke-linecap="round"/>
-          <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#D6A526"/>
+          <line x1="10" y1="48" x2="30" y2="48" stroke="#00D1F9" stroke-width="7" stroke-linecap="round"/>
+          <line x1="18" y1="34" x2="30" y2="34" stroke="#00D1F9" stroke-width="7" stroke-linecap="round"/>
+          <line x1="18" y1="62" x2="30" y2="62" stroke="#00D1F9" stroke-width="7" stroke-linecap="round"/>
+          <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#00D1F9"/>
         </svg>
       </div>
       <h2 class="rise" style="--d:1; margin-top: 18px;"><em>verified done,</em><br>not claimed done.</h2>
@@ -1187,10 +1187,10 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
 <svg width="0" height="0" aria-hidden="true" style="position:absolute">
   <defs>
     <marker id="ar-gold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#D6A526"/>
+      <path d="M0 0 L10 5 L0 10 z" fill="#00D1F9"/>
     </marker>
     <marker id="ar-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#232327"/>
+      <path d="M0 0 L10 5 L0 10 z" fill="#1F262D"/>
     </marker>
   </defs>
 </svg>
