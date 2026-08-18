@@ -117,6 +117,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The `Store` handle, `open`/`in_memory`/`migrate`, the row types, and most of the query surface. Start here. |
+| [`src/error.rs`](src/error.rs) | `StoreError` — every failure this crate returns, as named variants. A caller tells a corrupt file from a stale binary from an ordinary SQLite error by matching, not by reading prose (#3735). Add a variant only when a caller can act differently on it; everything else is `StoreError::Other`. |
 | [`src/ddl.rs`](src/ddl.rs) | Every table and index as DDL at the **current** `SCHEMA_VERSION`, plus the `TABLES` allowlist. The one place today's shape is written down. |
 | [`src/migrations.rs`](src/migrations.rs) | The ordered `MIGRATIONS` list, the fresh-file bootstrap, and the transactional runner. Open it to add a version. |
 | [`src/content_free.rs`](src/content_free.rs) | The zero-egress guard: the reviewed hub-column allowlist and the sentinel harness every egress encoder registers with. |

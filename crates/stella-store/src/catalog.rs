@@ -650,7 +650,7 @@ impl CatalogStore {
             )
             .optional()?;
         let Some(model_provider) = model_provider else {
-            return Err(StoreError(format!(
+            return Err(StoreError::Other(format!(
                 "cannot learn alias `{alias}`: model card {model_card_id} does not exist"
             )));
         };
