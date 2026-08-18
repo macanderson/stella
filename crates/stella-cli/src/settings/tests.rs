@@ -1280,3 +1280,167 @@ fn env_flag_accepts_only_truthy_spellings() {
         );
     }
 }
+
+/// An untrusted checkout that actually has steering on disk says so — in
+/// counts, never in content — and names the opt-in (#2302).
+///
+/// Three arms, because the notice is only right if it is also *absent* twice:
+/// a trusted workspace is getting its steering and is owed nothing, and an
+/// untrusted workspace with nothing to withhold must not warn about a
+/// suppression that cost it nothing. The memory body carries a marker the
+/// assertions look for by its absence: the whole point of a counts-only notice
+/// is that a refusal to load repository text cannot itself print repository
+/// text.
+#[test]
+fn an_untrusted_workspace_names_the_steering_it_withheld() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("repo");
+    let stella = workspace.join(".stella");
+    std::fs::create_dir_all(stella.join("memories")).unwrap();
+    std::fs::create_dir_all(stella.join("rules")).unwrap();
+    std::fs::create_dir_all(stella.join("skills").join("triage")).unwrap();
+    std::fs::write(
+        stella.join("memories").join("00-marker.md"),
+        "SECRET-MARKER-BODY",
+    )
+    .unwrap();
+    std::fs::write(stella.join("rules").join("style.toml"), "").unwrap();
+    std::fs::write(stella.join("rules").join("review.toml"), "").unwrap();
+    // Governance is not a record, and the loader already skips it by name.
+    std::fs::write(stella.join("rules").join("governance.toml"), "").unwrap();
+    std::fs::write(
+        stella.join("skills").join("triage").join("SKILL.md"),
+        "# triage",
+    )
+    .unwrap();
+
+    let withheld = super::withheld::survey(&workspace);
+    assert_eq!(withheld.memories, 1);
+    assert_eq!(withheld.records, 2, "governance.toml is not a record");
+    assert_eq!(withheld.skills, 1);
+    assert_eq!(withheld.commands, 0);
+    assert_eq!(withheld.agents, 0);
+
+    let untrusted = Some(super::withheld::Withholder::ProjectUntrusted);
+    let line = super::withheld::notice(&workspace, untrusted)
+        .expect("an untrusted workspace with steering on disk is owed a notice");
+    // The whole inventory in one assertion: singular/plural per count, and the
+    // two empty categories omitted rather than reported as `0 commands`.
+    assert!(
+        line.contains("(1 memory, 2 context records, 1 skill)"),
+        "{line}"
+    );
+    assert!(line.contains("STELLA_TRUST_PROJECT=1"), "{line}");
+    assert!(
+        !line.contains("SECRET-MARKER-BODY") && !line.contains("00-marker"),
+        "the notice must carry counts, never content or filenames: {line}"
+    );
+
+    assert!(
+        super::withheld::notice(&workspace, None).is_none(),
+        "a workspace that got its steering is owed no notice"
+    );
+    let bare = dir.path().join("bare");
+    std::fs::create_dir_all(&bare).unwrap();
+    assert!(
+        super::withheld::notice(&bare, untrusted).is_none(),
+        "a repo with no steering must not warn about a suppression that cost it nothing"
+    );
+
+    // The managed ceiling withholds the same steering and takes a different
+    // remedy, because it is the one the user cannot lift.
+    let managed = super::withheld::notice(
+        &workspace,
+        Some(super::withheld::Withholder::ManagedCeiling),
+    )
+    .expect("a managed ceiling withholds the same steering");
+    assert!(managed.contains("authority.project_prompts"), "{managed}");
+    assert!(
+        !managed.contains("set STELLA_TRUST_PROJECT=1"),
+        "the ceiling is not lifted by the flag, so the line must not tell anyone to set it: \
+         {managed}"
+    );
+
+    // …and the verdict `Settings::load` hands the notice really is the untrusted
+    // one, so the arm proved above is the arm a cloned repo actually takes. The
+    // pure arms are what this test is for; this is the join to the call site.
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "HOME",
+        "STELLA_MANAGED_SETTINGS",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+    ]);
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(home.join(".stella")).unwrap();
+    // SAFETY: serialized behind the binary-wide env lock.
+    unsafe {
+        std::env::set_var("HOME", &home);
+        std::env::set_var(
+            "STELLA_MANAGED_SETTINGS",
+            dir.path().join("no-such-managed.json"),
+        );
+        std::env::remove_var("STELLA_TRUST_PROJECT");
+        std::env::remove_var("STELLA_PROJECT_HOOKS");
+    }
+    let merged = Settings::load(&workspace).unwrap();
+    assert_eq!(
+        super::withheld::withholder(
+            merged.authority_policy.project_prompts_allowed,
+            merged.managed_authority.as_ref(),
+        ),
+        untrusted,
+        "an untrusted load must resolve to the arm that speaks, and to the remedy the user can \
+         actually apply"
+    );
+}
+
+/// The remedy the notice names is decided by attribution, and attribution is
+/// checked against the resolver itself rather than restated (#2302).
+///
+/// [`AuthorityPolicy::compute`] resolves `project_prompts_allowed` as a
+/// conjunction, so a withheld verdict has two possible causes and only one of
+/// them is lifted by `STELLA_TRUST_PROJECT=1`. This walks every combination of
+/// (repository trusted?, managed `project_prompts`) and asserts the attribution
+/// agrees with the real resolver — so a change to `compute` that moved the
+/// causes around would fail here instead of silently printing advice that
+/// cannot work.
+#[test]
+fn a_managed_ceiling_and_an_untrusted_repo_are_attributed_apart() {
+    use super::withheld::{Withholder, withholder};
+
+    for trusted in [false, true] {
+        for managed_toggle in [None, Some(Toggle::On), Some(Toggle::Off)] {
+            let managed = ManagedAuthoritySettings {
+                project_prompts: managed_toggle,
+                ..ManagedAuthoritySettings::default()
+            };
+            let policy = AuthorityPolicy::compute(Some(&managed), trusted);
+            let attributed = withholder(policy.project_prompts_allowed, Some(&managed));
+
+            let expected = match (trusted, managed_toggle) {
+                // The ceiling wins whenever it is down: setting the flag does
+                // not lift it, so it is the cause worth reporting even when the
+                // repository is also untrusted.
+                (_, Some(Toggle::Off)) => Some(Withholder::ManagedCeiling),
+                (false, _) => Some(Withholder::ProjectUntrusted),
+                (true, _) => None,
+            };
+            assert_eq!(
+                attributed, expected,
+                "trusted={trusted} managed={managed_toggle:?} \
+                 allowed={}",
+                policy.project_prompts_allowed
+            );
+        }
+    }
+
+    // A workspace with no managed scope at all is the ordinary case, and must
+    // never be attributed to a ceiling that does not exist.
+    assert_eq!(
+        withholder(false, None),
+        Some(Withholder::ProjectUntrusted),
+        "no managed scope means no ceiling"
+    );
+    assert_eq!(withholder(true, None), None);
+}

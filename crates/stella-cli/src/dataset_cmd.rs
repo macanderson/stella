@@ -47,6 +47,24 @@
 //! emitted beside the label, so a reader can re-derive a label under other
 //! weights without trusting this one.
 //!
+//! ## The unvouched turns are reachable, never silently (#2123)
+//!
+//! "Excluded under the default filter" implies a non-default path, and
+//! `--include-unverified-transcripts` is it: a store whose history predates
+//! the receipts plane holds no `step_receipt` row at all, so the default
+//! filter exports **zero** records from it even though the journal fold can
+//! still recover every one of those turns' prompt/tool-call/change
+//! trajectories. Under the flag those turns are exported with
+//! [`DatasetRecord::calls`] empty and
+//! [`DatasetRecord::transcript_verified`] false — the trajectory without the
+//! transcript, never unverified bytes wearing a verified transcript's shape.
+//! The gate itself stays era-blind, exactly as
+//! [`stella_store::Reconstruction::is_verified`] is: the benign
+//! compaction-era explanation for a mismatch is *reported* on the record
+//! ([`DatasetRecord::transcript_mismatch_severity`], read from
+//! [`stella_store::Reconstruction::mismatch_severity`] rather than
+//! re-derived), never used to admit one.
+//!
 //! ## What a "diff" can honestly be here
 //!
 //! There is no unified diff anywhere in `store.db`. `files_touched` holds
@@ -79,7 +97,7 @@ use sha2::{Digest, Sha256};
 use stella_core::redact::{PLACEHOLDER, redact_secrets};
 use stella_pipeline::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::AgentEvent;
-use stella_store::{FinishedExecution, RecordedCall, Store};
+use stella_store::{FinishedExecution, MismatchSeverity, RecordedCall, Store};
 
 /// Bump when [`DatasetRecord`]'s shape changes incompatibly, so a reader can
 /// refuse a dataset it does not understand instead of misparsing it.
@@ -88,7 +106,23 @@ use stella_store::{FinishedExecution, RecordedCall, Store};
 /// and the reward label ([`DatasetRecord::reward`], #1043), and tightened the
 /// default filter to transcript-verified executions — so a v1 dataset is not
 /// comparable to a v2 one even where the shared fields agree.
-pub const DATASET_SCHEMA_VERSION: u32 = 2;
+///
+/// `3` (#2123) added [`DatasetRecord::transcript_verified`] and
+/// [`DatasetRecord::transcript_mismatch_severity`], which
+/// `--include-unverified-transcripts` needs to state that a record's `calls`
+/// are absent because nothing could vouch for them. A v2 reader would take a
+/// v3 record's empty `calls` for a verified execution that made no model call,
+/// which v2 could not produce — so the shape is not compatible even though
+/// every v2 field is still present and still means what it did.
+///
+/// The same bump covers `reward.cost.steps` becoming nullable: a record the
+/// receipts plane holds nothing for reports an unrecorded step count and a
+/// `steps_unknown` discard rather than a scalar shaped against a zero. It is
+/// not a separate version because no v3 dataset can exist without it: `3` is
+/// unreleased at the time both halves were written, and only
+/// `--include-unverified-transcripts` can produce a record either one is
+/// visible on.
+pub const DATASET_SCHEMA_VERSION: u32 = 3;
 
 /// The dataset file written under `--output`.
 pub const DATASET_FILE: &str = "dataset.jsonl";
@@ -124,8 +158,8 @@ const SCAN_BATCH: u32 = 500;
 /// This is the journal half of the stated predicate. The transcript half —
 /// every recorded model call reconstructing digest-verified — needs the
 /// receipts plane rather than the fold, so [`accepted_record`] applies it via
-/// [`verified_transcripts`] after this returns true, and the manifest counts
-/// what it excludes.
+/// [`transcripts`] after this returns true, and the manifest counts what it
+/// excludes.
 fn is_accepted(outcome: &str, fold: &JournalFold, require_verdict: bool) -> bool {
     ACCEPTED_OUTCOMES.contains(&outcome)
         && !fold.changes.is_empty()
@@ -135,11 +169,21 @@ fn is_accepted(outcome: &str, fold: &JournalFold, require_verdict: bool) -> bool
 /// The predicate [`is_accepted`] applies, in words, for the manifest. Stated
 /// rather than described: a reader has to be able to reproduce the selection
 /// without reading this file.
-fn acceptance_predicate(require_verdict: bool) -> String {
+///
+/// Both flags rewrite it rather than annotating it: a manifest that states the
+/// default rule beside a flag that loosened it is a manifest nobody can
+/// reproduce the selection from.
+fn acceptance_predicate(require_verdict: bool, include_unverified_transcripts: bool) -> String {
+    let transcripts = if include_unverified_transcripts {
+        "AND (at least one recorded model call, every one reconstructing \
+         digest-verified (Reconstruction::is_verified) — OR exported with \
+         transcript_verified=false and no calls)"
+    } else {
+        "AND at least one recorded model call, every one reconstructing \
+         digest-verified (Reconstruction::is_verified)"
+    };
     let base = format!(
-        "executions.outcome in {{{}}} AND at least one mutating file_change event \
-         AND at least one recorded model call, every one reconstructing \
-         digest-verified (Reconstruction::is_verified)",
+        "executions.outcome in {{{}}} AND at least one mutating file_change event {transcripts}",
         ACCEPTED_OUTCOMES.join(", ")
     );
     if require_verdict {
@@ -191,6 +235,14 @@ pub enum DatasetCmd {
         /// a turn the deterministic ladder cleared never reaches a verifier.
         #[arg(long)]
         require_verdict: bool,
+        /// Also export otherwise-accepted turns whose transcripts cannot be
+        /// digest-verified — a store predating the receipts plane records no
+        /// model call at all, and exports nothing without this. Their `calls`
+        /// are empty and `transcript_verified` is false: the trajectory
+        /// without the transcript, never unverified bytes passed off as
+        /// verified ones.
+        #[arg(long)]
+        include_unverified_transcripts: bool,
     },
 }
 
@@ -233,10 +285,46 @@ pub struct DatasetRecord {
     pub prompt: String,
     /// Every model call, in wire order, each with the exact messages it was
     /// sent — reconstructed from the receipts plane and digest-verified
-    /// before admission (#2083). Never empty: an execution whose transcripts
-    /// do not all verify is excluded by the default filter, not exported
-    /// with a gap here.
+    /// before admission (#2083). Empty exactly when
+    /// [`Self::transcript_verified`] is false, which only
+    /// `--include-unverified-transcripts` can produce: an unvouched
+    /// transcript is withheld whole rather than emitted with a silent gap in
+    /// it.
     pub calls: Vec<DatasetCall>,
+    /// Whether [`Self::calls`] is the receipts plane's own digest-verified
+    /// answer to "what did each model call see" (#2123).
+    ///
+    /// `true` on every record the default filter produces. `false` only under
+    /// `--include-unverified-transcripts`, and then it is a statement about
+    /// this execution's *receipts*, not about its trajectory: `tool_calls`,
+    /// `changes` and `verdict` come from the journal and are exactly as
+    /// trustworthy as on any other record.
+    ///
+    /// [`Self::reward`] is the one field that is neither: its outcome term is
+    /// the journal's, but its shaping prices the receipts plane's step count.
+    /// An execution the plane holds nothing for therefore carries a discarded
+    /// label (`steps_unknown`) rather than a scalar — see [`Self::reward`].
+    pub transcript_verified: bool,
+    /// What a digest mismatch in this execution's reconstructions means, as
+    /// [`stella_store::MismatchSeverity`]'s wire token — `none`,
+    /// `compaction`, or `integrity`, the worst across its recorded calls.
+    /// Spelled by [`crate::inspect::severity_tag`], so a dataset record, a
+    /// `stella inspect --json` payload and the observatory all say the same
+    /// three words about the same verdict.
+    ///
+    /// Read from [`stella_store::Reconstruction::mismatch_severity`], the one
+    /// place the two compaction-journaling eras are told apart, so this file
+    /// never re-derives that distinction. It reports; it decides nothing —
+    /// admission is [`stella_store::Reconstruction::is_verified`]'s
+    /// deliberately era-blind answer, so a benign `compaction` record is
+    /// excluded by default exactly like an `integrity` one, and a consumer of
+    /// an `--include-unverified-transcripts` dataset can still tell a legacy
+    /// rewrite from bytes that are unaccounted for.
+    ///
+    /// `none` whenever no block's digest mismatched — which includes every
+    /// verified record, and an unverified one whose blocks simply could not be
+    /// resolved (a store with no receipts at all, or a missing preimage).
+    pub transcript_mismatch_severity: String,
     /// Every tool invocation, in journal order.
     pub tool_calls: Vec<DatasetToolCall>,
     /// Every mutating file change, in journal order.
@@ -249,6 +337,15 @@ pub struct DatasetRecord {
     /// journal holds no verdict at all: there is no proof or ladder evidence
     /// to derive a label from, and synthesizing a discard under a policy the
     /// run never saw would claim more than the store knows.
+    ///
+    /// A *present* label may still carry no scalar. Under
+    /// `--include-unverified-transcripts` an execution whose receipts plane
+    /// holds nothing has an unrecorded step count, and the shaping refuses to
+    /// price it as zero, so the label reports
+    /// `stella_pipeline::reward::DiscardReason::StepsUnknown` with its rung,
+    /// its outcome term and its policy intact. That is the discard's whole
+    /// point here: the row stays selectable and re-shapeable, and only the
+    /// number that would have been wrong is withheld.
     pub reward: Option<RewardLabel>,
     /// Whether redaction actually replaced something anywhere in this record.
     /// Recorded so "this was redacted" is a visible fact rather than an
@@ -357,14 +454,20 @@ pub struct DatasetFilter {
     pub since: Option<String>,
     pub until: Option<String>,
     pub require_verdict: bool,
+    /// Whether the unvouched turns were exported rather than excluded (#2123).
+    pub include_unverified_transcripts: bool,
     /// Settled executions read from the store.
     pub executions_scanned: u64,
     /// Of those, how many fell inside the `since`/`until` window.
     pub executions_in_window: u64,
     /// Of the executions the outcome-and-change half of the predicate
-    /// accepted, how many were excluded because their transcripts did not
-    /// verify: no recorded model call at all, or some call's reconstruction
-    /// short of [`stella_store::Reconstruction::is_verified`] (#2083).
+    /// accepted, how many could not vouch for their transcripts: no recorded
+    /// model call at all, or some call's reconstruction short of
+    /// [`stella_store::Reconstruction::is_verified`] (#2083).
+    ///
+    /// Counted identically in both modes, so the two are comparable: under
+    /// [`Self::include_unverified_transcripts`] these are the records carrying
+    /// `transcript_verified: false` rather than the ones left out (#2123).
     pub executions_transcripts_unverified: u64,
     /// Of those, how many the whole predicate accepted. Equals `records`.
     pub executions_accepted: u64,
@@ -389,12 +492,14 @@ pub fn run_dataset(cmd: &DatasetCmd) -> Result<(), String> {
             since,
             until,
             require_verdict,
+            include_unverified_transcripts,
         } => run_export(&ExportArgs {
             format: *format,
             output: output.clone(),
             since: since.clone(),
             until: until.clone(),
             require_verdict: *require_verdict,
+            include_unverified_transcripts: *include_unverified_transcripts,
         }),
     }
 }
@@ -406,6 +511,7 @@ struct ExportArgs {
     since: Option<String>,
     until: Option<String>,
     require_verdict: bool,
+    include_unverified_transcripts: bool,
 }
 
 fn run_export(args: &ExportArgs) -> Result<(), String> {
@@ -495,10 +601,14 @@ fn extract(
     }
 
     let filter = DatasetFilter {
-        acceptance_predicate: acceptance_predicate(args.require_verdict),
+        acceptance_predicate: acceptance_predicate(
+            args.require_verdict,
+            args.include_unverified_transcripts,
+        ),
         since: args.since.clone(),
         until: args.until.clone(),
         require_verdict: args.require_verdict,
+        include_unverified_transcripts: args.include_unverified_transcripts,
         executions_scanned: scanned,
         executions_in_window: counts.in_window,
         executions_transcripts_unverified: counts.transcripts_unverified,
@@ -515,7 +625,9 @@ struct ScanCounts {
     in_window: u64,
     /// Executions the outcome-and-change predicate accepted whose transcripts
     /// then failed to verify — see
-    /// [`DatasetFilter::executions_transcripts_unverified`].
+    /// [`DatasetFilter::executions_transcripts_unverified`]. Counted whether
+    /// they were then excluded or exported unvouched, so the two modes report
+    /// the same number for the same store.
     transcripts_unverified: u64,
 }
 
@@ -562,9 +674,19 @@ fn accepted_record(
     let receipts = store
         .recorded_calls(id)
         .map_err(|e| format!("cannot read receipts for execution {id}: {e}"))?;
-    let Some(calls) = verified_transcripts(store, id, &receipts)? else {
-        counts.transcripts_unverified += 1;
-        return Ok(None);
+    let (calls, transcript_verified, severity) = match transcripts(store, id, &receipts)? {
+        Transcripts::Verified(calls) => (calls, true, MismatchSeverity::None),
+        Transcripts::Unvouched { severity } => {
+            counts.transcripts_unverified += 1;
+            if !args.include_unverified_transcripts {
+                return Ok(None);
+            }
+            // The trajectory without the transcript: the journal half of this
+            // record is untouched, and the reconstructed messages are withheld
+            // whole rather than emitted with a gap the record does not admit
+            // to.
+            (Vec::new(), false, severity)
+        }
     };
     let reward = reward_label(&fold, receipts.len(), summary.cost_usd, policy);
 
@@ -582,6 +704,8 @@ fn accepted_record(
         cost_usd: summary.cost_usd,
         prompt: summary.prompt,
         calls,
+        transcript_verified,
+        transcript_mismatch_severity: crate::inspect::severity_tag(severity).to_string(),
         tool_calls: fold.tool_calls,
         changes: fold.changes,
         verdict: fold.verdict,
@@ -591,20 +715,46 @@ fn accepted_record(
     Ok(Some(redact_after_assembly(&record)?))
 }
 
-/// Every recorded call's exact prompt transcript, digest-verified — or `None`
-/// when this execution cannot vouch for its own: it recorded no model call at
-/// all, or some call's reconstruction fell short of
-/// [`stella_store::Reconstruction::is_verified`]. `None` is an exclusion the
-/// manifest counts, never a silent downgrade to an unverified transcript.
-fn verified_transcripts(
+/// What one execution's receipts can prove about the transcripts of its own
+/// model calls. All-or-nothing by construction: there is no arm carrying some
+/// verified calls beside an unvouched one, because a record that mixed them
+/// would need a per-call caveat nothing downstream reads.
+enum Transcripts {
+    /// Every recorded call reconstructed digest-verified — these are the exact
+    /// messages each one was sent.
+    Verified(Vec<DatasetCall>),
+    /// This execution cannot vouch for what its model saw: it recorded no
+    /// model call at all, or some call's reconstruction fell short of
+    /// [`stella_store::Reconstruction::is_verified`].
+    Unvouched {
+        /// The worst [`MismatchSeverity`] across the recorded calls — what a
+        /// digest mismatch here *means*, straight from
+        /// [`stella_store::Reconstruction::mismatch_severity`].
+        /// [`MismatchSeverity::None`] when nothing mismatched and the shortfall
+        /// was an unresolved block (or there were no receipts to check).
+        severity: MismatchSeverity,
+    },
+}
+
+/// Reconstruct every recorded call and judge the set as a whole.
+///
+/// Every receipt is reconstructed even once one has already failed, so the
+/// severity reported is the worst across the execution rather than whichever
+/// call happened to fail first — a benign compaction rewrite must not mask an
+/// integrity mismatch two calls later.
+fn transcripts(
     store: &Store,
     execution_id: i64,
     receipts: &[RecordedCall],
-) -> Result<Option<Vec<DatasetCall>>, String> {
+) -> Result<Transcripts, String> {
     if receipts.is_empty() {
-        return Ok(None);
+        return Ok(Transcripts::Unvouched {
+            severity: MismatchSeverity::None,
+        });
     }
     let mut calls = Vec::with_capacity(receipts.len());
+    let mut verified = true;
+    let mut severity = MismatchSeverity::None;
     for receipt in receipts {
         let reconstruction = store
             .reconstruct_call(
@@ -619,8 +769,15 @@ fn verified_transcripts(
                     receipt.turn_instance, receipt.step, receipt.call_seq
                 )
             })?;
+        severity = worst_severity(severity, reconstruction.mismatch_severity());
         if !reconstruction.is_verified() {
-            return Ok(None);
+            verified = false;
+        }
+        if !verified {
+            // Unvouched, here or at an earlier receipt: the rest of this
+            // execution's calls are reconstructed for their severity alone,
+            // and nothing built past this point would be emitted.
+            continue;
         }
         let mut prompt_messages = Vec::with_capacity(reconstruction.messages.len());
         for message in &reconstruction.messages {
@@ -639,7 +796,24 @@ fn verified_transcripts(
             prompt_messages,
         });
     }
-    Ok(Some(calls))
+    if verified {
+        Ok(Transcripts::Verified(calls))
+    } else {
+        Ok(Transcripts::Unvouched { severity })
+    }
+}
+
+/// The graver of two severities: `Integrity` outranks `Compaction`, which
+/// outranks `None`. The ordering is stated here rather than derived from the
+/// enum's declaration order, so reordering the variants cannot silently
+/// reverse it.
+fn worst_severity(a: MismatchSeverity, b: MismatchSeverity) -> MismatchSeverity {
+    let rank = |severity: MismatchSeverity| match severity {
+        MismatchSeverity::None => 0u8,
+        MismatchSeverity::Compaction => 1,
+        MismatchSeverity::Integrity => 2,
+    };
+    if rank(b) > rank(a) { b } else { a }
 }
 
 /// The record's training label, when the journal holds anything to derive one
@@ -652,9 +826,18 @@ fn verified_transcripts(
 /// role, not just the worker's) and revisions the verdicts beyond the
 /// settling one — the same fold `trace.rs` applies, so a dataset label and a
 /// trace label of one execution agree.
+///
+/// The step count is [`TrajectoryCost::recorded_steps`]'s, so an execution
+/// with no receipt at all — the shape
+/// `--include-unverified-transcripts` exists to admit — carries `steps: null`
+/// and a `steps_unknown` discard rather than a scalar shaped as though the
+/// turn had bought no model call. Reading that absence as zero would drop the
+/// step penalty from precisely the records whose provenance is weakest and
+/// leave them pooling with verified ones as though they had been cheaper
+/// (#2123).
 fn reward_label(
     fold: &JournalFold,
-    steps: usize,
+    recorded_calls: usize,
     cost_usd: f64,
     policy: &RewardPolicy,
 ) -> Option<RewardLabel> {
@@ -662,7 +845,7 @@ fn reward_label(
     Some(label(
         settlement,
         TrajectoryCost {
-            steps: u32::try_from(steps).unwrap_or(u32::MAX),
+            steps: TrajectoryCost::recorded_steps(recorded_calls),
             cost_usd,
             revisions: fold.verdicts.saturating_sub(1),
         },
@@ -973,21 +1156,40 @@ fn report(
     );
     println!("  accepted when: {}", filter.acceptance_predicate);
     if filter.executions_transcripts_unverified > 0 {
-        println!(
-            "  {} otherwise-accepted turn(s) excluded: transcripts not digest-verified",
-            filter.executions_transcripts_unverified
-        );
+        if filter.include_unverified_transcripts {
+            println!(
+                "  {} turn(s) exported with transcript_verified=false: transcripts not \
+                 digest-verified, so their calls are withheld",
+                filter.executions_transcripts_unverified
+            );
+        } else {
+            println!(
+                "  {} otherwise-accepted turn(s) excluded: transcripts not digest-verified \
+                 (--include-unverified-transcripts exports them without their calls)",
+                filter.executions_transcripts_unverified
+            );
+        }
     }
     println!("  {}", dataset_path.display().to_string().cyan());
     println!("  {}", manifest_path.display().to_string().cyan());
     if records.is_empty() {
-        println!(
-            "\nNothing matched. Turns qualify only once they have settled with a \
-             success outcome, changed a file, AND can prove what each model call \
-             saw (every recorded call reconstructing digest-verified); a \
-             read-only, aborted, or unvouched turn is recorded but is not a \
-             trajectory to distil from."
-        );
+        if filter.include_unverified_transcripts {
+            println!(
+                "\nNothing matched. Turns qualify only once they have settled with a \
+                 success outcome and changed a file; a read-only or aborted turn is \
+                 recorded but is not a trajectory to distil from."
+            );
+        } else {
+            println!(
+                "\nNothing matched. Turns qualify only once they have settled with a \
+                 success outcome, changed a file, AND can prove what each model call \
+                 saw (every recorded call reconstructing digest-verified); a \
+                 read-only, aborted, or unvouched turn is recorded but is not a \
+                 trajectory to distil from. A store predating the receipts plane can \
+                 prove no transcript at all — export it with \
+                 --include-unverified-transcripts."
+            );
+        }
         return;
     }
     let redacted = records.iter().filter(|r| r.redacted).count();

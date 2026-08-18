@@ -80,7 +80,15 @@ use stella_store::Store;
 /// yet, and the alternative is every future reader carrying "v2 implies the
 /// 2026-08 defaults" as a permanent special case. Skipping is cheaper and
 /// cannot rot.
-pub const TRACE_SCHEMA_VERSION: u32 = 3;
+///
+/// `4` makes the label's step count nullable ([`TrajectoryCost::steps`]).
+/// A v3 record whose execution recorded no model call wrote `steps: 0` and a
+/// reward scalar shaped as though the turn had bought none — the step penalty
+/// silently absent from every trace of a store predating the receipts plane
+/// (#2123). v4 writes `steps: null` and discards the scalar instead, so a v3
+/// line is skipped rather than pooled beside a v4 one that priced the same
+/// trajectory differently.
+pub const TRACE_SCHEMA_VERSION: u32 = 4;
 
 /// The append-only trace file, one JSON record per line, under
 /// `.stella/private/`.
@@ -163,7 +171,24 @@ pub struct TraceCall {
     /// ([`stella_store::Reconstruction::is_verified`]). A trace with
     /// `false` here is still honest — it says so.
     pub reconstruction_verified: bool,
-    /// Why reconstruction fell short, when it did.
+    /// Which compaction-journaling era wrote this execution's journal —
+    /// `compaction_journaled` or `compaction_unjournaled`, the same two words
+    /// `stella inspect --format json` and `/api/execution-context` emit.
+    /// `None` only when reconstruction failed outright and produced no
+    /// [`stella_store::Reconstruction`] to read it from: unknown is recorded
+    /// as unknown, never guessed (#2030).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journal_era: Option<String>,
+    /// What this call's digest mismatches mean — `none`, `compaction`, or
+    /// `integrity`. Present whenever a reconstruction was produced, including
+    /// the verified path, so "did any call in this run raise a real integrity
+    /// signal" is one grep over a field rather than a regex over
+    /// [`Self::reconstruction_error`]'s prose (#2030, #1981). `None` carries
+    /// the same meaning as on [`Self::journal_era`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest_mismatch_severity: Option<String>,
+    /// Why reconstruction fell short, when it did. The human sentence; the two
+    /// fields above are what a consumer filters on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reconstruction_error: Option<String>,
     /// Tools the model requested after this call, in order.
@@ -250,6 +275,17 @@ pub fn capture(
     append_trace(workspace_root, &record)
 }
 
+/// One call's reconstruction, already reduced to the shape [`TraceCall`]
+/// stores. A struct rather than a tuple because the two arms below now settle
+/// five values, and a five-tuple destructure names none of them.
+struct CallReconstruction {
+    messages: Vec<serde_json::Value>,
+    verified: bool,
+    journal_era: Option<String>,
+    digest_mismatch_severity: Option<String>,
+    error: Option<String>,
+}
+
 /// Build the [`TraceRecord`] for `execution_id`. Read after closeout so
 /// `outcome`, `cost_usd`, and the full journal are settled.
 pub fn assemble(
@@ -274,7 +310,7 @@ pub fn assemble(
     let mut calls = Vec::with_capacity(receipts.len());
     for receipt in &receipts {
         let key = (receipt.turn_instance, receipt.step, receipt.call_seq);
-        let (prompt_messages, verified, error) = match store.reconstruct_call(
+        let reconstructed = match store.reconstruct_call(
             execution_id,
             receipt.turn_instance,
             receipt.step,
@@ -282,12 +318,6 @@ pub fn assemble(
         ) {
             Ok(reconstruction) => {
                 let verified = reconstruction.is_verified();
-                // The severity rides along with the ids, because a trace is
-                // read long after the run and by someone who cannot ask which
-                // build wrote it. `compaction` says the mismatch is the
-                // pre-#1667 journal's routine one; `integrity` says nothing
-                // routine explains it. Same verdict `stella inspect` and the
-                // deck render — one source, four surfaces (#1981).
                 let error = (!verified).then(|| {
                     format!(
                         "unresolved: [{}]; digest mismatches ({}): [{}]",
@@ -296,17 +326,36 @@ pub fn assemble(
                         reconstruction.digest_mismatches.join(", ")
                     )
                 });
-                (
-                    redact_messages(&reconstruction.messages, &mut redacted),
+                CallReconstruction {
+                    messages: redact_messages(&reconstruction.messages, &mut redacted),
                     verified,
+                    // The era and the severity ride along with the ids as
+                    // fields, because a trace is read long after the run, by a
+                    // machine, and by someone who cannot ask which build wrote
+                    // it. `compaction` says the mismatch is the pre-#1667
+                    // journal's routine one; `integrity` says nothing routine
+                    // explains it. Stamped on the verified path too, where the
+                    // answer is `none`: a reader should never have to infer a
+                    // verdict from a field's absence. Same words `stella
+                    // inspect` and the deck render — one source, four surfaces
+                    // (#1981, #2030).
+                    journal_era: Some(crate::inspect::era_tag(reconstruction.journal_era).into()),
+                    digest_mismatch_severity: Some(
+                        crate::inspect::severity_tag(reconstruction.mismatch_severity()).into(),
+                    ),
                     error,
-                )
+                }
             }
-            Err(e) => (
-                Vec::new(),
-                false,
-                Some(format!("reconstruction failed: {e}")),
-            ),
+            // Nothing was read, so nothing is known: the era and severity stay
+            // absent rather than defaulting to a word that would read as a
+            // verdict.
+            Err(e) => CallReconstruction {
+                messages: Vec::new(),
+                verified: false,
+                journal_era: None,
+                digest_mismatch_severity: None,
+                error: Some(format!("reconstruction failed: {e}")),
+            },
         };
         let usage = fold.usage_by_call.get(&key);
         calls.push(TraceCall {
@@ -317,9 +366,11 @@ pub fn assemble(
             stage: fold.stage_by_call.get(&key).cloned().flatten(),
             provider: receipt.provider.clone(),
             model: receipt.model.clone(),
-            prompt_messages,
-            reconstruction_verified: verified,
-            reconstruction_error: error,
+            prompt_messages: reconstructed.messages,
+            reconstruction_verified: reconstructed.verified,
+            journal_era: reconstructed.journal_era,
+            digest_mismatch_severity: reconstructed.digest_mismatch_severity,
+            reconstruction_error: reconstructed.error,
             tool_uses: fold.tools_by_call.get(&key).cloned().unwrap_or_default(),
             input_tokens: usage.map(|u| u.input_tokens),
             output_tokens: usage.map(|u| u.output_tokens),
@@ -340,7 +391,7 @@ pub fn assemble(
     let reward = label(
         fold.settlement.unwrap_or(Settlement::Absent),
         TrajectoryCost {
-            steps: u32::try_from(calls.len()).unwrap_or(u32::MAX),
+            steps: TrajectoryCost::recorded_steps(calls.len()),
             cost_usd: summary.cost_usd,
             revisions: fold.verdicts.saturating_sub(1),
         },
@@ -915,6 +966,12 @@ mod tests {
         assert_eq!(record.calls.len(), 1);
         assert!(!record.calls[0].reconstruction_verified);
         assert!(record.calls[0].reconstruction_error.is_some());
+        // Unresolved is not a digest mismatch: the severity says `none` while
+        // `reconstruction_verified` says false. That distinction is exactly
+        // what the prose sentence cannot express (#2030).
+        let call = &serde_json::to_value(&record).unwrap()["calls"][0];
+        assert_eq!(call["digest_mismatch_severity"], "none");
+        assert_eq!(call["journal_era"], "compaction_journaled");
         assert_eq!(record.change_digest, None);
         assert!(record.outcome.is_none(), "unsettled execution says so");
         // No verdict reached the journal, so the label says exactly that
@@ -923,6 +980,93 @@ mod tests {
         assert_eq!(
             record.reward.discard,
             Some(stella_pipeline::reward::DiscardReason::NoVerdict)
+        );
+    }
+
+    /// #2030: a digest mismatch on a current-era journal is a real integrity
+    /// signal, and the trace record says so in a field a consumer can filter
+    /// on — not only inside `reconstruction_error`'s sentence. Asserted
+    /// against the serialized line rather than the struct, because the JSONL
+    /// artifact is what a dataset reader actually greps.
+    #[test]
+    fn a_digest_mismatch_is_a_field_not_a_substring() {
+        let store = Store::in_memory().unwrap();
+        // `begin_execution` stamps the current era, which is what makes an
+        // unexplained mismatch `integrity` rather than routine `compaction`.
+        let id = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
+        store
+            .record_event(
+                id,
+                0,
+                &AgentEvent::ToolResult {
+                    call_id: "call_1".to_string(),
+                    output: ToolOutput::Ok {
+                        content: "fn login() {}".to_string(),
+                        data: None,
+                    },
+                    duration_ms: 5,
+                    speculated: false,
+                },
+            )
+            .unwrap();
+        // The block resolves through the journal by `call_id`, but its
+        // recorded digest is not the digest of those bytes — a mismatch by
+        // construction. `gap_block` cannot express this: it stores `content`
+        // locally, which short-circuits the digest check to true.
+        store
+            .record_context_block(
+                id,
+                &ContextBlockRow {
+                    block_id: "blk_tool".to_string(),
+                    kind: "tool_result".to_string(),
+                    origin_turn: 0,
+                    origin_step: 0,
+                    call_id: Some("call_1".to_string()),
+                    memory_id: None,
+                    token_cost: Some(1),
+                    content_digest: format!("sha256:{}", "0".repeat(64)),
+                    citation_label: None,
+                    content: None,
+                },
+            )
+            .unwrap();
+        store
+            .record_step_manifest(
+                id,
+                &StepManifestRow {
+                    turn_instance: 0,
+                    step: 0,
+                    call_seq: 0,
+                    provider: "zai".to_string(),
+                    model: "glm-5.2".to_string(),
+                    call_role: "worker".to_string(),
+                    effective_budget_tokens: 1000,
+                    calibration_factor: 1.0,
+                    estimated_input_tokens: 10,
+                    compiled_frame_id: None,
+                    frame_hash: None,
+                    blocks: vec![manifest_entry("blk_tool", 0)],
+                },
+            )
+            .unwrap();
+
+        let record = assemble(&store, id, &RewardPolicy::default()).unwrap();
+        assert_eq!(record.calls.len(), 1);
+        assert!(!record.calls[0].reconstruction_verified);
+
+        let call = &serde_json::to_value(&record).unwrap()["calls"][0];
+        assert_eq!(
+            call["digest_mismatch_severity"], "integrity",
+            "the verdict is a key, not a substring: {call}"
+        );
+        assert_eq!(call["journal_era"], "compaction_journaled");
+        // The human sentence stays: the fields are additive to it, not a
+        // replacement for it.
+        assert!(
+            call["reconstruction_error"]
+                .as_str()
+                .is_some_and(|e| e.contains("blk_tool")),
+            "the prose still names the block: {call}"
         );
     }
 
@@ -967,10 +1111,20 @@ mod tests {
             record.reward.cost.revisions, 1,
             "two verdicts, one revision"
         );
-        assert_eq!(record.reward.cost.steps, 0, "no receipts in this fixture");
-        // 1.0 − 0.02·0 − 0.5·0.40 − 0.1·1 = 0.70
-        let reward = record.reward.reward.expect("scored");
-        assert!((reward - 0.70).abs() < 1e-9, "got {reward}");
+        // No receipts in this fixture, so how many calls the turn bought was
+        // never recorded. Shaped against a zero it would have scored
+        // 1.0 − 0.02·0 − 0.5·0.40 − 0.1·1 = 0.70, a step penalty lighter than
+        // any counted trajectory pays; the label withholds the scalar instead
+        // and keeps the rung and the outcome term, which are still true.
+        assert_eq!(
+            record.reward.cost.steps, None,
+            "no receipts in this fixture"
+        );
+        assert_eq!(record.reward.reward, None);
+        assert_eq!(
+            record.reward.discard,
+            Some(stella_pipeline::reward::DiscardReason::StepsUnknown)
+        );
 
         // The airlock at the trace seam: the verifier's own sentence is in the
         // journal this was folded from, and nowhere in the label.

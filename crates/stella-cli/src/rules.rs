@@ -98,7 +98,7 @@ impl From<Vec<Rule>> for ResolvedRules {
 /// 0011 ratified. Both are read from the same directories in the same order, so
 /// there is one precedence order rather than one per format — see
 /// [`stella_core::records::registry`].
-const RULE_EXTENSIONS: &[&str] = &["md", "toml"];
+pub(crate) const RULE_EXTENSIONS: &[&str] = &["md", "toml"];
 
 /// File names inside a rules directory that are **governance, not policy**, and
 /// so must never be parsed as records.
@@ -120,7 +120,7 @@ const RULE_EXTENSIONS: &[&str] = &["md", "toml"];
 /// [`RULE_EXTENSIONS`], so it is already never read.
 ///
 /// [g]: stella_core::records::promotion::Governance
-const RESERVED_RULE_FILENAMES: &[&str] = &["governance.toml"];
+pub(crate) const RESERVED_RULE_FILENAMES: &[&str] = &["governance.toml"];
 
 /// The production [`RuleSource`]: real `std::fs` reads over each directory
 /// in `dirs`, in the given order — every `.md` and `.toml` file's contents,

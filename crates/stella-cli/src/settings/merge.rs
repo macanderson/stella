@@ -411,7 +411,7 @@ impl Settings {
     /// file that fails to parse is a hard error naming the file.
     ///
     /// **The project scope is a trust boundary.** A cloned repo's
-    /// `.stella/settings.json` is untrusted input, and two kinds of entry in
+    /// `.stella/settings.json` is untrusted input, and three kinds of entry in
     /// it can act on your behalf without you asking:
     ///
     /// - **Hooks** run arbitrary shell commands automatically.
@@ -433,6 +433,13 @@ impl Settings {
     /// tool switches and replacement prompts are likewise restored from the
     /// trusted scopes while untrusted. Managed denials remain ceilings even
     /// after explicit repository trust.
+    ///
+    /// **Every one of those refusals is spoken, once.** The same trust verdict
+    /// also withholds the rest of the repository's steering plane — memories,
+    /// rules and records, skills, commands, agents — which lives outside
+    /// `settings.json` and so is suppressed at its own load sites; this is the
+    /// one place that holds the resolved verdict *and* runs before any of them,
+    /// so it is where [`super::withheld::notice`] is spoken too (#2302).
     pub fn load(workspace_root: &Path) -> Result<Self, String> {
         if filesystem_settings_disabled() {
             return Ok(Self::default());
@@ -566,6 +573,25 @@ impl Settings {
                     redacted.join(", "),
                 );
             }
+        }
+
+        // The steering plane's half of the same refusal. Whether anything was
+        // withheld is read off the merged policy rather than re-derived from
+        // `trust`, because an org-managed `project_prompts = "off"` withholds
+        // steering from a repository the user *did* trust — re-deriving here
+        // would announce the opposite of what the session got. The managed
+        // block goes along so the line can name a remedy that works on the arm
+        // it is actually on: the ceiling is not lifted by trusting the repo.
+        if announce
+            && let Some(line) = super::withheld::notice(
+                workspace_root,
+                super::withheld::withholder(
+                    merged.authority_policy.project_prompts_allowed,
+                    merged.managed_authority.as_ref(),
+                ),
+            )
+        {
+            eprintln!("{line}");
         }
         Ok(merged)
     }

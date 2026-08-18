@@ -939,7 +939,12 @@ struct ReconstructionJson {
 
 /// The stable JSON spelling of an era. Named constants rather than `Debug`,
 /// because these are a wire contract for `--format json` consumers.
-fn era_tag(era: JournalEra) -> &'static str {
+///
+/// `pub(crate)` for the same reason [`severity_tag`] is: the trace writer
+/// (`crate::trace`) stamps the era onto every `TraceCall`, and a second
+/// spelling of these two words is exactly the drift the pinning tests below
+/// exist to prevent (#2030).
+pub(crate) fn era_tag(era: JournalEra) -> &'static str {
     match era {
         JournalEra::CompactionUnjournaled => "compaction_unjournaled",
         JournalEra::CompactionJournaled => "compaction_journaled",
