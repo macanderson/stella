@@ -1,6 +1,8 @@
 //! Fleet-command tests — moved verbatim (dedented) out of the parent's
 //! inline `mod tests` when `fleet_cmd.rs` crossed the file-size ratchet.
 
+use std::path::PathBuf;
+
 use stella_fleet::CommitRecord;
 
 use super::*;
@@ -437,5 +439,160 @@ fn an_unfinished_worker_turn_claims_no_closing_boundary() {
     assert!(
         matches!(seen.as_slice(), [AgentEvent::Error { .. }]),
         "a turn that never completed gets no closing boundary: {seen:?}"
+    );
+}
+
+/// A workspace a fleet worker could be dispatched into: one context record on
+/// the volatile channel, and one workspace skill whose wording the prompt below
+/// shares.
+///
+/// The user-home redirect is not decoration — skills load from
+/// `~/.stella/skills` as well as from the workspace, so without it whoever runs
+/// this suite would have their own real skills join the block and the
+/// assertions would be reading someone's disk instead of this fixture.
+fn steered_workspace() -> (tempfile::TempDir, crate::paths::TestPathsGuard, PathBuf) {
+    let td = tempfile::tempdir().unwrap();
+    let home = td.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let guard = crate::paths::test_user_home(home);
+
+    let root = td.path().join("repo");
+    let rules = root.join(crate::context_records::RULES_DIR);
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(
+        rules.join("ctx.acme.migrations.toml"),
+        r#"
+schema = "context-record/v0.1"
+set_id = "acme"
+
+[defaults]
+sharing_scope = "repository"
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.acme.migration-window"
+kind = "preference"
+statement = "Migrations only run inside the Tuesday window."
+
+[record.steering]
+force = "may"
+"#,
+    )
+    .unwrap();
+
+    let skill_dir = root.join(".stella").join("skills").join("migration-notes");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: migration-notes\ndescription: how to run a database migration safely\n---\n\n\
+         Take a snapshot before the migration.\n",
+    )
+    .unwrap();
+
+    (td, guard, root)
+}
+
+/// A `Config` that reaches the disk above and nothing else — offline: nothing
+/// in this test builds a provider or spends a call.
+fn steered_config(workspace_root: PathBuf) -> Config {
+    let provider = crate::config::PROVIDERS
+        .iter()
+        .find(|p| p.id == "anthropic")
+        .unwrap()
+        .clone();
+    Config {
+        model_id: provider.default_model.to_string(),
+        provider,
+        turn_timeout: None,
+        max_output_tokens: None,
+        plan_mode: false,
+        model_pinned_by_flag: false,
+        durability: Default::default(),
+        output_ceilings: Default::default(),
+        create_worktrees: Default::default(),
+        allowed_write_dirs: Vec::new(),
+        api_key: stella_model::ApiKey::new("dummy-key-unused-offline"),
+        workspace_root,
+        base_url_override: None,
+        hooks: None,
+        engine_settings: None,
+        engine_settings_trusted: false,
+        tool_policy: Default::default(),
+        ignore_gitignore: true,
+        reward_policy: crate::reward::RewardPolicy::default(),
+        // Workspace skills sit behind the project-trust boundary, so a witness
+        // about a worker receiving one has to open the session the way a
+        // trusted project does.
+        authority: crate::settings::AuthorityPolicy {
+            project_prompts_allowed: true,
+            ..Default::default()
+        },
+        credential_source: None,
+        credential_advisories: Vec::new(),
+        aux_credentials: Default::default(),
+        cache_ttl: None,
+    }
+}
+
+/// **Witness (#3947).** A fleet worker's steering carries the volatile block —
+/// the matched context record, the selected skill, and today's date.
+///
+/// Fails on base, where `worker_recall_block` does not exist because the fleet
+/// door never assembled one: a worker got `build_system_prompt`'s byte-stable
+/// prefix and stopped there, while `stella run`, `/goal`, the REPL and the deck
+/// all got this half too.
+///
+/// The date assertion is the one that makes this a defect rather than a
+/// preference. `append_session_environment` keeps today's date out of the
+/// stable prefix *on purpose*, because it rides here (#2901) — so a worker
+/// carried the knowledge-cutoff clause telling it to treat anything that may
+/// have moved since as unverified, with no "now" to measure "since" against.
+#[tokio::test]
+async fn a_fleet_worker_receives_skills_records_and_todays_date() {
+    let (_td, _guard, root) = steered_workspace();
+    let cfg = steered_config(root.clone());
+    let active_rules = crate::rules::load_workspace_rules(&root, &cfg.authority);
+
+    // The control. If the registry rendered nothing on the volatile channel the
+    // record assertion below would be looking for a string this workspace never
+    // produced — a pass for entirely the wrong reason.
+    assert!(
+        active_rules
+            .registry()
+            .render(stella_core::records::Channel::Volatile, None)
+            .text
+            .contains("Tuesday window"),
+        "the planted `may` record must render on the volatile channel before \
+         this test can say anything about who receives it"
+    );
+
+    let (block, _event) = worker_recall_block(
+        &root,
+        &cfg,
+        &active_rules,
+        "run the database migration for the billing service",
+    )
+    .await;
+    let block = block.expect("a worker in a steered workspace gets a volatile block");
+
+    assert!(
+        block.starts_with(crate::memory::RECALL_MARKER),
+        "the block a worker receives is the same marked volatile block every \
+         other door injects:\n{block}"
+    );
+    assert!(
+        block.contains("Migrations only run inside the Tuesday window."),
+        "the workspace's own published context record must reach the \
+         unattended lane:\n{block}"
+    );
+    assert!(
+        block.contains("migration-notes"),
+        "a skill the prompt selects must reach the worker:\n{block}"
+    );
+    assert!(
+        block.contains("Today's date:"),
+        "the knowledge-cutoff clause in the stable prefix has no second \
+         operand without this line (#2901):\n{block}"
     );
 }
