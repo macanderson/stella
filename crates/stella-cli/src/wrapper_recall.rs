@@ -18,15 +18,17 @@
 //! # Why the projection lives here
 //!
 //! [`RecallHost`] is deliberately **not** [`stella_protocol::ContextRecallPort`]
-//! (née `stella_pipeline::ContextRecallPort`, retargeted to `stella-protocol`
-//! by the removal census, `docs/spec/pipeline-as-plugins.md` §7 slice 1),
-//! even though its signature mirrors it: it is `stella-runtime`'s own trait
-//! for the wrapper socket's host-call channel, kept distinct from the door's
-//! own recall port rather than merged with it, since a wrapper plugin's
-//! `recall` call and a door's own turn-start context recall are two different
-//! callers with two different lifecycles even where their payload shape
-//! agrees. The frames therefore have to be projected by a driver that has
-//! both, and that is this crate. The projection
+//! (the trait every door's own turn-start recall uses; née
+//! `stella_pipeline::ContextRecallPort`, retargeted to `stella-protocol` by
+//! the removal census, `docs/spec/pipeline-as-plugins.md` §7 slice 1), even
+//! though its signature mirrors it: `RecallHost` is `stella-runtime`'s own
+//! trait for the wrapper socket's host-call channel — a wrapper plugin's
+//! `recall` request, not a door's own recall stage — kept in `stella-runtime`
+//! rather than reused from `stella-protocol` so the socket's host-call
+//! surface stays defined beside the rest of `doc:wrapper-socket` §6, not
+//! scattered across the crate that happens to also define the door-side
+//! shape it mirrors. The frames therefore have to be projected by a driver
+//! that has both, and that is this crate. The projection
 //! is mechanical — a [`RecalledFrame`] carries strictly more than a
 //! [`RecallFrame`] does, and the surplus (token cost, provenance method, the
 //! content digest) is the host's accounting rather than anything a plugin acts
@@ -54,8 +56,8 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use stella_pipeline::{ContextRecallPort, RecalledFrame};
 use stella_plugin::RecallFrame;
+use stella_protocol::{ContextRecallPort, RecalledFrame};
 use stella_runtime::wrapper::RecallHost;
 
 use crate::memory::SessionMemory;
