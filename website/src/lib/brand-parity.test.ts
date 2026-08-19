@@ -307,7 +307,14 @@ test("no retired brand value survives anywhere in the site", () => {
       // comment recording why this test exists, and this test in the list
       // above. Naming the defect is not committing it.
       if (path.endsWith("app/tokens.css") || path === TEST_FILE) continue;
-      const text = read(path).toLowerCase();
+      // `%23` is `#` percent-encoded, which is how a hex colour is spelled
+      // inside an `<svg …>` data URI — and this site ships two of those as
+      // inline favicons. Normalising rather than listing every encoded twin
+      // keeps one entry per retired value: `vision.html` sat on v1.0's
+      // `%23FFB000` on `%230B0B0C` through three rebrands because a sweep for
+      // `#ffb000` cannot see it, the same blind spot the channel-triple
+      // entries above exist for.
+      const text = read(path).toLowerCase().replaceAll("%23", "#");
       for (const value of RETIRED) {
         if (text.includes(value)) {
           offenders.push(`${path} contains retired v1.0 value ${value}`);

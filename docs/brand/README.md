@@ -1,13 +1,13 @@
 ---
 id: brand
-title: "stella\* — brand kit v3.0"
+title: "stella\* — brand kit v4.0"
 status: living
 ---
 
-# stella\* — brand kit v3.0
+# stella\* — brand kit v4.0
 
 The comet: a four-point star moving fast enough to leave a trail.
-One shape, one color — Ion `#C58A32` on Obsidian `#070B10`.
+One shape, one color — Gold `#C58A32` on Obsidian `#070B10`.
 
 **Start with `brand-guidelines.html`** — it explains everything below,
 adapts to light/dark, and works offline.
@@ -67,11 +67,12 @@ decodes, inflates, and has the size its name promises; that `cometkit`'s
 geometry still matches the committed SVGs; that the three wallpaper tiers draw
 the same picture; and that the spinner GIFs carry the current brand hue.
 
-Quick rules: lowercase always. Comet flies left→right. Ion is the signal,
+Quick rules: lowercase always. Comet flies left→right. Gold is the signal,
 never the surface. On light backgrounds use brand-deep `#8B5E1A` for small
-ion text and brand-700 `#8B5E1A` for the mark itself — v3.0 retired the "full
-strength on both grounds" rule, because ion measures 1.61:1 on paper. Assemble,
-don't spin.
+gold text and brand-700 `#8B5E1A` for the mark itself — v3.0 retired the "full
+strength on both grounds" rule because Ion measured 1.61:1 on paper, and v4.0
+keeps it: gold is better at 2.63:1 but still under the 3:1 graphical floor,
+which brand-700 clears at 4.99:1. Assemble, don't spin.
 
 ```
 site/              one-page desktop mock + mobile mock with the star-fan
