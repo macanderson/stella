@@ -971,7 +971,7 @@ mod code_graph;
 
 /// The machine-readable envelope leads with `schema_version`, on the one
 /// summary shape a raw step-loop run still emits — `PipelineRunSummary` died
-/// with the staged pipeline it described (#3846). Key order is deliberately
+/// with the staged pipeline it described (#3865). Key order is deliberately
 /// *not* part of the consumer contract — this pins a build convention, not a
 /// promise: the envelope is assembled from a struct with the version declared
 /// first, so a derived `Serialize` emits it at the head of the object where a

@@ -10,7 +10,7 @@
 //! gave the staged pipeline's reflection gate its tool-call evidence (the
 //! pipeline path kept the worker's tool-calling turns out of `messages`, so
 //! `turn_warrants_reflection(&messages)` alone was always false there). That
-//! pipeline is gone from this build (#3846); the raw step-loop's `messages`
+//! pipeline is gone from this build (#3865); the raw step-loop's `messages`
 //! already carries every tool call, so `turn_warrants_reflection` alone is
 //! sufficient for it and always was.
 
@@ -112,7 +112,7 @@ pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat
     }
 }
 
-/// No production caller since #3846 — its one use was the staged pipeline's
+/// No production caller since #3865 — its one use was the staged pipeline's
 /// `--output-format json` envelope, whose `reflection` key does not exist on
 /// [`crate::agent::RawRunSummary`] (the raw step-loop's own JSON envelope
 /// never carried one). Kept for `reflection_json_preserves_full_paid_call_envelope_and_cost`'s

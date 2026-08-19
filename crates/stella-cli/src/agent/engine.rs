@@ -280,8 +280,7 @@ pub(crate) fn engine_config_for_kind(cfg: &Config, kind: &str) -> EngineConfig {
 /// agent's tuning.
 ///
 /// Its production caller (`run_goal_pipeline_turn`, `agent/goal.rs`) was
-/// deleted along with the staged pipeline's goal arm (removal census,
-/// `docs/spec/pipeline-as-plugins.md` §7 slice 1) — `stella goal`'s
+/// deleted along with the staged pipeline's goal arm (#3865) — `stella goal`'s
 /// surviving `Raw`/`Plugin` arms route their verifier through
 /// `stella_core::Engine::run_goal` directly rather than building a separate
 /// tuned config for it. `#[allow(dead_code)]` rather than deletion because

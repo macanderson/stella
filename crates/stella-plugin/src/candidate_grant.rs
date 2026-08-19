@@ -12,21 +12,24 @@
 //! Every name here was first defined in `stella-pipeline` — `ports.rs`'s
 //! process-outcome types, `ports/handle.rs`'s grant-minting and path fence,
 //! `witness.rs`'s command parser and identity comparator — because that was
-//! the only caller at the time. It moved here by the removal census for that
-//! crate (`docs/spec/pipeline-as-plugins.md` §7 slice 1, §1.5.6): the staged
-//! pipeline's own `CandidateHandles` table (`stella-pipeline`'s
-//! `ports/handle.rs`) still needs all of it, but so does `stella-cli`'s
-//! wrapper-socket driver (`wrapper_candidate.rs`) for **every**
-//! currently-installed witness-flavoured plugin, regardless of whether the
-//! staged pipeline itself ever runs again — the exact shape already
-//! established for [`crate::wire`]'s [`CandidateGrant`]/[`TestPlan`]. Two
-//! callers outside the crate that first needed a thing is the textbook
-//! boundary-type signal (AGENTS.md invariant 1), and `stella-plugin` is where
-//! it now sits: already near-leaf (only `stella-protocol` as a workspace
-//! dependency), already hosting the wire types ([`CandidateGrant`],
-//! [`crate::TamperFinding`]) these functions build against, and upstream of
-//! both `stella-cli` and `stella-runtime` in the dependency graph so either
-//! can reach the minting logic without a layering violation.
+//! the only caller at the time. It moved here (`§1.5.6` of the removal
+//! census that later deleted that crate outright, #3865) once a second
+//! caller needed it: `stella-cli`'s wrapper-socket driver
+//! (`wrapper_candidate.rs`) for **every** currently-installed
+//! witness-flavoured plugin — the exact shape already established for
+//! [`crate::wire`]'s [`CandidateGrant`]/[`TestPlan`]. At the time of the
+//! move the staged pipeline's own `CandidateHandles` table (then
+//! `stella-pipeline`'s `ports/handle.rs`) was still the other caller, so the
+//! move kept one minting implementation shared across the crate boundary
+//! rather than two; that crate is gone now (#3865) and this module's own
+//! caller is the only one left. Two callers outside the crate that first
+//! needed a thing was the textbook boundary-type signal (AGENTS.md
+//! invariant 1), and `stella-plugin` is where it now sits: already near-leaf
+//! (only `stella-protocol` as a workspace dependency), already hosting the
+//! wire types ([`CandidateGrant`], [`crate::TamperFinding`]) these functions
+//! build against, and upstream of both `stella-cli` and `stella-runtime` in
+//! the dependency graph so either can reach the minting logic without a
+//! layering violation.
 //!
 //! `stella-pipeline`, while it still exists, re-exports every name below
 //! unchanged from `ports`/`ports::handle`/`witness`, so its own call sites —

@@ -632,7 +632,7 @@ impl AgentEngineConfig {
 
     /// Whether a headless run skips the (now-removed) staged pipeline's
     /// scope-review gate rather than refusing outright. The gate itself is
-    /// gone with the pipeline (#3846); this accessor and the setting it reads
+    /// gone with the pipeline (#3865); this accessor and the setting it reads
     /// survive only because settings-merge tests still exercise the
     /// scope-chain precedence rule for `agent_engine_config.headless_scope_bypass`
     /// through it — no production code consults the answer any more.

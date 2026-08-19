@@ -161,17 +161,18 @@ use crate::{OutputFormat, config::Config};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PipelineChoice<'a> {
     /// The built-in staged pipeline, recorded as `classic`. **Removed**
-    /// (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice 1):
-    /// [`PipelineChoice::resolve`] refuses `--pipeline classic` rather than
-    /// ever producing this variant, so no live path constructs it any more —
-    /// hence the `#[allow]` below, which is accurate (dead_code is correct
-    /// that nothing builds one) rather than a lint the project disagrees
-    /// with. It stays declared, not deleted, only because
-    /// [`crate::agent::run_one_shot`]'s classic dispatch arm
-    /// (`run_pipeline_one_shot`) still matches on it and the crate's
-    /// classic-typed persistence/outcome plumbing still names it; both are
-    /// deleted in the same later slice (§1.5.3/§1.5.9 of the census) that
-    /// removes this variant and its `#[allow]` together.
+    /// (#3865): [`PipelineChoice::resolve`] refuses `--pipeline classic`
+    /// rather than ever producing this variant, so no live path constructs
+    /// it any more — hence the `#[allow]` below, which is accurate
+    /// (dead_code is correct that nothing builds one) rather than a lint
+    /// the project disagrees with. `run_pipeline_one_shot` and the crate's
+    /// classic-typed persistence/outcome plumbing, the two production call
+    /// sites this comment used to name as the reason the variant survived,
+    /// are both gone too (#3865) — the variant now stays declared only for
+    /// the unit tests that construct it directly to exercise the
+    /// unreachable-input arms it feeds (`wrapper_plugin/tests.rs`). Deleting
+    /// it cleanly means touching those tests too, which is why it is a
+    /// separate, tracked cleanup rather than folded into this one: #3867.
     #[allow(dead_code)]
     Classic,
     /// The raw step-loop with nothing over it — the default since #3381.
@@ -191,8 +192,7 @@ impl<'a> PipelineChoice<'a> {
     /// removed in the same change); now the deprecated flag simply has
     /// nothing left to veto, and `--pipeline <variant>` always wins.
     ///
-    /// Fallible again as of the removal census
-    /// (`docs/spec/pipeline-as-plugins.md` §7 slice 1): `--pipeline classic`
+    /// Fallible again as of #3865: `--pipeline classic`
     /// used to resolve to [`Self::Classic`]; it now refuses with
     /// [`classic_removed_message`], naming the removal and the wrapper-plugin
     /// remedy, rather than silently accepting a name that no longer runs
@@ -239,8 +239,7 @@ impl<'a> PipelineChoice<'a> {
 }
 
 /// The refusal `--pipeline classic` owes since the built-in staged pipeline
-/// was removed (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice
-/// 1). Named as its own function, mirroring
+/// was removed (#3865). Named as its own function, mirroring
 /// [`reject_verification_flags_without_pipeline`]'s shape, so
 /// [`PipelineChoice::resolve`]'s witness test and every door's own error
 /// path read the identical sentence rather than five hand-written copies
@@ -370,8 +369,7 @@ pub(crate) fn reject_arbiter_wrapper_on_goal(resolved: &ResolvedWrapper) -> Resu
 /// own oracle. Silently dropping the flag the caller asked for is exactly the
 /// expedient CLAUDE.md forbids, so this refuses before dispatch instead of
 /// letting the run start and the flag do nothing. `--pipeline classic`
-/// itself is refused at [`PipelineChoice::resolve`] now (removal census,
-/// `docs/spec/pipeline-as-plugins.md` §7 slice 1) — this function's own
+/// itself is refused at [`PipelineChoice::resolve`] now (#3865) — this function's own
 /// `choice.is_classic()` early return is therefore dead code today, kept
 /// only because it is harmless and dies with [`PipelineChoice::Classic`]
 /// itself in the slice that deletes the classic dispatch arm.

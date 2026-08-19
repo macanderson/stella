@@ -3,8 +3,7 @@
 //! `run_goal_cmd` drives the raw `Engine::run_goal` step-loop (the default
 //! since #3381) or an installed wrapper plugin per round (`--pipeline
 //! <variant>`, [`goal_wrapped`], #3695 goal half) — the staged pipeline
-//! (`--pipeline classic`) is gone (removal census,
-//! `docs/spec/pipeline-as-plugins.md` §7 slice 1). The goal verifier is
+//! (`--pipeline classic`) is gone (#3865). The goal verifier is
 //! independent of the worker model and answers "does the whole effort meet
 //! the goal?" — distinct from a wrapper plugin's own oracle — and stays the
 //! same `Engine::assess` primitive on both arms.
@@ -402,8 +401,7 @@ pub(crate) async fn run_raw_one_shot(
 ///
 /// `pipeline` selects the driver for each working round (#3381): `Classic`
 /// (`--pipeline classic`) is refused at [`crate::wrapper_plugin::PipelineChoice::resolve`]
-/// now — the built-in staged pipeline is gone (removal census,
-/// `docs/spec/pipeline-as-plugins.md` §7 slice 1) — so `run_goal_cmd` never
+/// now — the built-in staged pipeline is gone (#3865) — so `run_goal_cmd` never
 /// sees that variant in practice; `Raw` — the default since #3381, with or
 /// without `--no-pipeline` — falls back to the raw `Engine::run_goal`
 /// step-loop; `Plugin(variant)` dispatches each round's worker turn through
@@ -429,7 +427,7 @@ pub async fn run_goal_cmd(
     // dispatch: the wrapped arm builds the same system prompt, the same
     // recall block and the same tool stack `Raw` does, and differs only in
     // which function drives the round loop. The staged pipeline itself is
-    // gone (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice 1):
+    // gone (#3865):
     // `pipeline.is_classic()` can never be true any more
     // (`PipelineChoice::resolve` refuses `--pipeline classic` outright), so
     // this door runs the `Raw`/`Plugin` arms unconditionally now.

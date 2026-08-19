@@ -9,7 +9,7 @@
 //! ordinary engine checkpoint, in the same work-journal commit
 //! ([`stella_store::work_journal::PIPELINE_BLOB`]), naming the staging the
 //! killed turn belonged to. The staged pipeline itself has been removed from
-//! this build (#3846: `crates/stella-pipeline` is gone workspace-wide), so
+//! this build (#3865: `crates/stella-pipeline` is gone workspace-wide), so
 //! there is no more restoration path — but an operator's disk may still hold
 //! a frame an *older* build wrote, and `stella daemon resume` must keep
 //! reading it rather than crash on it.
@@ -47,7 +47,7 @@ pub const FRAME_VERSION: u32 = 1;
 /// The staged pipeline a checkpointed turn was running inside, as far as this
 /// build can still say.
 ///
-/// **Detection-only, since #3846.** `responsibilities` and `progress` used to
+/// **Detection-only, since #3865.** `responsibilities` and `progress` used to
 /// decode into `stella_pipeline::AssignmentOverride`/`FrameProgress` — real
 /// types owned by the crate that has been deleted. They are read here as
 /// opaque JSON instead: a historical frame's bytes still parse (nothing about
@@ -70,7 +70,7 @@ pub struct PipelineFrame {
     #[serde(default)]
     pub witness_writer: bool,
     /// The run's responsibility-roster override block, exactly as it arrived
-    /// on disk. Opaque JSON since #3846 (see the struct doc) — kept so a
+    /// on disk. Opaque JSON since #3865 (see the struct doc) — kept so a
     /// historical frame still round-trips its bytes, not because anything
     /// here decodes it.
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
@@ -88,7 +88,7 @@ pub struct PipelineFrame {
     pub max_revisions: u32,
     /// The facts the pipeline learned while running — task class, plan,
     /// execute cursor, test baseline — exactly as they arrived on disk.
-    /// Opaque JSON since #3846 (see the struct doc): its presence still means
+    /// Opaque JSON since #3865 (see the struct doc): its presence still means
     /// "this frame recorded enough to have restored the pipeline in an
     /// earlier build" (reported by [`ResumeFrame::advisory`]), but nothing
     /// decodes the record any more.
@@ -151,7 +151,7 @@ impl ResumeFrame {
     /// already assumed was false; naming the verify stage, the flip credit and
     /// the candidate workspace individually is what makes it actionable.
     ///
-    /// **The graceful refusal (#3846).** A [`Self::Pipeline`] frame used to
+    /// **The graceful refusal (#3865).** A [`Self::Pipeline`] frame used to
     /// branch here — restore into the staged pipeline when its `progress`
     /// field carried enough, fall back to the bare turn otherwise. The staged
     /// pipeline is gone from this build, so every `Self::Pipeline` frame now
@@ -281,7 +281,7 @@ mod tests {
         );
     }
 
-    /// **The #1615 witness, still true post-#3846.** A turn killed inside a
+    /// **The #1615 witness, still true post-#3865.** A turn killed inside a
     /// staged pipeline resumes knowing it is coming back smaller: the
     /// advisory names the verify command that will not re-run, the witness
     /// flip that will not be credited, and the candidate worktree that died
@@ -375,8 +375,8 @@ mod tests {
         );
     }
 
-    /// **The graceful refusal (#3846), and this slice's own witness.** A
-    /// frame a pre-#3846 build wrote — carrying real `responsibilities` and
+    /// **The graceful refusal (#3865), and this slice's own witness.** A
+    /// frame a pre-#3865 build wrote — carrying real `responsibilities` and
     /// `progress` JSON, the exact shape that used to restore the pipeline via
     /// `stella_pipeline::Pipeline::resume` — still deserializes cleanly in
     /// this build (it does not panic, and does not misclassify as a bare
@@ -389,7 +389,7 @@ mod tests {
     /// data can only ever be read back as opaque JSON, never reconstructed.
     #[test]
     fn a_stored_classic_frame_with_restorable_progress_deserializes_into_the_graceful_refusal() {
-        // A `responsibilities`/`progress` shape a real pre-#3846 build could
+        // A `responsibilities`/`progress` shape a real pre-#3865 build could
         // have written — this build does not need to know their internal
         // structure to accept them as opaque JSON.
         let json = serde_json::json!({

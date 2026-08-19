@@ -186,25 +186,23 @@ pub(crate) fn run_inspect(args: &InspectArgs) -> Result<(), String> {
 /// verdicts against the evidence that later contradicted or confirmed them —
 /// `GroundTruth`, `CalibrationReport`, `calibration_pending`, and
 /// `render_calibration` all lived in `stella_pipeline::replay`, and that
-/// crate is gone (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice
-/// 2). Unlike this file's other pipeline-era callers, that module was not a
-/// clean retarget: `replay::CalibrationReport` folds `LadderInputs`
-/// (`stella_pipeline::verify`) and `independence::GraderCohorts`, both
-/// pipeline-internal — pulling this command back would mean reconstructing a
-/// verify/independence model from scratch outside the crate that owned it,
-/// not moving a self-contained type. That is a real design decision, not a
-/// mechanical one, so it is left to a human rather than guessed at under a
-/// deletion slice's compile pressure (CLAUDE.md: "'now' vs. 'right' is the
-/// maintainer's call"). Tracked in #3854; the command still parses so a
-/// script invoking it fails loudly with this text instead of "unknown
-/// subcommand".
+/// crate is gone (#3865). Unlike this file's other pipeline-era callers,
+/// that module was not a clean retarget: `replay::CalibrationReport` folds
+/// `LadderInputs` (`stella_pipeline::verify`) and
+/// `independence::GraderCohorts`, both pipeline-internal — pulling this
+/// command back would mean reconstructing a verify/independence model from
+/// scratch outside the crate that owned it, not moving a self-contained
+/// type. That is a real design decision, not a mechanical one, so it is
+/// left to a human rather than guessed at under a deletion slice's compile
+/// pressure (CLAUDE.md: "'now' vs. 'right' is the maintainer's call").
+/// Tracked in #3866; the command still parses so a script invoking it fails
+/// loudly with this text instead of "unknown subcommand".
 pub(crate) fn run_calibration(_format: QueryFormat) -> Result<(), String> {
     Err("stella calibration no longer runs anything — it read \
          stella_pipeline::replay's ground-truth/calibration model, which was \
-         removed with the staged pipeline crate (see \
-         docs/spec/pipeline-as-plugins.md §7 slice 2). Re-implementing it \
-         standalone is an open design decision, tracked in \
-         https://github.com/macanderson/stella/issues/3854."
+         removed along with the staged pipeline crate (#3865). \
+         Re-implementing it standalone is an open design decision, tracked \
+         in https://github.com/macanderson/stella/issues/3866."
         .to_string())
 }
 

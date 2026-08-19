@@ -1460,8 +1460,7 @@ pub async fn run_deck_session(
             cfg,
             Some(&session_record.id),
             // No live path drives a deck turn through the staged pipeline any
-            // more (removal census, `docs/spec/pipeline-as-plugins.md` §7
-            // slice 1) — every turn's variant is `None`, exactly like every
+            // more (#3865) — every turn's variant is `None`, exactly like every
             // other door's raw arm.
             None,
         );
@@ -1920,8 +1919,7 @@ pub async fn run_deck_session(
                         // Scope review had exactly one consumer — the staged
                         // pipeline's `DeckApprovalGate`, which parked on this
                         // input to answer its `ApprovalGate::confirm`. Both
-                        // are gone (removal census,
-                        // `docs/spec/pipeline-as-plugins.md` §7 slice 1): no
+                        // are gone (#3865): no
                         // door raises the scope-review card any more, so a
                         // `ScopeDecision` arriving here has nothing to
                         // answer. `UserInput::ScopeDecision` itself is left

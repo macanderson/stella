@@ -20,13 +20,12 @@
 //!
 //! `stella run --pipeline <variant>` drives the raw step loop **in the shared
 //! work tree** (#3494). So the grant this module mints is over that tree, via
-//! [`stella_plugin::host_tree_grant`] — the same canonicalisation the staged
-//! pipeline's own `CandidateHandles::grant` performs (`stella-pipeline`'s
-//! `ports/handle.rs`, which calls the very same function), so there is one
-//! minting implementation and one fence rather than two — a guarantee the
-//! removal census for that crate kept true across the crate boundary by
-//! moving the minting logic here rather than duplicating it
-//! (`docs/spec/pipeline-as-plugins.md` §7 slice 1, §1.5.6).
+//! [`stella_plugin::host_tree_grant`] — the minting logic moved here (rather
+//! than staying duplicated) before the staged pipeline's own
+//! `CandidateHandles::grant` (formerly `stella-pipeline`'s `ports/handle.rs`)
+//! was deleted along with that crate (#3865), so there was one fence, not
+//! two, for as long as both callers coexisted, and this module is now the
+//! only one.
 //!
 //! Minting a *worktree* instead would be worse than the gap it closes: the turn
 //! would still run in the shared tree, the plugin would read and test an

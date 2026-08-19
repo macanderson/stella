@@ -9,7 +9,7 @@
 //! - [`human_can_answer`] / [`human_is_present`] — the single derivation of
 //!   "is a human present to answer?", read by the #2676 approval responder
 //!   and the rules-enforcement prompt. The staged pipeline's own approval
-//!   capability used to read it too, before the pipeline was removed (#3846).
+//!   capability used to read it too, before the pipeline was removed (#3865).
 //! - [`AskUserIo`] / [`TtyAskUserIo`] — how an interactive question (an
 //!   approval, a scope-review confirm) reaches the human. Injectable so the
 //!   decision logic is testable without a TTY: the approvals plane gets the
@@ -35,7 +35,7 @@
 /// that reads this process's handles. The consumer today is
 /// [`crate::approval::attach_interactive_approvals`] (the #2676 approval
 /// responder) — the staged pipeline's own approval port was a second
-/// consumer of this same fact until it was removed (#3846). Deriving it
+/// consumer of this same fact until it was removed (#3865). Deriving it
 /// separately is what once let two consumers disagree about whether anyone
 /// was listening.
 ///

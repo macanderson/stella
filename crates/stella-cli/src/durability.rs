@@ -124,7 +124,7 @@ impl SessionDurability {
     /// on an unbound handle, like everything else here: a session with no
     /// durable record has no checkpoint for a frame to ride on either.
     ///
-    /// **No production caller since #3846** — the staged pipeline that used
+    /// **No production caller since #3865** — the staged pipeline that used
     /// to call this (`resume_frame::declare`/`ProgressSink`) is gone, so no
     /// build past this one will ever write a fresh frame. Kept, not deleted:
     /// [`Self::pipeline_frame`] (the read side) is still live — it is how

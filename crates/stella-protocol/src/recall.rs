@@ -13,17 +13,18 @@
 //! on `stella-context`" — i.e. it was a boundary type from the start, not
 //! pipeline-internal orchestration logic, and every door's recall injection
 //! (`stella run`, `stella goal`, `stella fleet`, the Command Deck) depended on
-//! it whether or not the staged pipeline itself ran. The removal census for
-//! `stella-pipeline` (`docs/spec/pipeline-as-plugins.md` §7) named this the
-//! single highest-fan-out RETARGET in the whole crate for exactly that
-//! reason, and moved it here — beside [`crate::provider::Provider`] and
-//! [`crate::event::ScopeProposal`], the crate's other async-trait crossing
-//! points — rather than into `stella-cli`, so a future host that is not
-//! `stella-cli` (an embedded `stella-engine` consumer, `stella-serve`) can
-//! still speak this port without a dependency on the CLI binary.
+//! it whether or not the staged pipeline itself ran. The removal census that
+//! later deleted `stella-pipeline` outright (#3865) named this the single
+//! highest-fan-out RETARGET in the whole crate for exactly that reason, and
+//! moved it here ahead of the deletion — beside [`crate::provider::Provider`]
+//! and [`crate::event::ScopeProposal`], the crate's other async-trait
+//! crossing points — rather than into `stella-cli`, so a future host that is
+//! not `stella-cli` (an embedded `stella-engine` consumer, `stella-serve`)
+//! can still speak this port without a dependency on the CLI binary.
 //!
-//! `stella-pipeline`, while it still exists, re-exports every name below from
-//! `crate::ports` unchanged, so its own call sites needed no edits.
+//! While `stella-pipeline` still existed, it re-exported every name below
+//! from `crate::ports` unchanged, so its own call sites needed no edits; the
+//! crate is gone now (#3865), and this module is these types' only home.
 
 use async_trait::async_trait;
 

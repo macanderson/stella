@@ -27,7 +27,7 @@
 //!   fidelity wins — the transcript the provider priced and cached is the
 //!   transcript it gets back.
 //! - **A turn interrupted mid-pipeline always resumes as a plain engine
-//!   turn** (#3846: the staged pipeline that used to restore beyond it,
+//!   turn** (#3865: the staged pipeline that used to restore beyond it,
 //!   `crates/stella-pipeline`, is gone workspace-wide). A frame left by an
 //!   older build — [`crate::resume_frame::PipelineFrame`] — is still read and
 //!   reported on, never silently dropped: the run names every stage it is
@@ -78,7 +78,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     // through the daemon's own one-shot gate (sidecar or staged stdio), never
     // a TTY prompt raced against it (#2676).
     // The return value fed only the pipeline-restore arm's own recall block
-    // (#3846 removed it); the call itself still attaches the workspace's rule
+    // (#3865 removed it); the call itself still attaches the workspace's rule
     // guards to the registry, which every resumed turn needs regardless.
     let _ = crate::rules::enforce_workspace_rules(
         &tools_registry,
@@ -145,7 +145,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         "  resuming {} at step {step} — completed steps stay done, nothing re-runs",
         record.id
     );
-    // A frame naming a staged pipeline (#3846: the crate that could restore
+    // A frame naming a staged pipeline (#3865: the crate that could restore
     // one is gone) always takes the bare-turn path below — `frame.advisory()`
     // reports exactly what that costs, the graceful refusal this module's own
     // doc comment promises.
@@ -174,7 +174,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         false,
     );
 
-    // A killed turn always resumes as a bare engine turn now (#3846: the
+    // A killed turn always resumes as a bare engine turn now (#3865: the
     // staged pipeline that could restore beyond it is gone) — `frame`'s
     // advisory, printed above, is what tells the operator so.
     let end = {

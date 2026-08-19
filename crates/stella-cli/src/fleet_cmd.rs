@@ -661,7 +661,7 @@ fn worker_event_sender(tx: &mpsc::UnboundedSender<AgentEvent>) -> stella_core::E
 /// One worker turn in `root`, on the calling thread's runtime — the raw
 /// `Engine::run_turn` step-loop. Fleet used to also route a worker through
 /// the staged pipeline (`--pipeline classic`); that driver has been removed
-/// from this build (#3846), so every worker takes this path now.
+/// from this build (#3865), so every worker takes this path now.
 #[allow(clippy::too_many_arguments)] // one caller (EngineWorker::run); composition wiring
 async fn run_task(
     cfg: &Config,
@@ -731,7 +731,7 @@ async fn run_task(
     // parallel workers never contend on a single SQLite writer.
     let store = agent::open_store(root);
     // `pipeline_variant` is always NULL now — the staged pipeline that used
-    // to drive some fleet workers (#3381, #3388, #3684) is gone (#3846), so
+    // to drive some fleet workers (#3381, #3388, #3684) is gone (#3865), so
     // every attempt this build records ran the raw step-loop.
     let execution = agent::begin_execution(&store, "fleet", &task.prompt, &cfg, None, None);
     // From here on this attempt's spend is durable in the store even if this

@@ -39,8 +39,7 @@ pub(crate) struct InsightScope {
     /// Always `true` today: the staged pipeline was the one caller that ever
     /// set this `false` (it emits `Triage` first, and an `Execute` ahead of
     /// it was a backwards transition `replay::validate_stage_ordering`
-    /// rejected), and it is gone (removal census,
-    /// `docs/spec/pipeline-as-plugins.md` §7 slice 1). Kept as a field rather
+    /// rejected), and it is gone (#3865). Kept as a field rather
     /// than inlined as a constant `true` because it rides this struct for a
     /// reason unrelated to that call site: the deck's call sites are in a
     /// file closed to growth, so a second knob belongs on `InsightScope`, not

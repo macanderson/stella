@@ -101,7 +101,7 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
 ///
 /// `--keep-witness`/`--require-verified` used to reach this function too, back when
 /// `PipelineChoice::Classic` was a live arm — the staged pipeline that consumed them is gone
-/// (#3846), and `wrapper_plugin::reject_verification_flags_without_pipeline` now refuses both
+/// (#3865), and `wrapper_plugin::reject_verification_flags_without_pipeline` now refuses both
 /// flags unconditionally before a caller ever resolves a prompt, so nothing downstream of that
 /// refusal has a use for them any more.
 pub async fn run_one_shot(

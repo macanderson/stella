@@ -114,11 +114,11 @@ mod wire;
 pub mod wire_corpus;
 mod wrapper;
 
-// The host-side data and logic behind a candidate grant (removal census for
-// `stella-pipeline`, `docs/spec/pipeline-as-plugins.md` §7 slice 1, §1.5.6) —
-// see the module doc for why the process-outcome types, the test-command
-// parser, the tamper comparator, and the path fence all live beside the wire
-// types they build against.
+// The host-side data and logic behind a candidate grant — moved here from
+// `stella-pipeline` (`§1.5.6` of the removal census that later deleted that
+// crate outright, #3865). See the module doc for why the process-outcome
+// types, the test-command parser, the tamper comparator, and the path fence
+// all live beside the wire types they build against.
 pub use candidate_grant::{
     ArtifactIdentity, ArtifactKind, CmdKind, CmdOutcome, HOST_TREE_HANDLE, TestInvocation,
     TestInvocationError, canonical_root, fence, host_tree_grant, parse_test_invocation,

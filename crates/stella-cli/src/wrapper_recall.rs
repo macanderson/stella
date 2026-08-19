@@ -19,8 +19,8 @@
 //!
 //! [`RecallHost`] is deliberately **not** [`stella_protocol::ContextRecallPort`]
 //! (the trait every door's own turn-start recall uses; née
-//! `stella_pipeline::ContextRecallPort`, retargeted to `stella-protocol` by
-//! the removal census, `docs/spec/pipeline-as-plugins.md` §7 slice 1), even
+//! `stella_pipeline::ContextRecallPort`, retargeted to `stella-protocol`
+//! ahead of the crate's removal, #3865), even
 //! though its signature mirrors it: `RecallHost` is `stella-runtime`'s own
 //! trait for the wrapper socket's host-call channel — a wrapper plugin's
 //! `recall` request, not a door's own recall stage — kept in `stella-runtime`

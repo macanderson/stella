@@ -178,7 +178,7 @@ impl TurnFriction {
     /// `AgentEvent` variant must not change what a turn's friction *is* until
     /// someone decides that it should.
     ///
-    /// No production caller since #3846 — its one production caller,
+    /// No production caller since #3865 — its one production caller,
     /// `FrictionTap` (`agent/reflect.rs`), wrapped the staged pipeline's own
     /// event stream and was removed with the crate that drove it (the raw
     /// step-loop builds `TurnEvidence` from its transcript directly,
@@ -312,7 +312,7 @@ impl TurnFriction {
     /// work" signal the staged pipeline's episode/reflection gates used to
     /// read. The pipeline's worker turns deliberately kept tool calls out of
     /// the planner transcript (L-E6), so this event-stream witness was the
-    /// only way to see them; gone with the pipeline (#3846) — the raw
+    /// only way to see them; gone with the pipeline (#3865) — the raw
     /// step-loop's own transcript already carries every tool call, so
     /// `turn_warrants_reflection(&messages)` alone is sufficient for it.
     #[allow(dead_code)]

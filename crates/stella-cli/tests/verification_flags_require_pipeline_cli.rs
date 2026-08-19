@@ -163,7 +163,7 @@ fn arena_test_command_is_refused_without_pipeline() {
     assert!(stderr.contains("stella plugin install"), "{stderr}");
 }
 
-/// **Witness (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice
+/// **Witness (#3865 slice
 /// 1).** `--pipeline classic` used to give `--test-command` a ladder to arm,
 /// so this exact invocation used to run past the verification-flags gate
 /// (see the previous commit's `arena_test_command_is_accepted_with_pipeline_classic`,

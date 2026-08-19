@@ -262,8 +262,7 @@ pub static CAPABILITIES: &[Capability] = &[
         // the failing pre-execute test baseline and fed it the worker's own
         // shell results, so the execute turn ended the moment the tracked
         // command went fail→pass. That crate — and the candidate/baseline
-        // machinery the arming depended on — is gone (removal census,
-        // `docs/spec/pipeline-as-plugins.md` §7 slice 2); the raw step-loop
+        // machinery the arming depended on — is gone (#3865); the raw step-loop
         // that is the sole CLI path today has no baseline to arm a halt
         // from. The engine seam itself stays witnessed in stella-core
         // (`a_halt_ends_the_turn_at_the_next_step_boundary_as_completed`
@@ -599,8 +598,7 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_entries: &["with_provider_outcomes"],
         cli: SurfacePosture::ShippedUnwitnessed {
             // Was ALSO fed from PipelinePorts.attach() before the staged
-            // pipeline was removed (removal census, `docs/spec/pipeline-as-plugins.md`
-            // §7 slice 2); that feed is gone with the crate, and every CLI
+            // pipeline was removed (#3865); that feed is gone with the crate, and every CLI
             // one-shot path is the raw loop today, so this is the whole
             // story now rather than half of it.
             mechanism: "the bare loops feed a session-scoped `session_router` \
@@ -627,8 +625,7 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_entries: &["with_fallback_resolver"],
         cli: SurfacePosture::ShippedUnwitnessed {
             // Was ALSO attached by the staged pipeline's execute/revise
-            // engines before it was removed (removal census,
-            // `docs/spec/pipeline-as-plugins.md` §7 slice 2); that attach
+            // engines before it was removed (#3865); that attach
             // site is gone with the crate, so the bare loops' attach is the
             // whole story now rather than half of it.
             mechanism: "the bare loops attach a `SessionFallback` (agent/engine.rs) beside the \
@@ -682,7 +679,7 @@ mod tests {
             // Home of `a_piped_stdin_text_run_denies_every_consumer_of_the_human_present_fact`
             // — the `turn.run` CLI witness since the staged pipeline's own
             // scope-review-bypass witness was removed with the crate
-            // (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice 2).
+            // (#3865).
             include_str!("../../stella-cli/src/interactive.rs"),
             // Home of `styled_event_line_composes_glyph_body_detail_with_single_spaces`
             // — the `turn.stream_events` CLI witness, for the same reason.

@@ -1254,8 +1254,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // `goal` with a fixed prompt, not a door #3381 named. It used to
             // stay pinned to the staged pipeline deliberately: fixing CI is
             // exactly the multi-file, verify-gated work the pipeline's ladder
-            // was built for. The ladder is gone (removal census,
-            // `docs/spec/pipeline-as-plugins.md` §7 slice 1) — `--pipeline
+            // was built for. The ladder is gone (#3865) — `--pipeline
             // classic` is refused everywhere now, and pinning `monitor` to it
             // would only route it into that same refusal. `monitor` degrades
             // to the raw loop like every other door with no `--pipeline`

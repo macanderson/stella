@@ -84,7 +84,7 @@ impl Sleeper for TokioSleeper {
 /// surfaces (chat, the deck) deliberately keep an unarmed deadline: their
 /// sessions span many turns and no single wall-clock ceiling describes them.
 ///
-/// **No production caller since #3846.** Its one call site was the staged
+/// **No production caller since #3865.** Its one call site was the staged
 /// pipeline's one-shot driver (`run_pipeline_one_shot`), removed with the
 /// crate that drove it. The raw one-shot door (`run_raw_one_shot`,
 /// `agent/goal.rs`) — the *only* one-shot door since #3381 made it the

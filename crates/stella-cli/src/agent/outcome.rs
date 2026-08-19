@@ -12,7 +12,7 @@
 //! [`stella_pipeline::PipelineStatus`] projection (a store label, a JSON
 //! `reason`, an episodic-memory outcome, the process exit `Result`, and the
 //! terminal SESSIONS-registry status) — that pipeline is gone from this
-//! build (#3846), and with it every surface that produced a `PipelineStatus`
+//! build (#3865), and with it every surface that produced a `PipelineStatus`
 //! to project.
 
 use crate::failure::CliFailure;

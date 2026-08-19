@@ -553,7 +553,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-six crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-five crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -582,7 +582,6 @@ the files you must plan around (see below).
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
-| Triage → … → verifier orchestration plane | [`stella-pipeline`](crates/stella-pipeline/README.md) | |
 | MCP client (external tool servers) | [`stella-mcp`](crates/stella-mcp/README.md) | |
 | Multimodal generation | [`stella-media`](crates/stella-media/README.md) | |
 | Multi-agent fan-out, worktree isolation | [`stella-fleet`](crates/stella-fleet/README.md) | |
@@ -649,10 +648,9 @@ a plan needs and the part that rarely changes:
 
 | Crate | God files |
 |---|---|
-| `stella-cli` | `src/command_deck.rs`, `src/agent.rs` |
+| `stella-cli` | `src/command_deck.rs` |
 | `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
 | `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs` |
-| `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 

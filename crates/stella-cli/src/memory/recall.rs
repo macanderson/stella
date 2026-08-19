@@ -252,7 +252,7 @@ impl SessionMemory {
     /// event for a pipeline turn is the pipeline's own, and this block does
     /// no frame recall to report.
     ///
-    /// No production caller since #3846 — its one call site was the staged
+    /// No production caller since #3865 — its one call site was the staged
     /// pipeline's one-shot driver, removed with the crate that drove it.
     /// Kept for its own test coverage (`memory/tests.rs`,
     /// `memory/tests/ab_control.rs`) of the skills/draft-claims/volatile

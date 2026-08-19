@@ -307,7 +307,7 @@ pub struct Settings {
 ///
 /// The policy used to be consumed at triage (`Pipeline::isolate_in_worktree`)
 /// by the staged pipeline's candidate-workspace isolation — removed along
-/// with that crate (#3846). The setting itself is left in place (still
+/// with that crate (#3865). The setting itself is left in place (still
 /// parses, still validates) since retiring a settings.toml key is a schema
 /// decision of its own; see the filed issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

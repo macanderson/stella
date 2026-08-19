@@ -18,9 +18,8 @@ pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> Cali
 
 /// The id `executions.pipeline_variant` records for a run of the built-in
 /// staged pipeline (#3388/#3381). Was re-exported from
-/// `stella_pipeline::variant::CLASSIC_VARIANT_ID`; that crate's dispatch arm
-/// is refused now (removal census, `docs/spec/pipeline-as-plugins.md` §7
-/// slice 1) and no live path writes a new row with this variant. The literal
+/// `stella_pipeline::variant::CLASSIC_VARIANT_ID`; that crate is gone now
+/// (#3865) and no live path writes a new row with this variant. The literal
 /// survives as a pure historical join key so every already-written
 /// `executions.pipeline_variant = 'classic'` row (a plain `TEXT` column, no
 /// FK) stays queryable — do not resurrect the re-export if `stella-pipeline`

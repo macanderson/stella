@@ -5,7 +5,7 @@
 //! This module used to also carry the staged pipeline's own workspace ports
 //! (repo structure/status, the diagnostic/test/mutation/coverage runners,
 //! best-of-N candidate isolation) — that pipeline is gone from this build
-//! (#3846), and with it every consumer of those ports.
+//! (#3865), and with it every consumer of those ports.
 
 use super::*;
 use stella_plugin::{ArtifactIdentity, ArtifactKind};

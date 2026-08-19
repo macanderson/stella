@@ -18,7 +18,7 @@ use stella_store::reflection::SelfReviewRow;
 pub use digest::TurnEvidence;
 // `TurnFriction` is deliberately not re-exported here: its only production
 // consumer, `FrictionTap`, was removed with the staged pipeline it wrapped
-// (#3846). `digest::tests` and this module's own `tests` still reach it
+// (#3865). `digest::tests` and this module's own `tests` still reach it
 // through `digest::TurnFriction` / `super::digest::TurnFriction` directly.
 
 use super::ReflectionLesson;

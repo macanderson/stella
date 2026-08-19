@@ -12,7 +12,7 @@
 //!
 //! A separate `trace.rs` (#1042) once assembled a redacted trajectory record
 //! from a live pipeline run, but its one call site was the staged pipeline's
-//! one-shot driver — gone from this build (#3846) along with the crate that
+//! one-shot driver — gone from this build (#3865) along with the crate that
 //! drove it — so `.stella/private/traces.jsonl` was already absent in
 //! essentially every real workspace before that removal and carries nothing
 //! historical either way. This module therefore folds `store.db` directly:
