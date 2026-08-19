@@ -216,11 +216,29 @@ agent_event_tags! {
     StepManifest => "step_manifest",
         ConsumerPosture::Unclassified { issue: "#2703" },
         &[];
+    // The verification pair, post-rail (#3790). Neither row is `Unclassified`
+    // debt: the consumers are known and named below; what remains undecided —
+    // whether a verification plugin re-emits these variants — is a producer
+    // question the plugin wire contract (#3511) settles, not an audit gap.
+    //
+    // `Proof`'s only production emitter is `stella-pipeline`, so once that
+    // crate leaves the tree no plugin-less run can produce it; what consumes
+    // it today is the deck's traces tab
+    // (`stella-tui/src/deck/classify.rs::proof_trace`), the offline transcript
+    // export (`stella-cli/src/export/transcript.rs`), and a debug-level diag
+    // record — all readers of the recorded stream, none of them a selecting
+    // surface in [`Surface`]'s sense (the TUI renders every variant by
+    // construction, so it is deliberately not listable).
     Proof => "proof",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::RecordedOnly { issue: "#3790" },
         &[];
+    // `Verdict` additionally folds the session model's verification state
+    // (`stella-tui/src/model.rs`) into the one-line textline verdict — still
+    // rendering, still no branch, still no selecting surface. It stays on the
+    // wire because it is the natural event a verification plugin re-emits;
+    // #3790 confirms that assumption when the wire contract is settled.
     Verdict => "verdict",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::RecordedOnly { issue: "#3790" },
         &[];
     ScopeReview => "scope_review",
         ConsumerPosture::Unclassified { issue: "#2703" },
