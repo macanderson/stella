@@ -697,7 +697,10 @@ Order, easiest and least risky first:
 3. **vera** — `after_turn` + `judge`. Needs A10 (worktrees) and A6 (structured
    verdicts). Ported, not copied: see §8.
 4. **stella-candidates** — the heaviest, needs `again?` with different setup per
-   round.
+   round. **Blocked**: the wrapper socket has no capability for isolated,
+   N-wide candidate fan-out — no multi-workspace grant, no writing `child_turn`
+   equivalent, and no adoption message — so this cannot be built as best-of-N
+   on today's socket (#3844).
 5. **stella-goal** — folded in last so it stops being a second copy.
 
 **The bar for each:** a side-by-side benchmark holds before the built-in path is
