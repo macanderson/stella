@@ -815,10 +815,18 @@ impl QueueIssue {
 /// untriaged issue is a defect nobody has classified yet, not a non-defect.
 /// Feature work is deliberately excluded — this loop closes defects, and
 /// mixing the two makes the batch unreviewable.
+///
+/// Issues carrying `ESCALATION_LABEL` are dropped: the loop already attempted
+/// them and could not resolve them, so keeping them in the queue would make a
+/// later run spend on the same wall it already hit. The label is how that
+/// decision survives across processes — `spent` in the drive loop is
+/// process-local and cannot.
 pub fn rank_defects(issues: Vec<QueueIssue>) -> Vec<QueueIssue> {
     let mut defects: Vec<QueueIssue> = issues
         .into_iter()
-        .filter(|i| i.has_label("bug") || i.has_label("triage"))
+        .filter(|i| {
+            (i.has_label("bug") || i.has_label("triage")) && !i.has_label(ESCALATION_LABEL)
+        })
         .collect();
     defects.sort_by(|a, b| {
         a.priority_rank()
