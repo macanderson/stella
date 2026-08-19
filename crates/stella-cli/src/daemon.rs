@@ -156,8 +156,6 @@ const SIGKILL: i32 = 9;
 pub(crate) struct Supervised {
     /// The registry id — what `stella daemon attach` takes.
     pub(crate) id: String,
-    /// The child's session sidecar, where a parked approval waits (#1585).
-    sidecar: PathBuf,
     /// The child's process group, which is also its pid ([`spawn`]).
     pgid: i32,
     child: std::process::Child,
@@ -544,7 +542,6 @@ fn launch(
     let console = console::Follower::open(&sidecar)?;
     Ok(Supervised {
         id: record.id,
-        sidecar,
         pgid,
         child,
         console,
