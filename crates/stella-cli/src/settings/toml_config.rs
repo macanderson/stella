@@ -316,6 +316,57 @@ pub struct TomlConfig {
     pub authority: Option<ManagedAuthoritySettings>,
     #[serde(default)]
     pub enterprise_telemetry: Option<toml::Value>,
+    /// `[self_driving]` — how the autonomous loop identifies itself.
+    ///
+    /// Here rather than in a file of its own because everything configurable
+    /// about stella comes from `stella.toml`: a second config system is a
+    /// second place to look, and the one thing worse than a setting nobody can
+    /// find is two settings that disagree.
+    #[serde(default)]
+    pub self_driving: SelfDrivingSection,
+    /// `[issues]` — which tracker is active, and where its vocabulary lives.
+    #[serde(default)]
+    pub issues: IssuesSection,
+}
+
+/// `[self_driving]` — the autonomous loop's own configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SelfDrivingSection {
+    /// `[self_driving.attribution]` — what the loop appends to what it writes,
+    /// and how it names branches.
+    pub attribution: stella_autonomy::Attribution,
+}
+
+/// `[issues]` — the active tracker.
+///
+/// Two fields and no more, deliberately. *Which* tracker is a stella-level
+/// decision and belongs here; *how that tracker spells things* is the
+/// tracker's own vocabulary and belongs in its manifest, which this points at.
+/// Putting the spellings here too would mean a customer with two trackers had
+/// nowhere to put the second one's words.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct IssuesSection {
+    /// The provider id — `"github"` today.
+    pub provider: String,
+    /// Path to the provider's manifest, relative to the workspace root.
+    ///
+    /// `None` resolves to `.stella/issues/<provider>.toml`, and an absent file
+    /// yields the built-in defaults for that provider — so a workspace that
+    /// has configured nothing still works, which is the property that keeps
+    /// "everything is configurable" from becoming "everything must be
+    /// configured".
+    pub manifest: Option<String>,
+}
+
+impl Default for IssuesSection {
+    fn default() -> Self {
+        Self {
+            provider: "github".to_owned(),
+            manifest: None,
+        }
+    }
 }
 
 impl TomlConfig {
@@ -416,6 +467,17 @@ impl TomlConfig {
             reward,
             authority,
             enterprise_telemetry,
+            // Deliberately not lowered into `Settings`. Both are read straight
+            // off the parsed document by the self-driving verbs
+            // (`self_driving_cmd::config`), because `Settings` is the engine's
+            // merged view and neither of these steers a turn — folding them in
+            // would put loop bookkeeping and tracker vocabulary on the type
+            // every session-building code path already carries.
+            //
+            // Named rather than `..` so this stays an exhaustive destructure:
+            // the next section added here must still be consciously placed.
+            self_driving: _,
+            issues: _,
         } = self;
 
         let (registry_url, servers) = match mcp {

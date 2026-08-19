@@ -46,6 +46,23 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The label marking an issue the loop tried and could not resolve.
+///
+/// **The loop applies this one to itself.** Everything else in this module is
+/// about classification a human owns; this is the loop recording its own
+/// failure so the next run does not spend the same money discovering it again.
+///
+/// It is a *label* rather than a closure because the issue is not resolved: the
+/// work is still wanted, and a human may pick it up, adjust the ceiling, or
+/// break it into pieces the loop can take. Closing it would be a lie, and
+/// leaving it unmarked is how a loop burns its budget on the same unsolvable
+/// issue every cycle forever.
+///
+/// A session installs it if the tracker does not already carry it, because a
+/// label that does not exist cannot be applied and the loop would fail at the
+/// first escalation rather than at setup.
+pub const ESCALATION_LABEL: &str = "agent-escalated";
+
 /// Where a rule about how issues are written came from.
 ///
 /// This is a precedence order, strongest first, and the ordering is the whole
@@ -279,9 +296,176 @@ pub fn conform(convention: &BacklogConvention, labels: &[&str]) -> Conformance {
     }
 }
 
+/// Why an axis needs a decision rather than a mechanical fix.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "reason")]
+pub enum ChoiceReason {
+    /// No member of the axis is present.
+    Missing,
+    /// Several are, and only one may be.
+    Ambiguous {
+        /// Which ones.
+        present: Vec<String>,
+    },
+}
+
+/// An axis a judgement has to settle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AxisChoice {
+    /// Which axis.
+    pub axis: String,
+    /// What could satisfy it.
+    pub candidates: Vec<String>,
+    /// Why it needs deciding.
+    pub reason: ChoiceReason,
+}
+
+/// What would bring an existing issue into conformance.
+///
+/// Split into what a machine may do and what it may not, because those are
+/// different authorities and collapsing them is how a loop starts inventing
+/// classifications.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Repair {
+    /// Labels to remove. Decidable without judgement — these are the reserved
+    /// ones the loop is forbidden to carry.
+    pub remove: Vec<String>,
+    /// Axes something with judgement must settle.
+    ///
+    /// **Never auto-filled.** Choosing between `bug` and `feature`, or between
+    /// `P0` and `P2`, is a reading of what the issue says; a loop that guessed
+    /// would be manufacturing the very classification the queue is ranked by,
+    /// and the ranking would then be measuring its own invention.
+    pub choose: Vec<AxisChoice>,
+}
+
+impl Repair {
+    /// Whether nothing needs doing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.remove.is_empty() && self.choose.is_empty()
+    }
+
+    /// Whether a machine can finish this alone.
+    #[must_use]
+    pub fn is_mechanical(&self) -> bool {
+        self.choose.is_empty()
+    }
+}
+
+/// What it would take to bring `labels` into conformance.
+///
+/// The counterpart to [`conform`]: that decides whether a *filing* may go out,
+/// this decides what an *existing* issue is missing. One rule, both directions
+/// — which is what keeps the loop's own filings and the backlog it inherited
+/// held to the same standard.
+#[must_use]
+pub fn repair(convention: &BacklogConvention, labels: &[&str]) -> Repair {
+    let mut out = Repair::default();
+
+    for label in &convention.reserved {
+        if labels.contains(&label.as_str()) {
+            out.remove.push(label.clone());
+        }
+    }
+
+    for axis in &convention.axes {
+        let mut present = axis.present(labels);
+        present.sort_unstable();
+        present.dedup();
+
+        match (axis.requirement, present.len()) {
+            (AxisRequirement::ExactlyOne, 0) => out.choose.push(AxisChoice {
+                axis: axis.name.clone(),
+                candidates: axis.members.clone(),
+                reason: ChoiceReason::Missing,
+            }),
+            (AxisRequirement::ExactlyOne | AxisRequirement::AtMostOne, n) if n > 1 => {
+                out.choose.push(AxisChoice {
+                    axis: axis.name.clone(),
+                    candidates: axis.members.clone(),
+                    reason: ChoiceReason::Ambiguous {
+                        present: present.iter().map(|s| (*s).to_owned()).collect(),
+                    },
+                });
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The authority witness.** A missing type axis is reported as something
+    /// to *decide*, never filled in. A loop that guessed `bug` would be
+    /// manufacturing the classification the queue is ranked by, and the
+    /// ranking would then be measuring the loop's own invention.
+    #[test]
+    fn a_missing_axis_is_a_choice_never_a_guess() {
+        let r = repair(&stella(), &["P1", "area:core"]);
+
+        assert!(r.remove.is_empty(), "nothing to remove: {r:?}");
+        assert_eq!(r.choose.len(), 1, "{r:?}");
+        assert_eq!(r.choose[0].axis, "type");
+        assert_eq!(r.choose[0].reason, ChoiceReason::Missing);
+        assert!(!r.is_mechanical(), "a machine must not finish this alone");
+    }
+
+    /// The mechanical half: a reserved label the loop is forbidden to carry is
+    /// removable without judgement, so triage can do it unattended.
+    #[test]
+    fn a_reserved_label_is_removed_mechanically() {
+        let r = repair(&stella(), &["bug", "triage"]);
+
+        assert_eq!(r.remove, vec!["triage".to_owned()]);
+        assert!(r.choose.is_empty(), "{r:?}");
+        assert!(r.is_mechanical(), "a machine can finish this alone");
+    }
+
+    /// Which of two priorities to drop is also a reading of the issue, so it
+    /// is a choice rather than a removal.
+    #[test]
+    fn an_ambiguous_axis_is_a_choice_not_an_arbitrary_removal() {
+        let r = repair(&stella(), &["bug", "P0", "P2"]);
+
+        assert!(r.remove.is_empty(), "must not drop one at random: {r:?}");
+        assert_eq!(
+            r.choose[0].reason,
+            ChoiceReason::Ambiguous {
+                present: vec!["P0".into(), "P2".into()],
+            }
+        );
+    }
+
+    /// A conformant issue needs nothing, so triage leaves it alone.
+    #[test]
+    fn a_conformant_issue_needs_no_repair() {
+        assert!(repair(&stella(), &["bug", "P1", "area:core"]).is_empty());
+    }
+
+    /// `repair` and `conform` are the same rule pointed in two directions: an
+    /// issue needing no repair is one whose labels would pass as a filing.
+    #[test]
+    fn repair_and_conform_agree_on_every_case() {
+        for labels in [
+            vec!["bug", "P1", "area:core"],
+            vec!["P1"],
+            vec!["bug", "triage"],
+            vec!["bug", "P0", "P2"],
+            vec!["bug"],
+        ] {
+            let convention = stella();
+            assert_eq!(
+                repair(&convention, &labels).is_empty(),
+                conform(&convention, &labels).is_conformant(),
+                "the two disagreed about {labels:?}"
+            );
+        }
+    }
 
     /// This repository's actual convention, as
     /// `.github/workflows/issue-triage.yml` enforces it and

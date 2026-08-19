@@ -47,6 +47,13 @@
 //!
 //! [`stella_autonomy`]: https://docs.rs/stella-autonomy
 
+mod vocabulary;
+
+pub use vocabulary::{
+    CANONICAL_RESOLUTIONS, FieldNames, RESOLUTION_COMPLETED, RESOLUTION_DUPLICATE,
+    RESOLUTION_NOT_PLANNED, Vocabulary,
+};
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -316,17 +323,63 @@ pub trait IssueProvider: Send + Sync {
     /// filing the loop cannot name afterwards is barely better than none.
     async fn file(&self, draft: &IssueDraft) -> Result<IssueKey, IssueError>;
 
-    /// Close an issue, recording why.
+    /// Close an issue, recording why and in which terminal state.
     ///
     /// `receipt` names the evidence (`doc:backlog-self-driving` §4.3) and is
     /// required rather than optional: a closure with no evidence cannot be
     /// re-checked later, and the count of unsweepable closures is the direct,
     /// unflattering measure of how often `done` was a claim rather than a
     /// proof.
-    async fn close(&self, key: &IssueKey, receipt: &str) -> Result<(), IssueError>;
+    ///
+    /// `state` is stella's **canonical** resolution — `"completed"`,
+    /// `"not_planned"` or `"duplicate"`, from
+    /// `stella_autonomy::resolution_of`. **Never a tracker's own spelling.**
+    /// The provider does the spelling, which is what keeps one tracker's words
+    /// confined to its own adapter; a caller that spelled it first would hand
+    /// every provider a string it has to un-map before it can branch.
+    ///
+    /// The distinction is load-bearing rather than cosmetic: a regression sweep
+    /// re-checks what was **completed**, and re-running a witness for something
+    /// declined as stale would be measuring nothing. A provider whose tracker
+    /// has no such distinction maps several canonical values onto its one
+    /// closed state, which is a fact about that tracker rather than a reason to
+    /// stop making the distinction here.
+    async fn close(&self, key: &IssueKey, receipt: &str, state: &str) -> Result<(), IssueError>;
 
     /// Add a comment — the trail that binds an execution to an issue.
     async fn comment(&self, key: &IssueKey, body: &str) -> Result<(), IssueError>;
+
+    /// Add and remove labels.
+    ///
+    /// The loop is responsible for the backlog it draws from, so an issue that
+    /// arrived unclassified is one it may classify. Both directions are one
+    /// call because they are one decision: a re-label that added without
+    /// removing would leave an issue carrying two answers on the same axis,
+    /// which is the ambiguity `stella_autonomy::conform` exists to reject.
+    async fn relabel(
+        &self,
+        key: &IssueKey,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<(), IssueError>;
+
+    /// Rewrite an issue's title and body.
+    ///
+    /// For an issue that does not meet the repository's standard — a one-line
+    /// report a fresh reader cannot act on. Rewriting somebody's words is a
+    /// real authority, so the loop is expected to preserve what was reported
+    /// and add what a handoff needs, never to replace a description with its
+    /// own guess.
+    ///
+    /// `None` leaves that field alone, which is what makes "fix the body, keep
+    /// the title" expressible without a caller reconstructing the half it did
+    /// not want to change.
+    async fn edit(
+        &self,
+        key: &IssueKey,
+        title: Option<&str>,
+        body: Option<&str>,
+    ) -> Result<(), IssueError>;
 }
 
 #[cfg(test)]
