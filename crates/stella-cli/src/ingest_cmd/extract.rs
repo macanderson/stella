@@ -1,12 +1,27 @@
 //! Extraction — turning a markdown document into reviewable context-record
-//! proposals with one model call.
+//! proposals.
 //!
 //! This is the step the scan half of `stella ingest` set up: a classified
-//! document goes to the worker model, which splits it into atomic claims; each
-//! claim is mapped to a [`Record`], run through the deterministic safety
-//! [`gate`], probed against the tree for staleness, stamped with its
-//! content-derived identity, and written to `.stella/proposals/` as a
+//! document is divided into slices ([`super::chunk`]) and each goes to the
+//! worker model, which splits it into atomic claims; the slices' claims are
+//! merged, and each claim is mapped to a [`Record`], run through the
+//! deterministic safety [`gate`], probed against the tree for staleness, stamped
+//! with its content-derived identity, and written to `.stella/proposals/` as a
 //! `[[proposal]]` file in the shape of `docs/spec/adaptive-context/context-record-examples/05`.
+//!
+//! ## Why a document is divided rather than capped
+//!
+//! It used to be one call, with everything past a character cap dropped before
+//! the model saw it — 46% of this repository's own `AGENTS.md`, reported as a
+//! success (#2407). Raising the cap only moves that edge onto the reply, which
+//! is roughly the size of the text that produced it. So the document is divided
+//! and the claims merged, which makes coverage a property of the slicer rather
+//! than a number someone has to keep ahead of the documents people write.
+//!
+//! Two collisions exist only because there is now more than one call, and
+//! [`Merge`] resolves both: the same claim extracted from two slices, and a
+//! `lineage_suffix` the prompt asks to be unique *within the document* that each
+//! call can only make unique within its own reply.
 //!
 //! ## Why the safety work is here and not in the prompt
 //!
@@ -22,6 +37,7 @@
 //! reply, a write error — is reported and skipped. Ingest is user-invoked, so a
 //! failure is worth showing, but one bad document never aborts the others.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use colored::Colorize;
@@ -39,6 +55,7 @@ use stella_protocol::{
     CompletionMessage, CompletionRequest, FinishReason, ModelCallRole, Provider,
 };
 
+use super::chunk::{self, Chunk};
 use super::probe;
 use super::progress::Progress;
 
@@ -53,24 +70,13 @@ pub(super) struct NamedDoc {
     pub tier: Tier,
 }
 
-/// The largest slice of a document handed to the model. A steering document that
-/// needs more than this is not what ingest is for; beyond the cap the tail is
-/// dropped with a note in the prompt rather than silently.
+/// The most of a document extraction will read, in characters.
 ///
-/// Five times the 24,000 this started at, because 24,000 was smaller than the
-/// documents the feature exists to read: this repository's own `AGENTS.md` is
-/// 44,545 characters, so it was extracted at 54% — the cut landed mid-table and
-/// the god-file rules, the glossary, the code-style conventions, the testing
-/// approach and the whole gotchas section could not produce a record. Every
-/// document named by the first-run dialog is the kind that exceeded the old cap.
-///
-/// This is a ceiling, not a target: [`starting_output_budget`] scales the reply
-/// budget to the text actually sent, so a short document is unaffected.
-///
-/// Visible to the parent module only so the scan's `MAX_READ_BYTES` can be
-/// asserted to sit above it — a scan that hides what extraction would accept is
-/// the failure the two constants have to be compared to rule out.
-pub(super) const MAX_PROMPT_CHARS: usize = 120_000;
+/// Re-exported from [`super::chunk`] rather than owned here: the ceiling belongs
+/// to the slicer that enforces it, and the scan's `MAX_READ_BYTES` has to be
+/// asserted against it — a scan that hides what extraction would accept is the
+/// failure the two constants have to be compared to rule out.
+pub(super) const MAX_DOCUMENT_CHARS: usize = chunk::MAX_DOCUMENT_CHARS;
 
 /// The system prompt: the extractor's whole contract, including the two rules
 /// that keep an untrusted document from becoming an attack — atomicity and
@@ -165,8 +171,17 @@ pub(super) struct DocSummary {
     /// below — the rendered bullet adds a handle and markers — so a warning
     /// here is never a false alarm.
     pub pinned_chars: usize,
-    /// The run cost in USD.
+    /// The run cost in USD, across every slice of the document.
     pub cost_usd: f64,
+    /// How many slices the document was divided into, and how many of them
+    /// failed. A failed slice is content that produced no records, so it is
+    /// reported rather than folded into a success — the whole point of #2407 is
+    /// that a partially-read document must never look like a complete one.
+    pub slices: usize,
+    /// The slices that failed, each with the reason, in document order.
+    pub failed_slices: Vec<(usize, String)>,
+    /// Claims dropped as restatements of a claim an earlier slice already made.
+    pub duplicates: usize,
     /// The candidate ids of every proposal written, so the source file's
     /// lineage can name what it produced.
     pub candidate_ids: Vec<String>,
@@ -270,7 +285,11 @@ pub(super) fn extract_all(
     Ok(())
 }
 
-/// Extract one document: model call, mapping, gate, probes, write.
+/// Extract one document: slice, one model call each, merge, gate, probe, write.
+///
+/// Owns the progress line for the whole document so a reader sees one elapsed
+/// clock across every slice and every record, and so exactly one statement ends
+/// it — no error path below can leave a ticker drawing over later output.
 ///
 /// Takes `model_hint` rather than the whole `Config` so the assembly path is
 /// testable with a mock provider — the only thing extraction needs from config
@@ -285,10 +304,45 @@ async fn extract_document(
     ingest_run_id: &str,
     observed_at: &str,
 ) -> Result<DocSummary, String> {
+    let progress = Progress::start(format!("reading {}", doc.rel));
+    let outcome = extract_narrated(
+        provider,
+        model_hint,
+        root,
+        doc,
+        set_id,
+        ingest_run_id,
+        observed_at,
+        &progress,
+    )
+    .await;
+    progress.finish().await;
+    outcome
+}
+
+/// The body of [`extract_document`], narrating into a line the caller owns.
+#[allow(clippy::too_many_arguments)]
+async fn extract_narrated(
+    provider: &dyn Provider,
+    model_hint: &str,
+    root: &Path,
+    doc: &NamedDoc,
+    set_id: &str,
+    ingest_run_id: &str,
+    observed_at: &str,
+    progress: &Progress,
+) -> Result<DocSummary, String> {
     let defaults = build_defaults(root, doc, ingest_run_id, model_hint, observed_at);
     let eligibility = eligibility_for(doc.tier);
 
-    let (claims, cost_usd) = call_model(provider, model_hint, root, &doc.rel, &doc.content).await?;
+    let extracted = extract_claims(provider, model_hint, root, doc, progress).await?;
+    let Extracted {
+        claims,
+        cost_usd,
+        slices,
+        failed_slices,
+        duplicates,
+    } = extracted;
     if claims.is_empty() {
         return Err("the model found no durable context to extract".to_string());
     }
@@ -305,7 +359,21 @@ async fn extract_document(
     let mut withheld = 0usize;
     let mut pinned_chars = 0usize;
     let mut asserted = Vec::new();
-    for claim in claims {
+    let total_claims = claims.len();
+    for (done, claim) in claims.into_iter().enumerate() {
+        // Each record is gated and probed, and a probe reads the tree — on a
+        // document that atomized into hundreds of records that is a visible
+        // stretch of work with no model call in it, which is exactly the window
+        // that used to be silent. Naming the record in hand costs a string.
+        progress.say(record_label(
+            &doc.rel,
+            &claim.lineage_suffix,
+            done,
+            total_claims,
+        ));
+        // Hand the runtime back so the ticker task — single-threaded here, so it
+        // is otherwise starved by this loop — can actually draw the label above.
+        tokio::task::yield_now().await;
         let proposal = build_proposal(root, set_id, &defaults, observed_at, eligibility, claim);
         asserted.push(stella_core::ingest::AssertedClaim {
             lineage_id: proposal.record.lineage_id.clone(),
@@ -348,9 +416,169 @@ async fn extract_document(
         withheld,
         pinned_chars,
         cost_usd,
+        slices,
+        failed_slices,
+        duplicates,
         candidate_ids,
         asserted,
     })
+}
+
+/// What every slice of one document produced, merged.
+struct Extracted {
+    claims: Vec<Claim>,
+    cost_usd: f64,
+    slices: usize,
+    failed_slices: Vec<(usize, String)>,
+    duplicates: usize,
+}
+
+/// Divide the document and extract every slice, merging the claims.
+///
+/// A slice that fails does not abort the document — the other slices' claims are
+/// real and already paid for — but it is carried out in [`Extracted::failed_slices`]
+/// and reported, because the one thing this must never do is present a
+/// partially-read document as a complete one. Every slice failing is the whole
+/// document failing, and returns `Err`.
+async fn extract_claims(
+    provider: &dyn Provider,
+    model_hint: &str,
+    root: &Path,
+    doc: &NamedDoc,
+    progress: &Progress,
+) -> Result<Extracted, String> {
+    let (bounded, _dropped) = chunk::bound(&doc.content);
+    let chunks = chunk::split(&bounded);
+    let slices = chunks.len();
+    if slices == 0 {
+        return Err("the document has no text to extract".to_string());
+    }
+
+    let mut merge = Merge::default();
+    let mut cost_usd = 0.0;
+    let mut failed_slices = Vec::new();
+    let mut first_error: Option<String> = None;
+
+    for (index, chunk) in chunks.iter().enumerate() {
+        let position = SlicePosition {
+            index,
+            of: slices,
+            path: &chunk.path,
+        };
+        let label = slice_label(&doc.rel, position, merge.claims.len());
+        progress.say(label.clone());
+        match call_model(
+            provider, model_hint, root, doc, chunk, position, &label, progress,
+        )
+        .await
+        {
+            Ok((claims, cost)) => {
+                cost_usd += cost;
+                merge.absorb(claims);
+            }
+            Err((cost, err)) => {
+                // The spend is real whether or not the reply parsed, so it is
+                // counted; the loss is named rather than absorbed.
+                cost_usd += cost;
+                progress.note(&format!(
+                    "    {}",
+                    format!("slice {} of {slices} failed: {err}", index + 1).red()
+                ));
+                first_error.get_or_insert_with(|| err.clone());
+                failed_slices.push((index + 1, err));
+            }
+        }
+    }
+
+    if failed_slices.len() == slices {
+        return Err(first_error.unwrap_or_else(|| "every slice failed".to_string()));
+    }
+    let (claims, duplicates) = merge.finish();
+    Ok(Extracted {
+        claims,
+        cost_usd,
+        slices,
+        failed_slices,
+        duplicates,
+    })
+}
+
+/// Where a slice sits in its document, for the prompt and the progress line.
+#[derive(Clone, Copy)]
+struct SlicePosition<'a> {
+    /// Zero-based.
+    index: usize,
+    of: usize,
+    /// The heading path the slice opens under, outermost first.
+    path: &'a [String],
+}
+
+/// Accumulates the claims of a document's slices, resolving the two collisions
+/// that exist only because there is more than one call.
+///
+/// **The same claim, twice.** A rule stated in an overview section and restated
+/// where it applies reaches two slices, and the extractor rightly emits it in
+/// both. Two proposals for one claim is a review surface asking the same
+/// question twice, so the later restatement is dropped. Statements are compared
+/// case-folded and whitespace-collapsed, because that is the whole of the
+/// difference between two renderings of one sentence.
+///
+/// **The same suffix, two claims.** The prompt asks for a slug "unique within
+/// the document", which is exactly what a call reading one slice cannot
+/// guarantee. `build_proposal` turns the suffix into `ctx.<set_id>.<suffix>`, so
+/// a collision is two records with one identity. The first claim to use a suffix
+/// keeps it — which is what makes a single-slice document byte-identical to
+/// before this existed — and a later collision is numbered.
+#[derive(Default)]
+struct Merge {
+    claims: Vec<Claim>,
+    statements: HashSet<String>,
+    suffixes: HashSet<String>,
+    duplicates: usize,
+}
+
+impl Merge {
+    fn absorb(&mut self, incoming: Vec<Claim>) {
+        for mut claim in incoming {
+            if !self.statements.insert(normalized(&claim.statement)) {
+                self.duplicates += 1;
+                continue;
+            }
+            claim.lineage_suffix = self.unique_suffix(&claim.lineage_suffix);
+            self.claims.push(claim);
+        }
+    }
+
+    /// The suffix this claim may keep. Compared in the kebab form
+    /// `build_proposal` will slugify it to, so two suffixes that differ only in
+    /// punctuation are caught here rather than colliding downstream.
+    fn unique_suffix(&mut self, proposed: &str) -> String {
+        let base = kebab(proposed);
+        if self.suffixes.insert(base.clone()) {
+            return base;
+        }
+        for n in 2.. {
+            let candidate = format!("{base}-{n}");
+            if self.suffixes.insert(candidate.clone()) {
+                return candidate;
+            }
+        }
+        unreachable!("the integers are not exhausted")
+    }
+
+    fn finish(self) -> (Vec<Claim>, usize) {
+        (self.claims, self.duplicates)
+    }
+}
+
+/// A statement reduced to what makes it the same claim: case-folded, with every
+/// run of whitespace collapsed to one space.
+fn normalized(statement: &str) -> String {
+    statement
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// The file defaults every record in the document inherits.
@@ -416,26 +644,37 @@ fn starting_output_budget(chars: usize) -> u32 {
         .clamp(MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS)
 }
 
-/// Call the model, tolerating prose and one bad reply. Mirrors `infer_domains`:
-/// bounded repair, then give up on this document rather than hammering.
+/// Call the model for one slice, tolerating prose and one bad reply. Mirrors
+/// `infer_domains`: bounded repair, then give up on this slice rather than
+/// hammering.
+///
+/// The error carries the cost spent reaching it, because a failed slice is still
+/// a paid call and a run that under-reports its own bill is the "measure
+/// honestly" rule broken in the direction that flatters us.
+#[allow(clippy::too_many_arguments)]
 async fn call_model(
     provider: &dyn Provider,
     model_hint: &str,
     root: &Path,
-    rel: &str,
-    content: &str,
-) -> Result<(Vec<Claim>, f64), String> {
-    let (bounded, _skipped) = bounded_content(content);
+    doc: &NamedDoc,
+    chunk: &Chunk,
+    position: SlicePosition<'_>,
+    base_label: &str,
+    progress: &Progress,
+) -> Result<(Vec<Claim>, f64), (f64, String)> {
+    let rel = &doc.rel;
     let user = format!(
         "Extract atomic context records from `{rel}`. Return ONLY the JSON array.\n\n\
-         --- {rel} ---\n{bounded}"
+         {}--- {rel} ---\n{}",
+        slice_preamble(position),
+        chunk.text
     );
     let mut messages = vec![
         CompletionMessage::system(SYSTEM_PROMPT),
         CompletionMessage::user(&user),
     ];
     let mut total_cost = 0.0;
-    let mut max_output_tokens = starting_output_budget(bounded.chars().count());
+    let mut max_output_tokens = starting_output_budget(chunk.text.chars().count());
     // Three, not two: the budget ladder and the malformed-JSON repair share this
     // counter, and with a right-sized first request a document large enough to
     // need a doubling should still have a repair left.
@@ -452,11 +691,20 @@ async fn call_model(
             params: None,
         };
         // The wait is narrated because it is long: this is a paid call that
-        // runs for minutes on a real instruction file, and an unnarrated one
-        // reads as a wedged process. `finish` runs on the statement after the
-        // `await`, before the result is inspected, so none of the several error
-        // paths below can leave a ticker drawing over later output.
-        let progress = Progress::start(attempt_label(rel, attempt, ATTEMPTS));
+        // runs for minutes on a real instruction file. The line is the caller's,
+        // so the elapsed clock spans the whole document rather than resetting on
+        // every slice and every retry — a clock that restarts hides exactly the
+        // "how long has this really been going" the reader is asking.
+        //
+        // The first attempt keeps the label the caller already set, which
+        // carries the running record count; a retry says so, because a silent
+        // second attempt doubles both the wait and the spend.
+        if attempt > 0 {
+            progress.say(format!(
+                "{base_label} — attempt {} of {ATTEMPTS}",
+                attempt + 1
+            ));
+        }
         let outcome = crate::accounted_call::complete_standalone(
             root,
             provider,
@@ -467,7 +715,6 @@ async fn call_model(
             request,
         )
         .await;
-        progress.finish().await;
         match outcome {
             Ok(accounted) => {
                 total_cost += accounted.cost_usd;
@@ -481,16 +728,19 @@ async fn call_model(
                         if attempt + 1 == ATTEMPTS
                             || (cut_off && max_output_tokens >= MAX_OUTPUT_TOKENS) =>
                     {
-                        return Err(if cut_off {
-                            format!(
-                                "the model's reply was cut off at {max_output_tokens} output \
-                                 tokens before finishing the record list — this document needs \
-                                 more output than one call can carry, so split it and ingest \
-                                 the parts"
-                            )
-                        } else {
-                            format!("could not parse the model's records: {err}")
-                        });
+                        return Err((
+                            total_cost,
+                            if cut_off {
+                                format!(
+                                    "the model's reply was cut off at {max_output_tokens} output \
+                                     tokens before finishing this slice's record list — the \
+                                     model is emitting more per character than the slice size \
+                                     assumes"
+                                )
+                            } else {
+                                format!("could not parse the model's records: {err}")
+                            },
+                        ));
                     }
                     // Cut off, not malformed: the reply was on track but ran out of
                     // room. Asking it to "respond with ONLY the JSON array" again
@@ -504,14 +754,14 @@ async fn call_model(
                         let widened = max_output_tokens.saturating_mul(2).min(MAX_OUTPUT_TOKENS);
                         // Said out loud because it is the difference between a
                         // one-call wait and a two-call one, at twice the spend.
-                        println!(
+                        progress.note(&format!(
                             "    {}",
                             format!(
                                 "the reply filled its {max_output_tokens}-token budget before \
                                  the record list ended — retrying with {widened}"
                             )
                             .yellow()
-                        );
+                        ));
                         max_output_tokens = widened;
                     }
                     Err(_) => {
@@ -525,14 +775,70 @@ async fn call_model(
                 }
             }
             Err(error) => {
-                // The partial spend is already persisted by the accounting store;
-                // the document failed, so there is no summary to fold it into.
-                return Err(format!("model call failed: {}", error.message));
+                // The partial spend is already persisted by the accounting store,
+                // and carried out so the document's reported bill includes the
+                // slice that failed.
+                return Err((total_cost, format!("model call failed: {}", error.message)));
             }
         }
     }
     // Unreachable: the final attempt always returns above. Kept total for the type.
-    Err("extraction produced no records".to_string())
+    Err((total_cost, "extraction produced no records".to_string()))
+}
+
+/// The orienting header a slice carries, so a slice that opens mid-section is
+/// not an unlabelled fragment.
+///
+/// Empty for a document that fits one call, which keeps that request
+/// byte-identical to the one this repository has always sent — a single-slice
+/// document must not pay for the machinery that only multi-slice documents need,
+/// least of all in prompt-cache misses.
+fn slice_preamble(position: SlicePosition<'_>) -> String {
+    if position.of <= 1 {
+        return String::new();
+    }
+    let where_ = if position.path.is_empty() {
+        String::new()
+    } else {
+        format!(", under the section `{}`", position.path.join(" > "))
+    };
+    format!(
+        "This is part {} of {} of the document{where_}. Extract only from the text below; \
+         other parts are handled by their own calls.\n\n",
+        position.index + 1,
+        position.of
+    )
+}
+
+/// What the progress line says while a slice is in flight.
+///
+/// Names the slice and the running record count, because "which of the five
+/// calls am I paying for, and is it finding anything" is the question a person
+/// watching a multi-minute ingest actually has. A single-slice document says
+/// only what it used to.
+fn slice_label(rel: &str, position: SlicePosition<'_>, found: usize) -> String {
+    if position.of <= 1 {
+        return format!("extracting {rel}");
+    }
+    format!(
+        "extracting {rel} — part {} of {}, {found} record(s) so far",
+        position.index + 1,
+        position.of
+    )
+}
+
+/// What the progress line says while a record is being gated and probed.
+///
+/// One line per record, naming it: the stretch after the model calls is
+/// filesystem work with no network in it, and on a document that atomized into
+/// hundreds of records it was the second-longest silence in the command.
+fn record_label(rel: &str, suffix: &str, done: usize, total: usize) -> String {
+    format!(
+        "{rel}: processing {} — {} of {total} record(s), {} remaining",
+        kebab(suffix),
+        done + 1,
+        total.saturating_sub(done + 1)
+    )
 }
 
 /// Extract and parse the first JSON array in `text` (models add fences/prose).
@@ -712,15 +1018,57 @@ fn report(doc: &NamedDoc, summary: &DocSummary) {
     } else {
         String::new()
     };
+    let across = if summary.slices > 1 {
+        format!(" across {} parts", summary.slices)
+    } else {
+        String::new()
+    };
     println!(
-        "    {} {} record(s): {} eligible{}{}  {}",
+        "    {} {} record(s){}: {} eligible{}{}  {}",
         "·".dimmed(),
         summary.total,
+        across,
         summary.eligible,
         refuted,
         dismissed,
         format!("(${:.4})", summary.cost_usd).dimmed()
     );
+    // A slice that failed is a stretch of the document that produced no records.
+    // Said in red and named, because the defect this whole path exists to fix is
+    // a partially-read document reporting itself as a complete one (#2407).
+    if !summary.failed_slices.is_empty() {
+        let which: Vec<String> = summary
+            .failed_slices
+            .iter()
+            .map(|(n, _)| n.to_string())
+            .collect();
+        println!(
+            "    {}",
+            format!(
+                "INCOMPLETE: part(s) {} of {} produced no records, so that text is not \
+                 represented above. Re-run to retry them.",
+                which.join(", "),
+                summary.slices
+            )
+            .red()
+        );
+        for (n, err) in &summary.failed_slices {
+            println!("      {}", format!("part {n}: {err}").dimmed());
+        }
+    }
+    // Not a warning: a document that restates a rule where it applies is well
+    // written, and one proposal per claim is the point. Counted so the arithmetic
+    // between "records the model returned" and "proposals written" is visible.
+    if summary.duplicates > 0 {
+        println!(
+            "    {}",
+            format!(
+                "{} restatement(s) merged — the same claim reached more than one part",
+                summary.duplicates
+            )
+            .dimmed()
+        );
+    }
     // The "no gaps without bloat" half of the tier contract (#2709): pinned
     // records are guaranteed a prefix seat only while they fit the cached
     // budget, so an ingest that mints more pinned content than the budget
@@ -906,45 +1254,13 @@ fn digest_of(content: &str) -> String {
     format!("sha256:{hex}")
 }
 
-/// Cap the document at [`MAX_PROMPT_CHARS`], marking a truncation so the model
-/// (and a later reader of the prompt) can see the tail was dropped.
-///
-/// Returns the bounded text and how many characters were dropped, because the
-/// marker in the prompt only tells the *model* that the tail is missing — the
-/// person who typed the command was told nothing at all. That silence is what
-/// made the old 24,000-character cap so costly: this repository's `AGENTS.md` is
-/// 44,545 characters, so 46% of it never reached the extractor and the run still
-/// reported success. The cap is now 120,000 and a document that still exceeds it
-/// says so.
-fn bounded_content(content: &str) -> (String, usize) {
-    let total = content.chars().count();
-    if total <= MAX_PROMPT_CHARS {
-        return (content.to_string(), 0);
-    }
-    let kept: String = content.chars().take(MAX_PROMPT_CHARS).collect();
-    (
-        format!("{kept}\n\n[... document truncated for extraction ...]"),
-        total - MAX_PROMPT_CHARS,
-    )
-}
-
 /// How many characters of `content` extraction will not read.
 ///
-/// The cap belongs to this module, so the caller asks the question rather than
-/// holding a second copy of the number.
+/// Almost always zero now: a document is divided rather than trimmed, so this is
+/// non-zero only past [`MAX_DOCUMENT_CHARS`]. The caller asks rather than holding
+/// a second copy of the ceiling.
 pub(super) fn skipped_chars(content: &str) -> usize {
-    bounded_content(content).1
-}
-
-/// What the progress line says: the document, and which attempt this is once
-/// there has been more than one. A silent second attempt is the other half of
-/// why a cut-off document looked wedged — it doubles the wait and the spend.
-fn attempt_label(rel: &str, attempt: usize, attempts: usize) -> String {
-    if attempt == 0 {
-        format!("extracting {rel}")
-    } else {
-        format!("extracting {rel} (attempt {} of {attempts})", attempt + 1)
-    }
+    chunk::dropped_chars(content)
 }
 
 /// Lower-case, dash-separated slug keeping `[a-z0-9-]`; runs of other characters

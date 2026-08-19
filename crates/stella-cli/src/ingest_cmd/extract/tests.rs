@@ -316,13 +316,36 @@ fn a_truncated_reply_is_retried_with_a_larger_budget_instead_of_failing() {
         .build()
         .expect("runtime");
     let (claims, _cost) = runtime
-        .block_on(call_model(
-            &provider,
-            "canned-model",
-            &root,
-            "AGENTS.md",
-            "# Conventions\nThis repository uses pnpm.\n",
-        ))
+        .block_on(async {
+            let doc = NamedDoc {
+                rel: "AGENTS.md".to_string(),
+                content: "# Conventions\nThis repository uses pnpm.\n".to_string(),
+                tier: stella_core::ingest::Tier::Primary,
+            };
+            let chunk = Chunk {
+                text: doc.content.clone(),
+                path: vec!["Conventions".to_string()],
+            };
+            let position = SlicePosition {
+                index: 0,
+                of: 1,
+                path: &chunk.path,
+            };
+            let progress = Progress::start("extracting AGENTS.md".to_string());
+            let out = call_model(
+                &provider,
+                "canned-model",
+                &root,
+                &doc,
+                &chunk,
+                position,
+                "extracting AGENTS.md",
+                &progress,
+            )
+            .await;
+            progress.finish().await;
+            out
+        })
         .expect("recovers from the truncated first reply");
 
     assert_eq!(claims.len(), 1);
@@ -348,13 +371,10 @@ fn the_output_budget_is_sized_to_the_document() {
         MIN_OUTPUT_TOKENS,
         "below the floor stays at the floor"
     );
-    // The shape that motivated the change: this repository's AGENTS.md, which
-    // now fits the prompt cap whole.
-    assert_eq!(starting_output_budget(44_545), 44_545);
+    // A full slice: the budget tracks the text sent, one token per character.
     assert_eq!(
-        starting_output_budget(MAX_PROMPT_CHARS),
-        MAX_PROMPT_CHARS as u32,
-        "a full-size document must fit under the output ceiling in one call"
+        starting_output_budget(super::chunk::TARGET_CHARS),
+        super::chunk::TARGET_CHARS as u32,
     );
 }
 
@@ -369,9 +389,18 @@ fn the_output_budget_never_exceeds_the_ceiling() {
         MAX_OUTPUT_TOKENS
     );
     assert!(
-        MAX_PROMPT_CHARS as u32 <= MAX_OUTPUT_TOKENS,
-        "a document at the prompt cap must be expressible within one reply \
-         budget, or the ceiling is unreachable by construction"
+        super::chunk::TARGET_CHARS as u32 <= MAX_OUTPUT_TOKENS,
+        "a full slice must be expressible within one reply budget, or the \
+         ceiling is unreachable by construction"
+    );
+    // The reason the slice is this size rather than the largest one call could
+    // carry: the smallest per-model output ceiling in the seeded catalog is
+    // 30,000 tokens, and a slice must be answerable by every model, not only the
+    // frontier ones.
+    const SMALLEST_CATALOG_OUTPUT_CEILING: u32 = 30_000;
+    assert!(
+        starting_output_budget(super::chunk::TARGET_CHARS) <= SMALLEST_CATALOG_OUTPUT_CEILING,
+        "a slice must fit the smallest catalog model's reply budget"
     );
 }
 
@@ -526,54 +555,113 @@ fn the_stamped_precedence_agrees_with_the_force_it_came_from() {
     }
 }
 
-/// A document inside the cap reaches the model whole, and nothing is reported
-/// as dropped.
+/// A document nothing drops reports nothing dropped.
 #[test]
-fn a_document_within_the_cap_is_sent_whole_and_drops_nothing() {
+fn a_document_within_the_ceiling_drops_nothing() {
     let content = "# notes\n\nthe package manager is pnpm.\n";
-    let (bounded, skipped) = bounded_content(content);
-    assert_eq!(bounded, content);
-    assert_eq!(skipped, 0);
     assert_eq!(skipped_chars(content), 0);
 }
 
-/// The witness for the silent-truncation defect: the cap was applied and the
-/// dropped tail was reported to the model in the prompt, but the count never
-/// left this function, so no caller could tell anyone.
+/// The witness for #2407, at this module's boundary: the document that was
+/// extracted at 54% is now reported as losing nothing, because nothing is lost.
+///
+/// Fails on the old code, where `skipped_chars` on a 44,545-character document
+/// returned 20,545 against the 24,000 cap — and later 0 only because the cap had
+/// been raised, which a document twice the size defeats again. Here the size
+/// tested is ten times the raised cap.
 #[test]
-fn an_oversized_document_reports_the_characters_it_dropped() {
-    let content = "x".repeat(MAX_PROMPT_CHARS + 4_096);
-    let (bounded, skipped) = bounded_content(&content);
-    assert_eq!(skipped, 4_096);
-    assert_eq!(skipped_chars(&content), 4_096);
-    assert!(
-        bounded.starts_with(&"x".repeat(MAX_PROMPT_CHARS)),
-        "the head must survive intact"
-    );
-    assert!(
-        bounded.contains("[... document truncated for extraction ...]"),
-        "the model must still be told the tail is missing"
+fn a_document_far_past_any_single_call_cap_drops_nothing() {
+    let content = "x".repeat(MAX_DOCUMENT_CHARS + 4_096);
+    // Above the ceiling the loss is real and reported...
+    assert!(skipped_chars(&content) > 0);
+    // ...but every size below it — including ten times the cap this replaced —
+    // is covered whole.
+    let big = "y".repeat(MAX_DOCUMENT_CHARS - 1);
+    assert_eq!(skipped_chars(&big), 0);
+    assert_eq!(
+        skipped_chars(&"z".repeat(44_545)),
+        0,
+        "AGENTS.md's own size"
     );
 }
 
-/// The cap counts characters, not bytes: a multi-byte document must not be cut
-/// early (or mid-codepoint) because its bytes outrun its characters.
+/// The ceiling counts characters, not bytes: a multi-byte document must not be
+/// cut early (or mid-codepoint) because its bytes outrun its characters.
 #[test]
-fn the_cap_counts_characters_not_bytes() {
-    let content = "é".repeat(MAX_PROMPT_CHARS);
-    assert_eq!(content.len(), MAX_PROMPT_CHARS * 2, "fixture is multi-byte");
+fn the_ceiling_counts_characters_not_bytes() {
+    let content = "é".repeat(MAX_DOCUMENT_CHARS);
+    assert_eq!(
+        content.len(),
+        MAX_DOCUMENT_CHARS * 2,
+        "fixture is multi-byte"
+    );
     assert_eq!(skipped_chars(&content), 0);
 }
 
-/// The first attempt is unadorned; a retry names itself, because the second
-/// silent call is what turned a two-minute wait into a five-minute one.
+/// A single-slice document says what it always said; a divided one names the
+/// part it is on and what it has found, because "which of the five calls am I
+/// paying for" is the question a multi-minute ingest raises.
 #[test]
-fn only_a_retry_names_its_attempt() {
-    assert_eq!(attempt_label("AGENTS.md", 0, 2), "extracting AGENTS.md");
+fn the_progress_label_names_the_slice_only_when_there_is_more_than_one() {
+    let one = SlicePosition {
+        index: 0,
+        of: 1,
+        path: &[],
+    };
+    assert_eq!(slice_label("AGENTS.md", one, 0), "extracting AGENTS.md");
+
+    let path = ["Architecture".to_string()];
+    let second = SlicePosition {
+        index: 1,
+        of: 5,
+        path: &path,
+    };
     assert_eq!(
-        attempt_label("AGENTS.md", 1, 2),
-        "extracting AGENTS.md (attempt 2 of 2)"
+        slice_label("AGENTS.md", second, 48),
+        "extracting AGENTS.md — part 2 of 5, 48 record(s) so far"
     );
+}
+
+/// The record line names the record in hand and how many are left — the second
+/// silence in the command, after the model calls.
+#[test]
+fn the_record_label_names_the_record_and_what_remains() {
+    assert_eq!(
+        record_label("AGENTS.md", "pkg-manager", 47, 141),
+        "AGENTS.md: processing pkg-manager — 48 of 141 record(s), 93 remaining"
+    );
+    assert_eq!(
+        record_label("AGENTS.md", "last-one", 140, 141),
+        "AGENTS.md: processing last-one — 141 of 141 record(s), 0 remaining"
+    );
+}
+
+/// A one-slice document must send exactly the prompt it always sent: the
+/// orienting header exists for slices that open mid-document, and paying for it
+/// on every short file would cost prompt-cache hits for nothing.
+#[test]
+fn a_single_slice_document_carries_no_orienting_header() {
+    let one = SlicePosition {
+        index: 0,
+        of: 1,
+        path: &[],
+    };
+    assert_eq!(slice_preamble(one), "");
+}
+
+/// A slice that opens inside a section says so, and names the section — the
+/// issue's constraint that a chunk beginning mid-section gives the extractor no
+/// context for what it is reading.
+#[test]
+fn a_continued_slice_tells_the_model_where_it_is() {
+    let path = ["Architecture".to_string(), "Ports".to_string()];
+    let header = slice_preamble(SlicePosition {
+        index: 2,
+        of: 4,
+        path: &path,
+    });
+    assert!(header.contains("part 3 of 4"), "{header}");
+    assert!(header.contains("Architecture > Ports"), "{header}");
 }
 
 /// Witness for #2709: the classifier's promotion tier is stamped explicitly
