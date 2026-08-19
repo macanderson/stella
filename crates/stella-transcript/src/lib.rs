@@ -49,6 +49,6 @@ mod tests;
 
 pub use fold::{Command, Cursor, FoldState, Zoom};
 pub use model::{
-    Accounting, ArgRow, Call, FileChange, FileStatus, NodeId, Note, NoteKind, Output, Prose,
-    Run, Status, Step, ToolKind, Turn,
+    Accounting, ArgRow, Call, FileChange, FileStatus, NodeId, Note, NoteKind, Output, Prose, Run,
+    Status, Step, ToolKind, Turn,
 };

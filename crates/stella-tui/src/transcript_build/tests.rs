@@ -319,6 +319,9 @@ fn each_turn_starts_its_own_clock() {
 
     let run = b.snapshot();
     assert_eq!(run.turns[0].duration_ms, 5_000);
-    assert_eq!(run.turns[1].duration_ms, 2_000, "the clock leaked across turns");
+    assert_eq!(
+        run.turns[1].duration_ms, 2_000,
+        "the clock leaked across turns"
+    );
     assert_eq!(run.turns[1].steps[0].offset_ms, 0);
 }

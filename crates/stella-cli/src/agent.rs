@@ -283,12 +283,7 @@ async fn run_pipeline_one_shot(
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
-    // Journal the policy/extension audit plane through the same stream
-    // (receipts spec §6.4) — a no-op unless a hook bus is attached.
-    registry.bridge_policy_plane(tx.clone());
-    // Registry-born events (task board, sub-agent lifecycle) ride the same
-    // stream as the engine's, so a run's live output and its journal agree.
-    registry.attach_events(tx.clone());
+    persistence::attach_run_streams(&registry, &tx);
     let renderer = spawn_renderer(
         rx,
         format,
@@ -1627,12 +1622,7 @@ pub(crate) async fn run_turn(
     // free. Seeded from `messages` so the turn-opening block is never
     // re-injected, and given `tx` so its own recall is metered (#3366).
     let requery = crate::memory::requery_for_turn(session_memory.as_deref(), messages, tx.clone());
-    // Journal the policy/extension audit plane through the same stream
-    // (receipts spec §6.4) — a no-op unless a hook bus is attached.
-    registry.bridge_policy_plane(tx.clone());
-    // Registry-born events (task board, sub-agent lifecycle) ride the same
-    // stream as the engine's, so a run's live output and its journal agree.
-    registry.attach_events(tx.clone());
+    persistence::attach_run_streams(registry, &tx);
     let renderer = spawn_renderer(
         rx,
         format,

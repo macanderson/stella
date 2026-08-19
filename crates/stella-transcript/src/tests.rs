@@ -1087,7 +1087,10 @@ fn notes_interleave_with_steps_by_before_step() {
             .position(|l| l.contains(needle))
             .unwrap_or_else(|| panic!("{needle} missing from:\n{plain}"))
     };
-    assert!(at("BEFORE-FIRST") < at("first"), "note ordered after its step");
+    assert!(
+        at("BEFORE-FIRST") < at("first"),
+        "note ordered after its step"
+    );
     assert!(
         at("AFTER-LAST") > at("second"),
         "a note past the last step must still render (the trailing pass)"

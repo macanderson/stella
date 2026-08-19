@@ -180,10 +180,7 @@ fn note_block(
     ti: usize,
     ni: usize,
 ) {
-    let node = NodeId::Note {
-        turn: ti,
-        note: ni,
-    };
+    let node = NodeId::Note { turn: ti, note: ni };
     let foldable = !note.detail.is_empty();
     let open = foldable && state.is_open(run, node);
     let _ = write!(
@@ -206,7 +203,11 @@ fn note_block(
         }
         out.push_str("</div></details>");
     } else {
-        let _ = write!(out, "<div class=\"note-summary\">{}</div>", escape(&note.summary));
+        let _ = write!(
+            out,
+            "<div class=\"note-summary\">{}</div>",
+            escape(&note.summary)
+        );
     }
     out.push_str("</div>");
 }

@@ -378,9 +378,9 @@ fn note_kind(event: &AgentEvent) -> NoteKind {
         | AgentEvent::ProviderFallback { .. }
         | AgentEvent::Retry { .. }
         | AgentEvent::RetriesExhausted { .. } => NoteKind::Meter,
-        AgentEvent::TurnParked { .. } | AgentEvent::TurnWoken { .. } | AgentEvent::AskUser { .. } => {
-            NoteKind::Wait
-        }
+        AgentEvent::TurnParked { .. }
+        | AgentEvent::TurnWoken { .. }
+        | AgentEvent::AskUser { .. } => NoteKind::Wait,
         AgentEvent::Verdict { .. }
         | AgentEvent::GoalVerdict { .. }
         | AgentEvent::ScopeReview { .. }
