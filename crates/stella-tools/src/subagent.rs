@@ -350,6 +350,12 @@ impl Tool for SpawnSubAgent {
 /// line of output.
 fn render(outcome: &SubAgentOutcome) -> ToolOutput {
     match outcome {
+        SubAgentOutcome::Completed(report) if report.summary.trim().is_empty() => {
+            ToolOutput::error(
+                "the sub-agent finished without reporting anything — its answer was empty. \
+                 Do the work directly, or re-ask with a narrower, self-contained question.",
+            )
+        }
         SubAgentOutcome::Completed(report) => ToolOutput::Ok {
             content: if report.truncated {
                 format!(

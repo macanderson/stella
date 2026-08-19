@@ -68,6 +68,15 @@ Specific changes this crate is the far end of:
   wrapper driver yet and refuse a named plugin variant rather than silently
   ignoring it (#3695) — see [`stella-runtime`](../stella-runtime)'s README
   for exactly which doors call `WrapperDispatch` today.
+- **Resolving a wrapper and serving it are two moments, deliberately.**
+  `bind_installed` finds the plugin and declares its transport *before* the
+  provider is built, so `--pipeline` naming nothing installed fails as a typo
+  rather than after a paid run; `ResolvedWrapper::serving` builds the
+  `HostCallGate` afterwards, because a plugin's `child_turn` is spent by this
+  session's own `SubAgentDispatcher` and that needs the provider (#3576).
+  `HostPlanes` is consumed by value at `HostCallGate::declare`, so a plane
+  cannot be added to a gate later — collapsing the two halves back into one
+  function is what would break, not merely untidy.
 
 ## Boundary — does this change belong here?
 
