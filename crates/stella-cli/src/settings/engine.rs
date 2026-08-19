@@ -496,11 +496,29 @@ impl AgentEngineConfig {
     }
 
     /// Whether a headless run skips the (now-removed) staged pipeline's
-    /// scope-review gate rather than refusing outright. The gate itself is
-    /// gone with the pipeline (#3865); this accessor and the setting it reads
-    /// survive only because settings-merge tests still exercise the
-    /// scope-chain precedence rule for `agent_engine_config.headless_scope_bypass`
-    /// through it — no production code consults the answer any more.
+    /// scope-review gate rather than refusing outright. The gate is gone
+    /// (#3865, and the deck's interactive half with it in #3861), so no
+    /// production code consults the answer any more.
+    ///
+    /// **It is nevertheless not retired, and the reason is a measurement one
+    /// rather than an oversight (#3870).** The key is inert in the engine but
+    /// load-bearing in the benchmark contract:
+    /// `bench/harbor_adapter/stella_harbor/posture.py` writes
+    /// `headless_scope_bypass: "on"` into the claim-path Terminal-Bench
+    /// posture, whose digest `6c7fc70c` is registered in
+    /// `bench/READINESS.md` §8.4.5 and asserted by
+    /// `test_the_registered_sonnet_digest_is_unchanged`. Moving it to
+    /// `settings::unknown`'s `RETIRED` list would remove it from `ENGINE_ROOT_FIELDS`,
+    /// which `config::trusted_engine_config_shape_is_strict` shares and which
+    /// fails **closed** — so retiring it either refuses every benchmark launch
+    /// or forces the posture to drop the key and re-hash every registered arm.
+    /// Choosing between those is a maintainer's call about published numbers,
+    /// not a cleanup; #3870 carries the analysis.
+    ///
+    /// So the `#[allow]` below is a declared, issue-cited gap — NOT the
+    /// "dies with the pipeline removal" justification that #3872's definition
+    /// of done forbids surviving. Settings-merge tests still exercise the
+    /// scope-chain precedence rule through this accessor meanwhile.
     #[allow(dead_code)]
     pub fn headless_scope_bypass_on(&self) -> bool {
         self.headless_scope_bypass.is_some_and(Toggle::is_on)
