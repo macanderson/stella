@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use stella_core::Router;
 use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::retry::Sleeper;
-use stella_protocol::{ContextUsage, ModelRef, Provider, ScopeProposal};
+use stella_protocol::{ModelRef, Provider, ScopeProposal};
 
 /// Candidate isolation — see [`workspace`]. Re-exported below so every
 /// `ports::CandidateWorkspace` path in the crate still resolves.
@@ -53,6 +53,23 @@ pub trait ProviderResolver: Send + Sync {
     /// configured adapter matches (a resolution the glue reports as a hard
     /// error — never a silent fallback; L-M1).
     fn provider_for(&self, model: &ModelRef) -> Option<&dyn Provider>;
+}
+
+/// Where the pipeline reports the resume-relevant facts it learns mid-run
+/// (#1671) — triage's class, the plan, the execute cursor, the test
+/// baseline — so a host can store them beside the engine checkpoint and hand
+/// them back to [`crate::Pipeline::resume`] after a crash.
+///
+/// Mirrors [`stella_core::step::CheckpointSink`]'s posture: synchronous,
+/// infallible, best-effort. A record that cannot be stored costs the run its
+/// resumability, never its correctness — refusing to run would trade a
+/// working turn for none. The pipeline owns this port (not `stella-core`)
+/// because the frame is a pipeline shape and the engine must never learn
+/// those (invariant 1).
+pub trait ResumeFrameSink: Send + Sync {
+    /// Store `progress` — the complete record so far, not a delta — beside
+    /// the session's checkpoint.
+    fn record(&self, progress: &crate::pipeline::FrameProgress);
 }
 
 /// [`RecalledFrame`], [`ContextRecallPort`], and [`Recall`] moved to
