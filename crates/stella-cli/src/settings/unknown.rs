@@ -50,8 +50,6 @@ pub(super) const ROOT_FIELDS: &[&str] = &[
     "mcp",
     "agent_engine_config",
     "tools",
-    "enable_recap",
-    "trace_capture",
     "ignore_gitignore",
     "create_worktrees",
     "allowed_dirs",
@@ -125,6 +123,49 @@ const RETIRED: &[(&str, &str)] = &[
         "scaled a model verifier's opinion against a test's observation; no \
          rung carries that magnitude any more, so a reward label is priced by \
          `deterministic_weight` alone",
+    ),
+    // The three knobs whose implementations left with `crates/stella-pipeline`
+    // (#3865). All three shipped in releases and are plausibly still set in
+    // settings files in the wild, which is exactly what this list is for: the
+    // operator spelled a real key correctly and the feature behind it is gone,
+    // so "check the spelling" would be false advice. Retired rather than
+    // deleted silently (#3870, #3872); what each one did, and what rebuilding
+    // it on the raw loop would take, is recorded on its own issue.
+    (
+        "enable_recap",
+        "printed a deterministic end-of-run recap in text mode; the renderer \
+         read the staged pipeline's verdict types and went with that crate, so \
+         nothing assembles a recap now",
+    ),
+    (
+        "run.recap",
+        "printed a deterministic end-of-run recap in text mode; the renderer \
+         read the staged pipeline's verdict types and went with that crate, so \
+         nothing assembles a recap now",
+    ),
+    (
+        "trace_capture",
+        "appended a per-execution trajectory trace to \
+         `.stella/private/traces.jsonl`; the module that assembled it was \
+         orphaned by the staged pipeline's removal and deleted with it",
+    ),
+    (
+        "run.trace_capture",
+        "appended a per-execution trajectory trace to \
+         `.stella/private/traces.jsonl`; the module that assembled it was \
+         orphaned by the staged pipeline's removal and deleted with it",
+    ),
+    (
+        "agent_engine_config.approval_wait_secs",
+        "bounded how long a supervised run's parked scope-review approval \
+         waited before aborting itself; the scope-review gate it timed is gone, \
+         so there is no park for it to bound",
+    ),
+    (
+        "agents.approval_wait_secs",
+        "bounded how long a supervised run's parked scope-review approval \
+         waited before aborting itself; the scope-review gate it timed is gone, \
+         so there is no park for it to bound",
     ),
 ];
 
@@ -203,7 +244,6 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "model_timeout_secs",
     "compaction_budget_tokens",
     "tool_result_horizon_steps",
-    "approval_wait_secs",
     "agents",
 ];
 
@@ -280,12 +320,7 @@ const TOML_ROOT_FIELDS: &[&str] = &[
 ];
 
 const META_FIELDS: &[&str] = &["schema_version", "scope"];
-const RUN_FIELDS: &[&str] = &[
-    "recap",
-    "trace_capture",
-    "create_worktrees",
-    "ignore_gitignore",
-];
+const RUN_FIELDS: &[&str] = &["create_worktrees", "ignore_gitignore"];
 /// `[workspace]` — closed, like `[run]`: a mistyped `allowed_dir` grants
 /// nothing and looks exactly like a granted directory until a tool refuses a
 /// write, which is the failure this walker exists to pre-empt.

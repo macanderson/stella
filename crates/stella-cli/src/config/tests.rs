@@ -268,8 +268,6 @@ fn config_debug_never_leaks_the_api_key() {
         engine_settings: None,
         engine_settings_trusted: false,
         tool_policy: Default::default(),
-        enable_recap: false,
-        trace_capture: false,
         ignore_gitignore: true,
         reward_policy: Default::default(),
         authority: crate::settings::AuthorityPolicy::default(),
@@ -348,8 +346,6 @@ fn reload_fixture(tag: &str) -> (std::path::PathBuf, crate::paths::TestPathsGuar
         engine_settings: None,
         engine_settings_trusted: false,
         tool_policy: Default::default(),
-        enable_recap: false,
-        trace_capture: false,
         ignore_gitignore: true,
         reward_policy: Default::default(),
         authority: crate::settings::AuthorityPolicy::default(),
@@ -361,15 +357,23 @@ fn reload_fixture(tag: &str) -> (std::path::PathBuf, crate::paths::TestPathsGuar
         cfg.tool_policy.allows("bash"),
         "premise: the default policy allows bash"
     );
-    assert!(!cfg.enable_recap, "premise: recap starts off");
+    assert!(
+        cfg.ignore_gitignore,
+        "premise: the gitignore filter starts on"
+    );
     (home, paths, cfg)
 }
 
 /// Witness for `/reload` (`Config::reload_from_disk`): a settings edit made
 /// *after* the session's `Config` was resolved is re-applied to the live
-/// value — the fields the scope chain derives (the recap toggle, the tool
+/// value — the fields the scope chain derives (the gitignore filter, the tool
 /// switches) flip without a restart. Fails to compile on a build without
 /// `reload_from_disk`.
+///
+/// The vehicle was `enable_recap` until #3870 retired that key; any
+/// scope-merged field proves the same property, and `ignore_gitignore` is the
+/// one whose default is ON, so the edit below flips it in the direction a
+/// forgotten merge would not.
 #[test]
 fn reload_from_disk_reapplies_the_settings_scope_chain() {
     // `reload_from_disk` reads the process-wide trusted-engine-config env
@@ -383,15 +387,15 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
     // The edit a running session would previously only see after a restart.
     std::fs::write(
         home.join(".stella").join("settings.json"),
-        r#"{"enable_recap": "on", "tools": {"bash": "off"}}"#,
+        r#"{"ignore_gitignore": "off", "tools": {"bash": "off"}}"#,
     )
     .unwrap();
 
     cfg.reload_from_disk().unwrap();
 
     assert!(
-        cfg.enable_recap,
-        "reload must re-derive the recap toggle from the scope chain on disk"
+        !cfg.ignore_gitignore,
+        "reload must re-derive the gitignore filter from the scope chain on disk"
     );
     assert!(
         !cfg.tool_policy.allows("bash"),
@@ -410,8 +414,8 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
 /// scale a zero unit, which `reward_policy()` refuses by name rather than
 /// clamping. That is the only fallible step downstream of the load, so it
 /// is the lever that separates "derive, then commit" from "assign as you go":
-/// with the assignments interleaved, `enable_recap` and the `bash` switch are
-/// already written by the time the reward weights are rejected, and the
+/// with the assignments interleaved, `ignore_gitignore` and the `bash` switch
+/// are already written by the time the reward weights are rejected, and the
 /// session runs its next turn on a posture no scope chain ever produced —
 /// while both callers in `command_deck::settings_io` tell the user the reload
 /// failed and the previous values were kept.
@@ -422,7 +426,7 @@ fn a_failed_reload_leaves_every_field_untouched() {
 
     std::fs::write(
         home.join(".stella").join("settings.json"),
-        r#"{"enable_recap": "on", "tools": {"bash": "off"}, "reward": {"deterministic_weight": 0.0}}"#,
+        r#"{"ignore_gitignore": "off", "tools": {"bash": "off"}, "reward": {"deterministic_weight": 0.0}}"#,
     )
     .unwrap();
 
@@ -432,9 +436,9 @@ fn a_failed_reload_leaves_every_field_untouched() {
     assert!(error.contains("deterministic_weight"), "{error}");
 
     assert!(
-        !cfg.enable_recap,
-        "a failed reload must not leave the recap toggle applied — the callers \
-         report the previous values were kept"
+        cfg.ignore_gitignore,
+        "a failed reload must not leave the gitignore filter applied — the \
+         callers report the previous values were kept"
     );
     assert!(
         cfg.tool_policy.allows("bash"),
