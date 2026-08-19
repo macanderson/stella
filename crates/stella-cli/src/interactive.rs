@@ -7,8 +7,9 @@
 //! lives here instead is what every interactive plane needs:
 //!
 //! - [`human_can_answer`] / [`human_is_present`] — the single derivation of
-//!   "is a human present to answer?", read by the #2676 approval responder,
-//!   the rules-enforcement prompt, and the pipeline's approval capability.
+//!   "is a human present to answer?", read by the #2676 approval responder
+//!   and the rules-enforcement prompt. The staged pipeline's own approval
+//!   capability used to read it too, before the pipeline was removed (#3846).
 //! - [`AskUserIo`] / [`TtyAskUserIo`] — how an interactive question (an
 //!   approval, a scope-review confirm) reaches the human. Injectable so the
 //!   decision logic is testable without a TTY: the approvals plane gets the
@@ -31,11 +32,12 @@
 ///
 /// Pure over already-observed booleans so the condition is directly
 /// unit-testable without faking a terminal; [`human_is_present`] is the half
-/// that reads this process's handles. The consumers are
+/// that reads this process's handles. The consumer today is
 /// [`crate::approval::attach_interactive_approvals`] (the #2676 approval
-/// responder) and [`crate::agent::approval_capability_for`] (the pipeline's
-/// approval port). Deriving it separately is what once let two consumers
-/// disagree about whether anyone was listening.
+/// responder) — the staged pipeline's own approval port was a second
+/// consumer of this same fact until it was removed (#3846). Deriving it
+/// separately is what once let two consumers disagree about whether anyone
+/// was listening.
 ///
 /// A thin wrapper over [`stella_tty::human_can_answer`] — every consumer in
 /// this crate prints its prompt on stdout, so `stdout_is_terminal` is the
@@ -305,27 +307,6 @@ mod tests {
                 "the broker must stay headless: {reason}"
             ),
             other => panic!("no human, so nothing may approve: {other:?}"),
-        }
-
-        // Consumer 2 — the pipeline's approval port reads the same fact, so
-        // it cannot answer Stdio where the broker answered no.
-        for interactive_output in [true, false] {
-            for stdin_tty in [true, false] {
-                for stdout_tty in [true, false] {
-                    let fact = human_can_answer(interactive_output, stdin_tty, stdout_tty);
-                    let capability = crate::agent::approval_capability_for(
-                        false,
-                        interactive_output,
-                        stdin_tty,
-                        stdout_tty,
-                    );
-                    assert_eq!(
-                        fact,
-                        capability == crate::agent::PipelineApprovalCapability::Stdio,
-                        "({interactive_output}, {stdin_tty}, {stdout_tty}) must not fork"
-                    );
-                }
-            }
         }
     }
 
