@@ -231,42 +231,6 @@ pub(super) async fn escalate(
     comment(provider, key, &body, signature).await
 }
 
-/// Resolve one issue by key, through the port.
-///
-/// Reads the open queue and finds the key rather than asking the tracker for
-/// one issue, and that is a deliberate limit rather than an oversight: the port
-/// has no single-issue read, and adding one to serve a caller that only ever
-/// works **open** issues would widen a trait for a case that does not exist
-/// yet. The loop works what it drew from the ranked queue, and a claim lives in
-/// the fleet ledger rather than in the tracker's assignee field — so an issue
-/// being worked is still `Open` and still in this read.
-///
-/// A key that is not in the open queue is a typed refusal naming the two
-/// reasons a caller can act on: it is closed, or it does not exist.
-pub(super) fn resolve(
-    provider: &dyn IssueProvider,
-    key: &str,
-) -> Result<stella_protocol::issue::Issue, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
-    let issues = runtime
-        .block_on(provider.list_open(QUEUE_READ_LIMIT))
-        .map_err(|error| error.to_string())?;
-
-    issues
-        .into_iter()
-        .find(|issue| issue.key.as_str() == key)
-        .ok_or_else(|| {
-            format!(
-                "#{key} is not in the open queue — it is closed, or it does not exist \
-                 (read {QUEUE_READ_LIMIT} open issues from `{}`)",
-                provider.id()
-            )
-        })
-}
-
 /// Close an issue with a receipt naming the evidence, signed.
 ///
 /// The receipt is an issue comment, so it takes the `issue_comment` signature
