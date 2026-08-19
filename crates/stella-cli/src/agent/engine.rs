@@ -283,16 +283,20 @@ pub(crate) fn engine_config_for_kind(cfg: &Config, kind: &str) -> EngineConfig {
 /// deleted along with the staged pipeline's goal arm (#3865) — `stella goal`'s
 /// surviving `Raw`/`Plugin` arms route their verifier through
 /// `stella_core::Engine::run_goal` directly rather than building a separate
-/// tuned config for it. `#[allow(dead_code)]` rather than deletion because
-/// `agent/tests/engine_wiring.rs`'s cross-role invariant tests
-/// (`checkpoint_sink_reaches_every_role`,
+/// tuned config for it.
+///
+/// **Test-gated (#3872), not deleted.** `agent/tests/engine_wiring.rs`'s
+/// cross-role invariant tests (`checkpoint_sink_reaches_every_role`,
 /// `every_role_shares_one_session_view_of_affordable_output_ceilings`, the
 /// turn-timeout/max-output-tokens propagation tests) assert that
 /// `tuned_engine_config`'s session-wide plumbing (checkpoint sink, budget
 /// ceiling, flag propagation) reaches every `EngineAgentKind`, VERIFIER
-/// included — deleting this wrapper would either lose that coverage or force
-/// three tests to re-derive the config inline for no behavioral gain.
-#[allow(dead_code)]
+/// included; deleting this wrapper would either lose that coverage or force
+/// four tests to re-derive the config inline for no behavioral gain. `cfg(test)`
+/// keeps it out of the shipped binary while saying plainly that its only
+/// callers are tests — which the roleless-core work (#3903) will settle
+/// properly by retiring the VERIFIER kind from this crate's vocabulary.
+#[cfg(test)]
 pub(crate) fn verifier_engine_config_for(cfg: &Config) -> EngineConfig {
     tuned_engine_config(
         cfg,

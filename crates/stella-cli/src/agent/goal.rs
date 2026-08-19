@@ -204,7 +204,14 @@ pub(crate) async fn run_raw_one_shot(
     } else {
         discover_custom_tools(cfg, format == OutputFormat::Text).await
     };
-    let mut budget = build_budget_guard(budget_limit);
+    // The wall-clock task deadline, armed from `--turn-timeout` (#3868). This
+    // is the one-shot door, and a one-shot run is one task, so the flag's
+    // allowance IS the task's ceiling — `EngineConfig::turn_budget` (set from
+    // the same flag) only lets the engine *decline to start* work it cannot
+    // finish, and enforces nothing. Unarmed, an over-run died on the harness's
+    // kill with its work discarded instead of stopping at a safe boundary with
+    // a scorable partial; #2957 measured exactly that across 20 bench trials.
+    let mut budget = crate::runtime::one_shot_budget_guard(budget_limit, cfg.turn_timeout);
     let store = open_store(&cfg.workspace_root);
     let calibration = seed_calibration(&store, cfg);
     // Breaker feedback for the bare one-shot turn (#2673) — one turn per
