@@ -144,7 +144,7 @@ registry's event sender is a sink — so the child's `step_usage` reaches the
 run's report and the session's budget guard, but not the store's receipt
 (#3802).
 
-**The candidate-fanout plane exists and no shipped driver installs it.**
+**The candidate-fanout plane, and where its substrate comes from.**
 `candidate_fanout` and `adopt_candidate` (#3844) are the capability
 `plugins/stella-candidates` needs and could not previously express: N isolated
 writable workspaces, one full **worker** turn in each, per-candidate evidence
@@ -154,10 +154,12 @@ the host itself minted. `CandidateFanouts` is the plane and
 runs on — a separate port rather than a root field on `SubAgentSpec`, because a
 dispatcher that ignored such a field would run every candidate in the shared
 tree while the plane reported isolation, and nothing in `SubAgentOutcome` could
-tell the two apart. No driver implements the substrate today, so
-`HostPlanes::with_candidate_fanout` is never called and both capabilities are
-answered `Unavailable` — a declared gap, said out loud here rather than
-discovered by a plugin author.
+tell the two apart. **This crate implements no substrate and must not**: one
+needs a git worktree and a rooted writing turn, both of which are I/O over a
+host's own session. `stella-cli`'s `candidate_workspaces.rs` is the shipped one
+(#3892), installed on `stella run --pipeline <variant>`; a host that has none
+installs no plane, and both capabilities answer `Unavailable` — a declared gap
+the plugin is told about rather than a silence.
 
 **The driver channel now moves bytes, and still has no production caller.**
 `SubprocessDriver` (#3634) is the transport between the wire
@@ -231,7 +233,7 @@ it crosses.
 | `src/wrapper/framing.rs` | Where one message ends on a child's stdout, and the one task that owns its stdin — shared by both transports, because a second framer would be quadratic and pass its tests. |
 | `src/wrapper/host_call.rs` | The host half of the host-call channel: a plugin may ask the host for a capability, never reach for one itself — this module is the half that decides and applies the install-time grant (`doc:wrapper-socket` §6b). |
 | `src/wrapper/child_turn.rs` | The `ChildTurn` port: the host spends a model call at a declared role intent (`triage`, `planner`, `witness_author`, …) so a plugin never holds a provider credential itself (`doc:turn-loop-wrappers` §9.3). |
-| `src/wrapper/candidate_fanout.rs` | The `candidate_fanout`/`adopt_candidate` plane: N isolated writable workspaces, one worker turn in each, and the one adoption that lands a winner — over a `CandidateWorkspaces` substrate no shipped driver installs yet, so both calls answer `unavailable` today (#3844, `doc:wrapper-socket` §6b). |
+| `src/wrapper/candidate_fanout.rs` | The `candidate_fanout`/`adopt_candidate` plane: N isolated writable workspaces, one worker turn in each, and the one adoption that lands a winner — over a `CandidateWorkspaces` substrate a host supplies (`stella-cli`'s worktree one, #3892; a host with none installs no plane and both calls answer `unavailable`). #3844, `doc:wrapper-socket` §6b. |
 | `tests/no_ambient_reads.rs` | The executable form of the invariant above. |
 | `tests/wrapper_socket.rs` | The socket's end-to-end proof: a real `/bin/sh` subprocess plugin driven through `TurnWrapper` by the test's own round loop. It proves the socket *answers*; what it cannot prove is that anything in the workspace holds the same order, which is what `tests/wrapper_dispatch.rs` is for. `#![cfg(unix)]`; #3497 tracks the portable in-tree plugin binary a Windows-proof version needs. |
 | `tests/wrapper_dispatch.rs` | The host sequence's witness: the same kind of `/bin/sh` plugin driven through the **shipped** `WrapperDispatch`, proving a contribution reaches the turn after the stable prefix, its evidence reaches `judge`, and the verdict is what decides whether another turn runs. `#![cfg(unix)]` for the same reason. |

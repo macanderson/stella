@@ -334,6 +334,34 @@ impl<G: GitCli> WorktreeManager<G> {
         self
     }
 
+    /// Place this manager's worktrees somewhere other than
+    /// `<repo_root>/.stella/worktrees/`.
+    ///
+    /// Exists because [`crate::gc`] reclaims by **namespace**: it acts only on
+    /// worktrees under the default root and branches under the default prefix,
+    /// which is what keeps `stella fleet gc` from touching a checkout it did
+    /// not create. A caller whose worktrees are not a fleet's must therefore
+    /// move out of that namespace rather than share it — `stella-cli`'s
+    /// best-of-N candidate substrate puts its own under
+    /// `.stella/private/candidates/`, where the generated `.stella/.gitignore`
+    /// already covers them and `fleet gc` correctly cannot see them.
+    #[must_use]
+    pub fn with_worktrees_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.worktrees_root = root.into();
+        self
+    }
+
+    /// Name this manager's branches with a prefix other than `fleet/`.
+    ///
+    /// The other half of [`Self::with_worktrees_root`]'s namespace argument,
+    /// and needed for the same reason: a branch called `fleet/…` that no fleet
+    /// created is one `stella fleet gc` believes it owns.
+    #[must_use]
+    pub fn with_branch_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.branch_prefix = prefix.into();
+        self
+    }
+
     /// The repository root — the workspace a [`Isolation::SharedTree`] task
     /// runs in directly.
     ///
@@ -412,6 +440,51 @@ impl<G: GitCli> WorktreeManager<G> {
             branch_deleted,
             branch_had_commits: has_commits,
         })
+    }
+
+    /// Throw a worktree away whether or not it is dirty: `git worktree remove
+    /// --force`, then `git branch -D` unconditionally.
+    ///
+    /// **Deliberately not [`Self::remove`], and the difference is a judgement
+    /// about whose work is at stake.** That method refuses a dirty worktree
+    /// and preserves a branch carrying commits, because a fleet worker's
+    /// output *is* its commits and cleanup must never discard them. A
+    /// best-of-N candidate is the opposite case: its output is uncommitted
+    /// working-tree bytes by construction, so "refuse while dirty" would
+    /// refuse every candidate there has ever been, and its branch is a
+    /// scratch label that never carries a commit at all. A losing candidate
+    /// is *meant* to be thrown away — that is what makes the winner's
+    /// adoption the only thing that survives.
+    ///
+    /// Both halves run even when the first fails, and the first failure is
+    /// what is reported: a `worktree remove` that could not take the
+    /// directory still leaves a branch nobody will ever check out, and
+    /// leaking both is strictly worse than leaking one.
+    pub async fn discard(&self, worktree: &Worktree) -> Result<(), WorktreeError> {
+        let path_str = path_arg(&worktree.path)?;
+        // No `?` on either arm — that is the whole point. A `?` on the first
+        // would skip the second on a spawn failure, which is precisely the
+        // case where both are most likely to be needed.
+        let removed = match self
+            .git
+            .run(
+                &self.repo_root,
+                &["worktree", "remove", "--force", path_str],
+            )
+            .await
+        {
+            Ok(out) => ensure_ok(out, &format!("worktree remove --force {path_str}")).map(|_| ()),
+            Err(error) => Err(error.into()),
+        };
+        let branch = match self
+            .git
+            .run(&self.repo_root, &["branch", "-D", &worktree.branch])
+            .await
+        {
+            Ok(out) => ensure_ok(out, &format!("branch -D {}", worktree.branch)).map(|_| ()),
+            Err(error) => Err(error.into()),
+        };
+        removed.and(branch)
     }
 
     /// List the repository's worktrees (`git worktree list --porcelain`).
@@ -590,6 +663,69 @@ mod tests {
         assert_eq!(slugify("v1..v2"), "v1.v2");
         assert_eq!(slugify("a...b"), "a.b");
         assert_eq!(slugify(".."), "task");
+    }
+
+    // discard
+
+    /// A candidate's checkout goes whether or not it is dirty, and its branch
+    /// goes with it — the property `remove` deliberately does not have.
+    #[tokio::test]
+    async fn discard_forces_the_removal_and_deletes_the_branch() {
+        let git = ScriptedGit::new(|_| GitOutput::ok(""));
+        let mgr = manager(git);
+        let wt = mgr.create("cand-1", "HEAD").await.unwrap();
+        mgr.discard(&wt).await.unwrap();
+
+        let calls = mgr.git.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call[..3] == ["worktree", "remove", "--force"]),
+            "a candidate's tree is dirty by construction, so removal must \
+             force: {calls:?}"
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == &["branch", "-D", &wt.branch]),
+            "and its scratch branch goes with it: {calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|call| call[0] == "rev-list"),
+            "`remove`'s \"keep a branch carrying commits\" check must not run \
+             here — a candidate never commits, and asking would only make the \
+             discard fail on a repo that answers oddly: {calls:?}"
+        );
+    }
+
+    /// The branch delete is attempted even when the checkout would not go, so
+    /// a failed discard leaks one thing rather than two.
+    #[tokio::test]
+    async fn discard_deletes_the_branch_even_when_the_checkout_will_not_go() {
+        let git = ScriptedGit::new(|args| {
+            if args.first().is_some_and(|arg| arg == "worktree")
+                && args.get(1).is_some_and(|arg| arg == "remove")
+            {
+                GitOutput::failed(1, "fatal: could not remove")
+            } else {
+                GitOutput::ok("")
+            }
+        });
+        let mgr = manager(git);
+        let wt = mgr.create("cand-2", "HEAD").await.unwrap();
+
+        let error = mgr.discard(&wt).await.unwrap_err();
+        assert!(
+            error.to_string().contains("worktree remove --force"),
+            "the first failure is what is reported: {error}"
+        );
+        assert!(
+            mgr.git
+                .calls()
+                .iter()
+                .any(|call| call == &["branch", "-D", &wt.branch]),
+            "and the branch delete still ran"
+        );
     }
 
     // create

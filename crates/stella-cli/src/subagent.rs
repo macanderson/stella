@@ -341,6 +341,16 @@ impl SessionSubAgents {
     /// free function rather than folded into `ToolRegistry::new` because the
     /// registry lives in `stella-tools`, which has no provider factory and
     /// must not grow one.
+    ///
+    /// Returns the **concrete** dispatcher, not the trait object it is also
+    /// attached as. Both are the same allocation, and the trait object is what
+    /// `delegate` needs — but [`Self::dispatch_in_workspace`] is not on
+    /// [`SubAgentDispatcher`] and cannot be, since a dispatcher's contract is
+    /// "run this child against the session's tool set" and that method's whole
+    /// point is that the tool set is somewhere else. A caller wanting the
+    /// trait object coerces; a caller wanting the rooted seam does not have to
+    /// build a second dispatcher to get it, which is what would put a second
+    /// pool and a second ledger over one session's money.
     pub fn install(
         provider: Arc<dyn Provider>,
         registry: &Arc<ToolRegistry>,
@@ -348,13 +358,13 @@ impl SessionSubAgents {
         mode: stella_protocol::BudgetMode,
         pool_limit_usd: Option<f64>,
         seats: crate::agent::seats::SeatProviders,
-    ) -> Arc<dyn SubAgentDispatcher> {
-        let dispatcher: Arc<dyn SubAgentDispatcher> = Arc::new(
+    ) -> Arc<Self> {
+        let dispatcher = Arc::new(
             Self::new(provider, registry, config, mode)
                 .with_pool_limit(pool_limit_usd)
                 .with_seats(seats),
         );
-        registry.attach_sub_agent_dispatcher(dispatcher.clone());
+        registry.attach_sub_agent_dispatcher(dispatcher.clone() as Arc<dyn SubAgentDispatcher>);
         dispatcher
     }
 }
@@ -386,7 +396,7 @@ impl SessionSubAgents {
 pub fn install_for_session(
     cfg: &crate::config::Config,
     registry: &Arc<ToolRegistry>,
-) -> Result<Arc<dyn SubAgentDispatcher>, String> {
+) -> Result<Arc<SessionSubAgents>, String> {
     let assignments = cfg
         .engine_settings
         .as_ref()
@@ -454,6 +464,69 @@ impl SubAgentDispatcher for SessionSubAgents {
                 reason: "the session's tool registry is gone".to_string(),
             };
         };
+        self.run_child(spec, tools, None).await
+    }
+}
+
+impl SessionSubAgents {
+    /// Run one child against a tool set rooted **somewhere other than the
+    /// session's** — a best-of-N candidate's isolated worktree (#3892).
+    ///
+    /// # Why this is a seam here and not a root on [`SubAgentSpec`]
+    ///
+    /// Because there is no single root that could be correct. A fan-out runs
+    /// N candidates concurrently in N disjoint trees, so a registry whose
+    /// `root` were re-pointed per dispatch would be re-pointed by every
+    /// sibling underneath the others — and `root` is what every path fence
+    /// resolves against (`stella_core::workspace_scope`), so the failure mode
+    /// is not a confused tool but a candidate writing into its sibling's tree
+    /// while both report isolation. A registry per candidate has one root for
+    /// its whole life, which is the only shape that is true.
+    ///
+    /// Everything *else* is the session's and is deliberately not rebuilt:
+    /// the provider, the seat map, the sub-agent pool, the spend ledger, the
+    /// turn's event stream and controls, the orphan cascade and the
+    /// settle-on-the-thread discipline all come from this one dispatcher. A
+    /// second dispatcher would be a second pool and a second ledger over one
+    /// session's money, which is exactly what
+    /// [`crate::wrapper_plugin::SessionChildTurns`]' doc refuses.
+    ///
+    /// Unlike [`SubAgentDispatcher::dispatch`], the child runs behind the
+    /// operator's tool switches and the session authorization gate
+    /// ([`crate::agent::tool_stack::policy_stack_with`]). That asymmetry is
+    /// deliberate rather than an oversight: this child was asked for by an
+    /// *installed third-party plugin* and it writes, so the operator's
+    /// `tools.<name>` switches have to reach it. `delegate`'s children run
+    /// against the bare registry and always have; widening that is a change
+    /// to a different capability's behavior and is filed rather than smuggled
+    /// in here (#3930).
+    pub(crate) async fn dispatch_in_workspace(
+        &self,
+        spec: SubAgentSpec,
+        tools: Arc<ToolRegistry>,
+        policy: stella_tools::policy::ToolPolicy,
+        principal: stella_core::ports::Principal,
+    ) -> SubAgentOutcome {
+        self.run_child(spec, tools, Some((policy, principal))).await
+    }
+
+    /// The one child-running body both entry points share.
+    ///
+    /// `stack` is `None` for a `delegate` child (the bare registry, as it has
+    /// always been) and `Some` for a rooted candidate, which runs behind the
+    /// operator's switches — see [`Self::dispatch_in_workspace`] for why the
+    /// two differ. A private helper taking the difference as data is the one
+    /// shape that keeps the subtle half — `ParentGone`, `OrphanStop`,
+    /// `catch_unwind`, settle-before-report — written exactly once.
+    async fn run_child(
+        &self,
+        spec: SubAgentSpec,
+        tools: Arc<ToolRegistry>,
+        stack: Option<(
+            stella_tools::policy::ToolPolicy,
+            stella_core::ports::Principal,
+        )>,
+    ) -> SubAgentOutcome {
         // The turn's own stream, read now rather than captured at install:
         // a child's `StepUsage` has to be metered against the turn that
         // asked for it. A sink keeps a between-turns dispatch from failing.
@@ -510,11 +583,23 @@ impl SubAgentDispatcher for SessionSubAgents {
                     }
                 };
                 let mut view = pool_view;
+                // Built here rather than by the caller because the chain
+                // borrows its base, and the base is the registry this thread
+                // owns — a `GatedToolSet<'_>` cannot cross a thread boundary,
+                // only the owned pieces it is assembled from can.
+                let base: &dyn stella_core::ports::ToolExecutor = &*tools;
+                let stacked = stack.map(|(policy, principal)| {
+                    crate::agent::tool_stack::policy_stack_with(base, policy, principal)
+                });
+                let child_tools: &dyn stella_core::ports::ToolExecutor = match &stacked {
+                    Some(stack) => stack,
+                    None => &*tools,
+                };
                 // Set on the parent engine, not the child's: `run_sub_agent`
                 // propagates the gate as-is and narrows the steering to
                 // `ChildSteering`, so this is what makes a child pausable and
                 // stoppable without letting it steal the parent's messages.
-                let engine = Engine::with_sleeper(&*provider, &*tools, config, &TokioSleeper)
+                let engine = Engine::with_sleeper(&*provider, child_tools, config, &TokioSleeper)
                     .with_turn_controls(&controls);
                 // `catch_unwind` so a panic INSIDE the turn cannot skip the
                 // settle below (#1850). Without it the unwind leaves this
