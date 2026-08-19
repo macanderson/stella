@@ -43,12 +43,12 @@ stella fleet \
    unblock its dependents — they end the run as `skipped` — and nothing is
    retried automatically: the ledger records every attempt, but re-running
    is your call.
-4. **Work.** Each worker is a full engine run — the
-   [staged pipeline](/docs/inference-pipeline) with the standard toolbelt,
-   honoring your [agent-engine config](/docs/configuration/agent-engine-config).
+4. **Work.** Each worker is a full engine run — the raw step loop by
+   default, with the standard toolbelt, honoring your
+   [agent-engine config](/docs/configuration/agent-engine-config).
    Workers are headless by design: no MCP, no interactive prompts, nothing
-   that can block on stdin. Pass `--no-pipeline` to run the raw step loop
-   instead of the staged pipeline.
+   that can block on stdin. Pass `--pipeline classic` to route each worker
+   through the [staged pipeline](/docs/inference-pipeline) instead.
 5. **Record.** Every attempt, commit, and dollar lands in the fleet ledger
    at `.stella/private/fleet.db` — local SQLite, like all
    [stella telemetry](/docs/telemetry), with `runs`, `tasks`, `attempts`,
@@ -66,9 +66,9 @@ stella fleet \
    ```
 
    Under the shared tree the `commits` table records the commits each worker
-   was **observed** making: a commit runs while its worker holds a
+   was **observed** making. A commit runs while its worker holds a
    workspace-wide commit lane, so no sibling can move `HEAD` inside that
-   window and the advance across it belongs to exactly one task. The trade is
+   window; the advance belongs to exactly one task. The trade is
    deliberate — a commit made some other way in a shared tree (through the
    shell, which is off by default) is left out of the table rather than
    stamped onto whichever task happened to be open. An isolated task has one
@@ -172,8 +172,8 @@ isolation = "isolated"
 stella --spend-limit 6 fleet --plan feature-buildout.toml
 ```
 
-`schema` runs alone in wave one; `reader` and `writer` run together in wave two
-with disjoint claims; `docs` runs last in wave three, in its own worktree on its
+`schema` runs alone in wave one. `reader` and `writer` run together in wave two
+with disjoint claims. `docs` runs last in wave three, in its own worktree on its
 own `fleet/docs-<hash>` branch — divergent work, so isolation rather than
 claims. Had `reader` and `writer` both claimed `src/store/schema.rs`, the second
 dispatch would have failed by name instead of racing.
@@ -198,9 +198,9 @@ stella --spend-limit 5 fleet --plan release-prep.toml
 # equivalently: STELLA_SPEND_LIMIT=5 stella fleet --plan release-prep.toml
 ```
 
-It is enforced twice: each child runs under its own guard — the aggregate cap
-divided across the concurrency width (`spend limit ÷ max-concurrency`), so one
-wave's in-flight children can't collectively overshoot — and the fleet stops
+It is enforced twice. Each child runs under its own guard — the aggregate cap
+divided across the concurrency width (`spend limit ÷ max-concurrency`) — so one
+wave's in-flight children can't collectively overshoot, and the fleet stops
 launching new waves once total metered spend crosses the cap. In-flight
 siblings settle cleanly — never a mid-tool kill.
 
@@ -247,7 +247,8 @@ stella fleet --plan release-prep.toml --max-concurrency 2 --watch
     its PR status via `gh`. Exits non-zero if any watched branch ends red.
   </OptionCard>
   <OptionCard name="--no-pipeline">
-    Workers run the raw step loop instead of the staged pipeline.
+    Deprecated no-op: the raw step loop is already the default. Use
+    `--pipeline classic` to opt workers into the staged pipeline.
   </OptionCard>
 </CardGrid>
 

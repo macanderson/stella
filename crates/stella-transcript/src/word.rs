@@ -33,6 +33,17 @@
 //! the line tint already carries "this line changed", and a second tint over all
 //! of it is noise that makes the genuinely-partial changes elsewhere harder to
 //! spot. The threshold is [`SATURATION`].
+//!
+//! ## The length cap
+//!
+//! Both diffs above are exact LCS, so both are quadratic in time *and* space,
+//! and a line has no length limit: one minified bundle or one long JSON object
+//! is a single line that tokenises to tens of thousands of tokens. Nothing
+//! upstream bounds that — `stella_diff::LCS_AREA_CAP` bounds the *line-count*
+//! product of a file diff, which says nothing about what is inside one line —
+//! so this module bounds it itself with [`LCS_CELL_CAP`]. Over the cap, the
+//! pair degrades to the same plain spans a too-dissimilar pair returns and the
+//! line tint carries the signal alone.
 
 /// Above this fraction of a line being "changed", word highlights are dropped
 /// as noise and the line tint carries the signal alone.
@@ -41,6 +52,28 @@ pub const SATURATION: f64 = 0.8;
 /// A changed run shorter than this many characters triggers the character-level
 /// re-diff, because at that size a whole-token tint is mostly wrong.
 pub const SHORT_RUN: usize = 3;
+
+/// Beyond this many LCS table cells, word highlighting is abandoned for the
+/// line tint alone: a pathological line must degrade to a coarse-but-instant
+/// answer rather than allocate gigabytes and stall whatever is rendering it.
+///
+/// 250,000 cells is 500 tokens against 500 tokens — a 1 MiB `u32` table, and
+/// about 1.4 ms of fill at the ~5.7 ns per cell this loop measures in release.
+/// The number is a legibility boundary before it is a performance one: for the
+/// punctuation-dense text this tokeniser is tuned for, 500 tokens is roughly a
+/// 500-character line, which already wraps four times in a terminal and is the
+/// point past which nobody is reading word by word — so precision there is
+/// worth less than the guarantee that one machine-generated line cannot wedge
+/// a transcript.
+///
+/// This is **not** `stella_diff::LCS_AREA_CAP`, which bounds the product of two
+/// *line counts* across a file. This one bounds the product of two *token (or
+/// character) counts* inside a single changed pair; a file diff can pass that
+/// cap and still hand one 50 kB line to this module.
+///
+/// Public so a caller sizing its inputs can reason about the boundary; the
+/// value is not tunable per call by design — one bound, one behaviour.
+pub const LCS_CELL_CAP: usize = 250_000;
 
 /// One rendered span of a line: text, plus whether it is the *changed* part.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +147,9 @@ pub fn highlight(old: &str, new: &str) -> (Vec<Span>, Vec<Span>) {
 
     let old_tokens = tokenize(old);
     let new_tokens = tokenize(new);
+    if over_cap(old_tokens.len(), new_tokens.len()) {
+        return (vec![Span::plain(old)], vec![Span::plain(new)]);
+    }
     let script = lcs_script(&old_tokens, &new_tokens);
 
     let (mut old_spans, mut new_spans) = spans_from_script(&script);
@@ -133,9 +169,24 @@ enum Edit<'a> {
     Add(&'a str),
 }
 
-/// Exact LCS over tokens. Lines are short enough that the quadratic table is
-/// never the cost that matters here — [`crate::file_diff`] has already bounded
-/// how many pairs reach this function.
+/// Whether an LCS table over these two sequence lengths would exceed
+/// [`LCS_CELL_CAP`].
+///
+/// Measures the table [`lcs_script`] actually allocates, `(n + 1) * (m + 1)`,
+/// so the cap bounds the allocation exactly rather than approximately. The
+/// multiply saturates because overflowing it is the very thing being guarded
+/// against: two 5-billion-token sides would wrap to a small product and pass.
+fn over_cap(n: usize, m: usize) -> bool {
+    (n + 1).saturating_mul(m + 1) > LCS_CELL_CAP
+}
+
+/// Exact LCS over tokens — quadratic in both time and space.
+///
+/// **Every caller must first put its two lengths through [`over_cap`].** Nothing
+/// upstream does it for them: [`crate::file_diff`] bounds how many pairs reach
+/// this module and `stella_diff::LCS_AREA_CAP` bounds a file's line-count
+/// product, but a single minified line is one pair of one line, and its table
+/// is billions of cells (#3739).
 fn lcs_script<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<Edit<'a>> {
     let (n, m) = (old.len(), new.len());
     let mut table = vec![0u32; (n + 1) * (m + 1)];
@@ -200,6 +251,14 @@ fn refine_short_runs(old_spans: &mut Vec<Span>, new_spans: &mut Vec<Span>) {
     let new_text = new_spans[new_run].text.clone();
     let short = old_text.chars().count() < SHORT_RUN || new_text.chars().count() < SHORT_RUN;
     if !short && !shares_affix(&old_text, &new_text) {
+        return;
+    }
+
+    // A sole changed run can be the whole line — `--fast` → `--fast2` shares an
+    // affix, and so does one 50 kB minified line against the next revision of
+    // itself. Leaving the token-level spans in place is the right fallback:
+    // whatever the line-level pass decided still stands.
+    if over_cap(old_text.chars().count(), new_text.chars().count()) {
         return;
     }
 

@@ -37,33 +37,46 @@ not. [`stella-parity`](../stella-parity) is the enforcement of that instinct: a
 capability that ships on this surface and silently misses the API surface fails a
 test rather than a review.
 
-Four specific changes in flight that this crate is the far end of:
+Specific changes this crate is the far end of:
 
-- **Verification is becoming opt-in.** [`stella-pipeline`](../stella-pipeline) is
-  still the default `stella run` path and `--no-pipeline` still opts out, but the
-  planned inversion (#3381) makes the raw loop the default with `--pipeline
-  <variant>` opting in, and `--no-pipeline` an inert alias so no script breaks. The
-  crate the flag drives is itself leaving the workspace to become a plugin (#3246).
-  Once both land, a plain `stella run` does not verify its own work — which is a
-  claim on the user-facing surface, so the flip is gated on a side-by-side bench
-  reported even when the raw loop looks worse (`doc:turn-loop-wrappers` §9.6).
+- **Verification is opt-in.** The raw step-loop is the default on every door
+  (`stella run`, `arena`, `goal`, `fleet`, the deck) since #3381/#3694;
+  `--pipeline <variant>` opts a turn into a wrapper (`classic` names the
+  built-in staged pipeline), and `--no-pipeline` is a deprecated, hidden
+  no-op kept parseable so no script breaks (`crates/stella-cli/src/cli.rs`
+  `Command::Run::no_pipeline`). A plain `stella run` does not verify its own
+  work unless a wrapper is named — which is a claim on the user-facing
+  surface, so the flip was gated on a side-by-side bench reported even when
+  the raw loop looked worse (`doc:turn-loop-wrappers` §9.6). The crate the
+  flag drives is itself leaving the workspace to become a plugin (#3246).
 - **The pipeline dependency is the extraction's last mile.** 169 references across
   41 files in this crate name `stella-pipeline` (#3280), and cutting them is gated
   on the authority vocabulary for a plugin lane (#2716). Do not add a 170th without
   asking whether it belongs behind a port.
-- **`kind` is the door, not the wrapper.** `executions.kind` now records where the
-  turn came in (`run`, `deck`, `deck-sub`, `goal`, `fleet`) and
-  `executions.pipeline_variant` records which wrapper ran, NULL for an unwrapped
-  turn (#3388). Writing `"pipeline"` or `"deck-pipeline"` into `kind` is the bug
-  that migration fixed; the measurement surface double-counts if it grows back.
-- **A plugin can be installed, but nothing dispatches one yet.**
-  [`src/plugin_cmd.rs`](src/plugin_cmd.rs) resolves a manifest and shows
-  install consent (#3380/#3479) — real I/O, real code, genuinely landed — but
-  the wrapper socket it loads a manifest *for* has no host sequence in
-  `stella-runtime` that a live turn calls, so an installed plugin is inert on
-  the path `stella run` actually takes today. Do not read "install works" as
-  "plugins run"; see [`stella-runtime`](../stella-runtime)'s README for
-  exactly what has and has not landed there.
+- **`kind` is the door, `pipeline_variant` is the wrapper.**
+  `executions.kind` records where the turn came in (`run`, `deck`,
+  `deck-sub`, `goal`, `fleet`) and `executions.pipeline_variant` records
+  which wrapper ran — `"classic"`, an installed plugin's id, or NULL for an
+  unwrapped (raw) turn — on every door (#3388). Writing `"pipeline"` or
+  `"deck-pipeline"` into `kind` is the bug that migration fixed; the
+  measurement surface double-counts if it grows back.
+- **An installed wrapper plugin now dispatches on `stella run`.**
+  [`src/wrapper_plugin.rs`](src/wrapper_plugin.rs) resolves an installed
+  manifest and drives `stella_runtime::WrapperDispatch` for a live turn when
+  `--pipeline <variant>` names a plugin id (#3494); `plugins/stella-research`
+  is the shipped reference plugin. `stella goal` and `stella fleet` have no
+  wrapper driver yet and refuse a named plugin variant rather than silently
+  ignoring it (#3695) — see [`stella-runtime`](../stella-runtime)'s README
+  for exactly which doors call `WrapperDispatch` today.
+- **Resolving a wrapper and serving it are two moments, deliberately.**
+  `bind_installed` finds the plugin and declares its transport *before* the
+  provider is built, so `--pipeline` naming nothing installed fails as a typo
+  rather than after a paid run; `ResolvedWrapper::serving` builds the
+  `HostCallGate` afterwards, because a plugin's `child_turn` is spent by this
+  session's own `SubAgentDispatcher` and that needs the provider (#3576).
+  `HostPlanes` is consumed by value at `HostCallGate::declare`, so a plane
+  cannot be added to a gate later — collapsing the two halves back into one
+  function is what would break, not merely untidy.
 
 ## Boundary — does this change belong here?
 
@@ -336,7 +349,7 @@ unrecognized value is a hard parse error, never a silent fallback.
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions" (#7 is
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies" (#7 is
   the byte-stable-prompt rule this crate owns), "Workspace layout", and the
   `.stella/` directory table. [`../../README.md`](../../README.md) is the user-facing
   command and provider reference.

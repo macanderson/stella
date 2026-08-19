@@ -636,9 +636,18 @@ fn escape(raw: &str) -> String {
 }
 
 /// One file change's diff as the archive's `.dx` block: both line-number
-/// gutters, a sigil column, and a tinted row per change — the same shape the
-/// Observatory draws and the deck draws, because this archive is read side by
-/// side with them as evidence on a pull request.
+/// gutters, a sigil column, a tinted row per change, and — within a modified
+/// line pair — a second, stronger tint over the exact tokens that changed.
+/// The same shape the Observatory draws and the deck draws, because this
+/// archive is read side by side with them as evidence on a pull request.
+///
+/// Word-level highlighting is [`stella_transcript::word::highlight`], the
+/// same LCS-over-tokens pass the transcript surfaces use, reused rather than
+/// re-implemented: two copies of a diff tokenizer drift exactly the way two
+/// copies of a diff renderer did before this module existed. It paints with
+/// this page's own `--ok`/`--bad` tokens, not a new hue — this page's colour
+/// system is closed to categorical hues until #3630 settles that question for
+/// the transcript surfaces generally.
 ///
 /// Only the changed lines and their context, never a file listing, and never
 /// more than [`stella_diff::view::VIEW_CAP`] of them: the elided middle is
@@ -679,40 +688,7 @@ fn diff_html(diff: &str) -> String {
         // `elide` re-headers a hunk it splits: the tail's gutter has to name
         // the file's real lines, not restart from the head's.
         let (mut old_no, mut new_no) = (hunk.old_start, hunk.new_start);
-        for line in &hunk.lines {
-            let (class, sigil) = match line.op {
-                stella_diff::Op::Add => (" add", "+"),
-                stella_diff::Op::Remove => (" rem", "−"),
-                stella_diff::Op::Equal => ("", " "),
-            };
-            let old_cell = if line.op == stella_diff::Op::Add {
-                String::new()
-            } else {
-                let n = old_no;
-                old_no += 1;
-                n.to_string()
-            };
-            let new_cell = if line.op == stella_diff::Op::Remove {
-                String::new()
-            } else {
-                let n = new_no;
-                new_no += 1;
-                n.to_string()
-            };
-            let _ = write!(
-                out,
-                r#"<div class="dx-line{class}"><span class="no">{old_cell}</span>"#,
-            );
-            let _ = write!(
-                out,
-                r#"<span class="nn">{new_cell}</span><span class="sg">{sigil}</span>"#,
-            );
-            let _ = write!(
-                out,
-                r#"<span class="tx">{}</span></div>"#,
-                escape(&line.text)
-            );
-        }
+        diff_hunk_rows(&hunk.lines, &mut old_no, &mut new_no, &mut out);
         out.push_str("</div>");
     }
     if view.fold_before == Some(view.hunks.len()) {
@@ -720,6 +696,137 @@ fn diff_html(diff: &str) -> String {
     }
     out.push_str("</div>");
     out
+}
+
+/// Emit one hunk's rows, pairing each run of removals with the run of
+/// additions that follows it — positional, the `k`th removal against the
+/// `k`th addition — so a modified line gets word-level spans. Mirrors
+/// `stella_transcript::file_diff::render_hunk`'s block-pairing exactly;
+/// duplicated here rather than shared because that function consumes a
+/// `FileChange`'s raw before/after text, and this page already holds a
+/// parsed, elided `stella_diff::Hunk` with no text to rebuild it from.
+fn diff_hunk_rows(
+    lines: &[stella_diff::DiffLine],
+    old_no: &mut usize,
+    new_no: &mut usize,
+    out: &mut String,
+) {
+    let mut i = 0;
+    while i < lines.len() {
+        match lines[i].op {
+            stella_diff::Op::Equal => {
+                diff_row(
+                    " ",
+                    "",
+                    *old_no,
+                    *new_no,
+                    &[stella_transcript::word::Span {
+                        text: lines[i].text.clone(),
+                        changed: false,
+                    }],
+                    out,
+                );
+                *old_no += 1;
+                *new_no += 1;
+                i += 1;
+            }
+            stella_diff::Op::Remove | stella_diff::Op::Add => {
+                let start = i;
+                while i < lines.len() && lines[i].op == stella_diff::Op::Remove {
+                    i += 1;
+                }
+                let removals = &lines[start..i];
+                let add_start = i;
+                while i < lines.len() && lines[i].op == stella_diff::Op::Add {
+                    i += 1;
+                }
+                let additions = &lines[add_start..i];
+                diff_change_block(removals, additions, old_no, new_no, out);
+            }
+        }
+    }
+}
+
+/// One run of removals followed by its run of additions, word-highlighted
+/// where they pair. See [`diff_hunk_rows`] for why this duplicates
+/// `stella_transcript::file_diff::emit_change_block` rather than calling it.
+fn diff_change_block(
+    removals: &[stella_diff::DiffLine],
+    additions: &[stella_diff::DiffLine],
+    old_no: &mut usize,
+    new_no: &mut usize,
+    out: &mut String,
+) {
+    let paired = removals.len().min(additions.len());
+    let mut old_spans = Vec::with_capacity(removals.len());
+    let mut new_spans = Vec::with_capacity(additions.len());
+
+    for k in 0..paired {
+        let (o, n) = stella_transcript::word::highlight(&removals[k].text, &additions[k].text);
+        old_spans.push(o);
+        new_spans.push(n);
+    }
+    for line in &removals[paired..] {
+        old_spans.push(vec![stella_transcript::word::Span {
+            text: line.text.clone(),
+            changed: false,
+        }]);
+    }
+    for line in &additions[paired..] {
+        new_spans.push(vec![stella_transcript::word::Span {
+            text: line.text.clone(),
+            changed: false,
+        }]);
+    }
+
+    for spans in &old_spans {
+        diff_row("−", " rem", *old_no, 0, spans, out);
+        *old_no += 1;
+    }
+    for spans in &new_spans {
+        diff_row("+", " add", 0, *new_no, spans, out);
+        *new_no += 1;
+    }
+}
+
+/// One `.dx-line` row. `old_no`/`new_no` of `0` renders as the empty gutter
+/// cell — the same convention the old flat loop used, now driven by which
+/// side actually has a line number rather than by `line.op` directly.
+fn diff_row(
+    sigil: &str,
+    class: &str,
+    old_no: usize,
+    new_no: usize,
+    spans: &[stella_transcript::word::Span],
+    out: &mut String,
+) {
+    let old_cell = if old_no == 0 {
+        String::new()
+    } else {
+        old_no.to_string()
+    };
+    let new_cell = if new_no == 0 {
+        String::new()
+    } else {
+        new_no.to_string()
+    };
+    let _ = write!(
+        out,
+        r#"<div class="dx-line{class}"><span class="no">{old_cell}</span>"#,
+    );
+    let _ = write!(
+        out,
+        r#"<span class="nn">{new_cell}</span><span class="sg">{sigil}</span>"#,
+    );
+    out.push_str(r#"<span class="tx">"#);
+    for span in spans {
+        if span.changed {
+            let _ = write!(out, r#"<span class="ww">{}</span>"#, escape(&span.text));
+        } else {
+            out.push_str(&escape(&span.text));
+        }
+    }
+    out.push_str("</span></div>");
 }
 
 /// Parse `events.ts` (`YYYY-MM-DD HH:MM:SS`) to Unix seconds.

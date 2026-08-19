@@ -1,31 +1,22 @@
 //! Raw palette values -- the single normative colour source for the terminal.
-//! Cut from the brand kit v3.0 ("the comet") at `docs/brand/` -- read
+//! Cut from the brand kit v1.0 ("the comet") at `docs/brand/` -- read
 //! `css/tokens.css` and `brand-guidelines.html` before touching a value here.
 //! Nothing here is semantic: for role names
 //! (accent, ink, rule, status) see [`crate::theme`], which is the only module
 //! that should reference these directly.
 //!
-//! The identity is **Ion on Obsidian**: one colour, owned. Ion `#00D1F9` --
-//! the comet's ion tail, an electric azure-cyan -- is the signal (the mark,
-//! the prompt, active/selected, focus) and never the surface; Obsidian
-//! `#070B10` is the ground, a cool blue-black, and the text ramp above it is
-//! a cool graphite. The v2.0 bronze/warm-neutral system is gone entirely:
-//! there is no warm hue left in the chrome, only in the functional statuses
-//! and two categorical marks. Brand and identity are one family, so `BRAND`
-//! and `IDENTITY` deliberately share values. The paper theme (`stella-light`)
-//! swaps the ground for cool paper and the ion for its deep ramp stops.
+//! The identity is **Phosphor Gold on Ink**: one colour, owned. Gold
+//! `#FFB81A` is the signal -- the mark, the prompt, active/selected, focus --
+//! and never the surface; Ink `#0B0B0C` is the ground; text is warm Paper
+//! with the kit's warm neutral ramp beneath it. The old electric-blue/gold
+//! split is gone: brand and gold are one family now, so `BRAND` and `GOLD`
+//! deliberately share values. The paper theme (`stella-light`) swaps the
+//! ground for warm paper and the gold for its deep ramp stops.
 //!
-//! Every ramp is generated in OKLCH -- the ion family at hue 218 and the
-//! neutrals at hue 250 -- so the lightness steps are perceptual rather than
-//! eyeballed in sRGB, and every contrast figure quoted below is a computed
-//! WCAG ratio against the ground named beside it.
-//!
-//! Token names are hue-neutral on purpose (`BRAND`, not `ION_ACCENT`): the
+//! Token names are hue-neutral on purpose (`BRAND`, not `GOLD_ACCENT`): the
 //! brand hue has been recoloured before (aurora → gold → sky → green → ember →
-//! blue → gold → ion) and the name must outlive the value. That rule cost the
-//! repository real work this time -- `GOLD*` was a hue in a token name and had
-//! to be renamed to `IDENTITY*` across the crate when the hue moved. Add a
-//! *value* here; name a *role* in `theme`.
+//! blue → gold) and the name must outlive the value. Add a *value* here; name
+//! a *role* in `theme`.
 //!
 //! Mirrored by `docs/brand/css/tokens.css`, `website/src/app/tokens.css` and
 //! the observatory's inlined `:root` block; all of them must be edited
@@ -36,311 +27,273 @@ use ratatui::style::Color;
 
 // ── Ground (dark) ───────────────────────────────────────────────
 //
-// Obsidian: the terminal, not pure black. The kit's dark ground is a cool
-// blue-black -- no warm cast, no brown-greys anywhere on the dark side. Pure
-// black makes an accent scream; obsidian lets it speak, and it is what the
+// Ink: the terminal, not pure black. The kit's dark ground is a warm-neutral
+// near-black -- no blue cast, no cool grays anywhere on the dark side. Pure
+// black makes an accent scream; ink lets it speak, and it is what the
 // marketing site and the observatory already render. `surface` and `raised`
 // step up for cards and popovers; the two hairlines are the seam.
 
 /// Deepest ground -- full-bleed backdrops, the splash, OG art. The
-/// observatory's `--void`. Very nearly black (relative luminance 0.0016) so
-/// a full-bleed panel reads as a hole rather than as another surface.
-pub const VOID: Color = Color::Rgb(0x01, 0x03, 0x06);
+/// observatory's `--void`.
+pub const VOID: Color = Color::Rgb(0x05, 0x05, 0x06);
 
-/// App background. Obsidian `#070B10` -- THE brand ground, painted as a real
-/// frame fill by the deck, so every contrast figure below is measured against
-/// it.
-pub const GROUND: Color = Color::Rgb(0x07, 0x0B, 0x10);
+/// App background. Ink `#0B0B0C` -- THE brand ground, painted as a real frame
+/// fill by the deck, so every contrast figure below is measured against it.
+pub const GROUND: Color = Color::Rgb(0x0B, 0x0B, 0x0C);
 
 /// Card / panel surface, one step above ground (the kit's dark `--surface`).
-pub const SURFACE: Color = Color::Rgb(0x12, 0x18, 0x1D);
+pub const SURFACE: Color = Color::Rgb(0x13, 0x13, 0x15);
 
 /// Raised surface -- popovers, selected rows, hovered cells.
-pub const RAISED: Color = Color::Rgb(0x1F, 0x25, 0x2B);
+pub const RAISED: Color = Color::Rgb(0x1B, 0x1B, 0x1E);
 
 /// Seam / rule (the kit's dark `--border`). Deliberately low-contrast on
-/// ground (1.48:1): decorative only, never the sole carrier of structure.
-pub const HAIRLINE: Color = Color::Rgb(0x2A, 0x30, 0x36);
+/// ground (1.26:1): decorative only, never the sole carrier of structure.
+pub const HAIRLINE: Color = Color::Rgb(0x23, 0x23, 0x27);
 
 /// Seam where a boundary must actually read -- panel edges, focused borders.
-/// Still below 3:1 on ground (1.94:1), so it is a *stronger* decoration, not
+/// Still below 3:1 on ground (1.57:1), so it is a *stronger* decoration, not
 /// a substitute for a glyph or a gap.
-pub const HAIRLINE_STRONG: Color = Color::Rgb(0x3C, 0x42, 0x48);
+pub const HAIRLINE_STRONG: Color = Color::Rgb(0x33, 0x33, 0x38);
 
-// ── Brand (dark: Ion) ───────────────────────────────────────────
+// ── Brand (dark: Phosphor Gold) ─────────────────────────────────
 //
 // The one owned colour. Brand marks, the prompt, active/running, focus,
-// selection, primary action -- and nothing else: ion is the signal, never the
-// surface. Reserved exactly as the gold before it was, and like that gold it
-// needs no separate text tone: `#00D1F9` measures 10.79:1 on ground, so the
-// same value is safe on a glyph, a one-cell rule, and a fill. An ion fill (a
-// pill, a selected tab) always carries GROUND text -- white on ion is 1.83:1
-// and illegible.
+// selection, primary action -- and nothing else: gold is the signal, never
+// the surface. Reserved exactly as the blue before it was, but unlike the
+// blue it needs no separate text tone: `#FFB81A` measures 11.36:1 on ground,
+// so the same value is safe on a glyph, a one-cell rule, and a fill. A gold
+// fill (a pill, a selected tab) always carries INK text -- white on gold is
+// 1.83:1 and illegible.
 
-/// Ion `#00D1F9` -- the comet's tail, kit `brand-500`. 10.79:1 on ground.
-///
-/// Unlike the bronze it replaces, this value is **not** held apart from the
-/// web kit: `docs/brand/css/tokens.css`'s `--stella-brand` is the same hex.
-/// The gold era held a brighter terminal stop for a *brightness* reason, not
-/// a contrast one -- the kit's bronze cleared 6.40:1 on the old ink ground,
-/// so it could carry a glyph; it simply did not read as CRT amber at that
-/// saturation. At hue 218 the terminal wants no such lift: one stop clears
-/// 10.79:1 on obsidian and holds its edge in a browser, so the split has
-/// nothing left to buy.
-///
-/// The comment this replaces cited #2592 as an open question about "whether
-/// the two golds should mean the same thing". That was wrong twice over, and
-/// is recorded here rather than quietly deleted: #2592 was closed `wontfix`
-/// on 2026-08-12, and it was never about the two *values* — it is about the
-/// two *rules*, that the accent marks `Running` in the terminal and identity
-/// only on the web. **This recolour does not touch that divergence**: the
-/// deck still paints activity in the accent (`status_color`), the web
-/// instruments still reserve it for the wordmark and one primary action, and
-/// both rules are stated where they always were.
-pub const BRAND: Color = Color::Rgb(0x00, 0xD1, 0xF9);
+/// Phosphor Gold `#FFB81A` -- CRT amber, the gold star. 11.36:1 on ground.
+/// Held at this value across the 2026-08-11 bronze rebrand (`10781aa`), which
+/// moved `docs/brand/css/tokens.css`'s `--stella-gold` to `#C58A32` -- this
+/// constant does **not** track that hex. The TUI palette is deliberately not
+/// the web instrument palette (see the module doc): it needs a brighter,
+/// more saturated stop than paper or a browser does to read as CRT amber on
+/// ink at 11.36:1, so it is held apart rather than re-derived from the kit's
+/// current gold ramp. Whether the two golds should mean the same thing is
+/// #2592, still open; this value does not wait on it.
+pub const BRAND: Color = Color::Rgb(0xFF, 0xB8, 0x1A);
 
-/// The bright stop of the brand sweep (kit `brand-300`, the observatory's
-/// `--brand-bright`). 13.09:1 on ground. Gradients and hover lifts only --
+/// The bright stop of the brand sweep (kit `gold-400`, the observatory's
+/// `--gold-bright`). 12.12:1 on ground. Gradients and hover lifts only --
 /// resting chrome stays on [`BRAND`].
-pub const BRAND_BRIGHT: Color = Color::Rgb(0x72, 0xE1, 0xFF);
+pub const BRAND_BRIGHT: Color = Color::Rgb(0xFD, 0xC1, 0x54);
 
 /// Pressed / gradient-deep stop, and the leading stop of the progress fill
-/// (kit `brand-600`). 7.65:1 on ground, so even the fill's tail clears AA.
-pub const BRAND_DEEP: Color = Color::Rgb(0x00, 0xB0, 0xD2);
+/// (kit `gold-600` lifted 10% with the brand). 8.77:1 on ground, so even the
+/// fill's tail clears AA.
+pub const BRAND_DEEP: Color = Color::Rgb(0xE5, 0xA0, 0x00);
 
-// ── Brand (light: ion on paper) ─────────────────────────────────
+// ── Brand (light: gold on paper) ────────────────────────────────
 //
-// The `stella-light` primary. Ion cannot hold a text edge on paper at full
-// strength (1.61:1), so the light accent walks down the kit's own ion ramp
-// until it clears AA on [`PAPER`]. Applied by the per-frame theme remap in
+// The `stella-light` primary. Gold cannot hold a text edge on paper at full
+// strength, so the light accent walks down the kit's own gold ramp until it
+// clears AA on [`PAPER`]. Applied by the per-frame theme remap in
 // [`crate::theme`], truecolor only.
 
-/// The light-theme brand hue -- kit `brand-800`, 4.59:1 on [`PAPER`] and
-/// 4.93:1 on [`SNOW`], so it carries terminal-cell text on both light
-/// surfaces.
+/// The light-theme brand hue -- 5.22:1 on [`PAPER`], held apart from the
+/// current web kit's gold ramp for the same reason as [`BRAND`] (see its
+/// doc): the two golds are not required to track hex-for-hex until #2592
+/// settles what they should mean to each other.
 ///
-/// Deliberately one step *below* [`IDENTITY_INK`]: kit `brand-700` measures
-/// 3.16:1 on the painted paper ground -- fine for chrome, under the 4.5:1
-/// floor for text -- so the ramp splits the same way the bronze one did, one
-/// stop for glyphs and one for graphics.
-pub const BRAND_INK: Color = Color::Rgb(0x00, 0x77, 0x8F);
+/// Deliberately one step *below* [`GOLD_INK`], a value this crate held onto
+/// from before the 2026-08-11 bronze rebrand -- it no longer matches
+/// `docs/brand/css/tokens.css`'s current `gold-deep`, `#8B5E1A`. [`GOLD_INK`]
+/// measures 3.79:1 on the painted paper ground -- fine for chrome, under the
+/// 4.5:1 floor for terminal-cell text. It stays in the family as
+/// [`GOLD_INK`], the light theme's *chrome* gold.
+pub const BRAND_INK: Color = Color::Rgb(0x85, 0x5E, 0x00);
 
-/// Pressed stop / leading progress stop on paper (7.77:1 on [`PAPER`]).
-pub const BRAND_INK_DEEP: Color = Color::Rgb(0x00, 0x52, 0x63);
+/// Pressed stop / leading progress stop on paper (kit `gold-900` lifted 10%,
+/// 8.76:1).
+pub const BRAND_INK_DEEP: Color = Color::Rgb(0x5A, 0x3F, 0x00);
 
-// ── Identity ────────────────────────────────────────────────────
+// ── Gold ────────────────────────────────────────────────────────
 //
 // Identity chrome: the logo's block cursor, splash rules, section markers.
-// Under the comet kit, the identity IS the brand hue, so [`IDENTITY`] and
-// [`BRAND`] share a value on purpose -- the split only survives as *names* so
-// the identity sweep ([`IDENTITY_DEEP`] → [`IDENTITY_BRIGHT`]) can run wider
-// and quieter than the progress fill's.
+// Under the comet kit, gold IS the brand, so [`GOLD`] and [`BRAND`] share a
+// value on purpose -- the split only survives as *names* so the identity
+// sweep ([`GOLD_DEEP`] → [`GOLD_BRIGHT`]) can run wider and quieter than the
+// progress fill's.
 //
-// Identity NEVER carries a verdict. Under the gold system that rule existed
-// because the accent sat 4.0° from [`WARNING`] in hue and an outcome could
-// have been read off chrome; the nearest status hue is now 35° away
-// ([`SUCCESS`]) and the warning amber 146°, so the *confusion* is gone but
-// the *rule* is not -- chrome and verdict are
-// different jobs, and `theme::identity_never_carries_a_verdict` still proves
-// no outcome mapping can return an identity value. Activity is the one status
-// identity does carry: active/running IS the accent, by kit rule.
-//
-// These constants were named `GOLD*` until the v3.0 recolour, which is
-// precisely the hazard the module doc warns about: a hue in a token name
-// falsifies itself the first time the hue moves.
+// Gold NEVER carries a verdict. It sits 4.0° from [`WARNING`] in hue, so a
+// reader must never be asked to tell an outcome from chrome by hue alone --
+// status is always glyph-paired (`theme::gold_never_carries_a_verdict`
+// enforces this). Activity is the one status gold does carry: active/running
+// IS the accent, by kit rule.
 
-/// The mark's ion -- the same value as [`BRAND`].
-pub const IDENTITY: Color = Color::Rgb(0x00, 0xD1, 0xF9);
+/// The mark's gold -- the same Phosphor Gold as [`BRAND`].
+pub const GOLD: Color = Color::Rgb(0xFF, 0xB8, 0x1A);
 
-/// Headline gradient stop -- the bright end of the identity sweep (== kit
-/// `brand-300`, [`BRAND_BRIGHT`]).
-pub const IDENTITY_BRIGHT: Color = Color::Rgb(0x72, 0xE1, 0xFF);
+/// Headline gradient stop -- the bright end of the gold sweep (== kit
+/// `gold-400`, [`BRAND_BRIGHT`]).
+pub const GOLD_BRIGHT: Color = Color::Rgb(0xFD, 0xC1, 0x54);
 
-/// Trailing stop of the identity sweep (kit `brand-700`). 5.52:1 on ground --
-/// clears AA body text and the 3:1 graphical floor, but the *progress* fill
-/// leads with the stronger [`BRAND_DEEP`] instead.
-pub const IDENTITY_DEEP: Color = Color::Rgb(0x00, 0x94, 0xB1);
+/// Trailing stop of the identity sweep (kit `gold-700`, the web kit's
+/// `gold-deep`). 4.65:1 on ground -- clears AA body text and the 3:1
+/// graphical floor, but the *progress* fill leads with the stronger
+/// [`BRAND_DEEP`] instead.
+pub const GOLD_DEEP: Color = Color::Rgb(0xA3, 0x72, 0x00);
 
-/// Identity chrome on a light ground (kit `brand-700` again -- the kit's one
-/// light-ground *graphical* ion). 3.16:1 on [`PAPER`]: a graphical tone
-/// (splash rules, the identity sweep), while light-ground ion TEXT takes
+/// Gold chrome on a light ground (kit `gold-700` again -- `gold-deep` is the
+/// kit's one light-ground gold). 3.79:1 on [`PAPER`]: a *graphical* tone
+/// (splash rules, the identity sweep), while light-ground gold TEXT takes
 /// [`BRAND_INK`].
-pub const IDENTITY_INK: Color = Color::Rgb(0x00, 0x94, 0xB1);
+pub const GOLD_INK: Color = Color::Rgb(0xA3, 0x72, 0x00);
 
 // ── Text (dark ground) ──────────────────────────────────────────
 //
-// Cool paper over the kit's cool graphite ramp -- no warm greys. Prose is
+// Warm Paper over the kit's warm neutral ramp -- no cool grays. Prose is
 // paper-white: the accent earns its meaning by being rare, which only works
 // if the default voice is uncoloured.
 
-/// Primary text. Cool Paper -- the transcript's default voice. 16.78:1 on
+/// Primary text. Warm Paper -- the transcript's default voice. 17.44:1 on
 /// [`GROUND`].
-pub const TEXT_PRIMARY: Color = Color::Rgb(0xE9, 0xED, 0xF2);
+pub const TEXT_PRIMARY: Color = Color::Rgb(0xF4, 0xF1, 0xEA);
 
 /// Secondary text (the observatory's `--text-2`, the kit's dark
-/// `--muted-fg`). The safe small-text tone on every dark ground (6.85:1).
-pub const TEXT_SECONDARY: Color = Color::Rgb(0x92, 0x99, 0xA1);
+/// `--muted-fg`). The safe small-text tone on every dark ground (6.83:1).
+pub const TEXT_SECONDARY: Color = Color::Rgb(0x9B, 0x98, 0x90);
 
-/// Labels and captions (the observatory's `--text-3`). AA body on
-/// void/ground/surface (6.05:1 / 5.96:1 / 5.40:1); on [`RAISED`] it drops to
-/// 4.67:1 -- still AA, but treat it as the floor.
-pub const TEXT_TERTIARY: Color = Color::Rgb(0x87, 0x8E, 0x96);
+/// Labels and captions (kit `neutral-500`, the observatory's `--text-3`).
+/// AA body on void/ground/surface (5.71:1 / 5.38:1); on [`RAISED`] it drops
+/// to 4.98:1 -- still AA, but treat it as the floor.
+pub const TEXT_TERTIARY: Color = Color::Rgb(0x8D, 0x8A, 0x82);
 
 // ── Status ──────────────────────────────────────────────────────
 //
 // Functional, not brand: always paired with a glyph. Hue alone never carries
-// meaning. The three status hues are the only warm colours left in the
-// system, which is what makes them read as *functional* against an entirely
-// cool chrome -- the inverse of the gold era, where a warm accent had to be
-// held 4.0° off a warm warning.
+// meaning -- which matters doubly now that warning is a hue-neighbour of the
+// gold accent (4.0° apart).
 
-/// Success / done / added (12.00:1 on ground). Also the settled cost of a
+/// Success / done / added (11.29:1 on ground). Also the settled cost of a
 /// finished turn -- money spent is a fact, and a fact reads green.
-pub const SUCCESS: Color = Color::Rgb(0x00, 0xE7, 0x86);
+pub const SUCCESS: Color = Color::Rgb(0x4A, 0xDE, 0x80);
 
-/// Warning / needs-input. Amber (10.40:1) -- 146° from the ion accent, so
-/// unlike the gold era nothing in the chrome can be mistaken for it. The
-/// glyph is still the status carrier; the hue is now merely unambiguous
-/// rather than load-bearing.
-pub const WARNING: Color = Color::Rgb(0xF2, 0xB1, 0x00);
+/// Warning / needs-input. Amber (10.26:1) -- 4.0° from the gold accent in
+/// hue, which is exactly why the glyph, never the hue, is the status
+/// carrier.
+pub const WARNING: Color = Color::Rgb(0xEA, 0xB3, 0x08);
 
-/// Error / failed / removed (7.73:1 on ground, 6.06:1 on [`RAISED`]).
-pub const DANGER: Color = Color::Rgb(0xFF, 0x74, 0x9B);
+/// Error / failed / removed (6.62:1 on ground).
+pub const DANGER: Color = Color::Rgb(0xFF, 0x5C, 0x7A);
 
-/// The oracle's pre-flip state — the witness surface's `red` token, the one
+/// The oracle's pre-flip state — a verification surface's `red` token, the one
 /// sanctioned red-as-meaning in the deck (D6). A true signal red, kept
 /// distinct from [`DANGER`]'s pink-red so "the test is red before the patch"
 /// (a healthy, expected state) never shares a value with "something failed".
-/// 5.83:1 on [`GROUND`] and 4.57:1 on [`RAISED`], which is the binding
-/// surface: the witness panel is a raised card, so a value that cleared AA on
-/// ground alone would fail where this token actually renders.
-///
-/// 1.33:1 against [`DANGER`] at 23° of hue. The bronze pair managed 1.30:1 at
-/// 11.8°, so the two are now separated further by hue and marginally further
-/// by weight -- but the `red ──▸ green` wording beside them is still what
-/// carries the meaning, exactly as it was.
-pub const ORACLE_RED: Color = Color::Rgb(0xFF, 0x47, 0x34);
+/// 7.05:1 on [`GROUND`].
+pub const ORACLE_RED: Color = Color::Rgb(0xF8, 0x71, 0x71);
 
 // ── Status (light ground) ───────────────────────────────────────
 //
-// The same meanings, darkened along their own hue until they clear AA on the
-// painted paper ground. The dark-ground status tones are light colours --
-// `success` is 1.45:1 on paper -- so a light surface needs its own set for
-// the same reason the brand hue does.
+// The same three meanings, darkened along their own hue until they clear AA
+// on the painted paper ground. The dark-ground status tones are light
+// colours -- `success` is well under 2:1 on paper -- so a light surface
+// needs its own set for the same reason the brand hue does.
 
-/// Success on a light ground -- 5.12:1 on [`PAPER`].
-pub const SUCCESS_INK: Color = Color::Rgb(0x00, 0x75, 0x41);
+/// Success on a light ground -- 5.16:1 on [`PAPER`].
+pub const SUCCESS_INK: Color = Color::Rgb(0x16, 0x74, 0x4F);
 
-/// Warning on a light ground -- amber-brown, 5.65:1 on [`PAPER`].
-pub const WARNING_INK: Color = Color::Rgb(0x86, 0x54, 0x00);
+/// Warning on a light ground -- amber-brown, 5.61:1 on [`PAPER`].
+///
+/// One step darker than the web kit's `warning-ink` `#A16207`, which was
+/// tuned for white and measures 4.41:1 on the warm paper the deck actually
+/// paints -- under the 4.5:1 floor. Same hue, more ink.
+pub const WARNING_INK: Color = Color::Rgb(0x8A, 0x54, 0x05);
 
-/// Error on a light ground -- 6.69:1 on [`PAPER`].
-pub const DANGER_INK: Color = Color::Rgb(0xA8, 0x00, 0x4C);
+/// Error on a light ground -- 5.06:1 on [`PAPER`].
+pub const DANGER_INK: Color = Color::Rgb(0xC8, 0x1E, 0x3E);
 
 /// The oracle's pre-flip red on a light ground — [`ORACLE_RED`] darkened
-/// along its own hue until it clears AA on paper (7.06:1 on [`PAPER`]).
-pub const ORACLE_RED_INK: Color = Color::Rgb(0xA5, 0x06, 0x00);
+/// along its own hue until it clears AA on paper (5.3:1 on [`PAPER`]).
+pub const ORACLE_RED_INK: Color = Color::Rgb(0xB9, 0x1C, 0x1C);
 
 // ── Ground (light) ──────────────────────────────────────────────
 //
-// The paper mode: the kit's cool paper, not white. Accent here is
+// The paper mode: the kit's warm paper, not white. Accent here is
 // [`BRAND_INK`], text is [`INK`].
 
-/// Light background -- the kit's `paper-bg`, a cool off-white.
-pub const PAPER: Color = Color::Rgb(0xEE, 0xF1, 0xF5);
+/// Light background -- the kit's `paper-bg`, a warm off-white.
+pub const PAPER: Color = Color::Rgb(0xF6, 0xF2, 0xE9);
 
 /// Light surface (the kit's light `--surface`). Lifts *lighter* than paper,
-/// as the dark surface lifts lighter than obsidian.
-pub const SNOW: Color = Color::Rgb(0xF7, 0xF9, 0xFC);
+/// as the dark surface lifts lighter than ink.
+pub const SNOW: Color = Color::Rgb(0xFC, 0xFA, 0xF4);
 
 /// Light raised surface -- popovers, selected rows on paper (kit
-/// `neutral-100`-adjacent).
-pub const PAPER_RAISED: Color = Color::Rgb(0xD8, 0xDD, 0xE3);
+/// `neutral-100`).
+pub const PAPER_RAISED: Color = Color::Rgb(0xE4, 0xE2, 0xDC);
 
 /// Light seam / rule (the kit's light `--border`) -- the paper counterpart
 /// of [`HAIRLINE`].
-pub const PAPER_HAIRLINE: Color = Color::Rgb(0xCF, 0xD6, 0xDD);
+pub const PAPER_HAIRLINE: Color = Color::Rgb(0xE4, 0xDE, 0xCF);
 
-/// Primary text on paper -- Obsidian itself, 17.41:1. (The same value as
+/// Primary text on paper -- Ink itself, 17.61:1. (The same value as
 /// [`GROUND`]: the kit's one black serves as both the dark ground and the
 /// light text, which is the point of an identity this small.)
-pub const INK: Color = Color::Rgb(0x07, 0x0B, 0x10);
+pub const INK: Color = Color::Rgb(0x0B, 0x0B, 0x0C);
 
-/// Secondary text on paper (the kit's light `--muted-fg`) -- 5.04:1.
-pub const MUTED: Color = Color::Rgb(0x61, 0x67, 0x6F);
+/// Secondary text on paper (the kit's light `--muted-fg`) -- 4.83:1.
+pub const MUTED: Color = Color::Rgb(0x6E, 0x6A, 0x5F);
 
-/// Tertiary text on paper -- the paper counterpart of [`TEXT_TERTIARY`].
-/// 4.56:1 on [`PAPER`], so it clears AA body; on [`SNOW`] (4.90:1) it holds,
-/// and on [`PAPER_RAISED`] (3.78:1) it is a large-text / UI tone only,
-/// exactly as [`TEXT_TERTIARY`] is treated on [`RAISED`].
-pub const INK_DIM: Color = Color::Rgb(0x67, 0x6E, 0x75);
+/// Tertiary text on paper (kit `neutral-600`) -- the paper counterpart of
+/// [`TEXT_TERTIARY`]. 4.61:1 on [`PAPER`], so it clears AA body; on [`SNOW`]
+/// (4.94:1) it holds, and on [`PAPER_RAISED`] (3.98:1) it is a large-text /
+/// UI tone only, exactly as [`TEXT_TERTIARY`] is treated on [`RAISED`].
+pub const INK_DIM: Color = Color::Rgb(0x73, 0x6C, 0x68);
 
 // ── Data marks ──────────────────────────────────────────────────
 //
 // The categorical series palette, shared verbatim with the observatory
 // (its `--c1..--c4`). Deliberately *not* the brand hue -- a data mark must
-// not read as "active" -- and deliberately not a status hue either.
+// not read as "active" -- and deliberately not a status hue either. All are
+// complements of gold that stay warm/rich on ink: a muted violet, a warm
+// rose, a deep teal.
 //
-// Two laws govern the placement, and hue is measured the way
-// `theme::hue_deg` measures it (sRGB/HSV), because that is the guard a future
-// edit actually has to satisfy:
-//
-//   * **≥30° of hue from the accent.** The closest mark is the periwinkle at
-//     50.4°. Under the bronze/gold system `data-1` sat *0.8°* from the accent
-//     at 1.12:1, which is why it had to be stood down from every plotted
-//     surface. That distance is where this recolour buys the most.
-//   * **≥30° between marks**, so two adjacent rows are told apart by hue
-//     alone. The minimum in this set is 33.7° (orchid 278° / magenta 312°) --
-//     a shade *tighter* than the bronze set's 34.6°, stated plainly because
-//     it is the one axis on which the old placement was marginally better.
-//
-// The four status hues (oracle-red 5°, apricot-adjacent warning 44°, success
-// 155°, danger 343°) are *not* excluded zones -- eleven meanings do not fit
-// on a wheel with 30° between all of them -- so two marks are near-neighbours
-// of a status and are named as such in their own docs. Every one of those is
-// a chip or a node that carries a label; a verdict is always glyph-paired.
-// That is the same contract the gold set relied on, held at wider distances
-// everywhere except the one mark that is still confined to code bodies.
+// [`DATA_1`] and [`GOLD`] are hue 42° and 41° -- 1.06:1 against each other,
+// nothing distinguishes them but size. The observatory stands the amber mark
+// down from every plotted surface for exactly this reason; in the deck it
+// survives ONLY as the syntax-keyword tone inside code bodies, where gold
+// chrome never reaches (see `theme::SYNTAX_KEYWORD`). Never put it on a
+// chip, a node, or an agent.
 
-/// Categorical 1 -- apricot, hue 20° (170° from ion). 11.27:1 on ground. The
-/// syntax-keyword tone and the first chart series.
-///
-/// This mark stays **stood down** from chips, graph nodes and agent colours,
-/// as it was under the bronze kit -- but for a different reason. It is no
-/// longer confusable with the accent (0.8° and 1.12:1 then; 170° now); it is
-/// 24° from [`WARNING`] and 1.08:1 against it, so the two are told apart by
-/// saturation (pastel against saturated) rather than by weight. Inside a code
-/// body, where no verdict is ever painted, that is enough. On a chip beside a
-/// status glyph it would not be, so the stand-down is kept and
-/// `theme::identity_never_carries_a_verdict`'s sibling assertions still
-/// enforce it.
-pub const DATA_1: Color = Color::Rgb(0xFF, 0xB2, 0x8C);
-/// Categorical 2 -- periwinkle, hue 240° (50° from ion, the closest mark to
-/// the accent in the set). 6.20:1 on ground, 4.86:1 on [`RAISED`], and 1.74:1
-/// against [`BRAND`] -- so a process chip beside an active one differs in
-/// both hue and weight.
-pub const DATA_2: Color = Color::Rgb(0x84, 0x84, 0xF5);
-/// Categorical 3 -- magenta, hue 312° (122° from ion). 6.24:1 on ground.
-/// 31° from [`DANGER`] and 1.17:1 against it, so it never carries an error
-/// meaning and never appears without a label or glyph.
-pub const DATA_3: Color = Color::Rgb(0xF2, 0x49, 0xD0);
-/// Categorical 4 -- jade, hue 118° (72° from ion). 9.97:1 on ground. 37° from
-/// [`SUCCESS`]'s 155°, which matters more here than anywhere else in the set:
-/// this is the subagent mark, and it sits in the same column as the lead's
-/// accent and the run's verdicts.
-///
-/// It replaces a *teal* that sat at 165° under the bronze kit. Teal was 134°
-/// from a gold accent and only 24° from an ion one -- the single value in the
-/// old categorical set that a cyan brand made untenable.
-pub const DATA_4: Color = Color::Rgb(0x54, 0xD1, 0x4F);
-/// Categorical 5 -- citron, hue 78° (112° from ion, 34° from [`WARNING`] and
-/// 77° from [`SUCCESS`]). 12.50:1 on ground. The transcript's repository/VCS
-/// class.
-pub const DATA_5: Color = Color::Rgb(0xA6, 0xE0, 0x1D);
-/// Categorical 6 -- orchid, hue 278° (89° from ion, 38° from the periwinkle
-/// and 34° from the magenta). 8.00:1 on ground. The transcript's
-/// delegation/orchestration class.
-pub const DATA_6: Color = Color::Rgb(0xCF, 0x88, 0xF7);
+/// Categorical 1 -- amber. 10.11:1 on ground; see the stand-down note above.
+pub const DATA_1: Color = Color::Rgb(0xE3, 0xB3, 0x41);
+/// Categorical 2 -- muted violet, hue 256° (215° from gold). 5.29:1 on
+/// ground.
+pub const DATA_2: Color = Color::Rgb(0x8F, 0x70, 0xE8);
+/// Categorical 3 -- warm rose, hue 331° (70° from gold). 5.09:1 on ground;
+/// 1.30:1 against [`DANGER`], so it never carries an error meaning and never
+/// appears without a label or glyph.
+pub const DATA_3: Color = Color::Rgb(0xE4, 0x40, 0x8F);
+/// Categorical 4 -- deep teal, hue 175° (134° from gold). 10.54:1 on ground.
+pub const DATA_4: Color = Color::Rgb(0x2F, 0xD3, 0xC6);
+
+// The transcript's tool-class series extends the categorical set by two.
+// Five distinguishable hues were not enough to give every *kind* of tool call
+// its own colour, and the transcript is the one surface where that matters:
+// it is a log of actions, and the reader's first question of any row is what
+// KIND of thing happened -- a read, a write, a shell, a test, a push, a
+// hand-off. Both new values obey the same three laws the four above do: no
+// blue anywhere (the comet kit has none), at least 30° of hue from the gold
+// accent so neither can be mistaken for "active", and at least 30° from every
+// other categorical hue so two adjacent rows are told apart by hue alone.
+//
+// Placed in the two gaps the existing series leaves: 80.6° between gold's
+// 30° exclusion zone and the success green (142°), and 290° between the
+// violet (256°) and the rose (331°). The wrap-around gap (331° → 41°) is
+// gold's own, and stays empty.
+
+/// Categorical 5 -- citron, hue 81° (39° from gold, 61° from the success
+/// green). 11.08:1 on ground. The transcript's repository/VCS class.
+pub const DATA_5: Color = Color::Rgb(0xA3, 0xD1, 0x4B);
+/// Categorical 6 -- orchid, hue 290° (34° from the violet, 41° from the
+/// rose). 6.76:1 on ground. The transcript's delegation/orchestration class.
+pub const DATA_6: Color = Color::Rgb(0xD4, 0x6F, 0xE8);
 
 /// Every palette colour, paired with its token name.
 ///
@@ -360,10 +313,10 @@ pub const ALL: [(&str, Color); 39] = [
     ("brand-deep", BRAND_DEEP),
     ("brand-ink", BRAND_INK),
     ("brand-ink-deep", BRAND_INK_DEEP),
-    ("identity", IDENTITY),
-    ("identity-bright", IDENTITY_BRIGHT),
-    ("identity-deep", IDENTITY_DEEP),
-    ("identity-ink", IDENTITY_INK),
+    ("gold", GOLD),
+    ("gold-bright", GOLD_BRIGHT),
+    ("gold-deep", GOLD_DEEP),
+    ("gold-ink", GOLD_INK),
     ("text-primary", TEXT_PRIMARY),
     ("text-secondary", TEXT_SECONDARY),
     ("text-tertiary", TEXT_TERTIARY),

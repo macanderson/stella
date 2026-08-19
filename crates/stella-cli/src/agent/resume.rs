@@ -249,6 +249,11 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 // that never existed.
                 pipeline_config.roster = frame_config.roster();
                 pipeline_config.max_revisions = frame_config.max_revisions;
+                // The `[wrapper]` variant the killed run was launched under
+                // (#3408) — `None` (the built-in `classic` order) for every
+                // frame written before variants were configurable, and for
+                // a run that genuinely used none.
+                pipeline_config.variant = frame_config.variant.clone();
                 // #3243 Phase 3 (D5): a resumed run recalls again. The
                 // original leg's context died with its process — the frame
                 // restores goal, roster and revisions, but frames were never

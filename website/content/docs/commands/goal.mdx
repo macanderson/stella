@@ -1,6 +1,6 @@
 ---
 title: stella goal
-description: Work in judged rounds until a verifier model confirms the goal is met.
+description: Work in raw step-loop rounds (or, with --pipeline classic, staged-pipeline rounds) until a verifier model confirms the goal is met.
 ---
 
 Give stella a goal and let it work in **judged rounds** until a verifier model confirms, from evidence, that the goal has actually been met.
@@ -8,12 +8,12 @@ Give stella a goal and let it work in **judged rounds** until a verifier model c
 ## Synopsis
 
 ```bash
-stella goal <goal> [--no-pipeline] [global flags]
+stella goal <goal> [--no-pipeline] [--pipeline <VARIANT>] [global flags]
 ```
 
 ## What it does
 
-`stella goal` works in rounds, each run through the [staged pipeline](/docs/inference-pipeline) by default — pass `--no-pipeline` for raw step-loop rounds instead. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
+`stella goal` works in rounds, each a raw step-loop turn by default — pass `--pipeline classic` to run every round through the [staged pipeline](/docs/inference-pipeline) instead. This door cannot yet drive an installed wrapper plugin the way [`stella run`](/docs/commands/run) can, so a named `--pipeline <variant>` other than `classic` is refused with an error naming `stella run` as the door that supports it. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
 
 Crucially, the verifier is routed **cross-family** — it is a different model family than the worker, to avoid same-model bias. If only one provider family is configured, the worker doubles as its own verifier.
 
@@ -23,12 +23,22 @@ For the full explanation of judged rounds, the cross-family verifier, and the de
 
 ## Flags
 
-`stella goal` takes the [global flags](/docs/commands), plus one of its own:
+`stella goal` takes the [global flags](/docs/commands), plus two of its own:
 
 <CardGrid size="md">
   <OptionCard name="--no-pipeline">
-    Each working round runs the raw step loop instead of the staged pipeline (triage,
-    plan, witness, execute, verify). The pipeline is the default.
+    Deprecated, does nothing. The raw step-loop is the default now; pass
+    `--pipeline <VARIANT>` to opt into a wrapper instead. Kept parseable so no
+    script breaks — passing it prints a one-line notice and has no other
+    effect, including alongside `--pipeline`, which always wins.
+  </OptionCard>
+  <OptionCard name="--pipeline <VARIANT>">
+    Run each working round through an installed wrapper plugin, by the
+    `[wrapper] id` its manifest declares. `classic` names the built-in staged
+    pipeline (triage, plan, witness, execute, verify); omitted, the raw
+    step-loop runs with nothing over it. A named plugin variant other than
+    `classic` is refused today — see [`stella run`](/docs/commands/run) for
+    that.
   </OptionCard>
   <OptionCard name="--model <provider/model_id>">
     Pin the worker model. The verifier is routed to a different family automatically when one
@@ -62,10 +72,10 @@ stella --model anthropic/claude-fable-5 --spend-limit 10.00 \
   goal "Make the CLI exit with a non-zero code on invalid input"
 ```
 
-Run raw step-loop rounds instead of the staged pipeline:
+Run every round through the staged pipeline instead of the raw step loop:
 
 ```bash
-stella goal --no-pipeline "Silence the deprecation warnings in the build"
+stella goal --pipeline classic "Silence the deprecation warnings in the build"
 ```
 
 You can also run a goal-driven turn from the plain line REPL (`stella chat --plain`) with the `/goal <goal>` command.

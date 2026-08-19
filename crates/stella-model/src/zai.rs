@@ -1305,9 +1305,15 @@ impl ZaiProvider {
         body: &ZaiRequest<'_>,
         unary: bool,
     ) -> Result<reqwest::Response, ProviderError> {
-        let mut request = client
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(self.api_key.reveal());
+        let url = format!("{}/chat/completions", self.base_url);
+        // Capture what this run actually asks for, when a rig asked to see it
+        // (`STELLA_WIRE_LOG`). The body is the only place the reasoning
+        // budget, the output ceiling and the tool schemas appear; `step_usage`
+        // records what a call cost but never what it requested. Off, and free,
+        // unless the variable names a file. The credential is in the header
+        // below, never in the body, so nothing capturable is secret.
+        crate::wire_log::record_request(&url, &self.label, body);
+        let mut request = client.post(&url).bearer_auth(self.api_key.reveal());
         for (name, value) in &self.extra_headers {
             request = request.header(*name, value);
         }

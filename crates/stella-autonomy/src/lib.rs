@@ -935,8 +935,9 @@ pub fn fold_runs(
                 .and_then(serde_json::Value::as_i64)
                 .unwrap_or(0);
             let verdict = liveness(&id, live_id, heartbeat, now_unix, stale_after_secs);
-            if verdict != Liveness::Orphaned {
-                let live = live.expect("a non-orphaned run holds the live pointer");
+            if verdict != Liveness::Orphaned
+                && let Some(live) = live
+            {
                 phase = format!(
                     "{} ({}s ago)",
                     live.get("phase").and_then(|v| v.as_str()).unwrap_or("?"),

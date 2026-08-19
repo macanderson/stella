@@ -21,9 +21,7 @@
 use std::collections::{HashMap, HashSet};
 
 use contextgraph_types::frame::FrameEmbedding;
-use contextgraph_types::{
-    ContextFrame, ContextQuery, ContextQueryResult, Provenance, Representation,
-};
+use contextgraph_types::{ContextFrame, ContextQuery, Provenance, Representation};
 use rusqlite::Connection;
 
 use crate::candidates::{
@@ -58,508 +56,10 @@ pub const SELECTION_PROVENANCE_KIND: &str = "selection";
 /// gains no bytes and every existing frame's provenance chain is unchanged.
 pub const RECALL_TIER_PROVENANCE_KIND: &str = "recall_tier";
 
-/// Reciprocal-rank-fusion constant (the standard 60).
-pub const DEFAULT_RRF_K: f64 = 60.0;
-/// How much the recency list counts for, relative to vector similarity.
-///
-/// Recency used to be fused at full weight, as a peer of similarity. Because
-/// RRF is flat (see `rrf_fuse`), that made the N most recently written nodes
-/// structurally guaranteed a top-N slot no matter what the query asked: the
-/// newest node banked `1/61` from recency alone — the exact contribution of the
-/// single best semantic match — so with `max_frames: 5` the five newest rows
-/// could occupy every slot.
-///
-/// That is not hypothetical. A run asking to remove some test files wrote four
-/// reflections plus an episode; the very next run, on a completely unrelated
-/// TUI keybinding, recalled all five and handed them to the witness author,
-/// which then went looking for test files to delete.
-///
-/// A relevance floor was measured and rejected as the fix: under the default
-/// [`crate::embed::HashEmbedder`] (character-trigram hashing, not semantics)
-/// those five contaminants scored 0.38–0.50 against that prompt while
-/// genuinely relevant frames scored 0.45–0.63. The sets overlap, so no
-/// threshold separates them. Recency was the thing doing the damage, so
-/// recency is what changed.
-///
-/// At 0.15 the newest node banks `0.15/61 ≈ 0.0025`, which cannot outweigh
-/// even a mid-ranked semantic hit (`1/150 ≈ 0.0067`). Every embedded node is
-/// already in the vector list, so recency keeps its real job — ordering among
-/// comparably-relevant frames — and loses only its ability to inject a frame
-/// the query never asked for.
-pub const DEFAULT_RECENCY_WEIGHT: f64 = 0.15;
-/// MMR relevance/diversity trade-off; 0.7 favors relevance while still
-/// breaking up near-duplicate clusters.
-pub const DEFAULT_MMR_LAMBDA: f32 = 0.7;
-/// Below this mean top-k cosine, retrieval is deemed low-coverage and falls
-/// back to lexical search (`L-C6`).
-pub const DEFAULT_MIN_COVERAGE: f32 = 0.15;
-/// How many top vector hits define the coverage estimate.
-pub const DEFAULT_COVERAGE_TOPK: usize = 5;
-/// Graph expansion seeds beyond anchors: the strongest vector hits.
-pub const DEFAULT_MAX_VECTOR_SEEDS: usize = 8;
-/// Cap on lexical-fallback frames added.
-pub const DEFAULT_LEXICAL_LIMIT: usize = 8;
-/// How many fused candidates survive into the MMR pass and frame construction,
-/// as a multiple of the query's `max_frames`.
-///
-/// Everything downstream of the fusion is per-candidate work — a cosine fold
-/// against every other candidate, a full clone of the node's content body, and
-/// a token count over it — but `pack_to_budget` then keeps at most
-/// `max_frames` of them. Before this bound the candidate list was *every live
-/// node* (the recency ranking contributes all of them, at any relevance), so a
-/// 5-frame recall minted and scored one frame per node in the workspace's
-/// entire lifetime and discarded >99% of them.
-///
-/// 4x leaves the diversity pass real choice — MMR's whole job is to reject a
-/// cluster of near-duplicates in favour of something further down the list, so
-/// handing it exactly `max_frames` candidates would make it a no-op — while
-/// keeping the pass `Θ(max_frames² )` instead of `Θ(n²)`. Floored at
-/// [`DEFAULT_LEXICAL_LIMIT`] so a small `max_frames` still considers a sane window.
-pub const DEFAULT_MMR_CANDIDATE_MULTIPLE: usize = 4;
-/// Whether the IVF accelerator (the crate-private `ann` module) serves the
-/// similarity scan.
-///
-/// **`false`, and that is the decision, not a placeholder.** An approximate
-/// index changes which frames a turn recalls, and making that the silent default
-/// would contradict the honesty posture the rest of this module is built on
-/// (`docs/spec/adaptive-context/adaptive-context.md` §5.5). The exact full scan stays the
-/// default path and therefore stays the tested one; a workspace that wants
-/// sublinear recall turns it on in `context.retrieval` and gets a
-/// [`RecallResult::used_ann_index`] flag saying when it fired.
-pub const DEFAULT_ANN_ENABLED: bool = false;
-/// How many centroid posting lists an enabled probe reads before over-fetch
-/// widens it.
-///
-/// Against the `ceil(√n)` centroids the `ann` module builds, a fixed probe count
-/// means the probed *fraction* shrinks as the corpus grows — 12 of 20 lists at
-/// 400 vectors, 12 of 100 at 10,000 — which is where the sublinearity comes
-/// from. It is a floor, never a cap: the probe widens itself until the postings
-/// it will read cover the depth `coverage_topk` and `max_vector_seeds` actually
-/// consume.
-///
-/// **12 is measured, not guessed.** On the blended synthetic corpus in
-/// `ann/tests.rs`, recall@10 against the exact scan comes out 0.925 at 8 probes
-/// and 0.950 at 12, and 12 is the smallest width that holds ≥0.93 at every
-/// corpus size from 200 to 5,000 vectors. Going to 16 buys 0.975 for another
-/// third of the probe cost; the trade is a setting, which is why this is a
-/// default rather than a constant.
-pub const DEFAULT_ANN_PROBES: usize = 12;
-/// Whether a candidate must carry query-conditional evidence to be admitted.
-///
-/// **`true`, and that is a deliberate behavior change (#2289).** Before it,
-/// `max_frames` was a cap that always filled: every embedded node is in the
-/// vector list, so on any store with ≥`max_frames` live nodes five frames rode
-/// into every turn no matter how badly they scored — a small workspace
-/// surfaced the same five irrelevant memories on every call. With the gate
-/// on, admission requires an anchor, anchor adjacency, a distinctive lexical
-/// match, domain overlap, or a semantic-posture cosine floor (the `evidence`
-/// module holds the channels; [`crate::embed::SimilarityPosture`] says why
-/// the default embedder's cosine is not one of them) — and a recall where
-/// nothing qualifies returns **zero frames**, which downstream already
-/// renders as "no recalled context".
-///
-/// `false` is the documented escape hatch back to the old padding behavior,
-/// for a workspace that would rather see weak matches than nothing.
-pub const DEFAULT_REQUIRE_EVIDENCE: bool = true;
-
-/// The knobs that shape a recall, resolved once per store.
-///
-/// These were eight `const`s, unreachable from the settings block that exists
-/// to hold them (#712 deliverable 8). They are now data, defaulting to exactly
-/// the values that shipped — a host that configures nothing gets byte-identical
-/// behavior — so tuning retrieval no longer means editing and rebuilding.
-///
-/// Frame count and token budget are *not* here: they are per-query, not
-/// per-store, and already travel on `ContextQuery`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RecallTuning {
-    /// Reciprocal-rank-fusion constant. See [`DEFAULT_RRF_K`].
-    pub rrf_k: f64,
-    /// Weight of the recency list relative to vector similarity. See
-    /// [`DEFAULT_RECENCY_WEIGHT`] for why it is damped rather than a peer.
-    pub recency_weight: f64,
-    /// MMR relevance/diversity trade-off. See [`DEFAULT_MMR_LAMBDA`].
-    pub mmr_lambda: f32,
-    /// Coverage floor below which retrieval falls back to labeled lexical
-    /// search (`L-C6`). See [`DEFAULT_MIN_COVERAGE`].
-    pub min_coverage: f32,
-    /// How many top vector hits define the coverage estimate. See
-    /// [`DEFAULT_COVERAGE_TOPK`].
-    pub coverage_topk: usize,
-    /// Graph expansion seeds beyond anchors. See [`DEFAULT_MAX_VECTOR_SEEDS`].
-    pub max_vector_seeds: usize,
-    /// Cap on lexical-fallback frames. See [`DEFAULT_LEXICAL_LIMIT`].
-    pub lexical_limit: usize,
-    /// Shortlist size as a multiple of `max_frames`. See
-    /// [`DEFAULT_MMR_CANDIDATE_MULTIPLE`].
-    pub mmr_candidate_multiple: usize,
-    /// Whether the IVF accelerator may serve the similarity scan. Off by
-    /// default; see [`DEFAULT_ANN_ENABLED`] for why that is a decision rather
-    /// than caution.
-    pub ann_enabled: bool,
-    /// Centroid posting lists an enabled probe reads, before over-fetch widens
-    /// it. See [`DEFAULT_ANN_PROBES`].
-    pub ann_probes: usize,
-    /// Whether admission requires query-conditional evidence, or the budget
-    /// may fill with the best-ranked of whatever exists. See
-    /// [`DEFAULT_REQUIRE_EVIDENCE`] for why the default changed.
-    pub require_evidence: bool,
-}
-
-impl Default for RecallTuning {
-    fn default() -> Self {
-        Self {
-            rrf_k: DEFAULT_RRF_K,
-            recency_weight: DEFAULT_RECENCY_WEIGHT,
-            mmr_lambda: DEFAULT_MMR_LAMBDA,
-            min_coverage: DEFAULT_MIN_COVERAGE,
-            coverage_topk: DEFAULT_COVERAGE_TOPK,
-            max_vector_seeds: DEFAULT_MAX_VECTOR_SEEDS,
-            lexical_limit: DEFAULT_LEXICAL_LIMIT,
-            mmr_candidate_multiple: DEFAULT_MMR_CANDIDATE_MULTIPLE,
-            ann_enabled: DEFAULT_ANN_ENABLED,
-            ann_probes: DEFAULT_ANN_PROBES,
-            require_evidence: DEFAULT_REQUIRE_EVIDENCE,
-        }
-    }
-}
-
-impl RecallTuning {
-    /// Clamp every knob into the range it is meaningful over, so a
-    /// misconfiguration degrades retrieval instead of breaking it.
-    ///
-    /// A zero shortlist multiple would make every recall empty; a zero
-    /// `coverage_topk` divides by zero; a negative `rrf_k` inverts the ranking.
-    /// Settings arrive from a file a person edits, so the invalid values are
-    /// reachable, and failing a turn over a typo in a tuning knob is a worse
-    /// answer than ignoring it.
-    #[must_use]
-    pub fn sanitized(self) -> Self {
-        Self {
-            rrf_k: if self.rrf_k.is_finite() && self.rrf_k > 0.0 {
-                self.rrf_k
-            } else {
-                DEFAULT_RRF_K
-            },
-            recency_weight: if self.recency_weight.is_finite() && self.recency_weight >= 0.0 {
-                self.recency_weight
-            } else {
-                DEFAULT_RECENCY_WEIGHT
-            },
-            mmr_lambda: self.mmr_lambda.clamp(0.0, 1.0),
-            min_coverage: self.min_coverage.clamp(0.0, 1.0),
-            coverage_topk: self.coverage_topk.max(1),
-            max_vector_seeds: self.max_vector_seeds,
-            lexical_limit: self.lexical_limit.max(1),
-            mmr_candidate_multiple: self.mmr_candidate_multiple.max(1),
-            ann_enabled: self.ann_enabled,
-            // Zero probes would read no posting list at all and hand the
-            // ranking nothing but the unassigned tail — an empty recall on a
-            // full store. Clamped like every other knob rather than rejected.
-            ann_probes: self.ann_probes.max(1),
-            // A bool has no invalid range; carried so the escape hatch a file
-            // sets survives sanitization.
-            require_evidence: self.require_evidence,
-        }
-    }
-}
-
-/// A ranked candidate on its way to the budget: everything packing needs, and
-/// no body.
-///
-/// Packing used to run on `ContextFrame`s, which meant every candidate on the
-/// shortlist had its body cloned and its frame minted before the budget got a
-/// say — and the budget then discarded most of them. `NodeMeta` already carries
-/// the two things a packer reads (a token cost and something to name a drop
-/// by), so the frames are built after the cut instead: "frame construction only
-/// for packed survivors" (#712 deliverable 2).
-#[derive(Debug, Clone)]
-pub(crate) struct Ranked {
-    /// The candidate's ranking metadata — id, label, hash, byte count.
-    pub meta: NodeMeta,
-    /// Its max-normalized fused (RRF) score, carried through packing so the
-    /// frame built for a survivor declares the score the ranking gave it.
-    /// MMR changes the order these arrive in, not this value.
-    pub relevance: f32,
-    /// Why this candidate is in front of the budget at all — Phase 2 (#713).
-    pub selection_reason: SelectionReason,
-}
-
-impl Ranked {
-    /// Whether ranking is forbidden from evicting this candidate. See
-    /// [`SelectionReason::is_required`].
-    pub fn is_required(&self) -> bool {
-        self.selection_reason.is_required()
-    }
-}
-
-/// Why a candidate was selected into the ranked shortlist.
-///
-/// Phase 2 (#713) deliverable 5. Before this, a frame arrived with a score and
-/// no account of what produced it, so "why is this in my context?" was
-/// answerable only by re-deriving the whole retrieval. The vocabulary is
-/// deliberately small — it names the *mechanism*, which is stable, rather than
-/// a rationale, which would drift into prose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SelectionReason {
-    /// The goal named this file verbatim, so the graph expansion anchored on
-    /// it. **Required**: the user pointed at it, and no ranking heuristic is a
-    /// better verifier of relevance than that.
-    Anchored,
-    /// It won the hybrid ranking — vector similarity fused with recency and
-    /// graph adjacency, then diversified. The ordinary path.
-    Ranked,
-    /// Vector coverage of the goal fell below the floor and labeled lexical
-    /// search ran instead (`L-C6`). Carried so a consumer can tell grounding
-    /// from a keyword match dressed up as grounding.
-    LexicalFallback,
-}
-
-impl SelectionReason {
-    /// Whether budget packing may drop this candidate **by rank**.
-    ///
-    /// A required item can still be dropped, but only by an explicit decision
-    /// that is reported — [`DropReason::RequiredOverBudget`] when it exceeds
-    /// the whole token budget alone, [`DropReason::TokenBudget`] when earlier
-    /// required items already spent the budget it needed — never by
-    /// falling off the bottom of a ranked list. That is the ADR 0006
-    /// guarantee: "required items cannot be evicted by ranking; precedence is
-    /// category-aware, and budget packing may drop only non-required items,
-    /// always with a drop-report".
-    #[must_use]
-    pub fn is_required(self) -> bool {
-        matches!(self, SelectionReason::Anchored)
-    }
-
-    /// The stable wire spelling, for receipts and drop reports.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SelectionReason::Anchored => "anchored",
-            SelectionReason::Ranked => "ranked",
-            SelectionReason::LexicalFallback => "lexical_fallback",
-        }
-    }
-}
-
-/// Which precedence band a candidate competes in once the budget binds.
-///
-/// This is deliberately **not** a score. Scores are query-dependent and already
-/// fully expressed by the fused ranking; a tier says something the query cannot
-/// know — that a whole *class* of frame is worth less than the others when, and
-/// only when, something has to be dropped. Within a tier the ranking still
-/// decides everything.
-///
-/// The vocabulary has exactly two entries, and the asymmetry is the point.
-/// [`Normal`](RecallTier::Normal) is the default for every node the store has
-/// ever written, so adding this changes nothing for code symbols, episodes, or
-/// ordinary memories. [`Deferred`](RecallTier::Deferred) has to be asked for.
-/// Nothing is *promoted* by a tier — a frame can only volunteer to yield first
-/// — which is what keeps a writer from buying rank by relabeling its own
-/// content.
-///
-/// Its one caller today is the reflection lifecycle: a lesson about how the
-/// agent went about its work (`LessonKind::Process`) is written `Deferred`, so
-/// that a five-frame budget spends its slots on facts about the codebase before
-/// it spends them on commentary about the agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
-pub enum RecallTier {
-    /// Competes on rank alone. Every node written before this existed, and
-    /// every node whose writer says nothing about tiering.
-    #[default]
-    Normal,
-    /// Admitted only after every `Normal` candidate has taken what it needs.
-    /// Still ranked, still citable, still recalled whenever the budget has
-    /// room — it simply loses every tie against a frame that is not deferred.
-    Deferred,
-}
-
-impl RecallTier {
-    /// The stable wire spelling, for provenance and drop reports.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            RecallTier::Normal => "normal",
-            RecallTier::Deferred => "deferred",
-        }
-    }
-
-    /// How the tier is stored on the `node` row. `Normal` is 0 so the column's
-    /// `DEFAULT 0` and this enum's `Default` are the same value, and the v9
-    /// backfill is a no-op.
-    #[must_use]
-    pub fn as_i64(self) -> i64 {
-        match self {
-            RecallTier::Normal => 0,
-            RecallTier::Deferred => 1,
-        }
-    }
-
-    /// Read a tier back from storage or from the wire.
-    ///
-    /// An unrecognized value reads as `Normal` rather than failing: a tier is a
-    /// de-prioritization hint, and the safe direction for an unknown one is to
-    /// leave the frame competing normally. A newer stella's tiers cannot reach
-    /// here anyway — the schema migration rejects a store stamped by a newer
-    /// binary.
-    #[must_use]
-    pub fn from_i64(value: i64) -> Self {
-        match value {
-            1 => RecallTier::Deferred,
-            _ => RecallTier::Normal,
-        }
-    }
-}
-
-/// Why a candidate frame did not make it into the assembled context.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DropReason {
-    /// Keeping it would have exceeded the query's `max_tokens`.
-    TokenBudget,
-    /// The query's `max_frames` count was already reached.
-    FrameCount,
-    /// A **required** item that could not be honored: on its own it exceeds
-    /// the query's entire token budget, so no ordering of the pack could have
-    /// admitted it — Phase 2 (#713).
-    ///
-    /// Distinct from [`Self::TokenBudget`] on purpose. That one says "the
-    /// budget filled up before we got here", which is a statement about the
-    /// other candidates and is fixed by asking for more or for fewer frames.
-    /// This one says "you asked for this specifically and it does not fit at
-    /// all", which is the explicit, reported decision ADR 0006 requires before
-    /// a required item may be dropped. Collapsing the two would hide the only
-    /// case where the caller's own instruction was overruled.
-    RequiredOverBudget,
-}
-
-/// A frame that was retrieved and scored but did not fit the budget. Reported
-/// so assembly is never a silent truncation (`L-C5`).
-#[derive(Debug, Clone)]
-pub struct DroppedFrame {
-    /// The frame id it would have carried (the node's `nod_…` public id), so a
-    /// caller can ask for it explicitly on a follow-up query.
-    pub id: String,
-    /// Its citation label, so the drop report reads as names rather than ids
-    /// (`L-C4`).
-    pub title: String,
-    /// What it would have cost, so a caller can size the budget a re-query
-    /// needs instead of guessing.
-    pub token_cost: u32,
-    /// Which limit dropped it.
-    pub reason: DropReason,
-}
-
-/// The typed, inspectable result of a recall (typed
-/// outputs, not stringly telemetry). Carries the packed frames, the dropped
-/// report, the coverage score, and the honesty flag for lexical fallback.
-#[derive(Debug, Clone)]
-pub struct RecallResult {
-    /// Budget-respecting, MMR-ordered frames ready to assemble into a prompt.
-    pub frames: Vec<ContextFrame>,
-    /// What was scored but dropped, and why (`L-C5`).
-    pub dropped: Vec<DroppedFrame>,
-    /// Mean top-k vector coverage of the goal, in `[0, 1]`.
-    pub coverage: f32,
-    /// True when coverage fell below threshold and lexical fallback ran
-    /// (`L-C6`). Individual fallback frames are also marked in their provenance.
-    pub used_lexical_fallback: bool,
-    /// How many candidates the budget actually chose between — the packed
-    /// survivors plus [`Self::dropped`].
-    ///
-    /// That is `frames.len() + dropped.len()` in every ordinary recall, but
-    /// not by invariant: frame construction runs after packing and skips a
-    /// row that vanished between the two reads (a frame's digest must
-    /// describe bytes that exist), so `frames` can come up short of the
-    /// packed count. The denominator deliberately counts what the budget
-    /// *decided over*, not what survived serving.
-    ///
-    /// This is the denominator [`Self::dropped`] is a numerator of, and it is
-    /// the field that makes the drop report mean something. It used to be the
-    /// corpus: recency contributes every live node to the fusion, so a
-    /// workspace with 500 memories reported ~495 drops and permanent truncation
-    /// every single turn. That number was true and useless — it described how
-    /// much the workspace had accumulated, not anything a caller could change
-    /// by raising a budget. Now it describes the ranked shortlist the budget
-    /// was offered, so "12 of 20 dropped" is an actionable statement about this
-    /// query (#712 deliverable 3).
-    pub considered: usize,
-    /// How many fused candidates were cut by the candidate bound *before* the
-    /// budget saw them — ranked below the shortlist, never offered.
-    ///
-    /// Reported separately rather than folded into [`Self::dropped`] because
-    /// the two say different things: a budget drop is reversible by asking for
-    /// more, while these were judged not worth scoring. Reported at all because
-    /// `L-C5` bans silent truncation, and a bound that vanishes from the report
-    /// is exactly that.
-    pub candidates_cut: usize,
-    /// How many candidates were refused for carrying **no query-conditional
-    /// evidence** — nothing tied them to this query beyond existing and
-    /// ranking somewhere (`require_evidence`, #2289).
-    ///
-    /// Reported apart from both [`Self::dropped`] (a budget drop is reversible
-    /// by asking for more) and [`Self::candidates_cut`] (a rank cut is about
-    /// shortlist size): this count says the gate judged them unrelated, which
-    /// no budget raise changes. Zero whenever the gate is off. `L-C5`: a gate
-    /// that silently vanished candidates would be exactly the truncation that
-    /// principle bans.
-    pub no_evidence_cut: usize,
-    /// Whether the IVF index served the similarity scan instead of the exact
-    /// one.
-    ///
-    /// Additive and explicit, following the [`Self::considered`] precedent, and
-    /// for the same reason: the alternative is a caller *inferring* it from a
-    /// settings file plus a build watermark plus a drift threshold, three facts
-    /// that can each be true while the probe still declined. This is the only
-    /// place a recall says which scan actually ran.
-    ///
-    /// `false` on a store with the setting on but no index, a stale index, or a
-    /// lexical-fallback turn — in every one of those the exact scan ran and the
-    /// result is what an unindexed store would have returned.
-    pub used_ann_index: bool,
-    /// How many centroid posting lists the probe read, and how many exist:
-    /// `(probed, total)`. `(0, 0)` when the exact scan ran.
-    ///
-    /// The ratio is the honest summary of how approximate this recall was — 8
-    /// of 100 says far more about what the ranking did *not* look at than a bare
-    /// "approximate: true", and it is the number to raise `ann_probes` against
-    /// if a frame that should have been recalled was not.
-    pub ann_probes: (usize, usize),
-    /// How many vectors the similarity pass cosine-scored — the probe's
-    /// candidate count when [`Self::used_ann_index`], the whole live corpus
-    /// under the fingerprint when it is not.
-    ///
-    /// This is the denominator behind the acceleration claim, so it is reported
-    /// rather than asserted in prose: a caller comparing it to their memory
-    /// count can see exactly what fraction of the corpus was considered.
-    pub vectors_scored: usize,
-}
-
-impl RecallResult {
-    /// Total token cost of the assembled frames — must never exceed the
-    /// query's `max_tokens` (the invariant the packer guarantees).
-    #[must_use]
-    pub fn assembled_tokens(&self) -> u64 {
-        self.frames.iter().map(|f| f.token_cost as u64).sum()
-    }
-}
-
-/// The CGP wire shape of a recall — the drop report survives as
-/// `truncated`/`dropped_estimate`, so adapting a recall to the provider seam
-/// never silently discards it (`L-C5`).
-impl From<RecallResult> for ContextQueryResult {
-    fn from(result: RecallResult) -> Self {
-        ContextQueryResult {
-            truncated: !result.dropped.is_empty(),
-            dropped_estimate: u32::try_from(result.dropped.len()).ok(),
-            frames: result.frames,
-        }
-    }
-}
-
 impl ContextStore {
     /// Hybrid retrieval with no domain scope — grounding drawn from the whole
     /// workspace. The CGP-shaped `ContextProvider::query` adapts this down to
-    /// a [`ContextQueryResult`].
+    /// a [`contextgraph_types::ContextQueryResult`].
     pub async fn recall(&self, q: &ContextQuery) -> Result<RecallResult, ContextError> {
         self.recall_scoped(q, &[]).await
     }
@@ -1373,8 +873,8 @@ pub(crate) fn frame_from_node(
 /// provenance chain. Lets a host label weak-coverage context honestly.
 ///
 /// Per-frame provenance is the *only* place the fallback marker crosses the
-/// provider seam: the `RecallResult` → [`ContextQueryResult`] conversion keeps
-/// the frames and the drop report but drops `coverage` and
+/// provider seam: the `RecallResult` → [`contextgraph_types::ContextQueryResult`]
+/// conversion keeps the frames and the drop report but drops `coverage` and
 /// `used_lexical_fallback`, so a CGP consumer that never reads provenance sees
 /// weak-coverage frames as ordinary grounding.
 #[must_use]
@@ -1426,10 +926,20 @@ fn term_pass(
 }
 
 mod evidence;
+mod outcome;
 mod ranking;
 mod scope;
+mod tuning;
 
+pub(crate) use outcome::Ranked;
+pub use outcome::{DropReason, DroppedFrame, RecallResult, RecallTier, SelectionReason};
 pub use scope::RecallScope;
+pub use tuning::{
+    DEFAULT_ANN_ENABLED, DEFAULT_ANN_PROBES, DEFAULT_COVERAGE_TOPK, DEFAULT_LEXICAL_LIMIT,
+    DEFAULT_MAX_VECTOR_SEEDS, DEFAULT_MIN_COVERAGE, DEFAULT_MMR_CANDIDATE_MULTIPLE,
+    DEFAULT_MMR_LAMBDA, DEFAULT_RECENCY_WEIGHT, DEFAULT_REQUIRE_EVIDENCE, DEFAULT_RRF_K,
+    RecallTuning,
+};
 
 pub(crate) use ranking::{
     MmrItem, cosine, cosine_blob, coverage_score, dedup_by_content_hash, mmr_select,
@@ -1442,5 +952,7 @@ pub(crate) use ranking::budget_tokens_for_bytes;
 
 #[cfg(test)]
 mod evidence_tests;
+#[cfg(test)]
+mod recall_tests;
 #[cfg(test)]
 mod tests;

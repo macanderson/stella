@@ -215,7 +215,7 @@ fn save_cloud_registration_at(path: &Path, reg: &CloudRegistration) -> Result<()
         crate::ensure_private_dir(parent)?;
     }
     let body = serde_json::to_string_pretty(reg)
-        .map_err(|e| StoreError(format!("cannot render cloud registration: {e}")))?
+        .map_err(|e| StoreError::serde("cannot render cloud registration", e))?
         + "\n";
     crate::write_sensitive_file_atomic(path, body.as_bytes())
 }
@@ -265,7 +265,7 @@ pub fn register_workspace(workspace_root: &Path, id: Option<&str>) -> Result<Str
         _ => crate::enterprise_telemetry::random_uuid_v4(),
     };
     let dot = workspace_root.join(".stella");
-    std::fs::create_dir_all(&dot).map_err(|e| StoreError(format!("cannot create .stella: {e}")))?;
+    std::fs::create_dir_all(&dot).map_err(|e| StoreError::io("cannot create .stella", e))?;
     let path = dot.join("workspace.json");
     let body = serde_json::json!({ "workspace_id": minted }).to_string() + "\n";
     // create_new: if a sibling process registered first, its id wins.
@@ -277,9 +277,9 @@ pub fn register_workspace(workspace_root: &Path, id: Option<&str>) -> Result<Str
         Ok(mut file) => {
             use std::io::Write as _;
             file.write_all(body.as_bytes())
-                .map_err(|e| StoreError(format!("cannot write workspace identity: {e}")))?;
+                .map_err(|e| StoreError::io("cannot write workspace identity", e))?;
             file.sync_data()
-                .map_err(|e| StoreError(format!("cannot sync workspace identity: {e}")))?;
+                .map_err(|e| StoreError::io("cannot sync workspace identity", e))?;
             drop(file);
             crate::private::sync_directory(&dot)?;
             Ok(minted)
@@ -290,7 +290,7 @@ pub fn register_workspace(workspace_root: &Path, id: Option<&str>) -> Result<Str
         // and a file we cannot read may still hold one — so it names the exact
         // path and the remedy instead.
         Err(_) => workspace_id(workspace_root).ok_or_else(|| {
-            StoreError(format!(
+            StoreError::Other(format!(
                 "{} exists but carries no readable workspace_id. Inspect it, then \
                  delete it and re-run `stella cloud register` to mint a fresh one.",
                 path.display()

@@ -193,7 +193,7 @@ impl SessionJournal {
         // the interruption tore, corrupting BOTH.
         if unterminated_tail(&mut file) {
             file.write_all(b"\n")
-                .map_err(|e| StoreError(format!("cannot heal {}: {e}", path.display())))?;
+                .map_err(|e| StoreError::io(format!("cannot heal {}", path.display()), e))?;
         }
         Ok(Self {
             file,
@@ -267,18 +267,18 @@ impl SessionJournal {
         if record.is_transition() {
             self.file
                 .sync_data()
-                .map_err(|e| StoreError(format!("journal fsync failed: {e}")))?;
+                .map_err(|e| StoreError::io("journal fsync failed", e))?;
         }
         Ok(())
     }
 
     fn write_line_unsynced(&mut self, record: &JournalRecord) -> Result<()> {
         let mut line = serde_json::to_string(record)
-            .map_err(|e| StoreError(format!("cannot serialize journal record: {e}")))?;
+            .map_err(|e| StoreError::serde("cannot serialize journal record", e))?;
         line.push('\n');
         self.file
             .write_all(line.as_bytes())
-            .map_err(|e| StoreError(format!("journal write failed: {e}")))
+            .map_err(|e| StoreError::io("journal write failed", e))
     }
 
     /// Drain any pending run and fsync — the clean-shutdown / handoff barrier
@@ -287,7 +287,7 @@ impl SessionJournal {
         self.flush_pending()?;
         self.file
             .sync_data()
-            .map_err(|e| StoreError(format!("journal fsync failed: {e}")))
+            .map_err(|e| StoreError::io("journal fsync failed", e))
     }
 }
 
@@ -373,7 +373,7 @@ pub fn has_state(dir: &Path) -> bool {
 fn write_snapshot<T: Serialize + ?Sized>(dir: &Path, name: &str, value: &T) -> Result<()> {
     crate::ensure_private_dir(dir)?;
     let json = serde_json::to_string(value)
-        .map_err(|e| StoreError(format!("cannot serialize {name}: {e}")))?;
+        .map_err(|e| StoreError::serde(format!("cannot serialize {name}"), e))?;
     let path = dir.join(name);
     crate::private::write_private_atomic(&path, json.as_bytes())
 }

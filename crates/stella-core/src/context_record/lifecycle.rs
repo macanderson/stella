@@ -212,7 +212,7 @@ impl ProposalRecord {
     /// SKILL.md that informs, the other a rule that steers. Without the
     /// namespace they would collide onto one lineage, and declining the rule
     /// would silently decline the skill too.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // content-addressed constructor: every field feeds the hash, so a builder would just hide the same list
     pub fn new(
         proposal_kind: RecordProposalKind,
         status: RecordProposalStatus,
@@ -355,7 +355,6 @@ impl PromotionEventRecord {
     /// criterion, and *by any path* is only testable if there is exactly one
     /// path — a validator a caller can forget to run leaves the other paths
     /// open by construction.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         proposal_lineage_id: impl Into<String>,
         action: PromotionAction,

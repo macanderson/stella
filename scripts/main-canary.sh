@@ -23,6 +23,14 @@
 # its own header says so. This is the other half: it looks at `main` *after*
 # the merge, which is the first moment the question can be asked at all.
 #
+# A shared cell is not always a file. On 2026-08-18 it was a *seam*: two PRs
+# each redesigned how `agent::init_workspace` talks to its surface, both green,
+# and git reported no conflict because neither side contained the other's
+# lines. The composed tree did not compile (#3659). This script ran on that
+# commit and reported `ok` for everything it knew how to ask — it compiled
+# nothing (#3660). The `compile` row below is that gap closed, and it is why
+# this canary is minutes rather than seconds.
+#
 # ── Why it files an issue instead of just going red ──────────────────────────
 #
 # A scheduled workflow that fails silently into the Actions tab is the exact
@@ -161,10 +169,69 @@ checks=(
   # by simulation before this row was added: with the baseline set back to
   # 4010, the default invocation still reported ok.
   "file-size|./scripts/check-file-size.sh --absolute"
+  # Does the merged tree still BUILD? This row costs more than the two above
+  # put together, and it earns that on the admission rule rather than despite
+  # it: a shared cell does not have to be a file. It can be a *seam*.
+  #
+  # On 2026-08-18 `main` did not compile at 9fa4163fa. #3642 and #3647 each
+  # redesigned how `agent::init_workspace` talks to its surface — one passing
+  # the transcript sink and question channel as one `InitIo`, the other
+  # splitting a line into `Step` vs `Progress`. Both branches were internally
+  # consistent, both were green, and git reported no conflict because neither
+  # side contained the other's lines. The merge kept one's signature with the
+  # other's body and produced an `/init` arm that is not parseable Rust
+  # (#3659). Every `stella-cli` test and the release binary were down.
+  #
+  # This canary ran on that exact commit and said `ok lockfile-sync`. It
+  # noticed only that the splice had pushed `command_deck.rs` four lines over
+  # its ceiling — the build break itself was invisible, because nothing here
+  # compiled anything (#3660).
+  #
+  # `--all-targets` is load-bearing: the same splice shape lands in test files
+  # (AGENTS.md's deleted-test guard documents #1976 and #1860), and a break
+  # confined to a test target is exactly the one no other post-merge check
+  # sees. `--locked` matches what `install.sh` builds under, and stops cargo
+  # from silently rewriting the lock to paper over a skew the row above is
+  # trying to report. `--offline` applies only to the hermetic fixture, whose
+  # workspace has no dependencies to fetch.
+  "compile|cargo check --workspace --all-targets --locked${manifest_dir:+ --offline --manifest-path $manifest_dir/Cargo.toml}"
 )
+
+# The remediation for ONE failing check. Per-check on purpose: this block used
+# to be a single hardcoded lockfile recipe printed whatever had failed, so
+# #3655 — a file-size failure — told its reader to regenerate `Cargo.lock`,
+# which fixes nothing and costs them the time it takes to find that out. An
+# issue that misdirects is worse than an issue that only names the check.
+remedy_for() {
+  case "$1" in
+  lockfile-sync)
+    cat <<'SH'
+cargo metadata --format-version 1 >/dev/null   # regenerates Cargo.lock
+git add Cargo.lock
+SH
+    ;;
+  file-size)
+    cat <<'SH'
+# Split the oversized file so it fits its ceiling — a sibling submodule, the
+# way crates/stella-core/src/driver/settlement.rs came out of driver.rs.
+# ONLY if the growth is genuinely irreducible, and say so in review:
+#   ./scripts/check-file-size.sh --update
+SH
+    ;;
+  compile)
+    cat <<'SH'
+cargo check --workspace --all-targets --locked
+SH
+    ;;
+  *)
+    printf '# no recorded remedy for this check — see its output above\n'
+    ;;
+  esac
+}
 
 failures=""
 failed_names=""
+remedies=""
 
 cd "$repo_root"
 
@@ -180,6 +247,13 @@ for row in "${checks[@]}"; do
 
 \`\`\`
 ${out}
+\`\`\`
+
+"
+    remedies="${remedies}#### \`${name}\`
+
+\`\`\`sh
+$(remedy_for "$name")
 \`\`\`
 
 "
@@ -237,28 +311,35 @@ Failing: **${failed_names}**
 ${failures}
 ### Why this was not caught before the merge
 
-These checks are enforced against a shared cell — a file every PR of a given
-shape must write. Two branches can each write it correctly, pass every check,
-and still compose into a broken tree once both land. No pre-merge check has
-both halves in front of it, which is why this canary exists (#3332).
+These checks are enforced against a shared cell — something every PR of a
+given shape must write. Usually that is a file (\`Cargo.lock\`,
+\`scripts/file-size-baseline.txt\`); it can equally be a *seam* two branches
+each redesign in good faith (#3659). Either way, two branches can each be
+correct, pass every check, and still compose into a broken tree once both
+land. No pre-merge check has both halves in front of it, which is why this
+canary exists (#3332).
 
 ### How to fix
 
 \`\`\`sh
 git checkout main && git pull
-cargo metadata --format-version 1 >/dev/null   # or: cargo check --workspace
-git add Cargo.lock
 \`\`\`
 
-Land it on its own from a fresh \`main\` — do not fold it into an unrelated PR,
+...then, per failing check:
+
+${remedies}Land it on its own from a fresh \`main\` — do not fold it into an unrelated PR,
 for the reason AGENTS.md gives about the file-size baseline.
 
 ### Blast radius while this is open
 
-Everything that passes \`--locked\`: the MSRV check, the \`stella-serve\`
-container build, and \`install.sh\` — which builds \`--locked\`, so this reaches
-people installing from source, not only CI. A red \`main\` also reds every open
-PR, so the next contributor inherits a failure they did not cause.
+A red \`main\` reds every open PR, so the next contributor inherits a failure
+they did not cause and may spend their session on it.
+
+If **compile** is among the failures, nothing builds: the whole test suite and
+the release binary are down, not one crate. If **lockfile-sync** is, everything
+that passes \`--locked\` breaks — the MSRV check, the \`stella-serve\` container
+build, and \`install.sh\`, which reaches people installing from source rather
+than only CI.
 
 <!-- main-canary -->"
 

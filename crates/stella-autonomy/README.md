@@ -66,6 +66,7 @@ the CLI does — so the dashboard and the terminal cannot disagree.
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | Everything: the dedup digest, the `AimdLimits`/`Calibration`/`calibrate` controller, the `Lens`/`Tooling`/`LENSES` aperture ladder and `advance`, `CycleRecord`/`dry_streak`, the `Supply`/`Demand`/`Floors`/`CyclePlan`/`plan_cycle` governor, `Metrics`/`metrics`/`starved`, `QueueIssue`/`rank_defects`, and `Liveness`/`liveness`/`RunRow`/`fold_runs`. |
+| [`src/surface.rs`](src/surface.rs) | The host surface: `HOST_SURFACE`, `HOST_SURFACE_VERSION`, `HostVerb`, `Emits`, and the two-way `surface_drift` check the CLI's real clap tree is measured against (`doc:pipeline-as-plugins` §10, D2). |
 | [`src/tests.rs`](src/tests.rs) | Witness tests ported from `scripts/test-self-driving.sh` (#1548), plus the property tests a generator can sweep that the shell driver never could — digest normalization, controller bounds, dry-streak suffix matching, demand's one-directional effect on the plan. |
 
 ## Semantics worth knowing
@@ -131,9 +132,18 @@ never a vague health score, and add a fixture in `src/tests.rs` that raises it
 and one that stays silent — a dashboard that always warns teaches the reader
 to ignore it.
 
+Adding a host verb: add a [`HostVerb`] to [`HOST_SURFACE`] with its path, its
+[`Emits`] shape, and a one-line summary, placed in the order the cycle
+actually uses it — the list is rendered in declaration order on purpose.
+`stella-cli`'s `self_driving_cmd::surface` parity test walks the real clap
+tree and fails in both directions, so a verb cannot ship undeclared and a
+declared verb cannot vanish. Only bump [`HOST_SURFACE_VERSION`] when a verb is
+renamed or removed, or when a verb's [`Emits`] changes; a brand-new verb is
+additive and must not bump it.
+
 ## God files — none
 
-This crate has no god files: neither file exceeds the gate's 1500-line
+This crate has no god files: no file exceeds the gate's 1500-line
 ratchet (`scripts/check-file-size.sh`), and none may appear — a new file
 crossing 1500 lines fails the gate outright, and
 `scripts/file-size-baseline.txt` accepts no new entries. When a file here

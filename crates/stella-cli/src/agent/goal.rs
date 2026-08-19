@@ -1,9 +1,10 @@
 //! Goal-driven turns: judged rounds until a verifier confirms the goal is met.
 //!
-//! `run_goal_cmd` drives either the staged pipeline (default) or the raw
-//! `Engine::run_goal` step-loop. The goal verifier is independent of the worker
-//! model and answers "does the whole effort meet the goal?" — distinct from
-//! the pipeline's per-change verification verifier.
+//! `run_goal_cmd` drives either the raw `Engine::run_goal` step-loop (the
+//! default since #3381) or the staged pipeline, opted into with `--pipeline
+//! classic`. The goal verifier is independent of the worker model and
+//! answers "does the whole effort meet the goal?" — distinct from the
+//! pipeline's per-change verification verifier.
 
 use super::*;
 
@@ -118,7 +119,7 @@ pub(crate) async fn run_raw_one_shot(
     // the run it was meant to shape. The grant is minted in the same breath and
     // for the same reason — a `--test-command` the host's parser refuses must
     // stop the run here, not after it is paid for.
-    let bound = match pipeline.plugin() {
+    let resolved = match pipeline.plugin() {
         Some(variant) => Some(
             crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
                 eprintln!("  ! {line}");
@@ -129,7 +130,7 @@ pub(crate) async fn run_raw_one_shot(
     };
     // Pinned *before* the turn runs, which is the whole content of the tamper
     // claim: an identity snapshotted afterwards vouches for nothing.
-    let candidate = match &bound {
+    let candidate = match &resolved {
         Some(_) => Some(
             crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
                 .map_err(crate::failure::CliFailure::from)?,
@@ -143,7 +144,27 @@ pub(crate) async fn run_raw_one_shot(
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
-    crate::subagent::install_for_session(cfg, &registry)?;
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
+    // The gate is built *here*, not beside `resolve` above, and the ordering is
+    // the whole reason the two halves are separate: a `--pipeline` naming
+    // nothing installed must fail as a typo before a paid call, while a
+    // plugin's `child_turn` needs this session's dispatcher, which needs the
+    // provider built two lines up (#3576).
+    let bound = match resolved {
+        Some(resolved) => {
+            let host = crate::wrapper_plugin::session_host(
+                &cfg.workspace_root,
+                resolved.manifest(),
+                sub_agents,
+            );
+            Some(
+                resolved
+                    .serving(host)
+                    .map_err(crate::failure::CliFailure::from)?,
+            )
+        }
+        None => None,
+    };
     // The one derivation of "a human is here to answer" — the #2676 approval
     // responder and the rules-enforcement prompt both read this value.
     let ask = human_is_present(format == OutputFormat::Text);
@@ -366,15 +387,23 @@ pub(crate) async fn run_raw_one_shot(
 /// worker turns get the full tool stack (built-ins + MCP + custom), same as
 /// `run_one_shot`.
 ///
-/// `use_pipeline` (the default) runs each working round through the staged
-/// pipeline (triage → recall → plan → execute → witness → verify → verdict);
-/// `false` falls back to the raw `Engine::run_goal` step-loop.
+/// `pipeline` selects the driver for each working round (#3381): `Classic`
+/// (`--pipeline classic`) runs the staged pipeline (triage → recall → plan →
+/// execute → witness → verify → verdict); `Raw` — the default since #3381,
+/// with or without `--no-pipeline` — falls back to the raw `Engine::run_goal`
+/// step-loop. A named plugin `Variant` is refused before this is ever called
+/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Goal` arm) —
+/// this door only ever sees `Classic` or `Raw`.
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
     budget_limit: Option<f64>,
-    use_pipeline: bool,
+    pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
 ) -> Result<(), crate::failure::CliFailure> {
+    // Only `Classic`/`Raw` reach this door (see the doc above); either reads
+    // as one bool for the rest of this function's branching, same shape as
+    // before #3381.
+    let use_pipeline = pipeline.is_classic();
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
@@ -592,6 +621,10 @@ pub(crate) async fn run_goal_turn(
     session_memory: Option<&mut crate::memory::SessionMemory>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
+    // This function is the RAW arm — `run_goal_cmd` calls it only when
+    // `pipeline.is_classic()` is false — so `variant: None` is the honest
+    // answer every time, not a placeholder (#3381, #3388): nothing wrapped
+    // this round.
     let execution = begin_execution(store, "goal", goal, cfg, session, None);
     stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
 
@@ -753,7 +786,19 @@ async fn run_goal_pipeline_turn(
     session_memory: Option<&mut crate::memory::SessionMemory>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
-    let execution = begin_execution(store, "goal", goal, cfg, session, None);
+    // This function is the CLASSIC arm — `run_goal_cmd` calls it only when
+    // `pipeline.is_classic()` is true — so the row must name the wrapper that
+    // actually drove this round rather than leave `pipeline_variant` NULL
+    // (#3381, #3388, #3684): NULL on this path used to mean "raw OR classic",
+    // which made a per-variant comparison over `goal` rounds silently wrong.
+    let execution = begin_execution(
+        store,
+        "goal",
+        goal,
+        cfg,
+        session,
+        Some(persistence::PIPELINE_VARIANT_CLASSIC),
+    );
     // Rebound mutable and NOT consumed by the seam, so the same memory can
     // double as the pipeline's recall port below.
     let mut session_memory = session_memory;

@@ -1,9 +1,10 @@
 # stella-transcript
 
 One transcript information model, two renderers: the jet-black web surface the
-Observatory serves, and a character grid for the TUI. Pure functions over owned
-data — nothing here reads a file, spawns a process, formats a timestamp or
-touches the network.
+Observatory serves, and a character grid renderer in the same shape a TUI
+needs — though nothing in the shipping TUI reads it yet. Pure functions over
+owned data — nothing here reads a file, spawns a process, formats a timestamp
+or touches the network.
 
 ## Boundary
 
@@ -20,6 +21,42 @@ copy had drifted to the point of rendering a file edit as raw body text in a
 `<pre>` — no hunks, no line numbers, no word-level highlights, nothing. Two
 renderings of one thing will always drift; two renderings *of one model* can
 only differ in ink.
+
+That last sentence is the charter, and it is only true of what actually lives
+here. Twice it was broken at the *policy* layer while the painters agreed:
+
+- **`digest::PREVIEW_LINES`** — how much of a tool result a collapsed fold
+  shows. `stella-tui` kept its own number, so the deck showed six lines of a
+  successful result and an exported transcript showed three, for the same run
+  (#3644). One constant now, and the head…tail fold and the head-only fold
+  show the same total as each other besides.
+- **`syntax::json_runs`** — the JSON lexer. It lived in `stella-tui`, so the
+  deck coloured a tool result and the Observatory and an export rendered it
+  flat. It moved *down* here rather than the renderers reaching *up*, because
+  this crate is a near-leaf by contract; `stella-tui` now depends on this one
+  and re-exports `Tok`/`Runs`. What stayed up there is only what needs
+  ratatui — turning a token class into a `Style`.
+
+The rule the two cases share: **a policy every surface must answer identically
+belongs here, even when only one surface currently paints it.** A constant in a
+renderer is a second renderer's future bug.
+
+## Cross-language parity
+
+`arenabench/ui` re-implements two of this crate's algorithms in TypeScript,
+because that page is a Next.js client with no way to call into the workspace.
+Neither is allowed to drift silently: the two languages cannot share a test
+runner, so they share a **file**.
+
+| Algorithm | Golden | TypeScript check |
+|---|---|---|
+| `word::highlight` + change-block pairing | `tests/fixtures/word-highlight-matrix.txt` | `check-word-highlight-parity.mjs` |
+| `stella_diff::view::plan` | `stella-diff`'s `view-plan-matrix.txt` | `check-diff-view-parity.mjs` |
+
+Re-bless with `BLESS=1 cargo test -p stella-transcript --test
+word_highlight_matrix`, then **read the diff** and port the change — a
+re-blessed golden fails the TypeScript until it catches up. Both run in CI
+(`.github/workflows/diff-view-parity.yml`).
 
 ## What the model fixes structurally
 

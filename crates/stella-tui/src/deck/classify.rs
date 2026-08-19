@@ -203,7 +203,7 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         // Traced under Verdict, the kind that already means "what this run
         // established": the steps and the verdict are one story, and the trace
         // log is where a reader reconstructs how the rail got where it is.
-        AgentEvent::Proof { step } => (TraceKind::Verdict, crate::proof::proof_trace(step)),
+        AgentEvent::Proof { step } => (TraceKind::Verdict, proof_trace(step)),
         // `TraceKind::File`, not `Verdict`: this says where the bytes went, and
         // saying it under the verdict's kind would invite a reader to take a
         // delivery for a pass — the one reading #2927 exists to prevent.
@@ -340,5 +340,54 @@ pub(super) fn snip(text: &str) -> String {
     } else {
         let head: String = flat.chars().take(MAX - 1).collect();
         format!("{head}…")
+    }
+}
+
+/// One-line trace summary of a [`stella_protocol::ProofStep`] for the traces
+/// view — a row recording what each step said when it happened.
+///
+/// This deliberately keeps `stella-pipeline`'s own vocabulary: a trace is read
+/// by someone debugging the pipeline, for whom `oracle` and `warrant` are the
+/// precise words. It lives here rather than in a panel fold because the traces
+/// tab is a view of the raw event stream, so it costs the deck no folded state
+/// — it moved here when the PROOF rail was removed ahead of that crate's
+/// extraction (#3511), and it retires with `ProofStep` itself.
+fn proof_trace(step: &stella_protocol::ProofStep) -> String {
+    use stella_protocol::{ProofStep, ProofTree};
+    match step {
+        ProofStep::Assurance { witness, verifier } => format!(
+            "assurance: witness {}, verifier {}",
+            if *witness { "on" } else { "waived" },
+            if *verifier { "on" } else { "waived" }
+        ),
+        ProofStep::Warrant {
+            required: true,
+            diff_lines,
+            ..
+        } => format!("warrant: required ({diff_lines} lines)"),
+        ProofStep::Warrant { reason, .. } => format!(
+            "warrant: {}",
+            reason.as_deref().unwrap_or("no test warranted")
+        ),
+        ProofStep::WitnessAuthored { path, .. } => format!("witness authored: {path}"),
+        ProofStep::WitnessUnavailable { reason } => format!("witness unavailable: {reason}"),
+        ProofStep::VerificationUnavailable { reason } => {
+            format!("verification unavailable: {reason}")
+        }
+        ProofStep::VerificationUnproven { reason } => {
+            format!("verification unproven: {reason}")
+        }
+        ProofStep::Oracle { passed, tree, .. } => format!(
+            "oracle: {} on {}",
+            if *passed { "pass" } else { "fail" },
+            match tree {
+                ProofTree::Baseline => "base",
+                ProofTree::Candidate => "new",
+            }
+        ),
+        ProofStep::VerdictDegraded { candidate, reason } => {
+            format!("verdict degraded (candidate {candidate}): {reason}")
+        }
+        ProofStep::TriageDegraded { reason } => format!("triage degraded: {reason}"),
     }
 }

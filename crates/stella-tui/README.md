@@ -49,7 +49,17 @@ new dependency.
 ## Boundary — does this change belong here?
 
 This crate owns what a terminal shows and what a keypress means, and nothing
-upstream of that. The decision rule: if your change can be written as a pure
+upstream of that.
+
+**One exception is worth stating, because it points the other way:** a policy
+that *every* transcript surface must answer identically — how much of a tool
+result a collapsed fold shows, how a JSON body is lexed for colouring — lives
+in [`stella-transcript`](../stella-transcript/README.md), which this crate
+depends on. Both of those started here, and both meant the Command Deck and an
+exported transcript rendered the same run differently (#3644). The paint is
+still this crate's: `theme::SYNTAX_*` and the `Style` a token class resolves to
+need ratatui and stay here. The *decision* does not. If your change is a number
+or a rule the Observatory would also have to know, it belongs downstairs. The decision rule: if your change can be written as a pure
 fold — a function from the inbound `AgentEvent` / `Inbound` stream (plus
 `DeckUi` interaction state) to a `ratatui` buffer or an outbound
 `WorkspaceInput` — it belongs here. Views, keybindings, cards, overlays,
@@ -101,7 +111,7 @@ ceiling in `scripts/file-size-baseline.txt`. They are god files — already too
 big, closed to growth — and this crate hosts the workspace's single worst:
 the guard's own header cites [`src/deck_ui.rs`](src/deck_ui.rs), which had
 reached 6,884 lines when the guard landed and has since been cut to its
-recorded 4,068 ceiling. Plan changes so no new line lands in any of them. The
+recorded ceiling in `scripts/file-size-baseline.txt`. Plan changes so no new line lands in any of them. The
 crate's own precedent is the [`src/views/`](src/views) directory — one render
 module per tab, split out of the deck files — so a change that adds rendering
 goes in a `views/` module, not `deck_ui.rs` or `deck_render.rs`; new modal
@@ -126,14 +136,12 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The authoritative design statement (pure core + thin shell) and the whole public re-export surface. Read it first. |
-| [`src/model.rs`](src/model.rs) | `SessionModel` — one agent's fold. `apply` (line 319) is the *only* mutator; `replay` (line 645) rebuilds it from a log. |
-| [`src/ui.rs`](src/ui.rs) | `UiState` (scroll, composer, focus — everything *not* derived from events) and the pure `handle_key` / `ingest`. |
-| [`src/render.rs`](src/render.rs) | `render(model, ui, frame)` for the single-session REPL, plus `guarded_panel` — its entry to the panic boundary. |
-| [`src/panel_guard.rs`](src/panel_guard.rs) | The panel panic boundary itself (L-T7), shared by the REPL, the deck and the fleet dashboard — and the written argument for what a caught panic can leave in `DeckUi`. |
-| [`src/shell.rs`](src/shell.rs) | `run(...)`: terminal setup, crossterm loop, two channels, `RunOptions`, `DebugLog`. No decision logic. |
+| [`src/model.rs`](src/model.rs) | `SessionModel` — one agent's fold. `apply` (line 565) is the *only* mutator; `replay` (line 1125) rebuilds it from a log. |
+| [`src/render.rs`](src/render.rs) | Leaf panels the deck draws inside its own guarded bands — stat box, transcript rows, and the rest of the single-session drawing code. |
+| [`src/panel_guard.rs`](src/panel_guard.rs) | The panel panic boundary itself (L-T7), with `guarded_band` and `guarded_overlay` as its entry points — shared by the deck and the fleet dashboard — and the written argument for what a caught panic can leave in `DeckUi`. |
 | [`src/term.rs`](src/term.rs) | `TerminalGuard` + `PanicHookGuard`. Open this before touching anything about raw mode or panics. |
 | [`src/deck.rs`](src/deck.rs) | `WorkspaceModel` — N `SessionModel`s plus cross-agent read-models (file ledger, route log, prompt queue, unified trace). |
-| [`src/deck_ui.rs`](src/deck_ui.rs) | `DeckUi` and `handle_deck_key` — every deck keybinding, and the documented Esc precedence list (line 1222). The largest file here. |
+| [`src/deck_ui.rs`](src/deck_ui.rs) | `DeckUi` and `handle_deck_key` — every deck keybinding, and the documented Esc precedence list (line 1488). The largest file here. |
 | [`src/deck_render.rs`](src/deck_render.rs) | `render_deck`: tab bar · active view · trace strip · progress bar · composer · footer · statline. |
 | [`src/deck_shell.rs`](src/deck_shell.rs) | `run_deck(...)`: the deck's `select!` loop, plus a third arm — a 33 ms tick that advances the clock and samples resources. |
 | [`src/envelope.rs`](src/envelope.rs) | The multi-agent wire types: `Inbound` in, `WorkspaceInput` out, and every out-of-band snapshot the driver pushes. |
@@ -143,7 +151,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` mirrors the brand kit at `docs/brand/`; `theme.rs` is the only module allowed to reference it. |
 | [`src/statline.rs`](src/statline.rs) | The two-row statline: a micro-label row over its value row, led by `MODEL` (`worker: z-ai/glm-5.2` — the model's vendor, not the gateway) and the stage box (the live stage name over `Step 4 of 5`), then the CPU/CONTEXT meters and CACHE volumes, over the always-on MODELS pins row. `statline_items` is the one decision function — priority drops and the collapse-under-a-card rule included. |
 | [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the unified stage stepper + progress row, the cache formatters behind the statline/context overlay, and the launch mark held over session init. |
-| [`src/views/cards.rs`](src/views/cards.rs) + [`task_card`](src/views/task_card.rs) · [`scope_card`](src/views/scope_card.rs) · [`witness_card`](src/views/witness_card.rs) · [`models_card`](src/views/models_card.rs) · [`budget_card`](src/views/budget_card.rs) | The floating cards over one shared chrome; their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). The witness panel is the staged pipeline's surface (`/pipeline` stays the toggle). |
+| [`src/views/cards.rs`](src/views/cards.rs) + [`plan_card`](src/views/plan_card.rs) · [`models_card`](src/views/models_card.rs) · [`budget_card`](src/views/budget_card.rs) | The three floating cards over one shared chrome; their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). |
 | [`src/views/subagents.rs`](src/views/subagents.rs) | The SESSION tab's nested `└─ ◆` subagent blocks under the lead's header. |
 | [`src/scroll.rs`](src/scroll.rs), [`src/input.rs`](src/input.rs), [`src/graph.rs`](src/graph.rs), [`src/resource.rs`](src/resource.rs), [`src/attach.rs`](src/attach.rs), [`src/clipboard.rs`](src/clipboard.rs) | Small leaf modules: line-exact viewport math, the outbound message enum, the graph snapshot types, CPU/MEM sampling, pasted-path detection, `⌃V` clipboard capture. |
 | [`src/fleet_dashboard.rs`](src/fleet_dashboard.rs) | A separate full-screen surface for `stella fleet` — its own fold (`FleetMsg`), its own `run`, monotonic `Instant` clocks only. |
@@ -151,16 +159,13 @@ escape hatch for an irreducible line (a module declaration in an oversized
 
 ## Key concepts
 
-**"Pure fold" is a code-level split, not a slogan.** Verify it in three places:
-`SessionModel` has exactly one mutator, `apply` ([`src/model.rs:319`](src/model.rs)),
-and `replay` ([`src/model.rs:645`](src/model.rs)) is just `apply` in a loop.
-`render` ([`src/render.rs:46`](src/render.rs)) takes `&SessionModel` — the model
-is immutable during a draw; the `&mut UiState` exists solely so panels can
-record their viewport heights for the next keypress's scroll clamp. And
-`handle_key` ([`src/ui.rs:245`](src/ui.rs)) returns a `ShellAction` rather than
-performing anything. So every question a contributor has — "what does this key
-do", "what does the screen show after these events" — is answerable by calling
-a function with no terminal, no engine, and no tokio runtime.
+**"Pure fold" is a code-level split, not a slogan.** Verify it in two places:
+`SessionModel` has exactly one mutator, `apply` ([`src/model.rs`](src/model.rs)),
+and `replay` ([`src/model.rs`](src/model.rs)) is just `apply` in a loop. The
+panels in [`src/render.rs`](src/render.rs) take `&SessionModel` — the model is
+immutable during a draw. So every question a contributor has — "what does this
+key do", "what does the screen show after these events" — is answerable by
+calling a function with no terminal, no engine, and no tokio runtime.
 
 **Why that matters here.** AGENTS.md's [witness-test contract](../../AGENTS.md)
 names TUI rendering as the case where a witness is "genuinely impractical" —
@@ -169,20 +174,17 @@ gets one anyway: fold synthetic events into a model, render into a
 `ratatui::backend::TestBackend`, and assert on the flattened **cell buffer**,
 never on ANSI bytes. [`tests/progress_brand_fill.rs`](tests/progress_brand_fill.rs) is the
 shape to copy — its header states the goal, why it failed before the change,
-and what it asserts after. The determinism this rests on is itself
-property-tested: `replaying_a_log_renders_identical_buffers`
-([`src/render/tests.rs:1160`](src/render/tests.rs)) folds one event vector into
-two fresh models and asserts byte-identical backing buffers.
+and what it asserts after.
 
-**Two shells, one design.** [`shell::run`](src/shell.rs) drives one agent;
-[`deck_shell::run_deck`](src/deck_shell.rs) drives N. Both are near-logic-free
-`select!` loops over (inbound events, key events); the deck adds a third arm, a
-33 ms tick, because gauges and elapsed timers must repaint on a clock rather
-than only when the model streams. Anything you are tempted to write inside
-either loop belongs in `ui.rs` / `deck_ui.rs` instead.
+**One shell.** [`deck_shell::run_deck`](src/deck_shell.rs) drives N agents in a
+near-logic-free `select!` loop over (inbound events, key events), plus a third
+arm, a 33 ms tick, because gauges and elapsed timers must repaint on a clock
+rather than only when the model streams. Anything you are tempted to write
+inside that loop belongs in `deck_ui.rs` instead. A second, single-session
+shell was deleted in #936 — see [`src/lib.rs`](src/lib.rs)'s module header.
 
 **Keys are a precedence chain, not a match arm.** `handle_deck_key`
-([`src/deck_ui.rs:1251`](src/deck_ui.rs)) runs modal contexts first (splash,
+([`src/deck_ui.rs`](src/deck_ui.rs)) runs modal contexts first (splash,
 help, installed-agent editors, issues forms, queue editor, graph picker, engine
 panel, overlays), then tab navigation, then focused-agent gates, then composer
 editing, then per-tab keys, then Esc. Two rules hold throughout: bare-letter
@@ -197,7 +199,7 @@ it; `SlashKind` only distinguishes built-in from user-authored rows by glyph.
 ([`src/deck_ui.rs`](src/deck_ui.rs)) intercepts only the deck-local ones —
 `/files`, `/diff`, `/graph`, `/agents`, `/skills`, `/mcp`, `/mcp-search`,
 `/settings`, `/sessions`, `/context`, `/inspect`, `/inbox`, and the five
-floating cards `/tasks`, `/scope`, `/witness`, `/models`, `/budget` — because
+floating cards `/plan`, `/models`, `/budget` — because
 they change view state the driver has no say over. (`/budget` renders locally
 but its *edit* leaves as `WorkspaceInput::SetBudget`; the deck shows only the
 cap the budget stream folds back.) Everything else, `/help` included, is
@@ -209,7 +211,7 @@ constructed *before* the first state is acquired and flags each one (raw, alt
 screen, bracketed paste, mouse, kitty) as it lands, so a failure partway through
 `enter` still rolls back exactly what was entered. Release builds set
 `panic = "abort"`, where destructors never run, so `PanicHookGuard::install`
-([`src/term.rs:194`](src/term.rs)) additionally restores from inside the panic
+([`src/term.rs`](src/term.rs)) additionally restores from inside the panic
 hook — but **only** under `cfg!(panic = "abort")`, then delegating to the
 previous hook so the panic message prints on the real screen, not the alternate
 one. In unwind builds the hook deliberately does *not* restore: it fires for
@@ -231,7 +233,7 @@ every panic on every thread, including panel panics the session survives.
 - **Digits never switch tabs, deliberately.** They quick-pick answers on a
   pending question card and must stay typeable as a prompt's first character,
   so `Tab` / `Shift-Tab` are the only tab navigation
-  ([`src/deck_ui.rs:1418`](src/deck_ui.rs)). Adding a digit hotkey would eat a
+  ([`src/deck_ui.rs`](src/deck_ui.rs)). Adding a digit hotkey would eat a
   keystroke meant for the composer.
 - Mouse capture is off by default in both `RunOptions` and `DeckOptions` so
   native terminal selection and copy keep working. The deck's event loop
@@ -239,7 +241,7 @@ every panic on every thread, including panel panics the session survives.
   selection and buys nothing.
 - Bracketed paste is always enabled. Without it a multi-line paste arrives as
   raw key events and every newline acts as Enter, turning one paste into N
-  submissions ([`src/term.rs:101`](src/term.rs)).
+  submissions ([`src/term.rs`](src/term.rs)).
 - `⌃G`, not `⌃I`, opens the INSPECT overlay: without the kitty keyboard
   protocol (pushed only best-effort) `⌃I` is byte-identical to Tab, which is
   bound to tab switching. The collision would be silent and terminal-dependent.
@@ -274,10 +276,10 @@ Two integration tests sit in [`tests/`](tests): `deck_snapshot.rs` renders every
 tab through the real `render_deck` and writes a human-readable text "screenshot"
 to `CARGO_TARGET_TMPDIR` (deliberately outside the source tree, so a test run
 never dirties the working tree), and `progress_brand_fill.rs` is a single-assertion
-witness. `proptest` covers the two determinism-critical modules,
-`src/scroll.rs` and `src/render/`. No fixtures, env vars, or feature flags are
-needed. The one uncovered path is `shell::run` itself: its smoke test is
-`#[ignore]`d because it needs a real TTY.
+witness. `proptest` covers `src/scroll.rs` and `src/syntax.rs`.
+No fixtures, env vars, or feature flags are needed. The one uncovered path is
+[`tests/deck_pty_smoke.rs`](tests/deck_pty_smoke.rs): it is `#[ignore]`d
+because it needs a real TTY.
 
 ## Extending it
 

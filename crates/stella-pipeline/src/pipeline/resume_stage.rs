@@ -43,6 +43,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use stella_core::step::Checkpoint;
 
+use crate::schedule::{HostFacts, Schedule};
+
 use super::*;
 
 /// The facts the pipeline learns mid-run that a resume needs and cannot
@@ -412,12 +414,30 @@ impl<'a> Pipeline<'a> {
             diff_lines: state.diff_lines,
         });
 
+        // Never consulted: `verify_candidate` (called directly below, not
+        // through `run_candidate`) reads neither field of this frame's
+        // schedule — `should_verify` above is this file's own pre-#3408
+        // computation, unchanged (module docs, "What still does not come
+        // back"). Built anyway so `TaskFrame` has the fields every
+        // construction site supplies, from the run's own effective variant
+        // rather than a placeholder.
+        let variant = self.effective_variant(total_cost)?;
+        let schedule = Schedule::new(
+            &variant,
+            HostFacts {
+                test_command: self.config.test_command.is_some(),
+                candidates: self.config.candidate_count(),
+                budget_metered: budget.headroom_usd().is_some(),
+            },
+        );
         let base_messages: Vec<CompletionMessage> = Vec::new();
         let frame = TaskFrame {
             goal,
             base_messages: &base_messages,
             plan: resume.plan.as_deref(),
             assessment: TaskAssessment::from_class(task_class),
+            schedule,
+            witness_scheduled: false,
         };
         let best = {
             let mut spend = Spend {

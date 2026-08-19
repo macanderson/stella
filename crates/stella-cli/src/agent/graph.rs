@@ -484,6 +484,116 @@ impl Drop for SessionGraph {
 /// stderr or the deck transcript, never to a machine-readable stdout);
 /// `on_ready` fires once after the build (the deck refreshes its Graph tab
 /// there; other callers pass a no-op).
+/// Report — or, with `prune`, reclaim — semantic vectors left behind by an
+/// embedding model this workspace no longer uses (#3652).
+///
+/// Reporting is the default and sweeping is the flag, which is the opposite
+/// of what "leaked rows" usually warrants. The reason is that these rows are
+/// not leaked by accident: vectors are keyed by embedder fingerprint
+/// specifically so two models never share a vector space, and the same key is
+/// what lets a user switch back to a previous model and reuse its vectors for
+/// free. Sweeping on every init would quietly bill a full re-embed to anyone
+/// evaluating two embedders against each other — so `stella init` states the
+/// cost and leaves the decision to whoever is paying it.
+///
+/// Silent when no embedder is configured: without an active fingerprint there
+/// is no way to say which of the stored ones is retired, and guessing here
+/// would delete the wrong corpus.
+pub(super) fn report_retired_vectors(
+    workspace_root: &std::path::Path,
+    prune: bool,
+    emit: &mut dyn FnMut(String),
+) {
+    use stella_embed::Embedder;
+
+    let stella_embed::Resolution::Configured(embedder) =
+        stella_embed::resolve(&stella_embed::EmbedderEnv::from_process())
+    else {
+        return;
+    };
+    let active = embedder.fingerprint().id();
+
+    let Ok(db_path) = stella_store::workspace_private_sqlite_path(workspace_root, "codegraph.db")
+    else {
+        return;
+    };
+    let Ok(graph) = stella_graph::CodeGraph::open(workspace_root, &db_path) else {
+        return;
+    };
+    let retired = graph
+        .retired_vector_fingerprints(&active)
+        .unwrap_or_default();
+    if retired.is_empty() {
+        graph.shutdown();
+        return;
+    }
+
+    let rows: usize = retired.iter().map(|(_, count)| count).sum();
+    if !prune {
+        emit(format!(
+            "· semantic index: {rows} vector(s) from {} retired embedding model(s) are still \
+             stored — they are reused for free if you switch back; run `stella init \
+             --prune-vectors` to reclaim the space",
+            retired.len()
+        ));
+        graph.shutdown();
+        return;
+    }
+
+    let mut removed = 0usize;
+    for (fingerprint, _) in &retired {
+        removed += graph
+            .prune_vector_fingerprint(fingerprint, &active)
+            .unwrap_or(0);
+    }
+    emit(format!(
+        "· semantic index: reclaimed {removed} vector(s) from {} retired embedding model(s)",
+        retired.len()
+    ));
+    graph.shutdown();
+}
+
+/// Session-start vector top-up (#3649), reporting only what a user can act on.
+///
+/// Deliberately quieter than `stella init`'s pass. Init is where a workspace
+/// is *configured*, so naming an absent embedder there is help; naming it on
+/// every session start is nagging about a capability the user has already
+/// chosen not to use. So an unconfigured or not-opted-in workspace says
+/// nothing at all, and only a pass that actually embedded something — or
+/// failed while trying — is worth a line.
+/// `status` keeps its `Send` bound deliberately: this runs inside the
+/// `tokio::spawn`ed session task, and a bare `&mut dyn FnMut(InitLine)` would
+/// make the whole future non-`Send` — the same trap `drive_index_blocking`
+/// documents two functions up.
+async fn refresh_recent_vectors_quietly(
+    root: &std::path::Path,
+    status: &mut (dyn FnMut(InitLine) + Send),
+) {
+    use crate::search_cmd::semantic::{RefreshOutcome, WarmOutcome, refresh_recent_vectors};
+
+    let stella_embed::Resolution::Configured(embedder) =
+        stella_embed::resolve(&stella_embed::EmbedderEnv::from_process())
+    else {
+        return;
+    };
+    match refresh_recent_vectors(root, embedder.as_ref(), stella_graph::MAX_FILES_PER_PASS).await {
+        RefreshOutcome::Refreshed(WarmOutcome::Warmed { embedded, .. }) if embedded > 0 => {
+            status(InitLine::Step(format!(
+                "· semantic index: {embedded} changed file(s) re-embedded"
+            )));
+        }
+        RefreshOutcome::Refreshed(WarmOutcome::Failed { reason, .. }) => {
+            status(InitLine::Step(format!(
+                "! semantic index: refresh stopped — {reason} (search still ranks over the \
+                 vectors already stored)"
+            )));
+        }
+        // Nothing changed, no vectors to maintain, or another pass has it.
+        // None of the three is news.
+        _ => {}
+    }
+}
+
 pub(crate) fn spawn_session_graph(
     workspace_root: &std::path::Path,
     mut status: Box<dyn FnMut(InitLine) + Send>,
@@ -513,7 +623,20 @@ pub(crate) fn spawn_session_graph(
             ))),
         }
         on_ready();
-        // 2) Arm the live watcher on a mounted graph kept alive for the
+        // 2) Top up semantic vectors for whatever changed (#3649). The index
+        //    pass above has just stamped every changed file's `indexed_at`,
+        //    and `vectors::pending` orders on exactly that, so one bounded
+        //    pass here covers the commit or merge this session started after.
+        //    Without it the ordering has nothing pulling it: a session that
+        //    merges and then never runs a semantic search leaves those files
+        //    unembedded indefinitely.
+        //
+        //    After `on_ready` on purpose — this must never delay the first
+        //    turn. It is opt-in (a workspace with no vectors is left alone),
+        //    single-flight, and bounded; every one of those is checked inside
+        //    `refresh_recent_vectors`.
+        refresh_recent_vectors_quietly(&root, &mut status).await;
+        // 3) Arm the live watcher on a mounted graph kept alive for the
         //    session. Best-effort: a mount failure only loses live refresh, it
         //    never loses the index built in step 1.
         let db_path = crate::search_cmd::codegraph::graph_db_path(&root);

@@ -4,14 +4,10 @@
 //! The wrapper variant this pipeline runs — read from a manifest, not from
 //! branches.
 //!
-//! Today the stage order lives as conditional branches inside
-//! [`crate::pipeline`], a file on the god-file list and closed to growth, so
-//! the design cannot absorb a second variant even when someone wants one
-//! (`doc:turn-loop-wrappers` §5). This module is the reader that lets it: the
-//! built-in order ships as [`CLASSIC_MANIFEST`] — a real `[wrapper]` manifest
-//! under `variants/classic.toml` — and [`classic_program`] resolves it against
-//! the facts a turn has, producing the ordered
-//! [`StageProgram`] the run will follow.
+//! The built-in order ships as [`CLASSIC_MANIFEST`] — a real `[wrapper]`
+//! manifest under `variants/classic.toml` — and [`classic_program`] resolves
+//! it against the facts a turn has at the triage boundary, producing the
+//! ordered [`StageProgram`] the run follows.
 //!
 //! [`StageProgram`]: stella_plugin::StageProgram
 //!
@@ -24,14 +20,27 @@
 //! never learns what a `TaskAssessment` is. The one edge is this direction,
 //! from the orchestration plane down to a near-leaf types-and-rules crate.
 //!
-//! # What is not yet bound
+//! # What is bound today
 //!
-//! Nothing here dispatches a stage. The four wrapper interception points are
-//! #3380 and do not exist, and [`crate::pipeline`] still takes its own
-//! branches — so a resolved program is an answer a host may consult and log,
-//! not the schedule the pipeline is currently driven by. Binding the two is
-//! the socket work (#3408, #3380); until then the manifest and the branches are
-//! kept honest by `tests/variant_program.rs`, not by construction.
+//! [`crate::pipeline`] IS driven by this manifest (#3408): every stage
+//! question the closed condition grammar can express — `research`'s
+//! `"questions > 0"`, `plan`/`scope`'s `"plans"`, `witness`'s
+//! `"no-test-command"`, `verify`'s `"verifies"` — is answered by
+//! [`crate::schedule::Schedule`], not by a branch that merely happens to
+//! agree with `classic.toml`. What stays in Rust is exactly what the
+//! manifest's own header says it cannot name: the conversational fast path
+//! (an early *return*, not a stage a program can skip), witness's extra
+//! roster/independence conjuncts, and verify's zero-diff simple-lookup arm.
+//! See [`crate::schedule`] for the mechanism and
+//! `crates/stella-pipeline/tests/variant_dispatch.rs` for the witness that a
+//! second variant actually takes a different path through the same code.
+//!
+//! [`classic_program`] and [`signals`] below remain the *one-shot*
+//! triage-boundary reader — useful for a variant (like `classic`) whose every
+//! condition is answered by then, and for logging a whole program before a
+//! turn starts. A condition that reads what `execute`, `witness` or `verify`
+//! publishes needs [`crate::schedule::Schedule`] instead, which resolves
+//! progressively rather than from one fixed snapshot.
 
 use std::sync::OnceLock;
 
@@ -141,14 +150,15 @@ pub fn classic_program(values: &SignalValues) -> Result<StageProgram, VariantErr
 /// `stella-plugin` publishes signals from execute, witness and verify too, and
 /// none of them has a value at this point in the run: nothing has executed,
 /// nothing has been authored, nothing has been observed. They therefore carry
-/// their *nothing-yet* value, and that is only sound because
-/// [`stella_plugin::Wrapper::resolve`] is a single up-front pass over one
-/// snapshot — so a variant whose condition reads one of them would be answered
-/// from this snapshot rather than from the stage's actual output. The shipped
-/// `classic` manifest reads none of them, which `tests/variant_program.rs`
-/// asserts rather than assumes. Resolving progressively, so a post-execute
-/// condition reads what that stage produced, is the socket's work (#3380) and
-/// is tracked in #3491.
+/// their *nothing-yet* value here, which is only sound for a **one-shot**
+/// resolution ([`Wrapper::resolve`](stella_plugin::Wrapper::resolve) via
+/// [`classic_program`]) whose every condition is answered by the triage
+/// boundary — true of the shipped `classic` manifest, asserted rather than
+/// assumed by `tests/variant_program.rs`. A variant whose condition reads
+/// what `execute`, `witness` or `verify` actually produced needs
+/// [`crate::schedule::Schedule`] instead: it resolves progressively, one
+/// stage boundary at a time, so a post-execute condition reads the stage's
+/// real output rather than this function's placeholder (#3408, #3491).
 #[must_use]
 pub fn signals(
     assessment: &TaskAssessment,

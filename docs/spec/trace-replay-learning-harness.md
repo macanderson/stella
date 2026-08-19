@@ -22,7 +22,7 @@ document measures *formation* and deliberately claims nothing about outcome
 ## 1. Why this can exist at all — the learner census
 
 Every learner in the tree already sits below the model boundary or behind a
-port. That is invariant 1 ("ports, not concretions") and invariant 2 ("no I/O in
+port. That is invariant 1 ("ports, not direct dependencies") and invariant 2 ("no I/O in
 the engine") paying out: replay needs **no new architecture**, only a driver and
 a clock.
 

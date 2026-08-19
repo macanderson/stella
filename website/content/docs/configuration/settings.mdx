@@ -3,8 +3,8 @@ title: settings.json
 description: Configure providers, agents, tools, context, and managed authority across project, org-managed, and user scopes.
 ---
 
-`settings.json` is stella's configuration file. It has ten top-level sections, each with
-its own merge rule across the [scope hierarchy](#the-scope-hierarchy):
+`settings.json` is stella's configuration file. Each top-level section has its own
+merge rule across the [scope hierarchy](#the-scope-hierarchy):
 
 <Callout type="info">
   The same configuration is also available as
@@ -177,9 +177,9 @@ default:
 </Callout>
 
 The map key **is** the provider id (`zai` above). Leave a field out entirely to inherit the
-built-in default — note that an **empty string** for `base_url`, `name`, or
-`default_model` overwrites the built-in with an empty value (breaking the provider or its
-model selection) rather than being ignored; only `api_key` treats empty as unset.
+built-in default. An **empty string** for `base_url`, `name`, or
+`default_model` overwrites the built-in with an empty value, breaking the provider or its
+model selection; only `api_key` treats empty as unset.
 
 <Callout type="info">
   `providers` both overrides built-ins and **defines brand-new providers**: use an id that
@@ -295,8 +295,8 @@ The merged result for `zai` — **with the project trusted** (`STELLA_TRUST_PROJ
   trust — the project's `base_url` is a **credential-routing field** and is dropped by the
   [trust boundary](#the-project-trust-boundary): the merged `base_url` above would be the
   org gateway's, with a stderr notice naming the skipped field. Project-scope
-  `base_url`/`api_key`/`api_key_env` examples anywhere in these docs assume a trusted
-  project; for personal routing, user scope needs no flag.
+  `base_url`/`api_key`/`api_key_env` examples in these docs assume a trusted
+  project; personal routing in user scope needs no flag.
 </Callout>
 
 ## Precedence within a field
@@ -466,9 +466,9 @@ the same delta are attributed exactly as before.
 Two boundaries keep the filter honest. It consults only the repository rooted **at
 the workspace itself** — a workspace that merely sits under someone else's repository
 (say, a scratch directory beneath a `$HOME` dotfiles repo whose `.gitignore` says
-`*`) inherits nothing, so an ancestor's rules can never blind the probe. And outside
+`*`) inherits nothing, so an ancestor's rules can never blind the probe. Outside
 a git repository the switch is inert: nothing is ignored, and the probe stays fully
-sighted — producing build output there is frequently the whole job.
+sighted — producing build output there is often the whole job.
 
 ## The `ui` section
 

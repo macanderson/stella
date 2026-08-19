@@ -55,11 +55,54 @@ to a storage boundary — and the facade's own tests, which pin the re-exported
 surface and the checkpoint round-trip so a `stella-core` refactor cannot
 silently change what hosts see.
 
-A new re-export is legitimate when a host genuinely cannot drive a turn
-without it, and it arrives with doc prose explaining its place in the
-host-driving story. Anything with logic, I/O, or state is wrong here by
-construction: the crate inherits `stella-core`'s I/O-free posture (its tokio
-dependency is `sync`-only, deliberately) and `#![forbid(unsafe_code)]`.
+Anything with logic, I/O, or state is wrong here by construction: the crate
+inherits `stella-core`'s I/O-free posture (its tokio dependency is `sync`-only,
+deliberately) and `#![forbid(unsafe_code)]`.
+
+### What earns a re-export: the closure rule
+
+This section and the `# What earns a re-export` section of `src/lib.rs` state
+one rule in the same words, deliberately. They used to state two: this file
+said a re-export is earned only when a host "genuinely cannot drive a turn
+without it", while `src/lib.rs` stated a strictly wider per-port closure. The
+gap between them was not theoretical — `Engine::with_requery` was reachable
+through the facade and callable by nobody, because neither the
+`SteeringRequery` it takes nor the `TurnSignal` that port's one method names
+could be spelled from this crate (#3715).
+
+**The rule.** A host must be able to write, naming nothing but
+`stella_engine::` paths:
+
+1. an `impl` of every port this facade's engine accepts,
+2. a construction of every value it accepts — every `EngineConfig` field and
+   every builder argument, and
+3. a `match` on every value it hands back that the host must branch on.
+
+Closure is transitive through those three obligations and stops where they
+stop. `GenerationParams` is re-exported because a host fills that config
+field, so `Verbosity` and `ServiceTier` come with it; `AgentEvent` is
+re-exported because a host receives one, and its payload types are not,
+because a host forwards or serializes an event rather than constructing one. A
+facade closed over mere reachability would be `stella-protocol` with extra
+steps.
+
+The rule is a coherence property of what is *already* exported, not a licence
+to widen the facade for an imagined caller — the distinction that separates it
+from #2481, which asked for turn-boundary payload shapers no exported
+signature names and was closed as speculative. A genuinely new capability is
+still a design question; making an already-reachable one writable is not.
+Every entry arrives with doc prose explaining its place in the host-driving
+story.
+
+**Declared exclusions.** `Engine::with_hooks` (`Hooks`, `HookRunner`) and
+`Engine::with_bus` (`HookBus`) are deliberately not closed over, and say so in
+`src/lib.rs` rather than being left as a silence. Their closure is the
+shell-command hook plane, an extension surface whose purpose is to *execute*
+things, fronted here by a crate that inherits `stella-core`'s I/O-free
+posture; the supported host-extension door is
+[`stella-runtime`](../stella-runtime)'s wrapper socket (#3380), which lives one
+layer above this facade precisely because two of its four points do I/O.
+Tracked in #3768.
 
 Two contracts every consumer must know, documented at length in `src/lib.rs`:
 

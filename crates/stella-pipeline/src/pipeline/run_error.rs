@@ -47,6 +47,13 @@ pub enum PipelineError {
     /// A required role (worker) could not be resolved at all.
     #[error(transparent)]
     Routing(#[from] RouterError),
+    /// The turn's `[wrapper]` variant could not schedule a stage: the
+    /// built-in `classic` manifest failed to load (a build-time defect), or
+    /// a configured variant's declared order does not match how this host
+    /// visits its own stages (#3408). Unreachable for `classic`, asserted by
+    /// `tests/variant_program.rs` and `tests/variant_dispatch.rs`.
+    #[error("the pipeline's wrapper variant could not schedule this turn: {0}")]
+    InvalidVariant(String),
 }
 
 /// A hard pipeline failure paired with every paid stage that settled before

@@ -201,6 +201,40 @@ fn surfaces() -> Vec<Surface> {
                 // otherwise sit.
             ],
         },
+        // The shared transcript page. The Observatory's `render_transcript`
+        // route serves it, so a reader clicking a run in the dashboard lands
+        // on it — which is what makes it an instrument surface rather than a
+        // published one, and puts it outside #2594's carve-out. It is also the
+        // standalone artifact people mail around.
+        //
+        // It was outside this matrix until #3630, and had drifted exactly the
+        // way an unchecked surface does: ground `#0a0a0a` against the
+        // instrument's `#070B10`, and a different green, red and amber, so
+        // "passed" was one colour in the dashboard and another in the
+        // transcript of the same run. The file's own header comment claimed
+        // the values WERE the instrument palette the whole time — which is the
+        // argument for the row rather than for a third alignment pass.
+        //
+        // No `identity`: a transcript renders a run, and nothing on it is a
+        // brand mark. Its two categorical hues (`--cyan`, `--violet`, tool
+        // kind and speaker) are deliberately outside the instrument palette
+        // and so outside this matrix; the file's header carries that decision
+        // and its reasoning.
+        Surface {
+            file: "crates/stella-transcript/src/html/transcript.css",
+            dark: (":root {", "\n}"),
+            light: ("@media (prefers-color-scheme: light)", "\n  }"),
+            names: &[
+                ("ground", "--bg"),
+                ("surface", "--panel"),
+                ("text", "--ink"),
+                ("text-2", "--dim"),
+                ("text-3", "--faint"),
+                ("ok", "--green"),
+                ("bad", "--red"),
+                ("warn", "--amber"),
+            ],
+        },
         Surface {
             file: "arenabench/web/app/globals.css",
             dark: (":root {", "\n}"),
@@ -337,63 +371,29 @@ fn every_web_surface_agrees_with_the_observatory_palette() {
     );
 }
 
-/// The transcript surface carries the instrument palette too, for its one
-/// scheme.
+/// The transcript's *neutral ramp steps* match the observatory's too.
 ///
-/// A separate test rather than another `Surface` row, because `Surface`
-/// requires a dark *and* a light block and this page has only the dark one —
-/// which is exactly why the matrix above could not see it, and exactly what
-/// let it drift. The v3.0 recolour moved the observatory and every surface the
-/// matrix covers to Ion on Obsidian; `transcript.css` was not one of them, so
-/// it shipped a release declaring itself the instrument palette while carrying
-/// the previous ground and all three previous semantic colours. A reader
-/// clicking a run in the dashboard landed on a page whose "passed" was a
-/// different green from the row they clicked.
+/// The `Surface` row above holds this page to the eight canonical roles —
+/// ground, the two surfaces, the three text steps and the semantic triad. The
+/// ramp steps beside them (`--raised`, `--line`, `--line2`) are not in `ROLES`
+/// because no other surface spells them, so they need their own assertion or
+/// they have none: a transcript that took its ground from the observatory's
+/// palette block and its hairline from somewhere else would look assembled
+/// from two systems.
 ///
-/// Checking one scheme is not the whole contract — giving this page a light
-/// scheme and folding it into the matrix is still #3630 — but a surface with
-/// no test at all is how the drift happened, and the roles it *does* carry can
-/// be held today.
+/// That is not hypothetical. This file was outside the matrix entirely until
+/// #3630, and drifted exactly the way an unchecked surface does — the v3.0
+/// recolour moved the observatory and every surface the matrix covered to Ion
+/// on Obsidian and left this one on the previous ground, while its own header
+/// comment claimed the values *were* the instrument palette.
 #[test]
-fn the_transcript_surface_agrees_with_the_observatory_dark_scheme() {
-    let canon = canonical();
+fn the_transcript_ramp_steps_agree_with_the_observatory() {
     let css = read("crates/stella-transcript/src/html/transcript.css");
     let tokens = declarations(between(&css, ":root {", "\n}"));
-
-    // This file's own spelling of each role. `identity` is absent on purpose,
-    // for the same reason it is absent from the arena: a transcript is a
-    // reading surface for a run, and carries no wordmark to spend it on.
-    let names = [
-        ("ground", "--bg"),
-        ("surface", "--panel"),
-        ("text", "--ink"),
-        ("text-2", "--dim"),
-        ("text-3", "--faint"),
-        ("ok", "--green"),
-        ("bad", "--red"),
-        ("warn", "--amber"),
-    ];
-
-    let mut divergences = Vec::new();
-    for (role, want, _light) in &canon {
-        let Some((_, token)) = names.iter().find(|(r, _)| r == role) else {
-            continue;
-        };
-        match tokens.get(*token) {
-            None => divergences.push(format!("declares no `{token}` (role `{role}`)")),
-            Some(got) if got != want => divergences.push(format!(
-                "`{token}` (role `{role}`) is {got}, the observatory says {want}"
-            )),
-            Some(_) => {}
-        }
-    }
-
-    // The ramp steps beside the three named surfaces. Not in `ROLES` — no
-    // other surface spells them — but they are in the observatory's palette
-    // block, and a transcript that took its ground from there and its
-    // hairline from somewhere else would look assembled from two systems.
     let observatory = read("crates/stella-observatory/src/assets/index.html");
     let instrument = declarations(between(&observatory, "BEGIN palette", "END palette"));
+
+    let mut divergences = Vec::new();
     for (token, canonical_name) in [
         ("--raised", "--raised"),
         ("--line", "--hairline"),

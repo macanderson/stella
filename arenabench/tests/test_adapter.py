@@ -284,6 +284,41 @@ class TestTheRigMustBeAbleToRunTheSeatItAccepts:
         adapter.stella_seat_problem(str(script), probe=probe)
         assert asked == [str(interpreter)]
 
+    def test_a_uv_shell_wrapper_resolves_to_the_python_beside_it(
+        self, tmp_path: Path
+    ) -> None:
+        """``uv`` writes a ``#!/bin/sh`` re-exec stub, not a Python shebang.
+
+        Taking that shebang at face value hands the seat probe a shell, which
+        answers ``import: command not found`` — so every Stella seat is refused
+        on a rig that would have run it, while Claude Code's seat launches
+        beside it and the match reports a one-sided result. Frontier-Bench
+        makes this the only path there is: its ``min_harbor`` forces the
+        uv-provisioned Harbor, whose console script is exactly this shape.
+        """
+        venv = tmp_path / "harbor-venv" / "bin"
+        venv.mkdir(parents=True)
+        interpreter = venv / "python"
+        interpreter.write_text("", encoding="utf-8")
+        script = venv / "harbor"
+        script.write_text(
+            "#!/bin/sh\n"
+            "'''exec' \"$(dirname -- \"$(realpath -- \"$0\")\")\"/'python' "
+            '"$0" "$@"\n'
+            "' '''\n",
+            encoding="utf-8",
+        )
+        assert adapter.harbor_interpreter(str(script)) == str(interpreter)
+
+        asked: list[str] = []
+
+        def probe(interp: str, _roots: list[str]) -> tuple[int, str]:
+            asked.append(interp)
+            return 0, ""
+
+        adapter.stella_seat_problem(str(script), probe=probe)
+        assert asked == [str(interpreter)]
+
     def test_a_non_stella_contest_is_never_blocked_by_our_adapter(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

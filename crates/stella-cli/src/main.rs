@@ -351,6 +351,26 @@ fn supervision(globals: &cli::GlobalArgs) -> daemon::detach::Posture {
     )
 }
 
+/// Print `--no-pipeline`'s deprecation notice, if owed, once — from whichever
+/// process actually goes on to run the turn.
+///
+/// The one mechanism [`wrapper_plugin::no_pipeline_deprecation_notice`]'s doc
+/// asks every supervising door to share: call this *after* the
+/// `posture.supervises()` early-return, never before it. An `Attached`/
+/// `Detached` launch re-execs the same argv into a supervised child, which
+/// reaches this exact call site again in its own process — its own posture
+/// never supervises (the recursion backstop) — so printing here rather than
+/// before the re-exec means exactly one process ever calls it: the child
+/// under supervision, or this same process when there is no child at all.
+/// Printing before the early-return double-printed the line for every
+/// `Attached` launch, because `Supervised::follow` then relays the child's
+/// own copy back over the same stream the parent already wrote to.
+fn print_no_pipeline_notice_if_owed(no_pipeline: bool) {
+    if let Some(notice) = wrapper_plugin::no_pipeline_deprecation_notice(no_pipeline) {
+        eprintln!("⚠ {notice}");
+    }
+}
+
 /// The registry title for a supervised run: the same
 /// `<workspace>: <prompt…>` shape a session announces for itself, so a run
 /// reads identically in `stella daemon list` and in the deck's SESSIONS view.
@@ -976,13 +996,14 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
 
     // `init` works offline (heuristic fallback), so config resolution
     // failure downgrades rather than aborting.
-    if let Some(Command::Init) = cli.command {
+    if let Some(Command::Init { prune_vectors }) = cli.command {
         return signals::block_on_interruptible(
             rt()?,
             agent::run_init(
                 cli.globals.model.as_deref(),
                 cli.globals.api_key.as_deref(),
                 cli.globals.base_url.as_deref(),
+                prune_vectors,
             ),
         )
         .map_err(failure::CliFailure::from);
@@ -1041,6 +1062,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             require_verified,
             output_format,
         } => {
+            let pipeline_choice =
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
+            // A verification flag with nowhere to land is refused before the
+            // prompt is even resolved, not silently dropped after a paid call
+            // starts (#3696).
+            wrapper_plugin::reject_verification_flags_without_pipeline(
+                pipeline_choice,
+                test_command.as_deref(),
+                keep_witness,
+                require_verified,
+            )?;
             let prompt = prompt_source::resolve(
                 prompt,
                 std::io::stdin().is_terminal(),
@@ -1059,6 +1091,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     output_format,
                 ).map_err(failure::CliFailure::from);
             }
+            print_no_pipeline_notice_if_owed(no_pipeline);
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_one_shot(
@@ -1066,7 +1099,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &prompt,
                     cli.globals.spend_limit,
                     output_format,
-                    wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?,
+                    pipeline_choice,
                     test_command.as_deref(),
                     keep_witness,
                     require_verified,
@@ -1079,8 +1112,18 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             state_dir,
             resume,
             no_pipeline,
+            pipeline,
             test_command,
         } => {
+            // The same gate `run` applies, for the same reason: a benchmark
+            // adapter that silently ignores `--test-command` reports a number
+            // measured without the oracle the runner asked for.
+            wrapper_plugin::reject_verification_flags_without_pipeline(
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref()),
+                test_command.as_deref(),
+                false,
+                false,
+            )?;
             signals::block_on_interruptible(
                 rt()?,
                 arena::run_arena(
@@ -1091,12 +1134,20 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                         state_dir,
                         resume,
                         no_pipeline,
+                        pipeline,
                         test_command,
                     },
                 ),
             )?;
         }
-        Command::Goal { goal, no_pipeline } => {
+        Command::Goal {
+            goal,
+            no_pipeline,
+            pipeline,
+        } => {
+            let pipeline_choice =
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
+            wrapper_plugin::reject_plugin_variant_for_door("goal", pipeline_choice)?;
             let goal = prompt_source::resolve(
                 goal,
                 std::io::stdin().is_terminal(),
@@ -1115,9 +1166,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     OutputFormat::Text,
                 ).map_err(failure::CliFailure::from);
             }
+            print_no_pipeline_notice_if_owed(no_pipeline);
             signals::block_on_interruptible(
                 rt()?,
-                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, !no_pipeline),
+                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, pipeline_choice),
             )?;
         }
         Command::Fleet {
@@ -1136,9 +1188,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             base_ref,
             watch,
             no_pipeline,
+            pipeline,
             task_timeout,
             output_format,
         } => {
+            let pipeline_choice =
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
+            wrapper_plugin::reject_plugin_variant_for_door("fleet", pipeline_choice)?;
             let posture = supervision(&cli.globals);
             if posture.supervises() {
                 return daemon::supervise_this_invocation(
@@ -1156,6 +1212,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     output_format,
                 ).map_err(failure::CliFailure::from);
             }
+            print_no_pipeline_notice_if_owed(no_pipeline);
             signals::block_on_interruptible(
                 rt()?,
                 fleet_cmd::run_fleet(
@@ -1166,7 +1223,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     max_concurrency,
                     cli.globals.spend_limit,
                     watch,
-                    !no_pipeline,
+                    pipeline_choice.is_classic(),
                     task_timeout.map(std::time::Duration::from_secs),
                     output_format,
                 ),
@@ -1197,9 +1254,20 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                  only when the latest CI run for `{target}` has completed with every check \
                  successful."
             );
+            // `monitor` takes no `--pipeline`/`--no-pipeline` of its own — it is
+            // `goal` with a fixed prompt, not a door #3381 named — so its
+            // driver stays pinned to the staged pipeline exactly as before the
+            // flip, deliberately: fixing CI is exactly the multi-file,
+            // verify-gated work the pipeline's ladder was built for, and
+            // nothing here reads a user flag for the flip to invert.
             signals::block_on_interruptible(
                 rt()?,
-                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, true),
+                agent::run_goal_cmd(
+                    &cfg,
+                    &goal,
+                    cli.globals.spend_limit,
+                    wrapper_plugin::PipelineChoice::Classic,
+                ),
             )?;
         }
         Command::Chat => {
@@ -1287,7 +1355,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         // Models/Version (and Tools) short-circuit in the first match at the
         // top of `run` before a provider is resolved; Init is handled by the
         // caller. Reaching any of them here is impossible.
-        Command::Init
+        Command::Init { .. }
         | Command::Daemon { .. }
         | Command::Tools { .. }
         | Command::Search { .. }

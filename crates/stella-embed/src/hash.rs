@@ -24,16 +24,21 @@ use crate::seam::{EmbedError, Embedder, EmbedderFingerprint, Embedding, Similari
 /// two FNV-1a hashes — one selects a dimension bucket, and the OTHER's top
 /// bit picks a sign — and accumulate ±1 into that bucket (a signed random
 /// projection that keeps the expected dot-product an unbiased similarity
-/// estimate). The sign must come from a high bit: FNV-1a's multiplier is odd,
-/// so bit 0 survives hashing, both offset bases are odd, and with
-/// power-of-two dims the bucket (`h % dims`) shares that bit — a low-bit sign
-/// was a pure function of bucket parity, collapsing the projection into an
-/// unsigned count sketch whose collisions add instead of cancel (revision 1's
-/// defect; revision 2 fixed it). The result
-/// is L2-normalized so cosine similarity is a plain dot product. Fully
-/// deterministic and platform-independent: the same string always yields the
-/// same vector, which is what makes the `(content_hash, fingerprint)` skip in
-/// `L-C2` sound.
+/// estimate).
+///
+/// The sign has to come from a high bit. FNV-1a multiplies by an odd number,
+/// and both starting values are odd, so bit 0 of the hash is carried straight
+/// through from the input. With a power-of-two `dims` the bucket is
+/// `h % dims`, which keeps that same bit. So taking the sign from bit 0 made
+/// it a pure function of which bucket the n-gram landed in — every collision
+/// then added instead of cancelling, turning the signed projection into an
+/// unsigned count sketch. That was revision 1's bug; revision 2 takes the
+/// sign from the second hash's top bit instead.
+///
+/// The result is L2-normalized so cosine similarity is a plain dot product.
+/// Fully deterministic and platform-independent: the same string always
+/// yields the same vector, which is what makes the `(content_hash,
+/// fingerprint)` skip in `L-C2` sound.
 #[derive(Debug, Clone)]
 pub struct HashEmbedder {
     dims: usize,

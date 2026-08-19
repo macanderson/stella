@@ -9,9 +9,30 @@
 //! place raw content appears is inside an expanded body.
 
 use crate::model::{Accounting, Call, Output, Status, Step, ToolKind};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// Lines of a result body shown before the fold control.
-pub const HEAD_LINES: usize = 3;
+/// How many lines of a result body a **collapsed fold shows, on every
+/// surface** — the Command Deck, the Observatory, an exported transcript.
+///
+/// This is the whole fold policy expressed as one number, and it is one number
+/// on purpose. The deck and the export used to decide it separately — the deck
+/// previewed six lines of a successful result, the export three — so the same
+/// run answered "how much of this tool's output do I get to see" two different
+/// ways depending on which surface you opened. `stella-transcript`'s charter is
+/// one information model and two renderers; a second fold policy living in
+/// `stella-tui` was that charter being quietly broken at the policy layer
+/// rather than the painter layer (#3644).
+///
+/// Six rather than three because the deck's number was the one arrived at by
+/// looking at real output: three lines is under a stack frame, under a failing
+/// assertion's context, and under the shape of most JSON a tool returns.
+///
+/// The invariant every surface owes this constant is
+/// `head.len() + tail.len() == min(body.len(), PREVIEW_LINES)`, which
+/// [`crate::tests`] asserts directly and
+/// `crates/stella-tui/src/render/tests/tool_output.rs` asserts against the deck's own
+/// renderer.
+pub const PREVIEW_LINES: usize = 6;
 
 /// Lines kept at the *tail* of a long output when the body is folded.
 ///
@@ -19,6 +40,14 @@ pub const HEAD_LINES: usize = 3;
 /// one line the reader opened the transcript for, so a folded long output shows
 /// both ends and elides the middle.
 pub const TAIL_LINES: usize = 2;
+
+/// Lines shown *above* the fold when the fold also keeps a tail.
+///
+/// Derived, never chosen: a head…tail fold and a head-only fold must show the
+/// same total, or "how much do I see" would depend on how long the output
+/// happened to be. So the head is whatever is left of [`PREVIEW_LINES`] once
+/// the tail has taken its share.
+pub const HEAD_LINES: usize = PREVIEW_LINES - TAIL_LINES;
 
 /// Outputs at least this long get the head…tail treatment rather than head-only.
 pub const TAIL_FOLD_THRESHOLD: usize = 12;
@@ -80,7 +109,7 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
 
     let body = lines.to_vec();
     let total = body.len();
-    if total <= HEAD_LINES {
+    if total <= PREVIEW_LINES {
         return OutputFold {
             head: body.clone(),
             body,
@@ -103,9 +132,9 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
     }
 
     OutputFold {
-        head: body[..HEAD_LINES].to_vec(),
+        head: body[..PREVIEW_LINES].to_vec(),
         tail: Vec::new(),
-        hidden: total - HEAD_LINES + output.clipped,
+        hidden: total - PREVIEW_LINES + output.clipped,
         body,
         echo_hidden,
     }
@@ -163,11 +192,32 @@ impl Chip {
     }
 }
 
+/// How roomy a turn's token/cost rollup renders.
+///
+/// The web surface has a whole chip pill to spend on it (`41.2k → 388 tok`);
+/// the character grid is budgeting fixed terminal columns and wants the same
+/// numbers as tight as they'll go (`41.2k→388`). One computation
+/// ([`format_tokens`]), two acceptable spellings of its output — never two
+/// different numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChipStyle {
+    /// `41.2k→388` — no spaces, no unit suffix.
+    Tight,
+    /// `41.2k → 388 tok` — spaced arrow, unit suffix.
+    Roomy,
+}
+
 /// The chips for one step's accounting.
 ///
-/// Order is fixed — duration, size, tokens, cost — because a right-aligned chip
-/// row whose columns move between steps is unreadable at a glance, which is the
-/// only reason to render chips rather than prose in the first place.
+/// Order is fixed — spec badge, duration, size, cost — because a right-aligned
+/// chip row whose columns move between steps is unreadable at a glance, which
+/// is the only reason to render chips rather than prose in the first place.
+///
+/// Deliberately **no token count here**: a step is one call, and a column of
+/// per-call token counts is noise a reader has to sum by hand to answer the
+/// only question it actually has — what did this turn cost. That rollup is
+/// [`turn_digest`]'s job; a step shows only its own operational facts plus its
+/// own slice of the cost.
 #[must_use]
 pub fn step_chips(step: &Step) -> Vec<Chip> {
     let mut chips = Vec::new();
@@ -183,27 +233,32 @@ pub fn step_chips(step: &Step) -> Vec<Chip> {
             chips.push(Chip::mute(format!("{lines} ln")));
         }
     }
-    chips.extend(accounting_chips(step.accounting));
+    chips.extend(cost_chip(step.accounting.micros));
     chips
 }
 
-/// The chips for a token/cost rollup.
+/// The single cost chip, when there is a cost to show.
 #[must_use]
-pub fn accounting_chips(acc: Accounting) -> Vec<Chip> {
+fn cost_chip(micros: u64) -> Option<Chip> {
+    (micros > 0).then(|| Chip::toned(format_cost(micros), "cost"))
+}
+
+/// The chips for a token/cost rollup — a turn's total, never a single step's.
+///
+/// No separate cache indicator: `cached_in` is a cost-accounting input, not a
+/// fact a reader needs held up on its own chip.
+#[must_use]
+pub fn accounting_chips(acc: Accounting, style: ChipStyle) -> Vec<Chip> {
     let mut chips = Vec::new();
     if acc.tokens_in > 0 || acc.tokens_out > 0 {
-        chips.push(Chip::mute(format!(
-            "in {} · out {}",
-            format_tokens(acc.tokens_in),
-            format_tokens(acc.tokens_out)
-        )));
+        let (tin, tout) = (format_tokens(acc.tokens_in), format_tokens(acc.tokens_out));
+        let text = match style {
+            ChipStyle::Tight => format!("{tin}→{tout}"),
+            ChipStyle::Roomy => format!("{tin} → {tout} tok"),
+        };
+        chips.push(Chip::mute(text));
     }
-    if acc.cached_in > 0 {
-        chips.push(Chip::toned("cache", "ok"));
-    }
-    if acc.micros > 0 {
-        chips.push(Chip::toned(format_cost(acc.micros), "cost"));
-    }
+    chips.extend(cost_chip(acc.micros));
     chips
 }
 
@@ -329,7 +384,7 @@ pub fn step_digest(step: &Step, object_width: usize) -> StepDigest {
             object: String::new(),
             status: Status::Ok,
             delta: None,
-            chips: accounting_chips(step.accounting),
+            chips: cost_chip(step.accounting.micros).into_iter().collect(),
             monogram: '·',
             class: "xx",
         };
@@ -363,19 +418,46 @@ pub fn step_digest(step: &Step, object_width: usize) -> StepDigest {
 /// Middle rather than trailing because the two ends of an invocation are the
 /// informative parts: `pdflatex … | grep Overfull` says what ran and what was
 /// looked for, while a trailing cut says only `pdflatex -interaction=nonst…`.
+///
+/// Cells, not characters — a path with CJK in it is twice as wide as its
+/// character count says, and the column it lands in is fixed (#3740). A cut
+/// that would split a double-width character keeps the narrower side, so the
+/// result can come back one cell under `width` but never one over.
 #[must_use]
 pub fn elide(text: &str, width: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= width || width < 5 {
+    if UnicodeWidthStr::width(text) <= width || width < 5 {
         return text.to_string();
     }
     let keep = width - 3;
     let head = keep.div_ceil(2);
-    let tail = keep - head;
-    let mut out: String = chars[..head].iter().collect();
+    let mut out = prefix_cells(text, head).to_string();
     out.push_str(" … ");
-    out.extend(&chars[chars.len() - tail..]);
+    out.push_str(suffix_cells(text, keep - head));
     out
+}
+
+/// The longest prefix of `text` that fits in `budget` display cells.
+fn prefix_cells(text: &str, budget: usize) -> &str {
+    let mut used = 0;
+    for (i, ch) in text.char_indices() {
+        used += UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used > budget {
+            return &text[..i];
+        }
+    }
+    text
+}
+
+/// The longest suffix of `text` that fits in `budget` display cells.
+fn suffix_cells(text: &str, budget: usize) -> &str {
+    let mut used = 0;
+    for (i, ch) in text.char_indices().rev() {
+        used += UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used > budget {
+            return &text[i + ch.len_utf8()..];
+        }
+    }
+    text
 }
 
 /// The first sentence of a prose block — what it folds to.
@@ -413,7 +495,7 @@ pub struct TurnDigest {
 
 /// Build a turn's collapsed digest.
 #[must_use]
-pub fn turn_digest(turn: &crate::model::Turn, width: usize) -> TurnDigest {
+pub fn turn_digest(turn: &crate::model::Turn, width: usize, style: ChipStyle) -> TurnDigest {
     // A turn's wall time reads as `m:ss` rather than as a step's `1.4s`: turns
     // run for minutes, and a column of `41.0s`/`132.0s` is harder to compare at
     // a glance than `0:41`/`2:12`.
@@ -421,7 +503,7 @@ pub fn turn_digest(turn: &crate::model::Turn, width: usize) -> TurnDigest {
         Chip::mute(format!("{} steps", turn.steps.len())),
         Chip::mute(format_offset(turn.duration_ms)),
     ];
-    chips.extend(accounting_chips(turn.rollup()));
+    chips.extend(accounting_chips(turn.rollup(), style));
     TurnDigest {
         name: turn.name.clone(),
         status: turn.status,

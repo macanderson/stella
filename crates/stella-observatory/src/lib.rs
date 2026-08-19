@@ -241,11 +241,8 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         }
         // The rendered transcript (`?id=<execution id>`). Unlike every route
         // below it, this returns HTML rather than JSON: the page is rendered by
-        // `stella-transcript`, the same code the TUI draws from, so the two
-        // surfaces cannot drift the way the dashboard's hand-rolled JavaScript
-        // renderer drifted from the deck's. It is standalone — its own styles
-        // ride with it — so it opens in its own tab and needs nothing from
-        // `index.html`.
+        // `stella-transcript`. It is standalone — its own styles ride with it —
+        // so it opens in its own tab and needs nothing from `index.html`.
         "/transcript" => {
             let Some(id) = query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) else {
                 return Response::error("400 Bad Request", "missing ?id=<execution id>");

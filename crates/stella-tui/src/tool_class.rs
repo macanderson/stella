@@ -8,9 +8,9 @@
 //! A transcript is a log of actions, and the first question a reader asks of
 //! any row is not *which* tool ran but what kind of thing it did: was that a
 //! look, a change, an opaque external call, a hand-off to another agent? Every
-//! tool name used to render in one colour — the brand accent — so answering
-//! that question meant reading each name and recalling what it does. Twenty
-//! rows in, nobody does. The rest of the transcript was one neutral end to end,
+//! tool name used to render in one colour — the brand gold — so answering that
+//! question meant reading each name and recalling what it does. Twenty rows in,
+//! nobody does. The rest of the transcript was one warm neutral end to end,
 //! which is the state the deck's own owner described as "impossible to discern
 //! what is reasoning prose and what is a real tool call".
 //!
@@ -37,7 +37,7 @@
 //! # Colour law
 //!
 //! Every class hue is categorical (`crate::palette`'s `data-*` series) and
-//! therefore *not* the brand accent: ion means brand/active/focus and nothing
+//! therefore *not* the brand accent: gold means brand/active/focus and nothing
 //! else, and a tool name is none of those. `crate::theme`'s
 //! `every_tool_class_is_categorical_and_distinct` is the enforcement.
 
@@ -76,7 +76,7 @@ impl ToolClass {
     /// palette law test walks these values.
     pub fn color(self) -> Color {
         match self {
-            ToolClass::Inspect => theme::JADE,
+            ToolClass::Inspect => theme::TEAL,
             ToolClass::Mutate => theme::MAGENTA,
             ToolClass::Execute => theme::VIOLET,
             ToolClass::Delegate => theme::ORCHID,

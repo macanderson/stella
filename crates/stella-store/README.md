@@ -117,6 +117,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The `Store` handle, `open`/`in_memory`/`migrate`, the row types, and most of the query surface. Start here. |
+| [`src/error.rs`](src/error.rs) | `StoreError` — every failure this crate returns, as named variants. A caller tells a corrupt file from a stale binary from an ordinary SQLite error by matching, not by reading prose (#3735). Add a variant only when a caller can act differently on it; everything else is `StoreError::Other`. |
 | [`src/ddl.rs`](src/ddl.rs) | Every table and index as DDL at the **current** `SCHEMA_VERSION`, plus the `TABLES` allowlist. The one place today's shape is written down. |
 | [`src/migrations.rs`](src/migrations.rs) | The ordered `MIGRATIONS` list, the fresh-file bootstrap, and the transactional runner. Open it to add a version. |
 | [`src/content_free.rs`](src/content_free.rs) | The zero-egress guard: the reviewed hub-column allowlist and the sentinel harness every egress encoder registers with. |
@@ -139,7 +140,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 
 [`ddl.rs`](src/ddl.rs) says what the shape *is*; [`migrations.rs`](src/migrations.rs)
 says how an existing file *gets there*. A fresh database gets `create_latest_schema`
-in one shot and is stamped at `SCHEMA_VERSION` (`= MIGRATIONS.len()`, 22 today);
+in one shot and is stamped at `SCHEMA_VERSION` (`= MIGRATIONS.len()`);
 an existing one runs each pending step. `PRAGMA user_version` 0 is ambiguous — it
 is both "fresh empty file" and "legacy pre-versioning file" — so `Store::migrate`
 disambiguates by probing `TABLES` via `any_store_table_exists`. A file stamped
@@ -330,7 +331,7 @@ from `NotYetBuilt` to `Guarded`. `every_registered_encoder_is_content_free` and
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions"
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies"
   (invariant #3), "The `.stella/` directory", and the glossary of look-alike
   identifiers (session vs execution vs run vs task).
 - [`../../docs/spec/session-telemetry-receipts-spec.md`](../../docs/spec/session-telemetry-receipts-spec.md)

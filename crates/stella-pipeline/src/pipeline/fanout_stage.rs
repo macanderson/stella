@@ -194,6 +194,10 @@ impl<'a> Pipeline<'a> {
             futures_util::stream::iter(workspaces.iter().enumerate().map(|(index, slot)| {
                 let fan = fan.as_ref();
                 let budgets = &budgets;
+                // Cloned per candidate (#3408): each one decides `verify`
+                // independently against its own real diff, so each needs its
+                // own `Schedule` walk forward from the shared prefix.
+                let frame = frame.clone();
                 async move {
                     let ws = match slot {
                         Ok(ws) => ws.as_ref(),

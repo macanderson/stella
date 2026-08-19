@@ -113,10 +113,10 @@ stella models list --provider anthropic    # browse valid slugs + live pricing
     the same host your next turn calls anyway. No credential for a provider means nothing
     is fetched for it.
   - **The models.dev master list** is a third party, so the no-phone-home rule forbids
-    contacting it implicitly. It may only auto-refresh once a sync record already exists —
+    contacting it implicitly. It may only auto-refresh once a sync record exists —
     that is, **after your first explicit `stella models refresh`**. Until you run that
     command once, the seed table above is your whole catalog and models.dev is never
-    touched.
+    contacted.
 </Callout>
 
 Because the native overlay resolves through each provider's configured credential, the
