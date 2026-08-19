@@ -701,7 +701,7 @@ async fn run_task(
         &cfg,
         root.to_path_buf(),
     ));
-    // As in a deck lane: without a dispatcher the `task` tool is advertised
+    // As in a deck lane: without a dispatcher the `delegate` tool is advertised
     // and always refuses, and the pause gate published below has nothing to
     // reach. A worker's children inherit its headless posture through the
     // registry they run against.

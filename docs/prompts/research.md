@@ -123,5 +123,5 @@ manifests. `depth: 1`, per the sub-agent nesting contract.
 - [worker.md](worker.md) — the second sink (#2415): the same findings ride the
   worker's opening user message, so a verified fact no longer reaches it only
   as residue in a plan step
-- [worker.md](worker.md) — the `task` tool exposes the same read-only sub-agent
+- [worker.md](worker.md) — the `delegate` tool exposes the same read-only sub-agent
   shape to the worker, with its own system prompt

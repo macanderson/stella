@@ -75,6 +75,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + stat-portability + module-reachability
                          #   + typed-errors
                          #   + diagnostic-codes
+                         #   + bench-suites
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
@@ -212,6 +213,18 @@ SKIP_GATE=1 git push     # nothing at all (emergencies)
 
 `make impacted-test` covers the scoping rules; it is hermetic and deliberately
 not part of `gate`.
+
+The same diff also decides whether the hook runs `make bench-test` — the Python
+bench suites, which are gated by `.github/workflows/bench.yml` and are not a
+`make gate` step because they cost minutes. The hook selects on that workflow's
+own scope filter, read from it by `scripts/bench-suites.sh filter` rather than
+copied, so a push touching `bench/**`, `arenabench/**`,
+`crates/stella-model/src/catalog.rs` or the workflow itself runs them before it
+leaves the machine. `GATE=fast` skips them out loud, on the same "no tests"
+contract it applies to cargo. This existed nowhere until #2847: the workflow ran
+seven pytest suites, `make bench-test` ran three, and `main` went red on
+2026-08-11 on a deterministic arenabench failure with no local command that
+would have caught it.
 
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
 `cargo deny check advisories bans sources licenses`). All four are real
@@ -681,7 +694,7 @@ editing Stella's own code should know what lives where:
 | `.stella/skills/<slug>/SKILL.md` | Auto-promoted skills from recurring reflection lessons. Never enforced — selected and injected as volatile context. |
 | `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/spec/adaptive-context/context-pr.md`](docs/spec/adaptive-context/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants and record lifecycle events (retirements and supersessions, #2728); `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
-| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.task_assign: "off"` withholds the delegation tool — every built-in is registered by default since #710). Merged per-field with org-managed and user scopes. |
+| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.delegate: "off"` withholds the sub-agent delegation tool — every built-in is registered by default since #710). Merged per-field with org-managed and user scopes. |
 | `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. |
 | `.stella/domains.toml` | Domain taxonomy for memory/reflection tagging, inferred by `stella init`. |
 | `.stella/workspace.json` | Durable per-workspace telemetry identity (`workspace_id`), written by `stella cloud register`. Deliberately **outside** `private/` and safe to commit — sharing it makes every clone/machine report under one `workspace_id` to a cloud org. |

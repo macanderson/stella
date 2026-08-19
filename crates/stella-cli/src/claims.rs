@@ -369,6 +369,14 @@ impl ToolExecutor for ClaimTap<'_> {
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()
     }
+
+    /// Forwarded: this tap claims files, it dispatches no name of its own,
+    /// and it sits BETWEEN the custom-tool set and the base in the deck's
+    /// lead turn — so a `None` here would silently un-gate every custom tool
+    /// in every deck session (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.dispatch_gate()
+    }
 }
 
 #[cfg(test)]
@@ -394,7 +402,7 @@ mod tests {
             }
         }
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-            std::collections::HashSet::from(["task".to_string()])
+            std::collections::HashSet::from(["delegate".to_string()])
         }
     }
 
@@ -410,7 +418,7 @@ mod tests {
         let inner = Passthrough(Default::default());
         let tap = ClaimTap::new(&inner, None, "ses-1/lead");
         assert!(
-            tap.parallel_safe_names().contains("task"),
+            tap.parallel_safe_names().contains("delegate"),
             "the inner executor's concurrency claim must survive the tap"
         );
     }

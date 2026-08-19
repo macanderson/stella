@@ -443,7 +443,7 @@ mod tests {
         // Invariant #4 for #3284, same discipline as `output_schema`: the
         // declaration survives the wire, and its absence is the pre-#3284
         // bytes.
-        let emitting = ToolContract::builtin(schema("task", false, false), RiskLevel::High)
+        let emitting = ToolContract::builtin(schema("delegate", false, false), RiskLevel::High)
             .with_events(vec!["tool.call.progress".into()]);
         let json = serde_json::to_string(&emitting).unwrap();
         let back: ToolContract = serde_json::from_str(&json).unwrap();

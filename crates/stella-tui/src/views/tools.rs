@@ -677,7 +677,7 @@ mod tests {
         ToolPolicyState {
             tools: vec![
                 tool("get_environment", "environment"),
-                tool("task", "task"),
+                tool("delegate", "task"),
                 tool("get_state", "scratch"),
                 tool("save_state", "scratch"),
                 tool("mcp__gh__create_issue", "mcp"),
@@ -722,7 +722,7 @@ mod tests {
                 "get_state".to_string(),
                 "save_state".to_string(),
                 "[task]".to_string(),
-                "task".to_string(),
+                "delegate".to_string(),
             ],
             "groups sorted, tools sorted within them, one header each"
         );
@@ -770,8 +770,10 @@ mod tests {
     }
 
     /// Deliberately over `save_state`, whose group (`scratch`) has a
-    /// DIFFERENT name: `task` sits in a group called `task`, so a row toggle
-    /// that wrongly wrote the group key would be indistinguishable there.
+    /// DIFFERENT name. No catalog row is named after its own group any more
+    /// (#3192), so every row would now distinguish the two — but a row whose
+    /// name and group matched would hide the bug, and that is the shape this
+    /// test is written against.
     #[test]
     fn toggling_a_tool_writes_its_exact_name_never_its_group() {
         let (model, mut ui) = open_ui();
@@ -842,12 +844,12 @@ mod tests {
     fn a_managed_denied_row_is_locked_and_refuses_to_toggle_on() {
         let (model, mut ui) = open_ui();
         let mut state = sample_state();
-        state.switches.insert("task".into(), false);
+        state.switches.insert("delegate".into(), false);
         for tool in &mut state.tools {
-            if tool.name == "task" {
+            if tool.name == "delegate" {
                 tool.locked = true;
                 tool.off = Some(ToolDenial {
-                    key: "task".into(),
+                    key: "delegate".into(),
                     scope: Some(ToolScope::Managed),
                 });
             }
@@ -858,9 +860,9 @@ mod tests {
         ui.tools.row = rows
             .iter()
             .position(
-                |row| matches!(row, ToolsRow::Tool(i) if state_snapshot.tools[*i].name == "task"),
+                |row| matches!(row, ToolsRow::Tool(i) if state_snapshot.tools[*i].name == "delegate"),
             )
-            .expect("the `task` tool row");
+            .expect("the `delegate` tool row");
 
         handle_deck_key(ch(' '), &model, &mut ui);
         assert!(
@@ -876,20 +878,20 @@ mod tests {
             ui.tools.status
         );
         let state = ui.tools.state.as_ref().unwrap();
-        let task = state.tools.iter().find(|t| t.name == "task").unwrap();
-        assert!(!tool_enabled(state, &ui.tools.edits, task));
+        let delegate = state.tools.iter().find(|t| t.name == "delegate").unwrap();
+        assert!(!tool_enabled(state, &ui.tools.edits, delegate));
         assert_eq!(
-            off_reason(task).as_deref(),
-            Some("locked · \"task\" off in org-managed settings")
+            off_reason(delegate).as_deref(),
+            Some("locked · \"delegate\" off in org-managed settings")
         );
 
         // Even a forged edit (a group or wildcard grant reaching the map any
         // other way) cannot render it on.
         let mut edits = BTreeMap::new();
         edits.insert(WILDCARD.to_string(), true);
-        edits.insert("task".to_string(), true);
+        edits.insert("delegate".to_string(), true);
         assert!(
-            !tool_enabled(state, &edits, task),
+            !tool_enabled(state, &edits, delegate),
             "locked short-circuits every level of the precedence ladder"
         );
         // The group header the org fully denies is locked too.
@@ -930,10 +932,10 @@ mod tests {
         let mut ui = DeckUi::default();
         ui.splash.skip();
         ui.tools.state = Some(sample_state());
-        ui.tools.edits.insert("task".into(), false);
+        ui.tools.edits.insert("delegate".into(), false);
         ui.tools.busy = true;
 
-        // A failed save: the snapshot still says `task` is on, so the edit
+        // A failed save: the snapshot still says `delegate` is on, so the edit
         // stands.
         ingest_inbound(
             &Inbound::ToolPolicy {
@@ -943,13 +945,17 @@ mod tests {
             &mut model,
             &mut ui,
         );
-        assert_eq!(ui.tools.edits.get("task"), Some(&false), "still unsaved");
+        assert_eq!(
+            ui.tools.edits.get("delegate"),
+            Some(&false),
+            "still unsaved"
+        );
         assert!(!ui.tools.busy, "a snapshot always ends the in-flight op");
         assert!(ui.tools.dirty());
 
         // The successful echo carries the switch — the marker clears.
         let mut saved = sample_state();
-        saved.switches.insert("task".into(), false);
+        saved.switches.insert("delegate".into(), false);
         ingest_inbound(
             &Inbound::ToolPolicy {
                 state: saved.clone(),
@@ -1046,10 +1052,10 @@ mod tests {
                     scope: Some(ToolScope::User),
                 });
             }
-            if tool.name == "task" {
+            if tool.name == "delegate" {
                 tool.locked = true;
                 tool.off = Some(ToolDenial {
-                    key: "task".into(),
+                    key: "delegate".into(),
                     scope: Some(ToolScope::Managed),
                 });
             }

@@ -843,7 +843,7 @@ mod tests {
         for denied in [
             "save_state",
             "get_state",
-            "task",
+            "delegate",
             "task_create",
             "get_environment",
             "mcp_external",

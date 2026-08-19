@@ -78,9 +78,9 @@ pub struct ToolEntry {
     /// written against (#2716), and a **different question** from
     /// [`Self::read_only`]: that one asks whether the workspace changes, this
     /// one asks what the call costs the world. The two come apart in both
-    /// directions, which is why they are separate columns — `task` mutates
-    /// nothing in the workspace and spends real money, while `task_create`
-    /// mutates a board that dies with the session.
+    /// directions, which is why they are separate columns — `delegate`
+    /// mutates nothing in the workspace and spends real money, while
+    /// `task_create` mutates a board that dies with the session.
     ///
     /// The rubric, so the column stays consistent as tools are added:
     ///
@@ -96,8 +96,8 @@ pub struct ToolEntry {
     /// (`Low`), `write_file` and `edit_file` are bounded and locally undoable
     /// (`Medium`), `delete_file` is the one thing the agent cannot undo from
     /// inside the turn (`Destructive`), and `bash` runs a command nobody
-    /// bounded (`High`, which it shares with `task` for the same reason —
-    /// neither's cost is bounded by anything this table can see). The
+    /// bounded (`High`, which it shares with `delegate` for the same reason
+    /// — neither's cost is bounded by anything this table can see). The
     /// coordination rows — the board, the scratch plane, the environment
     /// report — are all `Low`, because what they mutate cannot outlive the
     /// process.
@@ -180,12 +180,18 @@ catalog! {
     "task_assign"         => (false, false, Low, Always, "task"),
     // Sub-agent delegation (#922). NOT read_only — it spends money, and that
     // flag is also what caps nesting: children run behind `ReadOnlyTools`, so
-    // a read-only `task` would let them spawn children of their own. `High`
-    // for the same reason it is not read-only, and it is the one built-in
-    // that a risk ceiling meaningfully separates from the rest: it spends
-    // real money, and the child it spawns wields a whole tool surface of its
-    // own.
-    "task"                => (false, false, High, Always, "task"),
+    // a read-only `delegate` would let them spawn children of their own.
+    // `High` for the same reason it is not read-only, and it is the one
+    // built-in that a risk ceiling meaningfully separates from the rest: it
+    // spends real money, and the child it spawns wields a whole tool surface
+    // of its own.
+    //
+    // It shares the board's `task` group — delegation and the board are one
+    // coordination family, and `"tools": {"task": "off"}` withholds all
+    // seven exactly as it always did. What it may NOT be is *named* `task`:
+    // a switch key resolves exact-name-first, so a tool named after its own
+    // group makes one key address two surfaces (#3192, the #3120 shape).
+    "delegate"            => (false, false, High, Always, "task"),
     // Session scratch state (tempfile::TempDir, self-deleting) — the plane
     // dies with the session, `delete_state` included, so nothing here is
     // irreversible in any sense that outlives the run.
@@ -245,21 +251,78 @@ pub const RETIRED_TOOL_NAMES: &[&str] = &[
 /// so they are excluded and recorded here instead of silently omitted — the
 /// guards err toward missing a stale reference rather than blocking a true
 /// sentence.
-pub const RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN: &[&str] = &["glob", "grep"];
+///
+/// `task` joins them for the same reason (#3192): it was the delegation
+/// tool's dispatch name until that name was moved to `delegate`, and it is
+/// still the *group* key for the seven-tool coordination family — as well as
+/// the commonest noun in every prompt this repository ships. It stays
+/// reserved ([`is_reserved`]) so a `.stella/tools/*.toml` manifest cannot
+/// claim a name an operator's `"tools": {"task": …}` entry already addresses
+/// as a group; it is simply not greppable.
+pub const RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN: &[&str] = &["glob", "grep", "task"];
+
+/// Whether `name` was a dispatch name Stella has since deleted — the union of
+/// [`RETIRED_TOOL_NAMES`] and [`RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN`].
+///
+/// The split between those two lists is a fact about **prose scanning**: one
+/// is safe to grep runtime strings for, the other false-fires on ordinary
+/// English. Neither half of that distinction survives an exact-match question
+/// about a manifest's `name` field, so a caller asking "did Stella once
+/// dispatch this?" reads both (#3237).
+pub fn is_retired(name: &str) -> bool {
+    RETIRED_TOOL_NAMES.contains(&name) || RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN.contains(&name)
+}
+
+/// Whether Stella claims `name` for itself, so a `.stella/tools/*.toml`
+/// manifest or a foundry-authored tool may not register it.
+///
+/// Two disjoint reasons, both of them "the model already has priors about
+/// this name and they are not the manifest's":
+///
+/// - a live [`CATALOG`] row, where shadowing would route the wrong executor
+///   *and* hand a third party a built-in's reviewed
+///   [`stella_protocol::ToolContract`] (see [`crate::contracts`]);
+/// - a name Stella dispatched and retired ([`is_retired`]), where nothing is
+///   shadowed today but the two sharp edges of #3237 remain: a custom `bash`
+///   that is not a shell is called as one, and an operator's
+///   `"tools": {"run_tests": "off"}` — written when that built-in existed —
+///   silently addresses the manifest instead of nothing.
+///
+/// The asymmetry is deliberate: reserving a name is reversible by deleting a
+/// line, while releasing one is not reversible once a shipped manifest
+/// depends on it.
+pub fn is_reserved(name: &str) -> bool {
+    ALL_NAMES.contains(&name) || is_retired(name)
+}
 
 /// Look up a tool's canonical row by dispatch name.
 pub fn get(name: &str) -> Option<&'static ToolEntry> {
     CATALOG.iter().find(|entry| entry.name == name)
 }
 
+/// The groups that have no fixed member list, sorted.
+///
+/// Every other group is a column of [`CATALOG`], so [`names_in_group`] can
+/// enumerate it. These two are assigned by *origin* instead — [`group_for`]
+/// answers `"mcp"` for anything named `mcp__<server>__<tool>` and `"custom"`
+/// for every other name the table has never heard of — so their membership is
+/// knowable only against a live session's tool list, and [`names_in_group`]
+/// answers empty for both.
+///
+/// Named as a constant because a caller that expands group keys into tool
+/// names ([`crate::policy::ToolPolicy::narrow_with`]) has to tell these apart
+/// from a plain tool name: both give an empty [`names_in_group`], and
+/// treating `"custom"` as a tool name is exactly the misreading #2800 was.
+pub const DYNAMIC_GROUPS: &[&str] = &["custom", "mcp"];
+
 /// The group an operator switches off to disable a whole family.
 ///
 /// Built-ins answer from [`CATALOG`]. Everything else is grouped by where it
 /// came from, so a policy can address tools this table has never heard of:
 /// MCP tools (`mcp__<server>__<tool>`) are `"mcp"`, and anything else — a
-/// customer's own manifest tool — is `"custom"`. That is what makes
-/// `{"custom": "off"}` mean "none of my registered tools" without enumerating
-/// them.
+/// customer's own manifest tool — is `"custom"`. Those two are
+/// [`DYNAMIC_GROUPS`]. That is what makes `{"custom": "off"}` mean "none of my
+/// registered tools" without enumerating them.
 pub fn group_for(name: &str) -> &'static str {
     if let Some(entry) = get(name) {
         return entry.group;
@@ -275,14 +338,16 @@ pub fn group_for(name: &str) -> &'static str {
 /// accepts as a group key.
 pub fn groups() -> Vec<&'static str> {
     let mut groups: Vec<&'static str> = CATALOG.iter().map(|entry| entry.group).collect();
-    groups.push("mcp");
-    groups.push("custom");
+    groups.extend(DYNAMIC_GROUPS.iter().copied());
     groups.sort_unstable();
     groups.dedup();
     groups
 }
 
 /// Names in one group, sorted.
+///
+/// Empty for a [`DYNAMIC_GROUPS`] entry and for a name that is no group at
+/// all — the caller that needs to tell those apart consults that constant.
 pub fn names_in_group(group: &str) -> Vec<&'static str> {
     let mut names: Vec<&'static str> = CATALOG
         .iter()
@@ -365,6 +430,36 @@ mod tests {
         assert_eq!(seen.len(), ALL_NAMES.len());
     }
 
+    /// [`DYNAMIC_GROUPS`] is a premise two other modules build on: that these
+    /// are the groups [`group_for`] can answer with off-catalog, and that
+    /// [`names_in_group`] cannot enumerate them. `ToolPolicy::narrow_with`
+    /// expands every *other* group key into names and falls back to a
+    /// group-level answer for these, so a third dynamic group added to
+    /// `group_for` without a line here would be silently expanded to nothing.
+    #[test]
+    fn the_dynamic_groups_are_the_ones_no_row_declares() {
+        for group in DYNAMIC_GROUPS {
+            assert!(
+                names_in_group(group).is_empty(),
+                "`{group}` is dynamic and cannot have catalog members"
+            );
+            assert!(groups().contains(group), "`{group}` must be listed");
+        }
+        // Both are reachable from `group_for`, which is what makes them keys
+        // an operator can write.
+        assert_eq!(group_for("mcp__github__create_issue"), "mcp");
+        assert_eq!(group_for("deploy_to_staging"), "custom");
+        // ...and no catalog row declares either, so nothing is in two groups.
+        for entry in CATALOG {
+            assert!(
+                !DYNAMIC_GROUPS.contains(&entry.group),
+                "`{}` declares the dynamic group `{}`",
+                entry.name,
+                entry.group
+            );
+        }
+    }
+
     /// `ALL_NAMES` is macro-derived from the same rows as `CATALOG`; this pins
     /// that the macro keeps them aligned rather than merely equal in length.
     #[test]
@@ -415,15 +510,10 @@ mod tests {
     /// #3120 shape). A single-member group named after its only tool is
     /// harmless — both readings resolve identically.
     ///
-    /// `task` is the one declared exemption: the delegation tool `task` still
-    /// shares its name with the task-board group, and untangling that is a
-    /// vocabulary decision tracked in #3192, not a silence.
+    /// No exemptions: every row is asked.
     #[test]
     fn a_group_key_never_doubles_as_another_tools_switch() {
         for entry in CATALOG {
-            if entry.group == "task" {
-                continue; // declared gap: #3192
-            }
             if get(entry.group).is_some() {
                 assert_eq!(
                     names_in_group(entry.group),

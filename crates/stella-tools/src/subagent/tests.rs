@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! `task` tool tests (#922) — the model-callable face of the sub-agent
+//! `delegate` tool tests (#922) — the model-callable face of the sub-agent
 //! primitive.
 
 use std::sync::Mutex;
@@ -239,7 +239,7 @@ async fn a_missing_prompt_is_a_self_correcting_error_and_dispatches_nothing() {
 }
 
 /// A sub-agent runs behind `ReadOnlyTools`, and this tool is truthfully NOT
-/// read-only (it spends money). So a child cannot see `task` in its schema
+/// read-only (it spends money). So a child cannot see `delegate` in its schema
 /// list and cannot execute it by guessing the name — nesting is capped at one
 /// level by construction, with no depth counter to thread through concurrent
 /// sibling spawns and get wrong.
@@ -263,14 +263,14 @@ async fn a_child_structurally_cannot_spawn_a_grandchild() {
 
     let (tool, _) = tool_with(SubAgentOutcome::Completed(report("nope", 0.0, false)));
     let parent = OneTool(tool);
-    assert_eq!(parent.schemas().len(), 1, "the parent can see `task`");
+    assert_eq!(parent.schemas().len(), 1, "the parent can see `delegate`");
 
     let child_view = ReadOnlyTools::new(&parent);
     assert!(
         child_view.schemas().is_empty(),
-        "a child must not be offered `task`"
+        "a child must not be offered `delegate`"
     );
-    let refused = child_view.execute("task", &call("x", "y")).await;
+    let refused = child_view.execute("delegate", &call("x", "y")).await;
     match refused {
         ToolOutput::Error { message, .. } => assert!(
             message.contains("read-only"),
@@ -293,7 +293,7 @@ fn slug_is_stable_short_and_never_empty() {
 fn the_schema_is_not_read_only_which_is_what_makes_nesting_structural() {
     let tool = SpawnSubAgent::new(Arc::default());
     let schema = tool.schema();
-    assert_eq!(schema.name, "task");
+    assert_eq!(schema.name, "delegate");
     assert!(
         !schema.read_only,
         "marking this read_only would let children spawn children"
@@ -381,7 +381,7 @@ fn attaching_replaces_rather_than_stacking() {
 ///
 /// `agent_id` was `slug(description)` — a pure function of model-supplied
 /// text — so two siblings both described "research X" got the SAME id. Since
-/// sibling `task` calls from one step run concurrently (#1836), their
+/// sibling `delegate` calls from one step run concurrently (#1836), their
 /// `SubAgent::Started`/`Finished` brackets then interleave under one id on the
 /// parent's stream: the deck renders indistinguishable rows, and any consumer
 /// that pairs by `agent_id` cannot tell which child finished. The child
@@ -435,7 +435,7 @@ fn minting_is_a_function_of_call_order_alone() {
 
 /// The #3284 witness: the one long-running built-in announces its child as
 /// `tool.call.progress` on the session bus — through a `ToolCtx` scoped to
-/// exactly the events `contracts::contract_for` declares for `task`, so this
+/// exactly the events `contracts::contract_for` declares for `delegate`, so this
 /// test also pins the allowlist table. Fails on `main`, where
 /// `Tool::execute` has no event handle at all.
 #[tokio::test]
@@ -456,14 +456,19 @@ async fn dispatching_a_child_emits_declared_progress_on_the_bus() {
         declared.contains(&"tool.call.progress".to_string()),
         "the contract table must declare the event this test asserts"
     );
-    let ctx = crate::ctx::ToolCtx::new(std::path::PathBuf::from("."), "task", Some(bus), declared);
+    let ctx = crate::ctx::ToolCtx::new(
+        std::path::PathBuf::from("."),
+        "delegate",
+        Some(bus),
+        declared,
+    );
 
     tool.execute(&call("find retry policy", "where is retry?"), &ctx)
         .await;
 
     let events = seen.lock().unwrap();
     assert_eq!(events.len(), 1, "exactly one progress event: {events:?}");
-    assert_eq!(events[0]["tool"], "task");
+    assert_eq!(events[0]["tool"], "delegate");
     assert_eq!(events[0]["stage"], "dispatched");
     assert_eq!(events[0]["agent_id"], "find-retry-policy");
 }

@@ -149,7 +149,7 @@ pub struct SessionSpec {
     pub pipeline: Option<crate::pipeline_run::PipelineRun>,
     /// What this turn's sub-agents may do (#1297), after the operator's
     /// [`crate::SubAgentPolicy`] has clamped the caller's request. `None`
-    /// advertises no `task` tool at all, so the model never learns children
+    /// advertises no `delegate` tool at all, so the model never learns children
     /// exist — the default, and the whole of the pre-#1297 behavior.
     pub sub_agents: Option<crate::subagents::EffectiveSubAgents>,
     /// The operator's hook plane for this turn (#1298), installed on a
@@ -675,7 +675,7 @@ fn run_session(
         // request agree. Built before the engine because the engine borrows
         // the tool set, and the delegating view IS the tool set once children
         // are allowed — a host tool call still remotes exactly as before; only
-        // `task` is executed here.
+        // `delegate` is executed here.
         let spend_ledger: stella_core::subagent::SubAgentSpendLedger = Default::default();
         let dispatcher = spec.sub_agents.as_ref().map(|effective| {
             let child_provider = crate::remote::RemoteProvider::new(

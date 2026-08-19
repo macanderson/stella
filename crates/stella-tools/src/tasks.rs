@@ -416,7 +416,7 @@ impl Tool for TaskAssign {
         };
         let owner = optional_str(input, "owner").unwrap_or_else(|| format!("sub:{id}"));
         // Ahead of the board mutation: with nothing draining the queue this
-        // call cannot delegate, and the honest answer is the one `task` already
+        // call cannot delegate, and the honest answer is the one `delegate` already
         // gives for an unattached dispatcher. Confirming instead is how a
         // session came to believe six sub-agents were working for it while its
         // queue grew and nothing ran.

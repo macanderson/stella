@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The session's sub-agent dispatcher — the host half of the `task` tool
+//! The session's sub-agent dispatcher — the host half of the `delegate` tool
 //! (#922).
 //!
 //! `stella-tools`' [`SpawnSubAgent`](stella_tools::subagent::SpawnSubAgent)
@@ -44,7 +44,7 @@
 //! spend.
 //!
 //! The pool lock is deliberately not held across the child's run, so sibling
-//! `task` calls from one step execute concurrently — reachable since the
+//! `delegate` calls from one step execute concurrently — reachable since the
 //! engine's dispatch scheduler groups the spawn tool with read-only calls
 //! (`Tool::parallel_safe`; before that claim existed, every non-read-only
 //! call was its own barrier and this concurrency was dead code). Every
@@ -57,9 +57,9 @@
 //! ## Settling is the child's job
 //!
 //! Both ledgers are charged from the child's own thread, the moment its turn
-//! ends — not after the `wait.await` below, and not by the `task` tool after
+//! ends — not after the `wait.await` below, and not by the `delegate` tool after
 //! `dispatch()` returns. Those were the original homes, and both share a
-//! defect: a parent hard cancelled mid-`task` never resumes either line, so a
+//! defect: a parent hard cancelled mid-`delegate` never resumes either line, so a
 //! child that had really spent money landed in *no* ledger at all. Whatever is
 //! still running when the parent goes away has to be what settles, and that is
 //! the thread. Charging late to the session is this ledger's existing doctrine
@@ -94,7 +94,7 @@
 //! boundary could. Stated rather than quietly implied, because the difference
 //! is invisible until it is a crash report (#1850).
 //!
-//! The cost is one thread per live `task` call, bounded by the engine's own
+//! The cost is one thread per live `delegate` call, bounded by the engine's own
 //! tool-call concurrency cap.
 //!
 //! # Pause and stop reach these children too
@@ -118,7 +118,7 @@
 //!
 //! - **The pause gate, as-is.** A paused session parks its children at their
 //!   own step boundaries. Note that a parked child holds the parent's
-//!   `task` tool call open, which is exactly right — pause means pause — and
+//!   `delegate` tool call open, which is exactly right — pause means pause — and
 //!   that both release together on resume.
 //! - **The soft stop, but not the steering messages.** The child engine is
 //!   built through `run_sub_agent`, which wraps whatever steering the parent
@@ -175,7 +175,7 @@ use crate::runtime::TokioSleeper;
 /// Default ceiling on what sub-agents may cost across one session, in USD.
 ///
 /// Generous enough that ordinary delegation never trips it, small enough
-/// that a model looping on `task` cannot quietly spend a session's budget on
+/// that a model looping on `delegate` cannot quietly spend a session's budget on
 /// research. Callers with a real `--spend-limit` get a tighter bound anyway: the
 /// parent's guard is the hard ceiling.
 pub const DEFAULT_POOL_LIMIT_USD: f64 = 2.0;
@@ -229,7 +229,7 @@ impl TurnSteering for OrphanStop {
     }
 }
 
-/// Runs sub-agents for the `task` tool. One per session.
+/// Runs sub-agents for the `delegate` tool. One per session.
 pub struct SessionSubAgents {
     /// `Arc`, not `Box`: the provider is moved onto each child's thread.
     provider: Arc<dyn Provider>,
@@ -282,7 +282,7 @@ impl SessionSubAgents {
         }
     }
 
-    /// Build the dispatcher and hand it to the registry, so the `task` tool
+    /// Build the dispatcher and hand it to the registry, so the `delegate` tool
     /// stops reporting sub-agents as unavailable. Also returned, so a caller
     /// that dispatches children outside the native registry can share the
     /// same runner.
@@ -306,7 +306,7 @@ impl SessionSubAgents {
 }
 
 /// Install the session's sub-agent dispatcher from a `Config`, so the
-/// `task` tool can actually run children.
+/// `delegate` tool can actually run children.
 ///
 /// One line at each session entry point, deliberately: the call sites live
 /// in files already well over the size ratchet, and the interesting decisions
@@ -337,7 +337,7 @@ pub fn install_for_session(
 /// there is exactly what went wrong: every production installer passed `None`
 /// — which [`SessionSubAgents::with_pool_limit`] reads as *unlimited*, not as
 /// "keep the default" — so [`DEFAULT_POOL_LIMIT_USD`] was documented as the
-/// bound that stops "a model looping on `task`" while binding nothing. A
+/// bound that stops "a model looping on `delegate`" while binding nothing. A
 /// session without `--spend-limit` whose model wedged on delegation ran every child
 /// to `max_steps` with no dollar bound at any layer (#1849).
 ///
@@ -381,7 +381,7 @@ impl SubAgentDispatcher for SessionSubAgents {
 
         // Snapshot, release, run, fold back. `BudgetGuard` is `Copy`, so the
         // child carves against the pool's real headroom without the lock
-        // being held across its turn — which is what keeps sibling `task`
+        // being held across its turn — which is what keeps sibling `delegate`
         // calls from one step concurrent instead of serialized.
         let pool_view = *self.pool.lock().unwrap_or_else(|p| p.into_inner());
         let before = pool_view.session_spent_usd();
@@ -452,7 +452,7 @@ impl SubAgentDispatcher for SessionSubAgents {
                 }));
 
                 // Settled HERE, before reporting, and deliberately not after
-                // the `wait.await` below: a parent cancelled mid-`task` never
+                // the `wait.await` below: a parent cancelled mid-`delegate` never
                 // resumes that await, and dollars this child has already
                 // spent would land in no ledger at all. Charging late to the
                 // session is the ledger's doctrine; never charging is not.
@@ -461,7 +461,7 @@ impl SubAgentDispatcher for SessionSubAgents {
                 // included — which is what the `catch_unwind` above buys.
                 //
                 // Exactly once, because this is now the only writer on either
-                // side — the `task` tool no longer charges what it did not
+                // side — the `delegate` tool no longer charges what it did not
                 // measure.
                 let spent = view.session_spent_usd() - before;
                 if spent > 0.0 {

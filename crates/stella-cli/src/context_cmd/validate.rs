@@ -20,13 +20,31 @@
 //! leak, an unparseable guard, or a refuted claim means something in the repository
 //! must not steer an agent, and a command that reported that on stdout with exit 0
 //! would be a check that always passes.
+//!
+//! # Why a retired revision is the one exemption
+//!
+//! Retirement archives the record **in place** — `stella ingest --refresh` rewrites
+//! it with `status = "archived"` and leaves the file in `.stella/rules/`, because the
+//! directory is Git-tracked and that revision is the audit trail (see
+//! `crate::ingest_cmd::refresh`). The loader then refuses to select it, which is the
+//! whole point of retiring it. Counting that refusal as a blocking finding made a
+//! *completed* retirement fail this check forever, with no edit left that could ever
+//! turn it green again (#3254).
+//!
+//! So a record whose only reason for not steering is a lifecycle status somebody
+//! deliberately set is reported under "Retired" and does not affect the exit code.
+//! The exemption is deliberately narrow: it is [`is_retired`], not
+//! "`Disposition::Block` is fine". A refuted claim still fails, and so does an
+//! archived record that *also* carries a blocking finding — a leaked credential does
+//! not stop being one because the record around it was retired.
 
 use std::path::Path;
 
 use colored::Colorize;
 use serde::Serialize;
 
-use stella_core::records::{Disposition, Registry, Severity};
+use stella_core::context_record::RecordStatus;
+use stella_core::records::{Disposition, Entry, Registry, Severity};
 
 use crate::context_records::{
     SweepCache, now_rfc3339, probe_everything, registry_with_cache, rule_files,
@@ -151,16 +169,32 @@ pub fn run_validate(root: &Path, format: QueryFormat) -> Result<(), String> {
     print_conflicts(&registry);
     print_diagnostics(&registry);
 
+    let retired = print_retired(&registry);
     let blocked = print_blocked(&registry);
     if blocked > 0 {
         return Err(format!(
             "{blocked} record(s) must not steer anything until this is resolved"
         ));
     }
-    println!(
-        "{}",
-        "Every loaded record is schema-valid and currently believed.".green()
-    );
+    // Naming the retired count here rather than reusing the unconditional line:
+    // "every loaded record is currently believed" is false the moment an archived
+    // revision is loaded, and a green line that overstates what was checked is the
+    // same defect as a check that always passes.
+    if retired > 0 {
+        println!(
+            "{}",
+            format!(
+                "Every steering record is schema-valid and currently believed; \
+                 {retired} retired revision(s) are kept as history."
+            )
+            .green()
+        );
+    } else {
+        println!(
+            "{}",
+            "Every loaded record is schema-valid and currently believed.".green()
+        );
+    }
     Ok(())
 }
 
@@ -226,6 +260,66 @@ fn print_probes(registry: &Registry, cache: &SweepCache) {
     println!();
 }
 
+/// Whether this entry is out of selection because somebody **retired** it, rather
+/// than because something about it is wrong.
+///
+/// Both halves are load-bearing. The status half is the same cut the loader itself
+/// makes (`records::registry::blocking_reason` refuses any non-`active` status), so
+/// `retracted` is exempt for the same reason `archived` is: a lifecycle status is a
+/// decision an author recorded, not a defect a reviewer must chase. The findings half
+/// is what keeps the exemption narrow — an archived record carrying a blocking
+/// finding is still counted, because a forbidden-data leak in a Git-tracked file is
+/// no less a leak for sitting in a revision nobody reads.
+///
+/// The tradeoff this accepts, stated out loud: editing `status` is now a way to take
+/// a refuted record out of the check. It is also a way to take it out of the prompt
+/// entirely — the loader stops selecting it in the same breath — so the edit cannot
+/// silence the check while keeping the claim steering, and it lands as a reviewable
+/// diff to a tracked governance file.
+fn is_retired(entry: &Entry) -> bool {
+    let lifecycle = !matches!(
+        entry.record.record.status,
+        None | Some(RecordStatus::Active)
+    );
+    lifecycle
+        && !entry
+            .record
+            .findings
+            .iter()
+            .any(|finding| finding.severity() == Severity::Blocking)
+}
+
+/// Whether this entry is the exit code's business: not steering, and not because it
+/// was retired. The one predicate both the text and the JSON report count with —
+/// two copies of this rule would be two answers to "did the check pass".
+fn is_blocking(entry: &Entry) -> bool {
+    !entry.disposition.is_selected() && !is_retired(entry)
+}
+
+/// Every retired revision still loaded, informationally. Returns the count.
+///
+/// Reported rather than passed over in silence: the file is in `.stella/rules/` and
+/// looks exactly like a record that steers, so a reader who is told nothing about it
+/// has to open it to learn that it does not.
+fn print_retired(registry: &Registry) -> usize {
+    let retired: Vec<&Entry> = registry.entries.iter().filter(|e| is_retired(e)).collect();
+    if retired.is_empty() {
+        return 0;
+    }
+    println!("{}", "Retired".bold());
+    for entry in &retired {
+        println!(
+            "  {}  {}",
+            format!("^{}", entry.record.handle).dimmed(),
+            entry.disposition.reason().unwrap_or("retired").dimmed()
+        );
+        println!("    {}", entry.record.record.statement.dimmed());
+        println!("    {}", entry.record.source.dimmed());
+    }
+    println!();
+    retired.len()
+}
+
 /// Every record that is loaded and not steering, with the reason. Returns the count.
 ///
 /// This is the exit-code signal rather than the finding count, because the two do not
@@ -235,11 +329,7 @@ fn print_probes(registry: &Registry, cache: &SweepCache) {
 /// Counting findings alone reported "everything is believed" while printing
 /// "1 refuted" three lines above it.
 fn print_blocked(registry: &Registry) -> usize {
-    let blocked: Vec<&stella_core::records::Entry> = registry
-        .entries
-        .iter()
-        .filter(|entry| !entry.disposition.is_selected())
-        .collect();
+    let blocked: Vec<&Entry> = registry.entries.iter().filter(|e| is_blocking(e)).collect();
     if blocked.is_empty() {
         return 0;
     }
@@ -379,6 +469,10 @@ impl RecordRow {
 #[derive(Debug, Serialize)]
 struct Report {
     blocking: usize,
+    /// Loaded, not steering, and that is the finished state somebody asked for.
+    /// Counted separately from `blocking` so a consumer can tell "one record is
+    /// broken" from "one record was retired" without re-deriving the rule.
+    retired: usize,
     warnings: usize,
     supported: usize,
     refuted: usize,
@@ -419,11 +513,8 @@ impl Report {
                 .count()
         };
         Self {
-            blocking: registry
-                .entries
-                .iter()
-                .filter(|entry| !entry.disposition.is_selected())
-                .count(),
+            blocking: registry.entries.iter().filter(|e| is_blocking(e)).count(),
+            retired: registry.entries.iter().filter(|e| is_retired(e)).count(),
             warnings: findings
                 .iter()
                 .filter(|(_, finding)| finding.severity() == Severity::Warning)

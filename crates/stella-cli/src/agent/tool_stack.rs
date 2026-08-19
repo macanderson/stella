@@ -316,4 +316,152 @@ mod tests {
             ToolOutput::Error { .. }
         ));
     }
+
+    /// A scripted MCP transport: one tool, one canned `tools/call` answer,
+    /// and a record of whether the wire call was ever made. Written here
+    /// rather than borrowed from `stella-mcp`'s own testkit, which is
+    /// `#[cfg(test)]`-private to that crate; `Transport` is the public seam.
+    struct CannedTransport {
+        called: Arc<std::sync::Mutex<bool>>,
+    }
+
+    #[async_trait]
+    impl stella_mcp::Transport for CannedTransport {
+        async fn request(
+            &self,
+            method: &str,
+            _params: Value,
+        ) -> Result<Value, stella_mcp::McpError> {
+            match method {
+                "initialize" => Ok(json!({ "protocolVersion": "2025-06-18" })),
+                "tools/list" => Ok(json!({
+                    "tools": [{ "name": "deploy", "inputSchema": { "type": "object" } }]
+                })),
+                "tools/call" => {
+                    *self.called.lock().unwrap() = true;
+                    Ok(json!({ "content": [{ "type": "text", "text": "deployed" }] }))
+                }
+                other => Err(stella_mcp::McpError::Transport(format!("no {other}"))),
+            }
+        }
+        async fn notify(&self, _m: &str, _p: Value) -> Result<(), stella_mcp::McpError> {
+            Ok(())
+        }
+        async fn close(&self) -> Result<(), stella_mcp::McpError> {
+            Ok(())
+        }
+    }
+
+    /// One `.stella/tools/*.toml` script tool named `my_tool`, whose script
+    /// touches `ran.marker` — so "did it run" is a fact about the process,
+    /// not about the text that came back.
+    fn script_tool(root: &std::path::Path) -> stella_tools::custom::CustomTool {
+        use std::os::unix::fs::PermissionsExt;
+        let path = root.join("s.sh");
+        std::fs::write(&path, "#!/bin/sh\ntouch ./ran.marker\necho ran\n").unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        stella_tools::custom::CustomTool {
+            name: "my_tool".into(),
+            description: "d".into(),
+            command: vec!["./s.sh".into()],
+            timeout_ms: 5_000,
+            input_schema: json!({ "type": "object" }),
+            env: Default::default(),
+            source: path,
+            foundry: None,
+            claimed_read_only: false,
+            claimed_risk: None,
+            claimed_idempotent: false,
+            output_schema: None,
+            contributed_by: None,
+        }
+    }
+
+    /// **The #2793 witness, through the *shipped* composition.**
+    ///
+    /// The session chain is `GatedToolSet → PolicyToolSet → CustomToolSet →
+    /// McpToolSet → ToolRegistry`, and the two middle layers each dispatch
+    /// names of their own that never reach the registry — so the registry's
+    /// `tool.call.requested` chain never saw them. An extension policy could
+    /// deny a built-in and be silently ignored for an MCP tool or a
+    /// `.stella/tools/*.toml` script with the same effect.
+    ///
+    /// Asserted through `session_stack_with_gate` — the assembly every driver
+    /// calls — rather than a hypothetical stack, for the same reason as the
+    /// forwarding witnesses in `subagent/tests.rs`: a future decorator
+    /// inserted into the real chain that forgets to forward `dispatch_gate`
+    /// fails here, and nowhere else.
+    #[tokio::test]
+    async fn the_production_tool_stack_gates_mcp_and_custom_dispatches() {
+        use stella_core::bus::{HookBus, HookDecision, names as hook_names};
+
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(stella_tools::registry::ToolRegistry::new(
+            dir.path().to_path_buf(),
+        ));
+        let bus = HookBus::new("gate-2793");
+        bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, |event| {
+            match event.payload["tool"].as_str() {
+                Some("mcp__vendor__deploy") | Some("my_tool") => {
+                    HookDecision::Deny("denied by the extension policy".into())
+                }
+                _ => HookDecision::Allow,
+            }
+        })
+        .detach();
+        registry.attach_bus(bus);
+
+        let called = Arc::new(std::sync::Mutex::new(false));
+        let mut client = stella_mcp::McpClient::new(
+            "vendor",
+            Box::new(CannedTransport {
+                called: called.clone(),
+            }),
+        );
+        client.initialize().await.unwrap();
+        let mcp = stella_mcp::McpToolSet::from_clients(vec![client])
+            .wrapping(registry.clone() as Arc<dyn ToolExecutor>);
+
+        let stack = session_stack_with_gate(
+            &mcp,
+            vec![script_tool(dir.path())],
+            dir.path().to_path_buf(),
+            ToolPolicy::allow_all(),
+            session_gate(),
+            Principal::User,
+        );
+
+        for tool in ["mcp__vendor__deploy", "my_tool"] {
+            match stack.execute(tool, &json!({})).await {
+                ToolOutput::Error { message, .. } => assert!(
+                    message.contains("denied by the extension policy"),
+                    "`{tool}`: {message}"
+                ),
+                ToolOutput::Ok { content, .. } => {
+                    panic!("`{tool}` was denied by policy and ran anyway: {content}")
+                }
+            }
+        }
+        assert!(
+            !*called.lock().unwrap(),
+            "the MCP refusal must stop the wire call"
+        );
+        assert!(
+            !dir.path().join("ran.marker").exists(),
+            "the custom-tool refusal must stop the script"
+        );
+
+        // Anti-vacuity: this exact stack runs a name the policy allows, so
+        // the two refusals above are the policy's doing and not the stack
+        // being broken.
+        assert!(
+            matches!(
+                stack.execute("task_list", &json!({})).await,
+                ToolOutput::Ok { .. }
+            ),
+            "an allowed call must still run through the same stack"
+        );
+    }
 }

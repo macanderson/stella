@@ -51,7 +51,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::mcp_usage::{McpUsageLedger, McpUsageRecord, push_usage};
-use stella_core::ports::ToolExecutor;
+use stella_core::ports::{DispatchAdmission, ToolExecutor, admit_dispatch};
 use stella_protocol::{ToolOutput, ToolSchema};
 
 use crate::client::{McpClient, McpToolInfo, ServerHealth};
@@ -816,6 +816,38 @@ impl McpToolSet {
         mcp.sort_by(|a, b| a.name.cmp(&b.name));
         mcp
     }
+
+    /// Answer one `mcp__…` name from this set's own arms: a routed server
+    /// call, the synthetic needs-auth placeholder, a synthetic resource tool,
+    /// or the miss. Split out of `execute` so the gate above wraps every arm
+    /// at one place instead of once per arm.
+    async fn dispatch_namespaced(&self, name: &str, input: &Value) -> ToolOutput {
+        if let Some((idx, raw_tool)) = self.routes.get(name) {
+            let client = &self.clients[*idx];
+            if self.is_disabled(client.name()) {
+                return ToolOutput::error(format!(
+                    "mcp server `{}` is disabled for this session — tool `{name}` unavailable",
+                    client.name()
+                ));
+            }
+            return self.execute_mcp(client, raw_tool, input).await;
+        }
+        // The synthetic needs-auth tool (#2687): answered locally — there is
+        // no connection to the suppressed server to route anything over.
+        if let Some(output) = needs_auth::route(self, name) {
+            return output;
+        }
+        // The synthetic resource tools (#2678): not in the routing map, but
+        // they do drive a wire call on the named server's live client.
+        if let Some(output) = resources::route(self, name, input).await {
+            return output;
+        }
+        // A namespaced name we don't recognize is an MCP miss, not a native
+        // tool — never fall through to native for it.
+        ToolOutput::error(format!(
+            "unknown MCP tool `{name}` — not advertised by any connected server"
+        ))
+    }
 }
 
 #[async_trait]
@@ -874,33 +906,27 @@ impl ToolExecutor for McpToolSet {
         contracts
     }
 
+    /// An `mcp__…` name is dispatched HERE — over a server's wire, or by one
+    /// of the synthetic tools — and never through the native executor, so the
+    /// native layer's blocking policy chain and approval flow would never see
+    /// it. That was #2793: a gated built-in asked a human, an MCP tool with
+    /// the same effect did not. The shared gate closes it, keyed on the
+    /// namespace prefix rather than on a list of the local dispatch arms:
+    /// every name this set answers is a [`wire_name`], synthetic ones
+    /// included, so a future synthetic family is covered the day it is added.
+    ///
+    /// A plain (native) name is deliberately NOT gated here — it falls
+    /// through to an executor that gates it itself, and gating twice would
+    /// ask a human twice for one call.
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
-        if let Some((idx, raw_tool)) = self.routes.get(name) {
-            let client = &self.clients[*idx];
-            if self.is_disabled(client.name()) {
-                return ToolOutput::error(format!(
-                    "mcp server `{}` is disabled for this session — tool `{name}` unavailable",
-                    client.name()
-                ));
-            }
-            return self.execute_mcp(client, raw_tool, input).await;
-        }
-        // The synthetic needs-auth tool (#2687): answered locally — there is
-        // no connection to the suppressed server to route anything over.
-        if let Some(output) = needs_auth::route(self, name) {
-            return output;
-        }
-        // The synthetic resource tools (#2678): not in the routing map, but
-        // they do drive a wire call on the named server's live client.
-        if let Some(output) = resources::route(self, name, input).await {
-            return output;
-        }
-        // A namespaced name we don't recognize is an MCP miss, not a native
-        // tool — never fall through to native for it.
         if name.starts_with(NS_PREFIX) {
-            return ToolOutput::error(format!(
-                "unknown MCP tool `{name}` — not advertised by any connected server"
-            ));
+            let admitted = admit_dispatch(self.dispatch_gate(), name, input).await;
+            let input = match &admitted {
+                DispatchAdmission::Admit => input,
+                DispatchAdmission::AmendedInput(amended) => amended,
+                DispatchAdmission::Refuse(refusal) => return refusal.clone(),
+            };
+            return self.dispatch_namespaced(name, input).await;
         }
         match &self.native {
             Some(native) => native.execute(name, input).await,
@@ -908,6 +934,14 @@ impl ToolExecutor for McpToolSet {
                 "unknown tool `{name}` (no native tools configured)"
             )),
         }
+    }
+
+    /// Forwarded from the native layer, which is where the base of the chain
+    /// — and so the gate — lives. Letting the `None` default stand would
+    /// un-gate every custom tool dispatched by a `CustomToolSet` composed
+    /// over this set, which is the shipped session order (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.native.as_ref().and_then(|n| n.dispatch_gate())
     }
 
     /// Forwarded: this is a decorator, and a decorator that let the default
@@ -1006,6 +1040,15 @@ impl ToolExecutor for CandidateMcpView {
             };
         }
         self.native.execute(name, input).await
+    }
+
+    /// Forwarded from the candidate's own `native` layer — the registry
+    /// rooted in the candidate's snapshot, which is the base a
+    /// `CustomToolSet` composed over this view dispatches against (#2793).
+    /// This view dispatches no name itself: an allowlisted `mcp__…` call goes
+    /// through `inner`, which gates it against the session's own base.
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.native.dispatch_gate()
     }
 
     /// Forwarded: this is a decorator, and a decorator that let the default

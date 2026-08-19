@@ -154,11 +154,11 @@ mod tests {
 
     fn request() -> ApprovalRequest {
         ApprovalRequest {
-            tool: "task".into(),
+            tool: "delegate".into(),
             read_only: false,
             reason: "spawns need a human".into(),
             gate: "tool.call.requested".into(),
-            subject: Some("task: refactor the parser".into()),
+            subject: Some("delegate: refactor the parser".into()),
         }
     }
 
@@ -217,8 +217,8 @@ mod tests {
         let responder = AskUserApprovalResponder::new(Box::new(ScriptedIo::new(vec!["1"])));
         let _ = responder.respond(&request()).await;
         let question = AskUserApprovalResponder::question(&request());
-        assert!(question.contains("task"));
-        assert!(question.contains("task: refactor the parser"));
+        assert!(question.contains("delegate"));
+        assert!(question.contains("delegate: refactor the parser"));
         assert!(question.contains("spawns need a human"));
     }
 }

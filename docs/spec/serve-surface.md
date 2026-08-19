@@ -195,7 +195,7 @@ know:
 ```
 
 With this and the operator's policy both saying yes, the turn's tool list
-gains `task`: the model delegates a self-contained research question to a
+gains `delegate`: the model hands a self-contained research question to a
 child that investigates and returns one paragraph. The child's forty tool
 results never enter the parent's transcript.
 
@@ -204,7 +204,7 @@ results never enter the parent's transcript.
   `provider_id`), its tool calls are `tool_request` frames. The sidecar still
   executes nothing.
 - **A child cannot write, and cannot spawn a child.** Children run behind
-  `ReadOnlyTools`, and `task` is not in the view a child gets, so nesting is
+  `ReadOnlyTools`, and `delegate` is not in the view a child gets, so nesting is
   capped at one level by construction rather than by a counter.
 - **The operator caps everything the caller may set.** `ServeConfig::sub_agents`
   (a `SubAgentPolicy`) decides whether children are allowed at all — **off by

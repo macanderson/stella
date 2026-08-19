@@ -183,6 +183,13 @@ impl ToolExecutor for CandidateTaskTap {
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()
     }
+
+    /// Forwarded: this tap mirrors task events, it dispatches no name of its
+    /// own, and a `None` here would un-gate a candidate's custom tools
+    /// (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.dispatch_gate()
+    }
 }
 
 #[cfg(test)]

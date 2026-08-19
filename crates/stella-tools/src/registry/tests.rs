@@ -135,7 +135,7 @@ fn the_subagent_spawn_tool_is_the_only_parallel_safe_builtin() {
     let names = ToolExecutor::parallel_safe_names(&reg);
     assert_eq!(
         names,
-        std::collections::HashSet::from(["task".to_string()]),
+        std::collections::HashSet::from(["delegate".to_string()]),
         "parallel_safe is a per-tool construction argument, not a default"
     );
 }

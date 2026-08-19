@@ -259,7 +259,7 @@ async fn an_unmet_goal_stops_at_the_round_cap_with_a_named_reason() {
 }
 
 /// #1297 acceptance, sub-agent half: with the operator's policy allowing it,
-/// a served turn advertises `task`, a child runs on the same remoted ports,
+/// a served turn advertises `delegate`, a child runs on the same remoted ports,
 /// and only the child's *finding* crosses back into the parent's transcript.
 ///
 /// The child's own model call is a `provider_request` like any other — the
@@ -292,8 +292,8 @@ async fn a_served_turn_can_delegate_to_a_sub_agent() {
 
     let mut parent_calls = 0usize;
     let mut child_calls = 0usize;
-    let mut saw_task_schema = false;
-    let mut child_saw_task_schema = false;
+    let mut saw_delegate_schema = false;
+    let mut child_saw_delegate_schema = false;
     let mut outcome = None;
 
     while let Some(frame) = session.next_frame().await {
@@ -307,15 +307,15 @@ async fn a_served_turn_can_delegate_to_a_sub_agent() {
                 let names: Vec<&str> = request.tools.iter().map(|t| t.name.as_str()).collect();
                 let result = if provider_id == "child-model" {
                     child_calls += 1;
-                    child_saw_task_schema |= names.contains(&"task");
+                    child_saw_delegate_schema |= names.contains(&"delegate");
                     answer("retries use exponential backoff, capped at 5 attempts")
                 } else {
                     parent_calls += 1;
-                    saw_task_schema |= names.contains(&"task");
+                    saw_delegate_schema |= names.contains(&"delegate");
                     if parent_calls == 1 {
                         wants_tool(
                             "call-1",
-                            "task",
+                            "delegate",
                             json!({
                                 "description": "find retry policy",
                                 "prompt": "How does the retry policy work?"
@@ -331,8 +331,8 @@ async fn a_served_turn_can_delegate_to_a_sub_agent() {
                 request_id, name, ..
             } => {
                 assert_ne!(
-                    name, "task",
-                    "`task` is executed by the engine, never remoted to the host"
+                    name, "delegate",
+                    "`delegate` is executed by the engine, never remoted to the host"
                 );
                 session
                     .resolve_tool(
@@ -350,13 +350,13 @@ async fn a_served_turn_can_delegate_to_a_sub_agent() {
     }
 
     assert!(
-        saw_task_schema,
-        "an opted-in turn must advertise `task`, or the model cannot delegate"
+        saw_delegate_schema,
+        "an opted-in turn must advertise `delegate`, or the model cannot delegate"
     );
     assert_eq!(child_calls, 1, "the child ran on the remoted provider port");
     assert!(
-        !child_saw_task_schema,
-        "a child must not see `task`: nesting is capped at one level by construction, not by \
+        !child_saw_delegate_schema,
+        "a child must not see `delegate`: nesting is capped at one level by construction, not by \
          a depth counter"
     );
     assert_eq!(parent_calls, 2, "the parent called again with the finding");
@@ -368,7 +368,7 @@ async fn a_served_turn_can_delegate_to_a_sub_agent() {
 /// exists. A capability that spends money on the host's account must not be
 /// reachable by a request body alone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_deployment_that_has_not_opted_in_advertises_no_task_tool() {
+async fn a_deployment_that_has_not_opted_in_advertises_no_delegate_tool() {
     assert!(
         SubAgentPolicy::default()
             .clamp(SubAgentRequest {
@@ -380,7 +380,7 @@ async fn a_deployment_that_has_not_opted_in_advertises_no_task_tool() {
     );
 
     let mut session = Session::start(base_spec("do the thing"));
-    let mut advertised_task = false;
+    let mut advertised_delegate = false;
     while let Some(frame) = session.next_frame().await {
         if let ServerFrame::ProviderRequest {
             request_id,
@@ -388,14 +388,14 @@ async fn a_deployment_that_has_not_opted_in_advertises_no_task_tool() {
             ..
         } = frame
         {
-            advertised_task |= request.tools.iter().any(|t| t.name == "task");
+            advertised_delegate |= request.tools.iter().any(|t| t.name == "delegate");
             session
                 .resolve_provider(&request_id, answer("done"))
                 .unwrap();
         }
     }
     assert!(
-        !advertised_task,
-        "a turn with no sub-agent grant must not advertise `task`"
+        !advertised_delegate,
+        "a turn with no sub-agent grant must not advertise `delegate`"
     );
 }

@@ -145,6 +145,22 @@ fn reserved_names_are_rejected() {
     }
 }
 
+/// #3237: a name Stella once dispatched and retired is refused too. The
+/// catalog stopped reserving it the moment the row was deleted, so a manifest
+/// could claim `run_tests` or `graph_query` and inherit the model's priors
+/// about the built-in that used to answer to it.
+#[test]
+fn retired_builtin_names_are_rejected() {
+    for retired in crate::catalog::RETIRED_TOOL_NAMES
+        .iter()
+        .chain(crate::catalog::RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN)
+    {
+        let src = format!("name = \"{retired}\"\ndescription = \"d\"\ncommand = [\"./x.sh\"]");
+        let err = parse_manifest(&src, Path::new("t.toml")).unwrap_err();
+        assert!(err.contains("retired"), "retired `{retired}` -> {err}");
+    }
+}
+
 #[test]
 fn timeout_defaults_when_omitted_and_clamps_over_cap() {
     let base = "name = \"tt\"\ndescription = \"d\"\ncommand = [\"./x.sh\"]";
@@ -1120,4 +1136,206 @@ fn a_manifest_cannot_claim_to_have_been_shipped_by_a_plugin() {
     )
     .expect("unknown fields are ignored, as they always have been");
     assert_eq!(tool.contributed_by, None);
+}
+
+// the shared dispatch gate (#2793)
+
+/// A registry whose `tool.call.requested` chain answers `decision` for
+/// `gated_name` and allows everything else, plus a script tool of that name
+/// that touches `ran.marker` when it runs. The marker is the assertion that
+/// matters: a refusal has to stop the *process*, not merely relabel its
+/// output.
+fn gated_fixture(
+    dir: &Path,
+    gated_name: &str,
+    decision: stella_core::bus::HookDecision,
+) -> (crate::registry::ToolRegistry, CustomTool) {
+    use stella_core::bus::{HookBus, names as hook_names};
+
+    let mut tool = script_tool(
+        dir,
+        "s.sh",
+        "#!/bin/sh\ntouch ./ran.marker\necho ran\n",
+        5000,
+    );
+    tool.name = gated_name.to_string();
+
+    let registry = crate::registry::ToolRegistry::new(dir.to_path_buf());
+    let bus = HookBus::new("custom-gate-test");
+    let gated_name = gated_name.to_string();
+    bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, move |event| {
+        if event.payload["tool"] == gated_name.as_str() {
+            decision.clone()
+        } else {
+            stella_core::bus::HookDecision::Allow
+        }
+    })
+    .detach();
+    registry.attach_bus(bus);
+    (registry, tool)
+}
+
+fn script_ran(dir: &Path) -> bool {
+    dir.join("ran.marker").exists()
+}
+
+/// **The #2793 witness (custom half).** A custom tool is dispatched by
+/// [`CustomToolSet`] itself and never reaches the registry, so before the
+/// shared gate the registry's `tool.call.requested` chain never saw it: an
+/// extension policy could deny a built-in and be silently ignored for a
+/// `.stella/tools/*.toml` script with the same effect.
+#[tokio::test]
+async fn a_policy_deny_stops_a_custom_tool_before_its_script_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (registry, tool) = gated_fixture(
+        dir.path(),
+        "my_tool",
+        stella_core::bus::HookDecision::Deny("custom tools are off here".into()),
+    );
+    let set = CustomToolSet::new(&registry, vec![tool], dir.path().to_path_buf());
+
+    match set.execute("my_tool", &serde_json::json!({})).await {
+        ToolOutput::Error { message, .. } => {
+            assert!(message.contains("custom tools are off here"), "{message}");
+        }
+        ToolOutput::Ok { content, .. } => panic!("a denied custom tool must not run: {content}"),
+    }
+    assert!(
+        !script_ran(dir.path()),
+        "the refusal must stop the process, not just relabel its output"
+    );
+}
+
+/// The approval half of the same seam (#2676): a `RequireApproval` on a
+/// custom tool reaches the session's responder — the asymmetry that made the
+/// gap user-visible was a gated built-in asking a human while a script tool
+/// with the same effect did not.
+#[tokio::test]
+async fn a_custom_tool_needing_approval_asks_the_sessions_responder() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Answering {
+        answer: crate::registry::approval::ApprovalResponse,
+        asked: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl crate::registry::approval::ApprovalResponder for Answering {
+        async fn respond(
+            &self,
+            request: &crate::registry::approval::ApprovalRequest,
+        ) -> crate::registry::approval::ApprovalResponse {
+            assert_eq!(request.tool, "my_tool", "the card names the custom tool");
+            self.asked.fetch_add(1, Ordering::SeqCst);
+            self.answer.clone()
+        }
+    }
+
+    for (answer, expect_ran) in [
+        (
+            crate::registry::approval::ApprovalResponse::Deny {
+                reason: "not this one".into(),
+            },
+            false,
+        ),
+        (crate::registry::approval::ApprovalResponse::Approve, true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let (registry, tool) = gated_fixture(
+            dir.path(),
+            "my_tool",
+            stella_core::bus::HookDecision::RequireApproval {
+                reason: "scripts need a human".into(),
+            },
+        );
+        let responder = std::sync::Arc::new(Answering {
+            answer,
+            asked: AtomicUsize::new(0),
+        });
+        registry.attach_approval_responder(responder.clone(), Duration::from_secs(5));
+        let set = CustomToolSet::new(&registry, vec![tool], dir.path().to_path_buf());
+
+        let out = set.execute("my_tool", &serde_json::json!({})).await;
+        assert_eq!(
+            responder.asked.load(Ordering::SeqCst),
+            1,
+            "the human is asked exactly once per call"
+        );
+        assert_eq!(
+            script_ran(dir.path()),
+            expect_ran,
+            "the human's answer decides whether the script runs: {out:?}"
+        );
+    }
+}
+
+/// A `modify` decision rewrites the input a custom tool actually runs on,
+/// exactly as it does for a built-in — the gate returns the amended input,
+/// and the dispatch must use it rather than the original.
+#[tokio::test]
+async fn a_modify_decision_rewrites_the_input_a_custom_tool_receives() {
+    let dir = tempfile::tempdir().unwrap();
+    let (registry, _) = gated_fixture(
+        dir.path(),
+        "my_tool",
+        stella_core::bus::HookDecision::Modify {
+            payload: serde_json::json!({
+                "tool": "my_tool",
+                "input": { "path": "rewritten" },
+            }),
+        },
+    );
+    // Echo the scalar the harness exports, so the amended input is visible.
+    let mut tool = script_tool(
+        dir.path(),
+        "s.sh",
+        "#!/bin/sh\necho \"saw=$STELLA_INPUT_PATH\"\n",
+        5000,
+    );
+    tool.name = "my_tool".into();
+    let set = CustomToolSet::new(&registry, vec![tool], dir.path().to_path_buf());
+
+    match set
+        .execute("my_tool", &serde_json::json!({ "path": "original" }))
+        .await
+    {
+        ToolOutput::Ok { content, .. } => {
+            assert!(content.contains("saw=rewritten"), "{content}");
+        }
+        ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
+    }
+}
+
+/// The other side of the contract: a name this set does NOT own falls
+/// through ungated *here*, because the inner executor gates it itself. Gating
+/// in both places would fire the chain twice for one call — and, once a
+/// `RequireApproval` is in play, ask a human twice.
+#[tokio::test]
+async fn a_name_that_falls_through_is_gated_exactly_once() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use stella_core::bus::{HookBus, HookDecision, names as hook_names};
+
+    let dir = tempfile::tempdir().unwrap();
+    let registry = crate::registry::ToolRegistry::new(dir.path().to_path_buf());
+    let bus = HookBus::new("once-test");
+    let seen = Arc::new(AtomicUsize::new(0));
+    let counter = seen.clone();
+    bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, move |_| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        HookDecision::Allow
+    })
+    .detach();
+    registry.attach_bus(bus);
+
+    let tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho hi\n", 5000);
+    let set = CustomToolSet::new(&registry, vec![tool], dir.path().to_path_buf());
+
+    let out = set.execute("task_list", &serde_json::json!({})).await;
+    assert!(!out.is_error(), "{out:?}");
+    assert_eq!(
+        seen.load(Ordering::SeqCst),
+        1,
+        "a fall-through must not run the chain twice"
+    );
 }

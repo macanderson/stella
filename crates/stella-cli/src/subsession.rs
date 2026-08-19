@@ -652,7 +652,7 @@ async fn run_worker(
     // handle either way would leak both.
     let registry = Arc::new(crate::write_dirs::registry_for(cfg));
     // A worker lane delegates research like any other turn. Without this the
-    // `task` tool is still advertised (the registry registers it
+    // `delegate` tool is still advertised (the registry registers it
     // unconditionally) and answers "sub-agents are unavailable" every time —
     // and the lane's pause gate, published below, would have nothing to reach.
     if let Err(error) = crate::subagent::install_for_session(cfg, &registry) {

@@ -93,7 +93,7 @@ guard, a contract could reach `SYSTEM_PROMPT` only and be invisible to
 ```text
 The schemas are the reference for your tools; this is how they fit together.
 
-Your built-in tools are coordination and session state: the task board (task_create, task_list, task_start, task_complete, task_cancel, task_assign) tracks multi-step work, task delegates a subtask to a sub-agent, the scratch state plane (save_state, get_state, list_state, delete_state) holds intermediate notes and data between steps, and get_environment reports the platform facts. Every other capability — reading and editing files, running commands, reaching the network — arrives as an MCP or custom tool in your schema list; use exactly what is advertised and never assume a capability no schema names.
+Your built-in tools are coordination and session state: the task board (task_create, task_list, task_start, task_complete, task_cancel, task_assign) tracks multi-step work, delegate hands a self-contained subtask to a sub-agent, the scratch state plane (save_state, get_state, list_state, delete_state) holds intermediate notes and data between steps, and get_environment reports the platform facts. Every other capability — reading and editing files, running commands, reaching the network — arrives as an MCP or custom tool in your schema list; use exactly what is advertised and never assume a capability no schema names.
 
 Read a file before you edit it. Send independent tool calls together in one response; sequence calls only when one needs another's result. Within one response, put reads first and mutations last: the engine runs consecutive read-only calls concurrently and can start leading reads while the response is still streaming, while a mutating call runs alone, in call order, and nothing after it starts early. Ordering changes speed, never meaning. Keep intermediate notes and working data in the scratch state plane, never as files in the workspace: leave no backups, copies, or debug artifacts behind. A file the task asked for is a deliverable, not scratch.
 ```
@@ -307,7 +307,7 @@ path exists to replace — so prepending it would re-arm exactly the behaviour
 worker's `effort` is excluded for the same kind of reason: it would displace
 the pinned `Low` above, buying deliberation for a greeting.
 
-## Sub-agent children (`task` tool)
+## Sub-agent children (`delegate` tool)
 
 A worker can delegate a bounded research question to a read-only child
 (`crates/stella-tools/src/subagent.rs`), capped at `MAX_STEPS` = 16 model calls

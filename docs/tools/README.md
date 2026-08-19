@@ -23,6 +23,7 @@ One field remains a stated absence rather than a value, because inventing it wou
 | Tool | Category | Availability | Read-only | Speculation-safe | Observed example |
 |---|---|---|---|---|---|
 | [`bash`](bash.toml) | shell | always | no | no | none observed |
+| [`delegate`](delegate.toml) | task | always | no | no | none observed |
 | [`delete_file`](delete_file.toml) | file | always | no | no | none observed |
 | [`delete_state`](delete_state.toml) | scratch | always | no | no | none observed |
 | [`edit_file`](edit_file.toml) | file | always | no | no | none observed |
@@ -32,7 +33,6 @@ One field remains a stated absence rather than a value, because inventing it wou
 | [`read_file`](read_file.toml) | file | always | yes | yes | none observed |
 | [`save_state`](save_state.toml) | scratch | always | no | no | none observed |
 | [`search`](search.toml) | search | always | yes | no | none observed |
-| [`task`](task.toml) | task | always | no | no | none observed |
 | [`task_assign`](task_assign.toml) | task | always | no | no | none observed |
 | [`task_cancel`](task_cancel.toml) | task | always | no | no | none observed |
 | [`task_complete`](task_complete.toml) | task | always | no | no | yes |

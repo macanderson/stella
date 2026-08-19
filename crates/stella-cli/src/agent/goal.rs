@@ -9,7 +9,8 @@
 use super::*;
 
 /// The session task board, tool by tool — everything the catalog files under
-/// the `task` group *except* the delegation tool that shares the group name.
+/// the `task` group *except* `delegate`, the sub-agent delegation tool that
+/// shares the group.
 ///
 /// See [`bare_loop_config`]'s `# Blast radius` for why this is a name list and
 /// not the one-line group key, and for the catalog assertion that keeps it
@@ -46,9 +47,9 @@ const WITHHELD_BOARD_TOOLS: [&str; 6] = [
 ///
 /// The switch names the six board tools one at a time, and deliberately not
 /// the `task` **group** key #2410 shipped: the catalog files sub-agent
-/// delegation — the tool literally named `task` — in that same group, so the
-/// group key took delegation with the board and the bare loop could not spawn
-/// a child at all.
+/// delegation — `delegate`, which was itself named `task` until #3192 — in
+/// that same group, so the group key took delegation with the board and the
+/// bare loop could not spawn a child at all.
 ///
 /// That was collateral, not a decision, and #2580 settled it that way: the
 /// measurement above, #2410's prose, its reviewer-facing behaviour-change note
@@ -1183,6 +1184,13 @@ impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
     fn live_services(&self) -> Vec<stella_core::LiveService> {
         self.inner.live_services()
     }
+
+    /// Forwarded: a narrower allowlist is not a narrower policy plane. This
+    /// view dispatches no name of its own, so the gate it hands back is the
+    /// inner stack's (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.dispatch_gate()
+    }
 }
 
 #[cfg(test)]
@@ -1236,7 +1244,7 @@ mod bare_loop_board_tests {
     /// Sub-agent delegation survives the board's withdrawal.
     ///
     /// #2410 narrowed with the `task` **group** key, and the catalog files
-    /// delegation — the tool named `task` — in that group, so the bare loop
+    /// delegation — `delegate` — in that group, so the bare loop
     /// silently lost the capability too. #2580 settled that as collateral
     /// rather than a decision: the evidence for withholding the board is about
     /// bookkeeping that reads nothing and changes nothing, and reaches no
@@ -1245,7 +1253,7 @@ mod bare_loop_board_tests {
     fn withholding_the_board_leaves_sub_agent_delegation_alone() {
         let policy = bare_loop_policy(ToolPolicy::allow_all());
         assert!(
-            policy.allows("task"),
+            policy.allows("delegate"),
             "sub-agent delegation shares the board's group but not its rationale"
         );
     }
@@ -1262,7 +1270,7 @@ mod bare_loop_board_tests {
     fn the_withheld_list_is_the_whole_board_minus_delegation() {
         let expected: Vec<&str> = stella_tools::catalog::CATALOG
             .iter()
-            .filter(|entry| entry.group == "task" && entry.name != "task")
+            .filter(|entry| entry.group == "task" && entry.name != "delegate")
             .map(|entry| entry.name)
             .collect();
         let mut withheld = WITHHELD_BOARD_TOOLS.to_vec();
@@ -1311,7 +1319,7 @@ mod bare_loop_board_tests {
     fn an_operator_who_denied_the_task_group_keeps_delegation_denied() {
         let policy = bare_loop_policy(ToolPolicy::from_switches([("task".to_string(), false)]));
         assert!(
-            !policy.allows("task"),
+            !policy.allows("delegate"),
             "the operator's group denial covers delegation and must survive"
         );
         assert!(
@@ -1364,7 +1372,7 @@ mod verifier_tools_tests {
             .map(|schema| schema.name)
             .collect();
         assert_eq!(names, vec!["task_list", "get_state"]);
-        for denied in ["mcp__srv__read", "save_state", "task"] {
+        for denied in ["mcp__srv__read", "save_state", "delegate"] {
             assert!(
                 scoped
                     .execute(denied, &serde_json::json!({}))

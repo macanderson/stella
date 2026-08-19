@@ -6,7 +6,7 @@
 //!
 //! The dispatch scheduler groups consecutive *read-only* calls and makes
 //! every other call its own barrier — which silently serialized sibling
-//! `task` calls, because the spawn tool is honestly not `read_only` (the
+//! `delegate` calls, because the spawn tool is honestly not `read_only` (the
 //! flag is load-bearing for the child nesting fence). The CLI dispatcher
 //! was built for concurrent siblings (thread per child, snapshot-carve,
 //! delta settle), so the concurrency it protected was unreachable from the
@@ -39,7 +39,7 @@ impl Sleeper for NoopSleeper {
     async fn sleep(&self, _duration_ms: u64) {}
 }
 
-/// First call: one step carrying two sibling `task` calls. Second call: done.
+/// First call: one step carrying two sibling `delegate` calls. Second call: done.
 struct TwoSpawnsThenDone {
     calls: std::sync::atomic::AtomicU32,
 }
@@ -85,7 +85,7 @@ impl Provider for TwoSpawnsThenDone {
     }
 }
 
-/// A `task`-shaped executor whose calls rendezvous on a barrier: the step
+/// A `delegate`-shaped executor whose calls rendezvous on a barrier: the step
 /// completes only when both spawns are in flight at the same time. The
 /// schema is honestly `read_only: false` (the real spawn tool's posture);
 /// the concurrency claim rides `parallel_safe_names`, exactly as the real
@@ -140,7 +140,7 @@ async fn sibling_task_calls_in_one_step_execute_concurrently() {
     )
     .await
     .expect(
-        "two sibling task calls in one step must run concurrently — a scheduler \
+        "two sibling delegate calls in one step must run concurrently — a scheduler \
          that serializes non-read-only calls deadlocks on the barrier",
     );
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));

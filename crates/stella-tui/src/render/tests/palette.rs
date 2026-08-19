@@ -227,7 +227,7 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
         "get_state",
         "save_state",
         "mcp__github__create_pull_request",
-        "task",
+        "delegate",
     ] {
         assert_eq!(
             name_fg(tool),
@@ -244,7 +244,7 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
     for (a, b) in [
         ("get_state", "save_state"),
         ("save_state", "mcp__github__create_pull_request"),
-        ("mcp__github__create_pull_request", "task"),
+        ("mcp__github__create_pull_request", "delegate"),
     ] {
         assert_ne!(name_fg(a), name_fg(b), "`{a}` and `{b}` must differ");
     }
@@ -309,7 +309,7 @@ fn a_sub_agent_dispatch_is_not_bookkeeping() {
     assert_eq!(
         label.fg,
         Some(crate::tool_class::ToolClass::Delegate.color()),
-        "a dispatch wears the delegation class, like the `task` call that made it"
+        "a dispatch wears the delegation class, like the `delegate` call that made it"
     );
     assert!(
         label.add_modifier.contains(Modifier::BOLD),

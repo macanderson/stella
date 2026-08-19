@@ -17,18 +17,27 @@
 //! because [`ToolPolicy::allows`] resolves both — a skill author writes the
 //! same vocabulary an operator writes in `settings.json`.
 //!
-//! # The intersection is computed per name, never folded into one policy
+//! # The intersection is computed per name
 //!
 //! Enforcement stacks the two answers per concrete tool name
 //! ([`effective_allows`]): the operator's `PolicyToolSet` sits below the
 //! invoke layer and the grant is consulted above it, so a call proceeds only
-//! when **both** allow it — the exact intersection, structurally. A folded
-//! single-policy form (`operator.narrow_with(&grant_policy(...))`) is
-//! deliberately not offered: `narrow_with` resolves raw *keys*, and a group
-//! key like `"scratch"` resolves through `catalog::group_for` as an unknown
-//! tool name into the dynamic `"custom"` group, which can make the folded
-//! policy *wider* than the per-name intersection (#2682 review finding; the
-//! property tests below pin the per-name form instead).
+//! when **both** allow it — the exact intersection, structurally, with no
+//! third object holding a copy of the answer. That is why this module offers
+//! no folded single-policy form: the shape enforcement actually takes is two
+//! layers, and a fold would be a second spelling of a decision the stack
+//! already makes.
+//!
+//! It was also, until #2800, the only *correct* spelling. A folded
+//! `operator.narrow_with(&grant_policy(…))` resolved raw **keys**, and a
+//! group key like `"scratch"` went through `catalog::group_for` as an unknown
+//! tool name into the dynamic `"custom"` group — so a grant naming `custom`
+//! could keep a whole catalog family alive and make the fold *wider* than
+//! this per-name intersection (#2682 review finding, filed as #2800).
+//! [`ToolPolicy::narrow_with`] now expands group keys to their member names
+//! and resolves the two dynamic groups at group level, and its own
+//! `the_fold_is_exactly_the_per_name_intersection` property pins that the two
+//! forms agree. The properties below pin this one.
 //!
 //! Enforcement sites: a session layer that mounts skill invocation holds the
 //! grant for an inline skill's span, and a forked skill's grant is resolved
@@ -186,7 +195,7 @@ mod tests {
             "group entries cover their family"
         );
         assert!(grant.allows("get_state"));
-        assert!(!grant.allows("task"));
+        assert!(!grant.allows("delegate"));
         assert!(!grant.allows("task_create"));
         assert!(!grant.allows("mcp__github__create_issue"));
     }

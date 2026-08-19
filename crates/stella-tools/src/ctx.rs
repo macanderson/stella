@@ -467,7 +467,7 @@ mod tests {
         let (bus, seen) = recording_bus();
         let ctx = ToolCtx::new(
             PathBuf::from("."),
-            "task",
+            "delegate",
             Some(bus),
             vec!["tool.call.progress".into()],
         );
@@ -480,7 +480,7 @@ mod tests {
         let (bus, seen) = recording_bus();
         let ctx = ToolCtx::new(
             PathBuf::from("."),
-            "task",
+            "delegate",
             Some(bus),
             vec!["tool.call.progress".into()],
         );
@@ -488,7 +488,7 @@ mod tests {
         let events = seen.lock().unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, "tool.call.progress");
-        assert_eq!(events[0].1["tool"], "task");
+        assert_eq!(events[0].1["tool"], "delegate");
         assert_eq!(events[0].1["stage"], "dispatched");
     }
 
@@ -505,7 +505,7 @@ mod tests {
         let (bus, seen) = recording_bus();
         let ctx = ToolCtx::new(
             PathBuf::from("."),
-            "task",
+            "delegate",
             Some(bus),
             vec!["tool.call.progress".into()],
         );

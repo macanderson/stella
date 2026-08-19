@@ -435,7 +435,7 @@ fn fixture_tool_policy() -> ToolPolicyState {
             ("get_environment", "environment"),
             ("get_state", "scratch"),
             ("save_state", "scratch"),
-            ("task", "task"),
+            ("delegate", "task"),
             ("task_assign", "task"),
             ("mcp__github__create_issue", "mcp"),
             ("deploy_to_staging", "custom"),

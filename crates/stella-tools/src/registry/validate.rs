@@ -33,7 +33,7 @@
 //!   carry the declared item type ([`InputError::WrongElementType`], which
 //!   names the index).
 //! - **`additionalProperties: false`** — unknown keys are rejected, but
-//!   **only** for schemas that advertise this (the `task` tool,
+//!   **only** for schemas that advertise this (the `delegate` tool,
 //!   foundry-authored tools, custom manifests that opt in).
 //!
 //! # Unknown keys are otherwise ignored — deliberately (#3144)
@@ -377,7 +377,7 @@ mod tests {
         );
     }
 
-    /// `additionalProperties: false` — advertised by the `task` tool — now
+    /// `additionalProperties: false` — advertised by the `delegate` tool — now
     /// rejects unknown keys with a deterministic, sorted refusal. On main
     /// the key was silently ignored and the sub-agent spawned anyway.
     #[tokio::test]
@@ -385,7 +385,7 @@ mod tests {
         let (_root, reg) = registry();
         let out = reg
             .execute(
-                "task",
+                "delegate",
                 &serde_json::json!({
                     "description": "probe",
                     "prompt": "p",
