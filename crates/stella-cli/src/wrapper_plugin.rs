@@ -155,26 +155,17 @@ use crate::{OutputFormat, config::Config};
 /// every door this enum reaches, `--pipeline <variant>` is the sole opt-in,
 /// and `--no-pipeline` is a deprecated no-op kept parseable so no script
 /// breaks the day this ships (see [`resolve`](Self::resolve) and
-/// [`no_pipeline_deprecation_notice`]). Making this a three-way enum rather
-/// than a `bool` plus an `Option<&str>` is what keeps "the staged pipeline
-/// and a plugin both ran" unrepresentable.
+/// [`no_pipeline_deprecation_notice`]). Making this an enum rather than a
+/// `bool` plus an `Option<&str>` is what keeps "two wrappers both ran"
+/// unrepresentable.
+///
+/// A third variant, `Classic`, named the built-in staged pipeline until that
+/// crate was deleted (#3865). It is gone (#3867): `--pipeline classic` is
+/// refused at [`resolve`](Self::resolve) with [`classic_removed_message`], so
+/// there is no longer any input — real or hand-built in a test — that selects
+/// the removed wrapper.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PipelineChoice<'a> {
-    /// The built-in staged pipeline, recorded as `classic`. **Removed**
-    /// (#3865): [`PipelineChoice::resolve`] refuses `--pipeline classic`
-    /// rather than ever producing this variant, so no live path constructs
-    /// it any more — hence the `#[allow]` below, which is accurate
-    /// (dead_code is correct that nothing builds one) rather than a lint
-    /// the project disagrees with. `run_pipeline_one_shot` and the crate's
-    /// classic-typed persistence/outcome plumbing, the two production call
-    /// sites this comment used to name as the reason the variant survived,
-    /// are both gone too (#3865) — the variant now stays declared only for
-    /// the unit tests that construct it directly to exercise the
-    /// unreachable-input arms it feeds (`wrapper_plugin/tests.rs`). Deleting
-    /// it cleanly means touching those tests too, which is why it is a
-    /// separate, tracked cleanup rather than folded into this one: #3867.
-    #[allow(dead_code)]
-    Classic,
     /// The raw step-loop with nothing over it — the default since #3381.
     Raw,
     /// The raw step-loop wrapped by an installed plugin whose `[wrapper] id` is
@@ -211,15 +202,10 @@ impl<'a> PipelineChoice<'a> {
         }
     }
 
-    /// Whether the built-in staged pipeline is the wrapper for this turn.
-    pub(crate) fn is_classic(self) -> bool {
-        matches!(self, Self::Classic)
-    }
-
     /// Whether this turn runs with **nothing** over it.
     ///
     /// The distinction the enterprise process-free authority turns on, and it
-    /// is not the same question as [`Self::is_classic`]: that authority admits
+    /// is not the same question as "no plugin was named": that authority admits
     /// exactly one execution surface — the raw loop, which spawns nothing — and
     /// a wrapper plugin's entire mechanism is a child process the host starts.
     /// Grading `--pipeline <variant>` as "not the pipeline, therefore raw"
@@ -233,7 +219,7 @@ impl<'a> PipelineChoice<'a> {
     pub(crate) fn plugin(self) -> Option<&'a str> {
         match self {
             Self::Plugin(variant) => Some(variant),
-            Self::Classic | Self::Raw => None,
+            Self::Raw => None,
         }
     }
 }
@@ -361,18 +347,17 @@ pub(crate) fn reject_arbiter_wrapper_on_goal(resolved: &ResolvedWrapper) -> Resu
 ///
 /// `--keep-witness`, `--require-verified`, and `--test-command` all belong to
 /// the staged pipeline's verification machinery — the witness-authoring stage
-/// and its fail→pass flip oracle. Before #3381 they always reached
-/// [`PipelineChoice::Classic`], because that was the default; after, `stella
-/// run` with no `--pipeline` resolves to [`PipelineChoice::Raw`], whose
+/// and its fail→pass flip oracle. Before #3381 they always reached the
+/// built-in staged pipeline, because that was the default; after, `stella run`
+/// with no `--pipeline` resolves to [`PipelineChoice::Raw`], whose
 /// `run_raw_one_shot` does not accept `keep_witness`/`require_verified` as
 /// parameters at all and only threads `test_command` to an installed wrapper's
 /// own oracle. Silently dropping the flag the caller asked for is exactly the
 /// expedient CLAUDE.md forbids, so this refuses before dispatch instead of
-/// letting the run start and the flag do nothing. `--pipeline classic`
-/// itself is refused at [`PipelineChoice::resolve`] now (#3865) — this function's own
-/// `choice.is_classic()` early return is therefore dead code today, kept
-/// only because it is harmless and dies with [`PipelineChoice::Classic`]
-/// itself in the slice that deletes the classic dispatch arm.
+/// letting the run start and the flag do nothing. Since #3865 removed the
+/// staged pipeline and #3867 removed the variant that named it, there is no
+/// choice left that these flags can be honored on unmodified — every arm below
+/// either refuses or hands the flag to a plugin's own oracle.
 ///
 /// `test_command` is meaningful on [`PipelineChoice::Plugin`] too — it arms a
 /// bound wrapper's own `[oracle]` flip check (#3553) — so only that variant
@@ -385,9 +370,6 @@ pub(crate) fn reject_verification_flags_without_pipeline(
     keep_witness: bool,
     require_verified: bool,
 ) -> Result<(), String> {
-    if choice.is_classic() {
-        return Ok(());
-    }
     let mut offending: Vec<&str> = Vec::new();
     if choice.is_raw() && test_command.is_some() {
         offending.push("--test-command");
@@ -404,7 +386,6 @@ pub(crate) fn reject_verification_flags_without_pipeline(
     let where_run = match choice {
         PipelineChoice::Raw => "the raw loop (no --pipeline)".to_string(),
         PipelineChoice::Plugin(variant) => format!("`--pipeline {variant}`"),
-        PipelineChoice::Classic => unreachable!("classic returned Ok above"),
     };
     Err(format!(
         "{} belong{} to the staged pipeline's verification machinery and {} nothing on {where_run}: \
