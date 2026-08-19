@@ -122,7 +122,7 @@ const FRICTION_LIST_CAP: usize = 6;
 /// leak in a best-effort path.
 const FRICTION_ENTRY_CAP: usize = 512;
 
-/// One model call's metering record, as [`AgentEvent::StepUsage`](stella_protocol::AgentEvent::StepUsage) reported it.
+/// One model call's metering record, as [`AgentEvent::StepUsage`] reported it.
 #[derive(Debug, Clone)]
 struct StepCost {
     step: usize,
@@ -132,8 +132,8 @@ struct StepCost {
     tool_calls: usize,
 }
 
-/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`](stella_protocol::AgentEvent::ToolStart),
-/// closed by its [`AgentEvent::ToolResult`](stella_protocol::AgentEvent::ToolResult).
+/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`],
+/// closed by its [`AgentEvent::ToolResult`].
 #[derive(Debug, Clone)]
 struct ToolPass {
     call_id: String,
@@ -150,7 +150,7 @@ struct ToolPass {
 
 /// What a turn's event stream says about where its time and money went.
 ///
-/// Folded live by the surface that owns the turn's [`AgentEvent`](stella_protocol::AgentEvent) stream and
+/// Folded live by the surface that owns the turn's [`AgentEvent`] stream and
 /// handed to reflection as evidence the transcript does not carry: a
 /// `CompletionMessage` records what was said, never what it cost or how long it
 /// took, and a retry or a loop-detector firing leaves no message at all.
@@ -430,6 +430,7 @@ impl TurnFriction {
     /// have reconstructed at any window size, and it is short — putting it
     /// behind several thousand characters of transcript would make it the first
     /// thing a narrating model skims past.
+    ///
     /// `total` is how many ledgers this one is being rendered among, which is
     /// what lets the header name the round (#3962). The round label is written
     /// only when there is more than one ledger to tell apart: a single-turn
@@ -569,7 +570,7 @@ impl<'a> TurnEvidence<'a> {
     /// Evidence from a transcript plus the turn's folded event ledger — what
     /// a surface that owns its `AgentEvent` stream should build (#3946).
     ///
-    /// Separate from [`Self::from_transcript`] rather than an `Option`
+    /// Separate from `from_transcript` rather than an `Option`
     /// parameter on it, so a caller that *has* a ledger and forgets to pass
     /// it is a visibly different call rather than a `None` nobody reads.
     pub fn with_friction(
