@@ -333,11 +333,25 @@ function usageLine(entry: TranscriptEntry): string {
 
 const THINKING_PREVIEW_LINES = 5;
 
-/** Collapsed-result line budgets, matching the deck's `row.rs` exactly: a
- * successful call shows one line from the salient point, a failed one shows
- * six — enough for a compiler error with its location and caret line, or the
- * top of a panic backtrace. */
-const OK_PREVIEW_LINES = 1;
+/** Collapsed-result line budgets, matching the deck and the export surfaces:
+ * six lines either way, anchored on the salient point.
+ *
+ * A success used to show one line here, on the argument that its output is
+ * chatter and its size belongs in the metric column. That is wrong for the
+ * calls whose output *is* the answer — a `search`, a `read_file` — and it was
+ * also a third answer to a question the deck and the export had already stopped
+ * disagreeing about: the shared policy is
+ * `stella_transcript::digest::PREVIEW_LINES`, which is 6 (#3644). Six is also
+ * what a failure wants — a compiler error with its location and caret line, or
+ * the top of a panic backtrace — so the two budgets coincide rather than being
+ * separately chosen.
+ *
+ * These stay hand-mirrored rather than generated. Unlike the diff-view policy
+ * and word highlighting, which are *algorithms* two languages can disagree
+ * about subtly, this is one integer, and a golden matrix to pin one integer
+ * would cost more than it caught. If a third constant shows up here, that
+ * judgement should be revisited. */
+const OK_PREVIEW_LINES = 6;
 const FAIL_PREVIEW_LINES = 6;
 
 /** Split on `\n` the way Rust's `str::lines()` does: no trailing empty
@@ -969,10 +983,17 @@ function Entry({
       });
     }
     // The collapsed window anchors on the SALIENT line, not line 1 — see
-    // `salientLine`'s doc comment — and its size is the deck's own budget: a
-    // success shows a single line, a failure shows six.
+    // `salientLine`'s doc comment — and its size is the shared preview budget.
+    //
+    // The anchor is clamped so the window is never starved: a salient line near
+    // the *end* of the output would otherwise leave fewer than `budget` lines
+    // to take, and this surface would show one line where the deck and the
+    // export showed six. Sliding the window back keeps the salient line on
+    // screen as the last thing shown rather than the first. A port of the same
+    // clamp in `crates/stella-tui/src/render/entry.rs`.
     const budget = isError ? FAIL_PREVIEW_LINES : OK_PREVIEW_LINES;
-    const anchor = total > 0 ? salientLine(body ?? "") : 0;
+    const anchor =
+      total > 0 ? Math.min(salientLine(body ?? ""), Math.max(0, total - budget)) : 0;
     const collapsedShown = hasDiff ? [] : lines.slice(anchor, anchor + budget);
     const shown = resultOpen ? lines : collapsedShown;
     const hidden = resultOpen ? 0 : total - collapsedShown.length;
