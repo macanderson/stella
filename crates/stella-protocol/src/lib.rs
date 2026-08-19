@@ -69,6 +69,7 @@ pub mod ladder;
 pub mod lane;
 pub mod proof;
 pub mod provider;
+pub mod recall;
 pub mod receipt;
 pub mod role;
 #[cfg(feature = "schema")]

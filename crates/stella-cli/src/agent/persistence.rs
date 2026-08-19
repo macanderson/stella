@@ -16,14 +16,22 @@ pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> Cali
     stella_runtime::seed_calibration(store.as_ref(), cfg.provider.id, &cfg.model_id)
 }
 
-/// The wrapper variant the staged pipeline records (#3388/#3381).
+/// The id `executions.pipeline_variant` records for a run of the built-in
+/// staged pipeline (#3388/#3381).
 ///
-/// Re-exported from `stella-pipeline` rather than spelled again: the id is the
-/// join key of every per-variant comparison, and two copies of a join key is
-/// how the last one died (AGENTS.md § God files). The manifest under
-/// `crates/stella-pipeline/variants/classic.toml` declares the same id, and
-/// that crate's `variant_program` tests hold the two together.
-pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = stella_pipeline::variant::CLASSIC_VARIANT_ID;
+/// Was re-exported from `stella_pipeline::variant::CLASSIC_VARIANT_ID`; that
+/// crate's `PipelineChoice::Classic` dispatch arm is refused now (removal
+/// census, `docs/spec/pipeline-as-plugins.md` §7 slice 1) and no live path
+/// writes a new row with this variant. The literal survives here as a **pure
+/// historical join key**: every already-written `executions.pipeline_variant
+/// = 'classic'` row (`crates/stella-store/src/ddl.rs`, a plain `TEXT` column
+/// with no FK back to the crate that used to produce it) stays queryable by
+/// `stella usage report`, `stella inspect`, and any `GROUP BY
+/// pipeline_variant` — those reads only ever compared this constant by value,
+/// never by type, so they keep working unchanged. Do not resurrect the
+/// re-export if `stella-pipeline` returns; a string this narrow belongs beside
+/// the rows it names, not the crate that used to emit them.
+pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = "classic";
 
 mod turn_door;
 
