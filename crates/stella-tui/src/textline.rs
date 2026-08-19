@@ -1061,6 +1061,22 @@ mod tests {
         assert_eq!(crud_letter(FileChangeKind::Deleted), "D");
     }
 
+    /// **The witness for a contributed stage's word.** The deck says the
+    /// plugin's own name back, verbatim — not a category like "plugin", and
+    /// not the nearest host stage it happens to resemble.
+    ///
+    /// `triage-lite` is the load-bearing case: it *contains* a host stage's
+    /// name, so anything that resolved by prefix or substring would silently
+    /// relabel it `triage` and claim the turn ran a stage it never ran.
+    #[test]
+    fn a_contributed_stage_is_labelled_with_its_own_word() {
+        for word in ["triage-lite", "vera/witness", "sast", "spec-check"] {
+            let stage = StageName::new(word);
+            assert!(stage.kind().is_none(), "{word} must be contributed");
+            assert_eq!(stage_label(&stage), word);
+        }
+    }
+
     /// The stage after `verify` is `verdict` — never `verifier`, which is the
     /// *model* that produces it. Naming the stage after its model recreates the
     /// `verify → verifier` adjacency #1394's rename existed to remove, and it

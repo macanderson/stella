@@ -955,3 +955,77 @@ fn a_stage_rule_is_hued_by_phase_and_never_by_verdict() {
          status gold carries"
     );
 }
+
+/// **The witness for a plugin-contributed stage's styling.**
+///
+/// A stage the host has never heard of has to render as a stage — visible, in
+/// the kit, and never dressed as an outcome. Before the vocabulary opened it
+/// could not reach a renderer at all, so there was nothing to colour.
+///
+/// The bar it must clear is the same one every host stage clears above: not a
+/// verdict hue, not the brand, and not the neutral tier that made a boundary
+/// invisible.
+#[test]
+fn a_contributed_stage_is_visible_in_the_kit_and_never_reads_as_a_verdict() {
+    for word in [
+        "triage-lite",
+        "vera/witness",
+        "review",
+        "sast",
+        "spec-check",
+        "benchmark",
+        "x",
+    ] {
+        let stage = stella_protocol::StageName::new(word);
+        assert!(
+            stage.kind().is_none(),
+            "{word} must be a contributed stage for this test to mean anything"
+        );
+        let color = stage_color(&stage);
+        assert_ne!(color, BAD, "{word} must not read as a failure");
+        assert_ne!(color, OK, "{word} must not read as a settled success");
+        assert_ne!(color, WARN, "{word} must not read as a warning");
+        assert_ne!(
+            color, ACCENT,
+            "{word} must not take the brand accent — gold is 'active', and a \
+             plugin's stage is not the brand"
+        );
+        assert_ne!(
+            color, TEXT_SECONDARY,
+            "{word} must not fall back to the neutral tier — that is the exact \
+             invisibility the phase hues were introduced to end"
+        );
+        // The transcript rule and the statline dot agree for a contributed
+        // stage: it never takes the accent, so there is no gold to move off a
+        // settled thing (the one divergence `stage_rule_color` makes).
+        assert_eq!(
+            stage_rule_color(&stage),
+            color,
+            "{word} must read the same in the transcript and the statline"
+        );
+    }
+}
+
+/// The hash is an identity, not a decoration: the same stage is the same
+/// colour on every frame, in every process, forever. A colour that moved
+/// between renders would make the hue actively misleading — the reader would
+/// take a recolour for a change of stage.
+#[test]
+fn a_contributed_stage_keeps_one_colour() {
+    let once = contributed_stage_color("triage-lite");
+    for _ in 0..64 {
+        assert_eq!(contributed_stage_color("triage-lite"), once);
+    }
+    // And it is genuinely keyed on the name — two stages are allowed to
+    // collide, but they must not collide by construction.
+    let words = ["triage-lite", "review", "sast", "spec-check", "benchmark"];
+    let distinct: std::collections::BTreeSet<String> = words
+        .iter()
+        .map(|w| format!("{:?}", contributed_stage_color(w)))
+        .collect();
+    assert!(
+        distinct.len() > 1,
+        "every contributed stage landed on one colour — the hash is not keyed \
+         on the name at all"
+    );
+}

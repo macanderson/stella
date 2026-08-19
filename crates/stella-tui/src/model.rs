@@ -1240,6 +1240,11 @@ impl SessionModel {
         // at the new turn's beginning. A model turn's first `Stage` event resets
         // this anyway; a driver command (which emits no stages) relies on it.
         self.hud.stage = None;
+        // Both stage fields, or the bar would restart at the *previous* turn's
+        // phase: `host_stage` is exactly the field that survives a contributed
+        // stage on purpose, so it is also the one that has to be cleared
+        // deliberately when the turn it described is over.
+        self.hud.host_stage = None;
         self.transcript
             .push(TranscriptEntry::User(text.to_string()));
         self.evict_transcript_overflow();

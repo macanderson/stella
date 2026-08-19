@@ -957,6 +957,43 @@ mod tests {
         assert_eq!(stage.spans[0].content.as_ref(), "—");
     }
 
+    /// **The witness on the surface a user actually watches.** A stage a
+    /// plugin contributed heads the statline's stage box under its own word,
+    /// in its own colour.
+    ///
+    /// Before the vocabulary opened this could not happen at all: the wire had
+    /// no way to carry the name, so a wrapped run's contributed stages were
+    /// invisible and the box went on displaying whichever host stage had last
+    /// gone past — a live cell reporting stale state.
+    #[test]
+    fn the_stage_box_heads_itself_with_a_contributed_stage_too() {
+        let mut model = WorkspaceModel::new();
+        model.now_ms = 10_000;
+        model.apply_inbound(&Inbound::Register(
+            AgentMeta::new("lead", "goal", 0).with_role("lead"),
+        ));
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Stage {
+                name: stella_protocol::StageName::new("triage-lite"),
+                scope: stella_protocol::StageScope::Run,
+            },
+        });
+
+        let items = statline_items(&model, &DeckUi::default());
+        let stage = items.iter().find(|i| i.key == "stage").expect("stage");
+        assert_eq!(
+            stage.label, "TRIAGE-LITE",
+            "the plugin's own word heads the cell — not IDLE, and not the host \
+             stage whose name it happens to contain"
+        );
+        assert_eq!(
+            stage.label_color,
+            Some(theme::contributed_stage_color("triage-lite")),
+            "a contributed stage carries its own colour, not the row's dim"
+        );
+    }
+
     #[test]
     fn the_step_counter_reads_the_board_position_not_the_done_count() {
         use stella_protocol::{TaskItem, TaskStatus};
