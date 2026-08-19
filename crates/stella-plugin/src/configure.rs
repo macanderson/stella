@@ -69,7 +69,7 @@ pub struct ConfigureEntry {
     /// `self_driving.attribution.commit`, not `[self_driving.attribution]`.
     ///
     /// Every segment is a TOML *bare* key (`A-Za-z0-9_-`), enforced by
-    /// [`validate_configure`]. Quoted and dotted-inside-quotes forms are
+    /// this module's validation. Quoted and dotted-inside-quotes forms are
     /// refused rather than supported: they exist so TOML can express keys with
     /// spaces and dots in them, and a package that needs one is asking to write
     /// a key this configuration surface does not have.
@@ -101,7 +101,7 @@ impl ConfigureEntry {
     /// The key's segments, in order — what a host walks to reach the leaf.
     ///
     /// Always at least two for an entry that loaded: a single-segment key is
-    /// refused by [`validate_configure`], because a bare root key is not a leaf
+    /// refused, because a bare root key is not a leaf
     /// inside a section and this surface has none worth writing.
     pub fn segments(&self) -> impl Iterator<Item = &str> {
         self.key.split('.')

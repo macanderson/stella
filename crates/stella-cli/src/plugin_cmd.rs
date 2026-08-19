@@ -282,14 +282,14 @@ fn install(
     // nothing on disk knows how to undo it; and the config write is what can
     // fail, which is why it is the step with an undo behind it rather than the
     // one with a rollback in front.
-    if let Some(target) = &config_target {
-        if let Err(reason) = install_configuration(&manifest, target, &destination) {
-            discard(&destination);
-            return Err(format!(
-                "`{name}` could not configure {}: {reason}\n\nIt was not installed.",
-                target.path().display()
-            ));
-        }
+    if let Some(target) = &config_target
+        && let Err(reason) = install_configuration(&manifest, target, &destination)
+    {
+        discard(&destination);
+        return Err(format!(
+            "`{name}` could not configure {}: {reason}\n\nIt was not installed.",
+            target.path().display()
+        ));
     }
 
     println!(
