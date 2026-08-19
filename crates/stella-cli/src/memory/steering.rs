@@ -15,13 +15,14 @@ use stella_core::steering::{
     DroppedCandidate, SteeringCandidate, SteeringPlane, SteeringSet, SteeringSource, TurnSignal,
     pack_to_budget,
 };
-use stella_pipeline::RecalledFrame;
+use stella_protocol::RecalledFrame;
 
 use super::recall::frame_recall_line;
 
 /// Recalled frames as candidates — the adapter that cannot live in
 /// `stella-core::steering::adapt` because [`RecalledFrame`] is a
-/// `stella-pipeline` type and the core sits below the pipeline.
+/// `stella-protocol` type and `stella-core` sits below `stella-protocol`'s
+/// consumers, never the reverse (invariant 1).
 ///
 /// `score` is the recall fusion's own rank, highest first: the RRF+MMR merge
 /// returns frames in fused order and reports no per-frame number, so position

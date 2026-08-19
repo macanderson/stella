@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use stella_pipeline::RecalledFrame;
+use stella_protocol::RecalledFrame;
 
 /// Preserve host-owned provider identity and the frame's complete provenance.
 /// Source is the origin-most actor; method is the latest derivation step.

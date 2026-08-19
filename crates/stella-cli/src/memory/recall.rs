@@ -11,8 +11,7 @@ use colored::Colorize;
 use stella_context::ContextQuery;
 use stella_core::records::RenderedChannel;
 use stella_core::skills::{self, SelectionConfig};
-use stella_pipeline::{ContextRecallPort, Recall, RecalledFrame};
-use stella_protocol::{CompletionMessage, MessageRole};
+use stella_protocol::{CompletionMessage, ContextRecallPort, MessageRole, Recall, RecalledFrame};
 
 use super::projection::{is_suppressed_local_frame, project_recalled_frame};
 use super::{RECALL_MARKER, SessionMemory};
@@ -644,11 +643,12 @@ impl SessionMemory {
 /// One turn's frame recall **and** what the host's merge could not fit.
 ///
 /// A sibling channel rather than two more fields on [`Recall`]: `Recall` is a
-/// `stella-pipeline` type and the drop report is the CLI's own host-merge
-/// type over a `stella-context` reason, and the pipeline does not depend on
-/// the context crate (`ports.rs` states that direction deliberately). Mapping
-/// to `DroppedCandidate` here — at the one call site that has all of them in
-/// scope — keeps that boundary intact and still gets the drops to the plane.
+/// `stella-protocol` boundary type and the drop report is the CLI's own
+/// host-merge type over a `stella-context` reason, and `stella-protocol`
+/// does not depend on the context crate (`recall.rs`'s module doc states
+/// that direction deliberately). Mapping to `DroppedCandidate` here — at the
+/// one call site that has all of them in scope — keeps that boundary intact
+/// and still gets the drops to the plane.
 #[derive(Debug, Default)]
 pub(super) struct RecalledFrames {
     pub recall: Recall,
@@ -806,7 +806,7 @@ pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
 /// `receipts::parse_recall_item` reads back. A memory WITHOUT one still has
 /// content worth recalling and the budget has already been spent fetching it;
 /// `RecalledFrame` documents `id: None` as a legitimate state for a
-/// not-yet-materialized frame (`crates/stella-pipeline/src/ports.rs`), so it
+/// not-yet-materialized frame (`crates/stella-protocol/src/recall.rs`), so it
 /// renders as grounding.
 ///
 /// Split out of the section loop so the steering plane's frame adapter
