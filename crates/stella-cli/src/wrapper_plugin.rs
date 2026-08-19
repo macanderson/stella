@@ -92,15 +92,22 @@
 //! [`WrapperDispatch::run`] once per judged round — the goal loop's own
 //! round loop, not the wrapper's, decides how many rounds run, because the
 //! goal verifier (`stella_core::Engine::assess`) is untouched (#3695, goal
-//! half). Two things that follows from keeping the verifier out of `judge`:
-//! a round's dispatch is refused outright if the plugin's own `[oracle]`
-//! holds it open past one internal turn — `DispatchReport::rounds != 1` —
-//! because a second worker turn at the same `turn_instance` would collide
-//! step manifests with the first rather than degrade gracefully (tracked as
-//! a real limit, not silently accepted); and the goal round's own execution
-//! row (opened once, before the loop, exactly like [`RawTurnDriver`]'s door
-//! opens one) records `bound`'s variant id for the whole run, honest because
-//! every round under that row really was dispatched through it.
+//! half). That only stays true because [`reject_arbiter_wrapper_on_goal`]
+//! refuses an arbiter-grade wrapper on this door before any of the above ever
+//! runs (#3832): `WrapperDispatch`'s own hold loop only holds a round open
+//! for an arbiter-grade plugin, and a hold-open round dispatched *inside* one
+//! already-judged goal round is a second round-holder judging the same
+//! round, which the goal loop's own `Engine::assess` was already doing —
+//! `run_goal_wrapped_turn` used to only discover this after billing
+//! `1 + DEFAULT_HOST_MAX_HOLDS` worker turns for it, then discard the whole
+//! run (`DispatchReport::rounds != 1`, still checked as a defense-in-depth
+//! assertion — see that module's doc comment). So for the steering/observer
+//! wrappers this door does accept, a round's dispatch always drives exactly
+//! one internal turn, at the round's own `turn_instance`; and the goal
+//! round's own execution row (opened once, before the loop, exactly like
+//! [`RawTurnDriver`]'s door opens one) records `bound`'s variant id for the
+//! whole run, honest because every round under that row really was
+//! dispatched through it.
 //!
 //! The goal door's [`WrapperHost`] serves `recall` and deliberately no
 //! `child_turn` plane: [`PLUGIN_CHILD_TURN_SLOT`] is a fixed `turn_instance`,
@@ -269,6 +276,52 @@ pub(crate) fn reject_plugin_variant_for_door(
         )),
         None => Ok(()),
     }
+}
+
+/// Refuse an arbiter-grade wrapper plugin on `stella goal`'s pre-flight rung,
+/// before binding completes and before any paid call (#3832).
+///
+/// `stella goal`'s own round loop is this door's completion arbiter:
+/// `Engine::assess` (called directly by
+/// `crate::agent::goal::goal_wrapped::run_goal_wrapped_turn`, or by
+/// `Engine::run_goal` on the raw arm) decides met/unmet after every round
+/// already. A wrapper plugin declaring `participation = "arbiter"` brings a
+/// SECOND hold loop — [`WrapperDispatch`]'s own `judge`/`again` — that wants
+/// to run *inside* one judged round, holding that one round open for up to
+/// `1 + DEFAULT_HOST_MAX_HOLDS` billed worker turns before
+/// `run_goal_wrapped_turn` ever sees the round back
+/// (`DispatchReport::rounds != 1`) — and only then discards the whole run,
+/// after every one of those turns was already paid for. Two round-holders
+/// judging the same round is exactly the doubled-supervisor shape the
+/// wrapper design forbids: an arbiter-grade plugin's designed home is
+/// `stella run --pipeline <variant>`, where `WrapperDispatch`'s hold loop is
+/// the ONLY thing that owns rounds (see [`crate::agent::goal::goal_wrapped`]'s
+/// module doc, and `plugins/stella-goal/README.md`, for why that plugin runs
+/// there and not here). So this refuses before the provider is ever built —
+/// the same pre-flight rung [`reject_verification_flags_without_pipeline`]
+/// and [`reject_plugin_variant_for_door`] use — at zero cost and zero
+/// provider calls, every time.
+///
+/// Steering and observer wrappers are unaffected and keep running per round
+/// on `stella goal` exactly as before: neither grade can reach `again`'s
+/// `Continuation::Again` arm (only [`stella_plugin::Participation::Arbiter`]
+/// can, `crates/stella-runtime/src/wrapper/verdict.rs`'s `again`), so their
+/// `WrapperDispatch::run` call always returns after exactly one internal
+/// turn and the goal loop's own round math is untouched.
+pub(crate) fn reject_arbiter_wrapper_on_goal(resolved: &ResolvedWrapper) -> Result<(), String> {
+    if resolved.manifest().loop_grant.participation != stella_plugin::Participation::Arbiter {
+        return Ok(());
+    }
+    Err(format!(
+        "--pipeline {variant} (\"{name}\") is arbiter-grade and cannot run on `stella goal` \
+         (#3832): the goal loop is this door's own completion arbiter — Engine::assess decides \
+         met/unmet after every round already — and a wrapper that holds rounds open runs its \
+         own hold loop via WrapperDispatch, which would judge the same round twice. Run it at \
+         its designed home instead: `stella run --pipeline {variant}`. Steering and observer \
+         wrappers are unaffected and still run per round on `stella goal`.",
+        variant = resolved.variant(),
+        name = resolved.manifest().name,
+    ))
 }
 
 /// Refuse a pipeline-only verification flag against a [`PipelineChoice`] that
@@ -503,6 +556,16 @@ impl ResolvedWrapper {
     /// assembling this host's planes for it.
     pub(crate) fn manifest(&self) -> &stella_plugin::PluginManifest {
         &self.manifest
+    }
+
+    /// The `--pipeline` value that resolved this wrapper — the same string
+    /// [`resolve`] was called with, kept for callers (like
+    /// [`reject_arbiter_wrapper_on_goal`]) that need to name it in a refusal
+    /// without re-deriving it from the manifest's own `[wrapper] id`, which
+    /// need not match what the user typed under every alias scheme #3512
+    /// leaves room for.
+    pub(crate) fn variant(&self) -> &str {
+        &self.variant
     }
 
     /// Bind the plugin's process to what this host will do for it.

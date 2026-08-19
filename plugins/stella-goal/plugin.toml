@@ -18,6 +18,19 @@
 # and `perf-budget.toml` already exercise, pointed at a verifier's assessment
 # instead of a witness test's flip or a benchmark's number.
 #
+# This runs via `stella run --pipeline goal-v1` — NEVER via `stella goal`,
+# and `stella goal` refuses to load it: this plugin's own `participation =
+# "arbiter"` below is exactly the grade
+# `crates/stella-cli/src/wrapper_plugin.rs::reject_arbiter_wrapper_on_goal`
+# refuses on that door, at resolve/bind time, before any paid call (#3832).
+# The reason is one loop, one arbiter: `stella goal`'s round loop is already
+# this door's own completion arbiter (`stella_core::Engine::assess` decides
+# met/unmet after every round), and an arbiter-grade wrapper brings a SECOND
+# hold loop (`WrapperDispatch`'s `judge`/`again`) that would run *inside* one
+# already-judged goal round — a second supervisor judging the same round the
+# first one is already judging. `stella run`'s door has no such second
+# arbiter, which is exactly why that is this plugin's designed home instead.
+#
 # This is deliberately NOT the same thing as `stella goal --pipeline
 # <variant>` (`crates/stella-cli/src/agent/goal/goal_wrapped.rs`, landed this
 # session for #3695's goal half). That CLI path keeps

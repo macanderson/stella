@@ -77,9 +77,26 @@ mapping as a pure function (`tests/wrapper_verdict.rs`,
 is `WrapperDispatch`, which resolves the declared stage program, calls
 `before_turn` per stage, hands a `TurnPrelude` to the host's `TurnDriver`,
 calls `after_turn`, and settles with `judge` + `again` — looping while the
-verdict asks for another turn. `stella run --pipeline <variant>` is its first
-driver, so an installed wrapper plugin now participates in a live turn and its
-id reaches `executions.pipeline_variant`.
+verdict asks for another turn. `crates/stella-cli` drives it from **two**
+doors, not one, each calling `WrapperDispatch::run` a different number of
+times per invocation: `stella run --pipeline <variant>` was its first driver
+and calls it exactly once per process, over the one raw turn the process
+runs; `stella goal --pipeline <variant>` (#3695, goal half) calls it once
+**per judged round** — the goal loop's own round loop, not
+`WrapperDispatch`'s, decides how many rounds run, because the goal verifier
+(`stella_core::Engine::assess`) stays outside `judge`/`again` entirely. That
+per-round shape is why `stella goal` refuses an arbiter-grade wrapper before
+ever calling `WrapperDispatch::run`
+(`crates/stella-cli/src/wrapper_plugin.rs::reject_arbiter_wrapper_on_goal`,
+#3832): only an arbiter grade can make `again` hold a round open past its
+first internal turn, and holding one open *inside* an already-judged goal
+round would be a second arbiter judging the round the goal loop's own
+`Engine::assess` is already judging — a shape this door refuses outright
+rather than let `WrapperDispatch`'s hold loop and the goal loop's hold loop
+collide. An arbiter-grade wrapper's designed home is `stella run --pipeline
+<variant>` instead, where `WrapperDispatch` is the only thing holding a turn
+open. Either door, an installed wrapper plugin participates in a live turn and
+its id reaches `executions.pipeline_variant`.
 
 What has **not** landed: the other two drivers `doc:wrapper-socket` §6 makes an
 acceptance criterion — `stella-serve` over HTTP and a minimal embedded host
@@ -99,14 +116,20 @@ the user's BYOK providers, carves the budget, attaches gate/steering/hooks,
 and settles once. That port is
 [`ChildTurnPlane`](src/wrapper/child_turn.rs), implemented by
 [`ChildTurns`](src/wrapper/child_turn.rs) over the host's own sub-agent
-dispatcher, taking `ChildTurnArgs` on the wire. It is now attached at a live
-call site (#3576): `stella run --pipeline <variant>` builds its
-`HostCallGate` with `.with_child_turns(..)` over the session's own
+dispatcher, taking `ChildTurnArgs` on the wire. It is now attached at one live
+call site of the two doors above (#3576): `stella run --pipeline <variant>`
+builds its `HostCallGate` with `.with_child_turns(..)` over the session's own
 `SubAgentDispatcher` — the one `task_assign` runs on — so an installed plugin
 declaring `[loop] calls = ["child_turn"]` and a `[roles.<name>]` gets a real
 turn, read-only, attributed to the seat its tier resolves to, with what it
 spent printed beside what it was refused
-(`crates/stella-cli/src/wrapper_plugin.rs`). Two limits stand: the `verifier`
+(`crates/stella-cli/src/wrapper_plugin.rs`). `stella goal` builds no such
+plane at all — its `WrapperHost` serves `recall` only — because the fixed
+`turn_instance` slot `stella run`'s one-shot worker can afford would collide
+with a goal round's own even/odd worker/verifier slots (#3833); a wrapper
+that named `child_turn` there would be answered `Unavailable`, exactly like
+naming the `verifier` tier is answered on `stella run`. Two more limits
+stand on the door that does attach the plane: the `verifier`
 tier is deliberately bound to no seat, so a plugin naming it is answered
 `Unavailable` rather than having its call attributed to a role the host never
 made (`ChildTurns::with_seat` is how a driver that wants it owns the claim);

@@ -27,16 +27,23 @@
 //!
 //! # One round, one wrapper-internal turn
 //!
-//! [`stella_runtime::wrapper::WrapperDispatch::run`] may hold a round open
-//! past its first internal turn if the plugin's own `[oracle]` says the
-//! evidence is unmet and the manifest's `[loop]` grant has holds left
-//! (`again` → `Continuation::Again`).
-//! [`GoalRoundDriver`] runs every such call at the SAME `turn_instance` — the
-//! goal round's own slot — so a second internal turn would silently collide
-//! its step manifests with the first's. [`run_goal_wrapped_turn`] refuses the
-//! round outright when `DispatchReport::rounds != 1` rather than let that
-//! happen; see the module doc on [`crate::wrapper_plugin`] and the issue
-//! filed for real multi-hold support in goal mode (#3832).
+//! Only an arbiter-grade wrapper can hold a round open past its first
+//! internal turn (`again` → `Continuation::Again`, gated on
+//! [`stella_plugin::Participation::Arbiter`]), and
+//! `crate::wrapper_plugin::reject_arbiter_wrapper_on_goal` refuses that grade
+//! on this door entirely, before this module is ever reached (#3832) — the
+//! goal loop is this door's own completion arbiter, and a held-open round
+//! would run a second hold loop via `WrapperDispatch` judging the same round
+//! twice. So for every wrapper this module actually drives (steering,
+//! observer), [`WrapperDispatch::run`] always returns after exactly one
+//! internal turn. [`run_goal_wrapped_turn`]'s `DispatchReport::rounds != 1`
+//! check below is kept anyway, as a defense-in-depth assertion rather than
+//! the primary guard: [`GoalRoundDriver`] runs every internal turn at the SAME
+//! `turn_instance` — the goal round's own slot — so a second internal turn
+//! would silently collide its step manifests with the first's if the
+//! pre-flight refusal above were ever bypassed or a future grade change
+//! reopened the hole. See the module doc on [`crate::wrapper_plugin`] and
+//! #3832 for the full reasoning.
 
 use async_trait::async_trait;
 use stella_plugin::{TamperFinding, TurnOutcome as WrapperTurnOutcome};
@@ -239,13 +246,24 @@ pub(crate) async fn run_goal_wrapped_turn(
                     };
                 }
             };
+            // Defense-in-depth, not the primary guard: an arbiter-grade
+            // wrapper — the only grade that can ever make `report.rounds`
+            // anything but 1 — is refused up front by
+            // `crate::wrapper_plugin::reject_arbiter_wrapper_on_goal` before
+            // `run_goal_cmd` ever calls into this loop (#3832), so this arm
+            // is unreachable for any wrapper actually bound here today. Kept
+            // as a named, load-bearing assertion rather than deleted: it is
+            // what turns a future hole in that pre-flight check (a grade
+            // change, a bypassed call site) into a refused round instead of a
+            // silent `turn_instance` collision.
             if report.rounds != 1 {
                 break 'rounds GoalOutcome::Unmet {
                     rounds: round,
                     reason: format!(
                         "wrapper \"{}\" held this round open for {} internal turns — stella \
                          goal only supports a wrapper whose [oracle] resolves within a single \
-                         turn per round today (#3832)",
+                         turn per round today; an arbiter-grade wrapper should have been refused \
+                         before this run started (#3832)",
                         bound.variant(),
                         report.rounds
                     ),

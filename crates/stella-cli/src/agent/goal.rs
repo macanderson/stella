@@ -397,10 +397,17 @@ pub(crate) async fn run_raw_one_shot(
 /// with or without `--no-pipeline` — falls back to the raw `Engine::run_goal`
 /// step-loop; `Plugin(variant)` dispatches each round's worker turn through
 /// the named installed wrapper ([`goal_wrapped::run_goal_wrapped_turn`],
-/// #3695 goal half) while the goal verifier stays exactly what `Raw` uses.
-/// `stella fleet` still refuses a named plugin before this is ever called
-/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Fleet` arm);
-/// this door sees all three.
+/// #3695 goal half) while the goal verifier stays exactly what `Raw` uses —
+/// **provided the named wrapper is not arbiter-grade**: this door's own
+/// pre-flight rung refuses `participation = "arbiter"` before the provider
+/// is ever built (`wrapper_plugin::reject_arbiter_wrapper_on_goal`, #3832),
+/// because the goal loop is already this door's completion arbiter and a
+/// second one held open inside a judged round is the doubled-supervisor
+/// shape the wrapper design forbids; an arbiter-grade wrapper's designed
+/// home is `stella run --pipeline <variant>` instead. Steering and observer
+/// wrappers reach `Plugin(variant)` unaffected. `stella fleet` still refuses
+/// any named plugin before this is ever called
+/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Fleet` arm).
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
@@ -428,6 +435,15 @@ pub async fn run_goal_cmd(
         ),
         None => None,
     };
+    // Arbiter-grade wrappers are refused here, before binding and before any
+    // paid call — the goal loop is this door's own completion arbiter, and a
+    // wrapper that holds rounds open would run a second hold loop inside one
+    // judged round (#3832). See
+    // `crate::wrapper_plugin::reject_arbiter_wrapper_on_goal`'s doc comment.
+    if let Some(resolved) = &resolved {
+        crate::wrapper_plugin::reject_arbiter_wrapper_on_goal(resolved)
+            .map_err(crate::failure::CliFailure::from)?;
+    }
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));

@@ -8,17 +8,38 @@ yet a goal verifier genuinely *is* a model call. §9.2's answer, quoted
 verbatim in `plugin.toml`'s header: **"The model call belongs to `after_turn`,
 never to `judge`."** This plugin is that answer, built.
 
-**This is not `stella goal --pipeline <variant>`.** That CLI path
-(`crates/stella-cli/src/agent/goal/goal_wrapped.rs`, landed for #3695's goal
-half in this same branch) keeps `stella_core::Engine::assess` as the one
-thing that decides met/unmet, and its own module doc explains why: encoding
-`GoalVerifierVerdict`'s free-text feedback into `EvidenceSet`'s
-flip/measurement vocabulary is a real gap, and moving goal's decision onto
-`judge`/`again` would be a rewrite of goal's verifier semantics that slice
-ruled out. `plugins/stella-goal` is the other half of the same design — a
-self-contained goal-supervision wrapper that runs under **`stella run
---pipeline goal-v1`**, using nothing but the generic `WrapperDispatch` loop
-every arbiter-grade plugin already gets. It never touches `stella goal`'s own
+**This runs via `stella run --pipeline goal-v1` — never via `stella goal`.**
+That is not a naming accident and `stella goal` will refuse to load it: this
+plugin declares `participation = "arbiter"`, and `stella goal`'s own
+pre-flight rung (`crates/stella-cli/src/wrapper_plugin.rs::
+reject_arbiter_wrapper_on_goal`, #3832) refuses every arbiter-grade wrapper on
+that door, before the provider is ever built, naming this exact invocation —
+`stella run --pipeline goal-v1` — as the remedy. The reason is **one loop, one
+arbiter**: `stella goal`'s round loop is *already* this door's completion
+arbiter (`stella_core::Engine::assess` decides met/unmet after every round,
+whether the working turn came from the raw loop, the classic pipeline, or an
+installed wrapper — see `crates/stella-cli/src/agent/goal/goal_wrapped.rs`).
+An arbiter-grade wrapper brings its *own* hold loop
+(`stella_runtime::wrapper::WrapperDispatch`'s `judge`/`again`), which wants to
+run *inside* one already-judged goal round — a second supervisor judging the
+same round the first one is already judging. Before #3832 that shape was only
+discovered after `WrapperDispatch` had already billed
+`1 + DEFAULT_HOST_MAX_HOLDS` worker turns holding the round open; the whole
+run was then discarded anyway (`run_goal_wrapped_turn`'s
+`DispatchReport::rounds != 1` check). `stella run`'s own door has no such
+second arbiter — `WrapperDispatch`'s hold loop is the *only* thing holding a
+turn open there — which is exactly why this plugin's designed home is `stella
+run --pipeline goal-v1` and not `stella goal --pipeline goal-v1`.
+`crates/stella-cli/src/agent/goal/goal_wrapped.rs` (landed for #3695's goal
+half in this same branch) is the *other* half of the design: it keeps
+`stella_core::Engine::assess` as the one thing that decides met/unmet on
+`stella goal`, for steering/observer wrappers, and its own module doc explains
+why moving that decision onto `judge`/`again` would itself be a rewrite of
+goal's verifier semantics — encoding `GoalVerifierVerdict`'s free-text
+feedback into `EvidenceSet`'s flip/measurement vocabulary is a real gap that
+slice ruled out of scope. `plugins/stella-goal` is a self-contained
+goal-supervision wrapper using nothing but the generic `WrapperDispatch` loop
+every arbiter-grade plugin already gets; it never touches `stella goal`'s own
 command, `Engine::run_goal`, or `Engine::assess`.
 
 ## What it does
