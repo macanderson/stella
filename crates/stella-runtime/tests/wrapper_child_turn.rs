@@ -35,7 +35,7 @@ use stella_core::{
     push_sub_agent_spend,
 };
 use stella_plugin::{
-    BeforeTurnRequest, HostCallRefusal, PROTOCOL_VERSION, PluginManifest, StageName,
+    BeforeTurnRequest, HostCallRefusal, HostStage, PROTOCOL_VERSION, PluginManifest, StageName,
 };
 use stella_protocol::event::ModelCallRole;
 use stella_runtime::wrapper::{
@@ -154,7 +154,7 @@ fn before() -> BeforeTurnRequest {
     BeforeTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "grading-v1".into(),
-        stage: StageName::Research,
+        stage: StageName::Host(HostStage::Research),
         round: 0,
         goal: "the retry is dropped on a 429".into(),
         candidate: None,

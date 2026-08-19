@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use stella_plugin::{
-    BeforeTurnRequest, HostCall, HostCallRefusal, LoopGrant, PROTOCOL_VERSION, Participation,
-    PluginManifest, RecallFrame, StageName, WrapperPoint,
+    BeforeTurnRequest, HostCall, HostCallRefusal, HostStage, LoopGrant, PROTOCOL_VERSION,
+    Participation, PluginManifest, RecallFrame, StageName, WrapperPoint,
 };
 use stella_runtime::wrapper::{
     DEFAULT_HOST_MAX_CALLS, HostCallGate, HostPlanes, RecallHost, SubprocessWrapper, TurnWrapper,
@@ -106,7 +106,7 @@ fn before() -> BeforeTurnRequest {
     BeforeTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "recalling-v1".into(),
-        stage: StageName::Recall,
+        stage: StageName::Host(HostStage::Recall),
         round: 0,
         goal: "retry_budget is not honoured".into(),
         candidate: None,

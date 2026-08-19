@@ -28,11 +28,11 @@ use stella_plugin::{
     AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse,
     BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs, CandidateFanoutResult,
     CandidateGrant, ChildTurnResult, Continuation, Correction, EvidenceProvenance, EvidenceSet,
-    FanoutCandidate, FlipObservation, HostCall, HostCallOk, HostCallResponse, ObservedEvidence,
-    Outcome, PROTOCOL_VERSION, PluginManifest, PublishedSignal, RecallResult, RoundState, Signal,
-    SignalValue, StageName, StopReason, TamperFinding, TestBaseline, TestPlan, TurnOutcome,
-    UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext,
-    WrapperPoint, WrapperRequest, WrapperResponse,
+    FanoutCandidate, FlipObservation, HostCall, HostCallOk, HostCallResponse, HostStage,
+    ObservedEvidence, Outcome, PROTOCOL_VERSION, PluginManifest, PublishedSignal, RecallResult,
+    RoundState, Signal, SignalValue, StageName, StopReason, TamperFinding, TestBaseline, TestPlan,
+    TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule,
+    VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
 };
 use stella_protocol::CandidateHandle;
 
@@ -63,7 +63,7 @@ fn before_request() -> BeforeTurnRequest {
     BeforeTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "staged-v1".into(),
-        stage: StageName::Research,
+        stage: StageName::Host(HostStage::Research),
         round: 2,
         goal: "make the flaky test deterministic".into(),
         candidate: Some(grant()),
@@ -91,7 +91,7 @@ fn after_request() -> AfterTurnRequest {
     AfterTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "staged-v1".into(),
-        stage: Some(StageName::Verify),
+        stage: Some(StageName::Host(HostStage::Verify)),
         round: 2,
         goal: "make the flaky test deterministic".into(),
         candidate: Some(grant()),
@@ -420,7 +420,7 @@ fn an_after_turn_request_names_the_stage_its_evidence_is_about() {
     // stage — the join a host needs to pair a contribution with its evidence.
     let before = before_request();
     let after = AfterTurnRequest {
-        stage: Some(before.stage),
+        stage: Some(before.stage.clone()),
         round: before.round,
         ..after_request()
     };

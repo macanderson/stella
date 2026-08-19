@@ -23,7 +23,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use stella_core::{SubAgentDispatcher, SubAgentOutcome, SubAgentReport, SubAgentSpec};
-use stella_plugin::{PluginManifest, SignalValues, StageName, TamperFinding, TurnOutcome};
+use stella_plugin::{
+    HostStage, PluginManifest, SignalValues, StageName, TamperFinding, TurnOutcome,
+};
 use stella_protocol::completion::MessageRole;
 use stella_protocol::event::ModelCallRole;
 use stella_runtime::wrapper::{
@@ -191,7 +193,7 @@ async fn the_host_sequence_drives_the_plugin_and_the_host_runs_its_child_turn() 
 
     let prelude = driver.prelude.expect("the host was asked to run a turn");
     assert!(
-        prelude.stages().contains(&StageName::Plan),
+        prelude.stages().contains(&StageName::Host(HostStage::Plan)),
         "the resolved program runs the stage this plugin exists for"
     );
     let messages = prelude.into_messages();
@@ -264,7 +266,7 @@ async fn a_turn_that_does_not_plan_gets_no_contribution() {
 
     assert!(report.faults.is_empty());
     let prelude = driver.prelude.expect("the host was asked to run a turn");
-    assert!(!prelude.stages().contains(&StageName::Plan));
+    assert!(!prelude.stages().contains(&StageName::Host(HostStage::Plan)));
     assert!(
         prelude.into_messages().is_empty(),
         "no plan stage means no child turn and no contribution"
