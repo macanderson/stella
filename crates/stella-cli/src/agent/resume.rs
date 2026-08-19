@@ -268,7 +268,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                     &active_rules,
                 );
                 let no_recall = NoContextRecall;
-                let recall: &dyn stella_pipeline::ContextRecallPort = match memory.as_ref() {
+                let recall: &dyn stella_protocol::ContextRecallPort = match memory.as_ref() {
                     Some(m) => m,
                     None => &no_recall,
                 };

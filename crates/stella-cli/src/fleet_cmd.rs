@@ -847,7 +847,8 @@ async fn run_task(
     let (summary, success, outcome_label, force_incomplete): (String, bool, &str, bool) =
         if use_pipeline {
             use stella_core::router::{CircuitBreaker, Router};
-            use stella_pipeline::{NoContextRecall, PipelineConfig, PipelinePorts};
+            use stella_pipeline::{PipelineConfig, PipelinePorts};
+            use stella_protocol::NoContextRecall;
             let model_ref = stella_protocol::ModelRef::new(cfg.provider.id, cfg.model_id.clone());
             // Role wiring from `agent_engine_config` — fleet workers honor the
             // same worker/triage/verifier pins and per-role overrides as `stella run`.
@@ -892,7 +893,7 @@ async fn run_task(
                 &active_rules,
             );
             let no_recall = NoContextRecall;
-            let recall: &dyn stella_pipeline::ContextRecallPort = match memory.as_ref() {
+            let recall: &dyn stella_protocol::ContextRecallPort = match memory.as_ref() {
                 Some(m) => m,
                 None => &no_recall,
             };
