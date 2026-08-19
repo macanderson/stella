@@ -8,7 +8,7 @@ import {
 /**
  * The kit's animated lockup (docs/brand/brand-guidelines.html § motion),
  * played ONCE: the trails arrive left→right, the star pops, the letters type
- * on behind an ion cursor, the cursor blinks out. Same geometry, same
+ * on behind a gold cursor, the cursor blinks out. Same geometry, same
  * timeline, same easings as the kit's looping demo — the only difference is
  * `animation-iteration-count: 1` with `fill-mode: forwards`, which is safe
  * because every track's 100% keyframe is its resting state.

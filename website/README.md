@@ -8,11 +8,11 @@ Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumad
 
 ## Brand
 
-Brand kit v1.0, **"the comet"**: a four-point star moving fast enough to leave
-a trail. One shape, one color — Phosphor Gold `#FFB000` on Ink `#0B0B0C`, warm
-Paper for the light ground, JetBrains Mono as the only face. Quick rules:
-lowercase always; the comet flies left→right; ion is the signal, never the
-surface; small ion text on light grounds drops to brand-deep `#8B5E1A`.
+Brand kit v4.0, **"the comet"**: a four-point star moving fast enough to leave
+a trail. One shape, one color — Bronze Gold `#C58A32` on Obsidian `#070B10`,
+cool Paper for the light ground, JetBrains Mono as the only face. Quick rules:
+lowercase always; the comet flies left→right; gold is the signal, never the
+surface; small gold text on light grounds drops to brand-deep `#8B5E1A`.
 
 **`docs/brand/` is normative** (start with its `brand-guidelines.html`). Three
 layers, in order:
