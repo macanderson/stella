@@ -163,6 +163,21 @@ pub struct EngineConfigState {
     pub model_efforts: std::collections::HashMap<String, Vec<String>>,
     /// Exactly one entry per [`EngineRole::ALL`] slot, in that order.
     pub agents: Vec<EngineAgentState>,
+    /// The **assignable seats** — one per role an installed plugin declares,
+    /// with the model the user put on it.
+    ///
+    /// This is the editing counterpart to [`Self::roles`]'s open *reading*
+    /// vocabulary (#3472), and the two were opened at different times for a
+    /// reason worth keeping in view. #3472 opened reading and deliberately left
+    /// editing closed, because editing meant an `agents.<key>` block and the
+    /// settings schema had a fixed set of those — "a role the settings schema
+    /// has never heard of has no block to edit". `seat_models` removed that
+    /// obstacle: it is an open map keyed by a name nobody enumerated, so a
+    /// contributed role now *does* have somewhere to be edited.
+    ///
+    /// Empty is the ordinary case — no plugin installed, or none declaring a
+    /// role — and renders as no rows rather than as an apology.
+    pub seats: Vec<SeatRow>,
     /// What each role **resolves to**, which is a different question from
     /// `agents` above: those are the raw overrides the ENGINE overlay edits,
     /// where `None` means "inherit", and these are the answers after the
@@ -175,6 +190,42 @@ pub struct EngineConfigState {
     /// Empty on a driver that sent no wiring; the dialog says so rather than
     /// inventing rows.
     pub roles: Vec<RoleWiringRow>,
+}
+
+/// One assignable seat: a role an installed plugin declared, and the model the
+/// user assigned to it.
+///
+/// A *display* shape like everything else in this module tree — the driver
+/// resolves which plugins are installed, what roles they declare and what the
+/// settings say, and hands the answers over pre-rendered.
+///
+/// # The deck does not read the key
+///
+/// [`Self::key`] is `<plugin-id>/<role>` (`doc:roleless-core` §8.4) and is
+/// **opaque here**: compared for identity, shown on screen, sent back on save,
+/// and never split, parsed or matched against a literal. The deck has no list
+/// of roles it accepts, which is the whole point — a role invented by a plugin
+/// nobody has written yet must render exactly as well as one shipped in an
+/// example. [`Self::from`] exists so the screen can say where a seat came from
+/// without the deck having to take the key apart to find out.
+///
+/// This is the same discipline [`super::roles`] states for the reading side:
+/// "Whether a role exists because of a plugin, a settings block or a hard-coded
+/// default is a question the deck cannot ask and does not need to."
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SeatRow {
+    /// `<plugin-id>/<role>`, exactly as the driver resolved it. Opaque.
+    pub key: String,
+    /// The model assigned to this seat, or `None` for "runs on the default
+    /// model".
+    ///
+    /// `None` is not a gap to be filled in on screen with a guess: an
+    /// unassigned seat genuinely runs on the session's model, so the honest
+    /// rendering names that rather than leaving the cell blank.
+    pub model: Option<String>,
+    /// Where this seat came from, pre-rendered by the driver — a plugin's
+    /// display name. Shown, never parsed.
+    pub from: String,
 }
 
 impl EngineConfigState {
