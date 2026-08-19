@@ -77,7 +77,10 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     // `interactive_approvals: false` — a daemon-resumed turn answers approvals
     // through the daemon's own one-shot gate (sidecar or staged stdio), never
     // a TTY prompt raced against it (#2676).
-    let active_rules = crate::rules::enforce_workspace_rules(
+    // The return value fed only the pipeline-restore arm's own recall block
+    // (#3846 removed it); the call itself still attaches the workspace's rule
+    // guards to the registry, which every resumed turn needs regardless.
+    let _ = crate::rules::enforce_workspace_rules(
         &tools_registry,
         &cfg.workspace_root,
         &cfg.authority,
