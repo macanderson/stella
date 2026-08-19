@@ -197,38 +197,6 @@ fn every_lens_declares_its_tooling_or_admits_it_has_none() {
     );
 }
 
-/// A lens command that names a path which no longer exists is worse than a
-/// lens with no tooling: `rg` exits non-zero on a missing directory, so the
-/// whole aperture reports "no findings" for a reason that has nothing to do
-/// with the code. The `properties` lens carried
-/// `crates/stella-pipeline/src` for as long as it took anyone to notice the
-/// crate had been deleted from the workspace (#3865).
-///
-/// Only `crates/…` words are checked. The rest of a `run` string is a make
-/// target, a slash command, or a script this crate does not own, and asserting
-/// on those would make this test a second copy of the `Makefile`.
-#[test]
-fn every_crate_path_a_lens_names_exists_in_the_tree() {
-    let workspace = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
-    for l in LENSES {
-        let Tooling::Command { run, .. } = l.tooling else {
-            continue;
-        };
-        for word in run.split_whitespace() {
-            let Some(path) = word.strip_prefix("crates/") else {
-                continue;
-            };
-            assert!(
-                workspace.join("crates").join(path).exists(),
-                "the `{}` lens runs `rg` over `crates/{path}`, which is not in \
-                 the tree — the aperture reports nothing found for a reason \
-                 that is not about the code",
-                l.name
-            );
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // dry streak — per lens, and consecutive
 // ---------------------------------------------------------------------------

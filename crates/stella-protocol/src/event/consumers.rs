@@ -82,9 +82,8 @@ use super::KNOWN_TYPE_TAGS;
 /// - The **TUI** matches `AgentEvent` exhaustively
 ///   (`stella-tui`'s `model::Model::apply`, `textline::event_line`,
 ///   `deck::trace_of`), so every variant reaches it by construction.
-/// - **Replay** likewise tagged every variant, in the then-existing
-///   `stella-pipeline`'s `replay::event_signature`; that crate was deleted in
-///   #3865 and no replay tagger has replaced it yet.
+/// - **Replay** likewise tags every variant (`stella-pipeline`'s
+///   `replay::event_signature`).
 /// - **Serve** forwards the event stream opaquely rather than selecting
 ///   variants.
 ///

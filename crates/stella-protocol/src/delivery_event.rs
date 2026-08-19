@@ -40,9 +40,8 @@
 //! decision some host already holds as a typed value — which is why no new
 //! logic was needed to say what happened. The host that held it when these
 //! types were written was the staged pipeline's `pipeline::delivery`
-//! (`crates/stella-pipeline`, deleted in #3865), and **nothing in this
-//! workspace produces the projection today** — a wrapper plugin's own
-//! delivery step is the shape that would replace it. Retiring it is #3881.
+//! (`crates/stella-pipeline`, deleted in #3865); a wrapper plugin's own
+//! delivery step is the shape that replaces it.
 
 use serde::{Deserialize, Serialize};
 

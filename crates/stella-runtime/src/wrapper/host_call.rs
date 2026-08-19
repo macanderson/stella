@@ -91,8 +91,8 @@ pub const DEFAULT_RECALL_FRAMES: u32 = 8;
 /// wire view and nothing else.
 ///
 /// It is **not** that trait, and that is not an oversight:
-/// `crates/stella-runtime/tests/no_policy_crate_edge.rs` asserts executably that
-/// the assembly seam declares no edge to a policy-above-the-loop crate, because a wrapper
+/// `crates/stella-runtime/tests/no_pipeline_edge.rs` asserts executably that the
+/// assembly seam declares no edge to the staged pipeline, because a wrapper
 /// `stella-cli` can drive and `stella-serve` cannot is a CLI feature wearing a
 /// socket's name. The projection is the driver's, and it is mechanical.
 ///

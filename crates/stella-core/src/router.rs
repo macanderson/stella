@@ -10,11 +10,11 @@
 //! over a caller-supplied abstraction (`ProviderProfile`) instead of any
 //! concrete catalog type, and has no I/O of its own: `resolve` is a plain
 //! synchronous function over owned data. It returns *data* describing what
-//! happened (a `ModelRef` plus an optional `FallbackInfo`); the host above
-//! this crate is what turns a `FallbackInfo` into an
-//! `AgentEvent::ProviderFallback` and pushes it onto the event channel —
-//! there is no event channel here. (That host was `stella-pipeline` when this
-//! was written; that crate was deleted in #3865.)
+//! happened (a `ModelRef` plus an optional `FallbackInfo`); the layer above is
+//! what turns a `FallbackInfo` into an `AgentEvent::ProviderFallback` and
+//! pushes it onto the event channel — there is no event channel here. That
+//! layer was `crates/stella-pipeline` until #3865 deleted it; `stella-cli` is
+//! where the conversion lives now.
 //!
 //! Binding lessons this module exists to satisfy: L-M3 (no `"auto"` string
 //! sentinel anywhere — absence of a pin is `Option::None`), L-M6 (role-based
@@ -275,7 +275,7 @@ impl CircuitBreaker {
 
 /// A breaker-forced provider substitution — maps directly onto
 /// `AgentEvent::ProviderFallback`'s fields. `stella-core` has no event
-/// channel; the host above it is what turns this into the real event (see
+/// channel; the layer above turns this into the real event (see
 /// the module docs). Never constructed for an intentional routing choice (e.g. verifier's
 /// cross-family preference) — only when the originally preferred provider
 /// was unavailable (L-M7: fallback is always visible, never silent).

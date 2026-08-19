@@ -205,7 +205,7 @@ running at all.
 
 The hook derives `CARGO_SCOPE` from the pushed diff via
 `scripts/impacted-crates.sh`, so a change confined to one crate compiles and
-tests that crate and its dependents rather than all 27 members (#1135). It
+tests that crate and its dependents rather than all 28 members (#1135). It
 widens to the whole workspace for a push to `main`, a tag, a diff touching a
 workspace-root manifest / `Cargo.lock` / a build script / the gate machinery,
 and for anything it cannot narrow with confidence. Two escape hatches sit

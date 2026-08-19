@@ -714,7 +714,7 @@ async fn a_plugin_acts_on_the_candidate_using_only_what_the_request_carried() {
     // `host_tree_grant` (the staged pipeline's
     // `ports::CandidateHandles::grant` until #3865 deleted that crate), which
     // canonicalises the root and refuses to mint one it cannot resolve; this
-    // crate must not take that edge (`tests/no_policy_crate_edge.rs`), so the grant is
+    // crate must not take that edge (`tests/no_pipeline_edge.rs`), so the grant is
     // built here in the shape that host produces.
     let mut request = after("make the failing test pass");
     request.candidate = Some(
