@@ -724,7 +724,7 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
 /// served by the shared adapter re-identified per provider so its
 /// `Provider::id()` and error messages name the surface actually being called
 /// (an xAI 401 must never read "Z.ai rejected the API key").
-fn build_provider_parts(
+pub(crate) fn build_provider_parts(
     provider_config: &crate::config::ProviderConfig,
     model_id: &str,
     api_key: ApiKey,
@@ -797,22 +797,30 @@ fn profile_for(config: &crate::config::ProviderConfig) -> ProviderProfile {
         .with_family(provider_family(config.id))
 }
 
-/// Resolve the VERIFIER role for the goal loop. Builds a role [`Router`] whose
-/// most-preferred provider is the active worker (`worker_id`/`worker_model`,
-/// so the `--model` pin is honored) followed by every OTHER configured
-/// provider, then resolves `Role::Verifier`. The router prefers a healthy
-/// provider whose family differs from the worker's (`resolve_verifier`), so:
+/// Resolve one seat's model, and build the adapter that serves it — the
+/// session's whole answer to "does this role run on a model of its own?".
 ///
-/// - Only the worker's family configured → the router degrades to the worker
-///   provider; `model_ref.provider == worker_id`, so we return `None` and no
-///   second provider is built (behavior identical to before).
-/// - A distinct family is selected → the concrete `ModelRef` is returned.
+/// Builds a role [`Router`] whose most-preferred provider is the active worker
+/// (`worker_id`/`worker_model`, so the `--model` pin is honored) followed by
+/// every OTHER configured provider, then resolves `role` through it. What that
+/// buys depends on the role, and the difference is the router's to make, not
+/// this function's: `Role::Verifier` prefers a healthy provider whose family
+/// differs from the worker's (`Router::resolve_verifier`), while the tier roles
+/// take the most-preferred available provider's matching tier.
 ///
-/// Returns `None` (→ caller reuses the worker as verifier) on ANY failure —
-/// same-family degradation, a resolve error, an unknown verifier provider, or a
-/// verifier-adapter build failure — so verifier routing can never break the loop.
-/// On success returns the built verifier provider and its id (for the notice).
-pub(crate) fn resolve_cross_family_verifier(
+/// - The router lands back on the worker's own provider → `None`, and no second
+///   adapter is built. This is the single-family case for the verifier and the
+///   ordinary case for every tier role today, because [`profile_for`] points a
+///   provider's three tiers at one `default_model`. A seat that cannot diverge
+///   says so by returning `None` rather than by building a duplicate adapter.
+/// - A distinct provider is selected → its concrete adapter and id.
+///
+/// Returns `None` on ANY failure — degradation to the worker, a resolve error,
+/// an unknown provider, or an adapter build failure — so seat routing can never
+/// break the loop that asked for it. Every caller's `None` arm is "use the
+/// worker's provider", which is what the session did before seats existed.
+pub(crate) fn resolve_seat_provider(
+    role: Role,
     worker_id: &str,
     worker_model: &str,
     configured: &[crate::config::ConfiguredProvider],
@@ -839,7 +847,7 @@ pub(crate) fn resolve_cross_family_verifier(
         profiles,
         CircuitBreaker::new(Box::new(SystemClock::new())),
     );
-    let decision = router.resolve(Role::Verifier).ok()?;
+    let decision = router.resolve(role).ok()?;
 
     // Same provider as the worker → single-family/degraded: reuse the worker
     // provider directly, never build a duplicate.
@@ -847,24 +855,40 @@ pub(crate) fn resolve_cross_family_verifier(
         return None;
     }
 
-    // Build the concrete verifier from the discovered credential for the chosen
+    // Build the concrete adapter from the discovered credential for the chosen
     // provider. A missing entry or a build error falls back to the worker.
     let entry = configured
         .iter()
         .find(|c| c.config.id == decision.model_ref.provider)?;
-    let verifier = build_provider_parts(
+    let seat = build_provider_parts(
         &entry.config,
         &decision.model_ref.model_id,
         entry.api_key.clone(),
         entry.config.base_url.to_string(),
         None,
         entry.aux.clone(),
-        // The routed verifier's calls land in bursts within a run; the
-        // 5-minute window is the right ask regardless of surface (#1839).
+        // A routed seat's calls land in bursts within a run; the 5-minute
+        // window is the right ask regardless of surface (#1839).
         stella_model::CacheTtl::default(),
     )
     .ok()?;
-    Some((verifier, decision.model_ref.provider))
+    Some((seat, decision.model_ref.provider))
+}
+
+/// Resolve the VERIFIER seat for the goal loop.
+///
+/// The named entry point the goal loop calls, kept as its own function rather
+/// than open-coding [`resolve_seat_provider`]'s `Role::Verifier` at the call
+/// site: the goal loop prints an operator-facing notice about *cross-family
+/// verification specifically*, so the role it asks for is part of that
+/// surface's contract rather than an argument a later edit could quietly
+/// retune.
+pub(crate) fn resolve_cross_family_verifier(
+    worker_id: &str,
+    worker_model: &str,
+    configured: &[crate::config::ConfiguredProvider],
+) -> Option<(Box<dyn Provider>, String)> {
+    resolve_seat_provider(Role::Verifier, worker_id, worker_model, configured)
 }
 
 /// The session-scoped role [`Router`] for a bare (non-pipeline) loop — the

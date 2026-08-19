@@ -271,7 +271,30 @@ pub struct SubAgentSpec {
     /// [`ReadOnlyTools`], enforced at execution time rather than by prompt.
     pub write_access: bool,
     /// Attribution role for the child's model calls.
+    ///
+    /// A **receipt** label, and deliberately not a routing decision: it answers
+    /// "what was this call for?" so a cost report can group by job. Which model
+    /// serves the child is [`Self::seat`]'s question, and the two are kept
+    /// apart because this enum is closed and core-owned while the set of jobs a
+    /// plugin invents is neither.
     pub role: ModelCallRole,
+    /// The name of the seat this child runs on, as its requester spelled it.
+    ///
+    /// **Opaque to the engine, by design.** A plugin declares the roles its
+    /// process needs — `"planner"`, `"reviewer"`, `"second-opinion"` — and the
+    /// host resolves that name against whatever model the *user* assigned to
+    /// it. Nothing in `stella-core` may branch on the contents of this string:
+    /// the moment the engine knows that `"planner"` means planning, the set of
+    /// processes a plugin can express is capped at the set core anticipated,
+    /// which is the coupling the wrapper socket exists to remove.
+    ///
+    /// `None` means "the requester named no seat", which every caller resolves
+    /// to the session's own model. That is also what an unassigned seat
+    /// resolves to, so a plugin that declares a `planner` role runs
+    /// single-model until a user decides otherwise — the plugin describes its
+    /// process, and whether that process is multi-model is the user's choice,
+    /// never the plugin's and never core's.
+    pub seat: Option<String>,
     /// Receipt turn slot. Context receipts key on
     /// `(execution_id, turn_instance, step, call_seq)` and every turn
     /// restarts `step` at 0, so a child sharing the parent's slot would
@@ -314,6 +337,9 @@ impl Default for SubAgentSpec {
             budget_usd: None,
             write_access: false,
             role: ModelCallRole::Worker,
+            // No seat named → the session's own model, which is what every
+            // child ran on before seats existed.
+            seat: None,
             turn_instance: 0,
             depth: 1,
             compaction_budget_tokens: None,

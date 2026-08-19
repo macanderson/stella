@@ -100,6 +100,43 @@ pub struct AgentEngineConfig {
     /// restriction (pickers fall back to the seed catalog).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_models: Option<Vec<String>>,
+    /// Which model each **plugin-declared seat** runs on.
+    ///
+    /// ```jsonc
+    /// "seat_models": {
+    ///   "vera/verifier": "anthropic/claude-opus-5",
+    ///   "stella-plan/planner": "deepseek/deepseek-chat"
+    /// }
+    /// ```
+    ///
+    /// Keys are `<plugin-id>/<role>`, where the role is a name the plugin chose
+    /// for a participant in its process; values are model strings in `--model`
+    /// spelling. Nothing in this workspace matches a key against a literal, and
+    /// nothing validates one against a list of known roles — there is no such
+    /// list, deliberately. A plugin describes the process it needs; this map is
+    /// where the user decides whether a participant gets a model of its own.
+    ///
+    /// **The plugin declares only the bare role name; the host applies the
+    /// prefix.** That is what makes the namespace non-forgeable: a plugin never
+    /// writes `vera/…`, so it cannot declare a role under another plugin's name
+    /// and capture the assignment meant for it. There is deliberately no bare
+    /// form and no precedence ladder — resolution is one lookup, and a miss is
+    /// the default model (`doc:roleless-core` §8.4).
+    ///
+    /// Absent, or absent for a given seat, means that seat runs on the
+    /// session's model — so installing a plugin with five participants costs
+    /// exactly what a single-model session costs until someone assigns
+    /// otherwise. See [`crate::agent::seats`] for the resolution and for why
+    /// core never substitutes a default of its own here.
+    ///
+    /// This is the replacement for the `pipeline_<role>_model` keys above,
+    /// which name roles a core loop no longer has: those were pins on a staged
+    /// pipeline deleted in #3865. Their removal is #3908; retiring the
+    /// four-language contract that pins the same words is #3910, and it is
+    /// deliberately a separate ticket because the guard may only go once role
+    /// names travel as trace data (#3906). Epic #3903.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_models: Option<std::collections::BTreeMap<String, String>>,
     /// Per-model output ceilings, overriding what the catalog knows the model
     /// can write. `[models.output_caps]` in TOML; keys are `provider/slug` or
     /// a bare slug, values are token counts.
@@ -371,6 +408,17 @@ impl AgentEngineConfig {
         take!(pipeline_research_model);
         take!(pipeline_plan_model);
         take!(allowed_models);
+        // Per KEY, for `model_output_caps`'s reason and one of its own: a
+        // project pinning its plan plugin's `planner` seat has said nothing
+        // about the `reviewer` seat the user assigned in their own file, and
+        // wholesale replacement would drop it. Seats are independent
+        // assignments, never one vocabulary.
+        if let Some(seats) = &other.seat_models {
+            let target = self.seat_models.get_or_insert_with(Default::default);
+            for (seat, model) in seats {
+                target.insert(seat.clone(), model.clone());
+            }
+        }
         // Per KEY, not wholesale — the deliberate opposite of
         // `allowed_models` two lines up, and the contrast is the reason
         // either rule is right. `allowed_models` is one vocabulary, so a

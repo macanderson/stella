@@ -154,6 +154,43 @@ impl ModelsSection {
     }
 }
 
+/// `[seats]` — which model each plugin-declared seat runs on.
+///
+/// ```toml
+/// [seats]
+/// "stella-plan/planner" = "openrouter/openai/gpt-5.5"
+/// "vera/verifier" = "anthropic/claude-opus-5"
+/// ```
+///
+/// Keys are `<plugin-id>/<role>` (`doc:roleless-core` §8.4). The plugin
+/// declares only the bare role name and the host applies the prefix, so the
+/// namespace cannot be forged by a plugin claiming another's.
+///
+/// Its own top-level table, and **not** a flattened part of `[agents]`, for the
+/// exact reason [`AgentsSection`]'s doc gives for why it may flatten: that set
+/// is closed, because its agent names are struct fields that cannot collide
+/// with a root key. Seats are the opposite — the names are chosen by whatever
+/// plugin the user installed, so a seat called `auto_mode` or `default_model`
+/// is a thing a plugin author can write tomorrow. Flattening an open set into a
+/// table that also holds root keys is a collision waiting for its first
+/// unlucky name; a table of its own cannot collide with anything.
+///
+/// A map, not fields, for the same reason: core does not know what seats
+/// exist, must not have a list of the ones it will accept, and must round-trip
+/// a name it has never seen without altering it.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct SeatsSection {
+    /// Seat name → model string, both opaque to this layer.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub models: BTreeMap<String, String>,
+}
+
+impl SeatsSection {
+    fn is_empty(&self) -> bool {
+        self.models.is_empty()
+    }
+}
+
 /// `[agents]` — the flattened engine config.
 ///
 /// The JSON nests per-agent config one level below the flat model fields
@@ -264,6 +301,8 @@ pub struct TomlConfig {
     pub models: ModelsSection,
     #[serde(default)]
     pub agents: AgentsSection,
+    #[serde(default)]
+    pub seats: SeatsSection,
     #[serde(default)]
     pub tools: Option<ToolsSettings>,
     #[serde(default)]
@@ -381,6 +420,7 @@ impl TomlConfig {
             providers,
             models,
             agents,
+            seats,
             tools,
             hooks,
             mcp,
@@ -406,7 +446,7 @@ impl TomlConfig {
             registry_url: Some(url),
         });
 
-        let agent_engine_config = lower_agents(agents, models);
+        let agent_engine_config = lower_agents(agents, models, seats);
 
         let settings = Settings {
             providers,
@@ -606,7 +646,7 @@ pub fn mcp_servers_not_yet_read(path: &Path, count: usize) -> String {
 /// call: `allowed_models` belongs to `[models]`, everything else to
 /// `[agents]`. Writing them separately would parse and re-render the file
 /// twice, doubling the window in which a crash leaves a half-written config.
-pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
+pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection, SeatsSection) {
     let per_agent = cfg.agents.clone().unwrap_or_default();
     let agents = AgentsSection {
         default_model: cfg.default_model.clone(),
@@ -633,7 +673,10 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         allowed: cfg.allowed_models.clone(),
         output_caps: cfg.model_output_caps.clone(),
     };
-    (agents, models)
+    let seats = SeatsSection {
+        models: cfg.seat_models.clone().unwrap_or_default(),
+    };
+    (agents, models, seats)
 }
 
 /// The `[agents]` / `[models]` items for a write, with an EMPTY section
@@ -646,7 +689,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
 pub fn agent_sections(
     cfg: &AgentEngineConfig,
 ) -> Result<Vec<(&'static str, Option<toml_edit::Item>)>, String> {
-    let (agents, models) = raise_agents(cfg);
+    let (agents, models, seats) = raise_agents(cfg);
     let agents_item = if agents.is_empty() {
         None
     } else {
@@ -657,15 +700,28 @@ pub fn agent_sections(
     } else {
         Some(super::toml_io::item_for(&models, "models")?)
     };
-    Ok(vec![("agents", agents_item), ("models", models_item)])
+    let seats_item = if seats.is_empty() {
+        None
+    } else {
+        Some(super::toml_io::item_for(&seats, "seats")?)
+    };
+    Ok(vec![
+        ("agents", agents_item),
+        ("models", models_item),
+        ("seats", seats_item),
+    ])
 }
 
 /// Fold `[agents]` + `[models]` into the one `AgentEngineConfig` the engine
 /// reads. Returns `None` when neither section said anything, so an absent block
 /// stays absent rather than becoming an all-`None` object that the scope merge
 /// would treat as a real (empty) opinion.
-fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEngineConfig> {
-    if agents.is_empty() && models.allowed.is_none() {
+fn lower_agents(
+    agents: AgentsSection,
+    models: ModelsSection,
+    seats: SeatsSection,
+) -> Option<AgentEngineConfig> {
+    if agents.is_empty() && models.allowed.is_none() && seats.is_empty() {
         return None;
     }
 
@@ -687,6 +743,11 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         pipeline_research_model: agents.pipeline_research_model,
         pipeline_plan_model: agents.pipeline_plan_model,
         allowed_models: models.allowed,
+        // Absent stays absent: an empty `[seats]` table must not become an
+        // empty-but-present map, which the scope merge would read as a real
+        // opinion and let a lower scope's assignments survive a higher scope
+        // that meant to say nothing.
+        seat_models: (!seats.is_empty()).then_some(seats.models),
         model_output_caps: models.output_caps,
         auto_mode: agents.auto_mode,
         effort_auto: agents.effort_auto,
