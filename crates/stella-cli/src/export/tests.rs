@@ -674,9 +674,9 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         "--text-2: #A4ABB3;",
         "--text-3: #737C88;",
         "--accent: #E9EDF2;",
-        "--identity: #00D1F9;",
+        "--identity: #C58A32;",
         "--ok: #3FD99B;",
-        "--warn: #D9A62E;",
+        "--warn: #FF7A45;",
         "--bad: #F2687A;",
         "--c1: #E9EDF2;",
     ] {
@@ -691,8 +691,14 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
     // block no longer defines.
     for retired in [
         "#7dd3fc", "#38bdf8", "#a78bfa", "#6c7b90", "#4d9fff", "--sky", "--azure",
-        // The bronze instrument palette the v3.0 ion recolour retired.
-        "#0A0A0A", "#EDEDED", "#C58A32", "#4CC38A", "#C9A227", "#E5715F", "#674415",
+        // The pre-instrument bronze page. Its ground, ink and semantic marks
+        // stay retired; #C58A32 and #674415 do NOT appear here any more,
+        // because v4.0 took the brand hue back to that ramp and they are the
+        // live identity again. What was actually retired in v3.0 was the warm
+        // NEUTRAL page around the gold, and that is what this row still names.
+        "#0A0A0A", "#EDEDED", "#4CC38A", "#C9A227", "#E5715F",
+        // The v3.0 ion values, retired by v4.0's return to gold.
+        "#00D1F9", "#00778F", "#D9A62E", "#7A5200",
     ] {
         assert!(
             !html.contains(retired),

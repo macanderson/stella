@@ -501,14 +501,18 @@ fn render_dashboard(
                                colour-vision deficiency and a projector.
        --identity              the wordmark and at most one primary action.
                                Never a state, and --warn was moved to keep
-                               that honest: the gold identity #C58A32 sits at
-                               OKLCH hue 73.2°, and the old --warn #D9A62E at
-                               83.8° was 10.7° away — the same colour, to a
-                               reader glancing at a row. The shipped #FF7A45
-                               is 32.0° away. Hue, not contrast ratio: two
-                               chromatic marks of equal lightness score ~1:1
-                               however different they look, so a luminance
-                               ratio cannot answer this question.
+                               that honest: the gold identity sits at OKLCH
+                               hue 73.2°, and the amber --warn it replaced sat
+                               10.7° from it — the same colour, to a reader
+                               glancing at a row. The shipped one is 32.0°
+                               away. Hue, not contrast ratio: two chromatic
+                               marks of equal lightness score ~1:1 however
+                               different they look, so a luminance ratio
+                               cannot answer this question. (The retired hexes
+                               are deliberately not spelled here — this
+                               comment ships inside the exported document, and
+                               export/tests.rs asserts no retired value
+                               appears in it.)
        --accent                what is selected. It IS the text colour, so
                                "active" is an ink/paper inversion rather than
                                a colour — the one dimension a reader cannot
