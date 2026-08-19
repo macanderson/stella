@@ -766,6 +766,13 @@ function TranscriptView({
               // margin signal a failure has.
               const failed = Boolean((result ?? entry).meta?.error);
               const cls = toolClassOf(entry.meta);
+              // Never returned, as opposed to merely not folded into this row:
+              // asked of the WHOLE transcript, so switching results off does
+              // not make every call on screen claim to be running.
+              const pending =
+                entry.kind === "tool" &&
+                Boolean(callId) &&
+                !callIndex.get(callId)?.result;
               return (
                 <div key={entry.seq} className="tx-row py-0.5">
                   <span className="tx-clock">{fmtClock(entry.t)}</span>
@@ -789,6 +796,7 @@ function TranscriptView({
                     <Entry
                       entry={entry}
                       result={result}
+                      pending={pending}
                       query={query.trim()}
                       thinkingOpen={thinkingOverrides[entry.seq] ?? thinkingDefault}
                       toggleThinking={() =>

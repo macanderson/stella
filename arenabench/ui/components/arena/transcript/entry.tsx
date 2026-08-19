@@ -806,6 +806,7 @@ function ResultBody({
 export function Entry({
   entry,
   result,
+  pending,
   query,
   thinkingOpen,
   toggleThinking,
@@ -822,6 +823,10 @@ export function Entry({
    *  ONE row — see `mergeToolRows`. Absent for every non-tool entry, and for a
    *  call still running or whose result the reader filtered away. */
   result?: TranscriptEntry;
+  /** Whether this call has no result anywhere in the transcript — it never
+   *  returned. Decided by the page, which can see the whole stream; the absence
+   *  of `result` above only says it is not in the current filtered view. */
+  pending?: boolean;
   query: string;
   thinkingOpen: boolean;
   toggleThinking: () => void;
@@ -928,10 +933,17 @@ export function Entry({
             </span>
           )}
           {parts && <ResultChips parts={parts} />}
-          {/* A call with no result yet is said to be pending rather than left
-              looking like one that returned nothing — a killed run leaves calls
-              that genuinely never came back, and the two must not look alike. */}
-          {!result && <span className="tx-chips"><span className="tx-chip">running…</span></span>}
+          {/* A call that never returned says so rather than looking like one
+              that returned nothing — a killed run leaves calls that genuinely
+              never came back, and the two must not look alike. Driven by
+              `pending` (the whole transcript) rather than by the absence of
+              `result` (this filtered view), because a reader who switched
+              results off has not made every call on screen start running. */}
+          {pending && (
+            <span className="tx-chips">
+              <span className="tx-chip">running…</span>
+            </span>
+          )}
           {onInspect && <Inspect onOpen={onInspect} open={Boolean(inspecting)} />}
           {expandable && toggleArgs && (
             <button
