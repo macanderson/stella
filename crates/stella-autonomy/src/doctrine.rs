@@ -26,7 +26,7 @@
 //! - **Prose doctrine does not.** "Prefer the architecturally sound option",
 //!   "match the neighbourhood", "no new dependencies casually" — that is
 //!   instruction for the judgement half, it already has a home in the context
-//!   record plane (`.stella/rules/*.toml`, `doc:adaptive-context/context-pr`),
+//!   record plane (`.stella/rules/*.toml`, `doc:context-pr`),
 //!   and duplicating it here would create the fifth plane. A `[doctrine]` block
 //!   that wanted to say something prose-shaped is a context record, and this
 //!   module's answer to that request is a pointer, not a field.
