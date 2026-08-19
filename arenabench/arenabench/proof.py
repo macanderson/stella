@@ -110,10 +110,12 @@ def flip_outcome(ladder: Mapping[str, Any]) -> str:
 
 #: Verdict-summary prefixes the pipeline stamps when it is telling you the
 #: result is *not* backed by proof. Ordered most- to least-specific; the first
-#: match wins. Sourced from ``crates/stella-pipeline/src/verify.rs`` — the
-#: constructors that build each summary — and deliberately matched against the
-#: head of the string rather than anywhere in it, because a model's own prose
-#: quotes these words often enough to matter.
+#: match wins. Sourced from the summary constructors in the staged pipeline's
+#: ``verify.rs``, before that crate was deleted from the Stella workspace
+#: (#3865); the strings live on in recorded runs and in whatever verification
+#: plugin ports the ladder, which is what this reader parses. Deliberately
+#: matched against the head of the string rather than anywhere in it, because
+#: a model's own prose quotes these words often enough to matter.
 _HONESTY_MARKERS: tuple[tuple[str, str], ...] = (
     ("WITNESS UNSATISFIABLE", "witness_unsatisfiable"),
     ("NO WORK ATTEMPTED", "nothing_attempted"),
@@ -212,8 +214,10 @@ class TrialProof:
     #: execute.
     warranted: bool | None = None
     #: Why no proof was demanded, when it was not. One of six fixed sentences
-    #: from ``crates/stella-pipeline/src/witness/warrant.rs`` — "documentation
-    #: only; prose has no runtime behavior to flip" and its siblings.
+    #: from the staged pipeline's ``witness/warrant.rs`` — "documentation
+    #: only; prose has no runtime behavior to flip" and its siblings. That
+    #: crate is deleted from the Stella workspace (#3865); the sentences are
+    #: what recorded runs carry.
     warrant_reason: str = ""
     #: Diff size the warrant saw. Its budget lives on the ladder.
     diff_lines: int | None = None
