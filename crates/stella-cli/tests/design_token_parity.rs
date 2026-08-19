@@ -201,6 +201,40 @@ fn surfaces() -> Vec<Surface> {
                 // otherwise sit.
             ],
         },
+        // The shared transcript page. The Observatory's `render_transcript`
+        // route serves it, so a reader clicking a run in the dashboard lands
+        // on it — which is what makes it an instrument surface rather than a
+        // published one, and puts it outside #2594's carve-out. It is also the
+        // standalone artifact people mail around.
+        //
+        // It was outside this matrix until #3630, and had drifted exactly the
+        // way an unchecked surface does: ground `#0a0a0a` against the
+        // instrument's `#070B10`, and a different green, red and amber, so
+        // "passed" was one colour in the dashboard and another in the
+        // transcript of the same run. The file's own header comment claimed
+        // the values WERE the instrument palette the whole time — which is the
+        // argument for the row rather than for a third alignment pass.
+        //
+        // No `identity`: a transcript renders a run, and nothing on it is a
+        // brand mark. Its two categorical hues (`--cyan`, `--violet`, tool
+        // kind and speaker) are deliberately outside the instrument palette
+        // and so outside this matrix; the file's header carries that decision
+        // and its reasoning.
+        Surface {
+            file: "crates/stella-transcript/src/html/transcript.css",
+            dark: (":root {", "\n}"),
+            light: ("@media (prefers-color-scheme: light)", "\n  }"),
+            names: &[
+                ("ground", "--bg"),
+                ("surface", "--panel"),
+                ("text", "--ink"),
+                ("text-2", "--dim"),
+                ("text-3", "--faint"),
+                ("ok", "--green"),
+                ("bad", "--red"),
+                ("warn", "--amber"),
+            ],
+        },
         Surface {
             file: "arenabench/web/app/globals.css",
             dark: (":root {", "\n}"),
