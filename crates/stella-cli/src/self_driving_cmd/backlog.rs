@@ -202,6 +202,35 @@ pub(super) fn ranked_keys(provider: &dyn IssueProvider) -> Result<Vec<String>, S
         .collect())
 }
 
+/// Mark an issue as one the loop tried and could not resolve, and say why.
+///
+/// Both halves matter. The label is what the next run reads, so it stops
+/// spending on a wall it has already hit; the comment is what a **human**
+/// reads, and without it the label is an accusation with no evidence — an
+/// issue sitting there marked unresolvable by a machine that did not say what
+/// went wrong is worse than one that was never attempted.
+pub(super) async fn escalate(
+    provider: &dyn IssueProvider,
+    key: &IssueKey,
+    why: &str,
+    signature: &str,
+) -> Result<(), IssueError> {
+    provider
+        .relabel(key, &[stella_autonomy::ESCALATION_LABEL.to_owned()], &[])
+        .await?;
+
+    let body = format!(
+        "This loop attempted this issue and could not resolve it, so it is \
+         labelled `{}` and will be skipped by later runs.\n\n\
+         What happened: {why}\n\n\
+         The work is still wanted — this is not a closure. Remove the label to \
+         put it back in the queue, once whatever stopped the attempt has \
+         changed.",
+        stella_autonomy::ESCALATION_LABEL
+    );
+    comment(provider, key, &body, signature).await
+}
+
 /// Resolve one issue by key, through the port.
 ///
 /// Reads the open queue and finds the key rather than asking the tracker for
@@ -248,10 +277,14 @@ pub(super) async fn close_with_receipt(
     key: &IssueKey,
     receipt: &str,
     signature: &str,
-    state: &str,
+    canonical_resolution: &str,
 ) -> Result<(), IssueError> {
     provider
-        .close(key, &stella_autonomy::sign(receipt, signature), state)
+        .close(
+            key,
+            &stella_autonomy::sign(receipt, signature),
+            canonical_resolution,
+        )
         .await
 }
 

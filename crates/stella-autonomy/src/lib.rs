@@ -58,7 +58,7 @@ pub use closure::{
 };
 pub use convention::{
     Acceptance, AxisChoice, AxisRequirement, BacklogConvention, ChoiceReason, Conformance,
-    ConventionSource, LabelAxis, Repair, Violation, conform, repair,
+    ConventionSource, ESCALATION_LABEL, LabelAxis, Repair, Violation, conform, repair,
 };
 pub use deliver::{
     Action, Attempts, CiConclusion, DeliverPolicy, EscalationReason, Mergeability, Observation,

@@ -71,6 +71,17 @@ pub(super) fn drive(
     let doctrine = Doctrine::default();
     let provider = crate::issue_provider::GhIssueProvider;
 
+    // Installed before anything is claimed. The loop cannot record an
+    // escalation against a label the tracker does not carry, and discovering
+    // that at the first failure — rather than here — would lose the one record
+    // that stops the next run repeating the attempt.
+    crate::issue_provider::ensure_label(
+        stella_autonomy::ESCALATION_LABEL,
+        "The self-driving loop attempted this and could not resolve it. Still wanted; \
+         remove the label to return it to the queue.",
+    )
+    .map_err(|error| format!("could not install the escalation label: {error}"))?;
+
     let mut state = LoopState {
         planned: true,
         batch: max_issues,
@@ -161,7 +172,23 @@ pub(super) fn drive(
                         eprintln!("  changed nothing ({why}) — moving on");
                     }
                     super::work::WorkOutcome::Failed { reason } => {
-                        eprintln!("  not worked: {reason} — moving on");
+                        eprintln!("  not worked: {reason}");
+                        // Recorded on the issue, not just in this log. A run
+                        // that only printed it would repeat the attempt — and
+                        // the cost — on the next cycle, having learnt nothing
+                        // that outlived the process.
+                        match runtime().block_on(super::backlog::escalate(
+                            &provider,
+                            &resolved.key,
+                            &reason,
+                            &cfg.attribution.issue_comment,
+                        )) {
+                            Ok(()) => eprintln!(
+                                "  labelled `{}` — later runs will skip it",
+                                stella_autonomy::ESCALATION_LABEL
+                            ),
+                            Err(error) => eprintln!("  could not label it: {error}"),
+                        }
                     }
                 }
             }
@@ -317,6 +344,18 @@ fn observe(max_issues: u32, opened: u32) -> LoopObservation {
         base_breakage_issue: None,
         base_fix_contention: Contention::default(),
     }
+}
+
+/// A runtime for the one awaited call a synchronous arm needs.
+///
+/// Built per use rather than held: these verbs are short-lived and the
+/// alternative is making every arm of the loop async for a handful of awaited
+/// port calls.
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a current-thread runtime is always constructible")
 }
 
 fn sleep(secs: u64) {

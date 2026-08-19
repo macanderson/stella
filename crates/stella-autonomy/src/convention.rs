@@ -46,6 +46,23 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The label marking an issue the loop tried and could not resolve.
+///
+/// **The loop applies this one to itself.** Everything else in this module is
+/// about classification a human owns; this is the loop recording its own
+/// failure so the next run does not spend the same money discovering it again.
+///
+/// It is a *label* rather than a closure because the issue is not resolved: the
+/// work is still wanted, and a human may pick it up, adjust the ceiling, or
+/// break it into pieces the loop can take. Closing it would be a lie, and
+/// leaving it unmarked is how a loop burns its budget on the same unsolvable
+/// issue every cycle forever.
+///
+/// A session installs it if the tracker does not already carry it, because a
+/// label that does not exist cannot be applied and the loop would fail at the
+/// first escalation rather than at setup.
+pub const ESCALATION_LABEL: &str = "agent-escalated";
+
 /// Where a rule about how issues are written came from.
 ///
 /// This is a precedence order, strongest first, and the ordering is the whole

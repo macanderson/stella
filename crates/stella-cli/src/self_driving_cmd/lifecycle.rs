@@ -175,11 +175,14 @@ pub(super) fn close_issue(req: CloseRequest<'_>) -> Result<(), String> {
     let issue_key = stella_protocol::issue::IssueKey::from(key);
     let receipt = stella_autonomy::receipt(&closure);
 
-    // Stella's canonical resolution, spelled the way THIS tracker spells it.
-    let resolution = cfg
-        .vocabulary
-        .resolution(stella_autonomy::resolution_of(&closure))
-        .to_owned();
+    // Stella's CANONICAL resolution. The provider spells it — that is what
+    // makes the adapter the only place carrying a tracker's words, and
+    // spelling it here instead is what made every declined closure record as
+    // `completed` until review caught it (#4001).
+    let canonical = stella_autonomy::resolution_of(&closure);
+
+    // The tracker's own spelling, for what a human reads. Never sent.
+    let spelled = cfg.vocabulary.resolution(canonical).to_owned();
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -203,7 +206,7 @@ pub(super) fn close_issue(req: CloseRequest<'_>) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
 
         runtime
-            .block_on(backlog::close_bare(&provider, &issue_key, &resolution))
+            .block_on(backlog::close_bare(&provider, &issue_key, canonical))
             .map_err(|error| error.to_string())?;
     } else {
         runtime
@@ -212,11 +215,11 @@ pub(super) fn close_issue(req: CloseRequest<'_>) -> Result<(), String> {
                 &issue_key,
                 &receipt,
                 &cfg.attribution.issue_comment,
-                &resolution,
+                canonical,
             ))
             .map_err(|error| error.to_string())?;
     }
 
-    println!("closed #{key} as {resolution}");
+    println!("closed #{key} as {spelled}");
     Ok(())
 }

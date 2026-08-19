@@ -171,20 +171,17 @@ impl IssueProvider for GhIssueProvider {
     }
 
     async fn close(&self, key: &IssueKey, receipt: &str, state: &str) -> Result<(), IssueError> {
-        // GitHub spells the two terminal states `completed` and
-        // `not planned`. Anything this build does not recognise closes as
-        // `completed` rather than failing: an unclosed issue is worse than one
-        // closed under a slightly wrong reason, and the receipt says what
-        // actually happened either way.
-        let reason = if state == "not_planned" {
-            "not planned"
-        } else {
-            "completed"
-        };
-        // An empty receipt attaches no comment: the partial-closure path posts
-        // its receipt as a standalone comment first (for durability), so
+        // Two fixes, both from review of #4001, and they compose:
+        //
+        // `state` is stella's CANONICAL resolution, and `gh_close_reason` is
+        // the only place that knows how GitHub spells it. Spelling it in the
+        // caller made every declined closure record as `completed`.
+        //
+        // And an empty receipt attaches no comment: the partial-closure path
+        // posts its receipt as a standalone comment first, for durability, so
         // re-attaching it here would leave the identical signed receipt on the
         // issue twice.
+        let reason = gh_close_reason(state);
         let mut args = vec!["issue", "close", key.as_str()];
         if !receipt.trim().is_empty() {
             args.push("--comment");
@@ -241,6 +238,60 @@ impl IssueProvider for GhIssueProvider {
         }
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         gh_json(&borrowed).map(|_| ())
+    }
+}
+
+/// Create a label if the repository does not already carry one by that name.
+///
+/// Called once at the start of a driving session. A label that does not exist
+/// cannot be applied, so without this the loop would fail at its **first**
+/// escalation — the moment it most needs to record something — rather than at
+/// setup, where a failure is cheap and obvious.
+///
+/// Already-exists is success, not an error: two sessions starting at once must
+/// not race each other into a failure, and `gh` reports the collision on
+/// stderr rather than distinguishing it in an exit code worth branching on.
+pub(crate) fn ensure_label(name: &str, description: &str) -> Result<(), IssueError> {
+    match gh_json(&[
+        "label",
+        "create",
+        name,
+        "--description",
+        description,
+        "--color",
+        "B60205",
+    ]) {
+        Ok(_) => Ok(()),
+        Err(IssueError::Failed { reason, .. }) if reason.contains("already exists") => Ok(()),
+        Err(other) => Err(other),
+    }
+}
+
+/// Map stella's canonical resolution onto the reason `gh issue close` accepts.
+///
+/// **`close` receives the CANONICAL resolution** — `"completed"`,
+/// `"not_planned"`, `"duplicate"` — never a tracker's own spelling. This
+/// adapter is the only place in the tree that carries GitHub's words, exactly
+/// as the module docs claim, and a caller that spelled the value first would
+/// leave this function comparing against something it does not recognise.
+///
+/// That is not hypothetical: it was the bug. The caller mapped through the
+/// configured vocabulary and passed `"not planned"`, this compared it to
+/// `"not_planned"`, the match never fired, and **every declined and duplicate
+/// closure was recorded as `completed`** — declined work labelled as done,
+/// which is the "looks productive" failure `stella_autonomy::closure` exists to
+/// prevent. Caught in review on #4001.
+///
+/// `duplicate` maps to `not planned` because `gh issue close --reason` accepts
+/// only two values, and of the two that is the truthful one: a duplicate is not
+/// work that was done. The receipt says which it was either way.
+///
+/// Anything unrecognised closes as `completed` rather than failing — an
+/// unclosed issue is worse than one closed under a slightly wrong reason.
+fn gh_close_reason(canonical: &str) -> &'static str {
+    match canonical {
+        "not_planned" | "duplicate" => "not planned",
+        _ => "completed",
     }
 }
 
@@ -332,6 +383,50 @@ mod tests {
 
     /// The GitHub wire shape decodes, and every field lands where the kernel
     /// says it does.
+    /// **The regression witness.** `close` receives stella's CANONICAL
+    /// resolution, and every one that is not work-that-was-done must reach
+    /// GitHub as `not planned`.
+    ///
+    /// The bug this pins: the caller used to spell the value through the
+    /// configured vocabulary first, so this comparison saw `"not planned"`,
+    /// never matched `"not_planned"`, and **every declined and duplicate
+    /// closure was recorded as `completed`** — declined work labelled as done,
+    /// which is the "looks productive" failure `stella_autonomy::closure`
+    /// exists to prevent. Caught in review on #4001.
+    #[test]
+    fn a_declined_closure_never_reaches_github_as_completed() {
+        assert_eq!(gh_close_reason("not_planned"), "not planned");
+        assert_eq!(gh_close_reason("duplicate"), "not planned");
+        assert_eq!(gh_close_reason("completed"), "completed");
+    }
+
+    /// The canonical vocabulary and this mapping cannot drift apart silently:
+    /// every resolution stella branches on has an answer here, and only
+    /// `completed` is allowed to mean work was done.
+    #[test]
+    fn every_canonical_resolution_maps_and_only_completed_means_done() {
+        for canonical in stella_protocol::issue::CANONICAL_RESOLUTIONS {
+            let reason = gh_close_reason(canonical);
+            assert!(
+                reason == "completed" || reason == "not planned",
+                "`{canonical}` mapped to `{reason}`, which `gh issue close` does not accept"
+            );
+            assert_eq!(
+                reason == "completed",
+                *canonical == "completed",
+                "only `completed` may record as work that was done, but `{canonical}` did"
+            );
+        }
+    }
+
+    /// An unrecognised value still closes: an unclosed issue is worse than one
+    /// closed under a slightly wrong reason, and the receipt says what actually
+    /// happened either way.
+    #[test]
+    fn an_unrecognised_resolution_still_closes() {
+        assert_eq!(gh_close_reason("cannot_reproduce"), "completed");
+    }
+
     #[test]
     fn the_gh_payload_maps_onto_the_kernel() {
         let rows: Vec<GhIssue> = serde_json::from_str(gh_payload()).expect("decode");

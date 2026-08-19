@@ -331,13 +331,19 @@ pub trait IssueProvider: Send + Sync {
     /// unflattering measure of how often `done` was a claim rather than a
     /// proof.
     ///
-    /// `state` is `"completed"` or `"not_planned"`, from
-    /// `stella_autonomy::tracker_state`. The distinction is load-bearing rather
-    /// than cosmetic: a regression sweep re-checks what was **fixed**, and
-    /// re-running a witness for something declined as stale would be measuring
-    /// nothing. A provider whose tracker has no such distinction maps both to
-    /// its one closed state, which is a fact about that tracker rather than a
-    /// reason to stop making the distinction here.
+    /// `state` is stella's **canonical** resolution — `"completed"`,
+    /// `"not_planned"` or `"duplicate"`, from
+    /// `stella_autonomy::resolution_of`. **Never a tracker's own spelling.**
+    /// The provider does the spelling, which is what keeps one tracker's words
+    /// confined to its own adapter; a caller that spelled it first would hand
+    /// every provider a string it has to un-map before it can branch.
+    ///
+    /// The distinction is load-bearing rather than cosmetic: a regression sweep
+    /// re-checks what was **completed**, and re-running a witness for something
+    /// declined as stale would be measuring nothing. A provider whose tracker
+    /// has no such distinction maps several canonical values onto its one
+    /// closed state, which is a fact about that tracker rather than a reason to
+    /// stop making the distinction here.
     async fn close(&self, key: &IssueKey, receipt: &str, state: &str) -> Result<(), IssueError>;
 
     /// Add a comment — the trail that binds an execution to an issue.
