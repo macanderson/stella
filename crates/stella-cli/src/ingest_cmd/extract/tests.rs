@@ -246,6 +246,148 @@ impl Provider for CannedProvider {
     }
 }
 
+/// A provider that answers every slice, recording what it was asked.
+///
+/// Each call returns two claims: one whose statement is unique to the slice, and
+/// one restating the *same* claim with the *same* `lineage_suffix` every time —
+/// which is exactly what a real document does when a rule stated in an overview
+/// is repeated where it applies, and exactly the pair `Merge` has to resolve.
+struct PerSliceProvider {
+    calls: AtomicUsize,
+    prompts: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl Provider for PerSliceProvider {
+    fn id(&self) -> &str {
+        "per-slice"
+    }
+
+    async fn complete_ref(
+        &self,
+        request: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        self.prompts.lock().expect("lock").push(
+            request
+                .messages
+                .last()
+                .map(|m| m.content.clone())
+                .unwrap_or_default(),
+        );
+        let text = format!(
+            "[{{\"lineage_suffix\":\"only-here\",\"kind\":\"fact\",\
+             \"statement\":\"Slice {call} says something of its own.\"}},\
+             {{\"lineage_suffix\":\"pkg-manager\",\"kind\":\"fact\",\
+             \"statement\":\"This repository uses pnpm.\"}}]"
+        );
+        Ok(CompletionResult {
+            upstream_provider: None,
+            text,
+            tool_calls: Vec::new(),
+            usage: CompletionUsage {
+                reported: true,
+                input_tokens: 20,
+                output_tokens: 8,
+                ..CompletionUsage::default()
+            },
+            model: "canned-model".into(),
+            cost_usd: 0.002,
+            finish_reason: Some(FinishReason::Stop),
+        })
+    }
+}
+
+/// The end-to-end witness for #2407: a document larger than one call is read by
+/// several, and the claims come back as one coherent set.
+///
+/// Fails on the old code twice over — it made exactly one call whatever the
+/// document's size, and had no merge to collide in.
+#[test]
+fn a_multi_slice_document_calls_once_per_slice_and_merges_the_claims() {
+    let root = temp_root("multi-slice");
+    let provider = PerSliceProvider {
+        calls: AtomicUsize::new(0),
+        prompts: std::sync::Mutex::new(Vec::new()),
+    };
+
+    // Four sections of ~15,000 characters: comfortably past one slice, and
+    // divided at headings rather than mid-sentence.
+    let content: String = (0..4)
+        .map(|i| format!("## Section {i}\n\nprose {i}. {}\n\n", "w".repeat(15_000)))
+        .collect();
+    let doc = NamedDoc {
+        rel: "AGENTS.md".to_string(),
+        content,
+        tier: Tier::Primary,
+    };
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let summary = runtime
+        .block_on(extract_document(
+            &provider,
+            "canned-model",
+            &root,
+            &doc,
+            RunStamp {
+                set_id: "acme.web",
+                ingest_run_id: "ing_multi",
+                observed_at: "2026-07-27T09:00:00Z",
+            },
+        ))
+        .expect("extraction succeeds");
+
+    let calls = provider.calls.load(Ordering::SeqCst);
+    assert!(
+        calls > 1,
+        "a document past one slice must buy more than one call, got {calls}"
+    );
+    assert_eq!(summary.slices, calls, "one call per slice");
+    assert!(
+        summary.failed_slices.is_empty(),
+        "no slice failed: {:?}",
+        summary.failed_slices
+    );
+
+    // The repeated claim is merged to one, not proposed once per slice.
+    assert_eq!(
+        summary.duplicates,
+        calls - 1,
+        "every restatement after the first is merged away"
+    );
+    assert_eq!(
+        summary.total,
+        calls + 1,
+        "one proposal per distinct claim: {calls} slice-local plus the shared one"
+    );
+
+    // ...and the colliding suffixes were made unique, so two records never share
+    // one lineage id.
+    let ids: std::collections::BTreeSet<&str> = summary
+        .asserted
+        .iter()
+        .map(|a| a.lineage_id.as_str())
+        .collect();
+    assert_eq!(
+        ids.len(),
+        summary.asserted.len(),
+        "lineage ids collided across slices: {ids:?}"
+    );
+
+    // Every slice was told where it sits, so none was an unlabelled fragment.
+    let prompts = provider.prompts.lock().expect("lock").clone();
+    for (i, prompt) in prompts.iter().enumerate() {
+        assert!(
+            prompt.contains(&format!("part {} of {calls}", i + 1)),
+            "slice {i} carried no orienting header"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A provider whose first reply is cut off at the token limit (`finish_reason:
 /// Length`, no closing `]`) and whose second reply is the same records,
 /// complete — the shape a real truncation-then-retry takes. Records the
