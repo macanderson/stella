@@ -251,6 +251,13 @@ impl SessionMemory {
     /// No telemetry rides with it, deliberately: the one `ContextRecall`
     /// event for a pipeline turn is the pipeline's own, and this block does
     /// no frame recall to report.
+    ///
+    /// No production caller since #3846 — its one call site was the staged
+    /// pipeline's one-shot driver, removed with the crate that drove it.
+    /// Kept for its own test coverage (`memory/tests.rs`,
+    /// `memory/tests/ab_control.rs`) of the skills/draft-claims/volatile
+    /// section this block still uniquely assembles.
+    #[allow(dead_code)]
     pub async fn pipeline_recall_block(&self, prompt: &str) -> Option<String> {
         if self.ab_suppressed || !self.steering_enabled {
             return None;

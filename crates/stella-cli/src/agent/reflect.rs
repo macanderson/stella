@@ -112,6 +112,13 @@ pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat
     }
 }
 
+/// No production caller since #3846 — its one use was the staged pipeline's
+/// `--output-format json` envelope, whose `reflection` key does not exist on
+/// [`crate::agent::RawRunSummary`] (the raw step-loop's own JSON envelope
+/// never carried one). Kept for `reflection_json_preserves_full_paid_call_envelope_and_cost`'s
+/// coverage of the shape rather than deleted outright, since a future
+/// envelope wanting a reflection summary would want this exact mapping.
+#[allow(dead_code)]
 pub(super) fn reflection_json(report: &ReflectionReport) -> serde_json::Value {
     serde_json::json!({
         "recorded": report.recorded,
