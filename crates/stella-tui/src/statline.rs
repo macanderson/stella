@@ -3,8 +3,8 @@
 //! hairline, with the ethos chip pinned right:
 //!
 //! ```text
-//!  MODEL                          │ EXECUTE     │ CPU         │ CONTEXT         │ SPEND │ CACHE                │ SAVED  │ WARMTH │ ENGINE   │ PIPELINE │ INBOX
-//!  worker: anthropic/claude-fable-5 │ Step 4 of 5 │ ▮▮▮▮▮▮ 100% │ ▮▮▮▯▯▯ 91k/200k │ $3.77 │ 94% (7.0M rd · 0 wr) │ $18.80 │ cold   │ 0 active │ ON       │ ✉ 29
+//!  MODEL                          │ EXECUTE     │ CPU         │ CONTEXT         │ SPEND │ CACHE                │ SAVED  │ WARMTH │ ENGINE   │ INBOX
+//!  worker: anthropic/claude-fable-5 │ Step 4 of 5 │ ▮▮▮▮▮▮ 100% │ ▮▮▮▯▯▯ 91k/200k │ $3.77 │ 94% (7.0M rd · 0 wr) │ $18.80 │ cold   │ 0 active │ ✉ 29
 //! ```
 //!
 //! ## What is deliberately NOT here
@@ -279,18 +279,6 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
                 format!("{} active", model.active_count()),
                 val,
             )],
-        ),
-        StatItem::new(
-            "pipeline",
-            "PIPELINE",
-            3,
-            // ON when the session drives the staged pipeline, OFF for the raw
-            // engine loop.
-            if model.pipeline {
-                vec![Span::styled("ON", ok)]
-            } else {
-                vec![Span::styled("OFF", dim)]
-            },
         ),
     ];
 
@@ -870,7 +858,7 @@ mod tests {
         let items = statline_items(&model, &ui);
         for key in [
             "model", "stage", "cpu", "ctx", "spend", "cache", "saved", "warmth", "engine",
-            "pipeline", "inbox",
+            "inbox",
         ] {
             assert!(
                 keys(&items).contains(&key),

@@ -509,6 +509,22 @@ pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) ->
 
 /// EngineConfig for the goal loop's standalone verifier engine — the VERIFIER
 /// agent's tuning.
+///
+/// Its production caller (`run_goal_pipeline_turn`, `agent/goal.rs`) was
+/// deleted along with the staged pipeline's goal arm (removal census,
+/// `docs/spec/pipeline-as-plugins.md` §7 slice 1) — `stella goal`'s
+/// surviving `Raw`/`Plugin` arms route their verifier through
+/// `stella_core::Engine::run_goal` directly rather than building a separate
+/// tuned config for it. `#[allow(dead_code)]` rather than deletion because
+/// `agent/tests/engine_wiring.rs`'s cross-role invariant tests
+/// (`checkpoint_sink_reaches_every_role`,
+/// `every_role_shares_one_session_view_of_affordable_output_ceilings`, the
+/// turn-timeout/max-output-tokens propagation tests) assert that
+/// `tuned_engine_config`'s session-wide plumbing (checkpoint sink, budget
+/// ceiling, flag propagation) reaches every `EngineAgentKind`, VERIFIER
+/// included — deleting this wrapper would either lose that coverage or force
+/// three tests to re-derive the config inline for no behavioral gain.
+#[allow(dead_code)]
 pub(crate) fn verifier_engine_config_for(cfg: &Config) -> EngineConfig {
     tuned_engine_config(
         cfg,

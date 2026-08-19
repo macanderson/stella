@@ -226,33 +226,6 @@ pub(crate) fn turn_outcome_result(outcome: &TurnOutcome) -> Result<(), CliFailur
     }
 }
 
-/// The terminal break a goal round's pipeline status folds to — `None` keeps
-/// the loop running to its verifier assessment. The goal-loop analogue of
-/// [`pipeline_status_result`], with the loop's own message prefixes: the fold
-/// used to stringify the status into `Err(String)`, which dropped the abort's
-/// typed [`AbortKind`] right there, so the goal loop's terminal registry
-/// write could only record a policy-stopped round as an error (#1862).
-///
-/// [`AbortKind`]: stella_core::AbortKind
-pub(crate) fn goal_round_break(status: &PipelineStatus) -> Option<CliFailure> {
-    match status {
-        PipelineStatus::Completed => None,
-        // A working round that produced no proof does not break the loop: the
-        // goal loop has its own oracle — the verifier's per-round assessment —
-        // and ending the loop here would substitute "this round was not
-        // proven" for "the goal is not met", which are different questions.
-        PipelineStatus::Unverified { .. } => None,
-        PipelineStatus::VerificationFailed { verdict } => Some(CliFailure::error(format!(
-            "goal not met: verification failed: {}",
-            verdict.summary
-        ))),
-        PipelineStatus::Aborted { reason, kind } => Some(CliFailure::from_abort(
-            format!("goal not met: working round aborted: {reason}"),
-            *kind,
-        )),
-    }
-}
-
 /// The failure an unmet goal loop reports at the process boundary — the raw
 /// (`--no-pipeline`) goal loop's half of #1862. The abort's typed kind
 /// survives when a working turn aborted; the backstops that are not turn
@@ -364,45 +337,6 @@ mod tests {
             pipeline_session_status(&hard, VerificationRequirement::Advisory),
             stella_store::SessionStatus::Error
         );
-    }
-
-    /// #1862 witness, the goal loop's half of #1826's: the fold an aborted
-    /// working round takes on its way to the terminal registry write keeps
-    /// the abort's typed kind, so `run_goal_cmd`'s `presence.finish`
-    /// projects a policy-stopped goal round as `Stopped`. Before, the fold
-    /// stringified the status into `Err(String)` and the terminal write
-    /// could only reconstruct `CliFailure::error` — every stopped goal run
-    /// aged into the registry as a crash.
-    ///
-    /// Like `an_unsupervised_deliberate_stop_projects_stopped_not_error`,
-    /// this relies on no test in this binary ever calling
-    /// `signals::note_interrupt`, so `interrupted_exit_code()` is reliably
-    /// `None` here.
-    #[test]
-    fn a_policy_stopped_goal_round_projects_stopped_not_error() {
-        let stopped = goal_round_break(&PipelineStatus::Aborted {
-            reason: "stuck-loop detected (persisted after a steering warning)".into(),
-            kind: AbortKind::DeliberateStop,
-        })
-        .expect("an aborted round ends the goal loop");
-        let crashed = goal_round_break(&PipelineStatus::Aborted {
-            reason: "the model call would not commit after retries".into(),
-            kind: AbortKind::Failure,
-        })
-        .expect("an aborted round ends the goal loop");
-
-        assert_eq!(
-            crate::daemon::outcome_status(Err(&stopped)),
-            stella_store::SessionStatus::Stopped,
-            "a goal round that ended itself by policy must not read as a crash"
-        );
-        assert_eq!(
-            crate::daemon::outcome_status(Err(&crashed)),
-            stella_store::SessionStatus::Error
-        );
-        // A completed round is not a break at all — the loop goes on to its
-        // verifier assessment.
-        assert!(goal_round_break(&PipelineStatus::Completed).is_none());
     }
 
     /// The raw (`--no-pipeline`) goal loop's half of the same witness: an
