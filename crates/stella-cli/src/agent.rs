@@ -25,10 +25,8 @@ use stella_pipeline::{
     AlwaysAbortGate, CmdOutcome, McpPrefetchPort, PipelineConfig, PipelinePorts, PipelineStatus,
     ProviderResolver, RepoStatusPort, RepoStructurePort,
 };
-use stella_protocol::{
-    AgentEvent, CompletionMessage, ContextRecallPort, ModelRef, NoContextRecall, Role, ToolOutput,
-    UNKNOWN_MODEL,
-};
+use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput, UNKNOWN_MODEL};
+use stella_protocol::{ContextRecallPort, NoContextRecall};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool};

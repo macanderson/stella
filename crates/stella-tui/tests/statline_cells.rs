@@ -94,7 +94,6 @@ fn the_band_is_a_label_row_over_a_value_row() {
     // label — the one label that is live state rather than a constant.
     for label in [
         "MODEL", "EXECUTE", "CPU", "CONTEXT", "SPEND", "CACHE", "SAVED", "WARMTH", "ENGINE",
-        "PIPELINE",
     ] {
         assert!(labels.contains(label), "label {label:?} renders:\n{labels}");
     }
@@ -312,7 +311,7 @@ fn cells_drop_whole_by_priority_as_the_row_narrows() {
 
     // Wide: every cell renders.
     let (labels, _) = statline_band(&model, 200);
-    for label in ["MODEL", "CPU", "CACHE", "SAVED", "WARMTH", "PIPELINE"] {
+    for label in ["MODEL", "CPU", "CACHE", "SAVED", "WARMTH"] {
         assert!(
             labels.contains(label),
             "at 200 cols {label} renders:\n{labels}"
@@ -324,7 +323,7 @@ fn cells_drop_whole_by_priority_as_the_row_narrows() {
     let mut gone_at = std::collections::HashMap::new();
     for w in (24..=200u16).rev() {
         let (labels, _) = statline_band(&model, w);
-        for label in ["PIPELINE", "CACHE", "CPU", "SPEND"] {
+        for label in ["SAVED", "CACHE", "CPU", "SPEND"] {
             if !labels.contains(label) {
                 gone_at.entry(label).or_insert(w);
             }
@@ -340,9 +339,9 @@ fn cells_drop_whole_by_priority_as_the_row_narrows() {
             .unwrap_or_else(|| panic!("{label} drops somewhere above 24 cols"))
     };
     assert!(
-        at("PIPELINE") >= at("CACHE"),
-        "priority 3 (PIPELINE, {}) drops before priority 4 (CACHE, {})",
-        at("PIPELINE"),
+        at("SAVED") >= at("CACHE"),
+        "priority 3 (SAVED, {}) drops before priority 4 (CACHE, {})",
+        at("SAVED"),
         at("CACHE")
     );
     assert!(

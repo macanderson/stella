@@ -17,20 +17,14 @@ pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> Cali
 }
 
 /// The id `executions.pipeline_variant` records for a run of the built-in
-/// staged pipeline (#3388/#3381).
-///
-/// Was re-exported from `stella_pipeline::variant::CLASSIC_VARIANT_ID`; that
-/// crate's `PipelineChoice::Classic` dispatch arm is refused now (removal
-/// census, `docs/spec/pipeline-as-plugins.md` §7 slice 1) and no live path
-/// writes a new row with this variant. The literal survives here as a **pure
-/// historical join key**: every already-written `executions.pipeline_variant
-/// = 'classic'` row (`crates/stella-store/src/ddl.rs`, a plain `TEXT` column
-/// with no FK back to the crate that used to produce it) stays queryable by
-/// `stella usage report`, `stella inspect`, and any `GROUP BY
-/// pipeline_variant` — those reads only ever compared this constant by value,
-/// never by type, so they keep working unchanged. Do not resurrect the
-/// re-export if `stella-pipeline` returns; a string this narrow belongs beside
-/// the rows it names, not the crate that used to emit them.
+/// staged pipeline (#3388/#3381). Was re-exported from
+/// `stella_pipeline::variant::CLASSIC_VARIANT_ID`; that crate's dispatch arm
+/// is refused now (removal census, `docs/spec/pipeline-as-plugins.md` §7
+/// slice 1) and no live path writes a new row with this variant. The literal
+/// survives as a pure historical join key so every already-written
+/// `executions.pipeline_variant = 'classic'` row (a plain `TEXT` column, no
+/// FK) stays queryable — do not resurrect the re-export if `stella-pipeline`
+/// returns; this string belongs beside the rows it names, not that crate.
 pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = "classic";
 
 mod turn_door;
