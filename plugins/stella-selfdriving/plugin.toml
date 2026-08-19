@@ -126,13 +126,35 @@ calls = [
   "backlog_file",
   "backlog_close",
   "backlog_link",
-  # work — one issue through Stella's own staged pipeline, in an isolated
-  # worktree, with the pipeline's verdict as the definition of done.
+  # work — one issue through Stella's own turn loop, in an isolated worktree.
+  #
+  # NOT through a built-in verification pipeline: there is no longer one to run.
+  # The staged pipeline was deleted from this workspace (#3852/#3865) and
+  # `--pipeline classic` is refused outright, so a turn gets exactly the
+  # verification the INSTALLED PLUGINS provide and no more. With no verification
+  # plugin installed, that is none, and the honest reading of a `work` outcome
+  # is "the turn finished", not "the change is proven".
+  #
+  # This block said "the staged pipeline" and "the pipeline's verdict as the
+  # definition of done" until #3599 B2. Both were false by then, and this file
+  # is a consent document — a human reads it to decide what to grant, so a
+  # promise here that nothing keeps is worse than no promise at all. What makes
+  # an autonomous merge safe is `deliver` below, which gates on CI observed on
+  # the forge, not on any claim made about the work stage.
   "work_start",
   "work_status",
   "work_abandon",
-  # deliver — the PR rhythm. `deliver_merge` is gated on the pipeline's
-  # verdict, never on the loop's opinion of it.
+  # deliver — the PR rhythm, and the whole of what makes an autonomous merge
+  # safe now that no built-in verification stage exists (see `work` above).
+  # `deliver_merge` is emitted only by the pure machine in
+  # `stella_autonomy::deliver_next`, and only from `Approved` — which requires
+  # CI observed GREEN ON THE FORGE, a mergeability the forge has actually
+  # computed, and, unless the operator turned it off in policy, a human
+  # approval. Never on the loop's own opinion of its work.
+  #
+  # A red build that reproduces on the base branch is `BaseBroken`, not
+  # `CiRed`: the loop waits rather than spending this PR's budget fixing
+  # somebody else's breakage.
   "deliver_open",
   "deliver_observe",
   "deliver_next",
