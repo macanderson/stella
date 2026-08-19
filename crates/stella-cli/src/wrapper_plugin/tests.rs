@@ -231,15 +231,13 @@ fn a_steering_wrapper_is_not_refused_by_the_arbiter_gate() {
         .expect("a steering-grade wrapper can never hold a round open — nothing to refuse");
 }
 
-/// The resolved `Raw` choice bypasses this gate entirely on every door — only
-/// a *named* plugin variant is ever in reach of it, and only on `fleet`.
-#[test]
-fn a_resolved_raw_choice_is_never_refused_on_any_door() {
-    reject_plugin_variant_for_door("goal", PipelineChoice::Raw)
-        .expect("raw has no plugin to drive — nothing to refuse");
-    reject_plugin_variant_for_door("fleet", PipelineChoice::Raw)
-        .expect("raw has no plugin to drive — nothing to refuse");
-}
+// `a_resolved_raw_choice_is_never_refused_on_any_door` lived here, pinning
+// `reject_plugin_variant_for_door`: the gate that refused a named plugin
+// variant on `stella fleet`, the one door with no `TurnDriver` over its round
+// loop. #3896 gave fleet workers that driver — one plugin per attempt — so the
+// door it guarded no longer exists and the function was deleted with it. The
+// test outlived its subject by three merges because nothing compiled the two
+// together until now.
 
 /// **Witness (#3696).** `--keep-witness`, `--require-verified`, and
 /// `--test-command` used to reach `run_one_shot` on the `Raw` arm and be
