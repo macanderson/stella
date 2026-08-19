@@ -295,7 +295,7 @@ pub(crate) fn reject_plugin_variant_for_door(
 /// judging the same round is exactly the doubled-supervisor shape the
 /// wrapper design forbids: an arbiter-grade plugin's designed home is
 /// `stella run --pipeline <variant>`, where `WrapperDispatch`'s hold loop is
-/// the ONLY thing that owns rounds (see [`crate::agent::goal::goal_wrapped`]'s
+/// the ONLY thing that owns rounds (see `agent/goal/goal_wrapped.rs`'s
 /// module doc, and `plugins/stella-goal/README.md`, for why that plugin runs
 /// there and not here). So this refuses before the provider is ever built —
 /// the same pre-flight rung [`reject_verification_flags_without_pipeline`]

@@ -35,7 +35,7 @@
 //! goal loop is this door's own completion arbiter, and a held-open round
 //! would run a second hold loop via `WrapperDispatch` judging the same round
 //! twice. So for every wrapper this module actually drives (steering,
-//! observer), [`WrapperDispatch::run`] always returns after exactly one
+//! observer), `WrapperDispatch::run` always returns after exactly one
 //! internal turn. [`run_goal_wrapped_turn`]'s `DispatchReport::rounds != 1`
 //! check below is kept anyway, as a defense-in-depth assertion rather than
 //! the primary guard: [`GoalRoundDriver`] runs every internal turn at the SAME
