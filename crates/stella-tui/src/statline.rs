@@ -68,6 +68,8 @@
 //! `SPEND`). [`statline_items`] is the single decision function,
 //! unit-testable without a buffer.
 
+use std::borrow::Cow;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -98,7 +100,10 @@ const ETHOS: &str = "↝ deterministic-first ";
 #[derive(Clone, Debug)]
 pub struct StatItem {
     pub key: &'static str,
-    pub label: &'static str,
+    /// The column's heading. `Cow` rather than `&'static str` because the
+    /// stage cell's heading *is* the live stage word, and a stage a plugin
+    /// contributed is runtime text that no literal can cover.
+    pub label: Cow<'static, str>,
     pub priority: u8,
     pub spans: Vec<Span<'static>>,
     /// Overrides the label row's dim for this one cell. `None` for every
@@ -110,13 +115,13 @@ pub struct StatItem {
 impl StatItem {
     fn new(
         key: &'static str,
-        label: &'static str,
+        label: impl Into<Cow<'static, str>>,
         priority: u8,
         spans: Vec<Span<'static>>,
     ) -> Self {
         Self {
             key,
-            label,
+            label: label.into(),
             priority,
             spans,
             label_color: None,
@@ -160,7 +165,7 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
     // The stage box: the stage NAME is the label (top row), so the row above
     // stops repeating a constant word and starts carrying live state; the
     // value below is how far through the task board this stage has gotten.
-    let stage_kind = focused.and_then(|a| a.model.hud.stage);
+    let stage_kind = focused.and_then(|a| a.model.hud.stage.as_ref());
     let stage = StatItem::new(
         "stage",
         stage_label_upper(stage_kind),
@@ -433,23 +438,32 @@ fn vendor_slug(pin: &crate::deck::RolePin) -> String {
 
 /// The stage name, uppercased for the label row it now heads. `None` — no
 /// stage observed yet — reads `IDLE`.
-fn stage_label_upper(stage: Option<stella_protocol::StageKind>) -> &'static str {
+fn stage_label_upper(stage: Option<&stella_protocol::StageName>) -> Cow<'static, str> {
     use stella_protocol::StageKind as S;
-    match stage {
-        None => "IDLE",
-        Some(S::Triage) => "TRIAGE",
-        Some(S::ContextRecall) => "CONTEXT RECALL",
-        Some(S::Research) => "RESEARCH",
-        Some(S::Plan) => "PLAN",
-        Some(S::ScopeReview) => "SCOPE REVIEW",
-        Some(S::Witness) => "WITNESS",
-        Some(S::Execute) => "EXECUTE",
-        Some(S::Verify) => "VERIFY",
-        Some(S::Verdict) => "VERDICT",
-        Some(S::Reflect) => "REFLECT",
-        Some(S::ContextWrite) => "CONTEXT WRITE",
-        Some(S::Complete) => "COMPLETE",
-    }
+    let Some(stage) = stage else {
+        return Cow::Borrowed("IDLE");
+    };
+    let Some(kind) = stage.kind() else {
+        // A contributed stage, in the plugin's own word — uppercased like every
+        // other heading on this row, because the statline's headings are chrome
+        // and a lowercase cell would read as a different kind of thing rather
+        // than as the same cell holding a different stage.
+        return Cow::Owned(stage.as_str().to_uppercase());
+    };
+    Cow::Borrowed(match kind {
+        S::Triage => "TRIAGE",
+        S::ContextRecall => "CONTEXT RECALL",
+        S::Research => "RESEARCH",
+        S::Plan => "PLAN",
+        S::ScopeReview => "SCOPE REVIEW",
+        S::Witness => "WITNESS",
+        S::Execute => "EXECUTE",
+        S::Verify => "VERIFY",
+        S::Verdict => "VERDICT",
+        S::Reflect => "REFLECT",
+        S::ContextWrite => "CONTEXT WRITE",
+        S::Complete => "COMPLETE",
+    })
 }
 
 /// How far through the task board the session has gotten: `Step 4 of 5`.
@@ -814,7 +828,7 @@ mod tests {
         m.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::Stage {
-                name: StageKind::Execute,
+                name: StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Run,
             },
         });
@@ -941,6 +955,43 @@ mod tests {
         );
         // No board on this fixture, so no step is invented.
         assert_eq!(stage.spans[0].content.as_ref(), "—");
+    }
+
+    /// **The witness on the surface a user actually watches.** A stage a
+    /// plugin contributed heads the statline's stage box under its own word,
+    /// in its own colour.
+    ///
+    /// Before the vocabulary opened this could not happen at all: the wire had
+    /// no way to carry the name, so a wrapped run's contributed stages were
+    /// invisible and the box went on displaying whichever host stage had last
+    /// gone past — a live cell reporting stale state.
+    #[test]
+    fn the_stage_box_heads_itself_with_a_contributed_stage_too() {
+        let mut model = WorkspaceModel::new();
+        model.now_ms = 10_000;
+        model.apply_inbound(&Inbound::Register(
+            AgentMeta::new("lead", "goal", 0).with_role("lead"),
+        ));
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Stage {
+                name: stella_protocol::StageName::new("triage-lite"),
+                scope: stella_protocol::StageScope::Run,
+            },
+        });
+
+        let items = statline_items(&model, &DeckUi::default());
+        let stage = items.iter().find(|i| i.key == "stage").expect("stage");
+        assert_eq!(
+            stage.label, "TRIAGE-LITE",
+            "the plugin's own word heads the cell — not IDLE, and not the host \
+             stage whose name it happens to contain"
+        );
+        assert_eq!(
+            stage.label_color,
+            Some(theme::contributed_stage_color("triage-lite")),
+            "a contributed stage carries its own colour, not the row's dim"
+        );
     }
 
     #[test]

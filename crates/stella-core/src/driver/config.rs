@@ -56,7 +56,7 @@ pub struct EngineConfig {
     pub loop_detection: LoopDetectionConfig,
     /// Compaction fires once the estimated conversation size exceeds this
     /// many tokens (`crate::estimator`). When calibration is attached
-    /// ([`Engine::with_calibration`]) the comparison uses the
+    /// ([`Engine::with_calibration`](super::Engine::with_calibration)) the comparison uses the
     /// drift-corrected estimate, so this budget is honored in the model's
     /// own observed tokens rather than raw heuristic tokens.
     pub compaction_budget_tokens: u64,
@@ -76,7 +76,7 @@ pub struct EngineConfig {
     /// stubbed), replace the oldest span of the conversation with a
     /// model-written summary instead of letting the next call overflow the
     /// provider's context window. Costs one cheap completion, metered into
-    /// the same [`BudgetGuard`] as every other call.
+    /// the same [`BudgetGuard`](crate::budget::BudgetGuard) as every other call.
     pub summarize_overflow: bool,
     /// Messages at the conversation tail the summarizer never touches —
     /// the recent work the model is actively reasoning over.
@@ -195,7 +195,7 @@ pub struct EngineConfig {
     /// interrupted mid-flight is gone, and the host recovers by re-dispatching
     /// the prompt and paying for the work again. Attaching a sink makes the
     /// turn itself recoverable; see [`crate::step::CheckpointSink`] for the failure
-    /// contract, and [`Engine::resume_turn`] for the other half.
+    /// contract, and [`Engine::resume_turn`](super::Engine::resume_turn) for the other half.
     ///
     /// Kept here rather than passed to `run_turn` because it is a property of
     /// the host's durability arrangement, not of any one turn — the same

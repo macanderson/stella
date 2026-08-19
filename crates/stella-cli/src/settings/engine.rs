@@ -1,46 +1,33 @@
-//! The `agent_engine_config` block — the per-role engine agents (models,
-//! prompts, effort, params), their JSON schema, and the load/save machinery
-//! for the one scope an editor owns.
+//! The `agent_engine_config` block — the one engine agent (model, prompt,
+//! effort, params), its JSON schema, and the load/save machinery for the one
+//! scope an editor owns.
 //!
 //! Moved verbatim out of `settings.rs` — no behavior change — when that file
 //! crossed the size ratchet (`scripts/check-file-size.sh`): the engine-agent
 //! cluster is the largest self-contained concept it carried. Everything here
 //! is re-exported by the parent, so every `settings::AgentEngineConfig` path
 //! keeps resolving.
+//!
+//! # One role, named `default`
+//!
+//! This block used to advertise six model personas — `default`, `worker`,
+//! `verifier`, `triage`, `research`, `plan` — for a core loop that has none of
+//! them. They were pins on the staged pipeline deleted in #3865, and by the
+//! time that crate left the workspace four of the five were **inert**: a user
+//! could set `pipeline_verifier_model` and nothing read it, including the one
+//! place a second model actually runs (`stella goal`'s cross-family verifier,
+//! which selects by family and ignored the pin entirely).
+//!
+//! A setting that reads like a capability and is not one is worse than no
+//! setting, so `doc:roleless-core` §6 slice 4 (#3908, epic #3903) collapsed
+//! them to the one role core actually has. What replaces them is
+//! [`AgentEngineConfig::seat_models`]: a plugin declares the participants its
+//! process needs, and the user assigns a model to each by name. The retired
+//! keys are **recognized, ignored and reported by name** rather than dropped
+//! silently — see `super::unknown`'s `RETIRED_ENGINE_ROOT` for why a silent
+//! removal would leave them reading like capabilities forever.
 
 use super::*;
-
-/// The configurable engine agents. `Default` is the interactive /
-/// step-loop agent; the rest are the staged pipeline's roles, one per
-/// `stella_protocol::Role` that serves a pipeline responsibility.
-///
-/// `Research` and `Plan` were the last two to get their own rows (#2374).
-/// Both used to ride the worker's settings, which read as harmless while the
-/// worker's posture was the only one anybody tuned — and then a benchmark seat
-/// pinned the worker to `xhigh` and silently bought fifteen `xhigh` research
-/// calls that emitted a few hundred reasoning tokens between them. A role that
-/// cannot be turned down is a role that is always billed at the most expensive
-/// setting in the file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EngineAgentKind {
-    Default,
-    Worker,
-    Verifier,
-    Triage,
-    Research,
-    Plan,
-}
-
-impl EngineAgentKind {
-    pub const ALL: [EngineAgentKind; 6] = [
-        EngineAgentKind::Default,
-        EngineAgentKind::Worker,
-        EngineAgentKind::Verifier,
-        EngineAgentKind::Triage,
-        EngineAgentKind::Research,
-        EngineAgentKind::Plan,
-    ];
-}
 
 /// The `agent_engine_config` root object — issue-style schema:
 ///
@@ -48,18 +35,16 @@ impl EngineAgentKind {
 /// {
 ///   "agent_engine_config": {
 ///     "default_model": "anthropic/claude-fable-5",
-///     "pipeline_worker_model": "zai/glm-5.2",
-///     "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
-///     "pipeline_triage_model": "deepseek/deepseek-chat",
 ///     "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
+///     "seat_models": {"planner": "openrouter/openai/gpt-5.5"},
 ///     "auto_mode": "off",
 ///     "effort_auto": "on",
 ///     "reasoning_auto": "on",
 ///     "agents": {
-///       "verifier": {
+///       "default": {
 ///         "provider": "openrouter",
 ///         "model": "openai/gpt-5.5",
-///         "prompt": "You are a strict code-review verifier…",
+///         "prompt": "You are a terse, test-first engineer…",
 ///         "effort": "high",
 ///         "reasoning": "on",
 ///         "params": {"temperature": 0.2, "top_p": 0.9}
@@ -69,35 +54,36 @@ impl EngineAgentKind {
 /// }
 /// ```
 ///
-/// Model precedence per agent: `agents.<agent>.model` >
-/// `pipeline_<agent>_model` (or `default_model` for the default agent) >
-/// `default_model` > the provider's own default. A model string is either
-/// `provider/slug` (`--model` semantics) or, when the agent's `provider`
-/// field is set, a bare slug sent verbatim to THAT provider — which is how
-/// an OpenRouter key routes `openai/gpt-5.5` while an Anthropic key serves
-/// the worker.
+/// Model precedence: `agents.default.model` > `default_model` > the
+/// provider's own default. A model string is either `provider/slug`
+/// (`--model` semantics) or, when the agent's `provider` field is set, a bare
+/// slug sent verbatim to THAT provider — which is how an OpenRouter key
+/// routes `openai/gpt-5.5` while an Anthropic key serves the session.
+///
+/// A model for anything *other* than the session's own agent is a
+/// [`seat_models`](Self::seat_models) entry, keyed by a name the plugin that
+/// declared the participant chose. Core ships exactly one model setting; see
+/// this module's header for why the five that used to sit beside it are gone.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentEngineConfig {
-    /// Model for the default (interactive/step-loop) agent, and the base
-    /// for every pipeline role that has no more specific setting.
+    /// The session's model — the one model setting core ships.
+    ///
+    /// Every other model a session spends on is one a human assigned to a
+    /// name an installed plugin declared, via
+    /// [`seat_models`](Self::seat_models).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_verifier_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_worker_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_triage_model: Option<String>,
-    /// The read-only research sub-agents' model. Unset, they ride the worker's
-    /// — which is the tier they have always run at, not a tier anyone chose.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_research_model: Option<String>,
-    /// The planner's model. Unset, it rides the worker's, per `Role::Plan`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_plan_model: Option<String>,
     /// The model vocabulary the TUI pickers offer and `auto_mode` selects
     /// from. Entries are `provider/slug` strings. Empty/absent = no
     /// restriction (pickers fall back to the seed catalog).
+    ///
+    /// It is the ceiling on **seat assignments** too, and not only on what a
+    /// picker will offer: a seat naming a model outside a non-empty list is
+    /// refused with a notice and falls back to the session's model, the same
+    /// answer an unassigned seat gets (see [`crate::agent::seats`]). Without
+    /// that, an operator who narrowed their vocabulary to two models could
+    /// still be billed for a third by one line in a plugin's seat map — which
+    /// is precisely the restriction this list exists to express.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_models: Option<Vec<String>>,
     /// Which model each **plugin-declared seat** runs on.
@@ -129,12 +115,15 @@ pub struct AgentEngineConfig {
     /// otherwise. See [`crate::agent::seats`] for the resolution and for why
     /// core never substitutes a default of its own here.
     ///
-    /// This is the replacement for the `pipeline_<role>_model` keys above,
-    /// which name roles a core loop no longer has: those were pins on a staged
-    /// pipeline deleted in #3865. Their removal is #3908; retiring the
+    /// This is the replacement for the `pipeline_<role>_model` keys, which
+    /// named roles a core loop no longer has: those were pins on a staged
+    /// pipeline deleted in #3865, and #3908 retired them. Retiring the
     /// four-language contract that pins the same words is #3910, and it is
     /// deliberately a separate ticket because the guard may only go once role
     /// names travel as trace data (#3906). Epic #3903.
+    ///
+    /// Assignments are bounded by [`allowed_models`](Self::allowed_models)
+    /// when that list is non-empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat_models: Option<std::collections::BTreeMap<String, String>>,
     /// Per-model output ceilings, overriding what the catalog knows the model
@@ -158,19 +147,34 @@ pub struct AgentEngineConfig {
     /// gets a correct default the moment the entry is removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_output_caps: Option<std::collections::BTreeMap<String, u32>>,
-    /// `on` = pick the verifier model automatically from `allowed_models`,
-    /// preferring a different model family than the worker's and ranking
-    /// by catalog list price (the closest objective proxy for capability
-    /// tier the seed catalog carries). You never worry about it.
+    /// `on` = leave model selection to Stella rather than to a pin.
+    ///
+    /// **It no longer selects a model, and that is a declared gap rather than
+    /// an oversight (#3936).** It used to pick the verifier out of
+    /// `allowed_models`, preferring a different family than the worker's and
+    /// ranking by catalog list price; #3908 retired the role that pin
+    /// staffed, and the selector (`engine_config::auto_verifier_spec`) went
+    /// with it rather than being left as code nothing calls. The live
+    /// second-model path — `stella goal`'s `resolve_cross_family_verifier` —
+    /// groups by family at the point of use and has never read this key.
+    ///
+    /// What it still does is real but narrow: it is one of the three switches
+    /// [`crate::profile`] reads and writes, so it participates in "is this
+    /// config in the auto state, or has a profile claimed it?"
+    /// (`profile::is_auto`, `restore_auto`, `detect`). That is why it is a
+    /// *diminished* key rather than a retired one — and why retiring it is a
+    /// decision rather than a cleanup: `bench/harbor_adapter`'s registered
+    /// postures write it, so removing it re-hashes published benchmark
+    /// digests (see `super::unknown`'s `RETIRED_ENGINE_ROOT`). Wiring it to
+    /// choose models for unassigned seats, or retiring it, is #3936.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_mode: Option<Toggle>,
-    /// `on` = per-agent reasoning effort is chosen automatically (verifier
-    /// high, worker medium, triage low, default medium), overriding any
-    /// per-agent `effort`.
+    /// `on` = the agent's reasoning effort is chosen automatically, overriding
+    /// any `agents.default.effort`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort_auto: Option<Toggle>,
-    /// `on` = thinking mode is chosen automatically (on for verifier/worker/
-    /// default, off for triage), overriding any per-agent `reasoning`.
+    /// `on` = thinking mode is chosen automatically, overriding any
+    /// `agents.default.reasoning`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_auto: Option<Toggle>,
     /// `on` = a headless `stella run` proceeds past scope review instead of
@@ -236,48 +240,24 @@ pub struct AgentEngineConfig {
     pub agents: Option<AgentEngineAgents>,
 }
 
-/// The `agents` map — fixed keys rather than a `BTreeMap` so per-role
-/// access is exhaustive and typed instead of stringly (a misspelled agent
-/// key in JSON is simply ignored, the same tolerance every other settings
-/// object has for unknown fields).
+/// The `agents` map — one named key rather than a `BTreeMap` so access is
+/// typed instead of stringly (a misspelled agent key in JSON is simply
+/// ignored, the same tolerance every other settings object has for unknown
+/// fields).
+///
+/// It carries exactly one entry, and its name is the one role core has.
+/// `worker`, `verifier`, `triage`, `research` and `plan` were siblings here
+/// until #3908; a settings file still naming one is reported by
+/// `super::unknown` rather than silently ignored.
+///
+/// Still a struct rather than a bare `Option<AgentEngineAgent>` on the parent
+/// because `agents.default` is the shipped spelling in every settings file,
+/// TOML `[agents.default]` section and benchmark posture in the wild —
+/// flattening it would be a second breaking rename for no gain.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentEngineAgents {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worker: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verifier: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub triage: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub research: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plan: Option<AgentEngineAgent>,
-}
-
-impl AgentEngineAgents {
-    pub fn get(&self, kind: EngineAgentKind) -> Option<&AgentEngineAgent> {
-        match kind {
-            EngineAgentKind::Default => self.default.as_ref(),
-            EngineAgentKind::Worker => self.worker.as_ref(),
-            EngineAgentKind::Verifier => self.verifier.as_ref(),
-            EngineAgentKind::Triage => self.triage.as_ref(),
-            EngineAgentKind::Research => self.research.as_ref(),
-            EngineAgentKind::Plan => self.plan.as_ref(),
-        }
-    }
-
-    pub fn get_mut(&mut self, kind: EngineAgentKind) -> &mut Option<AgentEngineAgent> {
-        match kind {
-            EngineAgentKind::Default => &mut self.default,
-            EngineAgentKind::Worker => &mut self.worker,
-            EngineAgentKind::Verifier => &mut self.verifier,
-            EngineAgentKind::Triage => &mut self.triage,
-            EngineAgentKind::Research => &mut self.research,
-            EngineAgentKind::Plan => &mut self.plan,
-        }
-    }
 }
 
 /// One agent's engine overrides. Every field optional — an absent field
@@ -402,11 +382,6 @@ impl AgentEngineConfig {
             };
         }
         take!(default_model);
-        take!(pipeline_verifier_model);
-        take!(pipeline_worker_model);
-        take!(pipeline_triage_model);
-        take!(pipeline_research_model);
-        take!(pipeline_plan_model);
         take!(allowed_models);
         // Per KEY, for `model_output_caps`'s reason and one of its own: a
         // project pinning its plan plugin's `planner` seat has said nothing
@@ -445,16 +420,14 @@ impl AgentEngineConfig {
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
         take!(tool_result_horizon_steps);
-        if let Some(agents) = &other.agents {
-            let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
-            for kind in EngineAgentKind::ALL {
-                if let Some(agent) = agents.get(kind) {
-                    target
-                        .get_mut(kind)
-                        .get_or_insert_with(AgentEngineAgent::default)
-                        .overlay(agent);
-                }
-            }
+        if let Some(agents) = &other.agents
+            && let Some(agent) = &agents.default
+        {
+            self.agents
+                .get_or_insert_with(AgentEngineAgents::default)
+                .default
+                .get_or_insert_with(AgentEngineAgent::default)
+                .overlay(agent);
         }
     }
 
@@ -474,32 +447,19 @@ impl AgentEngineConfig {
         merged
     }
 
-    /// The per-agent overrides for `kind`, if any.
-    pub fn agent(&self, kind: EngineAgentKind) -> Option<&AgentEngineAgent> {
-        self.agents.as_ref().and_then(|a| a.get(kind))
+    /// The agent's overrides, if any — `agents.default`.
+    pub fn agent(&self) -> Option<&AgentEngineAgent> {
+        self.agents.as_ref().and_then(|a| a.default.as_ref())
     }
 
-    /// The effective model STRING for `kind` (not yet resolved to a
-    /// provider): `agents.<kind>.model` > the flat per-role field >
-    /// `default_model`. `None` = no opinion (auto-detect / `--model` /
-    /// provider default decide, exactly as before this config existed).
-    pub fn model_for(&self, kind: EngineAgentKind) -> Option<&str> {
-        if let Some(model) = self.agent(kind).and_then(|a| a.model.as_deref()) {
-            return Some(model);
-        }
-        let flat = match kind {
-            EngineAgentKind::Default => None,
-            EngineAgentKind::Worker => self.pipeline_worker_model.as_deref(),
-            EngineAgentKind::Verifier => self.pipeline_verifier_model.as_deref(),
-            EngineAgentKind::Triage => self.pipeline_triage_model.as_deref(),
-            // Both fall through to `default_model` below when unset, which is
-            // where they have always landed — the worker's flat key is not
-            // consulted for them, since a worker pin says nothing about what
-            // a read-only research call or a single planning call should run.
-            EngineAgentKind::Research => self.pipeline_research_model.as_deref(),
-            EngineAgentKind::Plan => self.pipeline_plan_model.as_deref(),
-        };
-        flat.or(self.default_model.as_deref())
+    /// The effective model STRING (not yet resolved to a provider):
+    /// `agents.default.model` > `default_model`. `None` = no opinion
+    /// (auto-detect / `--model` / provider default decide, exactly as before
+    /// this config existed).
+    pub fn model_for(&self) -> Option<&str> {
+        self.agent()
+            .and_then(|a| a.model.as_deref())
+            .or(self.default_model.as_deref())
     }
 
     /// The allowed-model vocabulary, empty when unrestricted.
@@ -563,11 +523,14 @@ impl AgentEngineConfig {
     /// Choosing between those is a maintainer's call about published numbers,
     /// not a cleanup; #3870 carries the analysis.
     ///
-    /// So the `#[allow]` below is a declared, issue-cited gap — NOT the
-    /// "dies with the pipeline removal" justification that #3872's definition
-    /// of done forbids surviving. Settings-merge tests still exercise the
-    /// scope-chain precedence rule through this accessor meanwhile.
-    #[allow(dead_code)]
+    /// That gap is about the **field**, which must keep parsing and merging.
+    /// The *accessor* is a separate question with a plain answer: its only
+    /// callers are the settings-merge tests that exercise the scope-chain
+    /// precedence rule through this name. So it is `cfg(test)` rather than
+    /// `#[allow(dead_code)]` — the field stays in `ENGINE_ROOT_FIELDS` and the
+    /// registered posture digest is untouched, while nothing claims the
+    /// dead-code lint was wrong about a function no shipped path calls.
+    #[cfg(test)]
     pub fn headless_scope_bypass_on(&self) -> bool {
         self.headless_scope_bypass.is_some_and(Toggle::is_on)
     }

@@ -560,6 +560,149 @@ async fn the_billed_prompt_size_is_reported_and_bounded() {
     );
 }
 
+/// One turn's journal in the shape `agent::run_turn` hands to
+/// [`super::digest::TurnFriction::from_events`]: a tool that failed, its
+/// pairing start, a retry, and the model call that paid for it all.
+fn journal() -> Vec<stella_protocol::AgentEvent> {
+    use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+    vec![
+        AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: "c1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({ "command": "cargo test" }),
+            },
+        },
+        AgentEvent::ToolResult {
+            call_id: "c1".into(),
+            output: ToolOutput::Error {
+                message: "linker failed: ld returned 1".into(),
+                class: None,
+            },
+            duration_ms: 91_000,
+            speculated: false,
+        },
+        AgentEvent::Retry {
+            attempt: 1,
+            reason: "429 rate limited".into(),
+        },
+        AgentEvent::StepUsage {
+            upstream_provider: None,
+            step: 4,
+            role: stella_protocol::ModelCallRole::Worker,
+            provider: "anthropic".into(),
+            output_text: None,
+            model: "claude".into(),
+            input_tokens: 80_000,
+            output_tokens: 500,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: None,
+            estimated_input_tokens: 0,
+            cost_usd: 0.31,
+            duration_ms: 12_000,
+            retries: 1,
+            tool_calls: 1,
+            complete: true,
+            finish_reason: None,
+        },
+    ]
+}
+
+/// **The #3946 witness.** `the_prompt_names_where_the_turn_spent_itself` below
+/// proves the digest *renders* friction once something hands it a ledger. This
+/// proves something does.
+///
+/// Between #3865 (which deleted `FrictionTap`, the ledger's only producer) and
+/// this change, every production path built its evidence through
+/// [`super::TurnEvidence::from_transcript`], which hardcodes a permanently
+/// empty ledger — so the friction section of every shipped digest rendered as
+/// nothing at all. The second half of this test is that regression, still
+/// executable: same transcript, same turn, no producer, no section.
+#[tokio::test]
+async fn the_folded_journal_reaches_the_prompt_and_an_unfolded_turn_says_nothing() {
+    let events = journal();
+    let friction = super::digest::TurnFriction::from_events(&events);
+    let transcript = vec![CompletionMessage::user("run the tests")];
+
+    let wired = prompt_for_evidence(super::TurnEvidence::with_friction(
+        &transcript,
+        &friction,
+        false,
+    ))
+    .await;
+    assert!(
+        wired.contains("Where this turn spent itself"),
+        "a folded journal must render the friction section.\n\nprompt was:\n{wired}"
+    );
+    assert!(
+        wired.contains("linker failed"),
+        "the failed tool call is the turn's friction, and `run_turn` saw it.\
+         \n\nprompt was:\n{wired}"
+    );
+    assert!(
+        wired.contains("429 rate limited"),
+        "a retry leaves no message behind — only the event stream has it.\
+         \n\nprompt was:\n{wired}"
+    );
+    assert!(
+        wired.contains("$0.3100"),
+        "what the turn cost is nowhere in the transcript.\n\nprompt was:\n{wired}"
+    );
+
+    // Anti-vacuity, and the regression itself: the identical turn built the way
+    // every door built it before #3946 reaches the model with none of the above.
+    let unwired =
+        prompt_for_evidence(super::TurnEvidence::from_transcript(&transcript, false)).await;
+    assert!(
+        !unwired.contains("Where this turn spent itself"),
+        "`from_transcript`'s empty ledger must render no friction section — if \
+         it does, this test proves nothing about the wiring.\n\nprompt was:\n{unwired}"
+    );
+}
+
+/// The other half of the #3946 witness: the test above builds its evidence by
+/// hand, so it would still pass with every production call site reverted. This
+/// asserts the wiring itself — that a ledger is folded and that reflection is
+/// handed it, at the two doors that reflect on a single turn.
+///
+/// Source-level for the reason `every_recalling_driver_arms_the_control_first`
+/// (`memory/tests/ab_control.rs`) is: observing it otherwise means standing up a
+/// provider, an MCP connect, a store and a renderer task to watch one
+/// assignment. The names asserted on are real items, so a rename breaks the
+/// compile too.
+#[test]
+fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
+    const AGENT: &str = include_str!("../../agent.rs");
+    const GOAL: &str = include_str!("../../agent/goal.rs");
+    const REFLECT: &str = include_str!("../../agent/reflect.rs");
+
+    assert!(
+        AGENT.contains("TurnFriction::from_events(&collected)"),
+        "run_turn must fold the journal its renderer drained; without a producer \
+         every digest's friction section is empty, which is the #3946 regression"
+    );
+
+    // The one-shot door — the surface a benchmark run drives.
+    let door = GOAL
+        .find("pub(crate) async fn run_raw_one_shot")
+        .expect("the raw one-shot door must still be named this");
+    let next_door = GOAL[door..]
+        .find("pub async fn run_goal_cmd")
+        .map_or(GOAL.len(), |offset| door + offset);
+    assert!(
+        GOAL[door..next_door].contains("TurnEvidence::with_friction("),
+        "run_raw_one_shot must reflect with the ledger it folded, not \
+         from_transcript's empty one"
+    );
+
+    // The interactive door.
+    assert!(
+        REFLECT.contains("TurnEvidence::with_friction("),
+        "reflect_on_interactive_turn must reflect with the turn's ledger"
+    );
+}
+
 /// The event-derived half of the evidence (#2460's definition of done, item 1):
 /// cost, wall clock, retries and loop firings leave no message at all, so no
 /// window over the transcript can reach them.

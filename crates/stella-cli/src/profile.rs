@@ -1,17 +1,30 @@
-//! Harness profiles — one word that re-tunes every engine role at once.
+//! Harness profiles — one word that re-tunes the engine.
 //!
 //! A profile answers "how hard should this machine try?" in the vocabulary a
 //! person actually thinks in — `fast`, `balanced`, `pro`, `ultra` — and lowers
-//! that into the settings the engine already reads: a model per role, a
-//! reasoning effort per role, and the response-shape knobs that ride along.
+//! that into the settings the engine already reads: a model, a reasoning
+//! effort, and the response-shape knobs that ride along.
+//!
+//! # One role since #3908
+//!
+//! It used to lower a profile onto six roles at once, including a three-step
+//! cross-family search that kept the verifier independent of the worker. Four
+//! of those roles were the staged pipeline's (#3865) and their settings keys
+//! had stopped resolving, so the search was spending real ranking effort to
+//! write a key nothing read — and `/profile` was printing a per-role table for
+//! models that would never run.
+//!
+//! The independence *idea* is not gone: `stella goal`'s
+//! `resolve_cross_family_verifier` still groups by family at the point of use.
+//! What went is the attempt to pre-commit that choice in a settings file, for
+//! a role core no longer has. A profile that should tune a plugin's seat is
+//! #3936.
 //!
 //! # Why price is the tier signal
 //!
 //! [`CatalogEntry`](stella_model::catalog::CatalogEntry) carries no tier,
 //! rank, or latency field, so a profile has to infer capability from
-//! something. It uses **list output price**, the same proxy
-//! [`crate::engine_config::auto_verifier_spec`] already ranks by. That choice is
-//! deliberate: a hardcoded table of model names would be stale the week after
+//! something. It uses **list output price**. That choice is deliberate: a hardcoded table of model names would be stale the week after
 //! it merged, whereas price ranking picks up every `stella models refresh`
 //! for free. It is a proxy, not a truth — a cheap frontier model ranks low
 //! until its price says otherwise — and the confirmation text names the models
@@ -25,12 +38,11 @@
 //!
 //! # Why the auto switches go off
 //!
-//! `effort_auto` is a convenience that pins verifier=high, worker=medium,
-//! triage=low and **overrides any per-agent effort**. Left on, it would cap
-//! `/profile ultra`'s worker at medium — the profile would print one thing and
-//! run another. So applying a profile turns `effort_auto`, `reasoning_auto`,
-//! and `auto_mode` off and writes the values explicitly. What the confirmation
-//! prints is what the next session runs.
+//! `effort_auto` is a convenience that pins a middle rung and **overrides any
+//! per-agent effort**. Left on, it would cap `/profile ultra` at medium — the
+//! profile would print one thing and run another. So applying a profile turns
+//! `effort_auto`, `reasoning_auto`, and `auto_mode` off and writes the values
+//! explicitly. What the confirmation prints is what the next session runs.
 //!
 //! That would be a one-way door on its own, so [`restore_auto`] is the way
 //! back: it switches all three on again and drops the per-role pins, handing
@@ -55,8 +67,7 @@
 //! can express it, the clamp stands and the summary says which levels moved.
 
 use crate::settings::{
-    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, AgentEngineParams, EngineAgentKind,
-    Toggle,
+    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, AgentEngineParams, Toggle,
 };
 use stella_protocol::completion::{ReasoningEffort, ServiceTier, Verbosity};
 
@@ -128,59 +139,28 @@ impl Profile {
 
     /// Where in the price-sorted candidate list this role should land, as a
     /// fraction from 0.0 (cheapest reachable) to 1.0 (most expensive).
-    ///
-    /// Triage sits below the worker in every profile: it is a short
-    /// classification under a latency ceiling, and spending the session's most
-    /// expensive model on it buys nothing.
-    ///
-    /// The verifier's fraction is measured over a **filtered** list — see
-    /// [`plan`] — so it reads as "how far up the qualifying verifiers to reach",
-    /// not as a position in the full catalog.
-    fn percentile(self, kind: EngineAgentKind) -> f64 {
-        match (self, kind) {
-            (Profile::Fast, _) => 0.0,
-            (Profile::Balanced, EngineAgentKind::Triage) => 0.0,
-            (Profile::Balanced, EngineAgentKind::Verifier) => 0.75,
-            (Profile::Balanced, _) => 0.50,
-            (Profile::Pro, EngineAgentKind::Triage) => 0.25,
-            (Profile::Pro, EngineAgentKind::Verifier) => 1.0,
-            (Profile::Pro, _) => 0.85,
-            (Profile::Ultra, EngineAgentKind::Triage) => 0.50,
-            (Profile::Ultra, _) => 1.0,
+    fn percentile(self) -> f64 {
+        match self {
+            Profile::Fast => 0.0,
+            Profile::Balanced => 0.50,
+            Profile::Pro => 0.85,
+            Profile::Ultra => 1.0,
         }
     }
 
     /// The reasoning effort this profile asks for, before the provider clamp.
-    ///
-    /// Research shares triage's rung, and for the same reason `auto_effort`
-    /// puts it there: a read-only sub-agent that greps a tree and reports what
-    /// it found is doing retrieval, not deliberation. Left on the worker's
-    /// rung it is a fan-out of expensive short calls — measured at 76 seconds
-    /// over fifteen `xhigh` calls for a few hundred reasoning tokens (#2374).
-    fn effort(self, kind: EngineAgentKind) -> ReasoningEffort {
-        use EngineAgentKind::{Research, Triage, Verifier};
-        match (self, kind) {
-            (Profile::Fast, _) => ReasoningEffort::Low,
-            (Profile::Balanced, Triage | Research) => ReasoningEffort::Low,
-            (Profile::Balanced, Verifier) => ReasoningEffort::High,
-            (Profile::Balanced, _) => ReasoningEffort::Medium,
-            (Profile::Pro, Triage | Research) => ReasoningEffort::Low,
-            (Profile::Pro, Verifier) => ReasoningEffort::Xhigh,
-            (Profile::Pro, _) => ReasoningEffort::High,
-            (Profile::Ultra, Triage | Research) => ReasoningEffort::Medium,
-            (Profile::Ultra, _) => ReasoningEffort::Max,
+    fn effort(self) -> ReasoningEffort {
+        match self {
+            Profile::Fast => ReasoningEffort::Low,
+            Profile::Balanced => ReasoningEffort::Medium,
+            Profile::Pro => ReasoningEffort::High,
+            Profile::Ultra => ReasoningEffort::Max,
         }
     }
 
-    /// Whether thinking mode is on for a role. `fast` never thinks; triage and
-    /// research only think under `ultra`.
-    fn reasoning(self, kind: EngineAgentKind) -> bool {
-        match (self, kind) {
-            (Profile::Fast, _) => false,
-            (Profile::Ultra, _) => true,
-            (_, EngineAgentKind::Triage | EngineAgentKind::Research) => false,
-            _ => true,
-        }
+    /// Whether thinking mode is on. `fast` never thinks.
+    fn reasoning(self) -> bool {
+        !matches!(self, Profile::Fast)
     }
 
     /// Response detail. `fast` buys latency and cost back by asking for less
@@ -265,10 +245,9 @@ fn clamp_effort(wanted: ReasoningEffort, levels: &[&str]) -> Option<ReasoningEff
         .next_back()
 }
 
-/// What a profile decided for one role.
+/// What a profile decided for the session's role.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RolePick {
-    pub kind: EngineAgentKind,
     /// The chosen model, or `None` when no candidate was reachable at all —
     /// the role then keeps whatever it already had.
     pub model: Option<Candidate>,
@@ -285,7 +264,11 @@ pub struct RolePick {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
     pub profile: Profile,
-    /// One entry per [`EngineAgentKind`], in [`EngineAgentKind::ALL`] order.
+    /// The session role's pick.
+    ///
+    /// One, since #3908. A `Vec` rather than a bare `RolePick` because the
+    /// entries come back as plugin-declared seats in #3909, and every consumer
+    /// here already iterates.
     pub picks: Vec<RolePick>,
     pub verbosity: Verbosity,
     pub service_tier: ServiceTier,
@@ -293,18 +276,6 @@ pub struct Plan {
     /// means every role landed on the same model and the profiles differ only
     /// by effort — worth saying out loud rather than letting it look broken.
     pub ranked_count: usize,
-    /// `true` when the verifier had to share the worker's model family because no
-    /// reachable model was both independent of it and at least as capable. The
-    /// review is then correlated with the work it grades; the summary reports
-    /// it rather than letting the compromise pass unseen.
-    pub verifier_shares_worker_family: bool,
-}
-
-impl Plan {
-    /// The pick for one role.
-    pub fn pick(&self, kind: EngineAgentKind) -> Option<&RolePick> {
-        self.picks.iter().find(|p| p.kind == kind)
-    }
 }
 
 /// Order candidates cheapest-first on list output price, dropping unpriced
@@ -402,128 +373,41 @@ pub fn plan(profile: Profile, candidates: &[Candidate]) -> Plan {
         &ranked_list
     };
 
-    // What the worker landed on decides the verifier, so resolve it first.
-    let worker_index = index_at(pool.len(), profile.percentile(EngineAgentKind::Worker));
-    let worker = worker_index.and_then(|i| pool.get(i).copied());
-    let worker_family = worker.map(|c| c.family.as_str()).unwrap_or_default();
-    let worker_price = worker.map(|c| c.output_usd_per_mtok).unwrap_or_default();
-
-    // Choosing the verifier.
-    //
-    // Two goals pull against each other. A verifier in the worker's own family
-    // lets a shared blind spot pass review twice; a verifier well below the
-    // worker's tier cannot follow the work it grades, and rubber-stamps. No
-    // single ordering satisfies both on every catalog, so this resolves in
-    // three steps, preferring the option that gives up the least:
-    //
-    //   1. Independent AND at least as capable — no compromise at all.
-    //   2. Nothing clears the floor, but the strongest independent model is
-    //      only one rung below the worker. That is a near miss, not an
-    //      outmatched verifier, so independence is worth the single rung.
-    //   3. The strongest independent model is further down than that. Now
-    //      capability wins, and `Plan` records the correlation so the summary
-    //      says it out loud instead of absorbing it silently.
-    //
-    // Step 2 is what separates this from a plain capability floor: losing bias
-    // resistance over a rounding-error price gap was overcorrection. Anyone who
-    // wants independence unconditionally still has `auto_mode`.
-    let cross_family: Vec<&Candidate> = pool
-        .iter()
-        .copied()
-        .filter(|c| c.family != worker_family)
-        .collect();
-    let at_or_above: Vec<&Candidate> = cross_family
-        .iter()
-        .copied()
-        .filter(|c| c.output_usd_per_mtok >= worker_price)
-        .collect();
-    // `pool` is cheapest-first, so the last cross-family entry is the strongest
-    // independent option, and its rank decides whether the gap is a near miss.
-    let near_miss = at_or_above.is_empty()
-        && match (worker_index, cross_family.last()) {
-            (Some(worker_index), Some(best)) => pool
-                .iter()
-                .rposition(|c| std::ptr::eq(*c, *best))
-                .is_some_and(|rank| rank + 1 >= worker_index),
-            _ => false,
-        };
-    // Steps 1 and 2 both end with an independent verifier; only step 3 gives that
-    // up, and that is the case worth reporting.
-    let verifier_is_independent = !at_or_above.is_empty() || near_miss;
-
-    let picks = EngineAgentKind::ALL
-        .iter()
-        .map(|&kind| {
-            let wanted = profile.effort(kind);
-            // The verifier's three steps, in order; every other role just takes
-            // its fraction of the whole pool.
-            let chosen = match kind {
-                EngineAgentKind::Verifier if !at_or_above.is_empty() => {
-                    at_percentile_expressive(&at_or_above, profile.percentile(kind), wanted)
-                }
-                // A near-miss verifier was chosen for being the strongest
-                // independent option there is, so it takes the top of that list
-                // rather than the profile's usual fraction.
-                EngineAgentKind::Verifier if near_miss => cross_family.last().copied(),
-                _ => at_percentile_expressive(pool, profile.percentile(kind), wanted),
-            };
-            let effort = chosen.and_then(|c| clamp_effort(wanted, c.effort_levels));
-            // A catalog-confirmed non-reasoning model must not carry a
-            // thinking switch: the request path drops it anyway, and writing
-            // it into settings would show a state that never reaches the API.
-            let can_think = chosen.is_none_or(|c| c.supports_reasoning != Some(false));
-            RolePick {
-                kind,
-                // Posture only for research and plan — the same rule
-                // `provider_engine_baseline` follows for the default agent.
-                // These two ride the worker's model by contract, and a flat pin
-                // would break that in the one case it matters: `--model`
-                // re-points the worker for a single run and deliberately leaves
-                // settings alone, so a pinned research model would go on
-                // serving the model the flag overrode.
-                //
-                // `chosen` is still resolved above and still used, because the
-                // effort clamp and the thinking switch have to be judged
-                // against the model that will actually run — and at these two
-                // roles' percentile that IS the worker's pick. Dropping the
-                // candidate earlier instead nulled both, which made the
-                // profile's research posture a knob that wrote nothing.
-                model: match kind {
-                    EngineAgentKind::Research | EngineAgentKind::Plan => None,
-                    _ => chosen.cloned(),
-                },
-                effort,
-                reasoning: can_think.then(|| profile.reasoning(kind)),
-                effort_downgraded_from: match effort {
-                    Some(got) if got != wanted => Some(wanted),
-                    _ => None,
-                },
-            }
-        })
-        .collect();
+    let wanted = profile.effort();
+    let chosen = at_percentile_expressive(pool, profile.percentile(), wanted);
+    let effort = chosen.and_then(|c| clamp_effort(wanted, c.effort_levels));
+    // A catalog-confirmed non-reasoning model must not carry a thinking
+    // switch: the request path drops it anyway, and writing it into settings
+    // would show a state that never reaches the API.
+    let can_think = chosen.is_none_or(|c| c.supports_reasoning != Some(false));
 
     Plan {
         profile,
-        picks,
+        picks: vec![RolePick {
+            model: chosen.cloned(),
+            effort,
+            reasoning: can_think.then(|| profile.reasoning()),
+            effort_downgraded_from: match effort {
+                Some(got) if got != wanted => Some(wanted),
+                _ => None,
+            },
+        }],
         verbosity: profile.verbosity(),
         service_tier: profile.service_tier(),
         ranked_count: pool.len(),
-        // Only a compromise when there was a worker to be independent OF, and
-        // when no independent option survived either of the first two steps.
-        verifier_shares_worker_family: !verifier_is_independent && worker.is_some(),
     }
 }
 
 /// Write a plan into an existing engine config, in place.
 ///
-/// **Preserves what the profile does not own.** A hand-written verifier prompt, a
+/// **Preserves what the profile does not own.** A hand-written prompt, a
 /// pinned provider, a chosen temperature or seed all survive: the profile
-/// claims the per-role model, effort, reasoning, verbosity, and service tier,
-/// and nothing else. It also leaves `allowed_models` alone — silently
+/// claims the model, effort, reasoning, verbosity, and service tier, and
+/// nothing else. It also leaves `allowed_models` alone — silently
 /// narrowing the model picker is the kind of surprise that makes a
 /// convenience command untrustworthy.
 pub fn apply(plan: &Plan, engine: &mut AgentEngineConfig) {
-    // The profile is now the authority on effort and verifier selection; the
+    // The profile is now the authority on effort and model selection; the
     // auto switches would override it. See the module docs.
     engine.auto_mode = Some(Toggle::Off);
     engine.effort_auto = Some(Toggle::Off);
@@ -532,26 +416,11 @@ pub fn apply(plan: &Plan, engine: &mut AgentEngineConfig) {
     let agents = engine.agents.get_or_insert_with(AgentEngineAgents::default);
     for pick in &plan.picks {
         if let Some(chosen) = &pick.model {
-            let qualified = Some(chosen.qualified());
-            match pick.kind {
-                EngineAgentKind::Default => engine.default_model = qualified,
-                EngineAgentKind::Worker => engine.pipeline_worker_model = qualified,
-                EngineAgentKind::Verifier => engine.pipeline_verifier_model = qualified,
-                EngineAgentKind::Triage => engine.pipeline_triage_model = qualified,
-                // Unreachable while `plan` leaves both models `None` (see
-                // there), and stated rather than `unreachable!`d: a panic on a
-                // value the type permits is invariant 5's exact prohibition.
-                // Should a future profile pick a model for one of these, this
-                // is the key it belongs on.
-                EngineAgentKind::Research => engine.pipeline_research_model = qualified,
-                EngineAgentKind::Plan => engine.pipeline_plan_model = qualified,
-            }
+            engine.default_model = Some(chosen.qualified());
         }
-        let agent = agents
-            .get_mut(pick.kind)
-            .get_or_insert_with(AgentEngineAgent::default);
-        // The flat `pipeline_*_model` keys are the canonical simple form and a
-        // per-agent `model` outranks them, so a stale one here would quietly
+        let agent = agents.default.get_or_insert_with(AgentEngineAgent::default);
+        // The flat `default_model` key is the canonical simple form and a
+        // per-agent `model` outranks it, so a stale one here would quietly
         // beat the model this profile just chose.
         if pick.model.is_some() {
             agent.model = None;
@@ -579,7 +448,7 @@ pub fn apply(plan: &Plan, engine: &mut AgentEngineConfig) {
 /// It deliberately leaves **model** choices alone. The switches are what a
 /// profile took away; a model pin may well predate it — set by `/model` or by
 /// hand — and clearing that would be destroying something this command never
-/// owned. `auto_mode` re-picks the verifier on its own regardless.
+/// owned.
 pub fn restore_auto(engine: &mut AgentEngineConfig) {
     engine.auto_mode = Some(Toggle::On);
     engine.effort_auto = Some(Toggle::On);
@@ -587,33 +456,30 @@ pub fn restore_auto(engine: &mut AgentEngineConfig) {
     let Some(agents) = engine.agents.as_mut() else {
         return;
     };
-    for kind in EngineAgentKind::ALL {
-        let slot = agents.get_mut(kind);
-        if let Some(agent) = slot.as_mut() {
-            agent.effort = None;
-            agent.reasoning = None;
-            if let Some(params) = agent.params.as_mut() {
-                params.verbosity = None;
-                params.service_tier = None;
-                // Clearing the last field a profile owned must not leave a
-                // `"params": {}` husk behind. Same rule as `settings_from_state`
-                // — an emptied object is dropped, so the file stays minimal.
-                if *params == AgentEngineParams::default() {
-                    agent.params = None;
-                }
+    let slot = &mut agents.default;
+    if let Some(agent) = slot.as_mut() {
+        agent.effort = None;
+        agent.reasoning = None;
+        if let Some(params) = agent.params.as_mut() {
+            params.verbosity = None;
+            params.service_tier = None;
+            // Clearing the last field a profile owned must not leave a
+            // `"params": {}` husk behind. Same rule as `settings_from_state`
+            // — an emptied object is dropped, so the file stays minimal.
+            if *params == AgentEngineParams::default() {
+                agent.params = None;
             }
         }
-        if slot.as_ref() == Some(&AgentEngineAgent::default()) {
-            *slot = None;
-        }
     }
-    let no_agents_left = *agents == AgentEngineAgents::default();
-    if no_agents_left {
+    if slot.as_ref() == Some(&AgentEngineAgent::default()) {
+        *slot = None;
+    }
+    if *agents == AgentEngineAgents::default() {
         engine.agents = None;
     }
 }
 
-/// Whether this config has the auto switches on and no per-role effort pinned
+/// Whether this config has the auto switches on and no effort pinned
 /// — the state [`restore_auto`] leaves behind, and the honest answer to "which
 /// profile is this?" when none is.
 pub fn is_auto(engine: &AgentEngineConfig) -> bool {
@@ -621,11 +487,10 @@ pub fn is_auto(engine: &AgentEngineConfig) -> bool {
         return false;
     }
     engine.agents.as_ref().is_none_or(|agents| {
-        EngineAgentKind::ALL.iter().all(|&kind| {
-            agents
-                .get(kind)
-                .is_none_or(|a| a.effort.is_none() && a.reasoning.is_none())
-        })
+        agents
+            .default
+            .as_ref()
+            .is_none_or(|a| a.effort.is_none() && a.reasoning.is_none())
     })
 }
 

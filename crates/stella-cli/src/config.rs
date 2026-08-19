@@ -37,6 +37,20 @@ fn trusted_engine_config_shape_is_strict(value: &serde_json::Value) -> bool {
             .is_some_and(|object| object.keys().all(|key| allowed.contains(&key.as_str())))
     }
 
+    /// `allowed` plus the retired-but-recognized names, as one slice.
+    ///
+    /// A retired key is **recognized here and reported everywhere else**: it
+    /// parses into nothing, and both the settings walker and the launcher say
+    /// so by name. See `settings::unknown`'s `RETIRED_ENGINE_ROOT` for why
+    /// #3908's role keys take this path while `pipeline_max_revisions` was
+    /// dropped outright and is refused.
+    fn tolerating(
+        allowed: &'static [&'static str],
+        retired: &'static [&'static str],
+    ) -> Vec<&'static str> {
+        allowed.iter().chain(retired).copied().collect()
+    }
+
     // The ONE vocabulary, shared with the settings.json unknown-key warning
     // (`settings::unknown`). A second hand-maintained copy here would drift the
     // moment a knob is added — and because this gate fails CLOSED, a drifted
@@ -44,9 +58,10 @@ fn trusted_engine_config_shape_is_strict(value: &serde_json::Value) -> bool {
     use crate::settings::{
         ENGINE_AGENT_FIELDS as AGENT_FIELDS, ENGINE_AGENT_NAMES as AGENT_NAMES,
         ENGINE_PARAM_FIELDS as PARAM_FIELDS, ENGINE_ROOT_FIELDS as ROOT_FIELDS,
+        RETIRED_ENGINE_AGENT_NAMES, RETIRED_ENGINE_ROOT,
     };
 
-    if !object_has_only(value, ROOT_FIELDS) {
+    if !object_has_only(value, &tolerating(ROOT_FIELDS, RETIRED_ENGINE_ROOT)) {
         return false;
     }
     let Some(agents) = value.get("agents") else {
@@ -55,7 +70,7 @@ fn trusted_engine_config_shape_is_strict(value: &serde_json::Value) -> bool {
     if agents.is_null() {
         return true;
     }
-    if !object_has_only(agents, AGENT_NAMES) {
+    if !object_has_only(agents, &tolerating(AGENT_NAMES, RETIRED_ENGINE_AGENT_NAMES)) {
         return false;
     }
     let Some(agent_map) = agents.as_object() else {
@@ -675,13 +690,11 @@ impl Config {
         // (`provider/slug`) so the whole existing resolution path applies
         // unchanged. Pin-vs-spec precedence lives in `model_spec_for` — the
         // one resolver every engine agent goes through — so a stale pin
-        // can't swallow a qualified flat spec into a phantom slug here
-        // while the verifier/triage wiring resolves the same settings sanely.
+        // can't swallow a qualified flat spec into a phantom slug here.
         let engine_default: Option<String> = settings.agent_engine_config.as_ref().and_then(|e| {
-            use crate::settings::EngineAgentKind;
             let ids = all_provider_ids(settings);
             let is_provider = |id: &str| ids.contains(&id);
-            match crate::engine_config::model_spec_for(e, EngineAgentKind::Default, &is_provider) {
+            match crate::engine_config::model_spec_for(e, &is_provider) {
                 Some(spec) if !spec.model.is_empty() => {
                     Some(format!("{}/{}", spec.provider, spec.model))
                 }
@@ -691,7 +704,7 @@ impl Config {
                 // No setting, or an unparseable string — pass the raw
                 // value through so `resolve_provider_config` keeps its
                 // named error for typos.
-                None => e.model_for(EngineAgentKind::Default).map(str::to_string),
+                None => e.model_for().map(str::to_string),
             }
         });
         // Captured BEFORE the fold below, which is the last point where the

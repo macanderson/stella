@@ -22,7 +22,7 @@ fn run_complete_is_final_even_when_later_events_arrive() {
             cost_usd: 1.25,
         },
         AgentEvent::Stage {
-            name: stella_protocol::StageKind::Reflect,
+            name: stella_protocol::StageKind::Reflect.into(),
             scope: stella_protocol::StageScope::Run,
         },
     ];
@@ -87,7 +87,7 @@ async fn stream_renderer_persists_reflection_before_the_run_terminator() {
     })
     .unwrap();
     tx.send(AgentEvent::Stage {
-        name: stella_protocol::StageKind::Reflect,
+        name: stella_protocol::StageKind::Reflect.into(),
         scope: stella_protocol::StageScope::Run,
     })
     .unwrap();
@@ -107,9 +107,9 @@ async fn stream_renderer_persists_reflection_before_the_run_terminator() {
     assert!(matches!(
         journal.events.get(1).map(|record| &record.event),
         Some(AgentEvent::Stage {
-            name: stella_protocol::StageKind::Reflect,
+            name,
             scope: stella_protocol::StageScope::Run
-        })
+        }) if name.kind() == Some(stella_protocol::StageKind::Reflect)
     ));
     // The run terminator is the final durable line.
     assert!(matches!(

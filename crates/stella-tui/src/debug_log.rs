@@ -128,7 +128,7 @@ mod tests {
         let log = DebugLog::new(Some(path.clone()));
         assert!(log.is_active());
         log.event(&AgentEvent::Stage {
-            name: stella_protocol::StageKind::Execute,
+            name: stella_protocol::StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         });
         log.input(&UserInput::Prompt {

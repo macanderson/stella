@@ -137,8 +137,9 @@ use stella_model::provider::Provider;
 use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
-    ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS, DispatchReport, DrivenTurn, HostCallGate,
-    HostPlanes, RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
+    CandidateFanoutSpend, CandidateFanouts, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS,
+    DispatchReport, DrivenTurn, HostCallGate, HostPlanes, RoundInput, SubprocessWrapper,
+    TurnDriver, TurnPrelude, WrapperDispatch,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -387,6 +388,11 @@ pub(crate) struct BoundWrapper {
     /// plugin spent, and a driver that installed one and could not report on
     /// it would be silent about money (#3576).
     child_turns: Option<Arc<SessionChildTurns>>,
+    /// The candidate fan-out plane, kept for the child plane's reason and one
+    /// more of its own: it is the only thing that knows which isolated
+    /// workspaces are still on disk, so a driver that dropped it would leak
+    /// every unadopted candidate of the run (#3892).
+    candidate_fanout: Option<Arc<SessionCandidateFanouts>>,
 }
 
 impl BoundWrapper {
@@ -406,6 +412,38 @@ impl BoundWrapper {
             .map_or_else(Vec::new, |plane| plane.spends())
     }
 
+    /// Every candidate fan-out this host performed, in order.
+    ///
+    /// [`Self::child_spends`]' sibling, and the larger number of the two: a
+    /// fan-out is N *writing* worker turns bought on one host call, so a run
+    /// that reported child turns and stayed silent about fan-outs would be
+    /// visible about the cheap spend and quiet about the expensive one.
+    pub(crate) fn fanout_spends(&self) -> Vec<CandidateFanoutSpend> {
+        self.candidate_fanout
+            .as_ref()
+            .map_or_else(Vec::new, |plane| plane.spends())
+    }
+
+    /// Discard every candidate workspace this run still holds, and return what
+    /// would not go.
+    ///
+    /// Called once at the end of a wrapped run. The failures come back rather
+    /// than being swallowed because an un-removed worktree is disk left behind
+    /// under a name only the plane's table knew — see
+    /// [`CandidateFanouts::discard_all`], whose contract this is the caller
+    /// half of.
+    pub(crate) async fn sweep_candidates(&self) -> Vec<String> {
+        match &self.candidate_fanout {
+            Some(plane) => plane
+                .discard_all()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// Print what one round's dispatch concluded, exactly as [`run_wrapped`]
     /// does for `stella run`'s one-shot report.
     ///
@@ -415,7 +453,13 @@ impl BoundWrapper {
     /// goal loop) must never hold a second reference to it that could drift
     /// from what [`Self::child_spends`] already reports honestly.
     pub(crate) fn report(&self, format: OutputFormat, report: &DispatchReport) {
-        report_to(format, report, &self.gate, &self.child_spends());
+        report_to(
+            format,
+            report,
+            &self.gate,
+            &self.child_spends(),
+            &self.fanout_spends(),
+        );
     }
 }
 
@@ -441,6 +485,31 @@ pub(crate) type SessionChildTurns = ChildTurns<Arc<dyn SubAgentDispatcher>>;
 /// *between* the rounds they are about: each round opens its own execution
 /// row, so the key is already unique across rounds without this moving.
 const PLUGIN_CHILD_TURN_SLOT: u32 = 1;
+
+/// The candidate fan-out plane a `stella run` session installs: the plugin's
+/// declared role intents over **this session's own** worktree substrate.
+pub(crate) type SessionCandidateFanouts =
+    CandidateFanouts<crate::candidate_workspaces::SessionCandidateWorkspaces>;
+
+/// The receipt turn slot a plugin's candidate turns are recorded under.
+///
+/// [`PLUGIN_CHILD_TURN_SLOT`]'s neighbour and deliberately **not** the same
+/// number. Receipts key on `(execution_id, turn_instance, step, call_seq)`
+/// with `step` restarting at 0 every turn, so two planes sharing a slot would
+/// have a candidate's step manifests overwrite a child turn's the moment a
+/// plugin used both — which a best-of-N plugin does by construction, since it
+/// fans out and then reads. The candidates of one fan-out are told apart from
+/// each other by `call_seq` within this slot, not by a slot each: a width the
+/// host clamps is not a number that may reach a database key.
+///
+/// It is a constant for [`PLUGIN_CHILD_TURN_SLOT`]'s reason — a plugin's
+/// points run *between* rounds, and each round opens its own execution row —
+/// and that is exactly why the **goal door installs no fan-out plane at all**.
+/// `stella goal`'s own even/odd worker/verifier slot math (#3833) owns the
+/// low slots across a loop, so a fixed one here would collide there rather
+/// than merely crowd. Declining the capability on that door is the same
+/// judgement `session_host` already makes for `child_turn`.
+const PLUGIN_CANDIDATE_FANOUT_SLOT: u32 = 2;
 
 /// This host's child-turn plane for one installed plugin.
 ///
@@ -477,6 +546,38 @@ pub(crate) fn child_turn_plane(
     ChildTurns::declare(manifest, dispatcher).with_turn_instance(PLUGIN_CHILD_TURN_SLOT)
 }
 
+/// This host's candidate fan-out plane for one installed plugin (#3892).
+///
+/// Three decisions, and they are [`child_turn_plane`]'s three read against a
+/// capability whose unit is a *writing* worker turn rather than a read:
+///
+/// - **Only `worker` may be fanned out to, and this host binds no extra
+///   tier.** [`CandidateFanouts`] serves the same four tiers
+///   [`ChildTurns`] does and refuses every one that does not resolve to the
+///   worker's seat, which is the inverse of the child plane's rule and the
+///   reason both exist: a child turn is evidence *about* the work and must
+///   not be graded by the model that did it, while a candidate **is** the
+///   work and must not be booked to a responsibility that wrote nothing.
+///   Nothing is bound here, so that rule stands as core wrote it.
+/// - **No per-fan-out USD carve is requested.** `None` asks for the whole
+///   headroom, divided by the clamped width, and each share is clamped again
+///   by the substrate against the session's sub-agent pool
+///   ([`crate::subagent::session_pool_limit_usd`]) — so "unbounded ask" is
+///   still a bounded spend, exactly as it is for a child turn. Requesting a
+///   number here would be this driver inventing a second ceiling that no flag
+///   can raise.
+/// - **The host's own two ceilings stand.** `[loop] max_fanout_width` is the
+///   plugin's ask and
+///   [`stella_runtime::wrapper::DEFAULT_HOST_MAX_FANOUT_WIDTH`] the authority;
+///   [`stella_runtime::wrapper::DEFAULT_HOST_MAX_FANOUTS`] bounds the run.
+///   Neither is overridden.
+pub(crate) fn candidate_fanout_plane(
+    manifest: &stella_plugin::PluginManifest,
+    workspaces: crate::candidate_workspaces::SessionCandidateWorkspaces,
+) -> SessionCandidateFanouts {
+    CandidateFanouts::declare(manifest, workspaces).with_turn_instance(PLUGIN_CANDIDATE_FANOUT_SLOT)
+}
+
 /// What this host will do for a plugin, assembled after the resources exist.
 ///
 /// Separate from [`ResolvedWrapper`] because the two are built at different
@@ -490,6 +591,7 @@ pub(crate) fn child_turn_plane(
 pub(crate) struct WrapperHost {
     recall: Box<dyn stella_runtime::wrapper::RecallHost>,
     child_turns: Option<Arc<SessionChildTurns>>,
+    candidate_fanout: Option<Arc<SessionCandidateFanouts>>,
 }
 
 impl WrapperHost {
@@ -499,6 +601,7 @@ impl WrapperHost {
         Self {
             recall,
             child_turns: None,
+            candidate_fanout: None,
         }
     }
 
@@ -508,6 +611,13 @@ impl WrapperHost {
         self.child_turns = Some(plane);
         self
     }
+
+    /// Also serve `candidate_fanout` and `adopt_candidate` from this plane.
+    #[must_use]
+    pub(crate) fn with_candidate_fanout(mut self, plane: Arc<SessionCandidateFanouts>) -> Self {
+        self.candidate_fanout = Some(plane);
+        self
+    }
 }
 
 /// Everything a `stella run` session can do for the plugin wrapping it.
@@ -515,14 +625,20 @@ impl WrapperHost {
 /// The one place both planes are named together, so a driver cannot install
 /// half of them by accident.
 pub(crate) fn session_host(
-    workspace_root: &std::path::Path,
+    cfg: &crate::config::Config,
     manifest: &stella_plugin::PluginManifest,
-    dispatcher: Arc<dyn SubAgentDispatcher>,
+    dispatcher: Arc<crate::subagent::SessionSubAgents>,
 ) -> WrapperHost {
+    let workspaces = crate::candidate_workspaces::SessionCandidateWorkspaces::new(
+        cfg,
+        &manifest.name,
+        Arc::clone(&dispatcher),
+    );
     WrapperHost::recalling(Box::new(crate::wrapper_recall::SessionRecallHost::open(
-        workspace_root,
+        &cfg.workspace_root,
     )))
     .with_child_turns(Arc::new(child_turn_plane(manifest, dispatcher)))
+    .with_candidate_fanout(Arc::new(candidate_fanout_plane(manifest, workspaces)))
 }
 
 /// An installed wrapper plugin, found and start-able, before this host has
@@ -574,6 +690,9 @@ impl ResolvedWrapper {
         if let Some(plane) = &host.child_turns {
             planes = planes.with_child_turns(Arc::clone(plane));
         }
+        if let Some(plane) = &host.candidate_fanout {
+            planes = planes.with_candidate_fanout(Arc::clone(plane));
+        }
         // The manifest's own `[loop]` grant is the authoritative filter — an
         // undeclared capability is refused before this host performs anything —
         // and `DEFAULT_HOST_MAX_CALLS` clamps whatever allowance it asked for.
@@ -592,6 +711,7 @@ impl ResolvedWrapper {
             dispatch,
             gate,
             child_turns: host.child_turns,
+            candidate_fanout: host.candidate_fanout,
         })
     }
 }
@@ -850,6 +970,12 @@ impl TurnDriver for RawTurnDriver<'_> {
             Some(self.session),
             self.recall_event.take(),
             self.memory.as_deref_mut(),
+            // No friction ledger for a wrapped round (#3946): this host does
+            // not reflect on it. The plugin drives the turn and observes its
+            // own events through the socket, so a ledger folded here would go
+            // nowhere — unlike `facts` above, which the wrapper protocol
+            // actually reports back.
+            None,
         )
         .await;
 
@@ -922,9 +1048,23 @@ pub(crate) async fn run_wrapped(
     // this driver folds it (#3576). See `settle_plugin_child_spend`.
     settle_plugin_child_spend(driver.registry, &mut *driver.budget);
     let last = driver.results.pop();
+    // The end-of-run sweep, and it runs on both arms below because a dispatch
+    // that failed is exactly the run most likely to have left workspaces
+    // behind. Failures are printed rather than raised: the work is done, and
+    // turning "a worktree would not go" into the run's exit status would fail
+    // a turn that succeeded.
+    for leaked in bound.sweep_candidates().await {
+        eprintln!("  ! wrapper: {leaked}");
+    }
     match report {
         Ok(report) => {
-            report_to(format, &report, &bound.gate, &bound.child_spends());
+            report_to(
+                format,
+                &report,
+                &bound.gate,
+                &bound.child_spends(),
+                &bound.fanout_spends(),
+            );
             // A round always runs, so `results` always has an entry; an empty
             // one would mean the dispatcher returned without driving anything,
             // which is a report about the wrapper and not about the work.
@@ -984,6 +1124,7 @@ fn report_to(
     report: &DispatchReport,
     gate: &HostCallGate,
     spends: &[ChildTurnSpend],
+    fanouts: &[CandidateFanoutSpend],
 ) {
     for fault in &report.faults {
         eprintln!("  ! wrapper: {fault}");
@@ -992,6 +1133,9 @@ fn report_to(
         eprintln!("  ! wrapper: {refused}");
     }
     for line in spend_lines(spends) {
+        eprintln!("  ! wrapper: {line}");
+    }
+    for line in fanout_spend_lines(fanouts) {
         eprintln!("  ! wrapper: {line}");
     }
     if format == OutputFormat::Text || !report.met() {
@@ -1023,6 +1167,40 @@ fn spend_lines(spends: &[ChildTurnSpend]) -> Vec<String> {
                 } else {
                     " — it did not finish"
                 }
+            )
+        })
+        .collect()
+}
+
+/// One line per candidate fan-out this host performed, naming what the plugin
+/// asked for, what it got, and what the difference cost.
+///
+/// [`spend_lines`]' sibling, and the one that matters more: a fan-out is the
+/// largest spend a plugin can cause on a single host call — N *writing* worker
+/// turns — so a run that printed child turns and not these would be visible
+/// about the cheap spend and silent about the expensive one.
+///
+/// The clamp is stated rather than hidden. "asked 8, ran 3" and "asked 3, ran
+/// 3" are different facts about a plugin and only the host knows which one
+/// happened, so the requested width is printed whenever it differs from what
+/// ran — which is also how a user discovers that
+/// [`stella_runtime::wrapper::DEFAULT_HOST_MAX_FANOUT_WIDTH`] is why a plugin
+/// scored fewer candidates than its README promised.
+///
+/// Pure, so the wording is testable without a run, and empty for the
+/// overwhelmingly common plugin that never fans out.
+fn fanout_spend_lines(spends: &[CandidateFanoutSpend]) -> Vec<String> {
+    spends
+        .iter()
+        .map(|spend| {
+            let clamped = if spend.requested_width == spend.width {
+                String::new()
+            } else {
+                format!(" — it asked for {}", spend.requested_width)
+            };
+            format!(
+                "fanned out {} candidate turn(s) at \"{}\" (seat {:?}, {} finished, ${:.4}){clamped}",
+                spend.width, spend.role, spend.seat, spend.completed, spend.cost_usd,
             )
         })
         .collect()

@@ -56,7 +56,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use colored::{Color, ColoredString, Colorize};
-use stella_protocol::{AgentEvent, BudgetMode, FileChangeKind, StageKind};
+#[cfg(test)]
+use stella_protocol::StageKind;
+use stella_protocol::{AgentEvent, BudgetMode, FileChangeKind, StageName};
 use stella_tui::ansi::AnsiPalette;
 use stella_tui::render::{INLINE_DIFF_CAP, THINKING_ROWS};
 use stella_tui::textline::{self, EventLine, Tone, fmt_cost};
@@ -324,14 +326,14 @@ pub fn welcome_banner(provider: &str, model: &str, workspace: &str) {
 ///
 /// The label alone, without the word "stage": the divider already says what
 /// kind of thing this is.
-pub fn stage_rule(stage: StageKind) {
+pub fn stage_rule(stage: &StageName) {
     println!("\n{}", stage_rule_line(stage));
 }
 
 /// [`stage_rule`]'s composition, kept pure so the layout is testable without
 /// capturing stdout — the same split [`crate::term_policy`] uses for its
 /// decisions, and for the same reason.
-fn stage_rule_line(stage: StageKind) -> String {
+fn stage_rule_line(stage: &StageName) -> String {
     let label = textline::stage_label(stage);
     // "  " + "──" + " " + label + " " — what the trailing rule has to clear.
     let used = label.chars().count() + 5;
@@ -510,7 +512,7 @@ pub fn render_event(event: &AgentEvent) {
         flush_reasoning();
     }
     match event {
-        AgentEvent::Stage { name, .. } => stage_rule(*name),
+        AgentEvent::Stage { name, .. } => stage_rule(name),
         AgentEvent::ToolStart { .. } | AgentEvent::ToolResult { .. } => {
             // Handled inline at the call site, which holds the `call_id ->
             // name` correlation this event pair needs (see the module doc).
@@ -767,13 +769,14 @@ mod tests {
             (StageKind::Execute, "execute"),
             (StageKind::Verdict, "verdict"),
         ] {
-            let line = strip_ansi(&stage_rule_line(stage)).into_owned();
+            let stage = StageName::from(stage);
+            let line = strip_ansi(&stage_rule_line(&stage)).into_owned();
             assert!(line.contains(label), "stage rule lost its label: {line:?}");
             assert!(line.contains('─'), "stage rule drew no rule: {line:?}");
             // The vocabulary is `textline`'s, not a local copy — #1465 was
             // five surfaces disagreeing about one stage's name.
             assert!(
-                line.contains(textline::stage_label(stage)),
+                line.contains(textline::stage_label(&stage)),
                 "stage rule stopped using the shared label: {line:?}"
             );
         }

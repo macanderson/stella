@@ -9,7 +9,6 @@
 
 use crate::config::Config;
 use crate::profile::{self, Candidate, Plan, Profile};
-use crate::settings::EngineAgentKind;
 
 /// `/profile …` — the persistent harness-posture setter.
 #[derive(Debug, PartialEq)]
@@ -116,18 +115,14 @@ pub fn set_auto() -> Result<String, String> {
         "profile cleared — {AUTO_TAGLINE}.\n\
          effort_auto, reasoning_auto and auto_mode are back on, and the per-role effort, \
          thinking, verbosity and service-tier pins a profile had written are gone.\n\
-         Model choices were left alone: a pin may predate the profile, and `auto_mode` \
-         re-picks the verifier on its own."
+         Model choices were left alone: a pin may predate the profile."
     ))
 }
 
 /// One `role  model  effort · thinking` line per role.
 fn plan_rows(plan: &Plan) -> String {
     let mut out = String::new();
-    for kind in EngineAgentKind::ALL {
-        let Some(pick) = plan.pick(kind) else {
-            continue;
-        };
+    for pick in &plan.picks {
         let model = pick
             .model
             .as_ref()
@@ -144,22 +139,11 @@ fn plan_rows(plan: &Plan) -> String {
         };
         out.push_str(&format!(
             "  {:<8} {:<38} {effort} · {thinking}\n",
-            role_label(kind),
+            crate::config_wiring::DEFAULT_ROLE,
             model
         ));
     }
     out
-}
-
-fn role_label(kind: EngineAgentKind) -> &'static str {
-    match kind {
-        EngineAgentKind::Default => "default",
-        EngineAgentKind::Worker => "worker",
-        EngineAgentKind::Verifier => "verifier",
-        EngineAgentKind::Triage => "triage",
-        EngineAgentKind::Research => "research",
-        EngineAgentKind::Plan => "plan",
-    }
 }
 
 /// The caveats worth saying out loud rather than letting them look like bugs:
@@ -168,7 +152,7 @@ fn plan_notes(plan: &Plan) -> Vec<String> {
     let mut notes = Vec::new();
     if plan.ranked_count == 0 {
         notes.push(
-            "no models are reachable — every role keeps what it had. Add a key with \
+            "no models are reachable — the session keeps what it had. Add a key with \
              `stella auth` or set one in the SETTINGS tab."
                 .to_string(),
         );
@@ -179,24 +163,13 @@ fn plan_notes(plan: &Plan) -> Vec<String> {
                 .to_string(),
         );
     }
-    if plan.verifier_shares_worker_family {
-        notes.push(
-            "the verifier shares the worker's model family — no reachable model was both \
-             independent of it and at least as capable, so review is correlated with the \
-             work it grades. A key from another vendor fixes this."
-                .to_string(),
-        );
-    }
-    for kind in EngineAgentKind::ALL {
-        let Some(pick) = plan.pick(kind) else {
-            continue;
-        };
+    for pick in &plan.picks {
         let (Some(from), Some(to)) = (pick.effort_downgraded_from, pick.effort) else {
             continue;
         };
         notes.push(format!(
             "{}: effort {} → {} — that provider does not expose the higher rungs.",
-            role_label(kind),
+            crate::config_wiring::DEFAULT_ROLE,
             crate::engine_config::effort_to_str(from),
             crate::engine_config::effort_to_str(to),
         ));
@@ -386,12 +359,17 @@ mod tests {
     }
 
     #[test]
-    fn the_readout_names_every_role_and_its_model() {
+    fn the_readout_names_the_role_and_its_model() {
         let plan = profile::plan(Profile::Ultra, &sample());
         let rows = plan_rows(&plan);
-        for role in ["default", "worker", "verifier", "triage"] {
-            assert!(rows.contains(role), "readout omits the {role} row:\n{rows}");
-        }
+        // One row, because core has one role (#3908). It listed `default`,
+        // `worker`, `verifier` and `triage` until the four pipeline personas
+        // went — a readout that named four models a run would never buy.
+        assert!(
+            rows.contains(crate::config_wiring::DEFAULT_ROLE),
+            "readout omits the role row:\n{rows}"
+        );
+        assert_eq!(rows.lines().count(), 1, "one role, one row:\n{rows}");
         assert!(rows.contains("anthropic/claude-fable-5"));
         // A provider with no effort control must say so rather than printing a
         // level that never reaches the wire.
@@ -400,42 +378,12 @@ mod tests {
         println!("--- ultra ---\n{rows}\n--- fast ---\n{fast}");
     }
 
+    /// The clamp note. Its sibling — a verifier correlated with the worker
+    /// because no independent model was capable enough — went with the
+    /// verifier role itself (#3908): a plan has nothing to be independent OF
+    /// any more, so `plan_notes` has no such case to report.
     #[test]
-    fn notes_explain_a_clamped_effort_and_a_correlated_verifier() {
-        // One cheap outsider and a wall of same-family models: the only
-        // independent verifier is too far below the worker to follow the work, so
-        // capability takes over and the correlation must be spoken.
-        let correlated = vec![
-            Candidate {
-                provider: "deepseek".into(),
-                model: "deepseek-chat".into(),
-                family: "deepseek".into(),
-                output_usd_per_mtok: 1.0,
-                supports_reasoning: Some(true),
-                effort_levels: &["low", "medium", "high"],
-            },
-            Candidate {
-                provider: "anthropic".into(),
-                model: "claude-a".into(),
-                family: "anthropic".into(),
-                output_usd_per_mtok: 40.0,
-                supports_reasoning: Some(true),
-                effort_levels: &["low", "medium", "high", "xhigh", "max"],
-            },
-            Candidate {
-                provider: "anthropic".into(),
-                model: "claude-b".into(),
-                family: "anthropic".into(),
-                output_usd_per_mtok: 75.0,
-                supports_reasoning: Some(true),
-                effort_levels: &["low", "medium", "high", "xhigh", "max"],
-            },
-        ];
-        let notes = plan_notes(&profile::plan(Profile::Ultra, &correlated));
-        assert!(
-            notes.iter().any(|n| n.contains("shares the worker's")),
-            "a correlated verifier went unreported: {notes:?}"
-        );
+    fn notes_explain_a_clamped_effort() {
         // A single model whose provider stops at `high` must report the clamp.
         let capped = vec![Candidate {
             provider: "openai".into(),

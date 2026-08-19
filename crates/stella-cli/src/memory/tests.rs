@@ -338,16 +338,6 @@ async fn an_otherwise_empty_recall_block_still_names_the_date() {
         "the worker's block must name the date even with nothing else to \
          recall: {full}"
     );
-
-    let pipeline = memory
-        .pipeline_recall_block("hello")
-        .await
-        .expect("the pipeline door carries the same unconditional section");
-    assert!(
-        pipeline.contains("Today's date:"),
-        "the pipeline-driven turn's frames-free block must also name the \
-         date: {pipeline}"
-    );
 }
 
 #[test]
@@ -547,12 +537,19 @@ fn a_control_turn_reports_no_selected_skills() {
     );
 }
 
-/// The frames-free block for pipeline-driven turns: skills and the record
-/// channel ride, recalled frames do not — those are the pipeline recall
-/// port's job, and rendering them here too is the double-recall/double-bill
-/// this method exists to end.
+/// The one volatile block every door injects carries all three steering
+/// channels at once: recalled frames, the selected skills, and the context
+/// records `applies_to` matched this prompt.
+///
+/// This replaces `the_pipeline_recall_block_carries_skills_and_records_but_never_frames`,
+/// which pinned the frames-free variant that existed only so a staged-pipeline
+/// turn would not bill the same frames twice — once here and once through its
+/// own `ContextRecallPort`. That pipeline is gone (#3865) and the variant with
+/// it, so the property worth pinning is the live one: skills and records reach
+/// the model on the same turn the frames do, rather than any of the three
+/// silently dropping out of the assembled block.
 #[tokio::test]
-async fn the_pipeline_recall_block_carries_skills_and_records_but_never_frames() {
+async fn the_recall_block_carries_frames_skills_and_records_together() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join(".stella")).unwrap();
     let skill_dir = dir.path().join(".stella/skills/reviewer");
@@ -601,17 +598,17 @@ force = "may"
         .recall_block("review the database migrations")
         .await
         .expect("the full block renders frames, skills, and records");
-    assert!(full.contains("frobnicator"), "full block carries frames");
-
-    let pipeline = memory
-        .pipeline_recall_block("review the database migrations")
-        .await
-        .expect("skills + records still render");
-    assert!(pipeline.contains("ALWAYS_REVIEW_DATABASES"));
-    assert!(pipeline.contains("staging URL"));
     assert!(
-        !pipeline.contains("frobnicator"),
-        "frames must stay on the pipeline's recall port, not be billed twice"
+        full.contains("frobnicator"),
+        "the recalled frame must reach the block: {full}"
+    );
+    assert!(
+        full.contains("ALWAYS_REVIEW_DATABASES"),
+        "the selected skill must reach the block: {full}"
+    );
+    assert!(
+        full.contains("staging URL"),
+        "the matched context record must reach the block: {full}"
     );
 }
 

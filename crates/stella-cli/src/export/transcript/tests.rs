@@ -281,7 +281,7 @@ fn the_elapsed_column_counts_whole_seconds_and_invents_no_precision() {
             (
                 "2026-08-09 12:00:00",
                 AgentEvent::Stage {
-                    name: StageKind::Triage,
+                    name: StageKind::Triage.into(),
                     scope: stella_protocol::StageScope::Run,
                 },
             ),

@@ -450,13 +450,15 @@ pub struct RewardLabel {
 impl RewardLabel {
     /// `true` when this trajectory carries a usable scalar.
     ///
-    /// No production caller today — `dataset_cmd`'s export reads `.reward`
+    /// No production caller — `dataset_cmd`'s export reads `.reward`
     /// directly — but `dataset_cmd/tests.rs` and `reward/tests.rs` both
     /// assert through this name as the natural spelling of the check, so it
     /// stays a named accessor rather than every caller re-deriving
-    /// `.reward.is_some()`.
+    /// `.reward.is_some()`. Test-gated rather than `#[allow(dead_code)]`-ed
+    /// for that reason: "this exists for the tests" is the true statement,
+    /// and the compiler holds it to that.
     #[must_use]
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn is_scored(&self) -> bool {
         self.reward.is_some()
     }

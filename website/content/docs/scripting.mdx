@@ -74,7 +74,7 @@ object, so the array of records sits one level in, at `.files_touched.files_touc
 The `model` value is `provider/model_id` for the model that **actually ran** —
 on the pipeline path that is the model serving the worker turns, which is what
 `cost_usd` was spent on. It is not an echo of what you requested: a
-[`pipeline_worker_model`](/docs/configuration/agent-engine-config) that routes
+[`default_model`](/docs/configuration/agent-engine-config) that routes
 the worker somewhere other than the session default is reflected here. Read
 this key, not your own `--model` argument, when attributing spend.
 

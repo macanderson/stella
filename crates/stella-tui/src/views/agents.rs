@@ -475,7 +475,7 @@ mod tests {
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::Stage {
-                name: StageKind::Execute,
+                name: StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Run,
             },
         });

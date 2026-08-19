@@ -1,82 +1,67 @@
 ---
 title: Agent engine config
-description: Give each engine agent — default, worker, verifier, triage, research, plan — its own model, gateway, prompt, reasoning effort, and sampling parameters via agent_engine_config.
+description: Configure the session agent's model, gateway, prompt, reasoning effort, and sampling parameters via agent_engine_config — and assign models to the roles installed plugins declare.
 ---
 
 The `agent_engine_config` object in [`settings.json`](/docs/configuration/settings)
-configures each engine agent individually:
+configures the engine:
 
 <CardGrid size="md">
   <OptionCard name="default">
-    The interactive / step-loop agent — `stella chat`, the Command Deck,
-    a plain `stella run`. Its model is also the **session default** every
-    other role falls back to.
+    The one role the core loop has — `stella chat`, the Command Deck, a plain
+    `stella run`. `default_model` is its model, and the one model setting
+    stella ships.
   </OptionCard>
-  <OptionCard name="worker">
-    The [pipeline](/docs/inference-pipeline)'s execute turns — both the model
-    they route to and their tuning (prompt, effort, reasoning, params). It is
-    also the base **research** and **plan** inherit, field by field, so
-    configuring the worker alone still configures all three.
-  </OptionCard>
-  <OptionCard name="verifier">
-    The pipeline's verify verifier and
-    [goal mode](/docs/agent-modes#outcome-driven-goal-mode)'s round verifier. The
-    witness author rides the verifier's resolution too — the test that defines
-    "done" is written by the same independent role that enforces it — falling
-    back to the worker when no verifier resolves.
-  </OptionCard>
-  <OptionCard name="triage">
-    The pipeline's fast task classifier. One call, roughly one token out, under
-    a hard 10-second latency ceiling — route it to the cheapest, fastest model
-    you have.
-  </OptionCard>
-  <OptionCard name="research">
-    The read-only sub-agents that answer triage's pre-plan questions, one child
-    per question. A fan-out of short lookups rather than one long call, so it
-    is the role where a tier chosen for the worker is paid the most times over.
-    Its `prompt` is the one field that does **not** apply — see
-    [Custom prompts](#custom-prompts).
-  </OptionCard>
-  <OptionCard name="plan">
-    The planner — one call that writes the work order every later stage is
-    judged against.
+  <OptionCard name="seats">
+    A model for a participant an **installed plugin** declared. Keyed
+    `<plugin-id>/<role>`, unset by default, so a plugin's process is
+    single-model until you say otherwise. See [Seats](#seats).
   </OptionCard>
 </CardGrid>
 
 Every field is optional, and it merges across the same user → org-managed →
 project scope chain as the rest of `settings.json`, per field — a project can
-pin just the verifier model while your user scope keeps everything else.
+pin the model while your user scope keeps everything else.
+
+<Callout type="warn">
+**`pipeline_worker_model`, `pipeline_verifier_model`, `pipeline_triage_model`,
+`pipeline_research_model`, `pipeline_plan_model` and the `agents.worker` /
+`agents.verifier` / `agents.triage` / `agents.research` / `agents.plan` blocks
+are retired.** They configured the staged pipeline's roles; that pipeline was
+removed, and the keys had stopped steering anything well before they were
+taken out.
+
+A settings file that still carries one **loads normally and prints a line per
+key naming what it did and what to write instead** — nothing breaks, and
+nothing is silently ignored either. Set `default_model` for the session's own
+model, and a [seat](#seats) for anything a plugin runs.
+</Callout>
 
 ## The full schema
 
 ```jsonc title="~/.stella/settings.json"
 {
   "agent_engine_config": {
-    // Flat per-role models ("provider/slug", or a bare catalog slug).
-    // default_model is the session default AND the fallback every other
-    // role lands on when it sets nothing (see Model precedence below) —
-    // except research and plan, which land on the WORKER instead.
+    // The session's model ("provider/slug", or a bare catalog slug).
     "default_model": "zai/glm-5.2",
-    "pipeline_worker_model": "zai/glm-5.2",
-    "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
-    "pipeline_triage_model": "deepseek/deepseek-chat",
-    "pipeline_research_model": "deepseek/deepseek-chat",
-    "pipeline_plan_model": "zai/glm-5.2",
 
-    // The model vocabulary the TUI pickers offer and auto_mode selects from.
+    // A model for a role an installed plugin declared. Keyed
+    // "<plugin-id>/<role>". A seat with no entry runs on the session's model.
+    "seat_models": {
+      "vera/verifier": "openrouter/openai/gpt-5.5"
+    },
+
+    // The model vocabulary the TUI pickers offer, and the ceiling on seat
+    // assignments.
     "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2",
                         "openrouter/openai/gpt-5.5"],
 
-    // "on" = pick the verifier automatically from allowed_models: prefer a
-    // different model family than the worker's, then the highest catalog
-    // price tier. You never worry about it.
+    // "on" = let stella choose rather than a pin. It no longer selects a
+    // model (see Auto modes); it marks whether a /profile holds the dials.
     "auto_mode": "off",
-    // "on" = per-agent effort chosen for you (verifier high, worker,
-    // default and plan medium, triage and research low), overriding any
-    // per-agent "effort".
+    // "on" = reasoning effort chosen for you, overriding "effort" below.
     "effort_auto": "off",
-    // "on" = thinking mode chosen for you (on everywhere except triage and
-    // research).
+    // "on" = thinking mode chosen for you, overriding "reasoning" below.
     "reasoning_auto": "off",
 
     // Seconds of provider silence that end one generation. The partner of
@@ -84,17 +69,13 @@ pin just the verifier model while your user scope keeps everything else.
     // long steps stop on the timeout instead of the cap.
     "model_timeout_secs": 816,
 
-    // Seconds a supervised run may sit parked on a scope review nobody
-    // answers before it aborts. 0 (the default) parks until answered.
-    "approval_wait_secs": 0,
-
-    // Per-agent deep config. Set a field and it goes on the wire; leave it
+    // The agent's deep config. Set a field and it goes on the wire; leave it
     // out and the provider default applies.
     "agents": {
-      "verifier": {
+      "default": {
         "provider": "openrouter",          // gateway: the slug goes to THIS
         "model": "openai/gpt-5.5",         // provider verbatim
-        "prompt": "You are a strict, evidence-first code verifier.",
+        "prompt": "You are a terse, test-first engineer.",
         "effort": "high",                   // low | medium | high | xhigh | max
         "reasoning": "on",                  // thinking mode on/off
         "params": {
@@ -110,82 +91,80 @@ pin just the verifier model while your user scope keeps everything else.
 }
 ```
 
+## Seats
+
+A plugin describes a *process*, and that process may have several
+participants — a planner, a reviewer, a second opinion. It never asks for a
+model: it declares the roles it needs, and you decide which of them is worth a
+model of its own.
+
+```json title=".stella/settings.json"
+{
+  "agent_engine_config": {
+    "default_model": "zai/glm-5.2",
+    "seat_models": {
+      "vera/verifier": "anthropic/claude-fable-5"
+    }
+  }
+}
+```
+
+Or in `stella.toml`, where it is a section of its own:
+
+```toml title="stella.toml"
+[seats]
+"vera/verifier" = "anthropic/claude-fable-5"
+```
+
+Three things follow, and each is deliberate:
+
+- **A seat with no entry runs on the session's model.** Installing a plugin
+  with five participants costs exactly what a single-model session costs
+  until you write a line here. stella never picks a "sensible" second model
+  for you, because that is an opinion about a role it does not understand.
+- **The key is always `<plugin-id>/<role>`.** The plugin declares only the
+  bare role name; stella applies the prefix. So one plugin cannot capture the
+  assignment you made about another, and a `reviewer` you configured for one
+  plugin is not silently inherited by the next one that happens to declare a
+  role of that name.
+- **`allowed_models` is the ceiling here too.** A seat naming a model outside
+  a non-empty list is refused with a notice and falls back to the session's
+  model.
+
+Quote the key in TOML. `vera.verifier` is dotted-key syntax and would parse as
+a table `vera` containing `verifier`.
+
 ## Model precedence
 
-Every role resolves on its own chain. `--model` sets the **session default** —
-the model the interactive agent runs on and the one every unconfigured role
-falls back to — and also pins the **worker**, since overriding the
-worker model for one invocation is the flag's whole purpose. Research and plan
-follow the worker, so the flag moves all three together. An explicitly
-configured **verifier, triage, research or plan** keeps its own model even under
-a `--model` flag.
-
-**Default agent** (interactive / step-loop) — first hit wins:
-
-1. The `--model` CLI flag
-2. `agents.default.model`
-3. `default_model`
-4. Auto-detection / the provider's own default
-
-**Worker** (the pipeline's execute turns) — first hit wins:
+**The session's model** — first hit wins:
 
 1. The `--model` CLI flag (or `STELLA_MODEL`) — suppresses the settings below
    for this invocation
-2. `agents.worker.model`, sent verbatim to `agents.worker.provider` when that is set
-3. `pipeline_worker_model`
-4. `default_model`
-5. No configuration — the role rides the session default resolved above
-
-**Verifier and triage** — first hit wins:
-
-1. `agents.verifier.model` / `agents.triage.model`
-2. `pipeline_verifier_model` / `pipeline_triage_model`
+2. `agents.default.model`, sent verbatim to `agents.default.provider` when
+   that is set
 3. `default_model`
-4. No configuration — the role rides the session default
+4. Auto-detection / the provider's own default
 
-**Research and plan** — first hit wins, and the chain ends one rung earlier:
+**A plugin's seat** — first hit wins:
 
-1. `agents.research.model` / `agents.plan.model`
-2. `pipeline_research_model` / `pipeline_plan_model`
-3. No configuration — the role rides **the worker**, whatever the worker
-   resolved to above
-
-That last rung is the difference, and it is deliberate. `--model` re-points the
-worker for one invocation and does not touch settings, so a research call
-falling back to `default_model` would split off onto the model the flag just
-overrode: the run would report one model and buy two. Inheriting the worker
-means an unconfigured research or plan call is always on the model you can see.
-
-The inheritance is **field by field**, and it covers request shaping as well as
-the model — `effort`, `reasoning`, `temperature`, `params`, and `prompt` each
-fall back to `agents.worker`'s value on their own. So `agents.worker.prompt`
-still reaches the planner when `agents.plan.prompt` is unset, and setting
-`agents.plan.effort` alone changes the effort without disturbing anything else.
-
-`auto_mode: "on"` replaces the verifier spec with the cross-family pick from
-`allowed_models` (below), compared against the model the worker **actually**
-resolves to, not the session default. A `--model` flag does **not** override an
-explicitly configured verifier or triage — `stella --model anthropic/claude-fable-5 goal "…"`
-with `pipeline_verifier_model: openrouter/openai/gpt-5.5` runs a Fable worker under
-a GPT verifier — usually exactly what you want from a cross-family setup.
+1. `seat_models["<plugin-id>/<role>"]`
+2. No entry — the seat runs on the session's model resolved above
 
 <Callout type="info">
-  `--model` always changes what the pipeline executes on. When it suppresses a
-  configured worker model, the run says so on stderr — `engine config: worker
-  model ... skipped — --model pinned ... for this invocation` — so a dropped
-  setting is never silent. Settings still own the worker whenever the flag is
-  absent.
+  When `--model` suppresses a configured model, the run says so on stderr —
+  `engine config: model ... skipped — --model pinned ... for this invocation` —
+  so a dropped setting is never silent. Settings own the model whenever the
+  flag is absent.
 </Callout>
 
-Every override here is **soft**. A configured role model whose provider
-has no resolvable credential — or whose adapter fails to build — is skipped with
-a notice on stderr, and that role falls back exactly as it would with no config
-at all: to the session default for worker, verifier and triage, to the worker
-for research and plan. The notice names the role and the fallback:
+Every override here is **soft**. A configured model whose provider has no
+resolvable credential — or whose adapter fails to build — is skipped with a
+notice on stderr, and falls back exactly as it would with no config at all.
+The notice names what was skipped and what runs instead:
 
 ```text
-  ! engine config: verifier model `openrouter/openai/gpt-5.5` skipped — no resolvable
-    credential for provider `openrouter`; verifier rides the session default (`zai/glm-5.2`)
+  ! seat `vera/verifier`: no credential resolved for provider `openrouter` —
+    this seat runs on the session's model.
 ```
 
 `stella config` prints the resolved provider, session-default model, credential
@@ -197,31 +176,29 @@ stella config
 stella models list --all
 ```
 
-## One gateway per agent (BYOK per agent)
+## One gateway per role (BYOK per role)
 
-An agent's `provider` field routes its model slug through **that** provider
-verbatim — no prefix splitting. That is how you mix billing relationships in
-one pipeline:
+The agent's `provider` field routes its model slug through **that** provider
+verbatim — no prefix splitting. Seat assignments take a full `provider/slug`
+string. Together, that is how you mix billing relationships in one run:
 
 ```jsonc title="~/.stella/settings.json"
 {
   "agent_engine_config": {
-    "default_model": "anthropic/claude-fable-5",             // worker — your Anthropic key
-    "agents": {
-      "verifier":  { "provider": "openrouter", "model": "openai/gpt-5.5" }, // your OpenRouter key
-      "triage": { "provider": "zai", "model": "glm-5.2" }               // your Z.ai key
+    "default_model": "anthropic/claude-fable-5",   // the session — your Anthropic key
+    "seat_models": {
+      "vera/verifier": "openrouter/openai/gpt-5.5" // your OpenRouter key
     }
   }
 }
 ```
 
-Three keys, three bills, one pipeline:
+Two keys, two bills, one run:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 export OPENROUTER_API_KEY=sk-or-...
-export ZAI_API_KEY=...
-stella run --test-command "cargo test -p stella-router" "add a per-provider breaker cooldown"
+stella run --pipeline vera "add a per-provider breaker cooldown"
 ```
 
 Without a `provider` field, model strings use `--model` semantics:
@@ -235,23 +212,18 @@ Set any of the three autos to `"on"` and stop thinking about it:
 
 <CardGrid size="md">
   <OptionCard name="auto_mode" defaultValue="off">
-    The verifier model is picked automatically from `allowed_models`: prefer a
-    candidate from a **different model family** than the worker (an independent
-    second opinion), then the highest catalog price tier as a capability proxy,
-    then list order. Candidates whose provider has no resolvable credential are
-    skipped. The family comparison uses the model the worker *actually*
-    resolves to.
+    **Diminished — it no longer selects a model.** It used to pick the
+    verifier out of `allowed_models`, preferring a different family than the
+    worker's; the role that pin staffed is gone, and the selector went with
+    it rather than being left as a switch that does nothing on the wire. What
+    it still does is mark whether a [`/profile`](/docs/commands/config) holds
+    the dials or stella does.
   </OptionCard>
   <OptionCard name="effort_auto" defaultValue="off">
-    Reasoning effort per agent: verifier `high`, worker, default and plan
-    `medium`, triage and research `low`. Research sits at the bottom for the
-    same reason triage does rather than by analogy — a child that greps a tree
-    and reports what it found is doing retrieval, not deliberation.
+    Reasoning effort chosen for you, overriding `agents.default.effort`.
   </OptionCard>
   <OptionCard name="reasoning_auto" defaultValue="off">
-    Thinking mode on for verifier, worker, plan, and default; off for triage —
-    a latency-bound, one-token classification that gains nothing from it — and
-    off for research, a read-only lookup reporting what it read.
+    Thinking mode chosen for you, overriding `agents.default.reasoning`.
   </OptionCard>
   <OptionCard name="headless_scope_bypass" defaultValue="off">
     **Inert — setting this changes nothing.** It used to let a headless run
@@ -276,45 +248,29 @@ Set any of the three autos to `"on"` and stop thinking about it:
     64,000 stops on the timeout, which looks like a model that could not
     finish rather than a ceiling nobody scaled.
   </OptionCard>
-  <OptionCard name="approval_wait_secs" defaultValue="0">
-    Seconds a [supervised](/docs/commands/daemon) run's parked [scope
-    review](/docs/inference-pipeline) waits for `stella daemon attach` before
-    unparking itself as an abort. `0` (the default) parks forever, bounded
-    only by discoverability (`Needs Input` in `stella daemon list`) and an
-    explicit `stella daemon stop`.
-
-    Deliberately fails **closed**, not open: timing out to an automatic
-    approval would defeat the gate scope review exists to be. Set this only
-    where you have decided that sacrificing an unattended run is the better
-    trade than leaving it parked indefinitely.
-  </OptionCard>
 </CardGrid>
 
 When an auto is `"on"` it overrides the corresponding per-agent setting —
 that is its contract.
 
-The smallest useful config is three lines: a cheap worker, a flagship verifier
-from a different family, and the autos left alone.
+The smallest useful config is one line:
 
 ```json title=".stella/settings.json"
 {
   "agent_engine_config": {
-    "default_model": "zai/glm-5.2",
-    "pipeline_verifier_model": "anthropic/claude-fable-5",
-    "pipeline_triage_model": "deepseek/deepseek-chat"
+    "default_model": "zai/glm-5.2"
   }
 }
 ```
 
-Or hand the verifier choice over entirely, and let `auto_mode` keep it
-cross-family as your lineup changes:
+Add a second model only where an installed plugin has a participant worth
+running on one:
 
 ```json title=".stella/settings.json"
 {
   "agent_engine_config": {
     "default_model": "zai/glm-5.2",
-    "auto_mode": "on",
-    "allowed_models": ["zai/glm-5.2", "anthropic/claude-fable-5", "openrouter/openai/gpt-5.5"]
+    "seat_models": { "vera/verifier": "anthropic/claude-fable-5" }
   }
 }
 ```
@@ -338,7 +294,7 @@ comparator that stops lower. Two ways to say it.
 stella run "audit the auth module" --max-output-tokens 32000
 ```
 
-Global flag, applies to every role, also readable as
+Global flag, applies to every call, also readable as
 `STELLA_MAX_OUTPUT_TOKENS`. Use it when you want one invocation to behave
 differently, or when a configured value is the thing you are debugging — it
 outranks both settings surfaces below for exactly that reason.
@@ -367,7 +323,7 @@ Highest wins:
 
 1. `--max-output-tokens` (this invocation)
 2. `[models.output_caps]` (per model)
-3. per-agent `params.max_tokens` under `agent_engine_config`
+3. `agents.default.params.max_tokens` under `agent_engine_config`
 4. the model's own ceiling, from the catalog — **the default**
 
 <Callout type="warn">
@@ -486,18 +442,12 @@ knob never fails a request.
 
 ## Custom prompts
 
-An agent's `prompt` **replaces the built-in base instructions** for that
-agent. Workspace memories and rules still append to it — they are workspace
-context, not part of the base persona. The pipeline's triage, plan and verifier
-keep their built-in output contracts (the classification token, the planner's
-JSON array, the `PASS`/`FAIL` verdict line); a custom prompt for those agents is
-prepended as an extra system message rather than replacing the task prompt.
+`agents.default.prompt` **replaces the built-in base instructions** for the
+session agent. Workspace memories and rules still append to it — they are
+workspace context, not part of the base persona.
 
-**`agents.research.prompt` is not honoured.** A research child is an engine
-sub-agent turn, and its built-in read-only system prompt is the contract that
-makes it read-only — not a preference to override. Every other field of
-`agents.research` (`model`, `provider`, `effort`, `reasoning`, `params`) applies
-normally.
+A plugin's participants are the plugin's own: it ships their instructions, and
+`agent_engine_config` decides only which model each one runs on.
 
 ## The config panel in the Command Deck
 
@@ -506,16 +456,15 @@ of the **SETTINGS** tab — the home of all config (the former `/engine` popup,
 then the AGENT ENGINE tab's right column, now a tab of its own; open it with
 `/settings` or by tabbing to it):
 
-- **`e`** on the SETTINGS tab focuses the panel — a tab per agent plus
-  a GLOBAL tab (auto modes, `allowed_models`), in the order `GLOBAL default
-  worker verifier triage research plan`. Navigate with ↑/↓, press ⏎
-  to edit a row (enum rows cycle; numeric and text rows take inline input),
-  `x` clears a field back to "provider default", Esc hands the keyboard back
-  to the tab.
-- **⏎ on an agent's model row** opens a type-to-filter model picker for
-  that agent, listing your `allowed_models` (or the full catalog when the
-  list is empty). The SETTINGS tab is the one place models are configured —
-  there are no per-agent slash commands.
+- **`e`** on the SETTINGS tab focuses the panel — a GLOBAL tab (auto modes,
+  `allowed_models`) and the agent's own, in the order `GLOBAL default`.
+  Navigate with ↑/↓, press ⏎ to edit a row (enum rows cycle; numeric and text
+  rows take inline input), `x` clears a field back to "provider default", Esc
+  hands the keyboard back to the tab.
+- **⏎ on the model row** opens a type-to-filter model picker, listing your
+  `allowed_models` (or the full catalog when the list is empty). The SETTINGS
+  tab is the one place models are configured — there are no per-agent slash
+  commands.
 - **`s`** saves to your user settings (`~/.stella/settings.json`);
   **`S`** saves to the project (`<workspace>/.stella/settings.json`). Saves
   preserve every other key in the file, and apply to runs started from then
@@ -523,10 +472,10 @@ then the AGENT ENGINE tab's right column, now a tab of its own; open it with
 
 ## Degradation is always soft
 
-Configuration can never turn a runnable pipeline into an error. A configured
-role model whose provider has no resolvable credential — or whose adapter
-fails to build — is skipped with a visible notice, and that role rides the
-worker's model exactly as it would with no config at all.
+Configuration can never turn a runnable session into an error. A configured
+model whose provider has no resolvable credential — or whose adapter fails to
+build — is skipped with a visible notice, and rides the session's model
+exactly as it would with no config at all.
 
 <Callout type="info">
   `agent_engine_config` carries no credential routing of its own — an

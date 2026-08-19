@@ -147,14 +147,14 @@ pub(crate) fn spawn_forwarder(
                 owes_stage_execute = false;
                 held = Some(event);
                 AgentEvent::Stage {
-                    name: stella_protocol::StageKind::Execute,
+                    name: stella_protocol::StageKind::Execute.into(),
                     scope: stella_protocol::StageScope::Run,
                 }
             } else if owes_stage_complete && matches!(event, AgentEvent::TurnComplete { .. }) {
                 owes_stage_complete = false;
                 held = Some(event);
                 AgentEvent::Stage {
-                    name: stella_protocol::StageKind::Complete,
+                    name: stella_protocol::StageKind::Complete.into(),
                     scope: stella_protocol::StageScope::Run,
                 }
             } else {
@@ -364,11 +364,11 @@ mod tests {
         events
     }
 
-    fn stages(events: &[AgentEvent]) -> Vec<stella_protocol::StageKind> {
+    fn stages(events: &[AgentEvent]) -> Vec<stella_protocol::StageName> {
         events
             .iter()
             .filter_map(|event| match event {
-                AgentEvent::Stage { name, .. } => Some(*name),
+                AgentEvent::Stage { name, .. } => Some(name.clone()),
                 _ => None,
             })
             .collect()
@@ -414,8 +414,8 @@ mod tests {
         assert_eq!(
             stages(&events),
             vec![
-                stella_protocol::StageKind::Execute,
-                stella_protocol::StageKind::Complete
+                stella_protocol::StageName::from(stella_protocol::StageKind::Execute),
+                stella_protocol::StageName::from(stella_protocol::StageKind::Complete)
             ],
             "a raw lane frames its turn: {events:?}"
         );
@@ -428,10 +428,8 @@ mod tests {
             .position(|event| {
                 matches!(
                     event,
-                    AgentEvent::Stage {
-                        name: stella_protocol::StageKind::Complete,
-                        ..
-                    }
+                    AgentEvent::Stage { name, .. }
+                        if name.kind() == Some(stella_protocol::StageKind::Complete)
                 )
             })
             .expect("the closing boundary is emitted");
@@ -495,10 +493,8 @@ mod tests {
             .position(|event| {
                 matches!(
                     event,
-                    AgentEvent::Stage {
-                        name: stella_protocol::StageKind::Execute,
-                        ..
-                    }
+                    AgentEvent::Stage { name, .. }
+                        if name.kind() == Some(stella_protocol::StageKind::Execute)
                 )
             })
             .expect("the opening boundary is emitted");

@@ -75,7 +75,7 @@ impl EventSender {
         Self::from_fn(move |event| {
             if matches!(event, AgentEvent::TurnComplete { .. }) {
                 inner.send(AgentEvent::Stage {
-                    name: stella_protocol::StageKind::Complete,
+                    name: stella_protocol::StageKind::Complete.into(),
                     // The owner's vocabulary spans the whole run, not the turn
                     // that happened to trigger it (#3398's `StageScope`).
                     scope: stella_protocol::StageScope::Run,

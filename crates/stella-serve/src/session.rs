@@ -546,7 +546,7 @@ pub(crate) async fn drive_turn(
     // `Stage(Execute)` goes out below.
     let events = RunEnding::sealing(EventSender::new(events.clone()).pairing_stage_complete());
     let _ = events.send(AgentEvent::Stage {
-        name: stella_protocol::StageKind::Execute,
+        name: stella_protocol::StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     });
     let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel);

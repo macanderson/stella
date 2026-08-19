@@ -122,7 +122,7 @@ const FRICTION_LIST_CAP: usize = 6;
 /// leak in a best-effort path.
 const FRICTION_ENTRY_CAP: usize = 512;
 
-/// One model call's metering record, as [`AgentEvent::StepUsage`] reported it.
+/// One model call's metering record, as [`AgentEvent::StepUsage`](stella_protocol::AgentEvent::StepUsage) reported it.
 #[derive(Debug, Clone)]
 struct StepCost {
     step: usize,
@@ -132,8 +132,8 @@ struct StepCost {
     tool_calls: usize,
 }
 
-/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`],
-/// closed by its [`AgentEvent::ToolResult`].
+/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`](stella_protocol::AgentEvent::ToolStart),
+/// closed by its [`AgentEvent::ToolResult`](stella_protocol::AgentEvent::ToolResult).
 #[derive(Debug, Clone)]
 struct ToolPass {
     call_id: String,
@@ -150,7 +150,7 @@ struct ToolPass {
 
 /// What a turn's event stream says about where its time and money went.
 ///
-/// Folded live by the surface that owns the turn's [`AgentEvent`] stream and
+/// Folded live by the surface that owns the turn's [`AgentEvent`](stella_protocol::AgentEvent) stream and
 /// handed to reflection as evidence the transcript does not carry: a
 /// `CompletionMessage` records what was said, never what it cost or how long it
 /// took, and a retry or a loop-detector firing leaves no message at all.
@@ -171,6 +171,31 @@ pub struct TurnFriction {
 }
 
 impl TurnFriction {
+    /// The production entry point (#3946): fold a turn's whole journal, in
+    /// stream order, into one ledger.
+    ///
+    /// **This is a fold over events the caller already observed, not a
+    /// read-back of the durable journal** — the distinction this module's
+    /// header insists on. Callers pass the renderer's own collected `Vec`,
+    /// which is only available *after* `close_event_stream` has awaited the
+    /// renderer to completion, so there is no task still draining underneath
+    /// it and nothing to race.
+    ///
+    /// Folding after the turn rather than during it is not an approximation.
+    /// Every duration the fold records comes from the event's own
+    /// `duration_ms` field rather than from a clock read at fold time
+    /// (`ToolResult`, `StepUsage`), and the arms are order-dependent only in
+    /// stream order, which the `Vec` preserves. So this is byte-identical to
+    /// the live tap the staged pipeline used, and it stays a pure function of
+    /// the turn — which is what replay rests on.
+    pub fn from_events(events: &[AgentEvent]) -> Self {
+        let mut friction = Self::default();
+        for event in events {
+            friction.observe(event);
+        }
+        friction
+    }
+
     /// Fold one event into the ledger.
     ///
     /// Total over the variants that carry friction and deliberately silent on
@@ -178,14 +203,11 @@ impl TurnFriction {
     /// `AgentEvent` variant must not change what a turn's friction *is* until
     /// someone decides that it should.
     ///
-    /// No production caller since #3865 — its one production caller,
-    /// `FrictionTap` (`agent/reflect.rs`), wrapped the staged pipeline's own
-    /// event stream and was removed with the crate that drove it (the raw
-    /// step-loop builds `TurnEvidence` from its transcript directly,
-    /// `TurnEvidence::from_transcript`, and never folds a live event stream).
-    /// Kept for `memory/reflection/tests.rs`'s and `digest/tests.rs`'s direct
-    /// coverage of the fold/render pipeline this method feeds.
-    #[allow(dead_code)]
+    /// Fed in production by [`Self::from_events`], which every raw-loop door
+    /// runs over the turn's collected journal (#3946). Between #3865 and that
+    /// wiring there was no producer at all, so the friction section of every
+    /// shipped digest rendered empty and `Priority::Friction` selected on
+    /// nothing.
     pub fn observe(&mut self, event: &AgentEvent) {
         match event {
             AgentEvent::ToolStart { call } => {
@@ -272,7 +294,6 @@ impl TurnFriction {
 
     /// The `tools` slot a result belongs in, opening one for a result whose
     /// start was never seen. `None` means the entry cap refused it.
-    #[allow(dead_code)]
     fn close(&mut self, call_id: &str) -> Option<usize> {
         if let Some(index) = self.open.remove(call_id) {
             return Some(index);
@@ -311,18 +332,6 @@ impl TurnFriction {
             && self.tools.is_empty()
             && self.retries.is_empty()
             && self.loops.is_empty()
-    }
-
-    /// Whether the turn dispatched any tool call at all — the "did real
-    /// work" signal the staged pipeline's episode/reflection gates used to
-    /// read. The pipeline's worker turns deliberately kept tool calls out of
-    /// the planner transcript (L-E6), so this event-stream witness was the
-    /// only way to see them; gone with the pipeline (#3865) — the raw
-    /// step-loop's own transcript already carries every tool call, so
-    /// `turn_warrants_reflection(&messages)` alone is sufficient for it.
-    #[allow(dead_code)]
-    pub(crate) fn saw_tool_activity(&self) -> bool {
-        !self.tools.is_empty()
     }
 
     /// A shared empty ledger, so [`TurnEvidence::from_transcript`] can hand out
@@ -477,12 +486,37 @@ pub struct TurnEvidence<'a> {
 }
 
 impl<'a> TurnEvidence<'a> {
-    /// Evidence from a transcript alone: the shape every caller with no event
-    /// ledger uses, and the shape every test uses.
+    /// Evidence from a transcript alone: the shape a caller with no event
+    /// ledger uses, and the shape most tests use.
+    ///
+    /// Prefer [`Self::with_friction`] on any surface that owns its turn's
+    /// event stream. This constructor hands `build` a permanently empty
+    /// ledger, which renders no friction section at all and leaves
+    /// `Priority::Friction` with only the transcript's own errored tool
+    /// results to select on — it cannot see cost, wall clock, retries or
+    /// loop firings, because no `CompletionMessage` carries them.
     pub fn from_transcript(transcript: &'a [CompletionMessage], succeeded: bool) -> Self {
         Self {
             transcript,
             friction: TurnFriction::empty(),
+            succeeded,
+        }
+    }
+
+    /// Evidence from a transcript plus the turn's folded event ledger — what
+    /// a surface that owns its `AgentEvent` stream should build (#3946).
+    ///
+    /// Separate from [`Self::from_transcript`] rather than an `Option`
+    /// parameter on it, so a caller that *has* a ledger and forgets to pass
+    /// it is a visibly different call rather than a `None` nobody reads.
+    pub fn with_friction(
+        transcript: &'a [CompletionMessage],
+        friction: &'a TurnFriction,
+        succeeded: bool,
+    ) -> Self {
+        Self {
+            transcript,
+            friction,
             succeeded,
         }
     }

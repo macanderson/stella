@@ -77,7 +77,7 @@ pub(crate) mod rules_mining;
 pub(crate) mod self_tuning;
 mod skill_files;
 // #3349: the SteeringPlane implementation — the frame adapter and the one
-// packing pass behind `recall_block_reported` / `pipeline_recall_block`.
+// packing pass behind `recall_block_reported`.
 mod steering;
 /// Reachable by name only from tests: production drives the adapter through
 /// [`requery_for_turn`], which cannot forget to wire its telemetry (#3366).
@@ -282,7 +282,8 @@ fn deterministic_task_id(clock: &dyn Clock) -> String {
 mod reflection;
 pub(crate) use reflection::{ReflectionPosture, reflect_routed};
 pub use reflection::{
-    ReflectionReport, TurnEvidence, reflect_on_turn, should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, TurnEvidence, TurnFriction, reflect_on_turn, should_reflect_on,
+    turn_warrants_reflection,
 };
 
 /// Session-scoped memory state: the context store, the CGP host that
@@ -675,8 +676,8 @@ impl SessionMemory {
     /// as [`Self::recall_block_reported`], so this reports exactly what was applied.
     pub fn selected_skills(&self, prompt: &str) -> Vec<(String, String)> {
         // The A/B recall control gates every injection channel
-        // ([`Self::recall_block_reported`], [`Self::pipeline_recall_block`]),
-        // so it gates the report too: a control turn injects no skills, and
+        // ([`Self::recall_block_reported`] and its drifted sibling), so it
+        // gates the report too: a control turn injects no skills, and
         // recording usage for skills that never reached the prompt would
         // corrupt the appraisal signal `skill_usage` feeds.
         if self.ab_suppressed || !self.steering_enabled {

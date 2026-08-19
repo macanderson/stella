@@ -105,7 +105,15 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         AgentEvent::Unknown { event_type, .. } => {
             (TraceKind::Other, format!("unrecognized `{event_type}`"))
         }
-        AgentEvent::Stage { name, .. } => (TraceKind::Stage, format!("{name:?}").to_lowercase()),
+        // The shared label, not a `Debug` rendering of the enum. `Debug` used
+        // to spell the variant and happened to read like the stage word; once
+        // the vocabulary opened it spells the *wrapper* too (`Known(Triage)`),
+        // and a contributed stage would print `Contributed("triage-lite")`.
+        // `stage_label` is the one place a stage is worded (#1465).
+        AgentEvent::Stage { name, .. } => (
+            TraceKind::Stage,
+            crate::textline::stage_label(name).to_string(),
+        ),
         AgentEvent::Text { text } => (TraceKind::Text, snip(text)),
         // Mapped for completeness; `apply_event` never traces deltas (one
         // row per token would churn the capped ring — see the guard there).

@@ -895,7 +895,7 @@ mod skills;
 /// Why Esc steers rather than cancels — doc-only.
 pub mod steering;
 mod tool_policy;
-pub use engine_config::{EngineAgentState, EngineConfigState, EngineRole, RoleWiringRow};
+pub use engine_config::{EngineAgentState, EngineConfigState, EngineRole, RoleWiringRow, SeatRow};
 pub use mcp::{
     McpLiveIdentity, McpLookupState, McpSearchItem, McpSearchOutcome, McpServerDetail,
     McpServerInfo, McpToolRow,

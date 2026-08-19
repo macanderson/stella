@@ -1,4 +1,3 @@
-use super::reflect::reflection_json;
 use super::*;
 use crate::config::{ConfiguredProvider, PROVIDERS, ProviderConfig};
 use stella_model::credential::ApiKey;
@@ -847,13 +846,23 @@ fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
         }],
     };
 
-    let value = reflection_json(&report);
-    assert_eq!(value["cost_usd"], 0.0042);
-    assert_eq!(value["events"][0]["type"], "step_usage");
-    assert_eq!(value["events"][0]["role"], "reflection");
-    assert_eq!(value["events"][0]["provider"], "anthropic");
-    assert_eq!(value["events"][0]["model"], "claude-reflect");
-    assert_eq!(value["events"][0]["complete"], true);
+    // Asserted against the report's own serialization rather than a
+    // `reflection_json` wrapper: that helper was the staged pipeline's JSON
+    // envelope mapping, and the raw step-loop has no envelope to put it in —
+    // it declines to reflect at all under `--output-format json`, so a
+    // machine stream's `Complete` stays the unique final frame
+    // (`agent/goal.rs`'s `format == OutputFormat::Text` guard). What this
+    // test was always really pinning is that a paid reflection call survives
+    // serialization with its role, provider/model attribution and cost
+    // intact — which is a property of `AgentEvent`, not of the wrapper.
+    let events = serde_json::to_value(&report.events).expect("events serialize");
+    assert_eq!(report.cost_usd, 0.0042);
+    assert_eq!(events[0]["type"], "step_usage");
+    assert_eq!(events[0]["role"], "reflection");
+    assert_eq!(events[0]["provider"], "anthropic");
+    assert_eq!(events[0]["model"], "claude-reflect");
+    assert_eq!(events[0]["complete"], true);
+    assert_eq!(events[0]["cost_usd"], 0.0042);
 }
 
 #[test]

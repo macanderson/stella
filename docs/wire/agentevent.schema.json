@@ -1522,72 +1522,26 @@
       ],
       "type": "object"
     },
-    "StageKind": {
-      "oneOf": [
-        {
-          "const": "triage",
-          "description": "Prompt classification and routing: how hard is this turn, and which\ntier should serve it.",
-          "type": "string"
-        },
-        {
-          "const": "context_recall",
-          "description": "Context recall: the frames the context plane put in front of the model\nbefore it planned anything.",
-          "type": "string"
-        },
-        {
-          "const": "research",
-          "description": "Pre-plan research: triage named questions, and parallel read-only\nsub-agents answer them so the planner names files it has evidence for\nrather than guesses (#1778). Skipped whenever triage named none.",
-          "type": "string"
-        },
-        {
-          "const": "plan",
-          "description": "Planning: the ordered steps the worker is about to attempt.",
-          "type": "string"
-        },
-        {
-          "const": "scope_review",
-          "description": "The interactive approval gate a large plan passes through (L-E5).",
-          "type": "string"
-        },
-        {
-          "const": "witness",
-          "description": "Witness authoring: after the worker executes — once the warrant has\nread the diff and found something worth proving — an independent\nmodel (the verifier's resolution, never the worker's transcript)\nwrites the witness test in a pristine snapshot of the pre-execution\ntree: a test that FAILS there and will pass once the goal is met,\narming the deterministic flip oracle (L-E11). The witness is visible\nto the worker's revise turns (iterating against a failing test is\nwhere convergence comes from); integrity comes from tamper exclusion\nat verify time, not from hiding the test.",
-          "type": "string"
-        },
-        {
-          "const": "execute",
-          "description": "The worker's own tool-calling loop — the steps that actually change\nthe workspace.",
-          "type": "string"
-        },
-        {
-          "const": "verify",
-          "description": "The deterministic verification ladder: the flip oracle, the touched\ntests, the diff budget.",
-          "type": "string"
-        },
-        {
-          "const": "verdict",
-          "description": "The verifier's verdict, reached only when the deterministic ladder came\nback inconclusive (L-E11). Named for the output rather than the model:\na stage called `Verifier` sitting next to `Verify` hid which of the two\nwas proof and which was opinion.\n\nAliased for the same reason as the other renames in this pass: the\nstage shipped on the wire as `judge`, so every recorded session names\nit that way. Reading them is not optional — replay, the observatory and\nthe golden fixtures all parse stored streams. `verifier` is aliased too\nbecause it was this stage's name for the length of one commit on this\nbranch, and a stream recorded against that build must still read.",
-          "type": "string"
-        },
-        {
-          "const": "reflect",
-          "description": "Post-turn self-reflection: the agent reviews its own performance on\nthe completed turn and records improvement memories into the context\nplane, tagged with the workspace's inferred domains, for recall on\nfuture relevant turns.",
-          "type": "string"
-        },
-        {
-          "const": "context_write",
-          "description": "Context write-back: episode summaries and fact upserts landing in the\ncontext plane (close-not-delete, L-C3).",
-          "type": "string"
-        },
-        {
-          "const": "complete",
-          "description": "The turn is done. The last stage boundary a turn emits.",
-          "type": "string"
-        }
-      ]
+    "StageName": {
+      "description": "The name of a stage boundary — an OPEN vocabulary. The host's own boundaries are listed in `examples`; an installed plugin may contribute a stage under any other name, so a consumer must branch on the names it knows and keep a default arm rather than treating an unlisted value as invalid.",
+      "examples": [
+        "triage",
+        "context_recall",
+        "research",
+        "plan",
+        "scope_review",
+        "witness",
+        "execute",
+        "verify",
+        "verdict",
+        "reflect",
+        "context_write",
+        "complete"
+      ],
+      "type": "string"
     },
     "StageScope": {
-      "description": "A named point in the turn's data flow. Exactly one stage vocabulary\nexists in this workspace — never duplicated per-crate (the TS-era\n`StageKind` duplication this structurally forbids, L-E1).\nWhose stage boundary an [`AgentEvent::Stage`] reports (#3398).\n\nDeliberately **not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
+      "description": "Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).\n\nDeliberately **not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
       "oneOf": [
         {
           "const": "turn",
@@ -1940,7 +1894,8 @@
       "description": "A stage boundary was crossed. `scope` says whose stage it is, and it is not decoration: two disjoint authorities emit stages. The engine emits its own, once per turn, with scope `turn`. A wrapper -- the staged pipeline, a goal loop -- emits its own vocabulary once per run, with scope `run`. A consumer that branches on stage transitions must select on `scope` first, or it will see two interleaved vocabularies as one and read a wrapper's backwards-looking boundary as an engine regression.",
       "properties": {
         "name": {
-          "$ref": "#/$defs/StageKind"
+          "$ref": "#/$defs/StageName",
+          "description": "Which stage the boundary belongs to, as a plain string. An OPEN vocabulary: the host's own boundaries take the names listed in this field's type examples, and a stage contributed by an installed plugin takes whatever name that plugin declared. Every one of the host's own names encodes exactly as it always has, so an existing consumer keeps reading; a consumer must branch on the names it knows and keep a default arm, because a name it has never seen is now reachable."
         },
         "scope": {
           "$ref": "#/$defs/StageScope"
