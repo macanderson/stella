@@ -251,3 +251,241 @@ impl ResumeFrame {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pipeline_frame() -> PipelineFrame {
+        PipelineFrame {
+            version: FRAME_VERSION,
+            test_command: Some("cargo test -p stella-core".into()),
+            witness_writer: true,
+            responsibilities: serde_json::Map::new(),
+            candidates: 1,
+            isolation_possible: true,
+            max_revisions: 2,
+            progress: None,
+            variant: None,
+        }
+    }
+
+    /// Invariant 4: the frame crosses a crate boundary as JSON and must come
+    /// back the same value.
+    #[test]
+    fn a_frame_round_trips_through_json() {
+        let frame = pipeline_frame();
+        let json = serde_json::to_string(&frame).unwrap();
+        assert_eq!(
+            ResumeFrame::parse(&json),
+            ResumeFrame::Pipeline(Box::new(frame))
+        );
+    }
+
+    /// **The #1615 witness, still true post-#3846.** A turn killed inside a
+    /// staged pipeline resumes knowing it is coming back smaller: the
+    /// advisory names the verify command that will not re-run, the witness
+    /// flip that will not be credited, and the candidate worktree that died
+    /// — and the audit row is labelled `resumed_complete_unverified` rather
+    /// than borrowing the ordinary success label. A plain engine turn is
+    /// untouched by any of this — the delta, not just the addition, is what
+    /// is being witnessed.
+    #[test]
+    fn a_resumed_pipeline_run_reports_every_stage_it_cannot_restore() {
+        let frame = ResumeFrame::Pipeline(Box::new(pipeline_frame()));
+        assert!(frame.degrades());
+        assert_eq!(frame.completed_label(), "resumed_complete_unverified");
+        assert!(frame.completed_banner(7).contains("UNVERIFIED"));
+
+        let advisory = frame.advisory().expect("a degraded resume must say so");
+        let text = advisory.join("\n");
+        assert!(
+            text.contains("cargo test -p stella-core"),
+            "the verify command that will not re-run is named: {text}"
+        );
+        assert!(text.contains("no evidence is recorded"), "{text}");
+        assert!(text.contains("revision round"), "{text}");
+        assert!(text.contains("candidate worktree"), "{text}");
+        assert!(
+            text.contains("fail→pass flip is NOT credited"),
+            "witness_writer: true must still say so: {text}"
+        );
+
+        let bare = ResumeFrame::BareTurn;
+        assert!(!bare.degrades());
+        assert_eq!(bare.advisory(), None);
+        assert_eq!(bare.completed_label(), "resumed_complete");
+        assert!(!bare.completed_banner(7).contains("UNVERIFIED"));
+    }
+
+    /// A run with no witness author is not told its (nonexistent) flip went
+    /// uncredited — the one ablation `witness_writer` can still express
+    /// without decoding the now-opaque `responsibilities` block.
+    #[test]
+    fn an_ablated_witness_author_drops_its_own_sentence_and_nothing_else() {
+        let frame = ResumeFrame::Pipeline(Box::new(PipelineFrame {
+            witness_writer: false,
+            ..pipeline_frame()
+        }));
+        let text = frame
+            .advisory()
+            .expect("a pipeline frame advises")
+            .join("\n");
+        assert!(
+            !text.contains("fail→pass flip is NOT credited"),
+            "a run that authored no witness must not be told its flip went uncredited: {text}"
+        );
+        assert!(
+            text.contains("revision round"),
+            "and nothing else may vanish with it: {text}"
+        );
+    }
+
+    /// A frame present but unreadable must never read as "no frame": the two
+    /// are opposite in consequence, and guessing the safe-looking one is the
+    /// silent degradation this module exists to end.
+    #[test]
+    fn an_unreadable_frame_still_warns() {
+        for json in ["{ not json", r#"{"version":9999}"#] {
+            let frame = ResumeFrame::parse(json);
+            assert!(
+                matches!(frame, ResumeFrame::Unreadable(_)),
+                "{json} must not be mistaken for a bare turn"
+            );
+            assert!(frame.degrades());
+            assert_eq!(frame.completed_label(), "resumed_complete_unverified");
+            let text = frame.advisory().expect("unreadable still warns").join("\n");
+            assert!(text.contains("NOT verified"), "{text}");
+        }
+    }
+
+    /// An older frame stays readable: additive fields default rather than
+    /// failing the parse, so a resume never refuses a run it could report on.
+    #[test]
+    fn a_minimal_frame_from_an_older_writer_still_parses() {
+        let ResumeFrame::Pipeline(frame) = ResumeFrame::parse(r#"{"version":1}"#) else {
+            panic!("a version-1 frame must parse");
+        };
+        assert_eq!(frame.test_command, None);
+        assert!(!frame.witness_writer);
+        assert_eq!(frame.candidates, 0);
+        assert_eq!(
+            frame.progress, None,
+            "no FRAME_VERSION bump for the progress addition (#1671): an old \
+             frame reads as progress-unknown"
+        );
+    }
+
+    /// **The graceful refusal (#3846), and this slice's own witness.** A
+    /// frame a pre-#3846 build wrote — carrying real `responsibilities` and
+    /// `progress` JSON, the exact shape that used to restore the pipeline via
+    /// `stella_pipeline::Pipeline::resume` — still deserializes cleanly in
+    /// this build (it does not panic, and does not misclassify as a bare
+    /// turn), and its advisory says plainly that the restoration path this
+    /// frame once qualified for no longer exists.
+    ///
+    /// On a build that still had `crates/stella-pipeline`, `responsibilities`
+    /// decoded into `stella_pipeline::AssignmentOverride` and `progress` into
+    /// `stella_pipeline::FrameProgress` — both types are gone now, so this
+    /// data can only ever be read back as opaque JSON, never reconstructed.
+    #[test]
+    fn a_stored_classic_frame_with_restorable_progress_deserializes_into_the_graceful_refusal() {
+        // A `responsibilities`/`progress` shape a real pre-#3846 build could
+        // have written — this build does not need to know their internal
+        // structure to accept them as opaque JSON.
+        let json = serde_json::json!({
+            "version": 1,
+            "test_command": "cargo test -p widget",
+            "witness_writer": true,
+            "responsibilities": {
+                "witness_author": { "enabled": false }
+            },
+            "candidates": 1,
+            "isolation_possible": false,
+            "max_revisions": 2,
+            "progress": {
+                "task_class": "single_task",
+                "goal": "fix the parser",
+                "executing": true
+            }
+        })
+        .to_string();
+
+        let frame = ResumeFrame::parse(&json);
+        let ResumeFrame::Pipeline(pipeline_frame) = &frame else {
+            panic!("a well-formed classic frame must classify as Pipeline, not {frame:?}");
+        };
+        assert!(
+            pipeline_frame.progress.is_some(),
+            "the progress block survives as opaque JSON rather than being dropped"
+        );
+        assert!(
+            !pipeline_frame.responsibilities.is_empty(),
+            "the responsibilities block survives as opaque JSON rather than being dropped"
+        );
+
+        // No restoration function exists any more to call on this frame —
+        // that is the refusal. What remains is that the resume reports it
+        // honestly rather than silently degrading or panicking.
+        assert!(frame.degrades());
+        let text = frame.advisory().expect("a pipeline frame advises").join("\n");
+        assert!(
+            text.contains("no longer exists"),
+            "the advisory must name the removed restoration path explicitly: {text}"
+        );
+        assert!(
+            text.contains("recorded enough progress"),
+            "the advisory must say this specific frame once qualified for it: {text}"
+        );
+    }
+
+    /// **#3408 P2.** A run launched under a non-default `[wrapper]` variant
+    /// still comes back naming that variant — `PipelineFrame::variant` is a
+    /// genuinely independent field (never a `stella_pipeline` type, per its
+    /// own doc comment), so it round-trips structurally like any other.
+    #[test]
+    fn a_frames_variant_round_trips_structurally() {
+        let variant = stella_plugin::Wrapper {
+            id: "lean-diff-v1".into(),
+            stages: vec![
+                stella_plugin::WrapperStage {
+                    name: stella_plugin::StageName::Triage,
+                    condition: None,
+                },
+                stella_plugin::WrapperStage {
+                    name: stella_plugin::StageName::Execute,
+                    condition: None,
+                },
+                stella_plugin::WrapperStage {
+                    name: stella_plugin::StageName::Verify,
+                    condition: Some("diff-lines > 0".into()),
+                },
+            ],
+        };
+        let frame = PipelineFrame {
+            variant: Some(variant.clone()),
+            ..pipeline_frame()
+        };
+
+        let json = serde_json::to_string(&frame).expect("the frame writes");
+        let ResumeFrame::Pipeline(parsed) = ResumeFrame::parse(&json) else {
+            panic!("the frame this test wrote must read back: {json}");
+        };
+        assert_eq!(parsed.variant, Some(variant));
+    }
+
+    /// The overwhelmingly common case — no configured variant — adds nothing
+    /// to the frame.
+    #[test]
+    fn a_frame_with_no_variant_writes_no_variant_key() {
+        let frame = PipelineFrame {
+            variant: None,
+            ..pipeline_frame()
+        };
+        let json = serde_json::to_string(&frame).expect("the frame writes");
+        assert!(
+            !json.contains("variant"),
+            "the absent variant is skipped rather than written as `null`: {json}"
+        );
+    }
+}
