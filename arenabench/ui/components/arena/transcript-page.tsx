@@ -14,6 +14,7 @@ import {
 import {
   erroredSeqs,
   indexByCallId,
+  mergeToolRows,
   rawExchange,
   type RawExchange,
 } from "@/lib/transcript-view";
@@ -320,9 +321,16 @@ function TranscriptView({
     Record<number, boolean>
   >({});
   const [openResults, setOpenResults] = React.useState<Record<number, boolean>>({});
+  // The call's raw-argument disclosure, kept apart from `openResults`: on a
+  // merged row the primary fold belongs to the OUTPUT, and `args` is a sub-fold
+  // of the call — the same two folds `crates/stella-transcript` gives a Call.
+  // One record for both would make opening a call's arguments also open its
+  // output, and neither control could then say what it does.
+  const [openArgs, setOpenArgs] = React.useState<Record<number, boolean>>({});
   React.useEffect(() => {
     setThinkingOverrides({});
     setOpenResults({});
+    setOpenArgs({});
   }, [seatId, task]);
 
   // Open by default, because it is the answer to the question that brought
@@ -368,6 +376,13 @@ function TranscriptView({
     });
   }, [entries, enabled, disabledTools, query, errorsOnly, errored]);
 
+  // A tool call and its result are ONE row. Folded after filtering, never
+  // before, so a reader who switched calls or results off gets the honest
+  // degradation (`mergeToolRows`) rather than a pairing that ignores the
+  // filter — and so pacing, scrolling and the empty-state all count rows the
+  // way the reader sees them.
+  const rows = React.useMemo(() => mergeToolRows(visible), [visible]);
+
   // -- playback (paced replay for a finished trial) -----------------------
   const [playing, setPlaying] = React.useState(true);
   const [speed, setSpeed] = React.useState<number>(1);
@@ -379,24 +394,27 @@ function TranscriptView({
   const paced = historical && !searching && !skipPacing;
 
   React.useEffect(() => {
-    setRevealed(paced ? 0 : visible.length);
+    setRevealed(paced ? 0 : rows.length);
     setPlaying(true);
-  }, [seatId, task, paced, visible.length]);
+  }, [seatId, task, paced, rows.length]);
 
   React.useEffect(() => {
     if (!paced || !playing) return;
-    if (revealed >= visible.length) return;
-    const previous = visible[revealed - 1]?.t ?? 0;
-    const current = visible[revealed]?.t ?? previous;
+    if (revealed >= rows.length) return;
+    // The clock is the row's anchor — the CALL's timestamp for a paired
+    // exchange — so a replay reveals a call when it was made and its output
+    // arrives with it, which is what one node means.
+    const previous = rows[revealed - 1]?.entry.t ?? 0;
+    const current = rows[revealed]?.entry.t ?? previous;
     const timer = window.setTimeout(
-      () => setRevealed((n) => Math.min(n + 1, visible.length)),
+      () => setRevealed((n) => Math.min(n + 1, rows.length)),
       pacedDelay(Math.max(0, current - previous), speed),
     );
     return () => window.clearTimeout(timer);
-  }, [paced, playing, revealed, visible, speed]);
+  }, [paced, playing, revealed, rows, speed]);
 
-  const shown = paced ? visible.slice(0, revealed) : visible;
-  const done = paced && revealed >= visible.length && visible.length > 0;
+  const shown = paced ? rows.slice(0, revealed) : rows;
+  const done = paced && revealed >= rows.length && rows.length > 0;
 
   const feedRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -736,13 +754,18 @@ function TranscriptView({
                   : "no transcript entries for this trial."}
             </div>
           ) : (
-            shown.map((entry) => {
+            shown.map(({ entry, result }) => {
               // The icon is offered only where there is genuinely an exchange
               // behind the row, which is what keeps it rare enough to notice.
               const callId =
                 typeof entry.meta?.call_id === "string" ? entry.meta.call_id : "";
               const hasExchange =
                 Boolean(callId) && rawExchange(entry, callIndex) !== null;
+              // The row's outcome is its RESULT's, not its call's — a call
+              // carries no error flag, and on a merged row the dot is the only
+              // margin signal a failure has.
+              const failed = Boolean((result ?? entry).meta?.error);
+              const cls = toolClassOf(entry.meta);
               return (
                 <div key={entry.seq} className="tx-row py-0.5">
                   <span className="tx-clock">{fmtClock(entry.t)}</span>
@@ -756,10 +779,8 @@ function TranscriptView({
                       <span
                         className={cn(
                           "tx-dot",
-                          entry.meta?.error
-                            ? "text-bad"
-                            : TOOL_CLASS_TEXT[toolClassOf(entry.meta)],
-                          toolClassOf(entry.meta) === "mutate" && "solid",
+                          failed ? "text-bad" : TOOL_CLASS_TEXT[cls],
+                          cls === "mutate" && "solid",
                         )}
                       />
                     )}
@@ -767,6 +788,7 @@ function TranscriptView({
                   <div className="min-w-0">
                     <Entry
                       entry={entry}
+                      result={result}
                       query={query.trim()}
                       thinkingOpen={thinkingOverrides[entry.seq] ?? thinkingDefault}
                       toggleThinking={() =>
@@ -778,6 +800,13 @@ function TranscriptView({
                       resultOpen={openResults[entry.seq] ?? false}
                       toggleResult={() =>
                         setOpenResults((state) => ({
+                          ...state,
+                          [entry.seq]: !state[entry.seq],
+                        }))
+                      }
+                      argsOpen={openArgs[entry.seq] ?? false}
+                      toggleArgs={() =>
+                        setOpenArgs((state) => ({
                           ...state,
                           [entry.seq]: !state[entry.seq],
                         }))

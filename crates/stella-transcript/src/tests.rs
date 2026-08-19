@@ -179,6 +179,47 @@ fn acceptance_command_appears_exactly_once_per_call() {
     );
 }
 
+/// A tool is NAMED exactly once per call, in either renderer.
+///
+/// The sibling of the command check above, and the half that was never pinned.
+/// A journal carries a call and its result as two events, and a surface that
+/// renders them as two rows prints the tool's name on both — so a reader
+/// scrolling a run sees `bash … bash … bash …`, twice per call, with the second
+/// one naming nothing the first did not. That is exactly what the arena's
+/// transcript did until `mergeToolRows`, and the reason it could not happen
+/// *here* is structural: a [`Call`] owns its [`Output`], so there is one header
+/// and no second place for the name to live.
+///
+/// Pinned anyway, because "structurally impossible" is a claim about today's
+/// shape: a later result row added to either renderer would reintroduce it
+/// silently, and the Observatory renders through this crate.
+#[test]
+fn acceptance_tool_is_named_exactly_once_per_call() {
+    // A body that repeats the tool's own name, so a renderer echoing the result
+    // under its own header cannot pass by accident.
+    let call = bash("ls -la", &["bash: command output", "a.txt"], Status::Ok);
+    let run = run_with(vec![step(call, 0)]);
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Everything);
+
+    // The name as a *header* — `>bash<` in the markup's tool span, and the
+    // padded verb column in the grid — rather than the bare substring, which
+    // the output line above deliberately also contains.
+    let markup = html::render_run(&run, &state);
+    assert_eq!(
+        markup.matches("class=\"tool bash\">bash</span>").count(),
+        1,
+        "tool named more than once:\n{markup}"
+    );
+
+    let plain = grid::to_plain(&grid::render(&run, &state, 120));
+    let header_rows = plain
+        .lines()
+        .filter(|line| line.contains("ls -la"))
+        .count();
+    assert_eq!(header_rows, 1, "tool header rendered twice:\n{plain}");
+}
+
 /// Toggling any fold shifts zero columns: the gutters to the left of a step's
 /// tool name are byte-identical open and closed.
 #[test]
