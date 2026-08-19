@@ -87,13 +87,6 @@ pub(crate) fn spawn_forwarder(
         // rather than from a collected `Vec` the way `agent::run_turn` does:
         // this task forwards each event and keeps none, and a ledger is bounded
         // where a retained journal is not.
-        //
-        // This declaration is the one #3962 and #3969 composed away between
-        // them: both PRs were green, and the textual merge took #3969's version
-        // of the hunk that opened this task — which carried its own `reasoning`
-        // binding and not this one — while keeping #3962's two *uses* below.
-        // Neither author's tree was wrong, which is why no pre-merge check
-        // could see it (AGENTS.md, `main-canary.yml`).
         let mut friction = TurnFriction::default();
         // This lane's open run of streamed reasoning fragments, joined into one
         // row per thought rather than one per few tokens (#3969). One run per
