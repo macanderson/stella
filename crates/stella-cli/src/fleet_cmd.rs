@@ -663,16 +663,14 @@ fn worker_event_sender(tx: &mpsc::UnboundedSender<AgentEvent>) -> stella_core::E
     stella_core::EventSender::new(tx.clone()).pairing_stage_complete()
 }
 
-/// One worker turn in `root`, on the calling thread's runtime. `use_pipeline`
-/// is `false` by default since #3381 — the turn runs the raw `Engine::run_turn`
-/// step-loop; `true` (`--pipeline classic`) routes it through the staged
-/// pipeline instead (triage → recall → plan → execute → witness → verify →
-/// verdict).
+/// One worker turn in `root`, on the calling thread's runtime — the raw
+/// `Engine::run_turn` step-loop. Fleet used to also route a worker through
+/// the staged pipeline (`--pipeline classic`); that driver has been removed
+/// from this build (#3846), so every worker takes this path now.
 #[allow(clippy::too_many_arguments)] // one caller (EngineWorker::run); composition wiring
 async fn run_task(
     cfg: &Config,
     budget_limit: Option<f64>,
-    use_pipeline: bool,
     task: &Task,
     root: &Path,
     claim_holder: &str,
@@ -739,20 +737,10 @@ async fn run_task(
     let store = agent::open_store(root);
     // Owned above the pipeline so it outlives every engine it builds (#1595).
     let calibration = agent::seed_calibration(&store, &cfg);
-    // The variant is a fact about which driver ran THIS attempt, not a
-    // placeholder: `use_pipeline` is exactly `pipeline.is_classic()` at the
-    // door (main.rs's `Fleet` arm), so when the staged pipeline drives this
-    // worker the row must name it rather than leave `pipeline_variant` NULL
-    // (#3381, #3388, #3684) — NULL used to mean "raw OR classic" here, which
-    // made a per-variant comparison over fleet attempts silently wrong.
-    let execution = agent::begin_execution(
-        &store,
-        "fleet",
-        &task.prompt,
-        &cfg,
-        None,
-        use_pipeline.then_some(agent::persistence::PIPELINE_VARIANT_CLASSIC),
-    );
+    // `pipeline_variant` is always NULL now — the staged pipeline that used
+    // to drive some fleet workers (#3381, #3388, #3684) is gone (#3846), so
+    // every attempt this build records ran the raw step-loop.
+    let execution = agent::begin_execution(&store, "fleet", &task.prompt, &cfg, None, None);
     // From here on this attempt's spend is durable in the store even if this
     // thread never lives to report it — publish the handle that makes it
     // readable from the dispatch side (#1216).
@@ -760,26 +748,14 @@ async fn run_task(
 
     let mut messages = vec![CompletionMessage::system(
         // Each worker is its own session in its own workspace, so its
-        // SessionStart hooks fire here, in the worktree. Persona matches the
-        // driver: a pipeline-driven worker gets the pipeline worker persona
-        // (methodology ladder + `agents.worker.prompt` override), which
-        // fleet workers never carried.
+        // SessionStart hooks fire here, in the worktree.
         agent::with_session_hook_context(
-            if use_pipeline {
-                agent::build_pipeline_system_prompt(&cfg, root, &active_rules, None)
-            } else {
-                agent::build_system_prompt(&cfg, root, &active_rules)
-            },
+            agent::build_system_prompt(&cfg, root, &active_rules),
             &cfg,
         )
         .await,
     )];
-    // The raw step-loop path needs the task prompt as a user message in the
-    // history; the pipeline path takes the goal separately and appends its own
-    // volatile recall+goal message (L-E8), so it must not be pre-seeded here.
-    if !use_pipeline {
-        messages.push(CompletionMessage::user(&task.prompt));
-    }
+    messages.push(CompletionMessage::user(&task.prompt));
     // Each child runs under its own enforced guard at the full cap; the
     // parent fleet guard additionally stops new waves on the metered sum.
     let mut budget = agent::build_budget_guard(budget_limit);
