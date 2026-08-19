@@ -53,6 +53,7 @@ mod presence;
 mod prompt;
 mod reflect;
 pub(crate) mod resume;
+pub(crate) mod seats;
 mod skill_usage;
 mod summary;
 pub(crate) mod tool_stack;

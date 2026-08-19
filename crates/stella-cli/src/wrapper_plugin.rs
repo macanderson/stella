@@ -454,6 +454,14 @@ const PLUGIN_CHILD_TURN_SLOT: u32 = 1;
 ///   on the receipt attributed to a role this host did not make, so a plugin
 ///   naming a `verifier` tier is told `Unavailable` and this driver does not
 ///   pretend otherwise.
+///
+///   That refusal is correct and also not the real fix. The deeper problem is
+///   that this host has an opinion about the word `verifier` at all: the seat
+///   table below it (`ChildTurns::default_seats`) is a core-owned list of
+///   *plugin* role names, so a plugin whose process needs a `planner` or a
+///   `reviewer` can only be served by a name core already knows. Seats are
+///   meant to be the plugin's vocabulary and the user's model choice, resolved
+///   opaquely — see #3905, under epic #3903.
 /// - **No per-turn USD carve is requested.** `None` asks for the parent's
 ///   whole remaining headroom, which `BudgetGuard::carve` clamps — and the
 ///   dispatcher behind it carves from the session's sub-agent pool

@@ -1048,3 +1048,62 @@ fn saving_an_empty_engine_config_removes_both_of_its_sections() {
         "siblings kept:\n{rendered}"
     );
 }
+
+/// A seat key carries a `/` (`doc:roleless-core` §8.4: `<plugin-id>/<role>`),
+/// and that is the separator's one real cost — TOML must quote the key. This
+/// pins both halves of it: the writer quotes, and the reader gets the key back
+/// whole rather than as a nested table.
+///
+/// Worth a test of its own because the alternative separator considered here
+/// fails exactly this: `vera.verifier` inside `[seats]` is TOML dotted-key
+/// syntax and parses as a table `vera` containing `verifier`, silently. A slash
+/// cannot degrade that way — unquoted it is a parse error — and this is the
+/// assertion that would notice if a future rendering change dropped the quotes.
+#[test]
+fn a_seat_key_survives_a_toml_round_trip_with_its_slash_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let toml_path = dir.path().join("stella.toml");
+
+    let engine = AgentEngineConfig {
+        seat_models: Some(
+            [
+                (
+                    "vera/verifier".to_string(),
+                    "anthropic/claude-opus-5".to_string(),
+                ),
+                (
+                    "stella-plan/planner".to_string(),
+                    "deepseek/deepseek-chat".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+        ..AgentEngineConfig::default()
+    };
+    engine.save_to(&toml_path).unwrap();
+
+    let rendered = std::fs::read_to_string(&toml_path).unwrap();
+    assert!(rendered.contains("[seats]"), "{rendered}");
+    assert!(
+        rendered.contains("\"vera/verifier\""),
+        "the writer must quote a key carrying a slash:\n{rendered}"
+    );
+
+    let loaded = load_toml(&toml_path, ConfigScope::User).unwrap();
+    let seats = loaded
+        .agent_engine_config
+        .expect("engine config round-trips")
+        .seat_models
+        .expect("seats round-trip");
+    assert_eq!(
+        seats.get("vera/verifier").map(String::as_str),
+        Some("anthropic/claude-opus-5"),
+        "the key comes back whole, not split into a nested table: {seats:?}"
+    );
+    assert_eq!(
+        seats.get("stella-plan/planner").map(String::as_str),
+        Some("deepseek/deepseek-chat"),
+        "{seats:?}"
+    );
+}
