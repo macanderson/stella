@@ -13,6 +13,7 @@
 //! harness (`make self-driving-test`) drives those delegations end-to-end, so the
 //! two surfaces cannot drift.
 
+mod backlog;
 pub(crate) mod probes;
 pub(crate) mod state;
 mod surface;
@@ -397,22 +398,9 @@ fn gh_plain(args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// The demand half of the governor, read through the issue port.
 fn demand() -> Demand {
-    if !gh_available() {
-        return Demand::default();
-    }
-    let count = |extra: &[&str]| -> u32 {
-        let mut args = vec!["issue", "list", "--state", "open", "--label", "bug"];
-        args.extend_from_slice(extra);
-        args.extend_from_slice(&["--json", "number", "--jq", "length"]);
-        gh_plain(&args)
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0)
-    };
-    Demand {
-        open_defects: count(&[]),
-        p0: count(&["--label", "P0"]),
-    }
+    backlog::demand_from(&crate::issue_provider::GhIssueProvider)
 }
 
 fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
@@ -875,52 +863,9 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
     Ok(())
 }
 
-fn queue(_st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
-    let raw = gh_plain(&[
-        "issue",
-        "list",
-        "--state",
-        "open",
-        "--limit",
-        "200",
-        "--json",
-        "number,title,labels,createdAt,url",
-    ])
-    .ok_or_else(|| "gh issue list failed (is gh installed and authenticated?)".to_string())?;
-    let issues: Vec<stella_autonomy::QueueIssue> =
-        serde_json::from_str(&raw).map_err(|e| format!("gh issue list payload: {e}"))?;
-    let total_issues = issues.len();
-
-    let defects = stella_autonomy::rank_defects(issues);
-    let picked = &defects[..limit.min(defects.len())];
-
-    if format == QueryFormat::Json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&Rows::new(picked)).map_err(|e| e.to_string())?
-        );
-        return Ok(());
-    }
-    for i in picked {
-        let prio = ["P0", "P1", "P2"]
-            .into_iter()
-            .find(|p| i.labels.iter().any(|l| l.name == *p))
-            .unwrap_or("--");
-        let area = i
-            .labels
-            .iter()
-            .find(|l| l.name.starts_with("area:"))
-            .map(|l| l.name.as_str())
-            .unwrap_or("");
-        println!("{prio:>2}  #{:<6} {area:<18} {}", i.number, i.title);
-    }
-    eprintln!(
-        "\n{} of {} open defects ({} open issues total)",
-        picked.len(),
-        defects.len(),
-        total_issues
-    );
-    Ok(())
+/// The queue verb: the ranked defect batch this cycle draws from.
+fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
+    backlog::render_queue(st, &crate::issue_provider::GhIssueProvider, limit, format)
 }
 
 // ---------------------------------------------------------------------------

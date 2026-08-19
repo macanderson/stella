@@ -660,13 +660,31 @@ its witness — a test that fails on `main` and passes with the change.
 | Phase | Deliverable | Witness | Unblocks |
 |---|---|---|---|
 | **B0** — **built** | **The driver channel** (§3.0). A second dispatch context for the existing host-call machinery, opened by a driver session rather than a wrapper point; a `[driver]` block with its own `calls` list and its own `permits_call`, *without* touching the `Participation` ladder; the grant rendered at install consent. `stella-plugin/src/driver.rs` is the wire half and `stella-runtime/src/wrapper/driver_call.rs` the host half. **A call carries no arguments and returns no payload yet** — no verb is implemented, so no argument or result table can be written honestly; each lands with the verb that needs it. `plugins/stella-selfdriving` declares its `[driver]` grant but is still not a program the host runs, which is B2. | `an_undeclared_call_is_refused_and_the_session_keeps_running` (`stella-runtime/src/wrapper/driver_call.rs`): a driver whose manifest omits a call is refused it with a `HostCallRefusal` code, is not charged for it, and **keeps running**; a declared one is served. Both directions, because either alone is half a gate. Plus `a_driver_holds_capabilities_without_a_participation_grade` (`stella-plugin/src/manifest.rs`) — the defect itself, that `participation = "none"` made every capability unreachable. | everything below |
-| **B1** | **The issue port.** `Issue` kernel in `stella-protocol`; `IssueProvider` port; GitHub as a shipped manifest under `.stella/issues/`; the `backlog` calls on the channel; the CLI's `queue` row reshaped, `HOST_SURFACE_VERSION` → 2. | The ranked queue is produced against a fixture provider with **no `gh` on `PATH`**. | "any issue provider" |
+| **B1** — *port landed* | **The issue port.** `Issue` kernel in `stella-protocol`; `IssueProvider` port; GitHub as a shipped manifest under `.stella/issues/`; the `backlog` calls on the channel; the CLI's `queue` row reshaped, `HOST_SURFACE_VERSION` → 2. | The ranked queue is produced against a fixture provider with **no `gh` on `PATH`**. | "any issue provider" |
 | **B2** | **`work` + the loop step machine.** `LoopStep`/`step` pure in `stella-autonomy`; `work_start`/`work_status`/`work_abandon` served over the channel from `stella-cli`, built on the existing `child_turn` dispatcher rather than a second one; the plugin becomes a policy loop over declared calls; the eight slash commands and `scripts/self-driving.sh` retire **only after** `scripts/test-self-driving.sh` is green against the new path with every assertion intact. | One issue goes from `backlog next` to a verified diff with no Claude Code and no human. | the headline |
 | **B3** | **`deliver`.** `PrState` pure; open/observe/next/merge; `Escalated` reachable and terminal; `CiRed` vs `BaseBroken` distinguished. | A PR whose CI is red *on its base branch* transitions to `BaseBroken`, and the loop does not push a fix. |  PR rhythm (#2374's named weakness) |
 | **B4** | **Supply.** Ladder re-arm on baseline delta; `sweep regress` over closed-issue receipts; `sweep meta`. Per-supply switch, default queue-only. | A lens dry at `HEAD` re-opens after the declared baseline delta and yields **only** digests absent from `seen.txt`. | never runs out |
 | **B5** | **The residue gate** ([`doc:agent-native-delivery`](../design/agent-native-delivery.md) §7) in `warn`, plus fingerprint dedup and decay. | A run stating a follow-up in prose and claiming `done` fails the gate; the same run with the item `filed` passes. | filing is a guarantee |
 | **B6** | **`curate`.** Proposals from ledger evidence; acceptance gated on declared authority; `regulated` keeps the human on context records. | A skill proposal reaching the recurrence threshold is *proposed* and, under `regulated`, **not** applied. | self-curation |
 | **B7** | **`release`,** opt-in, gated on green `main` + quiet canary + derivable changelog. | Deliberately deferred — see §6.4. | shipping |
+
+**B1's first slice has landed**: the [`Issue`] kernel and the
+[`IssueProvider`] port (`crates/stella-protocol/src/issue.rs`), the GitHub
+adapter behind it (`crates/stella-cli/src/issue_provider.rs`), and both backlog
+readers moved onto the port
+(`crates/stella-cli/src/self_driving_cmd/backlog.rs`). GitHub is now an adapter
+rather than the answer, and the witness ranks a real defect queue from a fixture
+provider that runs no subprocess and holds no credential. The remaining
+`backlog` calls — `claim`, `file`, `close`, `link` — are the write half and are
+deliberately absent: a write path nothing calls is the unwired code AGENTS.md's
+"nothing left behind" rule exists to prevent.
+
+One thing the slice found that the design did not anticipate: **`demand` carried
+a second definition of "defect".** The governor counted its open-defect and P0
+numbers with two extra `gh issue list --jq length` calls whose `--label bug`
+filter was a rival to `rank_defects`'s own label rule — two definitions of one
+word, in two languages, able to disagree about the very backlog the same cycle
+drew its batch from. Both numbers are now folds of one ranking of one read.
 
 **Landing map** (each crate's boundary decides, not convenience):
 

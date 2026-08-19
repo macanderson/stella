@@ -69,6 +69,7 @@ mod fleet_warmth;
 mod ingest_cmd;
 mod inspect;
 mod interactive;
+mod issue_provider;
 mod mcp_cmd;
 mod memory;
 mod memory_cmd;
