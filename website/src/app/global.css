@@ -12,9 +12,9 @@
  * the mark, the prompt, the active item, the primary action — and nowhere
  * else. If everything is ion, nothing is.
  *
- * Ion text is ground-aware. Full-strength #00D1F9 only earns its keep on the
+ * Ion text is ground-aware. Full-strength #C58A32 only earns its keep on the
  * dark ground (10.8:1 on obsidian); on paper it is 1.6:1 and drops to
- * brand-deep (#00778F, 4.6:1).
+ * brand-deep (#8B5E1A, 4.6:1).
  * `--stella-accent-text` in tokens.css encodes exactly this flip — components
  * use it and never pick an ion by hand.
  *
@@ -901,9 +901,9 @@ html[data-home-nav="hidden"] #nd-nav {
   background: linear-gradient(
     105deg,
     transparent 35%,
-    rgb(0 209 249 / 0.05) 45%,
+    rgb(197 138 50 / 0.05) 45%,
     rgb(223 180 115 / 0.16) 50%,
-    rgb(0 209 249 / 0.05) 55%,
+    rgb(197 138 50 / 0.05) 55%,
     transparent 65%
   );
   transform: translateX(-101%);

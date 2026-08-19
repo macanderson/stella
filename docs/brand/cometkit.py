@@ -43,15 +43,19 @@ REPO = HERE.parents[1]
 
 # These were `GOLD`/`GOLD_DEEP` through the bronze era. They are role-named now
 # for the same reason the CSS ramp was renamed: a hue in a name falsifies
-# itself the first time the hue moves, and this one has moved three times.
-BRAND = "#00D1F9"  # Ion — the comet, on a dark ground
-# The mark on a LIGHT ground. v3.0 retires the kit's "shapes and marks stay
-# full strength on both grounds" rule: BRAND measures 1.61:1 on `PAPER_BG`,
-# which is a logotype nobody can see, while this stop holds 3.16:1. Bronze
-# never needed the split because it measured 2.98:1 against white. Enforced by
-# `check_svg_parity` in build_marks.py, not merely written down here.
-BRAND_ON_LIGHT = "#0094B1"
-BRAND_DEEP = "#00778F"  # small brand *text* on light surfaces only
+# itself the first time the hue moves, and this one has moved four times — the
+# fourth being v4.0, which took the hue back to gold and left these names
+# correct exactly because they never encoded it.
+BRAND = "#C58A32"  # Bronze Gold — the comet, on a dark ground
+# The mark on a LIGHT ground. v3.0 retired the kit's "shapes and marks stay
+# full strength on both grounds" rule because ion measured 1.61:1 on
+# `PAPER_BG`, a logotype nobody can see. v4.0 keeps the split rather than
+# reinstating the old rule: gold is not in ion's position, but at 2.63:1
+# BRAND is still under the 3:1 graphical floor on `PAPER_BG`, while this stop
+# clears it at 4.99:1. Enforced by `check_svg_parity` in build_marks.py, not
+# merely written down here.
+BRAND_ON_LIGHT = "#8B5E1A"
+BRAND_DEEP = "#8B5E1A"  # small brand *text* on light surfaces only
 INK = "#070B10"
 PAPER = "#E9EDF2"  # cool text on dark
 PAPER_BG = "#EEF1F5"  # light-mode surface
