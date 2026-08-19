@@ -19,6 +19,7 @@ stella self-driving aperture (--current | --advance | --reset | --list)
 stella self-driving seen (--digest TEXT… | --new DIGEST… | --add DIGEST… | --count)
 stella self-driving calibrate (--ok | --resource-fail | --show)
 stella self-driving queue [--limit N] [--format <text|json>]
+stella self-driving file --title TEXT [--body TEXT] [--label L…] [--format <text|json>]
 stella self-driving run (start | end [--status S] [--reason S] | cancel [reason] | list | stamp-cycle-pid [PID])
 stella self-driving runs
 stella self-driving phase <name>
@@ -92,6 +93,16 @@ A **run** spans many cycles (one `/loop` session, one daemon lifetime) and is th
 ### metrics, state, queue
 
 `metrics` folds the ledger into the loop's evidence about itself, with named pathology signals (`STUCK`, `STARVED`, `NOISY`, `FRAGILE`) for the meta-cycle to act on. `state` shows the counters and the last five cycles. `queue` ranks the open defects P0 &gt; P1 &gt; P2 &gt; untriaged, oldest first inside a rank — feature work is excluded, because this loop closes defects.
+
+### file
+
+`stella self-driving file` files a finding as an issue through the bound provider, and it **refuses rather than degrades**.
+
+Two checks run before the tracker is reached. A finding whose digest is already in the seen-set is not filed twice — the same normalization the aperture ladder's dry streak rests on, so the same defect reported against a shifted line number is one finding. And the draft must match this workspace's issue convention.
+
+That second check exists because of a feedback loop. The ranker counts an issue as a defect if it carries `bug` *or* `triage`; GitHub's triage workflow adds `triage` to any issue opened without a type label, and issues opened through the API carry no labels at all. So an unclassified filing comes back next cycle as an untriaged defect the loop is responsible for triaging — the loop manufactures its own queue, and every measure of ground gained on the backlog quietly includes its own exhaust.
+
+The convention is **learned, not assumed**: read from `.stella/issues/convention.json` if the workspace pins one, otherwise discovered from the automation that enforces it. Where nothing can be discovered the loop *proposes* a convention and files nothing under it until a human accepts — it may propose any convention and grants itself none. A refusal names every violation at once and says which source the convention came from, because "what did I get wrong" and "wrong according to what" are both questions you need answered.
 
 ## Files
 

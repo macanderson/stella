@@ -18,8 +18,7 @@ use stella_protocol::{GenerationParams, ReasoningEffort, ServiceTier, Verbosity}
 use stella_tui::{EngineAgentState, EngineConfigState, EngineRole};
 
 use crate::settings::{
-    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, AgentEngineParams, EngineAgentKind,
-    Toggle,
+    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, AgentEngineParams, Toggle,
 };
 
 // Model specs
@@ -64,16 +63,16 @@ pub fn parse_model_spec(raw: &str, is_provider: &dyn Fn(&str) -> bool) -> Option
         })
 }
 
-/// The effective [`ModelSpec`] for `kind`, honoring the agent's explicit
+/// The session's effective [`ModelSpec`], honoring the agent's explicit
 /// `provider` field: when set, the model string (from the same precedence
 /// chain as [`AgentEngineConfig::model_for`]) is the verbatim slug for
 /// THAT provider — no prefix splitting, which is what lets an OpenRouter
 /// entry carry a slug that itself contains `/`.
 ///
-/// One exception guards the pin: the flat model keys (`default_model`,
-/// `pipeline_*_model`) hold `provider/slug` specs — the TUI writes them
-/// that way on every save — and the same precedence chain hands them to a
-/// pinned agent. For a SEEDED pin the catalog arbitrates the two readings:
+/// One exception guards the pin: `default_model` holds a `provider/slug`
+/// spec — the TUI writes it that way on every save — and the same precedence
+/// chain hands it to a pinned agent. For a SEEDED pin the catalog arbitrates
+/// the two readings:
 /// when it rejects the verbatim one and the string parses as a qualified
 /// spec, the spec's own provider wins (a stale `zai` pin over
 /// `openrouter/openrouter/auto` must route to OpenRouter, not become the
@@ -91,14 +90,13 @@ pub fn parse_model_spec(raw: &str, is_provider: &dyn Fn(&str) -> bool) -> Option
 /// stripping it would send the unserved `auto`).
 pub fn model_spec_for(
     engine: &AgentEngineConfig,
-    kind: EngineAgentKind,
     is_provider: &dyn Fn(&str) -> bool,
 ) -> Option<ModelSpec> {
     let pinned_provider = engine
-        .agent(kind)
+        .agent()
         .and_then(|a| a.provider.as_deref())
         .filter(|p| !p.trim().is_empty());
-    let model = engine.model_for(kind);
+    let model = engine.model_for();
     match (pinned_provider, model) {
         (Some(provider), Some(model)) => {
             let pin_seeded = crate::config::PROVIDERS
@@ -143,94 +141,6 @@ pub fn model_spec_for(
     }
 }
 
-/// [`model_spec_for`], but only when a setting **names this role** — no
-/// fallback to `default_model`.
-///
-/// For the two roles whose documented default is "run whatever the worker
-/// runs", [`EngineAgentKind::Research`] and [`EngineAgentKind::Plan`].
-/// `model_spec_for`'s fallthrough to `default_model` is right for a role with
-/// a standing identity (triage, the verifier: unpinned, they still have a
-/// model of their own) and wrong for these two, in a way that only shows up
-/// once something re-points the worker. `--model` is exactly that something:
-/// it pins the worker for one invocation and deliberately does not touch
-/// settings, so a research spec inherited from `default_model` would split
-/// research off onto the model the flag just overrode. The run would report
-/// one model and buy two, which is the class of quiet mismeasurement this
-/// repository treats as worse than a crash.
-///
-/// `None` therefore means "inherit", and the caller keeps the worker's pin.
-pub fn own_model_spec_for(
-    engine: &AgentEngineConfig,
-    kind: EngineAgentKind,
-    is_provider: &dyn Fn(&str) -> bool,
-) -> Option<ModelSpec> {
-    let named = flat_model(engine, kind).is_some()
-        || engine.agent(kind).is_some_and(|a| {
-            let set = |v: &Option<String>| v.as_deref().is_some_and(|s| !s.trim().is_empty());
-            set(&a.model) || set(&a.provider)
-        });
-    named.then(|| model_spec_for(engine, kind, is_provider))?
-}
-
-/// Cross-family grouping key for verifier diversity. Same-vendor providers
-/// count as ONE family (a Gemini verifier over Vertex-served Gemini work
-/// carries the same bias), and an OpenRouter spec's family is the routed
-/// slug's vendor prefix — `openrouter/openai/gpt-5.5` IS an OpenAI model,
-/// and treating it as family "openrouter" would defeat the verifier's
-/// cross-family preference.
-pub fn spec_family(spec: &ModelSpec) -> String {
-    match spec.provider.as_str() {
-        "gemini" | "vertex" => "google".to_string(),
-        "anthropic" | "bedrock" => "anthropic".to_string(),
-        "openrouter" => spec
-            .model
-            .split_once('/')
-            .map(|(vendor, _)| vendor.to_string())
-            .unwrap_or_else(|| "openrouter".to_string()),
-        other => other.to_string(),
-    }
-}
-
-/// `auto_mode: on` — pick the verifier from `allowed_models`, preferring a
-/// family different from the worker's, then ranking by the seed catalog's
-/// output list price (the closest objective capability proxy the catalog
-/// carries; gateway-priced entries rank last at 0), then list order.
-/// Candidates whose provider has no resolvable credential are skipped —
-/// `configured` is the filter. `None` when nothing in the list is usable
-/// (the caller falls back to the normal verifier routing).
-pub fn auto_verifier_spec(
-    engine: &AgentEngineConfig,
-    worker_family: &str,
-    configured: &dyn Fn(&str) -> bool,
-) -> Option<ModelSpec> {
-    let catalog = stella_model::catalog::Catalog::current();
-    let mut best: Option<(bool, f64, usize, ModelSpec)> = None;
-    for (index, raw) in engine.allowed_models().iter().enumerate() {
-        let Some(spec) = parse_model_spec(raw, &|id| configured(id)) else {
-            continue;
-        };
-        if !configured(&spec.provider) {
-            continue;
-        }
-        let cross_family = spec_family(&spec) != worker_family;
-        let price = catalog
-            .resolve_for(&spec.provider, &spec.model)
-            .map(|entry| entry.pricing.output_usd_per_mtok)
-            .unwrap_or(0.0);
-        // Lexicographic max over (cross_family, price, earliest-in-list).
-        let better = match &best {
-            None => true,
-            Some((bf, bp, bi, _)) => {
-                (cross_family, price, std::cmp::Reverse(index)) > (*bf, *bp, std::cmp::Reverse(*bi))
-            }
-        };
-        if better {
-            best = Some((cross_family, price, index, spec));
-        }
-    }
-    best.map(|(_, _, _, spec)| spec)
-}
-
 // Per-agent tuning
 
 /// The resolved request-shaping settings for one agent: what lands on the
@@ -247,46 +157,39 @@ pub struct AgentTuning {
     pub params: Option<GenerationParams>,
 }
 
-/// `effort_auto: on` — the per-agent effort nobody has to think about:
-/// the verifier deliberates hard, the worker balances cost and quality, and
-/// triage (a one-token classification under a latency ceiling) stays low.
+/// `effort_auto: on` — the effort nobody has to think about.
 ///
-/// Research sits at the bottom with triage, and for the same reason rather
-/// than by analogy: a research sub-agent greps a tree and reports what it
-/// found, which is retrieval, not deliberation. Measured on `fix-git`, fifteen
-/// research calls at `xhigh` spent 76 seconds to emit a few hundred reasoning
-/// tokens between them (#2374). The planner stays at the worker's rung — it
-/// writes the work order every later stage is judged against, and that is the
-/// one short call where thinking is the product.
-fn auto_effort(kind: EngineAgentKind) -> ReasoningEffort {
-    match kind {
-        EngineAgentKind::Verifier => ReasoningEffort::High,
-        EngineAgentKind::Triage | EngineAgentKind::Research => ReasoningEffort::Low,
-        EngineAgentKind::Default | EngineAgentKind::Worker | EngineAgentKind::Plan => {
-            ReasoningEffort::Medium
-        }
-    }
-}
+/// A constant rather than a table since #3908: the table it replaces mapped
+/// six personas onto four rungs (the verifier deliberated hard, triage and
+/// research sat at the bottom, the worker and planner balanced), and five of
+/// those six were pins on the staged pipeline deleted in #3865. Core has one
+/// role, and the rung the interactive session has always taken is the middle
+/// one.
+///
+/// The per-participant version of this judgement is not lost, it moved: a
+/// plugin declaring a research seat that should run cheap is describing its
+/// own process, so the rung belongs beside the seat's model assignment rather
+/// than in a core table of words core is not supposed to know (#3936 carries
+/// the per-seat tuning that is not built yet).
+const AUTO_EFFORT: ReasoningEffort = ReasoningEffort::Medium;
 
-/// `reasoning_auto: on` — thinking on wherever deliberation pays (verifier,
-/// worker, plan, default), off for triage (latency-bound, one bare token out)
-/// and for research (a read-only lookup reporting what it read).
-fn auto_reasoning(kind: EngineAgentKind) -> bool {
-    !matches!(kind, EngineAgentKind::Triage | EngineAgentKind::Research)
-}
+/// `reasoning_auto: on` — thinking on, for [`AUTO_EFFORT`]'s reason: the two
+/// personas it used to be off for (triage's one-token classification,
+/// research's read-only lookup) are not core's to name.
+const AUTO_REASONING: bool = true;
 
-/// Resolve `kind`'s tuning from the merged config, applying the auto
-/// modes (`effort_auto`/`reasoning_auto` override the per-agent settings
+/// Resolve the session agent's tuning from the merged config, applying the
+/// auto modes (`effort_auto`/`reasoning_auto` override the per-agent settings
 /// when on — that is their contract: "you never worry about it").
-pub fn tuning_for(engine: &AgentEngineConfig, kind: EngineAgentKind) -> AgentTuning {
-    let agent = engine.agent(kind);
+pub fn tuning_for(engine: &AgentEngineConfig) -> AgentTuning {
+    let agent = engine.agent();
     let effort = if engine.effort_auto_on() {
-        Some(auto_effort(kind))
+        Some(AUTO_EFFORT)
     } else {
         agent.and_then(|a| a.effort)
     };
     let reasoning = if engine.reasoning_auto_on() {
-        Some(auto_reasoning(kind))
+        Some(AUTO_REASONING)
     } else {
         agent.and_then(|a| a.reasoning).map(Toggle::is_on)
     };
@@ -342,18 +245,24 @@ pub fn model_supports_reasoning(provider: &str, model: &str) -> Option<bool> {
 /// The OpenRouter default posture, as the settings object a user would have
 /// had to write by hand to get it.
 ///
-/// One key reaches every vendor, so the interesting choice on OpenRouter is
-/// not "which model" but "which model per ROLE" — and the roles want
-/// genuinely different things. The driver wants a long-context agentic model
-/// thinking hard; the verifier wants a different vendor's strongest reasoner, so
-/// its verdict is not the worker grading its own homework (see
-/// [`spec_family`], which exists precisely to keep those apart); triage wants
-/// something fast and cheap that runs on every turn.
+/// One key reaches every vendor, so an OpenRouter instance can afford a
+/// stronger posture than a single-vendor one: the driver wants a long-context
+/// agentic model thinking hard, and Kimi K3's slug costs the instance no extra
+/// configuration. That is the point of it being a default rather than
+/// documentation telling people to write it out.
 ///
-/// Hence Kimi K3 driving at `xhigh` with thinking on, Opus 5 judging, GLM 5.2
-/// triaging. All three are OpenRouter slugs on the one key, so this costs the
-/// instance no extra configuration — which is the point of it being a default
-/// rather than documentation telling people to write it out.
+/// It used to carry two more rows — Opus 5 judging and GLM 5.2 triaging, on
+/// `pipeline_verifier_model` and `pipeline_triage_model`. Both went with #3908:
+/// the roles they staffed were the staged pipeline's (#3865), and by the time
+/// that crate left the workspace the keys steered nothing, so the baseline was
+/// quietly promising an instance two models it never bought.
+///
+/// The cross-family *idea* survives at the one place a second model still
+/// runs — `stella goal`'s `resolve_cross_family_verifier`, which groups with
+/// `agent::engine::provider_family` and has never read these settings. What
+/// went with the keys is the separate `spec_family`/`auto_verifier_spec` pair
+/// that existed only to pre-commit that choice into a settings file, for a
+/// role core no longer has.
 ///
 /// Being a baseline is what keeps this honest: it composes UNDER the settings
 /// scope chain via [`AgentEngineConfig::layered_over`], so any of it that a
@@ -363,24 +272,6 @@ pub fn provider_engine_baseline(provider_id: &str) -> Option<AgentEngineConfig> 
         return None;
     }
     Some(AgentEngineConfig {
-        // Roles land on the FLAT keys in fully-qualified `provider/slug`
-        // form, NOT on `agents.<role>.model`, and the difference is the whole
-        // reason this is a default rather than an override:
-        // [`AgentEngineConfig::model_for`] reads `agents.<role>.model` BEFORE
-        // the flat key, so a per-agent baseline would outrank a user's
-        // `pipeline_verifier_model` — backwards. On the flat key the user's
-        // value simply replaces this one.
-        //
-        // Qualified rather than a bare slug plus an `agents.<role>.provider`
-        // pin for the same reason: a pin survives an overlay that replaces
-        // only the model, so a user retargeting the verifier at
-        // `anthropic/claude-fable-5` would have it sent to OpenRouter as a
-        // slug. The prefix travels WITH the model or not at all.
-        pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".to_string()),
-        pipeline_triage_model: Some("openrouter/z-ai/glm-5.2".to_string()),
-        // Unset: the worker rides the default agent's model, and saying so
-        // twice is how the two drift apart.
-        pipeline_worker_model: None,
         agents: Some(AgentEngineAgents {
             // Posture only, no `model`: the driver's model is already
             // answered by the provider row's `default_model`, and naming it
@@ -390,7 +281,6 @@ pub fn provider_engine_baseline(provider_id: &str) -> Option<AgentEngineConfig> 
                 reasoning: Some(Toggle::On),
                 ..AgentEngineAgent::default()
             }),
-            ..AgentEngineAgents::default()
         }),
         ..AgentEngineConfig::default()
     })
@@ -620,32 +510,6 @@ pub fn service_tier_from_str(raw: &str) -> Option<ServiceTier> {
 
 // Settings ↔ TUI snapshot
 
-/// The TUI's role vocabulary mapped onto the settings' — same order, so
-/// `EngineConfigState::agents[i]` is `EngineAgentKind::ALL[i]`.
-fn kind_for(role: EngineRole) -> EngineAgentKind {
-    match role {
-        EngineRole::Default => EngineAgentKind::Default,
-        EngineRole::Worker => EngineAgentKind::Worker,
-        EngineRole::Verifier => EngineAgentKind::Verifier,
-        EngineRole::Triage => EngineAgentKind::Triage,
-        EngineRole::Research => EngineAgentKind::Research,
-        EngineRole::Plan => EngineAgentKind::Plan,
-    }
-}
-
-/// The flat per-role model field (no fallback to `default_model` — the
-/// snapshot shows what THIS row sets, not what it inherits).
-fn flat_model(engine: &AgentEngineConfig, kind: EngineAgentKind) -> Option<&str> {
-    match kind {
-        EngineAgentKind::Default => engine.default_model.as_deref(),
-        EngineAgentKind::Worker => engine.pipeline_worker_model.as_deref(),
-        EngineAgentKind::Verifier => engine.pipeline_verifier_model.as_deref(),
-        EngineAgentKind::Triage => engine.pipeline_triage_model.as_deref(),
-        EngineAgentKind::Research => engine.pipeline_research_model.as_deref(),
-        EngineAgentKind::Plan => engine.pipeline_plan_model.as_deref(),
-    }
-}
-
 /// Build the engine panel's snapshot from the merged settings plus the
 /// picker vocabularies the driver knows (provider ids, catalog slugs, and
 /// each slug's per-model effort vocabulary).
@@ -660,17 +524,25 @@ pub fn state_from_settings(
     catalog_models: Vec<String>,
     model_efforts: std::collections::HashMap<String, Vec<String>>,
     roles: Vec<stella_tui::envelope::RoleWiringRow>,
+    declared: &[(String, String)],
 ) -> EngineConfigState {
     let agents = EngineRole::ALL
         .iter()
         .map(|role| {
-            let kind = kind_for(*role);
-            let agent = engine.agent(kind);
+            // One role, so one arm. The `match` survives the collapse
+            // deliberately: slice 5 (#3909) re-populates this from the live
+            // session's plugin seats, and a `match` is where each new row's
+            // source lands.
+            let agent = match role {
+                EngineRole::Default => engine.agent(),
+            };
             let params = agent.and_then(|a| a.params.as_ref());
             EngineAgentState {
+                // No fallback beyond `default_model` — the snapshot shows what
+                // this row SETS, not what it inherits.
                 model: agent
                     .and_then(|a| a.model.clone())
-                    .or_else(|| flat_model(engine, kind).map(str::to_string)),
+                    .or_else(|| engine.default_model.clone()),
                 provider: agent.and_then(|a| a.provider.clone()),
                 prompt: agent.and_then(|a| a.prompt.clone()),
                 effort: agent
@@ -703,8 +575,36 @@ pub fn state_from_settings(
         catalog_models,
         model_efforts,
         agents,
+        seats: seat_rows(engine, declared),
         roles,
     }
+}
+
+/// The assignable seats: every role an installed plugin declares, paired with
+/// the model the user assigned to it.
+///
+/// `declared` is `(seat key, plugin display name)` from
+/// [`crate::agent::seats::declared_seats`] — the host has already built each
+/// key, so nothing here parses one.
+///
+/// **A seat with no assignment is `None`, never a substituted model.** The
+/// pane renders `None` as "the default model", which is the truth; filling it
+/// in here with `default_model`'s value would make an unassigned seat
+/// indistinguishable on screen from one a user deliberately pinned to the same
+/// model, and only one of those survives a change to the default.
+fn seat_rows(
+    engine: &AgentEngineConfig,
+    declared: &[(String, String)],
+) -> Vec<stella_tui::SeatRow> {
+    let assignments = engine.seat_models.as_ref();
+    declared
+        .iter()
+        .map(|(key, from)| stella_tui::SeatRow {
+            model: assignments.and_then(|map| map.get(key)).cloned(),
+            key: key.clone(),
+            from: from.clone(),
+        })
+        .collect()
 }
 
 /// Rebuild the settings object from an edited snapshot. Models land on
@@ -735,7 +635,6 @@ pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
     let mut agents = AgentEngineAgents::default();
     let mut any_agent = false;
     for (index, role) in EngineRole::ALL.iter().enumerate() {
-        let kind = kind_for(*role);
         let Some(edited) = state.agents.get(index) else {
             continue;
         };
@@ -745,13 +644,8 @@ pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
             .map(str::trim)
             .filter(|m| !m.is_empty())
             .map(str::to_string);
-        match kind {
-            EngineAgentKind::Default => engine.default_model = model,
-            EngineAgentKind::Worker => engine.pipeline_worker_model = model,
-            EngineAgentKind::Verifier => engine.pipeline_verifier_model = model,
-            EngineAgentKind::Triage => engine.pipeline_triage_model = model,
-            EngineAgentKind::Research => engine.pipeline_research_model = model,
-            EngineAgentKind::Plan => engine.pipeline_plan_model = model,
+        match role {
+            EngineRole::Default => engine.default_model = model,
         }
         let params = AgentEngineParams {
             temperature: edited.temperature,
@@ -784,7 +678,9 @@ pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
             params: (params != AgentEngineParams::default()).then_some(params),
         };
         if agent != AgentEngineAgent::default() {
-            *agents.get_mut(kind) = Some(agent);
+            match role {
+                EngineRole::Default => agents.default = Some(agent),
+            }
             any_agent = true;
         }
     }
@@ -804,51 +700,25 @@ mod tests {
         serde_json::from_str(json).expect("valid engine config json")
     }
 
-    /// The whole point of the baseline is that it resolves to real, routable
-    /// specs through the SAME path a hand-written config takes — not to a
-    /// shape that only looks right in the struct.
+    /// The whole point of the baseline is that it resolves through the SAME
+    /// path a hand-written config takes — not to a shape that only looks right
+    /// in the struct.
+    ///
+    /// It carried a verifier and a triage row until #3908, and this test
+    /// asserted both routed through the gateway. Those rows are gone with the
+    /// roles they staffed, so what is left to assert is the half that was
+    /// always the subtle one: the baseline pins the driver's POSTURE and
+    /// deliberately not its model, because a model here would outrank an
+    /// explicit `--model`.
     #[test]
-    fn openrouter_baseline_routes_every_role_through_the_gateway() {
+    fn the_openrouter_baseline_pins_posture_and_never_a_model() {
         let engine = provider_engine_baseline("openrouter").expect("openrouter has a baseline");
 
-        let verifier = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
-        assert_eq!(verifier.provider, "openrouter");
-        assert_eq!(verifier.model, "anthropic/claude-opus-5");
-
-        let triage = model_spec_for(&engine, EngineAgentKind::Triage, &is_builtin).unwrap();
-        assert_eq!(triage.provider, "openrouter");
-        assert_eq!(triage.model, "z-ai/glm-5.2");
-
-        // The driver's posture, but NOT its model: pinning the model here
-        // would outrank an explicit `--model`, and the provider row already
-        // answers it.
-        let default = tuning_for(&engine, EngineAgentKind::Default);
+        let default = tuning_for(&engine);
         assert_eq!(default.effort, Some(ReasoningEffort::Xhigh));
         assert_eq!(default.reasoning, Some(true));
-        assert_eq!(engine.model_for(EngineAgentKind::Default), None);
-        assert!(model_spec_for(&engine, EngineAgentKind::Default, &is_builtin).is_none());
-    }
-
-    /// Verifier diversity is the reason Opus 5 is the verifier rather than another
-    /// Kimi. `spec_family` reads an OpenRouter spec's family from the routed
-    /// vendor prefix, so this is the check that the default actually achieves
-    /// the cross-family split it claims.
-    #[test]
-    fn openrouter_baseline_verifier_is_a_different_family_from_the_driver() {
-        let engine = provider_engine_baseline("openrouter").unwrap();
-        let verifier = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
-        let driver = ModelSpec {
-            provider: "openrouter".to_string(),
-            model: crate::config::PROVIDERS
-                .iter()
-                .find(|p| p.id == "openrouter")
-                .unwrap()
-                .default_model
-                .to_string(),
-        };
-        assert_eq!(spec_family(&driver), "moonshotai");
-        assert_eq!(spec_family(&verifier), "anthropic");
-        assert_ne!(spec_family(&driver), spec_family(&verifier));
+        assert_eq!(engine.model_for(), None);
+        assert!(model_spec_for(&engine, &is_builtin).is_none());
     }
 
     #[test]
@@ -866,28 +736,22 @@ mod tests {
     }
 
     /// A baseline that could displace a configured value would not be a
-    /// default. Each user field must win while the untouched roles survive.
+    /// default. Each user field must win while what they never mentioned
+    /// survives.
     #[test]
     fn configured_settings_beat_the_baseline_field_by_field() {
         let user = engine_from_json(
-            r#"{"pipeline_verifier_model": "openrouter/openai/gpt-5.5",
-                "headless_scope_bypass": "on",
+            r#"{"headless_scope_bypass": "on",
                 "agents": {"default": {"effort": "low"}}}"#,
         );
         let merged =
             engine_with_provider_baseline("openrouter", &Some(user)).expect("baseline applies");
 
-        // The user's verifier wins...
-        let verifier = model_spec_for(&merged, EngineAgentKind::Verifier, &is_builtin).unwrap();
-        assert_eq!(verifier.model, "openai/gpt-5.5");
-        // ...their effort wins over the baseline's xhigh...
-        let default = tuning_for(&merged, EngineAgentKind::Default);
+        // The user's effort wins over the baseline's xhigh...
+        let default = tuning_for(&merged);
         assert_eq!(default.effort, Some(ReasoningEffort::Low));
-        // ...the baseline still answers where they said nothing (reasoning,
-        // and the triage role they never mentioned)...
+        // ...the baseline still answers where they said nothing...
         assert_eq!(default.reasoning, Some(true));
-        let triage = model_spec_for(&merged, EngineAgentKind::Triage, &is_builtin).unwrap();
-        assert_eq!(triage.model, "z-ai/glm-5.2");
         // ...and the field `overlay` used to drop survives the extra layer.
         assert!(merged.headless_scope_bypass_on());
     }
@@ -935,24 +799,24 @@ mod tests {
     #[test]
     fn model_spec_honors_the_explicit_provider_pin_verbatim() {
         let engine = engine_from_json(
-            r#"{"agents": {"verifier": {"provider": "openrouter", "model": "openai/gpt-5.5"}}}"#,
+            r#"{"agents": {"default": {"provider": "openrouter", "model": "openai/gpt-5.5"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, &is_builtin).unwrap();
         // No prefix splitting: the slug goes to the pinned provider whole.
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "openai/gpt-5.5");
 
         // A provider pin with no model → empty slug (provider default).
-        let engine = engine_from_json(r#"{"agents": {"triage": {"provider": "zai"}}}"#);
-        let spec = model_spec_for(&engine, EngineAgentKind::Triage, &is_builtin).unwrap();
+        let engine = engine_from_json(r#"{"agents": {"default": {"provider": "zai"}}}"#);
+        let spec = model_spec_for(&engine, &is_builtin).unwrap();
         assert_eq!(spec.provider, "zai");
         assert!(spec.model.is_empty());
     }
 
     #[test]
     fn seeded_pin_yields_to_a_qualified_spec_the_catalog_rejects() {
-        // The flat keys hold `provider/slug` specs (the TUI writes them
-        // that way), and the precedence chain hands them to pinned agents
+        // `default_model` holds a `provider/slug` spec (the TUI writes it
+        // that way), and the precedence chain hands it to a pinned agent
         // too. A stale seeded pin must not swallow one into a phantom slug:
         // `zai` + `openrouter/openrouter/auto` routed verbatim produced the
         // unknown-model error `zai/openrouter/openrouter/auto`.
@@ -960,17 +824,17 @@ mod tests {
             r#"{"default_model": "openrouter/openrouter/auto",
                 "agents": {"default": {"provider": "zai"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Default, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, &is_builtin).unwrap();
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "openrouter/auto");
 
         // The TUI-save shape — pin plus a flat spec naming the SAME seeded
         // provider — resolves to the catalog slug, not `provider/provider/…`.
         let engine = engine_from_json(
-            r#"{"pipeline_verifier_model": "anthropic/claude-fable-5",
-                "agents": {"verifier": {"provider": "anthropic"}}}"#,
+            r#"{"default_model": "anthropic/claude-fable-5",
+                "agents": {"default": {"provider": "anthropic"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, &is_builtin).unwrap();
         assert_eq!(spec.provider, "anthropic");
         assert_eq!(spec.model, "claude-fable-5");
 
@@ -978,7 +842,7 @@ mod tests {
         let engine = engine_from_json(
             r#"{"default_model": "glm-5.2", "agents": {"default": {"provider": "zai"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Default, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, &is_builtin).unwrap();
         assert_eq!(spec.provider, "zai");
         assert_eq!(spec.model, "glm-5.2");
 
@@ -986,10 +850,10 @@ mod tests {
         // model whose prefix names another provider — that slug shape is
         // exactly how OpenRouter routes (`openai/gpt-5.5` IS its slug).
         let engine = engine_from_json(
-            r#"{"pipeline_verifier_model": "openai/gpt-5.5",
-                "agents": {"verifier": {"provider": "openrouter"}}}"#,
+            r#"{"default_model": "openai/gpt-5.5",
+                "agents": {"default": {"provider": "openrouter"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, &is_builtin).unwrap();
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "openai/gpt-5.5");
     }
@@ -1004,7 +868,7 @@ mod tests {
             r#"{"default_model": "openrouter/openrouter/auto",
                 "agents": {"default": {"provider": "openrouter"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Default, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, &is_builtin).unwrap();
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "openrouter/auto");
 
@@ -1013,7 +877,7 @@ mod tests {
             r#"{"default_model": "openrouter/anthropic/claude-sonnet-5",
                 "agents": {"default": {"provider": "openrouter"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Default, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, &is_builtin).unwrap();
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "anthropic/claude-sonnet-5");
 
@@ -1024,88 +888,36 @@ mod tests {
             r#"{"default_model": "openrouter/auto",
                 "agents": {"default": {"provider": "openrouter"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Default, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, &is_builtin).unwrap();
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "openrouter/auto");
-    }
-
-    #[test]
-    fn spec_family_groups_vendors_and_unwraps_openrouter_slugs() {
-        let family = |provider: &str, model: &str| {
-            spec_family(&ModelSpec {
-                provider: provider.into(),
-                model: model.into(),
-            })
-        };
-        assert_eq!(family("vertex", "gemini-3-pro"), "google");
-        assert_eq!(family("bedrock", "anything"), "anthropic");
-        assert_eq!(family("openrouter", "openai/gpt-5.5"), "openai");
-        assert_eq!(family("zai", "glm-5.2"), "zai");
-    }
-
-    #[test]
-    fn auto_verifier_prefers_cross_family_then_price_then_list_order() {
-        let engine = engine_from_json(
-            r#"{"allowed_models": [
-                "zai/glm-5.2",
-                "deepseek/deepseek-chat",
-                "anthropic/claude-fable-5"
-            ], "auto_mode": "on"}"#,
-        );
-        // Worker family zai → cross-family candidates are deepseek (1.10
-        // output) and anthropic (15.00 output): price ranks Anthropic first.
-        let spec = auto_verifier_spec(&engine, "zai", &|_| true).unwrap();
-        assert_eq!(spec.provider, "anthropic");
-        // Worker family anthropic → zai (2.20) beats deepseek (1.10).
-        let spec = auto_verifier_spec(&engine, "anthropic", &|_| true).unwrap();
-        assert_eq!(spec.provider, "zai");
-        // Credentials filter: with anthropic unavailable, `anthropic/…` stops
-        // parsing as a qualified spec (the prefix is no longer a configured
-        // provider) and falls through to a bare-slug catalog lookup of the
-        // whole string. The gateway seeds that exact slug — it is OpenRouter's
-        // real wire name for the model — so the same model is still reachable
-        // over a provider we DO hold a credential for, and price still ranks
-        // it above deepseek. Losing the first-party key downgrades the route,
-        // not the verifier.
-        let spec = auto_verifier_spec(&engine, "zai", &|id| id != "anthropic").unwrap();
-        assert_eq!(spec.provider, "openrouter");
-        assert_eq!(spec.model, "anthropic/claude-fable-5");
-        // With neither the vendor nor the gateway, deepseek is the fallback.
-        let spec = auto_verifier_spec(&engine, "zai", &|id| {
-            id != "anthropic" && id != "openrouter"
-        })
-        .unwrap();
-        assert_eq!(spec.provider, "deepseek");
-        // Nothing configured → None (caller falls back to normal routing).
-        assert!(auto_verifier_spec(&engine, "zai", &|_| false).is_none());
     }
 
     #[test]
     fn tuning_applies_auto_modes_over_per_agent_settings() {
         let engine = engine_from_json(
             r#"{"effort_auto": "on", "reasoning_auto": "on",
-                "agents": {"triage": {"effort": "max", "reasoning": "on"},
-                            "verifier": {"prompt": "Verifier hard."}}}"#,
+                "agents": {"default": {"effort": "max", "reasoning": "off",
+                                       "prompt": "Think hard."}}}"#,
         );
-        // Auto overrides the explicit triage settings (that's its contract).
-        let triage = tuning_for(&engine, EngineAgentKind::Triage);
-        assert_eq!(triage.effort, Some(ReasoningEffort::Low));
-        assert_eq!(triage.reasoning, Some(false));
-        let verifier = tuning_for(&engine, EngineAgentKind::Verifier);
-        assert_eq!(verifier.effort, Some(ReasoningEffort::High));
-        assert_eq!(verifier.reasoning, Some(true));
+        // Auto overrides the explicit settings — that is its whole contract,
+        // and it is the reason `/profile` has to switch it off before pinning
+        // an effort of its own.
+        let tuning = tuning_for(&engine);
+        assert_eq!(tuning.effort, Some(AUTO_EFFORT));
+        assert_eq!(tuning.reasoning, Some(AUTO_REASONING));
         // Prompts are never auto-managed.
-        assert_eq!(verifier.prompt.as_deref(), Some("Verifier hard."));
+        assert_eq!(tuning.prompt.as_deref(), Some("Think hard."));
 
         // Autos off → the per-agent settings answer.
         let engine =
-            engine_from_json(r#"{"agents": {"triage": {"effort": "max", "reasoning": "off"}}}"#);
-        let triage = tuning_for(&engine, EngineAgentKind::Triage);
-        assert_eq!(triage.effort, Some(ReasoningEffort::Max));
-        assert_eq!(triage.reasoning, Some(false));
-        // And an untouched agent has no opinions at all.
+            engine_from_json(r#"{"agents": {"default": {"effort": "max", "reasoning": "off"}}}"#);
+        let tuning = tuning_for(&engine);
+        assert_eq!(tuning.effort, Some(ReasoningEffort::Max));
+        assert_eq!(tuning.reasoning, Some(false));
+        // And an untouched config has no opinions at all.
         assert_eq!(
-            tuning_for(&engine, EngineAgentKind::Worker),
+            tuning_for(&AgentEngineConfig::default()),
             AgentTuning::default()
         );
     }
@@ -1113,11 +925,11 @@ mod tests {
     #[test]
     fn tuning_splits_params_between_direct_fields_and_the_rider() {
         let engine = engine_from_json(
-            r#"{"agents": {"worker": {"params": {
+            r#"{"agents": {"default": {"params": {
                 "temperature": 0.3, "max_tokens": 9000, "top_p": 0.9, "seed": 42
             }}}}"#,
         );
-        let worker = tuning_for(&engine, EngineAgentKind::Worker);
+        let worker = tuning_for(&engine);
         assert_eq!(worker.temperature, Some(0.3));
         assert_eq!(worker.max_output_tokens, Some(9000));
         let rider = worker.params.expect("rider");
@@ -1126,11 +938,7 @@ mod tests {
         // temperature/max_tokens alone → no rider at all (byte-stable wire).
         let engine =
             engine_from_json(r#"{"agents": {"worker": {"params": {"temperature": 0.3}}}}"#);
-        assert!(
-            tuning_for(&engine, EngineAgentKind::Worker)
-                .params
-                .is_none()
-        );
+        assert!(tuning_for(&engine).params.is_none());
     }
 
     #[test]
@@ -1279,11 +1087,10 @@ mod tests {
     #[test]
     fn snapshot_roundtrips_through_the_tui_state() {
         let engine = engine_from_json(
-            r#"{"default_model": "anthropic/claude-fable-5",
-                "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
+            r#"{"default_model": "openrouter/openai/gpt-5.5",
                 "allowed_models": ["anthropic/claude-fable-5"],
                 "auto_mode": "off", "effort_auto": "on", "reasoning_auto": "off",
-                "agents": {"verifier": {"provider": "openrouter", "effort": "high",
+                "agents": {"default": {"provider": "openrouter", "effort": "high",
                                       "reasoning": "on",
                                       "params": {"temperature": 0.2, "top_k": 40,
                                                   "verbosity": "low",
@@ -1295,34 +1102,31 @@ mod tests {
             vec!["zai/glm-5.2".into()],
             Default::default(),
             Vec::new(),
+            &[],
         );
         assert!(!state.auto_mode);
         assert!(state.effort_auto);
-        let verifier = state.agent(EngineRole::Verifier).expect("verifier state");
-        assert_eq!(verifier.model.as_deref(), Some("openrouter/openai/gpt-5.5"));
-        assert_eq!(verifier.provider.as_deref(), Some("openrouter"));
-        assert_eq!(verifier.effort.as_deref(), Some("high"));
-        assert_eq!(verifier.reasoning, Some(true));
-        assert_eq!(verifier.top_k, Some(40));
-        assert_eq!(verifier.verbosity.as_deref(), Some("low"));
-        assert_eq!(verifier.service_tier.as_deref(), Some("flex"));
+        let agent = state.agent(EngineRole::Default).expect("default state");
+        assert_eq!(agent.model.as_deref(), Some("openrouter/openai/gpt-5.5"));
+        assert_eq!(agent.provider.as_deref(), Some("openrouter"));
+        assert_eq!(agent.effort.as_deref(), Some("high"));
+        assert_eq!(agent.reasoning, Some(true));
+        assert_eq!(agent.top_k, Some(40));
+        assert_eq!(agent.verbosity.as_deref(), Some("low"));
+        assert_eq!(agent.service_tier.as_deref(), Some("flex"));
 
         let back = settings_from_state(&state);
-        // Models land on the flat keys, agents.model stays clear.
-        assert_eq!(
-            back.pipeline_verifier_model.as_deref(),
-            Some("openrouter/openai/gpt-5.5")
-        );
+        // The model lands on the flat key, agents.default.model stays clear.
         assert_eq!(
             back.default_model.as_deref(),
-            Some("anthropic/claude-fable-5")
+            Some("openrouter/openai/gpt-5.5")
         );
-        let verifier = back.agent(EngineAgentKind::Verifier).expect("verifier");
-        assert!(verifier.model.is_none());
-        assert_eq!(verifier.provider.as_deref(), Some("openrouter"));
-        assert_eq!(verifier.effort, Some(ReasoningEffort::High));
-        assert_eq!(verifier.reasoning, Some(Toggle::On));
-        let params = verifier.params.expect("params");
+        let agent = back.agent().expect("default agent");
+        assert!(agent.model.is_none());
+        assert_eq!(agent.provider.as_deref(), Some("openrouter"));
+        assert_eq!(agent.effort, Some(ReasoningEffort::High));
+        assert_eq!(agent.reasoning, Some(Toggle::On));
+        let params = agent.params.expect("params");
         assert_eq!(params.temperature, Some(0.2));
         assert_eq!(params.service_tier, Some(ServiceTier::Flex));
         // The toggles are written explicitly (an "off" the user chose is
@@ -1337,6 +1141,7 @@ mod tests {
             vec!["zai/glm-5.2".into()],
             Default::default(),
             Vec::new(),
+            &[],
         );
         assert_eq!(state2.agents, state.agents);
         assert_eq!(state2.allowed_models, state.allowed_models);

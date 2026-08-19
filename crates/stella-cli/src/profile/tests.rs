@@ -37,8 +37,9 @@ fn spread() -> Vec<Candidate> {
     ]
 }
 
-fn model_of(plan: &Plan, kind: EngineAgentKind) -> String {
-    plan.pick(kind)
+fn model_of(plan: &Plan) -> String {
+    plan.picks
+        .first()
         .and_then(|p| p.model.as_ref())
         .map(Candidate::qualified)
         .unwrap_or_default()
@@ -63,7 +64,8 @@ fn the_ladder_runs_cheapest_to_most_capable() {
         .into_iter()
         .map(|p| {
             plan(p, &models)
-                .pick(EngineAgentKind::Default)
+                .picks
+                .first()
                 .and_then(|pick| pick.model.as_ref())
                 .map(|c| c.output_usd_per_mtok)
                 .unwrap_or_default()
@@ -78,133 +80,6 @@ fn the_ladder_runs_cheapest_to_most_capable() {
     assert_eq!(picks[3], 75.0, "ultra should take the priciest model");
 }
 
-/// Where a role's pick sits in the price-sorted candidate list.
-fn rank_of(models: &[Candidate], plan: &Plan, kind: EngineAgentKind) -> usize {
-    let mut prices: Vec<f64> = models.iter().map(|c| c.output_usd_per_mtok).collect();
-    prices.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let price = plan
-        .pick(kind)
-        .and_then(|p| p.model.as_ref())
-        .map(|c| c.output_usd_per_mtok)
-        .unwrap();
-    prices.iter().position(|p| *p == price).unwrap()
-}
-
-#[test]
-fn triage_never_outspends_the_worker_and_the_verifier_stays_within_one_rung() {
-    for profile in Profile::ALL {
-        let models = spread();
-        let p = plan(profile, &models);
-        let price = |kind| {
-            p.pick(kind)
-                .and_then(|pick| pick.model.as_ref())
-                .map(|c| c.output_usd_per_mtok)
-                .unwrap_or_default()
-        };
-        assert!(
-            price(EngineAgentKind::Triage) <= price(EngineAgentKind::Worker),
-            "{}: triage outspent the worker",
-            profile.name()
-        );
-        // The verifier may sit one rung below the worker, and only one — that is
-        // the price of keeping it independent when nothing stronger is. Two
-        // rungs down is an outmatched verifier, and capability takes over.
-        let worker = rank_of(&models, &p, EngineAgentKind::Worker);
-        let verifier = rank_of(&models, &p, EngineAgentKind::Verifier);
-        assert!(
-            verifier + 1 >= worker,
-            "{}: verifier sat {} rungs below the worker",
-            profile.name(),
-            worker - verifier
-        );
-    }
-}
-
-#[test]
-fn the_verifier_prefers_a_family_the_worker_is_not_in() {
-    // Balanced puts the worker on `anthropic/claude-sonnet-5`; the only model
-    // that is both stronger and from another family is `openai/gpt-5.5`.
-    let p = plan(Profile::Balanced, &spread());
-    let worker = p.pick(EngineAgentKind::Worker).unwrap();
-    let verifier = p.pick(EngineAgentKind::Verifier).unwrap();
-    assert_ne!(
-        worker.model.as_ref().unwrap().family,
-        verifier.model.as_ref().unwrap().family,
-        "a verifier in the worker's own family lets a shared blind spot pass twice"
-    );
-    assert!(!p.verifier_shares_worker_family);
-}
-
-#[test]
-fn a_verifier_one_rung_below_the_worker_keeps_its_independence() {
-    // Ultra puts the worker on the priciest model, so nothing is both stronger
-    // AND independent. The strongest independent model is one rung down, which
-    // is a near miss rather than an outmatched verifier — losing bias resistance
-    // over a single rung would be overcorrection.
-    let models = spread();
-    let p = plan(Profile::Ultra, &models);
-    assert_eq!(
-        model_of(&p, EngineAgentKind::Worker),
-        "anthropic/claude-fable-5"
-    );
-    assert_eq!(model_of(&p, EngineAgentKind::Verifier), "openai/gpt-5.5");
-    assert_ne!(
-        p.pick(EngineAgentKind::Worker)
-            .unwrap()
-            .model
-            .as_ref()
-            .unwrap()
-            .family,
-        p.pick(EngineAgentKind::Verifier)
-            .unwrap()
-            .model
-            .as_ref()
-            .unwrap()
-            .family
-    );
-    assert!(
-        !p.verifier_shares_worker_family,
-        "independence was kept, so there is no compromise to report"
-    );
-}
-
-#[test]
-fn a_verifier_more_than_one_rung_below_loses_to_capability_and_is_recorded() {
-    // One cheap outsider and a wall of same-family models. The only
-    // independent option is three rungs down — far enough that it could not
-    // follow the work — so capability takes over and the correlation is
-    // reported rather than absorbed.
-    let models = vec![
-        candidate("deepseek", "deepseek-chat", "deepseek", 1.0),
-        candidate("anthropic", "claude-a", "anthropic", 15.0),
-        candidate("anthropic", "claude-b", "anthropic", 40.0),
-        candidate("anthropic", "claude-c", "anthropic", 75.0),
-    ];
-    let p = plan(Profile::Ultra, &models);
-    assert_eq!(model_of(&p, EngineAgentKind::Worker), "anthropic/claude-c");
-    assert_eq!(
-        model_of(&p, EngineAgentKind::Verifier),
-        "anthropic/claude-c"
-    );
-    assert!(
-        p.verifier_shares_worker_family,
-        "a correlated verifier must be reported, not absorbed"
-    );
-}
-
-#[test]
-fn a_single_reachable_family_still_yields_a_verifier() {
-    // One provider, one family — the cross-family preference has nothing to
-    // reach for and must not leave the verifier unset.
-    let only = vec![candidate("anthropic", "claude-fable-5", "anthropic", 75.0)];
-    let p = plan(Profile::Ultra, &only);
-    assert_eq!(
-        model_of(&p, EngineAgentKind::Verifier),
-        "anthropic/claude-fable-5"
-    );
-    assert_eq!(p.ranked_count, 1);
-}
-
 #[test]
 fn unpriced_rows_are_excluded_rather_than_read_as_free() {
     let mut models = spread();
@@ -216,7 +91,7 @@ fn unpriced_rows_are_excluded_rather_than_read_as_free() {
     });
     let p = plan(Profile::Fast, &models);
     assert_eq!(
-        model_of(&p, EngineAgentKind::Default),
+        model_of(&p),
         "deepseek/deepseek-chat",
         "fast took the unpriced gateway row instead of the cheapest known model"
     );
@@ -232,11 +107,8 @@ fn an_all_unpriced_catalog_still_produces_a_plan() {
         candidate("openrouter", "openrouter/auto", "openrouter", 0.0),
     ];
     let p = plan(Profile::Ultra, &models);
-    assert!(p.pick(EngineAgentKind::Default).unwrap().model.is_some());
-    assert_eq!(
-        p.pick(EngineAgentKind::Default).unwrap().effort,
-        Some(ReasoningEffort::Max)
-    );
+    assert!(p.picks.first().unwrap().model.is_some());
+    assert_eq!(p.picks.first().unwrap().effort, Some(ReasoningEffort::Max));
 }
 
 #[test]
@@ -260,26 +132,25 @@ fn effort_is_clamped_down_to_the_rungs_the_provider_exposes() {
         ..candidate("gemini", "gemini-3-pro", "google", 10.0)
     }];
     let pick = plan(Profile::Ultra, &gemini)
-        .pick(EngineAgentKind::Default)
+        .picks
+        .first()
         .cloned()
         .unwrap();
     assert_eq!(pick.effort, Some(ReasoningEffort::High));
     assert_eq!(pick.effort_downgraded_from, Some(ReasoningEffort::Max));
 
-    // The OpenAI shapes stop at high, so `pro`'s xhigh verifier lands on high.
+    // The OpenAI shapes stop at high, so `ultra`'s max lands on high.
     let openai = vec![Candidate {
         effort_levels: OPENAI,
         ..candidate("openai", "gpt-5.5", "gpt", 10.0)
     }];
-    let verifier = plan(Profile::Pro, &openai)
-        .pick(EngineAgentKind::Verifier)
+    let pick = plan(Profile::Ultra, &openai)
+        .picks
+        .first()
         .cloned()
         .unwrap();
-    assert_eq!(verifier.effort, Some(ReasoningEffort::High));
-    assert_eq!(
-        verifier.effort_downgraded_from,
-        Some(ReasoningEffort::Xhigh)
-    );
+    assert_eq!(pick.effort, Some(ReasoningEffort::High));
+    assert_eq!(pick.effort_downgraded_from, Some(ReasoningEffort::Max));
 }
 
 #[test]
@@ -298,7 +169,7 @@ fn a_same_tier_model_that_can_express_the_effort_wins_the_tie() {
         },
     ];
     let p = plan(Profile::Ultra, &models);
-    let pick = p.pick(EngineAgentKind::Default).unwrap();
+    let pick = p.picks.first().unwrap();
     assert_eq!(
         pick.model.as_ref().unwrap().qualified(),
         "anthropic/claude-fable-5"
@@ -328,7 +199,8 @@ fn the_expressiveness_tiebreak_never_leaves_the_price_tier() {
         },
     ];
     let pick = plan(Profile::Balanced, &models)
-        .pick(EngineAgentKind::Default)
+        .picks
+        .first()
         .cloned()
         .unwrap();
     assert_eq!(pick.model.as_ref().unwrap().provider, "gemini");
@@ -356,7 +228,8 @@ fn the_tiebreak_prefers_the_cheapest_expressive_model_in_the_band() {
         },
     ];
     let pick = plan(Profile::Ultra, &models)
-        .pick(EngineAgentKind::Default)
+        .picks
+        .first()
         .cloned()
         .unwrap();
     assert_eq!(
@@ -371,7 +244,8 @@ fn clamping_never_raises_an_effort() {
     // `fast` asks for low everywhere; a provider offering the full ladder must
     // not be nudged up to it.
     let pick = plan(Profile::Fast, &spread())
-        .pick(EngineAgentKind::Default)
+        .picks
+        .first()
         .cloned()
         .unwrap();
     assert_eq!(pick.effort, Some(ReasoningEffort::Low));
@@ -389,10 +263,7 @@ fn a_provider_with_no_effort_knob_gets_no_effort_but_keeps_thinking() {
         effort_levels: &[],
         ..candidate("zai", "glm-5.2", "glm", 5.0)
     }];
-    let pick = plan(Profile::Ultra, &zai)
-        .pick(EngineAgentKind::Default)
-        .cloned()
-        .unwrap();
+    let pick = plan(Profile::Ultra, &zai).picks.first().cloned().unwrap();
     assert_eq!(pick.effort, None);
     assert_eq!(pick.reasoning, Some(true));
 }
@@ -405,7 +276,8 @@ fn a_model_that_cannot_think_carries_neither_effort_nor_a_thinking_switch() {
         ..candidate("openai", "gpt-classic", "gpt", 10.0)
     }];
     let pick = plan(Profile::Ultra, &no_thinking)
-        .pick(EngineAgentKind::Default)
+        .picks
+        .first()
         .cloned()
         .unwrap();
     assert_eq!(pick.effort, None);
@@ -425,8 +297,8 @@ fn ranking_is_reproducible_when_two_models_cost_the_same() {
     let reversed: Vec<Candidate> = tied.iter().rev().cloned().collect();
     let second = plan(Profile::Fast, &reversed);
     assert_eq!(
-        model_of(&first, EngineAgentKind::Default),
-        model_of(&second, EngineAgentKind::Default),
+        model_of(&first),
+        model_of(&second),
         "a price tie must break deterministically, not on catalog order"
     );
 }
@@ -435,9 +307,9 @@ fn ranking_is_reproducible_when_two_models_cost_the_same() {
 
 #[test]
 fn applying_a_profile_turns_the_auto_switches_off() {
-    // `effort_auto: on` overrides every per-agent effort with verifier=high /
-    // worker=medium / triage=low. Left on, `/profile ultra` would print `max`
-    // and run `medium` — the profile must be the authority.
+    // `effort_auto: on` overrides the per-agent effort with its own rung.
+    // Left on, `/profile ultra` would print `max` and run `medium` — the
+    // profile must be the authority.
     let mut engine = AgentEngineConfig {
         auto_mode: Some(Toggle::On),
         effort_auto: Some(Toggle::On),
@@ -448,27 +320,26 @@ fn applying_a_profile_turns_the_auto_switches_off() {
     assert_eq!(engine.effort_auto, Some(Toggle::Off));
     assert_eq!(engine.reasoning_auto, Some(Toggle::Off));
     assert_eq!(engine.auto_mode, Some(Toggle::Off));
-    let worker = engine.agents.as_ref().unwrap().worker.as_ref().unwrap();
-    assert_eq!(worker.effort, Some(ReasoningEffort::Max));
+    let agent = engine.agents.as_ref().unwrap().default.as_ref().unwrap();
+    assert_eq!(agent.effort, Some(ReasoningEffort::Max));
 }
 
 #[test]
-fn applying_a_profile_writes_the_flat_model_keys_and_clears_per_agent_pins() {
+fn applying_a_profile_writes_the_flat_model_key_and_clears_the_per_agent_pin() {
     let mut engine = AgentEngineConfig {
         agents: Some(AgentEngineAgents {
-            worker: Some(AgentEngineAgent {
+            default: Some(AgentEngineAgent {
                 // A stale per-agent pin outranks the flat key, so it would
                 // quietly beat the model the profile just chose.
                 model: Some("openai/gpt-classic".to_string()),
                 ..AgentEngineAgent::default()
             }),
-            ..AgentEngineAgents::default()
         }),
         ..AgentEngineConfig::default()
     };
     apply(&plan(Profile::Fast, &spread()), &mut engine);
     assert_eq!(
-        engine.pipeline_worker_model.as_deref(),
+        engine.default_model.as_deref(),
         Some("deepseek/deepseek-chat")
     );
     assert!(
@@ -476,56 +347,12 @@ fn applying_a_profile_writes_the_flat_model_keys_and_clears_per_agent_pins() {
             .agents
             .as_ref()
             .unwrap()
-            .worker
+            .default
             .as_ref()
             .unwrap()
             .model
             .is_none(),
         "the per-agent pin must be cleared so the flat key decides"
-    );
-    assert!(engine.default_model.is_some());
-    assert!(engine.pipeline_verifier_model.is_some());
-    assert!(engine.pipeline_triage_model.is_some());
-}
-
-/// A profile owns research's and plan's **posture** and deliberately not their
-/// model (#2374).
-///
-/// Both halves matter. Writing the posture is the point — `stella profile fast`
-/// has to be able to reach research, or the role a benchmark could not turn
-/// down simply becomes a role a profile cannot turn down either. Withholding
-/// the model is what keeps "rides the worker" true: a flat
-/// `pipeline_research_model` would survive a `--model` that re-points the
-/// worker for one invocation, and the run would then buy two models while
-/// reporting one.
-#[test]
-fn a_profile_postures_research_and_plan_but_pins_no_model_for_them() {
-    let mut engine = AgentEngineConfig::default();
-    apply(&plan(Profile::Fast, &spread()), &mut engine);
-
-    assert!(
-        engine.pipeline_research_model.is_none() && engine.pipeline_plan_model.is_none(),
-        "a profile must leave both riding the worker's model"
-    );
-    let agents = engine.agents.as_ref().expect("posture rows are written");
-    let research = agents.research.as_ref().expect("research is postured");
-    assert_eq!(research.effort, Some(ReasoningEffort::Low));
-    assert!(research.model.is_none(), "posture only, never a model");
-    assert!(
-        agents
-            .plan
-            .as_ref()
-            .expect("plan is postured")
-            .model
-            .is_none()
-    );
-
-    // And `restore_auto` gives them back, or a profile would be a one-way door
-    // for the two newest rows the way it is not for the other four.
-    crate::profile::restore_auto(&mut engine);
-    assert!(
-        crate::profile::is_auto(&engine),
-        "every row hands the dials back"
     );
 }
 
@@ -535,7 +362,7 @@ fn applying_a_profile_preserves_what_it_does_not_own() {
         allowed_models: Some(vec!["anthropic/claude-fable-5".to_string()]),
         headless_scope_bypass: Some(Toggle::On),
         agents: Some(AgentEngineAgents {
-            verifier: Some(AgentEngineAgent {
+            default: Some(AgentEngineAgent {
                 prompt: Some("You are a strict reviewer.".to_string()),
                 provider: Some("openrouter".to_string()),
                 params: Some(AgentEngineParams {
@@ -545,12 +372,11 @@ fn applying_a_profile_preserves_what_it_does_not_own() {
                 }),
                 ..AgentEngineAgent::default()
             }),
-            ..AgentEngineAgents::default()
         }),
         ..AgentEngineConfig::default()
     };
     apply(&plan(Profile::Pro, &spread()), &mut engine);
-    let verifier = engine.agents.as_ref().unwrap().verifier.as_ref().unwrap();
+    let verifier = engine.agents.as_ref().unwrap().default.as_ref().unwrap();
     assert_eq!(
         verifier.prompt.as_deref(),
         Some("You are a strict reviewer.")
@@ -582,22 +408,18 @@ fn applying_the_same_profile_twice_changes_nothing_the_second_time() {
 
 #[test]
 fn switching_profiles_fully_replaces_the_previous_ones_effort() {
-    // Going ultra → fast must not leave `max` behind on any role.
+    // Going ultra → fast must not leave `max` behind.
     let models = spread();
     let mut engine = AgentEngineConfig::default();
     apply(&plan(Profile::Ultra, &models), &mut engine);
     apply(&plan(Profile::Fast, &models), &mut engine);
-    let agents = engine.agents.as_ref().unwrap();
-    for agent in [
-        &agents.default,
-        &agents.worker,
-        &agents.verifier,
-        &agents.triage,
-    ] {
-        let agent = agent.as_ref().unwrap();
-        assert_eq!(agent.effort, Some(ReasoningEffort::Low));
-        assert_eq!(agent.reasoning, Some(Toggle::Off));
-    }
+    let agent = engine
+        .agents
+        .as_ref()
+        .and_then(|agents| agents.default.as_ref())
+        .expect("the profile writes the agent row");
+    assert_eq!(agent.effort, Some(ReasoningEffort::Low));
+    assert_eq!(agent.reasoning, Some(Toggle::Off));
 }
 
 #[test]
@@ -625,7 +447,7 @@ fn detect_reports_a_hand_edited_config_as_no_profile() {
         .agents
         .as_mut()
         .unwrap()
-        .worker
+        .default
         .as_mut()
         .unwrap()
         .effort = Some(ReasoningEffort::Max);
@@ -669,14 +491,13 @@ fn restore_auto_keeps_a_params_object_that_still_has_something_in_it() {
     // profile never owned has to survive, and its `params` with it.
     let mut engine = AgentEngineConfig {
         agents: Some(AgentEngineAgents {
-            worker: Some(AgentEngineAgent {
+            default: Some(AgentEngineAgent {
                 params: Some(AgentEngineParams {
                     seed: Some(7),
                     ..AgentEngineParams::default()
                 }),
                 ..AgentEngineAgent::default()
             }),
-            ..AgentEngineAgents::default()
         }),
         ..AgentEngineConfig::default()
     };
@@ -685,8 +506,8 @@ fn restore_auto_keeps_a_params_object_that_still_has_something_in_it() {
     let worker = engine
         .agents
         .as_ref()
-        .expect("the worker still has a seed, so `agents` must survive")
-        .worker
+        .expect("the agent still has a seed, so `agents` must survive")
+        .default
         .as_ref()
         .unwrap();
     let params = worker.params.as_ref().unwrap();
@@ -705,17 +526,17 @@ fn restore_auto_leaves_model_choices_alone() {
     apply(&plan(Profile::Ultra, &spread()), &mut engine);
     let models = (
         engine.default_model.clone(),
-        engine.pipeline_worker_model.clone(),
-        engine.pipeline_verifier_model.clone(),
-        engine.pipeline_triage_model.clone(),
+        engine.default_model.clone(),
+        engine.default_model.clone(),
+        engine.default_model.clone(),
     );
     restore_auto(&mut engine);
     assert_eq!(
         (
             engine.default_model.clone(),
-            engine.pipeline_worker_model.clone(),
-            engine.pipeline_verifier_model.clone(),
-            engine.pipeline_triage_model.clone(),
+            engine.default_model.clone(),
+            engine.default_model.clone(),
+            engine.default_model.clone(),
         ),
         models
     );
@@ -725,7 +546,7 @@ fn restore_auto_leaves_model_choices_alone() {
 fn restore_auto_preserves_a_custom_prompt_and_temperature() {
     let mut engine = AgentEngineConfig {
         agents: Some(AgentEngineAgents {
-            verifier: Some(AgentEngineAgent {
+            default: Some(AgentEngineAgent {
                 prompt: Some("You are a strict reviewer.".to_string()),
                 params: Some(AgentEngineParams {
                     temperature: Some(0.2),
@@ -733,13 +554,12 @@ fn restore_auto_preserves_a_custom_prompt_and_temperature() {
                 }),
                 ..AgentEngineAgent::default()
             }),
-            ..AgentEngineAgents::default()
         }),
         ..AgentEngineConfig::default()
     };
     apply(&plan(Profile::Pro, &spread()), &mut engine);
     restore_auto(&mut engine);
-    let verifier = engine.agents.as_ref().unwrap().verifier.as_ref().unwrap();
+    let verifier = engine.agents.as_ref().unwrap().default.as_ref().unwrap();
     assert_eq!(
         verifier.prompt.as_deref(),
         Some("You are a strict reviewer.")

@@ -202,6 +202,11 @@ pub const HOST_SURFACE: &[HostVerb] = &[
         summary: "the ranked defect queue this cycle draws its batch from",
     },
     HostVerb {
+        path: "file",
+        emits: Emits::Text,
+        summary: "file a finding as an issue — refused unless it matches this workspace's convention",
+    },
+    HostVerb {
         path: "run start",
         emits: Emits::ShellAssignments,
         summary: "begin a run — the multi-cycle unit a person starts and stops",

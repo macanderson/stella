@@ -367,19 +367,20 @@ fn shots() -> Vec<Shot> {
              vec![key(0.0, 1.0, 0.5, 0.5), key(2.6, 1.35, left(1.35), top(1.35))],
              (0, 2), (1.0, 1.0)),
 
-        // The agent config: global routing, then two role tabs, so the film
-        // shows that per-role model / effort / reasoning is a real editor and
-        // not a settings blurb. Held close throughout — these rows are the
-        // point, and the role tabs draw down to row 17, so close costs nothing.
+        // The agent config: global routing, then the agent tab, so the film
+        // shows that model / effort / reasoning is a real editor and not a
+        // settings blurb. Held close throughout — these rows are the point,
+        // and the agent tab draws down to row 17, so close costs nothing.
+        //
+        // It ran three shots until #3908: `global`, `worker`, `verifier`. Core
+        // has one role now, and a film advertising two more tabs than the deck
+        // draws would be marketing a screen nobody can reach.
         shot("engine config · global", Scene::EngineConfig(EngineTab::Global), 3.2,
              vec![key(0.0, 1.35, left(1.35), top(1.35)), key(1.0, 1.30, left(1.30), top(1.30)),
                   key(3.2, 1.45, left(1.45), top(1.45))], (0, 2), (1.0, 1.0)),
-        shot("engine config · worker", Scene::EngineConfig(EngineTab::Agent(EngineRole::Worker)), 3.2,
-             vec![key(0.0, 1.45, left(1.45), top(1.45)), key(3.2, 1.60, left(1.60), top(1.60))],
-             (0, 3), (1.0, 1.0)),
-        shot("engine config · verifier", Scene::EngineConfig(EngineTab::Agent(EngineRole::Verifier)), 3.0,
-             vec![key(0.0, 1.60, left(1.60), top(1.60)), key(1.2, 1.55, left(1.55), top(1.55)),
-                  key(3.0, 1.0, 0.5, 0.5)], (0, 3), (1.0, 1.0)),
+        shot("engine config · default", Scene::EngineConfig(EngineTab::Agent(EngineRole::Default)), 3.2,
+             vec![key(0.0, 1.45, left(1.45), top(1.45)), key(1.2, 1.55, left(1.55), top(1.55)),
+                  key(3.2, 1.0, 0.5, 0.5)], (0, 3), (1.0, 1.0)),
 
         // The tool surface, and out on the whole deck.
         shot("settings · tools", Scene::SettingsTools, 3.4,

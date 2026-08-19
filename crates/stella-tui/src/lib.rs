@@ -119,7 +119,7 @@ pub use envelope::{
     EngineConfigState, EngineRole, EntityField, EntityHit, Inbound, InspectMessage, InspectView,
     InstalledAgentEntry, IssueAction, IssueRow, JournalEra, McpLiveIdentity, McpLookupState,
     McpSearchItem, McpSearchOutcome, McpServerDetail, McpServerInfo, McpToolRow, NotificationInfo,
-    RecordedCallInfo, Secret, SessionInfo, SessionPhase, SkillOp, SkillRow, SkillScope,
+    RecordedCallInfo, SeatRow, Secret, SessionInfo, SessionPhase, SkillOp, SkillRow, SkillScope,
     SkillSearchHit, SkillsView, SplashCue, ToolDenial, ToolPolicyState, ToolRow, ToolScope,
     WorkspaceInput,
 };

@@ -107,12 +107,16 @@ class TestSeatEnvironment:
         )
         return runner._agent_environment(spec, seat, run), run.notes
 
-    def test_a_clean_match_exports_nothing(self, tmp_path: Path) -> None:
+    def test_a_clean_match_exports_nothing(
+        self, tmp_path: Path, stella_adapter: Path
+    ) -> None:
         env, notes = self._env(match_from_toml(_toml_dict()), tmp_path)
         assert LINEAGE_ENV not in env
         assert not any("lineage" in note for note in notes)
 
-    def test_a_seeded_match_exports_the_id_and_says_so(self, tmp_path: Path) -> None:
+    def test_a_seeded_match_exports_the_id_and_says_so(
+        self, tmp_path: Path, stella_adapter: Path
+    ) -> None:
         env, notes = self._env(match_from_toml(_toml_dict(lineage="lin")), tmp_path)
         assert env[LINEAGE_ENV] == "lin"
         assert any("SEEDED from lineage lin" in note for note in notes)

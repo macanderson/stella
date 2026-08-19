@@ -284,7 +284,30 @@ class TestCheckoutDiscovery:
         monkeypatch.delenv(sut.STELLA_REPO_ENV, raising=False)
         monkeypatch.delenv("ARENABENCH_STELLA_ADAPTER", raising=False)
 
-    def test_the_checkout_this_arena_runs_from_needs_no_configuration(self) -> None:
+    @pytest.fixture
+    def nested_in_a_checkout(self) -> Path:
+        """The checkout this package sits inside, or skip.
+
+        Three tests below assert the walk-up *succeeds*, and their premise is
+        that this package ships inside the repository it measures. That is a
+        fact about the layout, not about the code: it holds in the Stella
+        monorepo and stops holding the moment this folder is its own
+        repository (#3919). The other tests in this class assert the walk-up
+        correctly *declines* — an unrelated checkout, a misconfigured env —
+        and hold either way, so they take no fixture and keep running.
+        """
+        repo = sut.stella_repo()
+        if repo is None:
+            pytest.skip(
+                "this package is not nested inside a Stella checkout, so "
+                "there is no walk-up to succeed: "
+                f"{sut.repo_problem()}"
+            )
+        return repo
+
+    def test_the_checkout_this_arena_runs_from_needs_no_configuration(
+        self, nested_in_a_checkout: Path
+    ) -> None:
         found = sut.stella_repo()
         assert found is not None, (
             "the arena refused to name the checkout it is executing out of"
@@ -359,7 +382,7 @@ class TestCheckoutDiscovery:
         )
 
     def test_a_pinned_seat_launches_with_nothing_configured(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nested_in_a_checkout: Path
     ) -> None:
         """The whole point, end to end: a staged binary for the pinned commit
         is enough to launch, with no arena-specific environment at all."""
@@ -367,7 +390,7 @@ class TestCheckoutDiscovery:
         assert sut.sut_problem_for(self._spec(head)) is None
 
     def test_the_launch_wires_the_adapter_from_that_same_checkout(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nested_in_a_checkout: Path
     ) -> None:
         """Launching is not enough if the seat then runs nothing.
 

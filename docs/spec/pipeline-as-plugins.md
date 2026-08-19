@@ -728,16 +728,18 @@ Order, easiest and least risky first:
 3. **vera** — `after_turn` + `judge`. Needs A10 (worktrees) and A6 (structured
    verdicts). Ported, not copied: see §8.
 4. **stella-candidates** — the heaviest, needs `again?` with different setup per
-   round. **Unblocked on the socket, blocked on a host.** The capability it
-   needed now exists: `candidate_fanout` asks for N isolated writable
+   round. **Writable now.** `candidate_fanout` asks for N isolated writable
    workspaces each running a full worker turn, `adopt_candidate` lands one and
    discards the rest, `[loop] max_fanout_width` is the manifest ceiling, and
    `stella_runtime::wrapper::CandidateFanouts` is the plane (#3844,
-   `doc:wrapper-socket` §6b). What is still missing is an **isolation
-   substrate**: no shipped driver implements `CandidateWorkspaces`, so both
-   calls answer `unavailable` today. Until one does, a `stella-candidates`
-   built on this would degrade to exactly the "bounded retry over the shared
-   tree" it must not ship as.
+   `doc:wrapper-socket` §6b) — over a real isolation substrate as of #3892:
+   `crates/stella-cli/src/candidate_workspaces.rs` gives each candidate its own
+   `git worktree`, runs a writing worker turn rooted there, and lands the
+   winner by applying its diff to the real tree.
+   `stella run --pipeline <variant>` installs it; `stella goal` declines it for
+   the receipt-slot reason `doc:wrapper-socket` §6b names. So a
+   `stella-candidates` built on this is genuinely best-of-N and no longer
+   degrades to the "bounded retry over the shared tree" it must not ship as.
 5. **stella-goal** — folded in last so it stops being a second copy.
 
 **The bar for each:** a side-by-side benchmark holds before the built-in path is

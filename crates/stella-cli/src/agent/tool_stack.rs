@@ -19,8 +19,10 @@
 //! per surface for reasons this module has no opinion about. What must *not*
 //! differ is everything above the base, and the [`Principal`] naming who the
 //! stack acts as: the human at the keyboard for an interactive or one-shot
-//! turn, the dispatched lane for a subsession or fleet worker, the pipeline
-//! role for a candidate workspace.
+//! turn, the dispatched lane for a subsession or fleet worker, the installed
+//! plugin for a best-of-N candidate workspace (#3892 — it read "the pipeline
+//! role" while the staged pipeline minted candidates; that crate is gone
+//! (#3865) and a candidate is asked for by a plugin now).
 //!
 //! # The gate is `NoAuthz`, and that is written down here
 //!
@@ -151,11 +153,30 @@ pub(crate) fn policy_stack<'a>(
     principal: Principal,
     bus: Option<HookBus>,
 ) -> GatedToolSet<'a> {
-    let permitted = PolicyToolSet::new(base, session_tool_policy(cfg));
     with_journal(
-        GatedToolSet::new_boxed(Box::new(permitted), session_gate(), principal),
+        policy_stack_with(base, session_tool_policy(cfg), principal),
         bus,
     )
+}
+
+/// [`policy_stack`] with the policy passed in and no journal — the explicit
+/// sibling, standing to it as [`session_stack_with_gate`] stands to
+/// [`session_stack`].
+///
+/// It exists for one caller that genuinely cannot supply the others: a
+/// best-of-N candidate's turn assembles its chain *inside the child's own
+/// thread*, over the rooted registry that thread owns
+/// ([`crate::subagent::SessionSubAgents::dispatch_in_workspace`]). A `&Config`
+/// would have to be cloned across that boundary to derive a policy the caller
+/// has already derived, and the rooted registry carries no session bus to
+/// journal onto — so both are named here rather than re-derived there.
+pub(crate) fn policy_stack_with<'a>(
+    base: &'a dyn ToolExecutor,
+    policy: ToolPolicy,
+    principal: Principal,
+) -> GatedToolSet<'a> {
+    let permitted = PolicyToolSet::new(base, policy);
+    GatedToolSet::new_boxed(Box::new(permitted), session_gate(), principal)
 }
 
 #[cfg(test)]
