@@ -572,7 +572,7 @@ mod tests {
                  "mcp": { "registry_url": "https://r" },
                  "ui": { "theme": "stella-dark" },
                  "tools": { "bash": "off", "some-mcp-server__thing": "off" },
-                 "enable_recap": "on",
+                 "ignore_gitignore": "on",
                  "agent_engine_config": {
                    "default_model": "zai/glm-5.2",
                    "agents": { "verifier": { "provider": "openrouter",

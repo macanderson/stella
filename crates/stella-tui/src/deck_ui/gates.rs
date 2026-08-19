@@ -1,15 +1,17 @@
-//! The focused agent's blocking gates: the plan-review dialog, the per-hunk
-//! approval card (#1265), and the `ask_user` question.
+//! The focused agent's blocking gates: the per-hunk approval card (#1265) and
+//! the `ask_user` question.
 //!
-//! All three follow one rule — a pending, unanswered gate owns the user's next
+//! Both follow one rule — a pending, unanswered gate owns the user's next
 //! submission. That rule is what makes a gate answerable at all: the deck's
 //! driver reads any other mid-turn submission as a *new request* and spawns a
 //! sidecar sub-session for it, so a gate that does not claim the submit chord
 //! watches the reviewer's words go to a different agent while it stays parked.
-//! The plan-review gate goes further: it is a modal dialog
-//! ([`crate::views::scope_dialog`]) that owns the whole keyboard, answered
-//! with a single keypress. Split out of `deck_ui.rs` beside `nav`/`create`
-//! (#458).
+//! Split out of `deck_ui.rs` beside `nav`/`create` (#458).
+//!
+//! A third gate lived here: the plan-review dialog, a modal that owned the
+//! whole keyboard and was answered with a single keypress. It was removed in
+//! #3861 — nothing has raised its card since the staged pipeline was deleted
+//! (#3865), so its keys answered a question no door asked.
 
 use super::*;
 

@@ -89,12 +89,12 @@ fn the_edit_reader_refuses_a_file_it_cannot_parse() {
     let wrong_type = write(
         dir.path(),
         "wrong-type.json",
-        r#"{"enable_recap": true,
+        r#"{"ignore_gitignore": true,
             "agent_engine_config": {"default_model": "zai/glm-5.2"}}"#,
     );
     assert!(
         user_engine_config_at(&wrong_type).is_err(),
-        "`enable_recap` is a Toggle, not a bool — the read must refuse rather \
+        "`ignore_gitignore` is a Toggle, not a bool — the read must refuse rather \
          than hand back an empty config the caller would then persist"
     );
 }

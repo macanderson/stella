@@ -2,11 +2,11 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! One visual vocabulary for a plan step's lifecycle, shared by every surface
-//! that draws steps — the rail ([`crate::views::plan_rail`]), the `/plan` card
-//! ([`crate::views::plan_card`]), and the plan-review dialog
-//! ([`crate::views::scope_dialog`]). The rail and the card used to carry two
+//! that draws steps — the rail ([`crate::views::plan_rail`]) and the `/plan`
+//! card ([`crate::views::plan_card`]). The rail and the card used to carry two
 //! hand-copied versions of the same style match, which is exactly how the two
-//! surfaces drift apart one tweak at a time.
+//! surfaces drift apart one tweak at a time. A third consumer, the plan-review
+//! dialog, was removed in #3861.
 //!
 //! The mapping is the product spec:
 //!
