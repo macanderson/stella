@@ -226,7 +226,7 @@ async fn a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round() 
         report.outcome
     );
     assert!(
-        matches!(report.outcome, Outcome::Met),
+        matches!(report.outcome, Outcome::Met { .. }),
         "got {:?}",
         report.outcome
     );

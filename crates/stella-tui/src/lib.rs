@@ -85,6 +85,7 @@ pub mod statline;
 pub mod syntax;
 pub mod theme;
 pub mod tool_class;
+pub mod transcript_build;
 pub mod transcript_nav;
 pub mod views;
 
@@ -97,7 +98,7 @@ pub use composer::{
     Submission,
 };
 pub use debug_log::DebugLog;
-pub use input::{ScopeDecision, UserInput};
+pub use input::UserInput;
 pub use model::{FileState, Hud, SessionModel, TranscriptEntry};
 pub use scroll::ScrollState;
 pub use textline::{EventLine, Tone, event_line};

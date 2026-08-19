@@ -26,9 +26,9 @@
 
 
 # -----------------------------------------------------------------------------
-# RUN  ── settings.json `enable_recap`
+# RUN  ── per-run behavior that the JSON kept as bare root scalars
 #
-# The JSON had this as a BARE ROOT SCALAR. TOML gives it a table, because a
+# The JSON had these as BARE ROOT SCALARS. TOML gives them a table, because a
 # bare key attaches to whatever `[table]` precedes it — move one line and it
 # silently becomes that table's key.
 #
@@ -38,13 +38,20 @@
 # schema; anywhere else it would have parsed clean and configured nothing.
 # DESIGN.md §6.3 is that finding; `[run]` is the fix.
 #
-# `on` = print an end-of-run recap in text mode: a deterministic synthesis of
-# the outcome (completed/verified/failed/aborted) and what changed, beside the
-# file and cost panels. No model call. Default off.
+# `recap` and `trace_capture` used to live here. Both were retired in #3870:
+# the code that rendered an end-of-run recap and the module that assembled a
+# trajectory trace were deleted with `crates/stella-pipeline` (#3865), so
+# setting either configured nothing. They are recognised as retired rather
+# than misspelled — `stella` names them and says the feature is gone.
+#
+# `ignore_gitignore`: `on` (the default) = the workspace probe skips paths the
+#   repository's own .gitignore excludes. `off` restores the unfiltered walk.
+# `create_worktrees`: `always` / `ask` / `never` — whether a run does its work
+#   in a throwaway git worktree instead of the checkout.
 # -----------------------------------------------------------------------------
 
 [run]
-recap = "off"
+ignore_gitignore = "on"
 
 
 # -----------------------------------------------------------------------------
@@ -523,7 +530,7 @@ media_requires_host_approval = "on"
 # Source: stella-cli/src/settings.rs `UiSettings`
 #
 # Whole-block last-wins across scopes; carries no authority.
-# (`enable_recap` moved to `[run].recap` — see the RUN block for why a bare
+# (The bare root scalars moved into `[run]` — see the RUN block for why a bare
 #  root scalar is not safe in TOML.)
 # -----------------------------------------------------------------------------
 

@@ -90,8 +90,6 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         mcp,
         agent_engine_config,
         tools,
-        enable_recap,
-        trace_capture,
         ignore_gitignore,
         create_worktrees,
         allowed_dirs,
@@ -115,16 +113,6 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
             agent_engine_config != &d.agent_engine_config,
         ),
         keyed("tools", Posture::Merged, tools != &d.tools),
-        keyed(
-            "enable_recap",
-            Posture::Merged,
-            enable_recap != &d.enable_recap,
-        ),
-        keyed(
-            "trace_capture",
-            Posture::Merged,
-            trace_capture != &d.trace_capture,
-        ),
         keyed(
             "ignore_gitignore",
             Posture::Merged,

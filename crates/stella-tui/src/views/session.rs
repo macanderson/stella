@@ -6,9 +6,7 @@
 //! It **reuses** the shared renderers (`render_hud`, `render_transcript`,
 //! `render_ask_user`, `entry_lines`), just scoped to whichever agent
 //! `ui.focused` points at. No transcript rendering is duplicated — there is
-//! one implementation of "draw a session". (The scope gate renders as the
-//! modal plan-review dialog, `views::scope_dialog`, not as a band. That module
-//! is crate-private, so this names it rather than linking it.)
+//! one implementation of "draw a session".
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -338,10 +336,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // pending at once — nothing clears one when the other arrives — so they
     // render independently, band by band; an
     // ask-user question is never hidden behind a plan review.
-    //
-    // (The scope gate is the exception: it renders as the modal plan-review
-    // dialog over the whole frame — `views::scope_dialog`, drawn by
-    // `deck_render` — so it claims no band here.)
+
     let ask_h: u16 = match &sm.pending_ask_user {
         Some(p) => (p.options.len() as u16 + 5).min(12),
         None => 0,
@@ -717,17 +712,11 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
 
-        // The ask-user gate renders as its band here; the scope gate renders
-        // as the deck-level plan-review dialog — pending simultaneously, so
-        // neither surface hides the other.
+        // The ask-user gate renders as its band here.
         let text = buffer_text(&buf);
         assert!(
             text.contains("Which database should the cache use?"),
-            "ask-user card visible alongside the plan review:\n{text}"
-        );
-        assert!(
-            crate::views::scope_dialog::pending(&model, &ui).is_some(),
-            "the plan-review dialog is up over the deck at the same time"
+            "ask-user card visible:\n{text}"
         );
     }
 
@@ -760,17 +749,12 @@ mod tests {
         });
 
         let mut ui = DeckUi::default();
-        ui.scope_answered.insert("lead".into());
         ui.ask_answered.insert("lead".into());
         let area = Rect::new(0, 0, 90, 40);
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
 
         let text = buffer_text(&buf);
-        assert!(
-            crate::views::scope_dialog::pending(&model, &ui).is_none(),
-            "the answered plan-review dialog drops, so its keys stop firing"
-        );
         assert!(
             text.contains("answer sent — awaiting engine…"),
             "ask-user card reads answered:\n{text}"

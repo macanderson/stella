@@ -1099,32 +1099,6 @@ fn an_esc_claimed_by_the_queue_editor_breaks_the_pair_too() {
 }
 
 #[test]
-fn esc_still_aborts_a_pending_scope_review() {
-    let mut model = model_with(&["lead"]);
-    model.apply_inbound(&Inbound::Event {
-        agent: "lead".into(),
-        event: AgentEvent::ScopeReview {
-            proposal: stella_protocol::ScopeProposal {
-                summary: "big".into(),
-                steps: vec![],
-                estimated_files: 3,
-                estimated_cost_usd: None,
-                ..Default::default()
-            },
-        },
-    });
-    let mut ui = ready_ui();
-    assert_eq!(
-        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
-        DeckAction::Send(WorkspaceInput::ToAgent {
-            agent: "lead".into(),
-            input: UserInput::ScopeDecision(ScopeDecision::Abort),
-        }),
-        "rule 5: the gate claims Esc — never a turn stop"
-    );
-}
-
-#[test]
 fn esc_closes_an_open_diff_before_it_stops_the_turn() {
     let model = running_model();
     let mut ui = ready_ui();
@@ -1219,82 +1193,6 @@ fn agents_updown_moves_focus_and_enter_opens_session() {
     assert_eq!(ui.focused, 1);
     handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
     assert_eq!(ui.tab, DeckTab::Session);
-}
-
-#[test]
-fn focused_scope_gate_routes_decision_to_that_agent() {
-    let mut model = model_with(&["lead"]);
-    model.apply_inbound(&Inbound::Event {
-        agent: "lead".into(),
-        event: AgentEvent::ScopeReview {
-            proposal: stella_protocol::ScopeProposal {
-                summary: "big".into(),
-                steps: vec![],
-                estimated_files: 3,
-                estimated_cost_usd: None,
-                ..Default::default()
-            },
-        },
-    });
-    let mut ui = ready_ui();
-    // One keypress decides — the dialog owns the keyboard (see
-    // `deck_ui::gates` for why that makes a bare letter safe here).
-    let action = handle_deck_key(ch('a'), &model, &mut ui);
-    assert_eq!(
-        action,
-        DeckAction::Send(WorkspaceInput::ToAgent {
-            agent: "lead".into(),
-            input: UserInput::ScopeDecision(ScopeDecision::Approve),
-        })
-    );
-}
-
-#[test]
-fn scope_decision_latches_until_a_fresh_review_rearms() {
-    let scope_review = Inbound::Event {
-        agent: "lead".into(),
-        event: AgentEvent::ScopeReview {
-            proposal: stella_protocol::ScopeProposal {
-                summary: "big".into(),
-                steps: vec![],
-                estimated_files: 3,
-                estimated_cost_usd: None,
-                ..Default::default()
-            },
-        },
-    };
-    let mut model = model_with(&["lead"]);
-    let mut ui = ready_ui();
-    ingest_inbound(&scope_review, &mut model, &mut ui);
-
-    assert_eq!(
-        handle_deck_key(ch('a'), &model, &mut ui),
-        DeckAction::Send(WorkspaceInput::ToAgent {
-            agent: "lead".into(),
-            input: UserInput::ScopeDecision(ScopeDecision::Approve),
-        })
-    );
-    // The gate stays pending until the engine's follow-on event, but the
-    // latch keeps a second press from re-sending — the dialog has dropped,
-    // so the key is ordinary typing and the submit is an ordinary prompt.
-    assert!(model.agents[0].model.pending_scope_review.is_some());
-    handle_deck_key(ch('a'), &model, &mut ui);
-    assert_eq!(
-        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
-        DeckAction::Send(WorkspaceInput::Enqueue { text: "a".into() }),
-        "an answered dialog does not take a second decision"
-    );
-
-    // A FRESH review re-arms the gate.
-    ingest_inbound(&scope_review, &mut model, &mut ui);
-    assert_eq!(
-        handle_deck_key(ch('x'), &model, &mut ui),
-        DeckAction::Send(WorkspaceInput::ToAgent {
-            agent: "lead".into(),
-            input: UserInput::ScopeDecision(ScopeDecision::Abort),
-        }),
-        "a new dialog re-arms the gate"
-    );
 }
 
 #[test]

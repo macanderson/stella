@@ -177,17 +177,6 @@ pub struct Settings {
     /// subject to repository trust and the non-overridable managed ceiling.
     #[serde(default)]
     pub tools: Option<ToolsSettings>,
-    /// `on` = print an end-of-run recap in text mode: a deterministic
-    /// synthesis of the outcome (completed/verified/failed/aborted) and what
-    /// changed, beside the file and cost panels. No model call. Default off.
-    #[serde(default)]
-    pub enable_recap: Option<Toggle>,
-    /// `on` = assemble a trajectory trace after each finished execution
-    /// (#1042): the exact model inputs, staged path, tool activity, and cost,
-    /// appended to `.stella/private/traces.jsonl` and pointed to from the
-    /// run's episode. Local-only by construction. Default off.
-    #[serde(default)]
-    pub trace_capture: Option<Toggle>,
     /// `on` (the default when the key is absent) = the workspace probe skips
     /// paths the repository's own `.gitignore` excludes, so build churn is
     /// never walked, recorded as file touches, or fed to the diff surfaces.
@@ -673,20 +662,6 @@ impl Settings {
             .as_ref()
             .map(ToolsSettings::policy)
             .unwrap_or_default()
-    }
-
-    /// Whether the end-of-run recap is enabled for this workspace. Default
-    /// off; only an explicit `"enable_recap": "on"` in the scope chain turns
-    /// it on (a later `"off"` turns it back off — project wins per field).
-    pub fn recap_enabled(&self) -> bool {
-        self.enable_recap.is_some_and(Toggle::is_on)
-    }
-
-    /// Whether trajectory trace capture (#1042) is enabled. Default off;
-    /// only an explicit `"trace_capture": "on"` in the scope chain turns it
-    /// on (a later `"off"` turns it back off — project wins per field).
-    pub fn trace_capture_enabled(&self) -> bool {
-        self.trace_capture.is_some_and(Toggle::is_on)
     }
 
     /// Whether the workspace probe skips what the repository's own ignore

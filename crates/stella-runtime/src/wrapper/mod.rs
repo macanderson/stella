@@ -78,6 +78,7 @@
 //! clamped per-point allowance, so what the plugin gets is what a human
 //! consented to at install and nothing more.
 
+mod candidate_fanout;
 mod child_turn;
 mod dispatch;
 mod driver_call;
@@ -96,6 +97,11 @@ use stella_plugin::{
 };
 use stella_protocol::completion::CompletionMessage;
 
+pub use candidate_fanout::{
+    CandidateFanoutError, CandidateFanoutPlane, CandidateFanoutSpend, CandidateFanouts,
+    CandidateReport, CandidateWork, CandidateWorkspace, CandidateWorkspaces,
+    DEFAULT_HOST_MAX_FANOUT_WIDTH, DEFAULT_HOST_MAX_FANOUTS,
+};
 pub use child_turn::{ChildTurnPlane, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CHILD_TURNS};
 pub use dispatch::{
     DEFAULT_HOST_MAX_HOLDS, DispatchReport, DrivenTurn, RoundInput, TurnDriver, TurnPrelude,

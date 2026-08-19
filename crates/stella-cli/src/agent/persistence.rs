@@ -152,6 +152,20 @@ pub(crate) async fn close_event_stream(
     renderer.await.unwrap_or_default()
 }
 
+/// Attach a run's two registry-born event streams to the engine's own stream.
+///
+/// The policy/extension audit plane (receipts spec §6.4 — a no-op unless a hook
+/// bus is attached) and the registry's own events (task board, sub-agent
+/// lifecycle) both ride the stream the engine writes to, so a run's live output
+/// and its journal agree. The two are always attached together: a run that
+/// journalled one and not the other would render a transcript that disagrees
+/// with its own replay. Both of `agent.rs`'s run paths had carried a verbatim
+/// copy of this pairing and of the comment explaining it.
+pub(crate) fn attach_run_streams(registry: &ToolRegistry, tx: &stella_core::EventSender) {
+    registry.bridge_policy_plane(tx.clone());
+    registry.attach_events(tx.clone());
+}
+
 /// `durable_pre_persisted` is set when [`super::output::event_sender_for_run`]
 /// already appended every event to Harbor's durable JSONL sink before admitting
 /// it here. The line then only needs publishing to stdout — re-appending would
@@ -162,6 +176,10 @@ pub(crate) fn spawn_renderer(
     execution: Option<(Arc<Store>, i64)>,
     provider_id: String,
     durable_pre_persisted: bool,
+    // The turn's prompt, when the caller has it. It is the anchor every row of
+    // a rendered frame is read against, so a caller that knows it should say
+    // so; `None` simply renders a frame with no `you` row.
+    prompt: Option<String>,
 ) -> tokio::task::JoinHandle<RendererOutcome> {
     tokio::spawn(async move {
         let mut tool_names: HashMap<String, String> = HashMap::new();
@@ -190,6 +208,19 @@ pub(crate) fn spawn_renderer(
         // journal stamp has to stay comparable across processes and runs, and a
         // per-construction origin is exactly the wrong shape for that (#2111).
         let clock = WallClock;
+        // The transcript frame is this surface's default rendering (#3578).
+        // `STELLA_PLAIN_STREAM=1` opts back into the line-by-line cards for a
+        // caller that wants tokens as they arrive rather than a finished turn.
+        let mut transcript = (format == OutputFormat::Text
+            && !plain::transcript::TranscriptPrinter::streaming_requested())
+        .then(|| {
+            let mut printer =
+                plain::transcript::TranscriptPrinter::new(String::new(), provider_id.to_string());
+            if let Some(prompt) = &prompt {
+                printer.start_turn(prompt);
+            }
+            printer
+        });
         while let Some(event) = rx.recv().await {
             bridge.observe(&event);
             let event = if format == OutputFormat::StreamJson {
@@ -274,6 +305,18 @@ pub(crate) fn spawn_renderer(
                 // later unmetered call.
                 OutputFormat::StreamJson => emit_stream_json(&event, durable_pre_persisted, &clock),
                 OutputFormat::Json => outcome.events.push(event),
+                // One frame per turn, folded from the same events the cards
+                // below would each have printed. The two cannot both run: the
+                // frame restates every row, so a surface doing both prints the
+                // turn twice.
+                OutputFormat::Text if transcript.is_some() => {
+                    if let AgentEvent::ToolStart { call } = &event {
+                        tool_names.insert(call.call_id.clone(), call.name.clone());
+                    }
+                    if let Some(printer) = transcript.as_mut() {
+                        printer.observe(&event);
+                    }
+                }
                 OutputFormat::Text => match &event {
                     AgentEvent::ToolStart { call } => {
                         tool_names.insert(call.call_id.clone(), call.name.clone());
@@ -303,6 +346,11 @@ pub(crate) fn spawn_renderer(
                     other => plain::render_event(other),
                 },
             }
+        }
+        // The stream is closed, so the turn is final: print whatever frame the
+        // fold accumulated. A turn that never opened prints nothing.
+        if let Some(printer) = transcript.as_mut() {
+            printer.flush();
         }
         // `RunComplete` is the protocol terminator, not ordinary narration.
         // Hold it until every later accounting/reflection event has drained,
@@ -735,103 +783,7 @@ pub(crate) fn persist_event_detailed(
 }
 
 #[cfg(test)]
-mod pipeline_variant_tests {
-    use super::*;
-
-    /// **The A/B witness.** The wrapper that ran is recorded on the executions
-    /// row — the actual variant id, not a constant.
-    ///
-    /// Failing before #3494 because the only writer was
-    /// [`begin_pipeline_execution`], which passed
-    /// [`PIPELINE_VARIANT_CLASSIC`] unconditionally: two variants produced the
-    /// same value in the column both are supposed to be distinguished by, so
-    /// the comparison `doc:pipeline-as-plugins` §7 justifies the whole
-    /// extraction with could not be made. The `TurnDoor` this asserts through
-    /// did not exist either.
-    #[test]
-    fn the_wrapper_that_ran_is_the_variant_the_row_records() {
-        let store = stella_store::Store::in_memory().expect("store");
-
-        let wrapped = store
-            .begin_execution("run", "make it faster", "anthropic", "claude-opus-5")
-            .expect("begin");
-        let door = TurnDoor::new("run").wrapped_by("budget-v1");
-        assert_eq!(door.kind, "run", "the door is the command, not the wrapper");
-        store
-            .set_pipeline_variant(wrapped, door.variant.expect("a wrapper ran"))
-            .expect("record the variant");
-        assert_eq!(
-            store.pipeline_variant(wrapped).expect("read"),
-            Some("budget-v1".to_string()),
-            "the installed plugin's own id reaches the column, not the built-in's"
-        );
-
-        // ...and the built-in staged pipeline still records its own id rather
-        // than a blank, which is the rule the column shipped with.
-        let classic = store
-            .begin_execution("run", "make it faster", "anthropic", "claude-opus-5")
-            .expect("begin");
-        store
-            .set_pipeline_variant(classic, PIPELINE_VARIANT_CLASSIC)
-            .expect("record");
-        assert_eq!(
-            store.pipeline_variant(classic).expect("read"),
-            Some("classic".to_string())
-        );
-
-        // ...and a raw turn with nothing over it leaves NULL, which is the
-        // positive statement "no wrapper ran", not a missing measurement.
-        let bare = store
-            .begin_execution("run", "make it faster", "anthropic", "claude-opus-5")
-            .expect("begin");
-        assert!(TurnDoor::new("run").variant.is_none());
-        assert_eq!(store.pipeline_variant(bare).expect("read"), None);
-    }
-
-    /// **Pins the goal/fleet honesty fix's call shape (#3381, #3388, #3684).**
-    /// `goal.rs`'s `run_goal_pipeline_turn` and `fleet_cmd.rs`'s `run_task`
-    /// used to call `begin_execution(..., None)` even while the staged
-    /// pipeline drove the round, so `NULL` meant "raw OR classic" there —
-    /// unlike `run`/`deck`. The real fix is the one-line argument each site
-    /// now passes, verified by reading those two lines directly (neither is
-    /// reachable from a unit test without a live provider); this pins that
-    /// `begin_execution`/`pipeline_variant` round-trip both call shapes
-    /// correctly for `"goal"`/`"fleet"` — see `wrapper_plugin::tests` for the
-    /// `resolve`-level witnesses that DO fail on old code.
-    #[test]
-    fn goal_and_fleet_write_classic_honestly_never_a_false_null() {
-        let provider = crate::config::PROVIDERS[0].clone();
-        let cfg = crate::config::Config::for_tests(provider, "test-model".to_string());
-        let store = Some(Arc::new(Store::in_memory().expect("in-memory store")));
-        // What `begin_execution` writes and reads back for `door`/`variant`.
-        let written = |door: &str, v| {
-            let (s, id) = begin_execution(&store, door, "prompt", &cfg, None, v).expect("begin");
-            s.pipeline_variant(id).expect("read")
-        };
-
-        for door in ["goal", "fleet"] {
-            // Classic arm: the wrapper that ran is named, not dropped. Raw
-            // arm: NULL is the honest answer here, not a gap.
-            let msg = format!("{door}: honesty rule");
-            assert_eq!(
-                written(door, Some(PIPELINE_VARIANT_CLASSIC)),
-                Some(PIPELINE_VARIANT_CLASSIC.to_string()),
-                "{msg}"
-            );
-            assert_eq!(written(door, None), None, "{msg}");
-        }
-    }
-
-    /// `PIPELINE_VARIANT_CLASSIC` is now a pure historical literal (the crate
-    /// it used to cross-check against, `stella_pipeline::variant`, is gone —
-    /// see the constant's own doc comment). This only pins the literal's
-    /// spelling so an edit to it is a deliberate, reviewed change to a join
-    /// key already-written rows depend on.
-    #[test]
-    fn the_classic_id_literal_is_unchanged() {
-        assert_eq!(PIPELINE_VARIANT_CLASSIC, "classic");
-    }
-}
+mod pipeline_variant_tests;
 
 #[cfg(test)]
 mod usage_recovery_tests {
@@ -1015,394 +967,7 @@ mod run_terminator_tests {
 }
 
 #[cfg(test)]
-mod stream_tests {
-    use super::*;
-
-    #[test]
-    fn run_complete_is_final_even_when_later_events_arrive() {
-        // Engine `TurnComplete` events pass through inline as ordinary
-        // narration; only the run's `RunComplete` terminator is held back and
-        // emitted last, even when accounting/reflection events follow it in the
-        // channel (#3379).
-        let events = vec![
-            AgentEvent::TurnComplete {
-                model: "worker".into(),
-                cost_usd: 1.0,
-            },
-            AgentEvent::RunComplete {
-                model: "final".into(),
-                cost_usd: 1.25,
-            },
-            AgentEvent::Stage {
-                name: stella_protocol::StageKind::Reflect,
-                scope: stella_protocol::StageScope::Run,
-            },
-        ];
-        let mut terminal = None;
-        let mut ordered: Vec<_> = events
-            .into_iter()
-            .filter_map(|event| defer_stream_terminal(&mut terminal, event))
-            .collect();
-        ordered.extend(terminal);
-
-        // The engine turn completion survives inline.
-        assert!(
-            ordered
-                .iter()
-                .any(|event| matches!(event, AgentEvent::TurnComplete { .. }))
-        );
-        // Exactly one terminator, and it is the last event.
-        assert_eq!(
-            ordered
-                .iter()
-                .filter(|event| matches!(event, AgentEvent::RunComplete { .. }))
-                .count(),
-            1
-        );
-        assert!(matches!(
-            ordered.last(),
-            Some(AgentEvent::RunComplete { model, cost_usd })
-                if model == "final" && (*cost_usd - 1.25).abs() < f64::EPSILON
-        ));
-    }
-
-    #[tokio::test]
-    async fn stream_renderer_persists_reflection_before_the_run_terminator() {
-        let store = std::sync::Arc::new(stella_store::Store::in_memory().expect("store"));
-        let execution_id = store
-            .begin_execution("pipeline", "prompt", "anthropic", "claude")
-            .expect("begin");
-        store
-            .set_execution_session(execution_id, "stream-order")
-            .expect("session");
-        let (tx, rx) = mpsc::unbounded_channel();
-        let renderer = spawn_renderer(
-            rx,
-            OutputFormat::StreamJson,
-            Some((store.clone(), execution_id)),
-            "anthropic".into(),
-            false,
-        );
-        // The engine turn completes inline, then the run owner emits the
-        // terminator — but a reflection event still comes down the channel
-        // after it. The renderer must hold the terminator until that later
-        // event has drained, so `RunComplete` is the final durable line.
-        tx.send(AgentEvent::TurnComplete {
-            model: "worker".into(),
-            cost_usd: 1.0,
-        })
-        .unwrap();
-        tx.send(AgentEvent::RunComplete {
-            model: "worker+reflection".into(),
-            cost_usd: 1.25,
-        })
-        .unwrap();
-        tx.send(AgentEvent::Stage {
-            name: stella_protocol::StageKind::Reflect,
-            scope: stella_protocol::StageScope::Run,
-        })
-        .unwrap();
-        drop(tx);
-
-        let outcome = renderer.await.expect("renderer");
-        assert!(outcome.persistence_complete);
-        let journal = store.session_events("stream-order").expect("journal");
-        assert_eq!(journal.events.len(), 3);
-        // The engine turn completion passes through inline as narration.
-        assert!(matches!(
-            journal.events.first().map(|record| &record.event),
-            Some(AgentEvent::TurnComplete { model, .. }) if model == "worker"
-        ));
-        // The reflection event arrived after the terminator on the wire but is
-        // persisted before it.
-        assert!(matches!(
-            journal.events.get(1).map(|record| &record.event),
-            Some(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Reflect,
-                scope: stella_protocol::StageScope::Run
-            })
-        ));
-        // The run terminator is the final durable line.
-        assert!(matches!(
-            journal.events.last().map(|record| &record.event),
-            Some(AgentEvent::RunComplete { model, cost_usd })
-                if model == "worker+reflection"
-                    && (*cost_usd - 1.25).abs() < f64::EPSILON
-        ));
-    }
-
-    #[test]
-    fn receipt_events_persist_into_queryable_block_and_manifest_rows() {
-        // The increment-1 promise, end to end: a BlockRegistered + StepManifest
-        // pair flowing through persist_event lands as queryable receipt rows,
-        // and the manifest reconstructs the step's block order with token_cost
-        // joined back from the block registry.
-        use stella_protocol::{BlockKind, BlockOrigin, CacheZone, ManifestEntry, ModelCallRole};
-        let store = Store::in_memory().expect("store");
-        let id = store
-            .begin_execution("run", "p", "anthropic", "opus")
-            .expect("exec");
-
-        let registered = AgentEvent::BlockRegistered {
-            block_id: "blk_tool1".into(),
-            kind: BlockKind::ToolResult,
-            origin: BlockOrigin {
-                turn_instance: 0,
-                step: 0,
-                call_id: Some("c1".into()),
-                memory_id: None,
-            },
-            token_cost: 40,
-            content_digest: "sha256:abc".into(),
-            citation_label: None,
-            content: None,
-        };
-        assert!(persist_event(&store, id, 0, &registered, "anthropic"));
-
-        let manifest = AgentEvent::StepManifest {
-            turn_instance: 0,
-            step: 0,
-            call_seq: 0,
-            role: ModelCallRole::Worker,
-            provider: "anthropic".into(),
-            model: "opus".into(),
-            blocks: vec![ManifestEntry {
-                block_id: "blk_tool1".into(),
-                cache_zone: CacheZone::Volatile,
-                token_cost: 40,
-                resident_since_step: 0,
-                message_index: 0,
-                call_id: Some("call_tool1".into()),
-            }],
-            effective_budget_tokens: 136_363,
-            calibration_factor: 1.1,
-            estimated_input_tokens: 40,
-            compiled_frame: None,
-        };
-        assert!(persist_event(&store, id, 1, &manifest, "anthropic"));
-
-        // The block registry row, with its call_id join key and snake_case kind.
-        let blocks = store.context_blocks(id).expect("blocks");
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].block_id, "blk_tool1");
-        assert_eq!(blocks[0].call_id.as_deref(), Some("c1"));
-        assert_eq!(blocks[0].kind, "tool_result");
-
-        // The manifest reconstructs the step's ordered blocks, token_cost joined
-        // back from context_blocks.
-        let entries = store.step_manifest(id, 0, 0, 0).expect("manifest");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].block_id, "blk_tool1");
-        assert_eq!(entries[0].cache_zone, "volatile");
-        assert_eq!(entries[0].token_cost, Some(40));
-    }
-
-    #[test]
-    fn end_to_end_receipt_reconstructs_the_step_byte_exact_from_the_persisted_store() {
-        // The increment-2 gate: the REAL emitter produces a receipt that, once
-        // persisted, reconstructs byte-exact what the model saw — resolved from
-        // the fold (tool I/O, assistant text) + local gaps (system/user), never
-        // from the emitter's in-memory state. Exercises a full tool round-trip.
-        use stella_core::event_sender::EventSender;
-        use stella_core::receipts::ReceiptLedger;
-        use stella_protocol::{CompletionMessage, MessageRole, ToolCall, ToolOutput, ToolResult};
-
-        let call = ToolCall {
-            call_id: "c1".into(),
-            name: "read_file".into(),
-            input: serde_json::json!({ "path": "a.rs" }),
-        };
-        let output = ToolOutput::Ok {
-            content: "fn a() {}".into(),
-            data: None,
-        };
-        // The step-1 input: system, user, assistant (text + tool call), result.
-        let original = vec![
-            CompletionMessage::system("you are a careful engineer"),
-            CompletionMessage::user("fix the failing test"),
-            CompletionMessage {
-                role: MessageRole::Assistant,
-                content: "let me read the file".into(),
-                tool_calls: vec![call.clone()],
-                tool_results: vec![],
-                attachments: vec![],
-            },
-            CompletionMessage {
-                role: MessageRole::Tool,
-                content: String::new(),
-                tool_calls: vec![],
-                tool_results: vec![ToolResult {
-                    call_id: "c1".into(),
-                    output: output.clone(),
-                }],
-                attachments: vec![],
-            },
-        ];
-
-        // Drive the REAL emitter + the journal events the driver would emit.
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let events = EventSender::new(tx);
-        let _ = events.send(AgentEvent::Text {
-            text: "let me read the file".into(),
-        });
-        let _ = events.send(AgentEvent::ToolStart { call: call.clone() });
-        let _ = events.send(AgentEvent::ToolResult {
-            call_id: "c1".into(),
-            output: output.clone(),
-            duration_ms: 5,
-            speculated: false,
-        });
-        let mut ledger = ReceiptLedger::new(0);
-        ledger.set_effective_budget(136_363, 1.1);
-        ledger.emit_step_receipt_estimating(
-            &original,
-            1,
-            stella_core::receipts::ServedBy {
-                role: stella_protocol::ModelCallRole::Worker,
-                provider: "anthropic",
-                model: "opus",
-            },
-            &events,
-        );
-        drop(events);
-
-        // Persist the whole stream exactly as the renderer would.
-        let store = Store::in_memory().expect("store");
-        let id = store
-            .begin_execution("run", "fix the failing test", "anthropic", "opus")
-            .expect("exec");
-        let mut seq = 0u64;
-        while let Ok(event) = rx.try_recv() {
-            persist_event(&store, id, seq, &event, "anthropic");
-            seq += 1;
-        }
-
-        // Reconstruct purely from the persisted store, and prove it byte-exact.
-        let recon = store
-            .reconstruct_worker_step(id, 0, 1)
-            .expect("reconstruct");
-        assert!(
-            recon.is_verified(),
-            "unresolved={:?} mismatches={:?}",
-            recon.unresolved,
-            recon.digest_mismatches
-        );
-        assert_eq!(recon.messages, original);
-    }
-
-    #[test]
-    fn a_decomposed_recall_turn_still_reconstructs_byte_exact() {
-        // The Phase 2 gate (#713): "byte-exact turn reconstruction still
-        // passes, NOW INCLUDING DECOMPOSED RECALL." The recall block splits
-        // into one block per recalled item, the summary and the steer stop
-        // being attributed to the user, and an attachment gets a block of its
-        // own — and after all of that the persisted receipt must still rebuild
-        // the exact messages the model saw.
-        //
-        // This is the single most important assertion in the phase: every other
-        // benefit of decomposition is worthless if the receipt stops being a
-        // faithful record.
-        use stella_core::event_sender::EventSender;
-        use stella_core::receipts::{RECALL_MARKER, ReceiptLedger};
-        use stella_protocol::{Attachment, CompletionMessage, MessageRole};
-
-        let recall = format!(
-            "{RECALL_MARKER}\n\nRelevant context:\n\
-             - [nod_abc123] auth module — always validate the token before use\n\
-             - [nod_def456] deploy runbook — staging first, then production\n\
-             - engine step-driver (driver.rs) — the step loop lives here"
-        );
-        let summary = "[earlier history summarized to fit context — full detail was compacted \
-                       away; re-read files or re-run tools for specifics]\n\nwe read three files";
-        let steer = "[stuck-loop warning] you appear to be looping: same call twice.";
-
-        let original = vec![
-            CompletionMessage::system("you are a careful engineer"),
-            CompletionMessage::user(summary),
-            CompletionMessage::user(recall.clone()),
-            CompletionMessage {
-                role: MessageRole::User,
-                content: "fix the failing test".into(),
-                tool_calls: vec![],
-                tool_results: vec![],
-                attachments: vec![Attachment::from_path(
-                    "screenshot.png",
-                    "image/png",
-                    2048,
-                    "/tmp/screenshot.png",
-                )],
-            },
-            CompletionMessage::user(steer),
-        ];
-
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let events = EventSender::new(tx);
-        let mut ledger = ReceiptLedger::new(0).with_lifecycle(true);
-        ledger.emit_step_receipt_estimating(
-            &original,
-            0,
-            stella_core::receipts::ServedBy {
-                role: stella_protocol::ModelCallRole::Worker,
-                provider: "anthropic",
-                model: "opus",
-            },
-            &events,
-        );
-        drop(events);
-
-        let store = Store::in_memory().expect("store");
-        let id = store
-            .begin_execution("run", "fix the failing test", "anthropic", "opus")
-            .expect("exec");
-        let mut seq = 0u64;
-        let mut kinds: Vec<String> = Vec::new();
-        let mut memory_ids: Vec<String> = Vec::new();
-        while let Ok(event) = rx.try_recv() {
-            if let AgentEvent::BlockRegistered { kind, origin, .. } = &event {
-                kinds.push(enum_tag(kind));
-                if let Some(memory_id) = &origin.memory_id {
-                    memory_ids.push(memory_id.clone());
-                }
-            }
-            persist_event(&store, id, seq, &event, "anthropic");
-            seq += 1;
-        }
-
-        // Decomposition actually happened — otherwise the round-trip below
-        // would pass trivially by never having split anything.
-        assert!(
-            kinds.contains(&"summary".to_string()),
-            "the overflow summary is no longer the user's goal: {kinds:?}"
-        );
-        assert!(
-            kinds.contains(&"steered".to_string()),
-            "the stuck-loop steer is no longer the user's goal: {kinds:?}"
-        );
-        assert!(
-            kinds.contains(&"attachment".to_string()),
-            "the attachment has a block: {kinds:?}"
-        );
-        assert_eq!(
-            kinds.iter().filter(|k| *k == "recalled_frame").count(),
-            4,
-            "one leading segment + three recalled items: {kinds:?}"
-        );
-        // Per-item provenance: the two memory frames resolve to their records.
-        assert_eq!(memory_ids, vec!["nod_abc123", "nod_def456"]);
-
-        // And the receipt is still a faithful record of what the model saw.
-        let recon = store
-            .reconstruct_worker_step(id, 0, 0)
-            .expect("reconstruct");
-        assert!(
-            recon.is_verified(),
-            "unresolved={:?} mismatches={:?}",
-            recon.unresolved,
-            recon.digest_mismatches
-        );
-        assert_eq!(recon.messages, original);
-    }
-}
+mod stream_tests;
 
 #[cfg(test)]
 mod reactor_tests {

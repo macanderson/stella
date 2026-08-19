@@ -77,10 +77,13 @@
 #
 # The second known miss is the mirror of the one documented in
 # scripts/check-left-behind.sh: a `#[test]` inside a STRING LITERAL is counted.
-# Two lines in the tree manage it (crates/stella-pipeline/src/witness/density.rs
-# and crates/stella-cli/src/candidate_ws/witness_tools.rs — both code that
+# Two lines in the tree managed it when this was written
+# (crates/stella-pipeline/src/witness/density.rs and
+# crates/stella-cli/src/candidate_ws/witness_tools.rs — both code that
 # analyses test code, whose fixtures put `#[test]` at the start of a Rust
-# line-continuation inside a literal). A shell script cannot reliably tell
+# line-continuation inside a literal). Both left the workspace with the staged
+# pipeline (#3865), so the tree holds no such line today; the miss is still
+# real for the next one. A shell script cannot reliably tell
 # whether a `#[test]` is inside a string, and this one does not try, for the
 # reason that script gives: a guard that guesses wrong cries wolf.
 #

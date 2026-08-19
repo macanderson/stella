@@ -3,7 +3,8 @@
 //! named load error instead.
 //!
 //! The two fixtures are the load-bearing claim. `wrapper-staged-v1.toml`
-//! transcribes the order `crates/stella-pipeline/src/pipeline.rs` runs today;
+//! transcribes the order the staged pipeline's `pipeline.rs` ran
+//! (`crates/stella-pipeline`, deleted in #3865);
 //! `wrapper-lean-v1.toml` is a cheaper second shape. They differ in nothing
 //! but their text, which is what makes the manifest a declaration the code
 //! reads rather than a description of one hardcoded path.
@@ -61,7 +62,8 @@ fn todays_stage_order_loads_as_a_manifest() {
             StageName::Witness,
             StageName::Verify,
         ],
-        "the order must match stage_rank in stella-pipeline's replay.rs"
+        "the order must match the stage_rank the staged pipeline's replay.rs \
+         defined before #3865 deleted that crate — this enum is the ordering now"
     );
 }
 

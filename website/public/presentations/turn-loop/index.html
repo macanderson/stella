@@ -190,8 +190,8 @@ text{font-family:var(--sans);fill:var(--ink2)}
     <div class="toc-part">
       <div class="h">Part 4 · The routes, end to end</div>
       <a href="#s-routeA"><span class="n">18</span><span>Route A — raw turn (the short one)</span></a>
-      <a href="#s-routeB"><span class="n">19</span><span>Route B — the staged pipeline</span></a>
-      <a href="#s-stages"><span class="n">20</span><span>Pipeline stages — interactive walker</span></a>
+      <a href="#s-routeB"><span class="n">19</span><span>Route B — a wrapper plugin</span></a>
+      <a href="#s-stages"><span class="n">20</span><span>Pipeline stages — historical, deleted #3865</span></a>
       <a href="#s-witness"><span class="n">21</span><span>The witness — proof, not opinion</span></a>
       <a href="#s-routeC"><span class="n">22</span><span>Route C — a turn inside a turn (sub-agents)</span></a>
       <a href="#s-routeD"><span class="n">23</span><span>Route D — goal mode &amp; monitor</span></a>
@@ -222,7 +222,8 @@ text{font-family:var(--sans);fill:var(--ink2)}
   and asks again — until the model stops asking for things.</p>
   <p>That is genuinely the whole engine. Everything else in this deck is one of two things:
   <b>bookkeeping around that loop</b> (money, memory, safety, size) or
-  <b>extra structure wrapped around the loop</b> (planning first, proving afterward).</p>
+  <b>extra structure an installed plugin can wrap around the loop</b> (context before, evidence
+  after) — never on by default.</p>
 
   <div class="viz">
     <div class="vhead"><span class="vtitle">The core loop</span><span class="hint">this runs once per step</span></div>
@@ -300,10 +301,13 @@ text{font-family:var(--sans);fill:var(--ink2)}
   <p class="eyebrow">Part 1 · 03</p>
   <h2>Two loops, six doors</h2>
   <p class="lead">This is the answer to "how many versions of the loop do we have?"
-  The honest answer is <b>two</b>, and one of them is built on top of the other.</p>
-  <p>There is one step loop at the bottom. Above it there is one optional wrapper — the staged
-  pipeline — that adds planning before and proof after. Six commands lead in. Four go through the
-  wrapper, two go straight to the loop.</p>
+  The honest answer is <b>one</b>, plus an optional socket a plugin can attach to.</p>
+  <p>There is one step loop at the bottom, and nothing runs over it by default. An <b>installed
+  wrapper plugin</b> can attach at exactly four points — <code>before_turn</code>,
+  <code>after_turn</code>, <code>judge</code>, <code>again</code> — but only when a door explicitly
+  names it with <code>--pipeline &lt;variant&gt;</code>. Six commands lead in. Today the socket is
+  live on two of them (<code>stella run</code>, full, incl. arbiter-grade; <code>stella goal</code>,
+  steering/observer only — one loop, one arbiter, #3832); the rest always run the raw loop.</p>
 
   <div class="viz">
     <div class="vhead">
@@ -323,19 +327,19 @@ text{font-family:var(--sans);fill:var(--ink2)}
       <text x="30" y="28" font-size="11" fill="#6f7c95" class="mono" letter-spacing="1.5">DOORS</text>
       <g id="doors"></g>
 
-      <text x="470" y="28" font-size="11" fill="#6f7c95" class="mono" letter-spacing="1.5">WRAPPER (OPTIONAL)</text>
+      <text x="470" y="28" font-size="11" fill="#6f7c95" class="mono" letter-spacing="1.5">WRAPPER PLUGIN (OPT-IN, INSTALLED)</text>
       <rect id="pipeBox" x="470" y="46" width="215" height="230" rx="12" fill="#151922" stroke="#333c52"/>
-      <text x="577" y="76" text-anchor="middle" font-size="15" fill="#b28cf0" font-weight="600">Staged pipeline</text>
-      <text x="577" y="98" text-anchor="middle" font-size="12" fill="#6f7c95">plan first, prove after</text>
+      <text x="577" y="76" text-anchor="middle" font-size="15" fill="#b28cf0" font-weight="600">--pipeline &lt;variant&gt;</text>
+      <text x="577" y="98" text-anchor="middle" font-size="12" fill="#6f7c95">named plugin, not a default</text>
       <g class="mono" font-size="11" fill="#a6b0c4">
-        <text x="492" y="126">triage → recall → research</text>
-        <text x="492" y="146">→ plan → scope review</text>
-        <text x="492" y="166" fill="#e2b869">→ EXECUTE ◀ calls the loop</text>
-        <text x="492" y="186">→ witness → verify</text>
-        <text x="492" y="206">→ verdict (↺ revise)</text>
+        <text x="492" y="126">before_turn (context)</text>
+        <text x="492" y="146" fill="#e2b869">→ EXECUTE ◀ calls the loop</text>
+        <text x="492" y="166">→ after_turn (evidence)</text>
+        <text x="492" y="186">→ judge — Stella evaluates</text>
+        <text x="492" y="206">→ again? (↺ ≤ max_holds)</text>
       </g>
-      <text x="577" y="240" text-anchor="middle" font-size="11" fill="#6f7c95">stella-pipeline</text>
-      <text x="577" y="258" text-anchor="middle" font-size="11" fill="#6f7c95">no I/O, no decisions in async</text>
+      <text x="577" y="240" text-anchor="middle" font-size="11" fill="#6f7c95">stella-runtime wrapper socket</text>
+      <text x="577" y="258" text-anchor="middle" font-size="11" fill="#6f7c95">evidence self-reported, never re-run</text>
 
       <text x="730" y="28" font-size="11" fill="#6f7c95" class="mono" letter-spacing="1.5">THE ENGINE</text>
       <rect id="loopBox" x="730" y="46" width="200" height="230" rx="12" fill="#151922" stroke="#e2b869"/>
@@ -357,11 +361,19 @@ text{font-family:var(--sans);fill:var(--ink2)}
     </svg></div>
     <div class="detail" id="doorDetail">
       <h4>Six doors, one engine</h4>
-      <p>Every door ends in the same place. The differences are: does a plan get made first,
-      does a proof get demanded after, who is watching, and where the work is written down.</p>
+      <p>Every door ends in the same place. The differences are: whether it can name a wrapper
+      plugin at all, who is watching, and where the work is written down. Nothing plans or proves
+      by default anywhere.</p>
       <p class="meta">website/content/docs/agent-engine-paths.mdx</p>
     </div>
   </div>
+
+  <div class="note red"><p><b>The crate this box used to draw is gone.</b> A built-in staged
+  pipeline (<code>crates/stella-pipeline</code>) shipped this shape once, as the default for two
+  of these doors. It was deleted (#3852, #3865); <code>--pipeline classic</code> is refused with a
+  typed error naming <code>stella plugin install</code> as the remedy. What is drawn above is the
+  <b>socket</b> that replaced it — the same shape, but only an installed plugin runs it, and only
+  when a door names it.</p></div>
 
   <div class="note"><p><b>The one subtlety.</b> The two direct doors are not the same depth.
   <code>stella --plain</code> calls <code>run_turn</code> and lets it loop.
@@ -393,8 +405,10 @@ text{font-family:var(--sans);fill:var(--ink2)}
       <p>Each turn opens a record: files touched, tools used, memories cited, cost, outcome.
       That record is what <code>stella stats</code> and the dashboard read.</p></div>
     <div class="card"><div class="num">06</div><h4>Model routing applies</h4>
-      <p>Roles — worker, triage, verifier, research, plan — can each be pinned to a different
-      model. Every route that uses a role honors the pin.</p></div>
+      <p>The worker role, goal mode's independent verifier, and any sub-agent role can each be
+      pinned to a different model. An installed wrapper plugin declares its own
+      <code>[roles]</code> the same way — that roster lives on the plugin's side of the socket
+      now, not as built-in pipeline stages.</p></div>
   </div>
 
   <div class="note green"><p><b>Why this matters for a new hire.</b> If you find a bug in the step
@@ -429,7 +443,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
     <li><b>Recall runs</b> — relevant memories and skills for <em>this</em> prompt, gathered
       fresh, added as a separate volatile block afterward.</li>
     <li><b>A budget guard is built</b> from the spend limit, and a record is opened in the store.</li>
-    <li><b>A route is chosen</b> — raw turn or staged pipeline — and the first step begins.</li>
+    <li><b>The first step begins</b> on the raw step loop — unless <code>--pipeline
+      &lt;variant&gt;</code> named an installed wrapper plugin, in which case its
+      <code>before_turn</code> runs first.</li>
   </ol>
 
   <div class="note red"><p><b>Common new-hire mistake.</b> Assuming the system prompt is built once
@@ -827,10 +843,11 @@ text{font-family:var(--sans);fill:var(--ink2)}
 <section class="slide" id="s-routeA" data-title="Route A — raw turn">
   <p class="eyebrow">Part 4 · 18</p>
   <h2>Route A — the raw turn</h2>
-  <p class="lead">The shortest path. No planning, no proof — the model works until it decides it
-  is done. You are the verification.</p>
-  <p><b>Doors:</b> <code>stella run --no-pipeline "…"</code> · <code>stella --plain</code> ·
-  Command Deck with <code>/pipeline</code> off.</p>
+  <p class="lead">The shortest path, and the <b>default everywhere</b>. No planning, no proof — the
+  model works until it decides it is done. You are the verification.</p>
+  <p><b>Doors:</b> <code>stella run "…"</code> (no <code>--pipeline</code> flag) ·
+  <code>stella --plain</code> · Command Deck · <code>stella fleet</code> — every door reaches this
+  route unless it both supports and is explicitly told to name a wrapper plugin.</p>
 
   <div class="viz">
     <div class="vhead"><span class="vtitle">End to end · raw turn</span></div>
@@ -853,36 +870,53 @@ text{font-family:var(--sans);fill:var(--ink2)}
 </section>
 
 <!-- ============ 19 route B ============ -->
-<section class="slide" id="s-routeB" data-title="Route B — staged pipeline">
+<section class="slide" id="s-routeB" data-title="Route B — wrapper plugin">
   <p class="eyebrow">Part 4 · 19</p>
-  <h2>Route B — the staged pipeline</h2>
-  <p class="lead">The default for <code>stella run</code> and for Command Deck turns. It wraps the
-  same step loop with planning before and proof after.</p>
+  <h2>Route B — a wrapper plugin</h2>
+  <p class="lead">Not a default anywhere. You name it: <code>stella run --pipeline
+  &lt;variant&gt;</code>, where <code>&lt;variant&gt;</code> is an <b>installed</b> plugin's
+  declared <code>[wrapper] id</code>. It wraps the same step loop with a plugin's own context
+  before the turn and its own self-reported evidence after.</p>
 
   <div class="viz">
-    <div class="vhead"><span class="vtitle">End to end · staged pipeline</span>
+    <div class="vhead"><span class="vtitle">End to end · wrapper socket</span>
       <span class="hint">the gold box is the whole of Part 3</span></div>
     <div class="svgwrap"><svg viewBox="0 0 940 250" width="940"><g id="routeB"></g></svg></div>
   </div>
 
   <h3>Two rules that shape the whole thing</h3>
   <div class="grid g2">
-    <div class="card"><h4>Verification buys no model call</h4>
-      <p>The verdict is not a model's opinion. It comes from measurements — did a command flip
-      from failing to passing, what does the diff say. There is exactly <b>one</b> extra model
-      call in the whole verification story, and it is the one that <em>writes the test</em>. That
-      survives because it creates the measuring stick rather than replacing it.</p></div>
-    <div class="card"><h4>The pipeline owns the ending</h4>
-      <p>The engine emits its own "complete" event, which is right for one turn and wrong for a
-      plan with a revise loop. So each turn gets a private channel; the pipeline forwards
-      everything except those, and emits the real ending itself.</p></div>
+    <div class="card"><h4>Evidence is self-reported, and evaluated — never re-run</h4>
+      <p>The plugin's own <code>after_turn</code> gathers whatever evidence its manifest declares
+      and reports it. Stella checks that report against the plugin's <b>declared verdict rule</b>
+      and never re-runs or re-checks it. Trusting a plugin's report is the price of installing
+      it — the same trust boundary any executable extension carries.</p></div>
+    <div class="card"><h4>Judge/again is a bounded hold loop</h4>
+      <p><code>WrapperDispatch</code> can hold a round open for another pass — up to
+      <code>max_holds</code> — before letting the turn's real ending through. An arbiter-grade
+      plugin (<code>participation = "arbiter"</code>) owns that hold loop; a steering/observer
+      plugin never holds anything.</p></div>
   </div>
+
+  <div class="note"><p><b>One loop, one arbiter.</b> <code>stella run</code> is the only door that
+  can bind an arbiter-grade plugin — its round loop and the plugin's hold loop are the same loop.
+  <code>stella goal</code> already has its own round-completion arbiter (the goal verifier), so an
+  arbiter-grade plugin there is refused pre-flight, before any paid call (#3832): two round-holders
+  judging the same round is exactly the doubled-supervisor shape this design forbids.</p></div>
 </section>
 
 <!-- ============ 20 stage walker ============ -->
-<section class="slide" id="s-stages" data-title="Pipeline stages">
+<section class="slide" id="s-stages" data-title="Pipeline stages (historical)">
   <p class="eyebrow">Part 4 · 20</p>
-  <h2>The stages, one at a time</h2>
+  <h2>The stages, one at a time — <span style="color:var(--red)">historical</span></h2>
+  <p class="lead">This is not how anything runs today. This is what the built-in
+  <code>crates/stella-pipeline</code> crate did, host-run, before it was deleted (#3852, #3865) in
+  favor of the wrapper socket the previous two slides describe.</p>
+  <p>It stays in this deck because the <em>shape</em> — triage before work, an independent witness,
+  a deterministic verdict ladder — did not disappear. It moved to the plugin side of the socket:
+  an installed verification plugin (Oxagen's Vera is the private reference one) can implement all
+  of this on its own, self-report the result through <code>after_turn</code>, and Stella evaluates
+  that report without re-running it. Nothing below is enforced by Stella itself anymore.</p>
   <div class="viz">
     <div class="vhead">
       <span class="vtitle">Interactive · stage walker</span>
@@ -894,37 +928,46 @@ text{font-family:var(--sans);fill:var(--ink2)}
     <div class="svgwrap"><svg id="stageSvg" viewBox="0 0 940 210" width="940"><g id="stageNodes"></g></svg></div>
     <div class="detail" id="stageDetail"></div>
   </div>
-  <div class="note blue"><p><b>Conditional means conditional.</b> A simple lookup skips planning
-  entirely. Research runs only when triage names actual questions. Scope review fires only above
-  a threshold. The witness is authored only when there is no test command <em>and</em> the change
-  turns out to need one. A cheap task should not pay for ceremony it cannot use.</p></div>
+  <div class="note blue"><p><b>Conditional means conditional — as it worked, then.</b> A simple
+  lookup skipped planning entirely. Research ran only when triage named actual questions. Scope
+  review fired only above a threshold. The witness was authored only when there was no test
+  command <em>and</em> the change turned out to need one. A cheap task did not pay for ceremony it
+  could not use — the same design pressure a plugin author porting this shape inherits today.</p></div>
 </section>
 
 <!-- ============ 21 witness ============ -->
 <section class="slide" id="s-witness" data-title="The witness">
   <p class="eyebrow">Part 4 · 21</p>
   <h2>The witness — proof, not opinion</h2>
-  <p class="lead">Stella's definition of "done" is a test that <b>fails before the change and
-  passes after</b>. Not a model saying it looks right.</p>
+  <p class="lead">"Verified done" means a test that <b>fails before the change and passes after</b>
+  — not a model saying it looks right. But <b>Stella verifies nothing itself.</b> That proof is a
+  property of an installed verification plugin's own <code>after_turn</code> evidence, self-reported
+  and evaluated against the plugin's declared rule, never re-run.</p>
 
   <div class="viz">
     <div class="vhead"><span class="vtitle">The flip</span></div>
     <div class="svgwrap"><svg viewBox="0 0 900 150" width="900"><g id="flipSvg"></g></svg></div>
   </div>
 
-  <h3>Four rules that make the proof mean something</h3>
+  <h3>What a plugin can choose to implement, vs. what Stella still enforces</h3>
   <div class="grid g2">
-    <div class="card"><div class="num">01</div><h4>A different model writes the test</h4>
-      <p>Never the model that did the work. Someone marking their own homework proves nothing.</p></div>
-    <div class="card"><div class="num">02</div><h4>The author is blind to the change</h4>
-      <p>It works in a clean copy of the tree from <em>before</em> the work. It cannot see the
-      diff — so it cannot write a test that just restates the patch.</p></div>
-    <div class="card"><div class="num">03</div><h4>Three tools, and no more</h4>
-      <p>Read a file, list files by pattern, create exactly one test. No shell, no writes, no
-      network. Enforced by its executor, not by asking nicely in a prompt.</p></div>
-    <div class="card"><div class="num">04</div><h4>Tampering voids the credit</h4>
-      <p>The test file's identity is pinned. A worker that edits the witness does not get credit
-      for "passing" it.</p></div>
+    <div class="card"><div class="num">01</div><h4>A plugin's choice: who writes the test</h4>
+      <p>Oxagen's Vera authors a fresh test with a model that never saw the change — the built-in
+      pipeline's old design, ported to plugin-side. The three reference <code>verify-*</code>
+      plugins take a different, simpler path: they just run a test command the candidate grant
+      names. Both are legitimate; neither is something Stella mandates.</p></div>
+    <div class="card"><div class="num">02</div><h4>A plugin's choice: how tightly the author is scoped</h4>
+      <p>An authoring plugin can work in a clean pre-change tree with a three-tool allowlist —
+      read, list, create-one-test — enforced by its own executor. That enforcement lives in the
+      plugin's process, not in a stage Stella runs.</p></div>
+    <div class="card"><div class="num">03</div><h4>Still host-enforced: the candidate grant</h4>
+      <p>Minting the grant a witness-flavoured plugin's flip-crediting depends on is
+      <code>stella-plugin</code>'s job (<code>src/candidate_grant.rs</code>), on Stella's side of
+      the socket.</p></div>
+    <div class="card"><div class="num">04</div><h4>Still host-enforced: tampering voids the credit</h4>
+      <p>The test file's identity is pinned by the host's tamper watch. A worker that edits the
+      witness does not get credit for "passing" it — the one piece of this story Stella still
+      polices directly, regardless of which plugin is installed.</p></div>
   </div>
 
   <div class="note"><p><b>Honest failure is a feature.</b> If a witness cannot be <em>produced</em>
@@ -996,9 +1039,12 @@ text{font-family:var(--sans);fill:var(--ink2)}
       even visible to it. It structurally cannot edit its way to a passing verdict.</p></div>
   </div>
 
-  <p>Each working round is a pipeline run by default; <code>--no-pipeline</code> makes rounds raw
-  turns instead. Two layers of verification is real rigor and you pay for it in money and time —
-  drop the inner one when the goal verifier alone is enough.</p>
+  <p>Each working round runs the raw step loop by default. <code>--pipeline &lt;variant&gt;</code>
+  can attach an installed plugin per round for steering/observer context only — an arbiter-grade
+  plugin is refused pre-flight, because this door's round loop is already its one arbiter (one
+  loop, one arbiter, #3832). Layering one in where it's allowed is real rigor and you pay for it
+  in money and time — most goals don't need it, since the round verifier alone is already
+  independent.</p>
 
   <div class="note"><p><b><code>stella monitor</code> is not a seventh route.</b> It is goal mode
   with the goal pinned to "the latest CI run for this target is fully green". Same machinery,
@@ -1022,8 +1068,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
 
   <div class="grid g3">
     <div class="card"><h4>Same engine per task</h4>
-      <p>Each worker drives the pipeline when available, the raw loop otherwise. Nothing new
-      below the waterline.</p></div>
+      <p>Every worker runs the raw step loop today — <code>--pipeline &lt;variant&gt;</code> is
+      refused on this door (#3695 tracks wiring a fleet worker's driver into the wrapper socket).
+      Nothing new below the waterline.</p></div>
     <div class="card"><h4>Two isolation modes</h4>
       <p>One shared tree with cooperative file claims, or a dedicated private worktree for tasks
       marked isolated.</p></div>
@@ -1072,23 +1119,28 @@ text{font-family:var(--sans);fill:var(--ink2)}
   <p class="eyebrow">Part 4 · 26</p>
   <h2>All six routes side by side</h2>
   <div class="scroller"><table>
-    <tr><th>Route</th><th>Command</th><th>Plans first?</th><th>Proves after?</th><th>Loop driver</th><th>Best for</th></tr>
-    <tr><td>A · Raw turn</td><td class="mono">run --no-pipeline<br>--plain</td><td>No</td><td>No</td><td class="mono">run_turn</td><td>Questions, small edits</td></tr>
-    <tr><td>B · Pipeline</td><td class="mono">stella run<br>stella (deck)</td><td>Yes</td><td>Yes</td><td class="mono">pipeline → run_turn</td><td>Work that must be right</td></tr>
-    <tr><td>C · Sub-agent</td><td class="mono">task_assign<br>(agent-initiated)</td><td>No</td><td>Parent reviews</td><td class="mono">run_turn (child)</td><td>Noisy side quests</td></tr>
-    <tr><td>D · Goal</td><td class="mono">stella goal<br>stella monitor</td><td>Per round</td><td>Independent verifier</td><td class="mono">rounds → pipeline/run_turn</td><td>Clear outcome, unclear steps</td></tr>
-    <tr><td>E · Fleet</td><td class="mono">stella fleet</td><td>Per task</td><td>Per task</td><td class="mono">per task → pipeline/run_turn</td><td>A backlog, not a task</td></tr>
-    <tr><td>F · Serve</td><td class="mono">stella-serve</td><td>Host's choice</td><td>Host's choice</td><td class="mono">run_step (host drives)</td><td>Durable hosts, checkpoints</td></tr>
+    <tr><th>Route</th><th>Command</th><th>Wrapper plugin?</th><th>Loop driver</th><th>Best for</th></tr>
+    <tr><td>A · Raw turn</td><td class="mono">run<br>--plain</td><td>No socket here</td><td class="mono">run_turn</td><td>Questions, small edits</td></tr>
+    <tr><td>B · Wrapper plugin</td><td class="mono">stella run --pipeline &lt;v&gt;</td><td>Yes — full, incl. arbiter</td><td class="mono">WrapperDispatch → run_turn</td><td>Work that must be right</td></tr>
+    <tr><td>C · Sub-agent</td><td class="mono">task_assign<br>(agent-initiated)</td><td>Inherits parent's</td><td class="mono">run_turn (child)</td><td>Noisy side quests</td></tr>
+    <tr><td>D · Goal</td><td class="mono">stella goal --pipeline &lt;v&gt;<br>stella monitor</td><td>Steering/observer only — arbiter refused</td><td class="mono">rounds → run_turn</td><td>Clear outcome, unclear steps</td></tr>
+    <tr><td>E · Fleet</td><td class="mono">stella fleet</td><td>Refused today (#3695)</td><td class="mono">per task → run_turn</td><td>A backlog, not a task</td></tr>
+    <tr><td>F · Serve</td><td class="mono">stella-serve</td><td>No socket here</td><td class="mono">run_step (host drives)</td><td>Durable hosts, checkpoints</td></tr>
   </table></div>
 
   <div class="note green"><p><b>Read the "loop driver" column top to bottom.</b> Every row ends at
-  the same two functions. That is the entire "how many loops do we have" answer, in one column.</p></div>
+  the same two functions. That is the entire "how many loops do we have" answer, in one column —
+  a wrapper plugin sits above <code>run_turn</code>, it never replaces it.</p></div>
 
   <h3>Each route stamps its own label on the record</h3>
-  <p>Every turn writes an execution record tagged with which door it came through —
+  <p>Every turn writes an execution record tagged with which <b>door</b> it came through —
   <code>run</code>, <code>chat</code>, <code>deck</code>, <code>deck-sub</code>,
-  <code>goal</code>, <code>pipeline</code>. That is why a cost row in the dashboard always traces
-  back to a door. The store is ordinary SQLite; you can ask it directly.</p>
+  <code>goal</code>, <code>fleet</code> — in the <code>kind</code> column. A separate
+  <code>pipeline_variant</code> column names the wrapper that ran over it, or is
+  <code>NULL</code> for the ordinary unwrapped case; <code>pipeline</code> is not a door, it is
+  history — rows written before the split migrated to <code>kind='run',
+  pipeline_variant='classic'</code>. That is why a cost row in the dashboard always traces back to
+  a door <em>and</em> to whatever wrapped it. The store is ordinary SQLite; you can ask it directly.</p>
 </section>
 
 <!-- ============ 27 record ============ -->
@@ -1210,13 +1262,16 @@ text{font-family:var(--sans);fill:var(--ink2)}
 
   <h3>If you remember five things from this deck</h3>
   <ol>
-    <li>There is <b>one</b> step loop and <b>one</b> optional wrapper. Six doors, two loops.</li>
+    <li>There is <b>one</b> step loop, and nothing runs over it by default. An optional wrapper
+      socket exists — live on <code>stella run</code> and <code>stella goal</code> only — for an
+      installed plugin an operator names explicitly.</li>
     <li>Twelve phases per step. Six ask "should we call the model", one calls it, five handle
       the answer.</li>
     <li>Turns end at <b>step boundaries</b>, never mid-tool. The budget cannot abort anything by
       itself — that is deliberate.</li>
     <li>Reads run in parallel; anything that writes runs alone, in order.</li>
-    <li>Done means a test <b>flipped</b>, not a model said so.</li>
+    <li>"Verified done" means a test <b>flipped</b>, not a model said so — and that proof is a
+      plugin's self-reported evidence, evaluated by Stella, never Stella's own claim.</li>
   </ol>
 </section>
 
@@ -1241,9 +1296,10 @@ text{font-family:var(--sans);fill:var(--ink2)}
     <tr><td>The port boundary</td><td class="mono">stella-core/src/ports.rs</td></tr>
     <tr><td>Hook decision folding</td><td class="mono">stella-core/src/hooks/decision.rs</td></tr>
     <tr><td>The tool foundry detector</td><td class="mono">stella-core/src/tool_foundry.rs</td></tr>
-    <tr><td>Stage sequencing</td><td class="mono">crates/stella-pipeline/src/pipeline.rs</td></tr>
-    <tr><td>Witness authoring and acceptance</td><td class="mono">stella-pipeline/src/witness.rs + pipeline/witness_stage.rs</td></tr>
-    <tr><td>The verdict ladder</td><td class="mono">stella-pipeline/src/verify.rs</td></tr>
+    <tr><td>Wrapper socket — before_turn/after_turn, judge/again, transports</td><td class="mono">crates/stella-runtime/src/wrapper/</td></tr>
+    <tr><td>Plugin manifest, evidence, wire contract</td><td class="mono">crates/stella-plugin/src/{manifest,evidence,wire}.rs</td></tr>
+    <tr><td>Door → wrapper choice, --pipeline classic refusal</td><td class="mono">crates/stella-cli/src/wrapper_plugin.rs</td></tr>
+    <tr><td>Candidate grant / tamper-watch minting</td><td class="mono">crates/stella-plugin/src/candidate_grant.rs</td></tr>
     <tr><td>Prompt assembly</td><td class="mono">crates/stella-cli/src/agent/prompt.rs</td></tr>
     <tr><td>Recall, reflection, skill promotion</td><td class="mono">crates/stella-cli/src/memory.rs</td></tr>
   </table></div>
@@ -1349,25 +1405,25 @@ paint();
 /* ================= 03 · doors ================= */
 var DOORS=[
  {id:"run",label:"stella run",sub:"one-shot",pipe:true,
-  d:["The scripting workhorse. One prompt in, verified work out, an exit code back.",
-     "Goes through the full staged pipeline by default. Add <code>--test-command</code> and verification gets a real measuring stick — a change that flips a failing test to passing can finish without spending a verifier call at all."],
-  m:"execution kind: pipeline · --no-pipeline drops to the raw loop"},
- {id:"deck",label:"stella",sub:"Command Deck",pipe:true,
-  d:["The tabbed terminal app, and what you get by default on a real terminal. Each prompt is one lead-agent turn.",
+  d:["The scripting workhorse. One prompt in, work out, an exit code back. Runs the raw step loop by default — nothing plans first or proves after unless you ask.",
+     "Pass <code>--pipeline &lt;variant&gt;</code> naming an installed wrapper plugin (`stella plugin install`) to opt into <code>before_turn</code>/<code>after_turn</code>, up to and including an arbiter-grade judge/again hold loop. <code>--pipeline classic</code> is refused outright — the built-in staged pipeline it named is deleted (#3852, #3865)."],
+  m:"execution kind: run · pipeline_variant: NULL unless --pipeline names a plugin"},
+ {id:"deck",label:"stella",sub:"Command Deck",pipe:false,
+  d:["The tabbed terminal app, and what you get by default on a real terminal. Each prompt is one lead-agent turn on the raw step loop — no wrapper socket wired to this door yet.",
      "Two things only deck turns get: taps that feed the live FILES and DIFF tabs, and cooperative file claims so parallel workers never fight over the same file. Mid-turn steering and soft-stop live here too."],
-  m:"execution kind: deck-pipeline / deck"},
+  m:"execution kind: deck / deck-sub"},
  {id:"goal",label:"stella goal",sub:"+ stella monitor",pipe:true,
-  d:["You state what must be true when it is done. Rounds run until an independent verifier agrees, or a backstop ends it honestly as not met.",
-     "<code>stella monitor</code> is this same door with the goal pinned to “CI is green”."],
-  m:"execution kind: goal · rounds are pipeline runs by default"},
- {id:"fleet",label:"stella fleet",sub:"many tasks",pipe:true,
-  d:["A dependency-ordered task graph fanned out to parallel workers, in one shared tree or in private worktrees.",
-     "Each worker drives the pipeline when available and the raw loop otherwise. Every attempt, commit and dollar lands in the fleet ledger."],
-  m:"execution kind: fleet ledger"},
+  d:["You state what must be true when it is done. Rounds run on the raw step loop by default, judged each round by goal mode's own independent verifier.",
+     "<code>--pipeline &lt;variant&gt;</code> can attach a plugin per round for steering/observer context only — an arbiter-grade plugin is refused pre-flight (#3832), because goal mode's own round loop is already this door's one arbiter. <code>stella monitor</code> is this same door with the goal pinned to “CI is green”."],
+  m:"execution kind: goal · arbiter-grade --pipeline refused (one loop, one arbiter)"},
+ {id:"fleet",label:"stella fleet",sub:"many tasks",pipe:false,
+  d:["A dependency-ordered task graph fanned out to parallel workers, in one shared tree or in private worktrees. Every worker runs the raw step loop today.",
+     "<code>--pipeline &lt;variant&gt;</code> is refused on this door (#3695 tracks wiring a fleet worker's driver into the socket). Every attempt, commit and dollar lands in the fleet ledger regardless."],
+  m:"execution kind: fleet · --pipeline refused"},
  {id:"plain",label:"stella --plain",sub:"raw · direct",pipe:false,
   d:["The line-based REPL — and what you get on any non-terminal input or output. One raw turn per prompt, sharing one conversation.",
-     "This door calls <code>run_turn</code> and lets the engine loop on its own. No stages, no verifier: you verify, live, between prompts."],
-  m:"execution kind: chat · also stella run --no-pipeline"},
+     "This door calls <code>run_turn</code> and lets the engine loop on its own, with no socket attached. You verify, live, between prompts."],
+  m:"execution kind: chat"},
  {id:"serve",label:"stella-serve",sub:"raw · step-wise",pipe:false,
   d:["A headless engine server a host process drives over the wire. This is the one door that calls <code>run_step</code> itself, one step at a time.",
      "That is what lets a durable host save its place between steps and resume later. The engine holds no ambient authority — every model and tool call is handed back to the host."],
@@ -1407,8 +1463,8 @@ var DOORS=[
     [].slice.call(g.children).forEach(function(c){c._hi&&c._hi(false);});
     sel=id; n._hi(true);
     setDetail(det,d.label+" — "+d.sub,d.d,d.m);
-    cap.textContent=d.pipe?"→ through the staged pipeline, whose execute stage calls the step loop"
-                          :"→ straight to the step loop, no stages at all";
+    cap.textContent=d.pipe?"→ can name --pipeline <variant> for a wrapper plugin; raw loop otherwise"
+                          :"→ straight to the step loop — no wrapper socket wired to this door";
   });
 })();
 
@@ -1416,7 +1472,7 @@ var DOORS=[
 (function(){
   var g=document.getElementById("preSteps");
   var S=[["Enter","text captured"],["Hooks","session start"],["Prefix","stable bytes"],
-         ["Recall","this prompt"],["Budget","+ record"],["Route","raw or staged"]];
+         ["Recall","this prompt"],["Budget","+ record"],["Step 1","raw · or wrapper"]];
   S.forEach(function(s,i){
     var x=20+i*152;
     box(g,x,40,130,56,"#1c2130","#333c52");
@@ -1431,7 +1487,7 @@ var DOORS=[
 /* ================= 06 · prompt layers ================= */
 var LAYERS=[
  {n:"1",t:"Base instructions",c:"gold",
-  d:["Who the agent is and how it behaves. Can be replaced per agent kind — the worker inside the pipeline gets a different base than a plain chat turn."],
+  d:["Who the agent is and how it behaves. Can be replaced per agent kind — <code>stella run</code>'s worker gets a different base than a plain chat turn (the constant name predates the wrapper socket, but the persona split is current)."],
   m:"SYSTEM_PROMPT / PIPELINE_SYSTEM_PROMPT"},
  {n:"2",t:"Session environment",c:"gold",
   d:["The facts the model would otherwise waste its first turns discovering: working directory, whether this is a git checkout, the platform, the OS release, the shell dialect.",
@@ -1917,35 +1973,28 @@ var LOOPCASES=[
 /* ================= 19 · route B ================= */
 (function(){
   var g=document.getElementById("routeB");
-  var top=[["triage","how much ceremony?"],["recall","(in parallel)"],["research","only if asked"],
-           ["plan","explicit steps"],["scope review","only if big"]];
-  var x=20;
-  top.forEach(function(s,i){
-    g.appendChild(el("rect",{x:x,y:36,width:168,height:52,rx:8,fill:"#1c2130",stroke:"#b28cf0","stroke-width":1.3}));
-    txt(g,x+84,60,s[0],13,"#b28cf0",null,600);
-    txt(g,x+84,77,s[1],10.5,"#6f7c95");
-    if(i<top.length-1)g.appendChild(el("path",{d:"M"+(x+172)+" 62 L"+(x+182)+" 62",stroke:"#6f7c95","stroke-width":1.4}));
-    x+=188;
-  });
-  g.appendChild(el("path",{d:"M960 62",stroke:"none"}));
-  g.appendChild(el("rect",{x:20,y:110,width:400,height:62,rx:10,fill:"#1c2130",stroke:"#e2b869","stroke-width":2}));
-  txt(g,220,138,"EXECUTE — the step loop",15,"#e2b869",null,600);
-  txt(g,220,158,"everything in Part 3 of this deck happens in here",11,"#6f7c95");
-  var bot=[["witness","author a failing test"],["verify","did it flip?"],["verdict","measured, not judged"]];
-  x=444;
-  bot.forEach(function(s,i){
-    g.appendChild(el("rect",{x:x,y:110,width:158,height:62,rx:8,fill:"#1c2130",stroke:"#5fcf94","stroke-width":1.3}));
-    txt(g,x+79,138,s[0],13,"#5fcf94",null,600);
-    txt(g,x+79,156,s[1],10.5,"#6f7c95");
-    if(i<bot.length-1)g.appendChild(el("path",{d:"M"+(x+162)+" 141 L"+(x+172)+" 141",stroke:"#6f7c95","stroke-width":1.4}));
-    x+=176;
-  });
-  g.appendChild(el("path",{d:"M424 141 L434 141",stroke:"#6f7c95","stroke-width":1.4}));
-  g.appendChild(el("path",{d:"M900 76 L920 76 L920 100",stroke:"#6f7c95","stroke-width":1.4,fill:"none"}));
-  g.appendChild(el("path",{d:"M20 62 L20 100",stroke:"none"}));
-  g.appendChild(el("path",{d:"M760 180 L760 206 L 220 206 L 220 178",stroke:"#f0a35f","stroke-width":1.5,
+  g.appendChild(el("rect",{x:20,y:70,width:170,height:60,rx:8,fill:"#1c2130",stroke:"#b28cf0","stroke-width":1.3}));
+  txt(g,105,96,"before_turn",13,"#b28cf0",null,600);
+  txt(g,105,114,"plugin adds context",10.5,"#6f7c95");
+  g.appendChild(el("path",{d:"M190 100 L206 100",stroke:"#6f7c95","stroke-width":1.4,"marker-end":"url(#ar3)"}));
+
+  g.appendChild(el("rect",{x:210,y:54,width:280,height:92,rx:10,fill:"#1c2130",stroke:"#e2b869","stroke-width":2}));
+  txt(g,350,96,"EXECUTE — the step loop",15,"#e2b869",null,600);
+  txt(g,350,116,"everything in Part 3 of this deck happens in here",11,"#6f7c95");
+  g.appendChild(el("path",{d:"M490 100 L506 100",stroke:"#6f7c95","stroke-width":1.4,"marker-end":"url(#ar3)"}));
+
+  g.appendChild(el("rect",{x:510,y:70,width:170,height:60,rx:8,fill:"#1c2130",stroke:"#5fcf94","stroke-width":1.3}));
+  txt(g,595,96,"after_turn",13,"#5fcf94",null,600);
+  txt(g,595,114,"plugin self-reports evidence",10.5,"#6f7c95");
+  g.appendChild(el("path",{d:"M680 100 L696 100",stroke:"#6f7c95","stroke-width":1.4,"marker-end":"url(#ar3)"}));
+
+  g.appendChild(el("rect",{x:700,y:70,width:170,height:60,rx:8,fill:"#1c2130",stroke:"#68a8f0","stroke-width":1.3}));
+  txt(g,785,96,"judge",13,"#68a8f0",null,600);
+  txt(g,785,114,"Stella evaluates the rule",10.5,"#6f7c95");
+
+  g.appendChild(el("path",{d:"M785 130 L785 190 L 350 190 L 350 148",stroke:"#f0a35f","stroke-width":1.5,
     fill:"none","stroke-dasharray":"5 4","marker-end":"url(#ar3)"}));
-  txt(g,490,224,"↺ revise — bounded, and it lands back on execute so nothing is re-planned or re-witnessed",
+  txt(g,470,208,"↺ again? — bounded by max_holds, and it lands back on EXECUTE so before_turn never reruns",
       12,"#f0a35f");
 })();
 
@@ -2086,7 +2135,7 @@ var STAGES=[
   g.appendChild(el("path",{d:"M194 68 L214 68",stroke:"#6f7c95","stroke-width":1.5,"marker-end":"url(#ar3)"}));
   g.appendChild(el("rect",{x:220,y:34,width:280,height:68,rx:10,fill:"#1c2130",stroke:"#e2b869","stroke-width":2}));
   txt(g,360,60,"a working round",14.5,"#e2b869",null,600);
-  txt(g,360,80,"pipeline run by default, raw turn with --no-pipeline",10.5,"#6f7c95");
+  txt(g,360,80,"raw loop by default, or a steering plugin",10.5,"#6f7c95");
   g.appendChild(el("path",{d:"M504 68 L524 68",stroke:"#6f7c95","stroke-width":1.5,"marker-end":"url(#ar3)"}));
   g.appendChild(el("rect",{x:530,y:34,width:250,height:68,rx:10,fill:"#1c2130",stroke:"#5fcf94","stroke-width":1.6}));
   txt(g,655,58,"independent verifier",13.5,"#5fcf94",null,600);
@@ -2125,7 +2174,7 @@ var STAGES=[
   g.appendChild(el("rect",{x:736,y:70,width:180,height:60,rx:9,fill:"#1c2130",stroke:"#5fcf94"}));
   txt(g,826,96,"the fleet ledger",13,"#5fcf94",null,600);
   txt(g,826,114,"run · task · attempt · $",11,"#6f7c95");
-  txt(g,20,200,"No third loop. Each worker drives the pipeline when it can and the raw step loop otherwise.",
+  txt(g,20,200,"No third loop. Every worker runs the raw step loop — --pipeline is refused on this door (#3695).",
       12.5,"#6f7c95","start");
 })();
 

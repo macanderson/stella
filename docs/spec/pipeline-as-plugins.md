@@ -166,9 +166,23 @@ participates in a real turn and its id reaches `executions.pipeline_variant`.
 `plugins/stella-research` is the first plugin exercising this path (§7).
 What remains open, precisely: `stella-serve` over HTTP and a minimal embedded
 `stella-engine` host — §0's other two acceptance-test drivers — do not call
-`WrapperDispatch` yet (#3551), and a named `--pipeline <variant>` plugin is
-still refused on `stella fleet`, which drives its own round loop (a worker's
-attempt) with no `WrapperDispatch` over it (#3695, fleet half).
+`WrapperDispatch` yet (#3551). `stella fleet`'s own round loop (a worker's
+attempt) now has a `WrapperDispatch` over it too — see the second update
+below.
+
+**Update, 2026-08-19: `stella fleet` drives it too, per worker attempt.**
+The remaining half of #3695 is closed: `stella fleet --pipeline <variant>`
+(`crates/stella-cli/src/fleet_cmd/wrapped.rs`) binds one wrapper per attempt
+— resolved from the *invocation* workspace's roster, because an isolated
+task's worktree need not carry an untracked `.stella/plugins/`, and granted
+over the attempt's own tree — and calls `WrapperDispatch::run` once for that
+attempt, with each internal round claiming its own `turn_instance` under the
+one execution row the attempt opens. No arbiter refusal applies here: a fleet
+attempt's verdict is its turn's own outcome, so the wrapper's hold loop is
+the only round-holder over it. The grant carries no `TestPlan` (`stella
+fleet` declares no `--test-command`), so a witness-flavoured plugin reports
+`Undecided` on this door rather than a flip nobody could observe (#3884), and
+the host serves `recall` but no `child_turn` plane (#3882).
 
 **Update, 2026-08-19: `stella goal` drives it too, per round — but only a
 steering/observer wrapper.** The other half of #3695 is closed: `stella goal
@@ -331,12 +345,12 @@ exercising `plugins/stella-research`).
 finished than it is.** §6's acceptance test — the *same* plugin driven
 unchanged by `stella-cli`, `stella-serve`, and an embedded `stella-engine`
 host — is only one third proven: `stella-serve` and an embedded host neither
-call `WrapperDispatch` yet (#3551). And on `stella-cli` itself, only `stella
-run` is a real `TurnWrapper` driver — `stella goal` and `stella fleet` each
-drive their own round loop (a judged goal round, a fleet worker's attempt),
-and a named `--pipeline <variant>` plugin is refused on either door rather
-than silently downgraded (#3695). Track B (§7) is where the first real
-plugin — `plugins/stella-research` — actually runs against this driver.
+call `WrapperDispatch` yet (#3551). On `stella-cli` itself all three doors that take
+`--pipeline` are real `TurnWrapper` drivers now — `stella run` over its one
+turn, `stella goal` per judged round, `stella fleet` per worker attempt
+(#3695) — each driving the same `WrapperDispatch` from its own loop. Track B
+(§7) is where the first real plugin — `plugins/stella-research` — actually
+runs against this driver.
 
 ### A4. A loader
 
@@ -714,10 +728,16 @@ Order, easiest and least risky first:
 3. **vera** — `after_turn` + `judge`. Needs A10 (worktrees) and A6 (structured
    verdicts). Ported, not copied: see §8.
 4. **stella-candidates** — the heaviest, needs `again?` with different setup per
-   round. **Blocked**: the wrapper socket has no capability for isolated,
-   N-wide candidate fan-out — no multi-workspace grant, no writing `child_turn`
-   equivalent, and no adoption message — so this cannot be built as best-of-N
-   on today's socket (#3844).
+   round. **Unblocked on the socket, blocked on a host.** The capability it
+   needed now exists: `candidate_fanout` asks for N isolated writable
+   workspaces each running a full worker turn, `adopt_candidate` lands one and
+   discards the rest, `[loop] max_fanout_width` is the manifest ceiling, and
+   `stella_runtime::wrapper::CandidateFanouts` is the plane (#3844,
+   `doc:wrapper-socket` §6b). What is still missing is an **isolation
+   substrate**: no shipped driver implements `CandidateWorkspaces`, so both
+   calls answer `unavailable` today. Until one does, a `stella-candidates`
+   built on this would degrade to exactly the "bounded retry over the shared
+   tree" it must not ship as.
 5. **stella-goal** — folded in last so it stops being a second copy.
 
 **The bar for each:** a side-by-side benchmark holds before the built-in path is

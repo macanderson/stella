@@ -59,10 +59,12 @@ stay in force. If the change concerns what happens *inside* one worker, it does 
 a fleet worker is whatever implements `FleetWorker`, and teaching this crate the
 worker's internals crosses the seam.
 
-Single-agent orchestration in particular belongs to
-[`stella-pipeline`](../stella-pipeline). That includes best-of-N candidates for a
+Single-agent orchestration in particular does not belong here. That includes
+best-of-N candidates for a
 single prompt, which look fleet-shaped — isolated worktrees, parallel workers — but
 are one turn's candidates, selected and discarded, not ledgered tasks with lineage.
+That work lived in `crates/stella-pipeline` until #3865 deleted it; a
+verification wrapper plugin is where it belongs now.
 The model-call/tool loop itself stays in [`stella-core`](../stella-core), and the
 real worker, plan parsing and `--spend-limit` split stay in
 `crates/stella-cli/src/fleet_cmd.rs`.

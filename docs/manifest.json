@@ -81,7 +81,7 @@
       "title": "The agent monitor protocol"
     },
     "agent-native-delivery": {
-      "path": "docs/design/agent-native-delivery.md",
+      "path": "docs/spec/agent-native-delivery.md",
       "sections": [
         0,
         1,
@@ -778,6 +778,11 @@
       "path": "docs/spec/verification-gate.md",
       "status": "living",
       "title": "The verification gate \u2014 how CI says whether a change helps or hurts the agent"
+    },
+    "verification-surface": {
+      "path": "docs/design/verification-surface.md",
+      "status": "implemented",
+      "title": "The deck's verification surface in the plugin era"
     },
     "why-stella": {
       "path": "docs/why-stella.md",

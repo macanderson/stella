@@ -51,8 +51,6 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
             }
           },
           "tools": {"bash": "off", "process": "off"},
-          "enable_recap": "off",
-          "trace_capture": "on",
           "ui": {"theme": "stella-dark"},
           "reward": {"deterministic_weight": 0.25, "per_usd": 0.75},
           "mcp": {"registry_url": "https://registry.example"}
@@ -67,8 +65,6 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
 schema_version = 1
 
 [run]
-recap = "off"
-trace_capture = "on"
 
 [reward]
 deterministic_weight = 0.25
@@ -127,15 +123,9 @@ registry_url = "https://registry.example"
         "agent_engine_config — the block the TOML shape reorganizes most"
     );
     assert_eq!(from_json.tools, from_toml.tools, "tools");
-    assert_eq!(from_json.enable_recap, from_toml.enable_recap, "recap");
-    assert_eq!(
-        from_json.trace_capture, from_toml.trace_capture,
-        "trace_capture"
-    );
-    assert!(
-        from_toml.trace_capture_enabled(),
-        "[run].trace_capture lowers into the flag"
-    );
+    // `enable_recap` / `[run].recap` and `trace_capture` were compared here
+    // until #3870 retired both. `[run]`'s surviving fields keep the parity
+    // claim honest — see `create_worktrees` and `ignore_gitignore` below.
     assert_eq!(from_json.ui, from_toml.ui, "ui");
     assert_eq!(from_json.reward, from_toml.reward, "reward");
     assert_eq!(
@@ -220,7 +210,11 @@ fn a_workspace_allowed_dirs_list_parses_and_lowers_to_absolute_paths() {
 #[test]
 fn no_reward_block_is_exactly_the_defaults() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "stella.toml", "[run]\nrecap = \"on\"\n");
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[run]\nignore_gitignore = \"on\"\n",
+    );
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     assert_eq!(settings.reward, None);
     assert_eq!(
@@ -455,9 +449,17 @@ fn the_json_spelling_of_a_renamed_key_is_unknown_in_toml() {
         found.contains(&"agent_engine_config".to_string()),
         "the JSON name is not a TOML root: {found:?}"
     );
+    // `enable_recap` is still reported, but for a different reason since
+    // #3870 retired it: it is no longer a key that moved to `[run].recap`, it
+    // is a key that reads nothing in either spelling. The distinction is what
+    // the operator is told, so assert the reason and not merely the report.
     assert!(
         found.contains(&"enable_recap".to_string()),
-        "the bare root scalar moved to [run].recap: {found:?}"
+        "a retired root scalar is still surfaced: {found:?}"
+    );
+    assert!(
+        super::unknown::retirement("enable_recap").is_some(),
+        "a retired key must be explained, not spell-checked"
     );
 }
 
@@ -471,9 +473,6 @@ fn a_valid_toml_document_flags_nothing() {
 [meta]
 schema_version = 1
 scope = "project"
-
-[run]
-recap = "on"
 
 [models]
 allowed = ["a/b"]
@@ -564,7 +563,11 @@ fn the_wildcard_tool_key_survives_quoting() {
 #[test]
 fn a_typoed_toggle_is_a_loud_parse_error() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "stella.toml", "[run]\nrecap = \"onn\"\n");
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[run]\nignore_gitignore = \"onn\"\n",
+    );
     let err = load_toml(&path, ConfigScope::User).unwrap_err();
     assert!(err.contains("invalid config file"), "{err}");
 }
@@ -663,7 +666,6 @@ const RICH_SETTINGS: &str = r#"{
     }
   },
   "tools": {"bash": "off", "process": "off"},
-  "enable_recap": "on",
   "ui": {"theme": "stella-dark"},
   "mcp": {"registry_url": "https://registry.example"},
   "context": {"retrieval": {"rrf_k": 60.0, "mmr_lambda": 0.7, "ann_probes": 12}},
@@ -692,7 +694,6 @@ fn migrating_a_settings_file_preserves_every_value_it_configured() {
         "engine config"
     );
     assert_eq!(before.tools, after.tools, "tools");
-    assert_eq!(before.enable_recap, after.enable_recap, "recap");
     assert_eq!(before.ui, after.ui, "ui");
     assert_eq!(before.mcp, after.mcp, "mcp");
     assert_eq!(before.context, after.context, "context");

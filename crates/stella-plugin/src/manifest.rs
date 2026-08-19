@@ -164,6 +164,21 @@ pub struct LoopGrant {
     /// means "the host's ceiling", never "unbounded".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_calls: Option<u32>,
+    /// The widest `candidate_fanout` the plugin asks for.
+    ///
+    /// **Its own key rather than a second meaning for [`Self::max_calls`]**,
+    /// because the two bound different things with different blast radii:
+    /// `max_calls` bounds how *chatty* a plugin may be inside one point, and
+    /// every call it bounds is either read-only or single-tracked; this bounds
+    /// how many **writing worker turns** one call may buy, so it multiplies
+    /// model spend by N. One number clamping both would mean a plugin that
+    /// wanted eight recalls had asked for eight candidates (#3844).
+    ///
+    /// An ask, never an authority — clamped against
+    /// `stella_runtime::wrapper::DEFAULT_HOST_MAX_FANOUT_WIDTH`, and absent
+    /// means "the host's ceiling" rather than "unbounded".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_fanout_width: Option<u32>,
     /// Arbiter only: the most completion-vetoes per turn the plugin asks
     /// for. The host clamps it; a spent allowance completes the turn with
     /// the unmet requirements reported, not silently dropped.
@@ -640,6 +655,18 @@ impl PluginManifest {
             // a declaration that contradicts itself, and the `max_holds` rule
             // for the same shape one rung up.
             Some(0) => return Err(ManifestError::ZeroMaxCalls),
+            _ => {}
+        }
+        // The fan-out width gets `max_calls`'s two rules against its *own*
+        // capability rather than against the list as a whole: a plugin that
+        // declares `recall` and a fan-out width has written a number that
+        // bounds nothing, which is the manifest that quietly does nothing one
+        // more time.
+        match grant.max_fanout_width {
+            Some(_) if !grant.calls.contains(&HostCall::CandidateFanout) => {
+                return Err(ManifestError::MaxFanoutWidthRequiresFanout);
+            }
+            Some(0) => return Err(ManifestError::ZeroMaxFanoutWidth),
             _ => {}
         }
 
@@ -1121,6 +1148,7 @@ mod tests {
             points: vec![WrapperPoint::BeforeTurn],
             calls: vec![HostCall::Recall],
             max_calls: None,
+            max_fanout_width: None,
             max_holds: None,
         };
         assert!(!smuggled.permits_hook(HookEvent::PreToolUse));

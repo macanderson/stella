@@ -135,7 +135,7 @@ sees what the others structurally cannot:
 | Aperture | The question it asks | How you look (#1549) |
 |---|---|---|
 | `rubric` | the standard engineering audit | `/ultraudit` (deep) or `/reaudit` (fast) |
-| `properties` | what is asserted by example that should be asserted by property | `rg --files-without-match 'proptest' -g '*.rs' crates/stella-core/src crates/stella-context/src crates/stella-fleet/src crates/stella-pipeline/src crates/stella-tui/src` — a pure decision module in that list is a finding |
+| `properties` | what is asserted by example that should be asserted by property | `rg --files-without-match 'proptest' -g '*.rs' crates/stella-core/src crates/stella-context/src crates/stella-fleet/src crates/stella-tui/src` — a pure decision module in that list is a finding |
 | `invariants` | where does the code violate AGENTS.md's numbered invariants | `make invariants` for the mechanical half; the semantic half — read each numbered invariant against the code — is yours |
 | `concurrency` | races, ordering, cancellation, partial failure | **model-only** — no tooling yet; say so in the report |
 | `performance` | allocation, cache voids, per-step cost regressions | `scripts/self-driving.sh bench loop` + the prompt-cache goldens (`cargo test -p stella-model`) — heavy tier only |

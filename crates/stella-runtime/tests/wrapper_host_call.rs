@@ -304,6 +304,7 @@ async fn a_grant_below_steering_leaks_no_capability() {
         points: vec![WrapperPoint::BeforeTurn],
         calls: vec![HostCall::Recall],
         max_calls: None,
+        max_fanout_width: None,
         max_holds: None,
     };
     let gate = gate(smuggled, DEFAULT_HOST_MAX_CALLS);
@@ -350,16 +351,25 @@ async fn a_dead_writer_mid_conversation_is_not_reported_as_a_missing_gate() {
     // this test lost on a loaded machine, reporting the child's exit instead
     // of the fault. So the plugin keeps asking, with no read in between
     // (pipelining ahead rather than a round trip), until the host stops the
-    // conversation. The bound only has to outlast the writer's scheduling,
-    // not match it, and the point timeout below is the backstop.
+    // conversation.
+    //
+    // Measured, on an idle machine: two asks fail every time and three pass —
+    // the fault is reported on the ask that finds the writer already gone, so
+    // there has to *be* one after that point. Any fixed count is therefore a
+    // bet that the writer's death propagates within it, and any `sleep` is the
+    // same bet in a larger denomination: a loaded machine can still run the
+    // list to its end first, and the child's exit is then reported instead of
+    // the fault (#3632). Unbounded, the supply outlasts the writer's
+    // scheduling by construction, and the child cannot exit early:
+    // once the host stops reading, the next `printf` blocks on a full pipe and
+    // the child is reaped by `kill_on_drop` and the group-kill guard on the
+    // error path. The point timeout below is the backstop if the host ever
+    // stops ending the conversation at all.
     let script = r#"
 read -r request
 exec 0<&-
-id=1
-while [ "$id" -le 200 ]; do
-  printf '%s\n' "{\"call\":\"recall\",\"id\":$id,\"args\":{\"goal\":\"ask\"}}"
-  sleep 0.05
-  id=$((id + 1))
+while :; do
+  printf '%s\n' '{"call":"recall","id":1,"args":{"goal":"ask"}}'
 done
 "#;
 

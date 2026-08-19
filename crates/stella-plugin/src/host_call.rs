@@ -84,6 +84,20 @@ use crate::wire::{WrapperPoint, WrapperResponse, decode_body};
 /// - `run_test` — the candidate's test invocation, for the re-runs a
 ///   verification plugin needs. #3498 solved the *first* run narrowly by putting
 ///   the plan in the request; it stays there, and this call is the re-run.
+/// - `candidate_fanout` — N isolated writable workspaces, each running one
+///   full worker turn, reported back with the evidence a plugin scores them
+///   on. `plugins/stella-candidates` (`doc:pipeline-as-plugins` §3/§7 item 4)
+///   is best-of-N and could not be written at all without it: every other
+///   capability here is read-only or single-tracked, so the strongest thing
+///   the socket could express was "retry with correction over the one real
+///   tree", which is a different operation and should not ship under that
+///   name (#3844).
+/// - `adopt_candidate` — apply one fan-out candidate's changes to the real
+///   tree and discard its siblings. Its own capability rather than a field on
+///   the fan-out result, because a plugin that only scores candidates and one
+///   that also lands one are different grants for a human to read at install,
+///   and invariant 9 says a parameter may scope an operation and never select
+///   one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostCall {
@@ -93,6 +107,10 @@ pub enum HostCall {
     ChildTurn,
     /// Ask for the candidate workspace's test invocation to be run again.
     RunTest,
+    /// Ask for N isolated workspaces, each running one full worker turn.
+    CandidateFanout,
+    /// Ask for one fan-out candidate to be applied to the real tree.
+    AdoptCandidate,
 }
 
 impl HostCall {
@@ -103,6 +121,8 @@ impl HostCall {
             Self::Recall => "recall",
             Self::ChildTurn => "child_turn",
             Self::RunTest => "run_test",
+            Self::CandidateFanout => "candidate_fanout",
+            Self::AdoptCandidate => "adopt_candidate",
         }
     }
 }
@@ -217,6 +237,12 @@ impl PluginEnvelope {
                     HostCall::Recall => decode_body(args).map(HostCallArgs::Recall)?,
                     HostCall::ChildTurn => decode_body(args).map(HostCallArgs::ChildTurn)?,
                     HostCall::RunTest => decode_body(args).map(HostCallArgs::RunTest)?,
+                    HostCall::CandidateFanout => {
+                        decode_body(args).map(HostCallArgs::CandidateFanout)?
+                    }
+                    HostCall::AdoptCandidate => {
+                        decode_body(args).map(HostCallArgs::AdoptCandidate)?
+                    }
                 };
                 Ok(PluginMessage::Call(HostCallRequest { id, args }))
             }
@@ -283,6 +309,10 @@ pub enum HostCallArgs {
     ChildTurn(ChildTurnArgs),
     /// Ask for the candidate workspace's test invocation to be run again.
     RunTest(RunTestArgs),
+    /// Ask for N isolated workspaces, each running one full worker turn.
+    CandidateFanout(CandidateFanoutArgs),
+    /// Ask for one fan-out candidate to be applied to the real tree.
+    AdoptCandidate(AdoptCandidateArgs),
 }
 
 impl HostCallArgs {
@@ -293,6 +323,8 @@ impl HostCallArgs {
             Self::Recall(_) => HostCall::Recall,
             Self::ChildTurn(_) => HostCall::ChildTurn,
             Self::RunTest(_) => HostCall::RunTest,
+            Self::CandidateFanout(_) => HostCall::CandidateFanout,
+            Self::AdoptCandidate(_) => HostCall::AdoptCandidate,
         }
     }
 }
@@ -341,6 +373,59 @@ pub struct ChildTurnArgs {
 #[serde(deny_unknown_fields)]
 pub struct RunTestArgs {
     /// The candidate workspace, as the grant named it.
+    pub candidate: CandidateHandle,
+}
+
+/// `candidate_fanout` — N isolated workspaces, each running one worker turn.
+///
+/// The three fields are the whole ask, and what is *absent* is the design:
+/// there is no field for a path, a branch, a base revision, a concurrency
+/// level, a tool grant or a dollar amount, so none of them is something the
+/// host has to remember to ignore ([`ChildTurnArgs`]'s argument, at the one
+/// capability where the turns write).
+///
+/// `width` is the sharpest of the three. It is **an ask, never an authority**
+/// — the [`RecallArgs::limit`] discipline, at the capability where getting it
+/// wrong costs N times a worker turn rather than N frames of prompt. The host
+/// clamps it against `[loop] max_fanout_width`'s own clamp
+/// (`stella_runtime::wrapper::DEFAULT_HOST_MAX_FANOUT_WIDTH`), and the answer
+/// reports back both what was asked and what ran, so a plugin can say honestly
+/// that it scored three candidates rather than the eight it wanted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateFanoutArgs {
+    /// The declared role intent every candidate turn runs at.
+    ///
+    /// Resolved exactly as [`ChildTurnArgs::role`] is — intent → declared
+    /// `tier` → seat — and then judged by the *opposite* rule, which is the
+    /// one thing about this capability a plugin author must read before
+    /// writing a manifest. A child turn may not resolve to the worker's seat,
+    /// because a plugin must not grade work with the model that did it. A
+    /// fan-out candidate is not evidence about the work, it **is** the work,
+    /// so it must resolve to the worker's seat and nothing else: booking a
+    /// writing turn against `triage` would put spend on the receipt under a
+    /// responsibility that did no writing, which is the same misattribution
+    /// read from the other end.
+    pub role: String,
+    /// What every candidate turn is asked to do.
+    pub instruction: String,
+    /// How many candidates the plugin wants. An ask; see the type docs.
+    pub width: u32,
+}
+
+/// `adopt_candidate` — land one candidate's changes on the real tree.
+///
+/// The handle is the only parameter, and it is the host's own minted name
+/// rather than a path, for the reason [`CandidateGrant`](crate::CandidateGrant)
+/// states: a plugin cannot name a directory and have the host write to it. The
+/// host resolves the name against the fan-out table *it* minted and refuses
+/// anything else — which is also what keeps
+/// [`HOST_TREE_HANDLE`](crate::HOST_TREE_HANDLE) un-adoptable, since it names
+/// no entry in any table and never has.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdoptCandidateArgs {
+    /// The candidate to adopt, as the fan-out answer named it.
     pub candidate: CandidateHandle,
 }
 
@@ -452,6 +537,10 @@ pub enum HostCallOk {
     Recall(RecallResult),
     /// `child_turn` — what the bounded turn the host ran reported back.
     ChildTurn(ChildTurnResult),
+    /// `candidate_fanout` — the candidates the host built, and what each did.
+    CandidateFanout(CandidateFanoutResult),
+    /// `adopt_candidate` — which candidate landed, and which were discarded.
+    AdoptCandidate(AdoptCandidateResult),
 }
 
 /// What one `child_turn` produced.
@@ -490,6 +579,88 @@ pub struct ChildTurnResult {
     /// `report` then carries whatever text it had produced, which may be
     /// empty.
     pub completed: bool,
+}
+
+/// What one `candidate_fanout` produced.
+///
+/// Both fields are **required** on the wire, and that is load-bearing rather
+/// than stylistic: [`HostCallOk`] is untagged and its rule is that every
+/// variant's required key set must be disjoint from every other's.
+/// [`RecallResult`]'s only field defaults, so `{}` reads as a recall answer —
+/// a fan-out result whose `candidates` defaulted would be a table that decodes
+/// as the wrong variant the moment a host had nothing to report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateFanoutResult {
+    /// The width the plugin asked for, echoed back so it can see the clamp.
+    ///
+    /// Reported rather than assumed, because "I scored 3 of the 8 I asked
+    /// for" and "I scored the 3 I asked for" are different sentences and only
+    /// the host knows which one is true.
+    pub requested: u32,
+    /// One entry per candidate the host actually built and ran, in the order
+    /// it minted them. Shorter than [`Self::requested`] whenever the clamp
+    /// bit, or a candidate's workspace could not be created — never longer.
+    pub candidates: Vec<FanoutCandidate>,
+}
+
+/// One candidate of a fan-out, as the plugin receives it.
+///
+/// The evidence half is deliberately small and deliberately *mechanical*:
+/// a handle to re-address it, a root to read and test it in, the turn's own
+/// report, whether it finished, and how big the diff is. What is absent is a
+/// score — scoring is the plugin's whole job, and a host that shipped one
+/// would be the thing the plugin was extracted to replace.
+///
+/// [`Self::root`] is a real absolute path for the same reason
+/// [`CandidateGrant::root`](crate::CandidateGrant) is one: a plugin that runs
+/// a test suite needs a directory. It is not thereby a capability — every path
+/// the plugin names on the way *back* is resolved against the handle by the
+/// host, and [`Self::candidate`] is the only thing that re-addresses this
+/// workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FanoutCandidate {
+    /// The name the host minted for this workspace — what
+    /// [`AdoptCandidateArgs::candidate`] and
+    /// [`RunTestArgs::candidate`] are spelled with.
+    pub candidate: CandidateHandle,
+    /// The workspace's absolute root on the host's filesystem, canonical.
+    pub root: String,
+    /// The candidate turn's own answer, clamped by the host's report ceiling.
+    pub report: String,
+    /// Whether the candidate turn reached a final answer. `false` is an
+    /// ordinary outcome the plugin weighs — its carve ran out, its step cap
+    /// hit — and the workspace is still there to be read and tested.
+    pub completed: bool,
+    /// Files the candidate turn changed in its workspace.
+    pub files_changed: u32,
+    /// Lines it added and removed, summed — the crude size signal
+    /// `CandidateSummary` carried before the staged pipeline was deleted
+    /// (#3865), kept crude on purpose: a plugin that wants a better one reads
+    /// [`Self::root`].
+    pub lines_changed: u32,
+}
+
+/// What one `adopt_candidate` did.
+///
+/// The host's decision reported as an outcome, never as a promise: by the time
+/// this crosses, the winner's changes are on the real tree and every workspace
+/// of the fan-out is gone — the winner's copy included, since its bytes now
+/// live where they were wanted. A plugin that named a handle the host does not
+/// hold gets a [`HostCallFailure`] instead and nothing moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdoptCandidateResult {
+    /// The candidate whose changes are now on the real tree.
+    pub adopted: CandidateHandle,
+    /// The siblings the host threw away without landing, in the order it
+    /// minted them. The winner is not among them: its workspace is cleaned up
+    /// too, but "landed, and its scratch copy removed" is a different fact
+    /// from "discarded", and collapsing the two would make a width-1 fan-out
+    /// read as having discarded its only candidate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discarded: Vec<CandidateHandle>,
 }
 
 /// The frames one `recall` returned.
@@ -585,8 +756,9 @@ pub enum HostCallRefusal {
     /// ask for something else. The standing case is verifier independence — a
     /// `child_turn` whose role intent resolves to the **worker's** seat would
     /// let a plugin grade the work with the model that did it, which is the
-    /// self-grading `stella_pipeline`'s roster already reports on and which a
-    /// plugin may not buy at all.
+    /// self-grading the staged pipeline's roster reported on
+    /// (`crates/stella-pipeline`, deleted in #3865) and which a plugin may not
+    /// buy at all.
     Forbidden,
     /// This host does not implement the capability at all. A declared gap on
     /// the host's side, not a fault of the plugin's.

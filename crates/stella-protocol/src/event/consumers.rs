@@ -82,8 +82,9 @@ use super::KNOWN_TYPE_TAGS;
 /// - The **TUI** matches `AgentEvent` exhaustively
 ///   (`stella-tui`'s `model::Model::apply`, `textline::event_line`,
 ///   `deck::trace_of`), so every variant reaches it by construction.
-/// - **Replay** likewise tags every variant (`stella-pipeline`'s
-///   `replay::event_signature`).
+/// - **Replay** likewise tagged every variant, in the then-existing
+///   `stella-pipeline`'s `replay::event_signature`; that crate was deleted in
+///   #3865 and no replay tagger has replaced it yet.
 /// - **Serve** forwards the event stream opaquely rather than selecting
 ///   variants.
 ///
@@ -183,7 +184,7 @@ pub use super::tags::SIGNAL_CONSUMERS;
 /// show up as a diff; raising it means a new variant was filed away unread,
 /// which is the exact move the ledger exists to prevent. #2703 drives it to
 /// zero, after which a new variant cannot reach `Unclassified` at all.
-pub const MAX_UNCLASSIFIED: usize = 36;
+pub const MAX_UNCLASSIFIED: usize = 34;
 
 /// What the audit found wrong with one ledger row.
 ///

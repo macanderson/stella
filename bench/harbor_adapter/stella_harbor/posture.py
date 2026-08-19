@@ -116,20 +116,22 @@ _ADMISSIBLE_ROLE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # that emitting a row changes nothing an operator did not ask for.
 _WORKER_REASONING = "on"
 
-# Host-side selectors for the two pipeline knobs that decide how many times a
-# task may be attempted: revision turns after a *failed* verification, and
-# best-of-N candidate executions. Both were fully implemented in the pipeline
-# and reachable from nothing — outside tests, `max_revisions` was written once
-# (to 2) and `candidates` once (to `None`), so best-of-N had never run in
-# production at all. `agent_engine_config` now carries both, which is what lets
-# a benchmark arm select them (#1211 §6.7, §6.8).
+# `STELLA_MAX_REVISIONS` and `STELLA_CANDIDATES` used to select the two
+# pipeline knobs deciding how many times a task may be attempted — revision
+# turns after a failed verification, and best-of-N candidate executions (#1211
+# §6.7, §6.8, wired end-to-end by #2600). Both are gone (#3871): the staged
+# pipeline that read them was deleted with `crates/stella-pipeline` (#3865), and
+# `agent_engine_config` no longer carries either key.
 #
-# Unset is the historical posture in both cases, and that is the whole point:
-# a tree that merely carries this code reproduces every digest recorded before
-# the selectors existed. Choosing a value adds a root key, changes the digest,
-# and therefore declares itself in the manifest.
-_MAX_REVISIONS_ENV = "STELLA_MAX_REVISIONS"
-_CANDIDATES_ENV = "STELLA_CANDIDATES"
+# They are deleted here rather than accepted-and-ignored, and the difference is
+# the whole point. `POSTURE_SELECTOR_ENV` below is spliced into the adapter's
+# `_HOST_ONLY_STELLA_ENV`, whose ambient check fails **closed** — so an operator
+# whose arm still exports one now gets a refused run naming the unregistered
+# variable, instead of a posture Stella's trusted-launcher seam rejects at
+# launch with an engine-config error that does not name the knob. A benchmark
+# knob that silently selects nothing is the failure CLAUDE.md's measure-honestly
+# rule exists to prevent, and a run refused early is far cheaper than a result
+# that quietly measured the default.
 
 # Host-side selector for the third coupled ceiling. The other two have been
 # selectable for generations — the output cap rides `params.max_tokens` in this
@@ -150,31 +152,15 @@ _CANDIDATES_ENV = "STELLA_CANDIDATES"
 # still describes the posture that produced it.
 _MODEL_TIMEOUT_ENV = "STELLA_MODEL_TIMEOUT"
 
-# Host-side selector for the corroboration ask (#1295): when a model verifier
-# passes and nothing deterministic stands behind it, does the pipeline spend
-# one revision demanding the evidence, or record the pass as unverified on the
-# spot?
-#
-# A selector rather than a rebuild because the question is empirical and the
-# answer is a measurement, not a preference. It was measured once and reverted:
-# the ask fired on nearly every Terminal-Bench turn, because those turns had no
-# tracked command and therefore no way to satisfy it, so it bought a turn
-# everywhere and evidence nowhere. The pipeline now refuses to raise the ask
-# without a command that could answer it, which is the change this selector
-# exists to put on the record — two arms, one binary, one posture key apart.
-#
-# Unset omits the key, so every digest recorded before this selector existed
-# still describes the posture that produced it.
-_VERIFIER_EVIDENCE_DEMAND_ENV = "STELLA_VERIFIER_EVIDENCE_DEMAND"
-
-# Refusal ceilings, not clamps. Unlike the effort tier there is no enum to
-# validate an integer against, so a bound is the only check available beyond
-# "parses as a number" — and the failure it catches is a fat-fingered extra
-# digit, which on these two knobs is a runaway bill rather than a wrong answer.
-# Both sit comfortably above the values #1211 actually proposes (3-4 revisions,
-# 2 candidates), so hitting one means a typo rather than an ambitious arm.
-_MAX_REVISIONS_CEILING = 10
-_CANDIDATES_CEILING = 5
+# `STELLA_VERIFIER_EVIDENCE_DEMAND` selected the corroboration ask (#1295):
+# when a model verifier passed and nothing deterministic stood behind it, did
+# the pipeline spend one revision demanding the evidence, or record the pass as
+# unverified on the spot? Gone for the same reason as the two above (#3871) —
+# the staged pipeline that raised the ask was deleted (#3865), and verification
+# makes no model call to corroborate. Its measured result is kept on the record
+# here because it is the answer, not a gap: the ask fired on nearly every
+# Terminal-Bench turn, since those turns had no tracked command and therefore no
+# way to satisfy it, so it bought a turn everywhere and evidence nowhere.
 
 # Six hours, the same refusal ceiling `stella-serve` applies to the knob over
 # the wire. Sized to sit far above any single generation a model produces
@@ -339,40 +325,6 @@ def _validated_attempt_count(
     return parsed
 
 
-def resolve_max_revisions(value: str | None) -> int | None:
-    """Resolve the per-candidate revision budget, or ``None`` to inherit.
-
-    ``0`` is admissible and meaningful — one shot, no retry — so the floor is
-    zero rather than one. Revisions are only ever spent on a verification that
-    already *failed*, so raising this costs nothing on tasks that pass first
-    time; it is the tail it changes.
-    """
-    if value is None:
-        return None
-    return _validated_attempt_count(
-        value, label="max revisions", floor=0, ceiling=_MAX_REVISIONS_CEILING
-    )
-
-
-def resolve_candidates(value: str | None) -> int | None:
-    """Resolve the best-of-N candidate count, or ``None`` for single-shot.
-
-    Floored at 1, not 0: the pipeline floors a zero to one anyway
-    (``PipelineConfig::candidate_count``), so accepting one here would let two
-    different selector values produce the same run under two different digests
-    — the exact ambiguity these selectors exist to remove.
-
-    Note the cost shape differs from revisions: candidates are paid
-    *unconditionally*, so ``2`` doubles execution cost across every task,
-    including the ones a single shot would have solved.
-    """
-    if value is None:
-        return None
-    return _validated_attempt_count(
-        value, label="candidates", floor=1, ceiling=_CANDIDATES_CEILING
-    )
-
-
 def _validated_toggle(value: str, *, label: str) -> bool:
     """Parse a host-side on/off selector, or refuse it with the reason.
 
@@ -389,13 +341,6 @@ def _validated_toggle(value: str, *, label: str) -> bool:
     if text in ("off", "0"):
         return False
     raise ValueError(f"benchmark {label} must be one of on/off/1/0; got `{value}`")
-
-
-def resolve_verifier_evidence_demand(value: str | None) -> bool | None:
-    """Resolve the corroboration-ask arm, or ``None`` to inherit the default."""
-    if value is None:
-        return None
-    return _validated_toggle(value, label="verifier evidence demand")
 
 
 def resolve_role_effort(value: str | None, *, role: str) -> str | None:
@@ -498,9 +443,6 @@ POSTURE_SELECTOR_ENV = (
     _PLAN_EFFORT_ENV,
     _PLAN_REASONING_ENV,
     _PLAN_MODEL_ENV,
-    _MAX_REVISIONS_ENV,
-    _CANDIDATES_ENV,
-    _VERIFIER_EVIDENCE_DEMAND_ENV,
     _MODEL_TIMEOUT_ENV,
 )
 
@@ -534,11 +476,6 @@ def read_posture_selectors(get: Callable[[str], str | None]) -> dict[str, Any]:
             get(_PLAN_REASONING_ENV), role="plan"
         ),
         "plan_model": resolve_role_model(get(_PLAN_MODEL_ENV)),
-        "max_revisions": resolve_max_revisions(get(_MAX_REVISIONS_ENV)),
-        "candidates": resolve_candidates(get(_CANDIDATES_ENV)),
-        "verifier_evidence_demand": resolve_verifier_evidence_demand(
-            get(_VERIFIER_EVIDENCE_DEMAND_ENV)
-        ),
         "model_timeout_secs": resolve_model_timeout(get(_MODEL_TIMEOUT_ENV)),
     }
 
@@ -714,9 +651,6 @@ def _benchmark_engine_posture(
     plan_effort: str | None = None,
     plan_reasoning: bool | None = None,
     plan_model: str | None = None,
-    max_revisions: int | None = None,
-    candidates: int | None = None,
-    verifier_evidence_demand: bool | None = None,
     model_timeout_secs: int | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return a canonical Terminal-Bench engine posture and its hash.
@@ -746,11 +680,14 @@ def _benchmark_engine_posture(
     point of having both is that the choice is made in the manifest instead of
     being discovered by grepping a trajectory for a warning line.
 
-    ``max_revisions`` and ``candidates`` follow the same rule and exist for the
-    same reason (#1211 §6.7, §6.8). Both are ``None`` by default, which omits
-    the key rather than writing the engine's default into it — so this function
-    still returns byte-identical JSON, and therefore an identical digest, for
-    every posture recorded before the knobs were reachable at all.
+    ``max_revisions``, ``candidates`` and ``verifier_evidence_demand`` were
+    three more arguments of the same shape (#1211 §6.7, §6.8; #1295). They are
+    gone (#3871): the staged pipeline that read all three was deleted with
+    ``crates/stella-pipeline`` (#3865), so the keys they emitted are no longer
+    in the engine's vocabulary and are refused by the trusted-launcher seam
+    rather than ignored. Passing one is now a ``TypeError`` here — at the call
+    site, naming the argument — rather than a run that starts and measures the
+    default.
 
     ``model_timeout_secs`` is the same shape again, for the ceiling that used to
     be the exception (#1211 §6.2). It is the last per-generation ceiling this
@@ -922,25 +859,18 @@ def _benchmark_engine_posture(
         )
         if row is not None:
             posture["agents"][role] = row
-    # The attempt-count knobs are omitted entirely when unselected rather than
-    # written at their default value, and that is load-bearing: the digest is
-    # taken over this dict, so emitting `"pipeline_max_revisions": 2` would
-    # change every hash in the tree to describe a posture identical to the one
-    # they already described. Absent means "the engine's default", which is
-    # exactly what the historical runs had.
-    if max_revisions is not None:
-        posture["pipeline_max_revisions"] = max_revisions
-    if candidates is not None:
-        posture["pipeline_candidates"] = candidates
-    # Same omit-when-unset rule, spelled in the setting's own `on`/`off`
-    # vocabulary rather than as a JSON bool: the CLI parses this key as a
-    # `Toggle`, and a `true` here would be a refused run rather than a
-    # selected arm.
-    if verifier_evidence_demand is not None:
-        posture["pipeline_verifier_evidence_demand"] = (
-            "on" if verifier_evidence_demand else "off"
-        )
-    # Same omit-when-unset rule, and here it carries an extra weight: this key
+    # `pipeline_max_revisions`, `pipeline_candidates` and
+    # `pipeline_verifier_evidence_demand` were emitted here until #3871.
+    #
+    # Removing them cannot move a digest that omitted them, and no artifact
+    # tracked in this repository carries any of the three (checked across
+    # `bench/` and `arenabench/`, ignored and hidden files included). A match
+    # registered outside the tree under `~/.arenabench/` is not covered by that
+    # check — if one selected a knob, its recorded digest describes a posture
+    # this code can no longer emit, which is the honest reading: the arm it
+    # named is gone, not renamed.
+    #
+    # Omit-when-unset, and here it carries an extra weight: this key
     # is what makes a timeout change a *posture* change rather than a rebuild.
     # A run that selects it says so in its digest; a run that does not is
     # byte-identical to every run recorded before the key existed, which is the

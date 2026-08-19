@@ -120,11 +120,12 @@ the contract that makes "plugin" mean something enforceable rather than
 aspirational: a declaration a host can check *before* anything runs, written by
 someone who does not get to see the engine. Two things follow from that.
 
-**The first plugin is Stella's own verification.** The staged pipeline
-([`stella-pipeline`](../stella-pipeline)) is the wrapper the `[wrapper]` block
-was designed for, and it is leaving the workspace to become a plugin (#3246,
-`doc:turn-loop-wrappers`). When it does, Stella no longer verifies its own work
-unless that plugin is installed — which is exactly why the manifest's rules are
+**The first plugin is Stella's own verification.** The built-in staged pipeline
+(`crates/stella-pipeline`) was the wrapper the `[wrapper]` block was designed
+for, and it left the workspace to become a plugin (#3246,
+`doc:turn-loop-wrappers`) — the crate itself was deleted in #3865. Stella
+therefore no longer verifies its own work
+unless such a plugin is installed — which is exactly why the manifest's rules are
 load errors rather than warnings: an opt-in verifier that silently declined to
 participate would be worse than none.
 
@@ -136,10 +137,11 @@ end-to-end against a real subprocess plugin in that crate's own tests. The
 host sequence that calls all four points for a live turn is
 `stella_runtime::WrapperDispatch`, and `stella-cli` drives it: `--pipeline
 <variant>` on `stella run` resolves an installed manifest and runs a live
-turn through `crate::wrapper_plugin` (#3494), and separately
-`stella-pipeline`'s own staged pipeline now dispatches from the shipped
-`[wrapper]` block via `Pipeline::begin_turn_schedule` (#3408) rather than a
-hardcoded stage order. The remaining gap: `stella-cli`'s manifest loader
+turn through `crate::wrapper_plugin` (#3494). The built-in staged pipeline was
+briefly a second driver — it dispatched from its own shipped `[wrapper]` block
+via `Pipeline::begin_turn_schedule` (#3408) rather than a hardcoded stage order
+— but that crate was deleted in #3865, so `WrapperDispatch` is the only host
+sequence left. The remaining gap: `stella-cli`'s manifest loader
 (`stella plugin install|list|remove`) resolves and shows consent for a
 manifest without itself driving a turn through it — that command surface is
 about installation, not execution, so nothing there needs to.
@@ -212,7 +214,8 @@ before it crosses.
   so a condition on an execute/witness/verify signal is answered from a real
   per-boundary value rather than a pre-run snapshot. `Clone`, so a caller
   fanning one turn into several candidates gives each its own copy from a
-  shared prefix. `stella-pipeline`'s `Schedule` is a thin wrapper over this.
+  shared prefix. The staged pipeline's `Schedule` was a thin wrapper over this
+  (`crates/stella-pipeline`, deleted in #3865).
 - `src/evidence.rs` — the `[oracle]` block's evidence half: `OracleCheck`,
   the `MeasurementRule` grammar and its parser, the load-time rules that keep
   a check readable and every requirement decidable, and `Oracle::unmet`.
@@ -237,9 +240,14 @@ before it crosses.
   gate-checked by `scripts/check-wire-schema.sh`; compiled into no default
   build.
 - `src/host_call.rs` — the channel that lets a plugin ask the host for
-  something (recall, a bounded child turn, a test re-run) and read the answer
-  before it replies. The host performs the call and applies
-  `LoopGrant::permits_call`, so the plugin never reaches anything itself.
+  something (recall, a bounded child turn, a test re-run, an N-wide candidate
+  fan-out, the adoption of one of its candidates) and read the answer before it
+  replies. The host performs the call and applies `LoopGrant::permits_call`, so
+  the plugin never reaches anything itself. The last two are the pair `#3844`
+  added: `candidate_fanout` is the only capability whose turns **write**, so it
+  carries its own manifest ceiling (`[loop] max_fanout_width`) and its own seat
+  rule — the inverse of `child_turn`'s, since a candidate is the work rather
+  than evidence about it.
 - `src/package.rs` — the `[[tools]]`, `[[skills]]` and `[[records]]` a package
   ships, plus `PluginManifest::reconcile`, which compares what the manifest
   declares against what the host actually found on disk and refuses any
@@ -296,14 +304,17 @@ more:
   routes hooks through `LoopGrant::permits_hook`. The project tier is gated on
   `project_code_execution_trusted()` — a cloned repository's plugins do not
   load until the workspace is trusted (#3509).
-- **`stella-pipeline`** consumes the `[wrapper]` half: `src/variant.rs`
-  embeds `variants/classic.toml` and resolves it through `Wrapper::resolve`,
-  and `src/schedule.rs`'s `Schedule` walks `ProgressiveResolver` stage by
-  stage as each stage's real facts become known. **It is now driven by the
-  answer, not merely checked against it** (#3408, #3672): `Pipeline::run`
-  calls `Schedule::decide` at each stage boundary and ANDs it with the small
-  set of grammar-inexpressible host-internal facts, so `classic.toml` decides
-  every stage question the closed condition grammar can express.
+- **`stella-pipeline`** consumed the `[wrapper]` half until #3865 deleted the
+  crate: `src/variant.rs` embedded `variants/classic.toml` and resolved it
+  through `Wrapper::resolve`, and `src/schedule.rs`'s `Schedule` walked
+  `ProgressiveResolver` stage by stage as each stage's real facts became
+  known. It was driven by the answer rather than merely checked against it
+  (#3408, #3672): `Pipeline::run` called `Schedule::decide` at each stage
+  boundary and ANDed it with the small set of grammar-inexpressible
+  host-internal facts, so `classic.toml` decided every stage question the
+  closed condition grammar could express. That is the shape an installed
+  verification plugin reproduces; no in-tree consumer of the `[wrapper]` half
+  remains.
 
 What is still unconsumed is narrower than it was: the subloop runner, and the
 Stop-gate binding of a plugin's declared hold allowance. Both arrive with the

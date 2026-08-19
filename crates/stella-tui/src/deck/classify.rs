@@ -346,8 +346,10 @@ pub(super) fn snip(text: &str) -> String {
 /// One-line trace summary of a [`stella_protocol::ProofStep`] for the traces
 /// view — a row recording what each step said when it happened.
 ///
-/// This deliberately keeps `stella-pipeline`'s own vocabulary: a trace is read
-/// by someone debugging the pipeline, for whom `oracle` and `warrant` are the
+/// This deliberately keeps the verification vocabulary the staged pipeline
+/// established (`crates/stella-pipeline`, deleted in #3865, and the vocabulary
+/// a verification plugin inherits): a trace is read
+/// by someone debugging verification, for whom `oracle` and `warrant` are the
 /// precise words. It lives here rather than in a panel fold because the traces
 /// tab is a view of the raw event stream, so it costs the deck no folded state
 /// — it moved here when the PROOF rail was removed ahead of that crate's
