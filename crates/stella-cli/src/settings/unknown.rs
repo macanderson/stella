@@ -521,9 +521,7 @@ mod tests {
     /// that measured nothing.
     #[test]
     fn the_dead_pipeline_posture_keys_are_named_unknown() {
-        let found = scan(
-            r#"{ "agent_engine_config": { "pipeline_max_revisions": 4 } }"#,
-        );
+        let found = scan(r#"{ "agent_engine_config": { "pipeline_max_revisions": 4 } }"#);
         assert_eq!(
             found,
             vec!["agent_engine_config.pipeline_max_revisions".to_string()]
