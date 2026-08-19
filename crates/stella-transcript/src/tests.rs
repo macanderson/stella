@@ -93,6 +93,7 @@ fn run_with(steps: Vec<Step>) -> Run {
                     .to_string(),
                 before_step: 0,
             }],
+            notes: Vec::new(),
             steps,
             answer: Some("All three overfull warnings are gone.".to_string()),
             status,
@@ -969,5 +970,195 @@ fn a_double_width_object_leaves_the_chip_column_flush_right() {
         widths,
         vec![WIDTH, WIDTH],
         "the double-width path moved the right edge of its row"
+    );
+}
+
+// --------------------------------------------------------------------- notes
+
+/// Every note glyph occupies exactly one terminal cell.
+///
+/// `grid.rs`'s column discipline is that a fixed-width gutter only stays fixed
+/// if nobody writes a variable-width prefix into it. `NoteKind::glyph` feeds
+/// the offset column, so a two-cell glyph (a default-emoji-presentation
+/// codepoint like U+23F8 is the trap) walks every column to its right on the
+/// rows that use it — and only on those rows, which is the hardest kind of
+/// misalignment to spot in a screenshot.
+#[test]
+fn every_note_glyph_is_one_display_cell() {
+    use crate::model::NoteKind;
+    for kind in [
+        NoteKind::Stage,
+        NoteKind::Context,
+        NoteKind::Meter,
+        NoteKind::Wait,
+        NoteKind::Verdict,
+        NoteKind::Handoff,
+        NoteKind::Other,
+    ] {
+        assert_eq!(
+            grid::cells(kind.glyph()),
+            1,
+            "{:?}'s glyph {:?} is not one display cell",
+            kind,
+            kind.glyph()
+        );
+    }
+}
+
+fn run_with_notes(notes: Vec<Note>) -> Run {
+    let mut run = run_with(vec![step(
+        bash("pdflatex main.tex", &["ok"], Status::Ok),
+        1_000,
+    )]);
+    run.turns[0].notes = notes;
+    run
+}
+
+/// A note the model has no step for still reaches the transcript.
+///
+/// This is the regression the `Note` node exists to prevent: the deck carries
+/// some twenty-odd non-call entry kinds, and before notes existed a surface
+/// rendering through this model could only drop them.
+#[test]
+fn a_note_renders_its_summary_as_its_own_row() {
+    let run = run_with_notes(vec![Note {
+        kind: NoteKind::Context,
+        summary: "recalled 5 frames · 408 tok · 126ms".to_string(),
+        detail: Vec::new(),
+        before_step: 0,
+    }]);
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Steps);
+
+    let plain = grid::to_plain(&grid::render(&run, &state, 100));
+
+    assert!(
+        plain.contains("recalled 5 frames · 408 tok · 126ms"),
+        "the note's summary never reached the grid:\n{plain}"
+    );
+}
+
+/// A note with detail folds it away at `Steps` and reveals it when opened; a
+/// note with no detail advertises no fold control at all.
+#[test]
+fn note_detail_folds_and_a_detailless_note_offers_no_control() {
+    let with_detail = run_with_notes(vec![Note {
+        kind: NoteKind::Context,
+        summary: "recalled 2 frames".to_string(),
+        detail: vec!["symbol fn find — stella-cli/src/config_wiring.rs".to_string()],
+        before_step: 0,
+    }]);
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Steps);
+
+    let closed = grid::to_plain(&grid::render(&with_detail, &state, 100));
+    assert!(
+        !closed.contains("config_wiring.rs"),
+        "detail leaked while folded:\n{closed}"
+    );
+    let summary_row = closed
+        .lines()
+        .find(|l| l.contains("recalled 2 frames"))
+        .expect("summary row");
+    assert!(
+        summary_row.contains(grid::fold_mark(false)),
+        "a foldable note must show a fold control: {summary_row:?}"
+    );
+
+    state.toggle(&with_detail, NodeId::Note { turn: 0, note: 0 });
+    let opened = grid::to_plain(&grid::render(&with_detail, &state, 100));
+    assert!(
+        opened.contains("config_wiring.rs"),
+        "detail never appeared when opened:\n{opened}"
+    );
+
+    let bare = run_with_notes(vec![Note {
+        kind: NoteKind::Meter,
+        summary: "spend $0.0085".to_string(),
+        detail: Vec::new(),
+        before_step: 0,
+    }]);
+    let bare_row = grid::to_plain(&grid::render(&bare, &FoldState::new(), 100))
+        .lines()
+        .find(|l| l.contains("spend $0.0085"))
+        .expect("meter row")
+        .to_string();
+    assert!(
+        !bare_row.contains(grid::fold_mark(false)) && !bare_row.contains(grid::fold_mark(true)),
+        "a note with no detail must not advertise a fold control: {bare_row:?}"
+    );
+}
+
+/// Notes, prose and steps interleave in the order they happened.
+#[test]
+fn notes_interleave_with_steps_by_before_step() {
+    let mut run = run_with(vec![
+        step(bash("first", &["a"], Status::Ok), 0),
+        step(bash("second", &["b"], Status::Ok), 1_000),
+    ]);
+    run.turns[0].prose = Vec::new();
+    run.turns[0].notes = vec![
+        Note {
+            kind: NoteKind::Stage,
+            summary: "BEFORE-FIRST".to_string(),
+            detail: Vec::new(),
+            before_step: 0,
+        },
+        Note {
+            kind: NoteKind::Verdict,
+            summary: "AFTER-LAST".to_string(),
+            detail: Vec::new(),
+            before_step: 2,
+        },
+    ];
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Steps);
+    let plain = grid::to_plain(&grid::render(&run, &state, 100));
+
+    let at = |needle: &str| {
+        plain
+            .lines()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} missing from:\n{plain}"))
+    };
+    assert!(
+        at("BEFORE-FIRST") < at("first"),
+        "note ordered after its step"
+    );
+    assert!(
+        at("AFTER-LAST") > at("second"),
+        "a note past the last step must still render (the trailing pass)"
+    );
+}
+
+/// Both renderers show a note. The crate's charter is one model and *two*
+/// renderers, so a node the grid draws and the page drops is precisely the
+/// drift this crate was extracted to end.
+#[test]
+fn both_renderers_show_a_note() {
+    let run = run_with_notes(vec![Note {
+        kind: NoteKind::Handoff,
+        summary: "delegated to reviewer subagent".to_string(),
+        detail: vec!["attempt 1 of 3".to_string()],
+        before_step: 0,
+    }]);
+    let state = FoldState::new();
+
+    let grid_out = grid::to_plain(&grid::render(&run, &state, 100));
+    let page = html::render_page(&run, &state);
+
+    assert!(
+        grid_out.contains("delegated to reviewer subagent"),
+        "grid dropped the note"
+    );
+    assert!(
+        page.contains("delegated to reviewer subagent"),
+        "html dropped the note"
+    );
+    // The fold control exists on the page, addressed by the same node key the
+    // grid folds on, so a cursor round-trips between surfaces.
+    assert!(
+        page.contains(&NodeId::Note { turn: 0, note: 0 }.key()),
+        "the note carries no stable node id on the page"
     );
 }

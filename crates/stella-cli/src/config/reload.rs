@@ -51,8 +51,6 @@ impl Config {
             )
         };
         let tool_policy = settings.tool_policy();
-        let enable_recap = settings.recap_enabled();
-        let trace_capture = settings.trace_capture_enabled();
         let reward_policy = settings.reward_policy()?;
         let create_worktrees = settings.create_worktrees();
         let hooks = if crate::enterprise_telemetry::process_free_authority_active() {
@@ -66,8 +64,6 @@ impl Config {
         self.engine_settings_trusted = engine_is_trusted;
         self.authority = settings.authority_policy;
         self.tool_policy = tool_policy;
-        self.enable_recap = enable_recap;
-        self.trace_capture = trace_capture;
         self.reward_policy = reward_policy;
         self.create_worktrees = create_worktrees;
         self.hooks = hooks;

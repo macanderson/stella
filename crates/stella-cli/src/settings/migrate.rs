@@ -55,15 +55,10 @@ pub fn render(settings: &Settings, scope: ConfigScope) -> Result<String, String>
     meta.set_implicit(false);
     doc["meta"] = toml_edit::Item::Table(meta);
 
-    if let Some(recap) = settings.enable_recap {
-        let mut run = toml_edit::Table::new();
-        run.insert(
-            "recap",
-            toml_edit::value(if recap.is_on() { "on" } else { "off" }),
-        );
-        run.set_implicit(false);
-        doc["run"] = toml_edit::Item::Table(run);
-    }
+    // `[run].recap` was written here from `enable_recap` until #3870 retired
+    // that key. A migrated document simply carries no `[run]` table now unless
+    // another `[run]` field earns one — a retired key must not be migrated
+    // forward into a file it will only be warned about in.
 
     if !settings.providers.is_empty() {
         doc["providers"] = toml_io::item_for(&settings.providers, "providers")?;

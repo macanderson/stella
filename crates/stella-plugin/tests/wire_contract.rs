@@ -25,12 +25,14 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use stella_plugin::{
-    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
-    Continuation, Correction, EvidenceSet, FlipObservation, ObservedEvidence, Outcome,
-    PROTOCOL_VERSION, PluginManifest, PublishedSignal, RoundState, Signal, SignalValue, StageName,
-    StopReason, TamperFinding, TestBaseline, TestPlan, TurnOutcome, UndecidedReason, UnmetBecause,
-    UnmetRequirement, Verdict, VerdictRule, VolatileContext, WrapperPoint, WrapperRequest,
-    WrapperResponse,
+    AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse,
+    BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs, CandidateFanoutResult,
+    CandidateGrant, ChildTurnResult, Continuation, Correction, EvidenceProvenance, EvidenceSet,
+    FanoutCandidate, FlipObservation, HostCall, HostCallOk, HostCallResponse, ObservedEvidence,
+    Outcome, PROTOCOL_VERSION, PluginManifest, PublishedSignal, RecallResult, RoundState, Signal,
+    SignalValue, StageName, StopReason, TamperFinding, TestBaseline, TestPlan, TurnOutcome,
+    UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext,
+    WrapperPoint, WrapperRequest, WrapperResponse,
 };
 use stella_protocol::CandidateHandle;
 
@@ -148,7 +150,9 @@ fn every_message_round_trips_byte_for_byte() {
 
 #[test]
 fn every_decision_type_round_trips_byte_for_byte() {
-    round_trip(&Verdict::Met);
+    round_trip(&Verdict::Met {
+        evidence: EvidenceProvenance::PluginReported,
+    });
     round_trip(&Verdict::Unmet {
         unmet: vec![unmet()],
     });
@@ -177,7 +181,9 @@ fn every_decision_type_round_trips_byte_for_byte() {
             },
         },
     });
-    round_trip(&Outcome::Met);
+    round_trip(&Outcome::Met {
+        evidence: EvidenceProvenance::PluginReported,
+    });
     round_trip(&Outcome::Undecided {
         reason: UndecidedReason::NoOracle,
     });
@@ -567,4 +573,172 @@ fn there_is_no_wire_message_that_asks_a_plugin_for_a_verdict() {
             "\"{point}\" must not be addressable on this wire"
         );
     }
+}
+
+/// The fan-out capability's four tables, byte-for-byte in both directions
+/// (#3844). `width` and `requested` are the two numbers the whole capability
+/// turns on — a plugin's ask and the host's answer about what it clamped that
+/// ask to — and a field that survives `to_string` but not the trip back is a
+/// plugin that scored three candidates believing it asked for one.
+#[test]
+fn the_candidate_fanout_tables_round_trip_byte_for_byte() {
+    let args = CandidateFanoutArgs {
+        role: "candidate".to_string(),
+        instruction: "make tests/test_flip.py pass".to_string(),
+        width: 3,
+    };
+    assert_eq!(
+        round_trip(&args),
+        r#"{"role":"candidate","instruction":"make tests/test_flip.py pass","width":3}"#
+    );
+
+    let result = CandidateFanoutResult {
+        requested: 8,
+        candidates: vec![FanoutCandidate {
+            candidate: CandidateHandle::new("candidate-1"),
+            root: "/tmp/stella-candidates/candidate-1".to_string(),
+            report: "added the retry".to_string(),
+            completed: true,
+            files_changed: 2,
+            lines_changed: 41,
+        }],
+    };
+    let json = round_trip(&result);
+    assert!(
+        json.starts_with(r#"{"requested":8,"candidates":[{"candidate":"candidate-1""#),
+        "{json}"
+    );
+
+    round_trip(&AdoptCandidateArgs {
+        candidate: CandidateHandle::new("candidate-1"),
+    });
+    assert_eq!(
+        round_trip(&AdoptCandidateResult {
+            adopted: CandidateHandle::new("candidate-1"),
+            discarded: vec![CandidateHandle::new("candidate-2")],
+        }),
+        r#"{"adopted":"candidate-1","discarded":["candidate-2"]}"#
+    );
+    // The empty-siblings shape, which a width-1 fan-out produces and which
+    // `skip_serializing_if` is what keeps off the wire.
+    assert_eq!(
+        round_trip(&AdoptCandidateResult {
+            adopted: CandidateHandle::new("candidate-1"),
+            discarded: Vec::new(),
+        }),
+        r#"{"adopted":"candidate-1"}"#
+    );
+}
+
+/// `HostCall` is a closed vocabulary, and the two new members are the reason
+/// this test is worth extending rather than trusting: `serde(rename_all)`
+/// changes every spelling at once, and `[loop] calls` is written by hand in a
+/// manifest a human consented to. A renamed capability is a grant that stops
+/// matching the thing it grants.
+#[test]
+fn every_host_call_is_pinned_on_both_sides() {
+    for (call, wire) in [
+        (HostCall::Recall, "recall"),
+        (HostCall::ChildTurn, "child_turn"),
+        (HostCall::RunTest, "run_test"),
+        (HostCall::CandidateFanout, "candidate_fanout"),
+        (HostCall::AdoptCandidate, "adopt_candidate"),
+    ] {
+        assert_eq!(serde_json::to_value(call).unwrap(), wire);
+        assert_eq!(call.to_string(), wire, "Display must match the wire string");
+        assert_eq!(call.as_str(), wire);
+        round_trip(&call);
+    }
+}
+
+/// [`HostCallOk`] is untagged, so the `ok` table is the only thing telling a
+/// plugin which result it holds — and the rule for adding a variant is that
+/// its required keys are disjoint from every other's. Asserted rather than
+/// reviewed: `RecallResult`'s only field defaults, so it decodes `{}` and is
+/// tried first, which makes it the arm a new table falls into when someone
+/// gives a required field a `#[serde(default)]`.
+#[test]
+fn every_host_call_result_decodes_as_the_variant_it_was_encoded_as() {
+    let answers = [
+        HostCallOk::Recall(RecallResult::default()),
+        HostCallOk::ChildTurn(ChildTurnResult {
+            role: "reviewer".to_string(),
+            seat: "research".to_string(),
+            report: "the diff drops the retry".to_string(),
+            completed: true,
+        }),
+        HostCallOk::CandidateFanout(CandidateFanoutResult {
+            requested: 3,
+            candidates: Vec::new(),
+        }),
+        HostCallOk::AdoptCandidate(AdoptCandidateResult {
+            adopted: CandidateHandle::new("candidate-1"),
+            discarded: Vec::new(),
+        }),
+    ];
+    for answer in answers {
+        let response = HostCallResponse::ok(1, answer.clone());
+        let text = serde_json::to_string(&response).expect("encodes");
+        let decoded: HostCallResponse = serde_json::from_str(&text).expect("decodes");
+        assert_eq!(
+            decoded, response,
+            "{text} decoded as a different untagged arm"
+        );
+    }
+
+    // The one that would go wrong first: a fan-out answer with nothing to
+    // report is `{"requested":0,"candidates":[]}` and NOT `{}`, which is what
+    // keeps it out of the `recall` arm tried before it.
+    let empty = serde_json::to_string(&HostCallResponse::ok(
+        1,
+        HostCallOk::CandidateFanout(CandidateFanoutResult {
+            requested: 0,
+            candidates: Vec::new(),
+        }),
+    ))
+    .expect("encodes");
+    assert_eq!(
+        empty,
+        r#"{"result":1,"ok":{"requested":0,"candidates":[]}}"#
+    );
+}
+
+/// A fan-out width is a number a manifest declares, and the two rules it gets
+/// are `max_calls`'s — bound something, and never bound it to zero — pointed
+/// at one capability rather than the list. A width beside a manifest that
+/// cannot fan out is a number that bounds nothing, which is the manifest that
+/// quietly does nothing (#3844).
+#[test]
+fn a_fanout_width_must_bound_a_fanout_this_manifest_can_actually_ask_for() {
+    let manifest = |calls: &str, width: &str| {
+        PluginManifest::from_toml_str(&format!(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\n\
+             calls = [{calls}]\n{width}"
+        ))
+    };
+
+    let declared = manifest("\"candidate_fanout\"", "max_fanout_width = 2").expect("loads");
+    assert_eq!(declared.loop_grant.max_fanout_width, Some(2));
+    assert!(declared.loop_grant.permits_call(HostCall::CandidateFanout));
+    assert!(
+        !declared.loop_grant.permits_call(HostCall::AdoptCandidate),
+        "declaring a fan-out must not silently grant the adoption beside it"
+    );
+
+    assert!(matches!(
+        manifest("\"recall\"", "max_fanout_width = 2").expect_err("a width bounding nothing"),
+        stella_plugin::ManifestError::MaxFanoutWidthRequiresFanout
+    ));
+    assert!(matches!(
+        manifest("\"candidate_fanout\"", "max_fanout_width = 0").expect_err("a zero width"),
+        stella_plugin::ManifestError::ZeroMaxFanoutWidth
+    ));
+    assert_eq!(
+        manifest("\"candidate_fanout\"", "")
+            .expect("loads")
+            .loop_grant
+            .max_fanout_width,
+        None,
+        "absent is the host's ceiling, not a load error"
+    );
 }

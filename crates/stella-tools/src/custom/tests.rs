@@ -335,9 +335,26 @@ fn workspace_wins_over_global_on_name_collision() {
 
 // execution
 
+/// Budget for an execution test that is *not* about the timeout: the script is
+/// expected to finish, so the only honest budget is the largest one a manifest
+/// may ask for. A hand-picked few seconds measures how loaded the machine is
+/// rather than anything about the tool, and a saturated `make gate` run turned
+/// a trivial `/bin/sh` spawn into three red tests (#2011). Only
+/// [`timeout_kills_and_returns_fast`] sets its own budget, because there the
+/// budget is the subject.
+const NO_TIMEOUT_MS: u64 = MAX_TIMEOUT_MS;
+
 /// Write an executable `#!/bin/sh` script into `root` and return a
 /// [`CustomTool`] whose relative `command[0]` resolves against `root`.
-fn script_tool(root: &Path, file: &str, body: &str, timeout_ms: u64) -> CustomTool {
+///
+/// The budget is [`NO_TIMEOUT_MS`]; a test whose subject is the timeout uses
+/// [`script_tool_with_timeout`].
+fn script_tool(root: &Path, file: &str, body: &str) -> CustomTool {
+    script_tool_with_timeout(root, file, body, NO_TIMEOUT_MS)
+}
+
+/// [`script_tool`] with an explicit budget — for the one test that measures it.
+fn script_tool_with_timeout(root: &Path, file: &str, body: &str, timeout_ms: u64) -> CustomTool {
     let path = root.join(file);
     std::fs::write(&path, body).unwrap();
     let mut perms = std::fs::metadata(&path).unwrap().permissions();
@@ -363,7 +380,7 @@ fn script_tool(root: &Path, file: &str, body: &str, timeout_ms: u64) -> CustomTo
 #[tokio::test]
 async fn exit_zero_captures_stdout() {
     let dir = tempfile::tempdir().unwrap();
-    let tool = script_tool(dir.path(), "ok.sh", "#!/bin/sh\necho custom_ran\n", 5000);
+    let tool = script_tool(dir.path(), "ok.sh", "#!/bin/sh\necho custom_ran\n");
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
         ToolOutput::Ok { content, .. } => assert!(content.contains("custom_ran"), "{content}"),
@@ -380,7 +397,7 @@ async fn exit_zero_captures_stdout() {
 #[tokio::test]
 async fn silent_success_is_stamped_with_the_input_identity() {
     let dir = tempfile::tempdir().unwrap();
-    let tool = script_tool(dir.path(), "silent.sh", "#!/bin/sh\nexit 0\n", 5000);
+    let tool = script_tool(dir.path(), "silent.sh", "#!/bin/sh\nexit 0\n");
     let render = |input: Value| {
         let tool = &tool;
         let dir = dir.path();
@@ -412,7 +429,7 @@ async fn silent_success_is_stamped_with_the_input_identity() {
 #[tokio::test]
 async fn spawn_retries_while_script_is_open_for_writing() {
     let dir = tempfile::tempdir().unwrap();
-    let tool = script_tool(dir.path(), "busy.sh", "#!/bin/sh\necho recovered\n", 5000);
+    let tool = script_tool(dir.path(), "busy.sh", "#!/bin/sh\necho recovered\n");
     let writer = std::fs::OpenOptions::new()
         .append(true)
         .open(dir.path().join("busy.sh"))
@@ -433,7 +450,7 @@ async fn spawn_retries_while_script_is_open_for_writing() {
 async fn input_json_is_delivered_on_stdin() {
     let dir = tempfile::tempdir().unwrap();
     // `cat` echoes the JSON document written to stdin.
-    let tool = script_tool(dir.path(), "stdin.sh", "#!/bin/sh\ncat\n", 5000);
+    let tool = script_tool(dir.path(), "stdin.sh", "#!/bin/sh\ncat\n");
     let out = run_custom(
         &tool,
         &serde_json::json!({ "path": "src/lib.rs" }),
@@ -456,7 +473,6 @@ async fn scalar_inputs_are_exported_as_env_vars() {
         dir.path(),
         "env.sh",
         "#!/bin/sh\necho \"path=$STELLA_INPUT_PATH dry=$STELLA_INPUT_DRY_RUN n=$STELLA_INPUT_COUNT\"\n",
-        5000,
     );
     let input = serde_json::json!({ "path": "hello", "dry_run": true, "count": 7 });
     let out = run_custom(&tool, &input, dir.path()).await;
@@ -477,7 +493,6 @@ async fn nested_input_is_not_exported_as_env_but_still_on_stdin() {
         dir.path(),
         "nested.sh",
         "#!/bin/sh\necho \"nested=[$STELLA_INPUT_NESTED]\"\ncat\n",
-        5000,
     );
     let input = serde_json::json!({ "nested": { "a": 1 } });
     let out = run_custom(&tool, &input, dir.path()).await;
@@ -500,7 +515,6 @@ async fn manifest_env_is_applied() {
         dir.path(),
         "menv.sh",
         "#!/bin/sh\necho \"p=$LINT_PROFILE\"\n",
-        5000,
     );
     tool.env.insert("LINT_PROFILE".into(), "strict".into());
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
@@ -517,7 +531,7 @@ async fn manifest_cannot_reintroduce_credentials_but_benign_env_survives() {
         "#!/bin/sh\n{}\n",
         crate::subprocess_env::test_support::PROBE_COMMAND
     );
-    let mut tool = script_tool(dir.path(), "secret-env.sh", &body, 5000);
+    let mut tool = script_tool(dir.path(), "secret-env.sh", &body);
     tool.env.extend([
         ("OPENROUTER_API_KEY".into(), "manifest-openrouter".into()),
         ("GITHUB_TOKEN".into(), "manifest-github".into()),
@@ -545,7 +559,7 @@ async fn a_custom_tool_is_spawned_without_git_or_forced_color_env() {
         "#!/bin/sh\n{}\n",
         crate::subprocess_env::test_support::SPAWN_HYGIENE_PROBE_COMMAND
     );
-    let tool = script_tool(dir.path(), "spawn-hygiene.sh", &body, 5000);
+    let tool = script_tool(dir.path(), "spawn-hygiene.sh", &body);
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
         ToolOutput::Ok { content, .. } => {
@@ -558,12 +572,7 @@ async fn a_custom_tool_is_spawned_without_git_or_forced_color_env() {
 #[tokio::test]
 async fn nonzero_exit_becomes_error_with_code_and_stderr() {
     let dir = tempfile::tempdir().unwrap();
-    let tool = script_tool(
-        dir.path(),
-        "fail.sh",
-        "#!/bin/sh\necho boom >&2\nexit 3\n",
-        5000,
-    );
+    let tool = script_tool(dir.path(), "fail.sh", "#!/bin/sh\necho boom >&2\nexit 3\n");
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
         ToolOutput::Ok { content, .. } => panic!("expected error: {content}"),
@@ -577,7 +586,7 @@ async fn nonzero_exit_becomes_error_with_code_and_stderr() {
 #[tokio::test]
 async fn timeout_kills_and_returns_fast() {
     let dir = tempfile::tempdir().unwrap();
-    let tool = script_tool(dir.path(), "slow.sh", "#!/bin/sh\nsleep 30\n", 200);
+    let tool = script_tool_with_timeout(dir.path(), "slow.sh", "#!/bin/sh\nsleep 600\n", 200);
     let start = std::time::Instant::now();
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     let elapsed = start.elapsed();
@@ -585,10 +594,34 @@ async fn timeout_kills_and_returns_fast() {
     if let ToolOutput::Error { message, .. } = out {
         assert!(message.contains("timed out"), "{message}");
     }
+    // The margin is deliberately enormous relative to the 200ms budget: the
+    // claim is "the timer fired instead of the script finishing", and the
+    // script sleeps for 600s, so anything under a minute falsifies the
+    // alternative just as well while leaving no room for load to decide the
+    // outcome (#2011).
     assert!(
-        elapsed.as_secs() < 5,
+        elapsed.as_secs() < 60,
         "should not wait for the full sleep: {elapsed:?}"
     );
+}
+
+/// Witness for #2011: an execution test's script must not be racing a
+/// few-second budget. This script deliberately outlives the old hardcoded
+/// 5000ms, so under the previous helper it returned
+/// ``custom tool `t` timed out after 5000ms``; with the budget at
+/// [`NO_TIMEOUT_MS`] it simply runs to completion.
+#[tokio::test]
+async fn a_script_outliving_the_old_fixed_budget_still_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = script_tool(
+        dir.path(),
+        "slowish.sh",
+        "#!/bin/sh\nsleep 6\necho survived\n",
+    );
+    match run_custom(&tool, &serde_json::json!({}), dir.path()).await {
+        ToolOutput::Ok { content, .. } => assert!(content.contains("survived"), "{content}"),
+        ToolOutput::Error { message, .. } => panic!("expected the script to finish: {message}"),
+    }
 }
 
 /// Dropping the future mid-wait (a cancelled turn) must kill the whole
@@ -610,7 +643,6 @@ async fn a_dropped_custom_tool_kills_the_process_group() {
             "#!/bin/sh\nsleep 30 &\necho $! > {}\nwait\n",
             pidfile.display()
         ),
-        60_000,
     );
     let root = dir.path().to_path_buf();
     let handle =
@@ -647,7 +679,7 @@ async fn missing_script_names_the_path_tried() {
         name: "t".into(),
         description: "d".into(),
         command: vec!["./does-not-exist.sh".into()],
-        timeout_ms: 5000,
+        timeout_ms: NO_TIMEOUT_MS,
         input_schema: serde_json::json!({ "type": "object" }),
         env: HashMap::new(),
         source: dir.path().join("t.toml"),
@@ -676,7 +708,6 @@ async fn oversized_output_is_elided_middle_out() {
         dir.path(),
         "big.sh",
         "#!/bin/sh\nhead -c 200000 /dev/zero | tr '\\0' 'X'\n",
-        5000,
     );
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
@@ -707,7 +738,6 @@ async fn over_cap_output_keeps_first_and_last_lines_with_a_named_elision() {
              head -c {MAX_OUTPUT_BYTES} /dev/zero | tr '\\0' 'x'\necho\n\
              echo LAST_SENTINEL_LINE\n"
         ),
-        5000,
     );
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     let content = match out {
@@ -735,7 +765,7 @@ async fn over_cap_output_keeps_first_and_last_lines_with_a_named_elision() {
 #[tokio::test]
 async fn non_object_input_does_not_panic() {
     let dir = tempfile::tempdir().unwrap();
-    let tool = script_tool(dir.path(), "cat.sh", "#!/bin/sh\ncat\n", 5000);
+    let tool = script_tool(dir.path(), "cat.sh", "#!/bin/sh\ncat\n");
     // A bare array — no top-level object, so no env vars, but still on stdin.
     let out = run_custom(&tool, &serde_json::json!(["a", "b"]), dir.path()).await;
     match out {
@@ -769,7 +799,7 @@ impl ToolExecutor for FakeInner {
 #[tokio::test]
 async fn set_advertises_inner_plus_custom_schemas() {
     let dir = tempfile::tempdir().unwrap();
-    let tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho hi\n", 5000);
+    let tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho hi\n");
     let inner = FakeInner;
     let set = CustomToolSet::new(&inner, vec![tool], dir.path().to_path_buf());
     let names: Vec<String> = set.schemas().into_iter().map(|s| s.name).collect();
@@ -780,7 +810,7 @@ async fn set_advertises_inner_plus_custom_schemas() {
 #[tokio::test]
 async fn set_routes_custom_names_and_falls_through_for_others() {
     let dir = tempfile::tempdir().unwrap();
-    let mut tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho from_custom\n", 5000);
+    let mut tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho from_custom\n");
     tool.name = "my_tool".into();
     tool.command = vec!["./s.sh".into()];
     let inner = FakeInner;
@@ -806,7 +836,7 @@ async fn owned_inner_delegates_schemas_and_fallthrough() {
     // like the borrowed one: inner schemas + customs, and unknown names
     // fall through to the owned inner.
     let dir = tempfile::tempdir().unwrap();
-    let mut tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho from_custom\n", 5000);
+    let mut tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho from_custom\n");
     tool.name = "my_tool".into();
     tool.command = vec!["./s.sh".into()];
     let inner: std::sync::Arc<dyn ToolExecutor> = std::sync::Arc::new(FakeInner);
@@ -901,7 +931,7 @@ command = ["./plain.sh"]
 #[tokio::test]
 async fn a_claimed_read_only_custom_tool_is_ceiling_refused_and_outside_the_read_only_set() {
     let dir = tempfile::tempdir().unwrap();
-    let mut tool = script_tool(dir.path(), "peek.sh", "#!/bin/sh\necho ok\n", 5000);
+    let mut tool = script_tool(dir.path(), "peek.sh", "#!/bin/sh\necho ok\n");
     tool.name = "peek".into();
     tool.claimed_read_only = true;
     let set = CustomToolSet::new(&FakeInner, vec![tool], dir.path().to_path_buf());
@@ -952,7 +982,6 @@ async fn a_declared_output_schema_holds_a_script_to_its_promise() {
         dir.path(),
         "honest.sh",
         "#!/bin/sh\necho '{\"count\": 3}'\n",
-        5000,
     );
     honest.output_schema = Some(schema.clone());
     match run_custom(&honest, &serde_json::json!({}), dir.path()).await {
@@ -962,7 +991,7 @@ async fn a_declared_output_schema_holds_a_script_to_its_promise() {
         other => panic!("a kept promise must pass: {other:?}"),
     }
 
-    let mut liar = script_tool(dir.path(), "liar.sh", "#!/bin/sh\necho 'not json'\n", 5000);
+    let mut liar = script_tool(dir.path(), "liar.sh", "#!/bin/sh\necho 'not json'\n");
     liar.output_schema = Some(schema.clone());
     match run_custom(&liar, &serde_json::json!({}), dir.path()).await {
         ToolOutput::Error { message, class } => {
@@ -976,7 +1005,6 @@ async fn a_declared_output_schema_holds_a_script_to_its_promise() {
         dir.path(),
         "wrong.sh",
         "#!/bin/sh\necho '{\"count\": \"three\"}'\n",
-        5000,
     );
     wrong.output_schema = Some(schema);
     match run_custom(&wrong, &serde_json::json!({}), dir.path()).await {
@@ -1169,12 +1197,7 @@ fn gated_fixture(
 ) -> (crate::registry::ToolRegistry, CustomTool) {
     use stella_core::bus::{HookBus, names as hook_names};
 
-    let mut tool = script_tool(
-        dir,
-        "s.sh",
-        "#!/bin/sh\ntouch ./ran.marker\necho ran\n",
-        5000,
-    );
+    let mut tool = script_tool(dir, "s.sh", "#!/bin/sh\ntouch ./ran.marker\necho ran\n");
     tool.name = gated_name.to_string();
 
     let registry = crate::registry::ToolRegistry::new(dir.to_path_buf());
@@ -1307,7 +1330,6 @@ async fn a_modify_decision_rewrites_the_input_a_custom_tool_receives() {
         dir.path(),
         "s.sh",
         "#!/bin/sh\necho \"saw=$STELLA_INPUT_PATH\"\n",
-        5000,
     );
     tool.name = "my_tool".into();
     let set = CustomToolSet::new(&registry, vec![tool], dir.path().to_path_buf());
@@ -1345,7 +1367,7 @@ async fn a_name_that_falls_through_is_gated_exactly_once() {
     .detach();
     registry.attach_bus(bus);
 
-    let tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho hi\n", 5000);
+    let tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho hi\n");
     let set = CustomToolSet::new(&registry, vec![tool], dir.path().to_path_buf());
 
     let out = set.execute("task_list", &serde_json::json!({})).await;

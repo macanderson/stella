@@ -399,10 +399,11 @@ pub(crate) async fn run_raw_one_shot(
 /// worker turns get the full tool stack (built-ins + MCP + custom), same as
 /// `run_one_shot`.
 ///
-/// `pipeline` selects the driver for each working round (#3381): `Classic`
-/// (`--pipeline classic`) is refused at [`crate::wrapper_plugin::PipelineChoice::resolve`]
-/// now — the built-in staged pipeline is gone (#3865) — so `run_goal_cmd` never
-/// sees that variant in practice; `Raw` — the default since #3381, with or
+/// `pipeline` selects the driver for each working round (#3381). It has two
+/// arms, both live: `--pipeline classic` is refused at
+/// [`crate::wrapper_plugin::PipelineChoice::resolve`] — the built-in staged
+/// pipeline is gone (#3865) and the variant that named it with it (#3867), so
+/// this door has no third case to handle. `Raw` — the default since #3381, with or
 /// without `--no-pipeline` — falls back to the raw `Engine::run_goal`
 /// step-loop; `Plugin(variant)` dispatches each round's worker turn through
 /// the named installed wrapper ([`goal_wrapped::run_goal_wrapped_turn`],
@@ -414,9 +415,11 @@ pub(crate) async fn run_raw_one_shot(
 /// second one held open inside a judged round is the doubled-supervisor
 /// shape the wrapper design forbids; an arbiter-grade wrapper's designed
 /// home is `stella run --pipeline <variant>` instead. Steering and observer
-/// wrappers reach `Plugin(variant)` unaffected. `stella fleet` still refuses
-/// any named plugin before this is ever called
-/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Fleet` arm).
+/// wrappers reach `Plugin(variant)` unaffected. `stella fleet` drives a named
+/// plugin per worker attempt now, on its own driver
+/// (`crate::fleet_cmd::wrapped`, #3695 fleet half) — and deliberately
+/// without this door's arbiter refusal, because a fleet attempt has no
+/// completion arbiter of its own for a hold loop to double.
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
@@ -427,10 +430,9 @@ pub async fn run_goal_cmd(
     // dispatch: the wrapped arm builds the same system prompt, the same
     // recall block and the same tool stack `Raw` does, and differs only in
     // which function drives the round loop. The staged pipeline itself is
-    // gone (#3865):
-    // `pipeline.is_classic()` can never be true any more
-    // (`PipelineChoice::resolve` refuses `--pipeline classic` outright), so
-    // this door runs the `Raw`/`Plugin` arms unconditionally now.
+    // gone (#3865) and so is the variant that named it (#3867), so `Raw` and
+    // `Plugin` are the whole space and this door runs those two arms
+    // unconditionally now.
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
@@ -666,10 +668,9 @@ pub(crate) async fn run_goal_turn(
     session_memory: Option<&mut crate::memory::SessionMemory>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
-    // This function is the RAW arm — `run_goal_cmd` calls it only when
-    // `pipeline.is_classic()` is false — so `variant: None` is the honest
-    // answer every time, not a placeholder (#3381, #3388): nothing wrapped
-    // this round.
+    // This function is the RAW arm — `run_goal_cmd` calls it only for
+    // `PipelineChoice::Raw` — so `variant: None` is the honest answer every
+    // time, not a placeholder (#3381, #3388): nothing wrapped this round.
     let execution = begin_execution(store, "goal", goal, cfg, session, None);
     stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
 
@@ -701,6 +702,7 @@ pub(crate) async fn run_goal_turn(
         execution.clone(),
         cfg.provider.id.to_string(),
         false,
+        Some(goal.to_string()),
     );
     // First event of the turn: what recall put in front of the model.
     if let Some(event) = recall_event {

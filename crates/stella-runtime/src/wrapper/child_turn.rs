@@ -59,9 +59,10 @@
 //! 3. **Forbidden** — the intent resolves to the **worker's** seat. This is the
 //!    security half and it is not buyable: a plugin whose job is to judge the
 //!    worker's output must not be able to spend the worker's own model to do
-//!    it. `stella_pipeline`'s roster already *reports* this loss for an
-//!    operator's own configuration (`Roster::independence_losses`) — an
-//!    operator may choose it, and a plugin may not.
+//!    it. The staged pipeline's roster *reported* this loss for an operator's
+//!    own configuration (`Roster::independence_losses`;
+//!    `crates/stella-pipeline`, deleted in #3865) — an operator may choose it,
+//!    and a plugin may not.
 //!
 //! The third is compared on the **resolved seat**, never on the spelling of the
 //! tier, which is the lesson `independence_losses` records in prose: while
@@ -478,8 +479,9 @@ impl<P: ChildTurnPlane + ?Sized> ChildTurnPlane for std::sync::Arc<P> {
 
 /// A seat's wire token, as `step_usage` records it.
 ///
-/// Through `serde_json` rather than a second hand-written table, for
-/// `stella_pipeline::roster::responsibility_token`'s reason: the token a plugin
+/// Through `serde_json` rather than a second hand-written table, for the
+/// reason the staged pipeline's `roster::responsibility_token` gave
+/// (`crates/stella-pipeline`, deleted in #3865): the token a plugin
 /// reads must be the token the telemetry carries, and two spellings of that is
 /// how the last one drifted. The fallback is unreachable for a fieldless enum
 /// and exists only to keep this total (invariant 5 — no `expect` on a value a

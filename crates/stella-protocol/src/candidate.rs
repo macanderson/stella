@@ -5,8 +5,9 @@
 //! `doc:pipeline-as-plugins` §4 A10, `doc:wrapper-socket` §6.
 //!
 //! `after_turn` is defined as "author a witness, run the oracle, read the
-//! flip", and all three of those need the candidate worktree. Today that
-//! worktree is only reachable as `stella_pipeline::ports::CandidateWorkspace`
+//! flip", and all three of those need the candidate worktree. When these types
+//! were designed that worktree was reachable only as the staged pipeline's
+//! `ports::CandidateWorkspace` (`crates/stella-pipeline`, deleted in #3865)
 //! — nineteen methods returning borrowed trait objects — and **an
 //! out-of-process plugin cannot be handed a `&dyn` anything**
 //! (`doc:wrapper-socket` §6, the no-host-assumed acceptance test). What
@@ -30,8 +31,10 @@
 //! trustworthy on the way back in: every path a plugin names is resolved
 //! against the handle's root by the host and refused if it lands outside
 //! ([`PathDenial`]). The refusal is the host's, on the host's filesystem,
-//! after symlinks — never a promise the plugin was asked to keep. The
-//! implementation of that fence is `stella_pipeline::ports::handle`.
+//! after symlinks — never a promise the plugin was asked to keep. The fence
+//! was first implemented by the staged pipeline's `ports::handle`
+//! (`crates/stella-pipeline`, deleted in #3865); `stella-cli`'s
+//! `wrapper_candidate.rs` carries it now.
 //!
 //! # Why this crate and not `stella-plugin`
 //!
@@ -48,9 +51,9 @@
 //! 3. `stella-plugin` already depends on `stella-protocol`, so the
 //!    plugin-facing request/response envelope can name these types without
 //!    moving them. The reverse placement would push every host that resolves a
-//!    handle — `stella-pipeline`, and later `stella-runtime` and
-//!    `stella-serve` — through the manifest-parsing crate to reach a type that
-//!    parses no manifests.
+//!    handle — `stella-cli` today, `stella-runtime` and `stella-serve` as the
+//!    socket reaches them — through the manifest-parsing crate to reach a type
+//!    that parses no manifests.
 //!
 //! # Wire shape
 //!
@@ -238,9 +241,11 @@ pub enum CandidateDenial {
     #[error("the test command was refused: {reason}")]
     TestCommandRefused {
         /// The parser's own reason, as prose. The vocabulary it comes from is
-        /// the host's (`stella_pipeline::witness::TestInvocationError`) and is
-        /// deliberately not mirrored here: a second copy of a closed enum in
-        /// this crate is a rule in two places.
+        /// the host's — the staged pipeline's `witness::TestInvocationError`
+        /// when this was written (`crates/stella-pipeline`, deleted in #3865),
+        /// a wrapper plugin's own oracle now — and is deliberately not mirrored
+        /// here: a second copy of a closed enum in this crate is a rule in two
+        /// places.
         reason: String,
     },
 }

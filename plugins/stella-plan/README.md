@@ -185,4 +185,4 @@ its output, and the same is true of `stella-research`'s.
 | It is spawned once per declared stage and contributes at exactly one of them | #3543 |
 | Nobody has benchmarked it against the built-in stage | (none yet — parallel to #3544 for `stella-research`) |
 | The goldens have no `BLESS=1` regeneration path | #3548 |
-| `stella goal` and `stella fleet` still get no wrapper plugin driver at all, so `plan-v1` is `stella run`-only | #3695 |
+| `plan-v1` runs on every door that takes `--pipeline` now (`stella run`, `stella goal` per round, `stella fleet` per worker attempt, #3695) — but only `stella run`'s door installs a `ChildTurns` plane, so the planner role intent it asks for is answered `Unavailable` on the other two | #3833 (goal), #3882 (fleet) |

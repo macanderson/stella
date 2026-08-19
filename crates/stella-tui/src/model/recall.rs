@@ -23,7 +23,8 @@ use stella_protocol::{ContextFrameRef, ContextUsage, ProviderShare};
 /// A near-lossless read-model of [`ContextFrameRef`]: every field the wire
 /// carries survives except `block_id`, which recall never sets — a frame
 /// becomes a block only once it is *rendered* into a message, after the event
-/// is emitted (see `stella_pipeline::Recall::telemetry_event`).
+/// is emitted (see [`stella_protocol::Recall::telemetry_event`], which #3865
+/// retargeted here out of `stella-pipeline` ahead of deleting that crate).
 ///
 /// The two fields worth naming are the two the old label-only shape lost.
 /// [`Self::kind`] is what separates a 60-token graph symbol from an 800-token

@@ -137,6 +137,26 @@ pub enum ManifestError {
     )]
     ZeroMaxCalls,
 
+    /// `[loop] max_fanout_width` was declared without `candidate_fanout` in
+    /// `[loop] calls`. Unlike [`ManifestError::MaxCallsRequiresCalls`] this
+    /// names one capability rather than the list, because the width bounds
+    /// that capability alone — a plugin declaring `recall` and a width has
+    /// written a number that bounds nothing.
+    #[error(
+        "[loop] max_fanout_width has nothing to bound: declare \
+         \"candidate_fanout\" in [loop] calls, or drop the width"
+    )]
+    MaxFanoutWidthRequiresFanout,
+
+    /// `[loop] max_fanout_width = 0` — a width that forbids the fan-out the
+    /// same block declares. The [`ManifestError::ZeroMaxCalls`] rule, for the
+    /// one allowance whose unit is a writing worker turn.
+    #[error(
+        "[loop] max_fanout_width = 0 contradicts the \"candidate_fanout\" \
+         capability [loop] calls declares: drop the capability instead"
+    )]
+    ZeroMaxFanoutWidth,
+
     /// `[oracle]` was declared without `after_turn` in `[loop] points`. The
     /// oracle's evidence reaches the host in the `after_turn` response and
     /// nowhere else, and an undeclared point is never dispatched — so the

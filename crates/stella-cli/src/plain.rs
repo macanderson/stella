@@ -48,6 +48,8 @@
 //! command deck's honest run progress bar (`stella_tui::progress`), never by a
 //! cosmetic character-noise loop.
 
+pub mod transcript;
+
 use std::io::{self, Write};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};

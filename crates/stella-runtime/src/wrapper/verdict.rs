@@ -34,10 +34,10 @@
 //! `stella_plugin::Oracle::unmet` already holds, restated where the verdict is
 //! actually made.
 //!
-//! [`ladder_decision`](https://github.com/oxagen/stella) in
-//! `crates/stella-pipeline/src/verify.rs` is the same shape and the reason
-//! porting the staged pipeline onto this socket is a re-home rather than a
-//! rewrite: every arm of that ladder is terminal, and so is every arm here.
+//! The staged pipeline's `ladder_decision` (`crates/stella-pipeline`, deleted
+//! in #3865) was the same shape, which was the reason porting that pipeline
+//! onto this socket would have been a re-home rather than a rewrite: every arm
+//! of that ladder was terminal, and so is every arm here.
 
 use std::fmt::Write as _;
 
@@ -89,7 +89,9 @@ use stella_plugin::{
 #[must_use]
 pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
     if rule.requirements.is_empty() {
-        return Verdict::Met;
+        return Verdict::Met {
+            evidence: evidence.provenance,
+        };
     }
     let Some(oracle) = &rule.oracle else {
         return Verdict::Undecided {
@@ -176,7 +178,12 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
     }
     match undecided {
         Some(reason) => Verdict::Undecided { reason },
-        None => Verdict::Met,
+        // Provenance is carried out of the evidence, not consulted on the way
+        // in: which arm we reach was decided above, on the flip, the tamper
+        // finding and the measurements alone (#3513).
+        None => Verdict::Met {
+            evidence: evidence.provenance,
+        },
     }
 }
 
@@ -261,9 +268,11 @@ fn tamper_credit(policy: TamperPolicy, finding: &TamperFinding) -> FlipCredit {
 #[must_use]
 pub fn again(verdict: &Verdict, round: &RoundState, grant: &LoopGrant) -> Continuation {
     let unmet = match verdict {
-        Verdict::Met => {
+        Verdict::Met { evidence } => {
             return Continuation::Stop {
-                outcome: Outcome::Met,
+                outcome: Outcome::Met {
+                    evidence: *evidence,
+                },
             };
         }
         Verdict::Undecided { reason } => {

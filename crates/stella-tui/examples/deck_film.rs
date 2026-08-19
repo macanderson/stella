@@ -615,13 +615,6 @@ fn ui_for(scene: Scene, sel: usize, model: &WorkspaceModel, splash_ms: u64) -> D
     ui.engine.pristine = Some(demo_engine_config());
     ui.engine.state = Some(demo_engine_config());
     ui.tools.state = Some(fixture_tool_policy());
-    // The scripted session reaches a pending scope review, and the deck draws
-    // that dialog centred over the whole frame. Left up it would cover the tab
-    // the shot exists to show, so it is answered — exactly as the golden
-    // harness does, and for the same reason.
-    for entry in &model.agents {
-        ui.scope_answered.insert(entry.meta.id.clone());
-    }
 
     match scene {
         Scene::Splash => {

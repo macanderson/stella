@@ -535,9 +535,11 @@ since a plain `stella run` has no verification stage to hand it to.)
     classic` is refused the same as everywhere else.
   </OptionCard>
   <OptionCard name="stella fleet">
-    Raw workers, unconditionally — this door cannot yet drive an installed
-    wrapper plugin over a worker's attempt (#3695 stays open for that), so
-    any named `--pipeline <variant>`, including `classic`, is refused — see
+    Raw workers by default; `--pipeline <variant>` binds an installed wrapper
+    plugin once per worker attempt, in that attempt's own tree, and
+    dispatches the attempt's turn through it (#3695, fleet half). No arbiter
+    refusal here — a fleet attempt has no completion arbiter of its own.
+    `--pipeline classic` is refused the same as everywhere else — see
     [fleets](/docs/agent-fleets).
   </OptionCard>
 </CardGrid>

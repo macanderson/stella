@@ -19,7 +19,7 @@ A prompt whose **first word** is exactly a subcommand name (`clean`, `claims`) i
 
 ## What it does
 
-Each task prompt becomes an independent task running **in the shared repository root**. Workers coordinate through cooperative file claims — paths declared upfront in a plan (`claims`) plus claim-on-first-write at the tool layer — so a conflict surfaces in under a second at write time with the rival named, and commits interleave on one branch with no merge-back. A task a plan file opts into `isolation = "isolated"` instead gets a dedicated git worktree under `.stella/worktrees/<slug>` — branched from the current `HEAD` (or `--base-ref`), pinned to a SHA at start, onto a `fleet/<slug>-<hash>` branch (the hash suffix keeps re-runs from colliding with branches you kept). Tasks dispatch in dependency-ordered waves, running up to `--max-concurrency` at once within a wave. Each worker is a full engine run through the raw step loop — this door cannot yet drive an installed wrapper plugin over a worker's attempt (#3695 stays open for that), so a named `--pipeline <variant>` is refused, naming [`stella run`](/docs/commands/run) and [`stella goal`](/docs/commands/goal) as the doors that support it. `classic` used to name a built-in staged pipeline that also ran here; that crate is deleted from the workspace, so `--pipeline classic` is refused the same way as any other named variant now, not for a different reason. Progress, attempts, commits, and cost are persisted to `.stella/private/fleet.db` and surface on the [Observatory dashboard](/docs/telemetry/dashboard)'s Fleet runs card.
+Each task prompt becomes an independent task running **in the shared repository root**. Workers coordinate through cooperative file claims — paths declared upfront in a plan (`claims`) plus claim-on-first-write at the tool layer — so a conflict surfaces in under a second at write time with the rival named, and commits interleave on one branch with no merge-back. A task a plan file opts into `isolation = "isolated"` instead gets a dedicated git worktree under `.stella/worktrees/<slug>` — branched from the current `HEAD` (or `--base-ref`), pinned to a SHA at start, onto a `fleet/<slug>-<hash>` branch (the hash suffix keeps re-runs from colliding with branches you kept). Tasks dispatch in dependency-ordered waves, running up to `--max-concurrency` at once within a wave. Each worker is a full engine run through the raw step loop, or — with `--pipeline <variant>` — through an installed wrapper plugin bound once per worker attempt (#3695): the plugin is resolved from the roster of the workspace you invoked `stella fleet` in (an isolated task's fresh worktree need not carry an untracked `.stella/plugins/` at all) and granted the tree that attempt actually runs in, and every attempt's execution row records its variant id. Unlike [`stella goal`](/docs/commands/goal), this door applies no arbiter refusal — a fleet attempt's verdict is its turn's own outcome, so a wrapper's hold loop is the only round-holder over it. `classic` used to name a built-in staged pipeline that also ran here; that crate is deleted from the workspace, so `--pipeline classic` is refused now, unlike any other named variant. Progress, attempts, commits, and cost are persisted to `.stella/private/fleet.db` and surface on the [Observatory dashboard](/docs/telemetry/dashboard)'s Fleet runs card.
 
 Isolated worktrees and fleet branches are **not** cleaned up automatically: they stay on disk so you can inspect, test, and merge each result yourself. Reclaim the finished ones with [`stella fleet clean`](#stella-fleet-clean) when you are done reviewing. A failed task is never retried automatically, and its dependents end the run as `skipped`.
 
@@ -59,11 +59,12 @@ For anything beyond a handful of independent prompts, use a plan file (`--plan`)
     effect, including alongside `--pipeline`, which always wins.
   </OptionCard>
   <OptionCard name="--pipeline <VARIANT>">
-    Not supported on this door yet: any named variant, including `classic`
-    (the built-in staged pipeline, deleted from the workspace), is refused —
-    wrapper plugins run on [`stella run`](/docs/commands/run) and
-    [`stella goal`](/docs/commands/goal) today, not `stella fleet`. Omit the
-    flag for the raw loop.
+    Run each worker attempt through the installed wrapper plugin whose
+    manifest declares this `[wrapper] id` (`stella plugin list`). The variant
+    is resolved once before the fan-out, so a typo fails the command rather
+    than each task; each attempt then binds its own plugin process in its own
+    tree. `classic` — the built-in staged pipeline, deleted from the
+    workspace — is refused. Omit the flag for the raw loop.
   </OptionCard>
   <OptionCard name="--task-timeout <SECS>" defaultValue="unbounded">
     Wall-clock ceiling per worker attempt. On expiry the task's stop line fires — the same

@@ -100,9 +100,9 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
 /// wrapper runs over the turn (`Raw` by default, #3381). `test_command`, when given, arms a
 /// bound wrapper plugin's own oracle.
 ///
-/// `--keep-witness`/`--require-verified` used to reach this function too, back when
-/// `PipelineChoice::Classic` was a live arm — the staged pipeline that consumed them is gone
-/// (#3865), and `wrapper_plugin::reject_verification_flags_without_pipeline` now refuses both
+/// `--keep-witness`/`--require-verified` used to reach this function too, back when a
+/// `Classic` arm selected the built-in staged pipeline. That pipeline is gone
+/// (#3865) and its variant with it (#3867), and `wrapper_plugin::reject_verification_flags_without_pipeline` now refuses both
 /// flags unconditionally before a caller ever resolves a prompt, so nothing downstream of that
 /// refusal has a use for them any more.
 pub async fn run_one_shot(
@@ -1128,18 +1128,14 @@ pub(crate) async fn run_turn(
     // free. Seeded from `messages` so the turn-opening block is never
     // re-injected, and given `tx` so its own recall is metered (#3366).
     let requery = crate::memory::requery_for_turn(session_memory.as_deref(), messages, tx.clone());
-    // Journal the policy/extension audit plane through the same stream
-    // (receipts spec §6.4) — a no-op unless a hook bus is attached.
-    registry.bridge_policy_plane(tx.clone());
-    // Registry-born events (task board, sub-agent lifecycle) ride the same
-    // stream as the engine's, so a run's live output and its journal agree.
-    registry.attach_events(tx.clone());
+    persistence::attach_run_streams(registry, &tx);
     let renderer = spawn_renderer(
         rx,
         format,
         execution.clone(),
         cfg.provider.id.to_string(),
         durable_pre_persisted,
+        Some(prompt.to_string()),
     );
     // Recall's frames, then this run's own opening stage boundary — see
     // `output::open_raw_turn` for the ordering and for why it lives there.

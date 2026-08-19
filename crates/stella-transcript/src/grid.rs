@@ -241,6 +241,11 @@ fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
 
     let offsets = digest::offsets(&turn.steps);
     for (si, step) in turn.steps.iter().enumerate() {
+        for (ni, note) in turn.notes.iter().enumerate() {
+            if note.before_step == si {
+                note_lines(out, ctx, note, index, ni);
+            }
+        }
         for (pi, prose) in turn.prose.iter().enumerate() {
             if prose.before_step == si {
                 prose_lines(out, ctx, prose, index, pi);
@@ -252,6 +257,11 @@ fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
     // and — the case that has no step at all — a turn that produced only prose.
     // Mirrors the trailing pass in `steps_and_prose` in html.rs; without it the
     // two renderers disagree about which prose exists.
+    for (ni, note) in turn.notes.iter().enumerate() {
+        if note.before_step >= turn.steps.len() {
+            note_lines(out, ctx, note, index, ni);
+        }
+    }
     for (pi, prose) in turn.prose.iter().enumerate() {
         if prose.before_step >= turn.steps.len() {
             prose_lines(out, ctx, prose, index, pi);
@@ -328,6 +338,62 @@ fn role_lines(out: &mut Vec<Line>, tag: &str, color: Color, text: &str, width: u
         }
         line.push(Cell::new(wrapped, Color::Ink));
         out.push(line);
+    }
+}
+
+/// One non-call row — a recall, a compaction, a verdict, a delegation.
+///
+/// Shares the step row's column geometry on purpose: the offset column carries
+/// the kind glyph, the mark column the fold control, and the summary starts
+/// where a step's object starts. A note is a peer of a step, not an aside, so
+/// it lines up with one.
+fn note_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, note: &crate::model::Note, ti: usize, ni: usize) {
+    let width = ctx.width;
+    // A note with nothing behind it gets no fold control, rather than a control
+    // that opens onto an empty body.
+    let foldable = !note.detail.is_empty();
+    let open = foldable && ctx.open(NodeId::Note { turn: ti, note: ni });
+    let color = note_color(note.kind);
+
+    let mut line = vec![
+        Cell::new("│ ", Color::Faint),
+        Cell::new(pad(note.kind.glyph(), OFFSET_W), color),
+        Cell::new(
+            pad(if foldable { fold_mark(open) } else { "" }, MARK_W),
+            Color::Dim,
+        ),
+        Cell::new(&note.summary, color),
+    ];
+    let used = line_width(&line);
+    if used < width {
+        line.push(Cell::new(" ".repeat(width - used), Color::Faint));
+    }
+    out.push(line);
+
+    if !open {
+        return;
+    }
+    for row in &note.detail {
+        for wrapped in wrap(row, width.saturating_sub(OFFSET_W + MARK_W + 4).max(20)) {
+            out.push(vec![
+                Cell::new("│ ", Color::Faint),
+                Cell::new(" ".repeat(OFFSET_W + MARK_W), Color::Faint),
+                Cell::new(wrapped, Color::Dim),
+            ]);
+        }
+    }
+}
+
+/// The colour a note kind paints in. Money stays quiet deliberately — the
+/// model's rule is that metadata never carries the weight of the work.
+fn note_color(kind: crate::model::NoteKind) -> Color {
+    use crate::model::NoteKind;
+    match kind {
+        NoteKind::Stage => Color::Violet,
+        NoteKind::Context => Color::Blue,
+        NoteKind::Meter | NoteKind::Other => Color::Dim,
+        NoteKind::Wait | NoteKind::Verdict => Color::Amber,
+        NoteKind::Handoff => Color::Cyan,
     }
 }
 

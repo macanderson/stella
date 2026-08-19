@@ -133,9 +133,10 @@ pub use driver::{
 pub use error::ManifestError;
 pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
 pub use host_call::{
-    ChildTurnArgs, ChildTurnResult, HostCall, HostCallArgs, HostCallFailure, HostCallOk,
-    HostCallOutcome, HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage, RecallArgs,
-    RecallFrame, RecallResult, RunTestArgs,
+    AdoptCandidateArgs, AdoptCandidateResult, CandidateFanoutArgs, CandidateFanoutResult,
+    ChildTurnArgs, ChildTurnResult, FanoutCandidate, HostCall, HostCallArgs, HostCallFailure,
+    HostCallOk, HostCallOutcome, HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage,
+    RecallArgs, RecallFrame, RecallResult, RunTestArgs,
 };
 pub use manifest::{
     FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, OracleProcess, OracleProcessSource,
@@ -151,9 +152,9 @@ pub use progressive::{ProgressiveResolver, StageDecision};
 pub use runtime::Runtime;
 pub use wire::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
-    Continuation, Correction, EvidenceSet, FlipObservation, Outcome, PROTOCOL_VERSION,
-    PublishedSignal, RoundState, SignalValue, StopReason, TamperFinding, TestBaseline, TestPlan,
-    TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule,
-    VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
+    Continuation, Correction, EvidenceProvenance, EvidenceSet, FlipObservation, Outcome,
+    PROTOCOL_VERSION, PublishedSignal, RoundState, SignalValue, StopReason, TamperFinding,
+    TestBaseline, TestPlan, TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict,
+    VerdictRule, VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
 };
 pub use wrapper::{CompareOp, Condition, Signal, SignalKind, StageName, Wrapper, WrapperStage};

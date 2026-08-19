@@ -16,9 +16,10 @@
 //!
 //! # Why this lives in `stella-core`
 //!
-//! It is pure arithmetic over owned data with no I/O, and it has **three**
-//! dispatch sites to serve: `stella-pipeline`'s `metered_raw_call`, which
-//! drives the staged pipeline's management roles; `stella-cli`'s
+//! It is pure arithmetic over owned data with no I/O, and it was written for
+//! **three** dispatch sites: the staged pipeline's `metered_raw_call`, which
+//! drove its management roles (`crates/stella-pipeline`, deleted in #3865, so
+//! two of the three remain); `stella-cli`'s
 //! `complete_standalone`, which drives the four standalone paid calls
 //! (reflection, agent authoring, skill authoring, domain inference); and the
 //! engine's own overflow summarizer (`driver/restore.rs`). #2128 fixed the

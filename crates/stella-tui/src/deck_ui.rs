@@ -38,7 +38,7 @@ use crate::envelope::{
     SplashCue, WorkspaceInput,
 };
 use crate::graph::GraphSnapshot;
-use crate::input::{ScopeDecision, UserInput};
+use crate::input::UserInput;
 use crate::notice::NoticeState;
 use crate::scroll::ScrollState;
 use crate::splash::SplashState;
@@ -669,17 +669,6 @@ pub struct DeckUi {
     /// runs before the prompt the hold returned to the queue. Cleared the
     /// moment that submission is sent.
     pub dispatch_held: bool,
-    /// Agents whose current scope-review card has been answered. The pending
-    /// gate clears only when the ENGINE's follow-on event lands, so without
-    /// this latch the decision keys stay live for the whole round-trip and a
-    /// second press re-sends the decision. Cleared by [`ingest_inbound`] on a
-    /// fresh `ScopeReview`.
-    pub scope_answered: std::collections::HashSet<String>,
-    /// The plan-review dialog's text input: `Some` while `r` (refine note) or
-    /// `!` (shell line) has switched the dialog out of its one-keypress
-    /// options, holding the line as typed. View state, like
-    /// [`Self::hunk_marks`] — a half-written note is not session state.
-    pub scope_input: Option<gates::ScopeInput>,
     /// The same latch for a pending `ask_user` question (cleared on a fresh
     /// `AskUser`).
     pub ask_answered: std::collections::HashSet<String>,
@@ -837,8 +826,6 @@ impl Default for DeckUi {
             fold_rev: 0,
             esc_armed_at: None,
             dispatch_held: false,
-            scope_answered: std::collections::HashSet::new(),
-            scope_input: None,
             ask_answered: std::collections::HashSet::new(),
             hunk_answered: std::collections::HashSet::new(),
             hunk_marks: std::collections::HashMap::new(),
@@ -916,17 +903,7 @@ impl DeckUi {
             return;
         }
 
-        // 1a. The plan-review dialog's input is modal while open — a pasted
-        //     "don't touch the tests" belongs to the note, not to the composer
-        //     hidden behind the dialog. Whether newlines survive is the
-        //     input's own call (`ScopeInput::paste`): verbatim for the
-        //     multi-line refine note, flattened for the one-line shell field.
-        if let Some(input) = self.scope_input.as_mut() {
-            input.paste(text);
-            return;
-        }
-
-        // 1b. The ISSUES tab's sub-modes are modal while open: a paste
+        // 1a. The ISSUES tab's sub-modes are modal while open: a paste
         //     belongs to whichever input owns the keyboard. The body is the
         //     one multi-line surface (verbatim paste, like the agent
         //     editor); pasting into an entity field re-fires its type-ahead
@@ -1374,12 +1351,6 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // CURRENT card only.
     if let Inbound::Event { agent, event } = inbound {
         match event {
-            stella_protocol::AgentEvent::ScopeReview { .. } => {
-                ui.scope_answered.remove(agent);
-                // A fresh proposal opens the dialog on its options, never on
-                // a stale half-typed note from the last one.
-                ui.scope_input = None;
-            }
             stella_protocol::AgentEvent::AskUser { .. } => {
                 ui.ask_answered.remove(agent);
             }
@@ -1517,7 +1488,7 @@ pub mod dispatch;
 mod gates;
 /// Esc-with-something-to-say — see [`steer`].
 mod steer;
-pub use gates::{HunkMarks, ScopeInput};
+pub use gates::HunkMarks;
 mod nav;
 mod queue_editor;
 pub use dispatch::{AskBeforeSpawn, DispatchRoute, PendingDispatch};

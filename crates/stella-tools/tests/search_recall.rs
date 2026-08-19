@@ -18,7 +18,11 @@
 //!
 //! `fixtures/name_rung_corpus.jsonl` is this repository's own code-graph
 //! index — every indexed file's path and symbol names, 1,761 files — frozen
-//! as a dataset. It is deliberately **not** re-harvested on every run:
+//! as a dataset, as the tree stood on the day it was harvested. It therefore
+//! still carries `crates/stella-pipeline/**` rows, from before that crate was
+//! deleted from the workspace (#3865); that is the snapshot working as
+//! intended, not drift to repair. It is deliberately **not** re-harvested on
+//! every run:
 //!
 //! - a probe measures the *ranker*, so its corpus must not move underneath
 //!   it, or a rank that changed says nothing about the change that caused it;
@@ -28,6 +32,13 @@
 //! - and it makes the whole eval hermetic: no index build, no tree-sitter, no
 //!   network, no key, and no dependence on what the working tree happens to
 //!   contain today.
+//!
+//! So the corpus is a **snapshot of a past tree, not a description of this
+//! one**, and it is expected to name files the workspace no longer has — it
+//! carries `crates/stella-pipeline/…` rows, for instance, from before #3865
+//! deleted that crate. Those are data, not stale citations: re-harvesting to
+//! remove them would invalidate every recorded number in the table below,
+//! which is the one thing this fixture exists to prevent.
 //!
 //! The harvest excludes the work-in-flight design scratchpad, because a
 //! corpus carries every indexed path as data and `check-design-refs` reads
