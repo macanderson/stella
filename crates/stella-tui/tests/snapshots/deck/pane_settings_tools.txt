@@ -18,7 +18,7 @@
 │    get_state               on                                                                                                                                │
 │    save_state              on                                                                                                                                │
 │  TASK                      on   2 tools                                                                                                                      │
-│    task                    on                                                                                                                                │
+│    delegate                on                                                                                                                                │
 │    task_assign             off  locked · "task_assign" off in org-managed settings                                                                           │
 │                                                                                                                                                              │
 │                                                                                                                                                              │

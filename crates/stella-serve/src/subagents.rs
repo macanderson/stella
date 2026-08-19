@@ -4,9 +4,9 @@
 //! [`stella_core::subagent`] carves budgets, forwards metering, bounds
 //! reports, and emits a `SubAgent` event vocabulary the wire already carries.
 //! What a served turn lacked was the *handle*: its tool stack is whatever
-//! schemas the host advertised, and none of them is `task`, so a child could
-//! not be asked for. This module is that handle, plus the caps an operator
-//! needs before handing it to callers.
+//! schemas the host advertised, and none of them is `delegate`, so a child
+//! could not be asked for. This module is that handle, plus the caps an
+//! operator needs before handing it to callers.
 //!
 //! # Containment is unchanged
 //!
@@ -22,7 +22,7 @@
 //! - **A child cannot write.** Children run behind
 //!   [`stella_core::ports::ReadOnlyTools`], enforced at execution time, so a
 //!   host's mutating tools are simply not in a child's schema list.
-//! - **A child cannot spawn a child.** `task` is advertised only to the
+//! - **A child cannot spawn a child.** `delegate` is advertised only to the
 //!   parent, and the read-only view a child gets does not include it. Nesting
 //!   is capped at one level by construction, with no depth counter to get
 //!   wrong.
@@ -68,7 +68,7 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SubAgentPolicy {
     /// Whether callers may request sub-agents at all. `false` — the default —
-    /// makes `sub_agents` on a turn request a no-op: the `task` tool is not
+    /// makes `sub_agents` on a turn request a no-op: the `delegate` tool is not
     /// advertised, so the model never learns it exists.
     pub enabled: bool,
     /// Ceiling on the USD a single turn's children may spend between them.
@@ -85,7 +85,7 @@ pub struct SubAgentPolicy {
 /// The default sub-agent pool ceiling: two dollars per turn.
 ///
 /// Generous enough that ordinary delegation never trips it, small enough that
-/// a model looping on `task` cannot quietly spend a deployment's month on
+/// a model looping on `delegate` cannot quietly spend a deployment's month on
 /// research. The same number `stella-cli`'s dispatcher uses, deliberately: one
 /// surface having a laxer default than the other is how a capability's cost
 /// profile drifts between them.
@@ -147,7 +147,7 @@ impl SubAgentPolicy {
 /// What a caller asked for on `POST /v1/turns`, before the policy sees it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SubAgentRequest {
-    /// Whether this turn wants the `task` tool at all.
+    /// Whether this turn wants the `delegate` tool at all.
     pub enabled: bool,
     /// Requested pool ceiling; clamped down to the policy's.
     pub pool_limit_usd: Option<f64>,
@@ -176,11 +176,11 @@ pub(crate) struct ServedSubAgents {
     provider: Arc<dyn stella_protocol::Provider>,
     tools: Arc<dyn ToolExecutor>,
     config: stella_core::EngineConfig,
-    /// The turn's shared spend pool. Behind a `Mutex` because sibling `task`
-    /// calls from one step run concurrently; the lock is never held across a
-    /// child's run, so two siblings can each carve against the same headroom
-    /// before either settles — an overshoot bounded by one child's cap and
-    /// caught by the parent's guard at the next step boundary.
+    /// The turn's shared spend pool. Behind a `Mutex` because sibling
+    /// `delegate` calls from one step run concurrently; the lock is never held
+    /// across a child's run, so two siblings can each carve against the same
+    /// headroom before either settles — an overshoot bounded by one child's
+    /// cap and caught by the parent's guard at the next step boundary.
     pool: Arc<Mutex<BudgetGuard>>,
     /// Where a child's events go. The parent turn's own channel: a child's
     /// metering must land in the stream of the turn that asked for it, which
@@ -245,7 +245,7 @@ impl SubAgentDispatcher for ServedSubAgents {
                 runtime.block_on(async move {
                     // Read-only, enforced at execution time rather than by
                     // prompt — and the reason nesting is structurally capped
-                    // at one level: `task` is not in this view.
+                    // at one level: `delegate` is not in this view.
                     let read_only = ReadOnlyTools::new(&*tools);
                     let engine = Engine::with_sleeper(
                         &*provider,
@@ -269,7 +269,7 @@ impl SubAgentDispatcher for ServedSubAgents {
                         )
                         .await;
                     // Settling is the CHILD's job, from the child's own
-                    // thread: a parent hard-cancelled mid-`task` never
+                    // thread: a parent hard-cancelled mid-`delegate` never
                     // resumes the await below, and a child that really spent
                     // money must land in a ledger regardless.
                     let cost = outcome.cost_usd();
@@ -294,7 +294,7 @@ impl SubAgentDispatcher for ServedSubAgents {
 
 /// The name the model calls to delegate. Identical to the CLI's, so a prompt
 /// written for one surface works on the other.
-pub(crate) const TASK_TOOL: &str = "task";
+pub(crate) const DELEGATE_TOOL: &str = "delegate";
 
 /// The system prompt every child gets — the CLI's, verbatim, for the same
 /// reason the goal loop's seed message is verbatim: two surfaces running one
@@ -312,10 +312,10 @@ const CHILD_SYSTEM_PROMPT: &str = "You are a research sub-agent. You have been g
 /// guarantee in mechanism form, and deliberately not model-settable.
 const REPORT_CHARS: usize = 8_000;
 
-/// The host's tool set with `task` layered on top (#1297).
+/// The host's tool set with `delegate` layered on top (#1297).
 ///
 /// Everything the host advertised passes through to the remoted executor
-/// unchanged; only `task` is executed here, by dispatching a child. A wrapper
+/// unchanged; only `delegate` is executed here, by dispatching a child. A wrapper
 /// rather than a registry because serve owns no registry — its tools are
 /// schemas the host supplied, and this is the one tool the *engine* implements.
 pub(crate) struct DelegatingTools<'a> {
@@ -344,10 +344,10 @@ impl<'a> DelegatingTools<'a> {
         }
     }
 
-    /// The `task` schema, as the model sees it.
-    fn task_schema() -> ToolSchema {
+    /// The `delegate` schema, as the model sees it.
+    fn delegate_schema() -> ToolSchema {
         ToolSchema {
-            name: TASK_TOOL.into(),
+            name: DELEGATE_TOOL.into(),
             description: "Delegate a self-contained research question to a sub-agent that \
                  investigates with read-only tools and returns only its findings. Its \
                  intermediate work never enters this conversation, so use it when answering \
@@ -384,29 +384,31 @@ impl ToolExecutor for DelegatingTools<'_> {
     fn schemas(&self) -> Vec<ToolSchema> {
         let mut schemas = self.inner.schemas();
         // Appended, not inserted: a host that already advertises its own
-        // `task` keeps it, and the engine dispatches by name to whichever the
-        // model picked — which is the host's, since `execute` below only
+        // `delegate` keeps it, and the engine dispatches by name to whichever
+        // the model picked — which is the host's, since `execute` below only
         // claims the name when the host did not.
-        if !schemas.iter().any(|schema| schema.name == TASK_TOOL) {
-            schemas.push(Self::task_schema());
+        if !schemas.iter().any(|schema| schema.name == DELEGATE_TOOL) {
+            schemas.push(Self::delegate_schema());
         }
         schemas
     }
 
     /// Forwarded, mirroring `schemas()` (#3287). The appended engine-side
-    /// `task` rides as a declared contract: this crate has no catalog to
+    /// `delegate` rides as a declared contract: this crate has no catalog to
     /// vouch for it, and declared-`High` is the fail-closed reading — a host
     /// ceiling that refuses it refuses too much, never too little.
     fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
         let mut contracts = self.inner.contracts();
-        if !contracts.iter().any(|c| c.name() == TASK_TOOL) {
-            contracts.push(stella_protocol::ToolContract::declared(Self::task_schema()));
+        if !contracts.iter().any(|c| c.name() == DELEGATE_TOOL) {
+            contracts.push(stella_protocol::ToolContract::declared(
+                Self::delegate_schema(),
+            ));
         }
         contracts
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
-        if name != TASK_TOOL || self.inner.schemas().iter().any(|s| s.name == TASK_TOOL) {
+        if name != DELEGATE_TOOL || self.inner.schemas().iter().any(|s| s.name == DELEGATE_TOOL) {
             return self.inner.execute(name, input).await;
         }
         let Some(prompt) = input
@@ -466,7 +468,7 @@ impl ToolExecutor for DelegatingTools<'_> {
 
     /// Forwarded: letting the empty default stand would silently serialize
     /// the host executor's sibling spawns (see the port's contract). The
-    /// `task` this wrapper itself implements is deliberately not added here —
+    /// `delegate` this wrapper itself implements is deliberately not added here —
     /// claiming it needs a witness on the remoted dispatch path first.
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()

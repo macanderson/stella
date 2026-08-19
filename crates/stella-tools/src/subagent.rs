@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The `task` tool — the model's handle on the sub-agent primitive
+//! The `delegate` tool — the model's handle on the sub-agent primitive
 //! (`stella_core::subagent`, #922).
 //!
 //! Delegate a bounded piece of research to a child turn that reads whatever
@@ -34,7 +34,7 @@
 //!
 //! # Sibling spawns run concurrently
 //!
-//! `read_only: false` used to also mean sibling `task` calls in one step
+//! `read_only: false` used to also mean sibling `delegate` calls in one step
 //! were serialized — the engine's dispatch scheduler made every
 //! non-read-only call its own barrier, so the fan-out this dispatcher was
 //! built for (thread per child, snapshot-carve, delta settle) was
@@ -68,7 +68,7 @@
 //! are turn-scoped. [`TurnControlsSlot`] is the join: the driver publishes
 //! its gate and steering tap for the duration of the turn
 //! ([`crate::ToolRegistry::attach_turn_controls`]), and the dispatcher reads
-//! them when a `task` call arrives. Without it, Esc ended the parent while
+//! them when a `delegate` call arrives. Without it, Esc ended the parent while
 //! its children spent on.
 
 use std::sync::{Arc, RwLock};
@@ -160,7 +160,7 @@ const CHILD_SYSTEM_PROMPT: &str = "You are a research sub-agent. You have been g
      did, and never a plan. If you could not determine the answer, say so plainly and state \
      what you ruled out; a confident wrong answer is far worse than an honest gap.";
 
-/// `task` — delegate a bounded research question to a read-only sub-agent.
+/// `delegate` — hand a bounded research question to a read-only sub-agent.
 pub struct SpawnSubAgent {
     dispatcher: DispatcherSlot,
     /// How many children this session has already minted per slug, so a
@@ -186,7 +186,7 @@ impl SpawnSubAgent {
     ///
     /// `slug(description)` alone is a pure function of model-supplied text, so
     /// two siblings described "research X" got the SAME id. Since sibling
-    /// `task` calls from one step run concurrently, their
+    /// `delegate` calls from one step run concurrently, their
     /// `SubAgent::Started`/`Finished` brackets then interleave under one id on
     /// the parent's stream: the deck renders indistinguishable rows and any
     /// consumer that pairs by `agent_id` mis-correlates which child finished.
@@ -212,7 +212,7 @@ impl SpawnSubAgent {
 impl Tool for SpawnSubAgent {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
-            name: "task".into(),
+            name: "delegate".into(),
             description: "Delegate a self-contained research question to a sub-agent that \
                  investigates with read-only tools and returns only its findings. Its \
                  intermediate work never enters this conversation, so use it when answering \
@@ -220,7 +220,7 @@ impl Tool for SpawnSubAgent {
                  these modules defines X', 'how is Y wired end to end', 'find every caller of \
                  Z and summarize the patterns'. Prefer it over running the same searches \
                  yourself whenever the evidence is bulky and only the conclusion matters. \
-                 Independent questions should be dispatched as SEVERAL task calls in the \
+                 Independent questions should be dispatched as SEVERAL delegate calls in the \
                  same step — they run concurrently, so three parallel investigations cost \
                  the wall-clock of the slowest, not the sum. Not \
                  for work that must edit files (the sub-agent cannot write), and not for a \
@@ -390,7 +390,7 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
 }
 
 /// The structured half of a delegation's result: what the child cost and how
-/// much came back, keyed to the schema `task` declares in
+/// much came back, keyed to the schema `delegate` declares in
 /// `crate::contracts::declared_output_schema`.
 ///
 /// `report_chars` is the answer's size in UTF-8 bytes rather than a verdict on

@@ -65,6 +65,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_core::bus::{HookBus, HookDecision, HookEventDraft, names as hook_names};
+use stella_core::ports::{DispatchAdmission, DispatchGate};
 use stella_protocol::tool::ToolOutput;
 
 use super::ToolRegistry;
@@ -397,6 +398,32 @@ impl ToolRegistry {
                 );
                 Ok(None)
             }
+        }
+    }
+}
+
+/// The registry is the workspace's one [`DispatchGate`] (#2793): the gate
+/// entry above, offered to every decorator that dispatches a name of its own
+/// rather than forwarding it here.
+///
+/// Before this impl the chains ran only for names the registry itself owned,
+/// so an MCP tool and a `.stella/tools/*.toml` script reached the model's
+/// hands without an extension policy — or a human — ever being asked, while a
+/// built-in with the same effect was gated. One implementation, consumed
+/// through the port, is the half that cannot drift: a second copy of this
+/// fold in each decorator is exactly the shape that loses the approval arm.
+#[async_trait]
+impl DispatchGate for ToolRegistry {
+    async fn admit(&self, name: &str, input: &Value) -> DispatchAdmission {
+        // No bus, no chains — the same "policy plane absent" case
+        // `ToolRegistry::execute` has always had, and the same answer.
+        let Some(bus) = self.bus() else {
+            return DispatchAdmission::Admit;
+        };
+        match self.gate_tool_call(&bus, name, input).await {
+            Ok(None) => DispatchAdmission::Admit,
+            Ok(Some(amended)) => DispatchAdmission::AmendedInput(amended),
+            Err(refusal) => DispatchAdmission::Refuse(refusal),
         }
     }
 }

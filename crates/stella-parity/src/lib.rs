@@ -396,16 +396,16 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_home: "stella-core subagent: bounded child turns with carved budgets and forwarded metering",
         engine_entries: &[],
         cli: SurfacePosture::Shipped {
-            mechanism: "the task tool via SessionSubAgents; deck lanes; fleet workers",
+            mechanism: "the delegate tool via SessionSubAgents; deck lanes; fleet workers",
             witness: "the_production_tool_stack_forwards_sub_agent_spend",
         },
         // Shipped in #1297. The engine machinery was ready; what a served
-        // turn lacked was the handle (no `task` in a host-advertised tool
+        // turn lacked was the handle (no `delegate` in a host-advertised tool
         // stack) and the operator's answer to "may this deployment spend on
         // children at all", which is `ServeConfig::sub_agents` and defaults
         // to no.
         api: SurfacePosture::Shipped {
-            mechanism: "a `sub_agents` block on POST /v1/turns layers the task tool over the \
+            mechanism: "a `sub_agents` block on POST /v1/turns layers the delegate tool over the \
                         host's remoted stack; children run on the same reverse-RPC ports \
                         (announcing their own provider_id and role), read-only and one level \
                         deep by construction, with pool/steps/provider clamped by \

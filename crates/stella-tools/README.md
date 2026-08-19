@@ -22,7 +22,7 @@ keep; the rest are coordination state that dies with the session:
 - **Code search** — `search` ([`src/search.rs`](src/search.rs)), read-only but
   deliberately *not* speculation-safe: its semantic rung writes embeddings
   through while it ranks, so it is not free to run twice.
-- **Sub-agent delegation** — `task` ([`src/subagent.rs`](src/subagent.rs)),
+- **Sub-agent delegation** — `delegate` ([`src/subagent.rs`](src/subagent.rs)),
   which spawns read-only child turns through a host-attached dispatcher.
 - **The session task board** — `task_create` / `task_list` / `task_start` /
   `task_complete` / `task_cancel` / `task_assign`
@@ -128,7 +128,7 @@ landing in `registry.rs`.
 | [`src/rootfd.rs`](src/rootfd.rs) | Path confinement by *held directory descriptors* (#938) — `openat(… O_DIRECTORY \| O_NOFOLLOW)` per component, `..` popping the descriptor stack, bounded symlink expansion re-walked from the root. The reason a rename or a planted symlink cannot re-point a path between the check and the open; `resolve_within_root` in `lib.rs` answers about a *name* and is not sufficient on its own. |
 | [`src/durable_write.rs`](src/durable_write.rs) | Durable in-place replacement for `write_file` and `edit_file`. A plain `O_TRUNC` write destroys the old bytes before the new ones land, so a crash in that window left the *user's own source file* truncated with the replacement nowhere on disk. Deliberately not the temp+rename helper Stella uses for its own state: rename replaces the inode, and #617 ruled that out for files the user owns. |
 | [`src/search.rs`](src/search.rs), [`src/search/`](src/search) | The `search` tool and its strategy rungs, including the semantic rung whose embedding write-through is why the tool is read-only without being speculation-safe. |
-| [`src/subagent.rs`](src/subagent.rs) | The `task` tool: sub-agent delegation over a host-attached dispatcher (#922), with turn controls and a spend ledger the engine drains at step boundaries. |
+| [`src/subagent.rs`](src/subagent.rs) | The `delegate` tool: sub-agent delegation over a host-attached dispatcher (#922), with turn controls and a spend ledger the engine drains at step boundaries. |
 | [`src/tasks.rs`](src/tasks.rs) | The six `task_*` tools over the session board, plus `task_assign`'s spawn queue. |
 | [`src/scratch.rs`](src/scratch.rs) | The scratch state plane: `ScratchDir` and the four state tools. |
 | [`src/environment.rs`](src/environment.rs) | `get_environment` and the shared environment-identity probes the CLI prompt renders from (#2697). |

@@ -436,6 +436,14 @@ impl ToolExecutor for GatedToolSet<'_> {
     fn live_services(&self) -> Vec<stella_core::LiveService> {
         self.inner.get().live_services()
     }
+
+    /// Forwarded: this decorator authorizes, it does not dispatch, so the
+    /// gate it hands back is the base's. Letting the `None` default stand
+    /// would un-gate every dispatching decorator composed *above* this one
+    /// (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.get().dispatch_gate()
+    }
 }
 
 #[cfg(test)]
@@ -464,7 +472,7 @@ mod tests {
     /// The three tools every test here needs: a reviewed `Low` read, the one
     /// reviewed `High` built-in, and a third-party tool nobody reviewed.
     const READ: &str = "get_state";
-    const SPENDS: &str = "task";
+    const SPENDS: &str = "delegate";
     const THIRD_PARTY: &str = "mcp__vendor__deploy";
 
     #[async_trait]
@@ -498,7 +506,7 @@ mod tests {
             2.5
         }
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-            std::collections::HashSet::from(["task".to_string()])
+            std::collections::HashSet::from(["delegate".to_string()])
         }
     }
 
@@ -664,7 +672,7 @@ mod tests {
             "sub-agent spend must not vanish through the gate"
         );
         assert!(
-            gated.parallel_safe_names().contains("task"),
+            gated.parallel_safe_names().contains("delegate"),
             "the inner concurrency claim must survive"
         );
         assert_eq!(

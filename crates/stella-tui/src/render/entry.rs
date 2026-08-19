@@ -800,7 +800,7 @@ fn entry_body(
             // — a whole other agent starts working here, with its own budget
             // and its own tool calls — and it rendered in the quiet tier, the
             // same one the bookkeeping notes use. It gets the delegation class
-            // hue, the same one `task`/`task_*` wear on the call rows around
+            // hue, the same one `delegate`/`task_*` wear on the call rows around
             // it, so the hand-off and the board it moves read as one family.
             None => push_note(
                 "⤷ sub-agent",

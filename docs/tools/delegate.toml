@@ -1,4 +1,4 @@
-# task — GENERATED FILE, DO NOT EDIT.
+# delegate — GENERATED FILE, DO NOT EDIT.
 #
 # Regenerate:   make tool-docs-update
 # Guarded by:   make tool-docs (a `make gate` step)
@@ -9,7 +9,7 @@
 #   risk_level                             crates/stella-tools/src/catalog.rs
 #   output_schema                          stella_protocol::ToolOutput
 
-name = "task"
+name = "delegate"
 category = "task"
 availability = "always"
 read_only = false
@@ -18,7 +18,7 @@ available_for_speculation = false
 # risk_level: how bad one honest call is — a reviewed judgement, declared in
 # crates/stella-tools/src/catalog.rs beside the flags above and graded against
 # the rubric on `ToolEntry::risk` (#2716, #3060). A DIFFERENT axis from
-# `read_only`: `task` mutates no file and spends real money, while
+# `read_only`: `delegate` mutates no file and spends real money, while
 # `task_create` mutates a board that dies with the session. Deliberately not
 # derived from the two booleans above — that would be a relabelling, not
 # information. A policy grant is expressed as a ceiling over this grade, and
@@ -27,7 +27,7 @@ available_for_speculation = false
 risk_level = "high"
 
 description = '''
-Delegate a self-contained research question to a sub-agent that investigates with read-only tools and returns only its findings. Its intermediate work never enters this conversation, so use it when answering would otherwise mean reading many files you do not need to keep — 'which of these modules defines X', 'how is Y wired end to end', 'find every caller of Z and summarize the patterns'. Prefer it over running the same searches yourself whenever the evidence is bulky and only the conclusion matters. Independent questions should be dispatched as SEVERAL task calls in the same step — they run concurrently, so three parallel investigations cost the wall-clock of the slowest, not the sum. Not for work that must edit files (the sub-agent cannot write), and not for a single lookup you already know the location of — one direct read is cheaper than a sub-agent.
+Delegate a self-contained research question to a sub-agent that investigates with read-only tools and returns only its findings. Its intermediate work never enters this conversation, so use it when answering would otherwise mean reading many files you do not need to keep — 'which of these modules defines X', 'how is Y wired end to end', 'find every caller of Z and summarize the patterns'. Prefer it over running the same searches yourself whenever the evidence is bulky and only the conclusion matters. Independent questions should be dispatched as SEVERAL delegate calls in the same step — they run concurrently, so three parallel investigations cost the wall-clock of the slowest, not the sum. Not for work that must edit files (the sub-agent cannot write), and not for a single lookup you already know the location of — one direct read is cheaper than a sub-agent.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.
@@ -106,12 +106,12 @@ output_schema = '''
 
 # ── example ───────────────────────────────────────────────────────────────
 # OBSERVED EXAMPLE: none.
-# `task` has 2 calls in the wider census, but none in the 2829-row capture the
-# examples are drawn from. No payload is shown, because an invented one would
-# teach the reader what the author imagined this tool is for.
+# `delegate` has no call to record: it was not advertised in the runs the
+# capture comes from, so it never had the chance to be called. No payload is
+# shown, because an invented one would teach the reader what the author
+# imagined this tool is for.
 
 # ── usage ─────────────────────────────────────────────────────────────────
-# Measured 2026-08-11 across 408 trials / 15304 model calls:
-# calls 2 · trials that used it 1/408 · calls per model call 0.0001 · mean
-# position of first use 12.0 · failures 0 (0.0%).
-# A measurement, not a contract: it ages, the schema above does not.
+# No usage measurement. `delegate` carries no row in the 2026-08-11 census,
+# which scanned 408 trials — the census enumerates the schemas those runs
+# advertised, and this tool was not among them.

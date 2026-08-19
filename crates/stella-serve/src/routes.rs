@@ -73,7 +73,7 @@ struct TurnRequest {
     #[serde(default)]
     goal: Option<GoalSpec>,
     /// Let this turn delegate to sub-agents (#1297). Omitted advertises no
-    /// `task` tool, so the model never learns children exist.
+    /// `delegate` tool, so the model never learns children exist.
     #[serde(default)]
     sub_agents: Option<SubAgentsSpec>,
     /// Drive this turn through the verification pipeline (#1288) — plan,

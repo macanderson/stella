@@ -331,11 +331,11 @@ mod tests {
 
     fn approval_request() -> stella_tools::registry::approval::ApprovalRequest {
         stella_tools::registry::approval::ApprovalRequest {
-            tool: "task".into(),
+            tool: "delegate".into(),
             read_only: false,
             reason: "spawns need a human".into(),
             gate: "tool.call.requested".into(),
-            subject: Some("task: refactor the parser".into()),
+            subject: Some("delegate: refactor the parser".into()),
         }
     }
 }

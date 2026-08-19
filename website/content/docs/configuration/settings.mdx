@@ -380,16 +380,21 @@ built-ins, MCP-server tools, and tools you registered yourself:
 
 A key is one of three things, and the most specific one wins:
 
-1. an exact **tool name** — `task_assign`, `mcp__github__create_issue`, your own
-   `deploy_to_staging`;
-2. a **group** — the families in [Built-in tools](/docs/agent-tools): `task`,
-   `scratch`, `environment`, plus
+1. an exact **tool name** — `task_assign`, `delegate`, `mcp__github__create_issue`,
+   your own `deploy_to_staging`;
+2. a **group** — the families in [Built-in tools](/docs/agent-tools): `shell`,
+   `file`, `search`, `task`, `scratch`, `environment`, plus
    `mcp` and `custom` for anything the built-in catalog has never heard of;
 3. `"*"`, every tool.
 
 Anything unmentioned is on. So `{"*": "off", "task_list": "on"}` is an agent that can
 read the board and nothing else, and `{"task": "off", "task_list": "on"}` keeps exactly
 the read-only member of the task family.
+
+No group shares a name with a tool, so a key is never ambiguous: `task` is the family
+(the six board tools plus `delegate`), and `delegate` alone is the sub-agent spawn. That
+is why `{"delegate": "off"}` stops sub-agents without touching the board — a distinction
+`task` could not express while it was both a tool name and a group name.
 
 A switched-off tool is **withheld from the schema list and refused if it is called
 anyway** — the refusal reads like the unknown-tool error, so a disabled tool is

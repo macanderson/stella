@@ -99,7 +99,7 @@
 //!
 //! [`SubAgentSpec::depth`] is checked against [`MAX_SUB_AGENT_DEPTH`] before
 //! the first model call. There is deliberately no engine-level depth counter:
-//! the one model-callable spawn surface (`stella-tools`' `task` tool) pins
+//! the one model-callable spawn surface (`stella-tools`' `delegate` tool) pins
 //! `depth: 1`, and a child runs behind [`ReadOnlyTools`], which never
 //! advertises that tool — so recursion is not reachable from a prompt. Any
 //! further spawn surface MUST thread `parent_depth + 1` into the spec it

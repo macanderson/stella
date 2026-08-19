@@ -224,7 +224,7 @@ const TOOL_RACKS: readonly {
   {
     rack: "sub-agents",
     tools: [
-      { name: "task", access: "mutating" },
+      { name: "delegate", access: "mutating" },
       { name: "task_assign", access: "mutating" },
     ],
   },

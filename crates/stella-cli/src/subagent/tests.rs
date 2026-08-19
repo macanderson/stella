@@ -12,7 +12,7 @@ use stella_protocol::{ToolOutput, ToolSchema};
 use super::*;
 
 /// A leaf executor standing in for the registry: it holds the spend ledger
-/// the `task` tool writes to, and reports it exactly as the registry does.
+/// the `delegate` tool writes to, and reports it exactly as the registry does.
 struct LedgerBase(SubAgentSpendLedger);
 
 #[async_trait]
@@ -36,9 +36,9 @@ impl ToolExecutor for LedgerBase {
         stella_core::subagent::drain_sub_agent_spend(&self.0)
     }
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-        // The registry claims exactly this for the `task` tool
+        // The registry claims exactly this for the `delegate` tool
         // (`Tool::parallel_safe`); the stand-in reports it the same way.
-        std::collections::HashSet::from(["task".to_string()])
+        std::collections::HashSet::from(["delegate".to_string()])
     }
 }
 
@@ -165,7 +165,7 @@ async fn the_production_tool_stack_forwards_wait_requests() {
 /// **The parallel-dispatch counterpart of the spend witness above.**
 ///
 /// `parallel_safe_names` has an empty default, so any decorator that forgets
-/// to forward it silently serializes sibling `task` calls in every real
+/// to forward it silently serializes sibling `delegate` calls in every real
 /// session — the registry's claim never reaches the engine, and the feature
 /// (#1776) is dead exactly where it shipped. Asserted through the shipped
 /// composition for the same reason as the spend test: a future decorator
@@ -185,7 +185,7 @@ async fn the_production_tool_stack_forwards_parallel_safe_names() {
     );
 
     assert!(
-        permitted.parallel_safe_names().contains("task"),
+        permitted.parallel_safe_names().contains("delegate"),
         "the registry's concurrency claim must survive every decorator \
          between the engine and the registry — one that swallows it silently \
          serializes sibling spawns"
@@ -307,7 +307,7 @@ async fn the_pool_binds_and_a_failed_child_charges_nothing() {
 /// (#1849).
 ///
 /// `DEFAULT_POOL_LIMIT_USD` was documented as the bound that stops "a model
-/// looping on `task`" and bound nothing: every production installer passed
+/// looping on `delegate`" and bound nothing: every production installer passed
 /// `None` to `with_pool_limit`, which means *unlimited*, not "keep the
 /// default". So an unbudgeted session whose model wedged on delegation ran
 /// every child to `max_steps` with no dollar bound at any layer.
@@ -360,7 +360,7 @@ fn an_unbudgeted_session_still_installs_a_sub_agent_pool_ceiling() {
 }
 
 #[test]
-fn the_task_tool_is_always_advertised_and_never_read_only() {
+fn the_delegate_tool_is_always_advertised_and_never_read_only() {
     let registry = registry();
     // Registered whether or not a dispatcher is attached — an unattached one
     // yields a truthful "unavailable" tool result, which the model can act
@@ -368,7 +368,7 @@ fn the_task_tool_is_always_advertised_and_never_read_only() {
     let advertised: Vec<_> = registry
         .schemas()
         .into_iter()
-        .filter(|schema| schema.name == "task")
+        .filter(|schema| schema.name == "delegate")
         .collect();
     assert_eq!(advertised.len(), 1, "registered exactly once");
     assert!(
@@ -387,7 +387,7 @@ fn the_task_tool_is_always_advertised_and_never_read_only() {
         registry
             .schemas()
             .iter()
-            .filter(|schema| schema.name == "task")
+            .filter(|schema| schema.name == "delegate")
             .count(),
         1,
         "installing a dispatcher does not duplicate the tool"
@@ -531,7 +531,7 @@ async fn a_dispatched_child_never_eats_the_parents_queued_steering() {
 }
 
 /// Pause means pause, including inside delegated work. The parked child
-/// holds the parent's `task` call open, and both continue on resume.
+/// holds the parent's `delegate` call open, and both continue on resume.
 #[tokio::test]
 async fn a_paused_turn_parks_its_children_and_resume_releases_them() {
     let provider = Arc::new(CountingProvider::default());
@@ -734,7 +734,7 @@ async fn cancelling_the_parent_stops_the_child_at_its_next_boundary() {
 
 /// The sharper half of the same defect. Settlement used to happen after
 /// `wait.await` in the dispatcher and after `dispatch().await` in the tool —
-/// neither of which runs when the parent is cancelled mid-`task`, so a child's
+/// neither of which runs when the parent is cancelled mid-`delegate`, so a child's
 /// real spend landed in NO ledger. Charging late to the session is the
 /// ledger's doctrine; never charging is not.
 #[tokio::test]

@@ -64,14 +64,14 @@ const DOCS_DIR: &str = "docs/tools";
 /// keeps the column honest: a rung derived from `read_only` +
 /// `speculation_safe` would be arithmetic on two booleans this page already
 /// prints, and it would put `save_state` — which writes into a self-deleting
-/// `TempDir` — at the same rung as `task`, which spends money. The grades are
+/// `TempDir` — at the same rung as `delegate`, which spends money. The grades are
 /// reviewed judgements against a stated rubric, which is exactly why they are
 /// declared.
 const RISK_NOTE: &str = "\
 # risk_level: how bad one honest call is — a reviewed judgement, declared in
 # crates/stella-tools/src/catalog.rs beside the flags above and graded against
 # the rubric on `ToolEntry::risk` (#2716, #3060). A DIFFERENT axis from
-# `read_only`: `task` mutates no file and spends real money, while
+# `read_only`: `delegate` mutates no file and spends real money, while
 # `task_create` mutates a board that dies with the session. Deliberately not
 # derived from the two booleans above — that would be a relabelling, not
 # information. A policy grant is expressed as a ceiling over this grade, and

@@ -128,7 +128,7 @@ pub(crate) fn tool_policy_state(
 ///   not deleted by an editor that had never heard of it.
 /// - **A grant the org denies is refused here too.** The UI already locks such
 ///   rows; this is the second half of the same rule, at the layer that writes.
-///   Persisting `{"task": "on"}` under a managed `{"task": "off"}` would put a
+///   Persisting `{"delegate": "on"}` under a managed `{"delegate": "off"}` would put a
 ///   line in the operator's own file that reads like a capability they have
 ///   and that the next load discards — the settings file must not lie.
 pub(crate) fn save_switches(

@@ -160,6 +160,13 @@ impl ToolExecutor for CommitObserver<'_> {
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()
     }
+
+    /// Forwarded: this observer watches commits, it dispatches no name of its
+    /// own, and a `None` here would un-gate a fleet worker's custom tools
+    /// (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.dispatch_gate()
+    }
 }
 
 /// One attempt's commits, oldest first — and the two ways of knowing which
@@ -347,7 +354,7 @@ mod tests {
         }
 
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-            std::collections::HashSet::from(["task".to_string()])
+            std::collections::HashSet::from(["delegate".to_string()])
         }
 
         async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
@@ -393,7 +400,7 @@ mod tests {
         assert!(
             observer(&tools, &tree, "t1")
                 .parallel_safe_names()
-                .contains("task"),
+                .contains("delegate"),
             "the inner executor's concurrency claim must survive the observer"
         );
     }

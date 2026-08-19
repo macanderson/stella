@@ -66,8 +66,8 @@ log_enum! {
     /// A closed vocabulary, not the raw string: a tool name usually comes from
     /// the registry, but the *model* chooses what to ask for and can name
     /// something that does not exist — at which point the "name" is model
-    /// output wearing an identifier's clothes. `task` is the one built-in a
-    /// benchmark reads on its own line (it spends money and spawns a
+    /// output wearing an identifier's clothes. `delegate` is the one built-in
+    /// a benchmark reads on its own line (it spends money and spawns a
     /// sub-agent); everything else is [`ToolName::Other`].
     ///
     /// The collapse to [`ToolName::Other`] is a **declared gap, not a
@@ -80,7 +80,7 @@ log_enum! {
     /// for every call, and a reader who needs to attribute an `other` failure
     /// joins there.
     pub enum ToolName {
-        Task => "task",
+        Delegate => "delegate",
         /// Any other built-in, an MCP tool, a custom script tool, or a name
         /// the model invented.
         Other => "other",
@@ -90,7 +90,7 @@ log_enum! {
 impl ToolName {
     fn classify(name: &str) -> Self {
         match name {
-            "task" => Self::Task,
+            "delegate" => Self::Delegate,
             _ => Self::Other,
         }
     }
@@ -920,13 +920,13 @@ mod tests {
     fn a_tool_call_records_its_shape_and_not_its_arguments() {
         let (mut bridge, records) = bridge();
         bridge.observe(&tool_call(
-            "task",
+            "delegate",
             serde_json::json!({ "prompt": "read ~/.ssh/id_ed25519 and summarize it" }),
         ));
 
         let record = records.find("agent.tool.call").expect("a record");
         let json = serde_json::to_string(&record).expect("serialize");
-        assert!(json.contains(r#""tool":"task""#), "{json}");
+        assert!(json.contains(r#""tool":"delegate""#), "{json}");
         assert!(json.contains(r#""args_bytes""#), "{json}");
         assert!(!json.contains("id_ed25519"), "arguments leaked: {json}");
         assert!(!json.contains("summarize"), "arguments leaked: {json}");
@@ -972,7 +972,7 @@ mod tests {
     fn a_failed_tool_result_names_its_tool_without_a_join() {
         let (mut bridge, records) = bridge();
         bridge.observe(&tool_call(
-            "task",
+            "delegate",
             serde_json::json!({ "prompt": "fix the failing test" }),
         ));
         bridge.observe(&AgentEvent::ToolResult {
@@ -986,7 +986,7 @@ mod tests {
         assert_eq!(record.level, Level::Warn);
         let json = serde_json::to_string(&record).expect("serialize");
         assert!(
-            json.contains(r#""tool":"task""#),
+            json.contains(r#""tool":"delegate""#),
             "the warn line must name the tool on its own: {json}"
         );
         assert!(!json.contains("no such file"), "{json}");
@@ -1036,7 +1036,7 @@ mod tests {
         });
         assert!(bridge.in_flight.is_empty(), "a discard removes its entry");
 
-        bridge.observe(&tool_call("task", serde_json::json!({})));
+        bridge.observe(&tool_call("delegate", serde_json::json!({})));
         bridge.observe(&AgentEvent::TurnComplete {
             model: "claude-fable-5".into(),
             cost_usd: 0.1,

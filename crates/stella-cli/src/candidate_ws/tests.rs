@@ -109,7 +109,7 @@ pub(super) fn read(path: &Path) -> String {
 }
 
 /// A dispatcher that answers without running anything, so the assertion is
-/// about *reachability* — did the `task` tool find a runner — and not about
+/// about *reachability* — did the `delegate` tool find a runner — and not about
 /// what a child would do.
 struct StubDispatcher;
 
@@ -131,7 +131,7 @@ impl stella_core::subagent::SubAgentDispatcher for StubDispatcher {
 
 /// The witness for #3318.
 ///
-/// A candidate registry attached no sub-agent dispatcher, so `task` answered
+/// A candidate registry attached no sub-agent dispatcher, so `delegate` answered
 /// "sub-agents are unavailable in this session — do the work directly with
 /// your own tools" — advice a candidate cannot take, because the built-in
 /// surface has no command-executing tool. And since an authored witness
@@ -152,7 +152,7 @@ async fn a_candidate_delegates_through_the_session_runner_only_when_it_is_shared
         crate::rules::ResolvedRules::default(),
     );
     let ws = bare.create_workspace().await.unwrap();
-    let out = ws.tools().execute("task", &call).await;
+    let out = ws.tools().execute("delegate", &call).await;
     let rendered = format!("{out:?}");
     assert!(
         rendered.contains("sub-agents are unavailable"),
@@ -168,7 +168,7 @@ async fn a_candidate_delegates_through_the_session_runner_only_when_it_is_shared
     )
     .with_sub_agents(Arc::new(StubDispatcher));
     let ws = shared.create_workspace().await.unwrap();
-    let out = ws.tools().execute("task", &call).await;
+    let out = ws.tools().execute("delegate", &call).await;
     let rendered = format!("{out:?}");
     assert!(
         !rendered.contains("sub-agents are unavailable"),

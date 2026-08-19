@@ -87,8 +87,8 @@ All 18 tools register in every session — no configuration, no prerequisites. G
   <ToolCard name="task_assign" access="mutating">
     Delegate a board task to a parallel sub-agent — the briefing is passed verbatim, so write it self-contained.
   </ToolCard>
-  <ToolCard name="task" access="mutating">
-    Delegate a self-contained research question to a read-only sub-agent that investigates and returns only its findings. Its intermediate work never enters the conversation, so the parent never re-sends it on later steps.
+  <ToolCard name="delegate" access="mutating">
+    Hand a self-contained research question to a read-only sub-agent that investigates and returns only its findings. Its intermediate work never enters the conversation, so the parent never re-sends it on later steps.
   </ToolCard>
 </CardGrid>
 
@@ -149,7 +149,7 @@ Two recipes that fall out of that rule:
 {
   "tools": {
     "task_assign": "off",
-    "task": "off"
+    "delegate": "off"
   }
 }
 ```

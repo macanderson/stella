@@ -64,12 +64,12 @@ pub fn contract_for(schema: &ToolSchema) -> ToolContract {
 /// registry's per-call `ToolCtx` drops anything not listed here, so this
 /// table is the allowlist. Empty — most rows — means the tool emits nothing.
 ///
-/// `task` is the one long-running built-in: it announces the child it
+/// `delegate` is the one long-running built-in: it announces the child it
 /// dispatched as `tool.call.progress`, so an observer can tell a slow
 /// delegation from a wedged one.
 fn declared_events(name: &str) -> Vec<String> {
     match name {
-        "task" => vec!["tool.call.progress".to_string()],
+        "delegate" => vec!["tool.call.progress".to_string()],
         _ => Vec::new(),
     }
 }
@@ -91,7 +91,7 @@ fn declared_output_schema(name: &str) -> Option<serde_json::Value> {
         // child result from a cheap one, so nothing downstream could mark an
         // anomalous delegation; `crate::subagent::render` documents why these
         // values ride `data` rather than the model-visible content.
-        "task" => Some(serde_json::json!({
+        "delegate" => Some(serde_json::json!({
             "type": "object",
             "properties": {
                 "status": { "type": "string", "enum": ["completed", "partial"] },
@@ -178,10 +178,10 @@ mod tests {
     /// - something that writes the workspace is above it but bounded and
     ///   locally undoable (`write_file`, `edit_file` at `Medium`);
     /// - something the agent cannot undo, or that runs unbounded code, sits
-    ///   at the top (`delete_file`, `bash`, `task`).
+    ///   at the top (`delete_file`, `bash`, `delegate`).
     ///
     /// The one previously-enforced claim that must NOT survive unchanged is
-    /// "`task` outranks everything": it did while delegation was the only
+    /// "`delegate` outranks everything": it did while delegation was the only
     /// built-in that reached the world, and restoring the shell and the file
     /// writers is precisely the change that ends it.
     ///
@@ -234,7 +234,7 @@ mod tests {
             "a shell runs code nobody bounded"
         );
         assert_eq!(
-            risk("task"),
+            risk("delegate"),
             RiskLevel::High,
             "delegation spends real money and hands a child a whole tool surface"
         );

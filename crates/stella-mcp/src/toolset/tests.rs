@@ -35,7 +35,7 @@ impl ToolExecutor for FakeNative {
         }
     }
     fn parallel_safe_names(&self) -> HashSet<String> {
-        HashSet::from(["task".to_string()])
+        HashSet::from(["delegate".to_string()])
     }
 }
 
@@ -47,13 +47,13 @@ async fn parallel_safe_names_forward_from_the_native_layer() {
     let client = connected_client("files", "read").await;
     let set = Arc::new(McpToolSet::from_clients(vec![client]).wrapping(Arc::new(FakeNative)));
     assert!(
-        set.parallel_safe_names().contains("task"),
+        set.parallel_safe_names().contains("delegate"),
         "the native layer's claim must survive the MCP set"
     );
 
     let view = set.for_candidates(Arc::new(FakeNative));
     assert!(
-        view.parallel_safe_names().contains("task"),
+        view.parallel_safe_names().contains("delegate"),
         "and the candidate view forwards its own native layer's claim"
     );
 
@@ -1136,5 +1136,205 @@ async fn server_annotations_ride_the_declared_contract_never_the_schema() {
         stella_protocol::RiskLevel::Destructive,
         "a destructiveHint raises the grade — self-reports only ever make a \
          tool look more dangerous"
+    );
+}
+
+// the shared dispatch gate (#2793)
+
+/// A native layer that carries a [`DispatchGate`] whose verdict is fixed at
+/// construction — the stand-in for the real registry's gate, which lives in
+/// `stella-tools` and cannot be reached from here (this crate deliberately
+/// does not depend on it, invariant #1). Records every name the gate saw.
+struct GatedNative {
+    verdict: DispatchAdmission,
+    admitted: Arc<std::sync::Mutex<Vec<String>>>,
+    executed: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl GatedNative {
+    fn new(verdict: DispatchAdmission) -> Arc<Self> {
+        Arc::new(Self {
+            verdict,
+            admitted: Arc::default(),
+            executed: Arc::default(),
+        })
+    }
+}
+
+#[async_trait]
+impl stella_core::ports::DispatchGate for GatedNative {
+    async fn admit(&self, name: &str, _input: &Value) -> DispatchAdmission {
+        self.admitted.lock().unwrap().push(name.to_string());
+        self.verdict.clone()
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for GatedNative {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: "bash".into(),
+            description: "run a command".into(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            read_only: false,
+            speculation_safe: false,
+        }]
+    }
+    async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
+        // A real base gates inside its own `execute`; mirror that so the
+        // "gated exactly once" assertion below is meaningful.
+        self.admitted.lock().unwrap().push(name.to_string());
+        self.executed.lock().unwrap().push(name.to_string());
+        ToolOutput::Ok {
+            content: format!("native ran {name}"),
+            data: None,
+        }
+    }
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        Some(self)
+    }
+}
+
+/// **The #2793 witness (MCP half).** An `mcp__…` name is dispatched by this
+/// set itself and never reaches the native executor, so before the shared
+/// gate the native layer's blocking policy chain never saw it: a policy that
+/// denies a built-in was silently ignored for an MCP tool with the same
+/// effect. The transport log is the assertion that matters — a refusal has to
+/// stop the wire call, not merely relabel its result.
+#[tokio::test]
+async fn a_denying_gate_stops_an_mcp_call_before_it_reaches_the_wire() {
+    let transport = ScriptedTransport::new();
+    transport.push_ok(
+        "initialize",
+        serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+    );
+    transport.push_ok(
+        "tools/list",
+        serde_json::json!({ "tools": [{ "name": "deploy", "inputSchema": { "type": "object" } }] }),
+    );
+    transport.push_ok(
+        "tools/call",
+        serde_json::json!({ "content": [{ "type": "text", "text": "deployed" }] }),
+    );
+    let sent = transport.requests_handle();
+    let mut client = McpClient::new("vendor", Box::new(transport));
+    client.initialize().await.unwrap();
+
+    let native = GatedNative::new(DispatchAdmission::Refuse(ToolOutput::error(
+        "mcp deploys are off here",
+    )));
+    let set = McpToolSet::from_clients(vec![client]).wrapping(native.clone());
+
+    match set
+        .execute("mcp__vendor__deploy", &serde_json::json!({}))
+        .await
+    {
+        ToolOutput::Error { message, .. } => {
+            assert!(message.contains("mcp deploys are off here"), "{message}");
+        }
+        other => panic!("a denied MCP tool must not run: {other:?}"),
+    }
+    assert_eq!(
+        native.admitted.lock().unwrap().as_slice(),
+        ["mcp__vendor__deploy".to_string()],
+        "the gate must see the namespaced name"
+    );
+    assert!(
+        !sent.lock().unwrap().iter().any(|(m, _)| m == "tools/call"),
+        "the refusal must stop the wire call, not just relabel its result: {:?}",
+        sent.lock().unwrap()
+    );
+}
+
+/// A `modify` decision rewrites the arguments the server is actually called
+/// with — the gate returns the amended input and the dispatch must use it.
+#[tokio::test]
+async fn an_amended_input_is_what_reaches_the_server() {
+    let transport = ScriptedTransport::new();
+    transport.push_ok(
+        "initialize",
+        serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+    );
+    transport.push_ok(
+        "tools/list",
+        serde_json::json!({ "tools": [{ "name": "read", "inputSchema": { "type": "object" } }] }),
+    );
+    transport.push_ok(
+        "tools/call",
+        serde_json::json!({ "content": [{ "type": "text", "text": "ok" }] }),
+    );
+    let sent = transport.requests_handle();
+    let mut client = McpClient::new("files", Box::new(transport));
+    client.initialize().await.unwrap();
+
+    let native = GatedNative::new(DispatchAdmission::AmendedInput(
+        serde_json::json!({ "path": "redacted" }),
+    ));
+    let set = McpToolSet::from_clients(vec![client]).wrapping(native);
+
+    let out = set
+        .execute(
+            "mcp__files__read",
+            &serde_json::json!({ "path": "/etc/shadow" }),
+        )
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+    let call = sent
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(m, _)| m == "tools/call")
+        .map(|(_, params)| params.clone())
+        .expect("the call reached the wire");
+    assert_eq!(
+        call["arguments"],
+        serde_json::json!({ "path": "redacted" }),
+        "the amended input is what the server sees"
+    );
+}
+
+/// The other side of the contract: a plain (native) name falls through
+/// ungated *here*, because the executor it falls through to gates it itself.
+/// Gating in both places would run the chain twice for one call — and, once a
+/// `RequireApproval` is in play, ask a human twice.
+#[tokio::test]
+async fn a_native_fall_through_is_gated_exactly_once() {
+    let client = connected_client("files", "read").await;
+    let native = GatedNative::new(DispatchAdmission::Admit);
+    let set = McpToolSet::from_clients(vec![client]).wrapping(native.clone());
+
+    let out = set.execute("bash", &serde_json::json!({})).await;
+    assert!(!out.is_error(), "{out:?}");
+    assert_eq!(
+        native.admitted.lock().unwrap().as_slice(),
+        ["bash".to_string()],
+        "the native layer gates its own name once; this set must not gate it again"
+    );
+}
+
+/// Both wrappers hand the native layer's gate back up the chain. Letting the
+/// `None` default stand would un-gate every custom tool dispatched by a
+/// `CustomToolSet` composed over an MCP-connected session — the shipped
+/// order — and no compiler would say so.
+#[tokio::test]
+async fn the_dispatch_gate_forwards_from_the_native_layer() {
+    let client = connected_client("files", "read").await;
+    let native = GatedNative::new(DispatchAdmission::Admit);
+    let set = Arc::new(McpToolSet::from_clients(vec![client]).wrapping(native.clone()));
+    assert!(
+        set.dispatch_gate().is_some(),
+        "the MCP set must forward the native layer's gate"
+    );
+
+    let view = set.for_candidates(native);
+    assert!(
+        view.dispatch_gate().is_some(),
+        "and so must the Best-of-N candidate view"
+    );
+
+    let bare = McpToolSet::from_clients(Vec::new());
+    assert!(
+        bare.dispatch_gate().is_none(),
+        "no native layer, no gate — and `admit_dispatch` then admits"
     );
 }

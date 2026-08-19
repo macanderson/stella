@@ -81,8 +81,8 @@
 //! wins and the global one is reported as a [`ToolDiagnostic`]. A malformed
 //! manifest never aborts discovery — it becomes a typed per-file diagnostic so
 //! `stella tools` can show developers exactly which file is broken and why. A
-//! manifest whose `name` collides with a reserved built-in is likewise
-//! skipped with a diagnostic.
+//! manifest whose `name` collides with a reserved built-in — live or retired
+//! ([`crate::catalog::is_reserved`]) — is likewise skipped with a diagnostic.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -91,7 +91,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use stella_core::ports::{Principal, ToolExecutor};
+use stella_core::ports::{DispatchAdmission, Principal, ToolExecutor, admit_dispatch};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -100,11 +100,16 @@ use tokio::process::Command;
 /// canonical [`crate::catalog`], which covers every built-in registered in
 /// [`crate::registry::ToolRegistry`]. A custom tool must never shadow one,
 /// or the decorator chain (native ← custom ← mcp) would route the wrong
-/// executor and a manifest named e.g. `task` or `save_state` could silently
+/// executor and a manifest named e.g. `delegate` or `save_state` could silently
 /// replace a built-in.
 ///
 /// This is an alias, not a copy: declaring a tool in the catalog reserves its
 /// name automatically, so the two can no longer drift apart.
+///
+/// **Not the whole refusal set.** [`parse_manifest`] also refuses a name
+/// Stella *retired* ([`crate::catalog::is_retired`]) — see
+/// [`crate::catalog::is_reserved`] for why, and note that the two are
+/// deliberately separate messages because the operator's remedy differs.
 pub const RESERVED_NAMES: &[&str] = crate::catalog::ALL_NAMES;
 
 /// Timeout applied when a manifest omits `timeout_ms`. Public so
@@ -439,6 +444,15 @@ pub fn parse_manifest(text: &str, source: &Path) -> Result<CustomTool, String> {
         return Err(format!(
             "tool name `{}` is reserved by a built-in and cannot be redefined",
             raw.name
+        ));
+    }
+    if crate::catalog::is_retired(&raw.name) {
+        return Err(format!(
+            "tool name `{name}` is reserved: Stella dispatched a built-in called `{name}` \
+             and retired it, so the model still carries that tool's priors and an operator's \
+             `\"tools\": {{\"{name}\": \"off\"}}` would address this manifest instead of \
+             nothing — pick a name Stella has never used (#3237)",
+            name = raw.name
         ));
     }
     if raw.description.trim().is_empty() {
@@ -999,11 +1013,34 @@ impl ToolExecutor for CustomToolSet<'_> {
         contracts
     }
 
+    /// A custom tool is dispatched HERE, never through the inner executor, so
+    /// the inner executor's blocking policy chain and approval flow would
+    /// never see it — the #2793 hole. The shared gate closes it: the same
+    /// entry a built-in passes through, run before the script spawns, with a
+    /// `modify` decision's rewritten input honoured exactly as the registry
+    /// honours it. Names this set does not own fall through ungated on
+    /// purpose: the inner executor gates them itself, and gating twice would
+    /// ask a human twice for one call.
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         if let Some(tool) = self.tools.iter().find(|t| t.name == name) {
+            let admitted = admit_dispatch(self.dispatch_gate(), name, input).await;
+            let input = match &admitted {
+                DispatchAdmission::Admit => input,
+                DispatchAdmission::AmendedInput(amended) => amended,
+                DispatchAdmission::Refuse(refusal) => return refusal.clone(),
+            };
             return run_custom(tool, input, &self.workspace_root).await;
         }
         self.inner.get().execute(name, input).await
+    }
+
+    /// Forwarded: the gate belongs to the base of the chain, and the
+    /// dispatch above reads it back through this accessor. A wrapper below
+    /// this one that fails to forward silently un-gates every custom tool in
+    /// that session — which is why every decorator in the workspace forwards
+    /// (see the port's contract).
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.get().dispatch_gate()
     }
 
     /// Forwarded: this is a decorator, and a decorator that let the default

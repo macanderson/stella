@@ -144,6 +144,15 @@ impl ToolExecutor for PolicyToolSet<'_> {
         names.retain(|name| self.policy.allows(name));
         names
     }
+
+    /// Forwarded, and NOT narrowed: this layer decides whether a tool is
+    /// switched on, the gate decides what the session's extension policy said
+    /// about a call that is. Letting the `None` default stand would un-gate
+    /// every custom tool, since the custom set sits directly beneath this one
+    /// in the shipped chain (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.get().dispatch_gate()
+    }
 }
 
 /// Which `"tools"` key withheld `name` — the exact name, its group, or the
@@ -205,7 +214,7 @@ mod tests {
             }
         }
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-            std::collections::HashSet::from(["task".to_string()])
+            std::collections::HashSet::from(["delegate".to_string()])
         }
     }
 
@@ -315,7 +324,7 @@ mod tests {
         let fake = Fake;
         let set = PolicyToolSet::new(&fake, ToolPolicy::allow_all());
         assert!(
-            set.parallel_safe_names().contains("task"),
+            set.parallel_safe_names().contains("delegate"),
             "the inner executor's claim must survive the policy layer"
         );
     }
@@ -326,7 +335,10 @@ mod tests {
     #[test]
     fn a_disabled_tool_is_not_advertised_as_parallel_safe() {
         let fake = Fake;
-        let set = PolicyToolSet::new(&fake, ToolPolicy::from_switches([("task".into(), false)]));
+        let set = PolicyToolSet::new(
+            &fake,
+            ToolPolicy::from_switches([("delegate".into(), false)]),
+        );
         assert!(
             set.parallel_safe_names().is_empty(),
             "a withheld tool must not be advertised as parallel-safe"

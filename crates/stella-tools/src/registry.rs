@@ -8,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::bus::{self, HookBus, names as hook_names};
-use stella_core::ports::ToolExecutor;
+use stella_core::ports::{DispatchAdmission, DispatchGate, ToolExecutor};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 pub mod approval;
@@ -67,7 +67,7 @@ pub trait Tool: Send + Sync {
 }
 
 /// Registry of the built-in tools, keyed by name: the sub-agent spawn tool
-/// (`task`), the session task board (`task_*`), the session scratch state
+/// (`delegate`), the session task board (`task_*`), the session scratch state
 /// plane (`save_state` / `get_state` / `list_state` / `delete_state`), and
 /// the environment report (`get_environment`).
 ///
@@ -106,7 +106,7 @@ pub struct ToolRegistry {
     /// needs this registry as the child's tool set, so taking it as a
     /// constructor argument would be a reference cycle.
     sub_agent_dispatcher: crate::subagent::DispatcherSlot,
-    /// Spend by sub-agents the `task` tool dispatched, drained by the engine
+    /// Spend by sub-agents the `delegate` tool dispatched, drained by the engine
     /// at each step-boundary budget check. A tool cannot charge the turn's
     /// guard directly (the engine holds it mutably), so this ledger is how
     /// `--spend-limit` stays a hard ceiling once turns nest.
@@ -369,7 +369,7 @@ impl ToolRegistry {
         *self.policy_bridge.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 
-    /// Let the `task` tool run sub-agents through `dispatcher` (#922).
+    /// Let the `delegate` tool run sub-agents through `dispatcher` (#922).
     ///
     /// Late attachment, not a constructor argument: a dispatcher needs this
     /// registry as the child's tool set, so the two would otherwise own each
@@ -426,7 +426,7 @@ impl ToolRegistry {
     /// `pub` because settling is the *dispatcher's* job, per
     /// [`stella_core::subagent::SubAgentDispatcher`]'s contract: it must
     /// happen the moment a child stops, on the child's own thread, or a
-    /// parent cancelled mid-`task` leaves paid-for dollars in no ledger at
+    /// parent cancelled mid-`delegate` leaves paid-for dollars in no ledger at
     /// all.
     pub fn sub_agent_spend_ledger(&self) -> stella_core::subagent::SubAgentSpendLedger {
         self.sub_agent_spend.clone()
@@ -472,18 +472,18 @@ impl ToolRegistry {
         let bus = self.bus();
         let started_at = std::time::Instant::now();
 
-        // Extension policy: the `tool.call.requested` blocking chain. Runs
-        // FIRST — a `modify` decision replaces the input, and everything
-        // downstream (validation, execution) must see the final input, not
-        // the original.
-        let mut modified_input: Option<Value> = None;
-        if let Some(bus) = &bus {
-            match self.gate_tool_call(bus, name, input).await {
-                Ok(replacement) => modified_input = replacement,
-                Err(denied) => return denied,
-            }
-        }
-        let input: &Value = modified_input.as_ref().unwrap_or(input);
+        // Extension policy: the `tool.call.requested` blocking chain, through
+        // the SAME entry every decorator uses (`DispatchGate`, #2793) so the
+        // policy plane cannot mean one thing here and another for an MCP or
+        // custom tool. Runs FIRST — a `modify` decision replaces the input,
+        // and everything downstream (validation, execution) must see the
+        // final input, not the original.
+        let admitted = DispatchGate::admit(self, name, input).await;
+        let input: &Value = match &admitted {
+            DispatchAdmission::Admit => input,
+            DispatchAdmission::AmendedInput(amended) => amended,
+            DispatchAdmission::Refuse(refusal) => return refusal.clone(),
+        };
 
         let tool = self.tools.get(name).cloned();
 
