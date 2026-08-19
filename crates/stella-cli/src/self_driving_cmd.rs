@@ -948,11 +948,14 @@ fn work_issue(
             let _ = st;
             Ok(())
         }
-        work::WorkOutcome::NoChange => {
+        work::WorkOutcome::NoChange { why } => {
             if format == QueryFormat::Json {
-                println!(r#"{{"outcome":"no_change"}}"#);
+                println!(
+                    "{}",
+                    serde_json::json!({ "outcome": "no_change", "why": why })
+                );
             } else {
-                println!("worked #{key} — the turn changed nothing; worktree released");
+                println!("worked #{key} — the turn changed nothing ({why}); worktree released");
             }
             Ok(())
         }

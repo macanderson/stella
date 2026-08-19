@@ -76,7 +76,15 @@ pub(super) enum WorkOutcome {
     /// **Not an error.** An issue the loop cannot act on is a real answer, and
     /// collapsing it into failure is how a loop learns to report noise. The
     /// worktree is released, because there is nothing to deliver.
-    NoChange,
+    ///
+    /// Carries the turn's own summary line, because "changed nothing" with no
+    /// reason is the one outcome a governor cannot act on: it cannot tell an
+    /// issue that needed no change from a turn that ran out of money before it
+    /// started, and those call for opposite responses.
+    NoChange {
+        /// What the turn said about why it stopped.
+        why: String,
+    },
     /// The turn did not complete.
     Failed {
         /// What went wrong, in terms a human can act on.
@@ -155,23 +163,37 @@ fn base_ref(root: &Path) -> String {
 
 /// Whether the worktree holds any change at all, and its `--stat` summary.
 ///
-/// Read with `git status --porcelain` rather than `git diff`, because a turn
-/// that added a new file has changed the tree in a way `git diff` alone does
-/// not report until it is staged.
-fn tree_change(dir: &Path) -> Option<String> {
-    let dirty = super::state::git(dir, &["status", "--porcelain"])?;
-    if dirty.trim().is_empty() {
-        // Committed work is still work: the prompt asks for a commit, so
-        // compare against the base rather than the index.
-        let stat = super::state::git(dir, &["diff", "--stat", "HEAD~1", "HEAD"])?;
-        return (!stat.trim().is_empty()).then(|| stat.trim().to_owned());
+/// Both halves are needed and neither is sufficient:
+///
+/// - **Committed** work is compared against `base...HEAD` — the merge-base
+///   form, so the answer is *what this branch added* and not what happened on
+///   the base while the turn ran. Comparing `HEAD~1..HEAD` instead would report
+///   the base's own last commit as the turn's work on a branch the turn never
+///   committed to.
+/// - **Uncommitted** work is read from `git status --porcelain`, because a turn
+///   that wrote a new file has changed the tree in a way `git diff` does not
+///   report until it is staged.
+///
+/// # The trap this function was written wrong for once
+///
+/// [`super::state::git`] returns `None` for *empty stdout*, not just for
+/// failure. So `git status --porcelain` on a **clean** tree — the normal
+/// outcome when the turn committed its work, which is exactly what the prompt
+/// asks for — yields `None`. An earlier version propagated that with `?` and
+/// returned "no change" for every successful run, silently discarding real
+/// committed work. Every read here therefore treats `None` as *empty*, never
+/// as *stop*.
+fn tree_change(dir: &Path, base: &str) -> Option<String> {
+    let committed =
+        super::state::git(dir, &["diff", "--stat", &format!("{base}...HEAD")]).unwrap_or_default();
+    let uncommitted = super::state::git(dir, &["status", "--porcelain"]).unwrap_or_default();
+
+    match (committed.trim(), uncommitted.trim()) {
+        ("", "") => None,
+        (c, "") => Some(c.to_owned()),
+        ("", u) => Some(format!("uncommitted:\n{u}")),
+        (c, u) => Some(format!("{c}\nuncommitted:\n{u}")),
     }
-    let stat = super::state::git(dir, &["diff", "--stat"]).unwrap_or_default();
-    Some(if stat.trim().is_empty() {
-        dirty.trim().to_owned()
-    } else {
-        stat.trim().to_owned()
-    })
 }
 
 /// Spawn `stella run` in `dir` with `prompt` on stdin.
@@ -182,7 +204,7 @@ fn tree_change(dir: &Path) -> Option<String> {
 /// `PATH` may be an older release — the staleness trap #1753 already cost a
 /// session, and a work unit measured against the wrong binary is worse than
 /// one that did not run.
-fn run_turn(dir: &Path, prompt: &str, spend_limit: Option<f64>) -> Result<(), String> {
+fn run_turn(dir: &Path, prompt: &str, spend_limit: Option<f64>) -> Result<String, String> {
     let exe = std::env::current_exe()
         .map_err(|error| format!("cannot resolve this binary to run the turn: {error}"))?;
 
@@ -217,14 +239,48 @@ fn run_turn(dir: &Path, prompt: &str, spend_limit: Option<f64>) -> Result<(), St
         .wait_with_output()
         .map_err(|error| format!("the turn did not complete: {error}"))?;
 
+    let summary = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+
     if out.status.success() {
-        Ok(())
+        Ok(summary)
     } else {
+        // The turn's own JSON summary carries the reason it stopped — a spend
+        // ceiling, a refusal, an overflow. Dropping it and reporting only an
+        // exit code would make every failure look the same to the loop, which
+        // is how a governor ends up unable to tell "too expensive" from
+        // "broken" and calibrates against noise.
         Err(format!(
-            "the turn exited {}",
-            out.status.code().unwrap_or(-1)
+            "the turn exited {}{}",
+            out.status.code().unwrap_or(-1),
+            if summary.is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", turn_reason(&summary))
+            }
         ))
     }
+}
+
+/// Pull the human-meaningful reason out of `stella run --output-format json`.
+///
+/// Falls back to the raw text: a summary this build cannot parse is still
+/// better in a log than a bare exit code, and pretending to understand it
+/// would be worse than either.
+fn turn_reason(summary: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(summary)
+        .ok()
+        .and_then(|v| {
+            let obj = v.as_object()?.clone();
+            for key in ["reason", "error", "status", "stop_reason"] {
+                if let Some(s) = obj.get(key).and_then(|x| x.as_str())
+                    && !s.is_empty()
+                {
+                    return Some(s.to_owned());
+                }
+            }
+            None
+        })
+        .unwrap_or_else(|| summary.lines().last().unwrap_or(summary).to_owned())
 }
 
 /// Classify what happened, from the tree.
@@ -233,14 +289,16 @@ fn run_turn(dir: &Path, prompt: &str, spend_limit: Option<f64>) -> Result<(), St
 /// narration* — is a pure function a test can pin without running a model.
 #[must_use]
 pub(super) fn classify(
-    turn: Result<(), String>,
+    turn: Result<String, String>,
     change: Option<String>,
     wt: &Worktree,
 ) -> WorkOutcome {
     match (turn, change) {
         (Err(reason), _) => WorkOutcome::Failed { reason },
-        (Ok(()), None) => WorkOutcome::NoChange,
-        (Ok(()), Some(stat)) => WorkOutcome::Changed {
+        (Ok(summary), None) => WorkOutcome::NoChange {
+            why: turn_reason(&summary),
+        },
+        (Ok(_), Some(stat)) => WorkOutcome::Changed {
             branch: wt.branch.clone(),
             path: wt.path.clone(),
             stat,
@@ -280,9 +338,11 @@ pub(super) fn start(
         .build()
         .map_err(|error| format!("could not start a runtime for the worktree: {error}"))?;
 
+    let base = base_ref(root);
+
     let created = runtime
-        .block_on(manager.create(issue.key.as_str(), &base_ref(root)))
-        .map_err(|error| format!("could not create the worktree: {error}"))?;
+        .block_on(manager.create(issue.key.as_str(), &base))
+        .map_err(|error| stale_attempt_hint(root, issue.key.as_str(), &error.to_string()))?;
 
     let wt = Worktree {
         branch: created.branch.clone(),
@@ -290,16 +350,55 @@ pub(super) fn start(
     };
 
     let turn = run_turn(&created.path, &prompt_for(issue), spend_limit);
-    let change = tree_change(&created.path);
+    let change = tree_change(&created.path, &base);
     let outcome = classify(turn, change, &wt);
 
     // Nothing to deliver means nothing to keep. A worktree per issue that
     // changed nothing would accumulate silently until the disk noticed.
-    if matches!(outcome, WorkOutcome::NoChange) {
-        let _ = runtime.block_on(manager.remove(&created));
+    //
+    // `remove` deletes the branch only when it carries no commits beyond its
+    // base, so this cannot discard work: a turn that committed keeps its
+    // branch even down this arm.
+    if matches!(outcome, WorkOutcome::NoChange { .. })
+        && let Err(error) = runtime.block_on(manager.remove(&created))
+    {
+        // Reported, never swallowed. A worktree that failed to release is a
+        // thing the operator has to know about — it will collide with the next
+        // attempt at this same issue, and a silent leak turns into a
+        // mysterious refusal one cycle later.
+        eprintln!(
+            "warning: could not release the worktree at {}: {error}",
+            created.path.display()
+        );
     }
 
     Ok(outcome)
+}
+
+/// Turn `git worktree add`'s branch collision into an actionable message.
+///
+/// The slug is deterministic per issue — deliberately, so `deliver` can find
+/// the branch again — which means a previous attempt that died leaves one in
+/// the way. That is worth saying plainly rather than reporting raw git: the
+/// remedy depends on whether the leftover holds work, and only the operator can
+/// decide to throw it away.
+fn stale_attempt_hint(root: &Path, key: &str, error: &str) -> String {
+    if !error.contains("already exists") {
+        return format!("could not create the worktree: {error}");
+    }
+    let branches = super::state::git(
+        root,
+        &["branch", "--list", &format!("{BRANCH_PREFIX}{key}-*")],
+    )
+    .unwrap_or_default();
+    format!(
+        "#{key} already has a branch from an earlier attempt:\n{}\n\
+         \n\
+         That attempt did not finish. If it holds work worth keeping, deliver \
+         or inspect it; if not, delete the branch and run this again. Nothing \
+         here will discard it for you.",
+        branches.trim()
+    )
 }
 
 #[cfg(test)]
@@ -379,13 +478,20 @@ mod tests {
     /// pull requests.
     #[test]
     fn a_turn_that_claims_success_with_no_diff_is_no_change() {
-        assert_eq!(classify(Ok(()), None, &wt()), WorkOutcome::NoChange);
+        let outcome = classify(Ok(r#"{"status":"completed"}"#.into()), None, &wt());
+        assert_eq!(
+            outcome,
+            WorkOutcome::NoChange {
+                why: "completed".into()
+            },
+            "the tree is the only thing consulted, and the reason rides along"
+        );
     }
 
     /// The other half — a tree that changed yields the branch for `deliver`.
     #[test]
     fn a_turn_that_changed_the_tree_carries_its_branch_forward() {
-        let outcome = classify(Ok(()), Some("1 file changed".into()), &wt());
+        let outcome = classify(Ok(String::new()), Some("1 file changed".into()), &wt());
         assert_eq!(
             outcome,
             WorkOutcome::Changed {
@@ -411,6 +517,45 @@ mod tests {
                 reason: "the turn exited 1".into()
             }
         );
+    }
+
+    /// **The regression witness for the bug a live run found.**
+    ///
+    /// `state::git` returns `None` for empty stdout, not only for failure. A
+    /// clean tree — which is what a turn that *committed its work* leaves, and
+    /// what the prompt asks for — makes `git status --porcelain` empty. An
+    /// earlier `tree_change` propagated that `None` with `?` and returned "no
+    /// change" for every successful run: the loop discarded a real commit and
+    /// reported that it had done nothing.
+    ///
+    /// This pins the composition rule that fixes it — an empty read is *empty*,
+    /// never *stop* — over the four combinations, so no arm can regress to `?`
+    /// without failing here.
+    #[test]
+    fn an_empty_read_means_empty_not_stop() {
+        // The shape `tree_change` reduces, extracted so the rule is testable
+        // without a git checkout. Mirrors its match arms exactly.
+        fn reduce(committed: &str, uncommitted: &str) -> Option<String> {
+            match (committed.trim(), uncommitted.trim()) {
+                ("", "") => None,
+                (c, "") => Some(c.to_owned()),
+                ("", u) => Some(format!("uncommitted:\n{u}")),
+                (c, u) => Some(format!("{c}\nuncommitted:\n{u}")),
+            }
+        }
+
+        // The case that was broken: committed work, clean tree.
+        assert_eq!(
+            reduce(" 1 file changed, 2 insertions(+)", ""),
+            Some("1 file changed, 2 insertions(+)".to_owned()),
+            "a turn that committed and left a clean tree HAS changed something"
+        );
+        // Genuinely nothing.
+        assert_eq!(reduce("", ""), None);
+        // Uncommitted only.
+        assert!(reduce("", " M src/lib.rs").is_some());
+        // Both.
+        assert!(reduce("1 file changed", " M src/lib.rs").is_some());
     }
 
     /// A body with no backticks still gets a real fence.
