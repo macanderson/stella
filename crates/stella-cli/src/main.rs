@@ -1193,7 +1193,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             output_format,
         } => {
             let pipeline_choice =
-                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
             wrapper_plugin::reject_plugin_variant_for_door("fleet", pipeline_choice)?;
             let posture = supervision(&cli.globals);
             if posture.supervises() {
