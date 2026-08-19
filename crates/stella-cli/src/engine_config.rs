@@ -721,7 +721,10 @@ pub fn state_from_settings(
 /// in here with `default_model`'s value would make an unassigned seat
 /// indistinguishable on screen from one a user deliberately pinned to the same
 /// model, and only one of those survives a change to the default.
-fn seat_rows(engine: &AgentEngineConfig, declared: &[(String, String)]) -> Vec<stella_tui::SeatRow> {
+fn seat_rows(
+    engine: &AgentEngineConfig,
+    declared: &[(String, String)],
+) -> Vec<stella_tui::SeatRow> {
     let assignments = engine.seat_models.as_ref();
     declared
         .iter()
@@ -1321,6 +1324,7 @@ mod tests {
             vec!["zai/glm-5.2".into()],
             Default::default(),
             Vec::new(),
+            &[],
         );
         assert!(!state.auto_mode);
         assert!(state.effort_auto);
@@ -1363,6 +1367,7 @@ mod tests {
             vec!["zai/glm-5.2".into()],
             Default::default(),
             Vec::new(),
+            &[],
         );
         assert_eq!(state2.agents, state.agents);
         assert_eq!(state2.allowed_models, state.allowed_models);

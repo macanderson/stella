@@ -46,6 +46,7 @@ pub mod plan_card;
 pub mod plan_rail;
 pub(crate) mod plan_style;
 pub(crate) mod queue_popup;
+pub mod seats;
 pub mod session;
 pub mod settings;
 pub mod skills;
