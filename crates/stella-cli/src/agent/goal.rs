@@ -1,12 +1,13 @@
 //! Goal-driven turns: judged rounds until a verifier confirms the goal is met.
 //!
 //! `run_goal_cmd` drives the raw `Engine::run_goal` step-loop (the default
-//! since #3381), the staged pipeline (`--pipeline classic`), or an installed
-//! wrapper plugin per round (`--pipeline <variant>`, [`goal_wrapped`],
-//! #3695 goal half). The goal verifier is independent of the worker model
-//! and answers "does the whole effort meet the goal?" — distinct from the
-//! pipeline's per-change verification verifier — and stays the same
-//! `Engine::assess` primitive on all three arms.
+//! since #3381) or an installed wrapper plugin per round (`--pipeline
+//! <variant>`, [`goal_wrapped`], #3695 goal half) — the staged pipeline
+//! (`--pipeline classic`) is gone (removal census,
+//! `docs/spec/pipeline-as-plugins.md` §7 slice 1). The goal verifier is
+//! independent of the worker model and answers "does the whole effort meet
+//! the goal?" — distinct from a wrapper plugin's own oracle — and stays the
+//! same `Engine::assess` primitive on both arms.
 
 use super::*;
 
@@ -400,9 +401,11 @@ pub(crate) async fn run_raw_one_shot(
 /// `run_one_shot`.
 ///
 /// `pipeline` selects the driver for each working round (#3381): `Classic`
-/// (`--pipeline classic`) runs the staged pipeline (triage → recall → plan →
-/// execute → witness → verify → verdict); `Raw` — the default since #3381,
-/// with or without `--no-pipeline` — falls back to the raw `Engine::run_goal`
+/// (`--pipeline classic`) is refused at [`crate::wrapper_plugin::PipelineChoice::resolve`]
+/// now — the built-in staged pipeline is gone (removal census,
+/// `docs/spec/pipeline-as-plugins.md` §7 slice 1) — so `run_goal_cmd` never
+/// sees that variant in practice; `Raw` — the default since #3381, with or
+/// without `--no-pipeline` — falls back to the raw `Engine::run_goal`
 /// step-loop; `Plugin(variant)` dispatches each round's worker turn through
 /// the named installed wrapper ([`goal_wrapped::run_goal_wrapped_turn`],
 /// #3695 goal half) while the goal verifier stays exactly what `Raw` uses —

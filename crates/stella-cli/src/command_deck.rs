@@ -3695,7 +3695,7 @@ async fn run_deck_command(
                 return DeckCommand::Prompt;
             }
             say(format!(
-                "unknown command `{trimmed}` — try /help, /clear, /models, /theme, /init, /agents, /pipeline, /export, /donate, /files, /diff, /graph"
+                "unknown command `{trimmed}` — try /help, /clear, /models, /theme, /init, /agents, /export, /donate, /files, /diff, /graph"
             ));
         }
     }

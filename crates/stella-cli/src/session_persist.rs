@@ -762,8 +762,6 @@ mod tests {
             })
             .is_some()
         );
-        assert!(journal_record(&Inbound::Pipeline(true)).is_some());
-
         // Out-of-band view state must never journal…
         assert!(journal_record(&Inbound::Sessions(vec![])).is_none());
         assert!(journal_record(&Inbound::Notifications(vec![])).is_none());
@@ -1039,7 +1037,6 @@ mod tests {
                 agent: "lead".into(),
                 status: AgentStatus::WaitingInput,
             },
-            Inbound::Pipeline(false),
         ];
         for inbound in stream {
             let record = journal_record(&inbound).expect("fold-relevant");
@@ -1282,7 +1279,6 @@ mod tests {
                 agent: "lead".into(),
                 status: AgentStatus::WaitingInput,
             },
-            Inbound::Pipeline(false),
         ];
 
         // Live fold.
@@ -1320,7 +1316,6 @@ mod tests {
         assert_eq!(a.tokens_out, b.tokens_out);
         assert_eq!(a.cost_usd, b.cost_usd);
         assert_eq!(a.meta.model, b.meta.model);
-        assert_eq!(live.pipeline, replayed.pipeline);
         // NOT asserted: trace-row count. The trace is a per-event activity
         // ring, and the journal coalesces adjacent streaming deltas by
         // design — two `Text` deltas replay as one event. Everything the
