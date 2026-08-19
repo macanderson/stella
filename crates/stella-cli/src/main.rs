@@ -1222,7 +1222,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     max_concurrency,
                     cli.globals.spend_limit,
                     watch,
-                    pipeline_choice.is_classic(),
                     task_timeout.map(std::time::Duration::from_secs),
                     output_format,
                 ),

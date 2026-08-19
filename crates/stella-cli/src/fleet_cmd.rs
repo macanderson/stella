@@ -464,9 +464,9 @@ fn render_watch_line(watch: &BranchWatch) {
     );
 }
 
-/// The engine-backed [`FleetWorker`]: one turn per task (the raw step-loop by
-/// default since #3381, or the staged pipeline with `--pipeline classic`), in
-/// the task's own workspace, with the standard (headless) tool registry.
+/// The engine-backed [`FleetWorker`]: one turn per task — the raw
+/// `Engine::run_turn` step-loop — in the task's own workspace, with the
+/// standard (headless) tool registry.
 struct EngineWorker {
     cfg: Config,
     /// Per-child spend cap. Derived as `--spend-limit / max_concurrency` (not
@@ -474,7 +474,6 @@ struct EngineWorker {
     /// whole cap and blow the aggregate — the parent fleet guard then enforces
     /// the true total, stopping further launches once it is crossed.
     per_child_budget: Option<f64>,
-    use_pipeline: bool,
     /// The fleet run id — combined with the task id it forms the worker's
     /// lock-table identity (`<run>/<task>`), the SAME holder string the
     /// fleet's declared-claim acquisition uses, so a task's tool-level
@@ -503,7 +502,6 @@ impl FleetWorker for EngineWorker {
         // half of a oneshot from the async side.
         let cfg = self.cfg.clone();
         let per_child_budget = self.per_child_budget;
-        let use_pipeline = self.use_pipeline;
         let task = task.clone();
         let root = workspace_root.to_path_buf();
         let claim_holder = format!("{}/{}", self.run_id, task.id);
@@ -542,7 +540,6 @@ impl FleetWorker for EngineWorker {
                     rt.block_on(run_task(
                         &cfg,
                         per_child_budget,
-                        use_pipeline,
                         &task,
                         &root,
                         &claim_holder,
