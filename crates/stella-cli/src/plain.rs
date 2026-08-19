@@ -56,9 +56,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use colored::{Color, ColoredString, Colorize};
-use stella_protocol::{AgentEvent, BudgetMode, FileChangeKind, StageName};
 #[cfg(test)]
 use stella_protocol::StageKind;
+use stella_protocol::{AgentEvent, BudgetMode, FileChangeKind, StageName};
 use stella_tui::ansi::AnsiPalette;
 use stella_tui::render::{INLINE_DIFF_CAP, THINKING_ROWS};
 use stella_tui::textline::{self, EventLine, Tone, fmt_cost};

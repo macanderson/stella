@@ -137,10 +137,8 @@ impl StageName {
     /// The stage a name refers to, resolving the host's own vocabulary first.
     #[must_use]
     pub fn new(name: &str) -> Self {
-        StageKind::from_wire_str(name).map_or_else(
-            || Self::Contributed(name.to_owned()),
-            Self::Known,
-        )
+        StageKind::from_wire_str(name)
+            .map_or_else(|| Self::Contributed(name.to_owned()), Self::Known)
     }
 
     /// The host boundary this is, or `None` for a contributed stage.
@@ -204,13 +202,40 @@ impl schemars::JsonSchema for StageName {
         "StageName".into()
     }
 
-    /// Deliberately a bare string rather than an enum of the twelve.
+    /// A string, **not** an enum of the twelve.
     ///
     /// The schema is the contract a non-Rust reader validates against, and a
     /// closed enum there would make a contributed stage a schema violation —
     /// re-closing on the wire exactly the vocabulary this type opened.
+    ///
+    /// The twelve still ride along as `examples`, which documents without
+    /// constraining. That is the half a consumer actually loses when a closed
+    /// enum becomes a string: not validation (it never wanted to reject a
+    /// stage), but the list of names worth writing a branch for. A reader
+    /// should switch on these and keep a default arm — which is the shape it
+    /// needed anyway, since a stage it has never heard of is now reachable.
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        String::json_schema(generator)
+        let mut schema = String::json_schema(generator);
+        schema.insert(
+            "description".to_owned(),
+            serde_json::Value::String(
+                "The name of a stage boundary — an OPEN vocabulary. The host's own boundaries \
+                 are listed in `examples`; an installed plugin may contribute a stage under any \
+                 other name, so a consumer must branch on the names it knows and keep a default \
+                 arm rather than treating an unlisted value as invalid."
+                    .to_owned(),
+            ),
+        );
+        schema.insert(
+            "examples".to_owned(),
+            serde_json::Value::Array(
+                StageKind::ALL
+                    .iter()
+                    .map(|kind| serde_json::Value::String(kind.as_wire_str().to_owned()))
+                    .collect(),
+            ),
+        );
+        schema
     }
 }
 
@@ -314,7 +339,10 @@ mod tests {
     /// decode as `Verdict` and re-encode as `"verdict"`.
     #[test]
     fn a_known_name_never_becomes_a_contributed_one() {
-        assert_eq!(StageName::new("execute"), StageName::Known(StageKind::Execute));
+        assert_eq!(
+            StageName::new("execute"),
+            StageName::Known(StageKind::Execute)
+        );
         for alias in ["judge", "verifier"] {
             let name = StageName::new(alias);
             assert_eq!(name, StageName::Known(StageKind::Verdict));

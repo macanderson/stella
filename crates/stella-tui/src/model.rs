@@ -20,8 +20,8 @@
 use crate::ansi::strip_ansi;
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, HunkProposal, MediaJobState, MediaKind,
-    PrStatus, ScopeProposal, StageKind, StageName, StageScope, SubAgentPhase, SubAgentStatus, TaskItem,
-    TaskStatus, ToolOutput,
+    PrStatus, ScopeProposal, StageKind, StageName, StageScope, SubAgentPhase, SubAgentStatus,
+    TaskItem, TaskStatus, ToolOutput,
 };
 
 use std::collections::VecDeque;

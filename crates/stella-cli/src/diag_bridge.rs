@@ -494,11 +494,22 @@ impl DomainBridge {
                 // `operator_id` takes and for the same reason: the word was
                 // chosen by whoever installed the plugin, and is never model
                 // output, file content or a path.
-                let field = match name.kind() {
-                    Some(kind) => self.at_seq().with("stage", stage_name(kind)),
-                    None => self.at_seq().with("stage", contributed_stage(name.as_str())),
-                };
-                self.emit(Level::Info, "agent.stage", field);
+                //
+                // Inlined into the `emit` call rather than bound to a local
+                // first: the reference generator (`scripts/diagnostic-codes.py`)
+                // reads the field chain out of the emit site's own text, and a
+                // local turns `seq`/`stage` into "built at runtime" — a
+                // documented record losing the names of its fields.
+                self.emit(
+                    Level::Info,
+                    "agent.stage",
+                    match name.kind() {
+                        Some(kind) => self.at_seq().with("stage", stage_name(kind)),
+                        None => self
+                            .at_seq()
+                            .with("stage", contributed_stage(name.as_str())),
+                    },
+                );
             }
             AgentEvent::TurnComplete { model, cost_usd } => {
                 // A turn terminator: any call still awaiting a result will

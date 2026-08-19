@@ -22,7 +22,10 @@
  * compat fallback would mean hand-writing a visitor for every variant.
  */
 export type AgentEvent = {
-  name: StageKind;
+  /**
+   * Which stage the boundary belongs to, as a plain string. An OPEN vocabulary: the host's own boundaries take the names listed in this field's type examples, and a stage contributed by an installed plugin takes whatever name that plugin declared. Every one of the host's own names encodes exactly as it always has, so an existing consumer keeps reading; a consumer must branch on the names it knows and keep a default arm, because a name it has never seen is now reachable.
+   */
+  name: StageName;
   scope: StageScope;
   type: "stage";
 } | {
@@ -1769,12 +1772,12 @@ export interface ScopeProposal {
  */
 export type ServiceTier = "auto" | "default" | "flex" | "priority";
 
-export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+/**
+ * The name of a stage boundary — an OPEN vocabulary. The host's own boundaries are listed in `examples`; an installed plugin may contribute a stage under any other name, so a consumer must branch on the names it knows and keep a default arm rather than treating an unlisted value as invalid.
+ */
+export type StageName = string;
 
 /**
- * A named point in the turn's data flow. Exactly one stage vocabulary
- * exists in this workspace — never duplicated per-crate (the TS-era
- * `StageKind` duplication this structurally forbids, L-E1).
  * Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
  *
  * Deliberately **not** `#[serde(default)]`. A default would silently claim

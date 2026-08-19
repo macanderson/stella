@@ -970,6 +970,9 @@ export interface ScopeProposal {
   write_globs?: string[];
 }
 
+/**
+ * The name of a stage boundary — an OPEN vocabulary. The host's own boundaries are listed in `examples`; an installed plugin may contribute a stage under any other name, so a consumer must branch on the names it knows and keep a default arm rather than treating an unlisted value as invalid.
+ */
 export type StageName = string;
 
 /**
@@ -1220,10 +1223,7 @@ export interface VerdictEvidence {
  */
 export type AgentEvent = {
   /**
-   * Which stage. An **open** vocabulary ([`crate::StageName`]): one of
-   * [`StageKind`]'s twelve when this host emitted the boundary, or a
-   * contributed stage's own word. On the wire it is a plain string
-   * either way, so the twelve encode exactly as they always have.
+   * Which stage the boundary belongs to, as a plain string. An OPEN vocabulary: the host's own boundaries take the names listed in this field's type examples, and a stage contributed by an installed plugin takes whatever name that plugin declared. Every one of the host's own names encodes exactly as it always has, so an existing consumer keeps reading; a consumer must branch on the names it knows and keep a default arm, because a name it has never seen is now reachable.
    */
   name: StageName;
   scope: StageScope;

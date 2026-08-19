@@ -1049,7 +1049,10 @@ mod tests {
 
     #[test]
     fn label_tables_cover_every_variant() {
-        assert_eq!(stage_label(&StageKind::ContextRecall.into()), "context recall");
+        assert_eq!(
+            stage_label(&StageKind::ContextRecall.into()),
+            "context recall"
+        );
         assert_eq!(budget_mode_label(BudgetMode::Enforced), "enforced");
         assert_eq!(media_kind_label(MediaKind::Svg), "svg");
         assert_eq!(pr_status_label(PrStatus::Merged), "merged");
