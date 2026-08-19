@@ -122,11 +122,22 @@ pub(super) fn prompt_for(issue: &Issue) -> String {
          \n\
          Fix the problem it describes. Follow this repository's own \
          conventions — read AGENTS.md and CLAUDE.md before you change \
-         anything. Leave the work committed on the current branch.\n",
+         anything.\n\
+         \n\
+         Leave the work committed on the current branch, and end the commit \
+         message with this line exactly:\n\
+         \n\
+         {trailer}\n",
         key = issue.key,
         title = issue.title,
         body = issue.body,
         fence = fence,
+        // The trailer is composed by `deliver`, which owns the closing
+        // contract, and applied here, because the turn is what authors the
+        // commit. A squash merge reads only the commit message and a rebase
+        // merge replays the commits verbatim, so a `Closes` that lives only in
+        // the pull request body never closes anything on either path.
+        trailer = super::deliver::commit_trailer(issue.key.as_str()),
     )
 }
 

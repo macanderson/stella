@@ -15,6 +15,7 @@
 
 mod backlog;
 mod convention;
+mod deliver;
 pub(crate) mod probes;
 pub(crate) mod state;
 mod surface;
@@ -202,6 +203,16 @@ pub(crate) enum SelfDrivingCmd {
         format: QueryFormat,
     },
 
+    /// The pull-request rhythm: open, observe, decide, merge.
+    ///
+    /// Deciding buys no model call — it is arithmetic over observed facts
+    /// (`stella_autonomy::deliver_next`). `merge` performs only what `next`
+    /// returned, so the loop can never merge on its own opinion of its work.
+    Deliver {
+        #[command(subcommand)]
+        cmd: DeliverCmd,
+    },
+
     /// Run lifecycle — a RUN spans many cycles and is the unit a person
     /// starts, stops, and drills into.
     Run {
@@ -278,6 +289,76 @@ impl OutcomeArg {
             OutcomeArg::ResourceFail => CycleOutcome::ResourceFail,
         }
     }
+}
+
+#[derive(Subcommand)]
+pub(crate) enum DeliverCmd {
+    /// Push the branch and open a draft pull request that closes the issue.
+    ///
+    /// Draft on purpose: the machine takes it out of draft itself once CI is
+    /// green, so a pull request that never goes green never asks a human to
+    /// look at it.
+    Open {
+        /// The issue this closes.
+        #[arg(long)]
+        issue: String,
+        /// The branch holding the work, as `work` reported it.
+        #[arg(long)]
+        branch: String,
+        /// The pull request title.
+        #[arg(long)]
+        title: String,
+    },
+
+    /// One read of the forge, plus the second read of the base branch that
+    /// separates "our failure" from "inherited". Facts only, no decisions.
+    Observe {
+        /// The pull request number.
+        #[arg(long)]
+        pr: String,
+        /// Output format.
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
+    },
+
+    /// The single next action, decided deterministically. Buys no model call.
+    Next {
+        /// The pull request number.
+        #[arg(long)]
+        pr: String,
+        /// Fix pushes already made for this pull request.
+        #[arg(long, default_value_t = 0)]
+        fixes: u32,
+        /// Rebases already made for this pull request.
+        #[arg(long, default_value_t = 0)]
+        rebases: u32,
+        /// Merge without waiting for a human approval.
+        ///
+        /// Off by default. A default that merged unreviewed would make the
+        /// safe choice the one an operator has to remember to opt into.
+        #[arg(long)]
+        no_review: bool,
+        /// Output format.
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
+    },
+
+    /// Merge — and only when `next` says so, re-derived here rather than
+    /// trusted from the caller.
+    Merge {
+        /// The pull request number.
+        #[arg(long)]
+        pr: String,
+        /// Fix pushes already made for this pull request.
+        #[arg(long, default_value_t = 0)]
+        fixes: u32,
+        /// Rebases already made for this pull request.
+        #[arg(long, default_value_t = 0)]
+        rebases: u32,
+        /// Merge without waiting for a human approval.
+        #[arg(long)]
+        no_review: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -386,6 +467,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), 
             format,
         } => file_finding(&st, title, body, labels, *format),
         SelfDrivingCmd::Work { issue, format } => work_issue(&st, issue, spend_limit, *format),
+        SelfDrivingCmd::Deliver { cmd } => deliver_cmd(cmd),
         SelfDrivingCmd::Run { cmd } => match cmd {
             RunCmd::Start => run_start(&st),
             RunCmd::End { status, reason } => run_end(&st, status, reason),
@@ -917,6 +999,116 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
 /// The queue verb: the ranked defect batch this cycle draws from.
 fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
     backlog::render_queue(st, &crate::issue_provider::GhIssueProvider, limit, format)
+}
+
+/// `stella self-driving deliver` — the pull-request rhythm.
+///
+/// Every arm that acts re-derives the decision from a fresh observation rather
+/// than trusting a verdict handed to it. `merge` in particular does **not**
+/// take "the caller already ran `next`" as evidence: the forge moves between
+/// calls, and a merge authorised by a stale read is exactly the failure the
+/// machine's `Mergeability::Unknown` arm exists to prevent one layer down.
+fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
+    let root = state::repo_root();
+
+    match cmd {
+        DeliverCmd::Open {
+            issue,
+            branch,
+            title,
+        } => {
+            let pr = deliver::open(&root, branch, issue, title)?;
+            println!("opened #{pr} for #{issue} from {branch}");
+            Ok(())
+        }
+
+        DeliverCmd::Observe { pr, format } => {
+            let obs = deliver::observe(&root, pr)?;
+            if *format == QueryFormat::Json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&obs).map_err(|e| e.to_string())?
+                );
+            } else {
+                println!(
+                    "pr #{pr}: ci={:?} base_ci={:?} mergeable={:?} review={:?} draft={}",
+                    obs.ci, obs.base_ci, obs.mergeable, obs.review, obs.draft
+                );
+            }
+            Ok(())
+        }
+
+        DeliverCmd::Next {
+            pr,
+            fixes,
+            rebases,
+            no_review,
+            format,
+        } => {
+            let transition = decide(&root, pr, *fixes, *rebases, *no_review)?;
+            if *format == QueryFormat::Json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&transition).map_err(|e| e.to_string())?
+                );
+            } else {
+                println!(
+                    "pr #{pr}: {:?} -> {:?}",
+                    transition.state, transition.action
+                );
+            }
+            Ok(())
+        }
+
+        DeliverCmd::Merge {
+            pr,
+            fixes,
+            rebases,
+            no_review,
+        } => {
+            let transition = decide(&root, pr, *fixes, *rebases, *no_review)?;
+            if transition.action != stella_autonomy::Action::Merge {
+                // Refused, not silently skipped: a caller that asked to merge
+                // and got nothing must be able to tell "already merged" from
+                // "not allowed yet".
+                return Err(format!(
+                    "pr #{pr} is not mergeable yet — the machine says {:?} ({:?})",
+                    transition.action, transition.state
+                ));
+            }
+            deliver::merge(pr)?;
+            println!("merged #{pr}");
+            Ok(())
+        }
+    }
+}
+
+/// Observe the forge and run the pure machine over what it said.
+fn decide(
+    root: &std::path::Path,
+    pr: &str,
+    fixes: u32,
+    rebases: u32,
+    no_review: bool,
+) -> Result<stella_autonomy::Transition, String> {
+    let obs = deliver::observe(root, pr)?;
+    let policy = stella_autonomy::DeliverPolicy {
+        require_approval: !no_review,
+        ..stella_autonomy::DeliverPolicy::default()
+    };
+    let attempts = stella_autonomy::Attempts { fixes, rebases };
+
+    // The state is re-derived from the observation each call rather than
+    // persisted: the forge is the source of truth about a pull request, and a
+    // remembered state that disagreed with it would be the stale-read defect
+    // this design is trying to avoid. `CiPending` is the neutral entry point —
+    // every arm of the machine is reachable from it.
+    Ok(stella_autonomy::deliver_next(
+        stella_autonomy::PrState::CiPending,
+        &obs,
+        attempts,
+        &policy,
+    ))
 }
 
 /// `stella self-driving work` — run one issue to a diff.

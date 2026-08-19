@@ -212,6 +212,26 @@ pub const HOST_SURFACE: &[HostVerb] = &[
         summary: "run one issue through the turn loop in an isolated worktree, and report what the tree says",
     },
     HostVerb {
+        path: "deliver open",
+        emits: Emits::Text,
+        summary: "push the work branch and open a draft pull request that closes its issue",
+    },
+    HostVerb {
+        path: "deliver observe",
+        emits: Emits::QueryEnvelope,
+        summary: "one read of the forge, plus the base-branch read that separates ours from inherited",
+    },
+    HostVerb {
+        path: "deliver next",
+        emits: Emits::QueryEnvelope,
+        summary: "the single next action for a pull request — arithmetic, and it buys no model call",
+    },
+    HostVerb {
+        path: "deliver merge",
+        emits: Emits::Text,
+        summary: "merge, and only when `deliver next` says so on a freshly re-read observation",
+    },
+    HostVerb {
         path: "run start",
         emits: Emits::ShellAssignments,
         summary: "begin a run — the multi-cycle unit a person starts and stops",

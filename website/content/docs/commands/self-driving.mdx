@@ -21,6 +21,10 @@ stella self-driving calibrate (--ok | --resource-fail | --show)
 stella self-driving queue [--limit N] [--format <text|json>]
 stella self-driving file --title TEXT [--body TEXT] [--label L…] [--format <text|json>]
 stella self-driving work --issue KEY [--spend-limit USD] [--format <text|json>]
+stella self-driving deliver open --issue KEY --branch B --title T
+stella self-driving deliver observe --pr N [--format <text|json>]
+stella self-driving deliver next --pr N [--fixes N] [--rebases N] [--no-review] [--format <text|json>]
+stella self-driving deliver merge --pr N [--fixes N] [--rebases N] [--no-review]
 stella self-driving run (start | end [--status S] [--reason S] | cancel [reason] | list | stamp-cycle-pid [PID])
 stella self-driving runs
 stella self-driving phase <name>
@@ -118,6 +122,18 @@ Two properties are deliberate and tested.
 **The outcome is measured from the tree, never from what the turn said.** A turn that exits cleanly and narrates success while changing nothing reports `no_change` and releases its worktree. The two disagree exactly when it matters, and a loop that believed the narration would open empty pull requests.
 
 Worktrees live under `.stella/private/self-driving/` on `self-driving/` branches — outside the fleet's namespace, because `stella fleet gc` reclaims by namespace and must not be given authority over checkouts it did not create.
+
+### deliver
+
+`stella self-driving deliver` is the pull-request rhythm: open, observe, decide, merge.
+
+**Deciding buys no model call.** What to do with an open pull request is arithmetic over observed facts, so the decision lives in a pure state machine and this command only reads the forge and performs what the machine returned. `merge` re-derives the decision from a fresh observation rather than trusting that the caller already ran `next` — the forge moves between calls, and a merge authorised by a stale read is exactly what the machine's "mergeability not yet computed" arm exists to prevent.
+
+**`base_ci` is a second read, and it is the point.** A failure that reproduces on the base branch is not this pull request's failure, and treating it as one burns every cycle on somebody else's breakage. So `observe` does not ask a blanket "is main red" — it compares **the same checks by name**. For every check failing on the pull request, it asks what the check of that name concluded on the base branch's head, and the base counts as broken only when the failures actually overlap. A blanket read would call a genuine regression "inherited" whenever anything unrelated was red, which is the expensive direction to be wrong in.
+
+**Closing an issue takes both spellings.** `Closes #N` goes in the pull request body *and* as a commit trailer, because a squash merge composes its message from the commits and never from the body, while a rebase merge replays the commits verbatim. Either alone is a silent single point of failure. The trailer is applied by `work`, since the turn is what authors the commit.
+
+A pull request opens as a **draft** and the machine takes it out of draft itself once CI is green — so one that never goes green never asks a human to look at it. Merging waits for a human approval unless `--no-review` is passed: a default that merged unreviewed would make the safe choice the one an operator has to remember to opt into.
 
 ## Files
 
