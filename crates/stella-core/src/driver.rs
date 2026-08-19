@@ -84,7 +84,7 @@ use stella_protocol::{
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
 use crate::bus;
-use crate::compaction::compact_measured;
+use crate::compaction::compact_and_digest;
 use crate::receipts::TranscriptRevision;
 pub use config::{DEFAULT_STOP_HOLDS, EngineConfig, STOP_HOLD_CEILING, TurnHalt, clamp_stop_holds};
 // These moved to `config` with the fields that use them; the test modules
@@ -1038,7 +1038,7 @@ impl<'a> Engine<'a> {
         // Whether anything was rewritten IN PLACE, decided at the mutation sites
         // below and reported through a `#[must_use]` return.
         let mut rewrote = false;
-        // Post-pass size, for the overflow decision below. `compact_measured`
+        // Post-pass size, for the overflow decision below. `compact_and_digest`
         // returns the count it already computed on every path — including both
         // `None` paths, the common case — so this walks the transcript once per
         // step rather than eagerly re-deriving a number the callee just discarded.
@@ -1046,7 +1046,7 @@ impl<'a> Engine<'a> {
             .config
             .tool_result_horizon_steps
             .map(|keep_recent_steps| crate::compaction::RetentionPolicy { keep_recent_steps });
-        let (after_tokens, report) = compact_measured(messages, compaction_budget, retention);
+        let (after_tokens, report) = compact_and_digest(messages, compaction_budget, retention);
         if let Some(report) = report {
             // `Some` means a pass actually stubbed, aged or superseded something,
             // so positions at or after the first rewrite name different bytes now.
