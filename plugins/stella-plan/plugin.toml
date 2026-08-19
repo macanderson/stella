@@ -1,0 +1,146 @@
+# stella-plan — the pipeline's plan stage, extracted (#3380, Track B.2).
+#
+# `doc:pipeline-as-plugins` §7 orders the extractions and puts this one
+# second. #3562 recorded why it could not start until now: a planner *is* a
+# model call, and until `child_turn` had a host behind it
+# (`stella_runtime::wrapper::ChildTurns`, wired into the `stella run` driver's
+# `bind_installed`) a plan plugin could contribute a prompt and nothing else.
+# That host is wired for this door now, so this plugin asks for the one thing
+# #3562 named as load-bearing: one bounded turn at a declared `plan` role
+# intent, and nothing more.
+#
+# What it does, at the one stage of a turn where it has anything honest to
+# say. At `plan` it asks the host to run one child turn — using the same
+# planner prompt shape `crates/stella-pipeline/src/plan.rs::build_planner_prompt`
+# assembles, to the extent the wire carries the inputs that function reads
+# (see main.py's module doc for exactly what is and is not included and why)
+# — parses the JSON-array-of-steps answer the way the built-in stage does,
+# and contributes the result as one volatile context block. It makes the
+# model call through nobody's credential but the host's own
+# (`doc:turn-loop-wrappers` §9.3): this plugin holds no provider, no key, and
+# no engine.
+#
+# What it deliberately does NOT declare, each for a reason stated in the
+# README beside this file:
+#
+#   - no `[oracle]`, no `[requirements]`, no `Stop` hook. Those are arbiter
+#     powers. A plan is a proposal the worker reads; it decides nothing about
+#     whether the turn is done.
+#   - no `after_turn`. An undeclared point is never dispatched (#3501).
+#   - `calls = ["recall"]` is deliberately absent even though the built-in
+#     planner prompt has a "## Recalled context" section
+#     (`build_planner_prompt`'s `recall` argument). Asking for both `recall`
+#     and `child_turn` in one `before_turn` call would spend two different
+#     host-call ceilings for one stage's contribution, and the honest planner
+#     prompt this plugin can build without it — goal only — is already a
+#     documented narrowing (README "What it replaces, and what it does not").
+#     `plugins/stella-research` is the sibling that reads recall; running both
+#     under one `--pipeline` selection is not possible today (#3801).
+#   - no `read_file` / `search` capability. This plugin never opens the
+#     candidate workspace — the built-in planner's `repo_structure` argument
+#     has no wire representation (#3562 item 2) and a plugin-computed
+#     approximation of it would be measuring a second change alongside the
+#     one this extraction is meant to isolate. See README "Known gaps".
+
+name = "stella-plan"
+description = "Asks the host for one bounded planner-role child turn, at the plan stage only, and contributes the parsed steps as volatile context. Makes no model call itself and decides nothing."
+
+# Steering: this plugin contributes context to a turn and never touches
+# completion — the same grade `stella-research` asks for, and the lowest one
+# `[loop] points` accepts at all.
+[loop]
+participation = "steering"
+# `before_turn` only: there is nothing to say about a turn already run.
+points = ["before_turn"]
+# The one host capability this plugin may ask for, exhaustively
+# (`doc:wrapper-socket` §6b). `child_turn` is the mechanism
+# `doc:turn-loop-wrappers` §9.3 names for "a wrapper needs one bounded model
+# call it does not own the credential for" — the host resolves the `planner`
+# role intent below, carves the budget, runs the turn and settles once, so
+# invariant 3 ("every model call is made by the host") survives this plugin
+# asking for one.
+calls = ["child_turn"]
+# One child turn per point, matching the one call `main.py` actually makes.
+# Declared rather than left to the host's ceiling (4, `DEFAULT_HOST_MAX_CHILD_TURNS`)
+# so the consent text a human reads states the real number.
+max_calls = 1
+
+# `[roles]` requires `[subloop]` (`ManifestError::RolesRequireSubloop`,
+# `crates/stella-plugin/src/manifest.rs:772-775`) even though this plugin
+# uses none of `[subloop]`'s own bounded-child-turn *dispatch* — its child
+# turn is spent entirely over the host-call channel above. That coupling is
+# a real, awkward constraint on any plugin that wants a role intent purely
+# for `child_turn`, tracked at #3496 rather than treated as intentional
+# here. `stages = ["plan"]` is declared only to satisfy the validator; the
+# host never reads it for this plugin, because nothing here asks the host
+# to run `[subloop]`'s own stage list.
+[subloop]
+stages = ["plan"]
+
+# The one role intent this plugin names. `tier = "plan"` resolves to
+# `ModelCallRole::Plan` under the host's `default_seats()`
+# (`crates/stella-runtime/src/wrapper/child_turn.rs:170-180`), which is the
+# same responsibility the built-in stage's own `Role::Plan` model call
+# carries — so a child turn spent here lands on the receipt under the seat a
+# human reading it already expects a planning call to use.
+[roles.planner]
+tier = "plan"
+
+# The stage order this variant runs, and the id the executions row records
+# (#3388). Transcribed from `stage_rank` in `crates/stella-pipeline/src/replay.rs`,
+# the same source `research-v1` reads from — see that manifest's header
+# comment for why every stage but the ones this plugin actually gates is
+# declared unconditional (the closed condition grammar has no conjunction,
+# #3538).
+#
+# `plan` carries its real gate: the built-in stage's own call site
+# (`Pipeline::plan_stage`) only runs when triage's `Signal::Plans` is true,
+# and `if = "plans"` is that boolean read exactly
+# (`crates/stella-plugin/src/wrapper.rs::Signal::Plans`, "Boolean, triage:
+# this task class plans").
+[wrapper]
+id = "plan-v1"
+
+[[wrapper.stages]]
+name = "triage"
+
+[[wrapper.stages]]
+name = "recall"
+
+[[wrapper.stages]]
+name = "research"
+if = "questions > 0"
+
+[[wrapper.stages]]
+name = "plan"
+if = "plans"
+
+[[wrapper.stages]]
+name = "scope"
+
+[[wrapper.stages]]
+name = "execute"
+
+[[wrapper.stages]]
+name = "witness"
+
+[[wrapper.stages]]
+name = "verify"
+
+# How the host starts this plugin's process. A list, never a shell string;
+# `${plugin_dir}` interpolation is the host's job.
+[runtime]
+argv = ["python3", "${plugin_dir}/main.py"]
+# The one child-turn conversation this plugin holds is bounded by the host's
+# own dispatcher and budget guard, so this ceiling is a backstop against a
+# process that hangs before writing anything, not the thing that bounds the
+# stage.
+timeout_secs = 60
+# Default-deny. `PATH` is the whole list, and it is here only so the host can
+# find `python3` — this plugin reaches for no filesystem path, no candidate
+# root, and asks the host for everything else it needs.
+env = ["PATH"]
+
+# No `[[capabilities]]` table: this plugin asks for nothing outside the turn.
+# It never reads a file and never searches a workspace — see the header
+# comment above for why `repo_structure` is not approximated here.
