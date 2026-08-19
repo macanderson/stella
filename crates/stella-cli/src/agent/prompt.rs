@@ -698,14 +698,14 @@ Workspace memories (lessons from previous sessions — apply them):
     }
 }
 
-/// The `agent_engine_config` custom prompt for `kind`, when one is set —
-/// it replaces the built-in BASE instruction set only; workspace memories
-/// and rules still append (they are workspace context, not part of the
-/// base persona, and a custom prompt should not silently disable them).
-fn custom_prompt_base(cfg: &Config, kind: crate::settings::EngineAgentKind) -> Option<String> {
+/// The `agent_engine_config` custom prompt, when one is set — it replaces
+/// the built-in BASE instruction set only; workspace memories and rules still
+/// append (they are workspace context, not part of the base persona, and a
+/// custom prompt should not silently disable them).
+fn custom_prompt_base(cfg: &Config) -> Option<String> {
     cfg.engine_settings
         .as_ref()
-        .and_then(|e| e.agent(kind))
+        .and_then(|e| e.agent())
         .and_then(|a| a.prompt.clone())
         .filter(|p| !p.trim().is_empty())
 }
@@ -719,7 +719,7 @@ pub(crate) fn build_system_prompt(
     workspace_root: &std::path::Path,
     active_rules: &crate::rules::ResolvedRules,
 ) -> String {
-    let base = custom_prompt_base(cfg, crate::settings::EngineAgentKind::Default);
+    let base = custom_prompt_base(cfg);
     // The raw step loop always runs the session default (`build_provider`
     // reads `cfg` directly, and `--model` is already folded into it), so the
     // non-pipeline persona resolves its own model ref — true at every surface.
@@ -734,15 +734,20 @@ pub(crate) fn build_system_prompt(
     )
 }
 
-/// The pipeline-mode system prompt plus workspace memories — the WORKER
+/// The pipeline-mode system prompt plus workspace memories — the session
 /// agent's custom prompt applies here.
+///
+/// It read `agents.worker.prompt` until #3908; `worker` and `default` were
+/// distinct personas then, and this surface is the one place the difference
+/// was ever observable. Core has one role now, so both resolve `agents.default`
+/// and the two prompts differ only in their built-in fallback.
 pub(crate) fn build_pipeline_system_prompt(
     cfg: &Config,
     workspace_root: &std::path::Path,
     active_rules: &crate::rules::ResolvedRules,
     worker: Option<&stella_protocol::role::ModelRef>,
 ) -> String {
-    let base = custom_prompt_base(cfg, crate::settings::EngineAgentKind::Worker);
+    let base = custom_prompt_base(cfg);
     assemble_system_prompt(
         base.as_deref().unwrap_or(PIPELINE_SYSTEM_PROMPT),
         workspace_root,

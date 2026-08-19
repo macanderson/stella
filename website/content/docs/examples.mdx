@@ -92,40 +92,30 @@ stella run --test-command "cargo test -p api" "add cursor pagination to /orders"
 stella --spend-limit 2.00 goal "the linter passes and the snapshot tests are green"
 ```
 
-When every role is the same family, make the verifier *behave* differently — strict prompt,
-high effort:
+One key is one model, so the whole config is the model and how hard it thinks:
 
 ```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     "default_model": "anthropic/claude-fable-5",
-    "pipeline_worker_model": "anthropic/claude-fable-5",
-    "pipeline_verifier_model": "anthropic/claude-fable-5",
-    "pipeline_triage_model": "anthropic/claude-fable-5",
 
     "allowed_models": ["anthropic/claude-fable-5"],
 
-    "auto_mode": "off",
     "effort_auto": "off",
     "reasoning_auto": "on",
 
     "agents": {
-      "worker": { "effort": "high" },
-      "verifier": {
-        "effort": "high",
-        "prompt": "You are a strict, evidence-first code verifier. Claimed success without deterministic evidence is a FAIL."
-      },
-      "triage": { "effort": "low" }
+      "default": { "effort": "high" }
     }
   }
 }
 ```
 
-`reasoning_auto: "on"` puts thinking on for worker, verifier, plan, and default agents and
-off for triage and research, so per-agent `reasoning` is left out on purpose — the auto would
-override it. `effort_auto` stays off, which is what lets the per-agent `effort` values apply.
+`reasoning_auto: "on"` chooses thinking for you, so `reasoning` is left out on purpose —
+the auto would override it. `effort_auto` stays off, which is what lets the `effort` value
+above apply.
 
-To use another provider, swap the four model strings and `allowed_models`:
+To use another provider, swap the model string and `allowed_models`:
 
 | Key you hold | Model string | Window | $/Mtok in/out | Effort honoured? |
 | --- | --- | --- | --- | --- |
@@ -134,61 +124,55 @@ To use another provider, swap the four model strings and `allowed_models`:
 | Z.ai | `zai/glm-5.2` | 200k | 0.60 / 2.20 | **no — dropped on the wire** |
 | DeepSeek | `deepseek/deepseek-chat` | 128k | 0.27 / 1.10 | **no — dropped on the wire** |
 
-Where effort is dropped, differentiate the verifier with its `prompt` instead. Only OpenAI
-puts `service_tier` on the wire, so `"params": { "service_tier": "priority" }` is worth
-adding to an OpenAI verifier and inert everywhere else.
+Where effort is dropped, shape the run with `prompt` and `params.max_tokens` instead.
+Only OpenAI puts `service_tier` on the wire, so
+`"params": { "service_tier": "priority" }` is worth setting there and inert everywhere
+else.
 
 <Callout type="warn">
-  A same-family verifier shares the worker's blind spots — it is real review, not independent
-  review. Compensate deterministically: arm `--test-command` wherever a test can express
-  "done", and treat the verifier as a regression net rather than the main gate.
+  One model reviewing its own work shares its own blind spots — it is real review, not
+  independent review. Compensate deterministically: arm `--test-command` wherever a test
+  can express "done". A genuinely independent second opinion comes from an installed
+  verification plugin with a [seat](/docs/configuration/agent-engine-config#seats) of its
+  own, on a model from another family.
 </Callout>
 
 ## Dirt cheap
 
-Point every role at the cheapest capable models, turn thinking off where it doesn't pay,
-cap output, and put a hard `--spend-limit` under it. Good for lint sweeps, docstrings, and
-mechanical migrations.
+Point the session at the cheapest capable model, turn thinking off, cap output, and put a
+hard `--spend-limit` under it. Good for lint sweeps, docstrings, and mechanical
+migrations.
 
 ```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
-    "pipeline_worker_model": "deepseek/deepseek-chat",
-    "pipeline_verifier_model": "zai/glm-5.2",
-    "pipeline_triage_model": "deepseek/deepseek-chat",
     "default_model": "deepseek/deepseek-chat",
 
     "allowed_models": ["deepseek/deepseek-chat", "zai/glm-5.2"],
 
-    "auto_mode": "off",
     "effort_auto": "off",
     "reasoning_auto": "off",
 
     "agents": {
-      "worker": {
+      "default": {
         "effort": "low",
         "reasoning": "off",
         "params": { "max_tokens": 8192 }
-      },
-      "verifier": { "effort": "medium", "reasoning": "on" },
-      "triage": { "reasoning": "off" }
+      }
     }
   }
 }
 ```
 
 ```bash
-export DEEPSEEK_API_KEY="sk-..."   # worker and triage
-export ZAI_API_KEY="..."           # verifier
+export DEEPSEEK_API_KEY="sk-..."
 
 stella --spend-limit 0.25 run "add docstrings to every public function in src/api/"
 stella stats --format text
 ```
 
-DeepSeek and Z.ai both drop `effort` on the wire, so the `effort` lines above record
-intent only — `reasoning: "off"` and `params.max_tokens` are what actually do the work.
-The verifier stays a *different family* than the worker with thinking on; the whole verifier
-call costs a fraction of a cent.
+DeepSeek drops `effort` on the wire, so the `effort` line above records intent only —
+`reasoning: "off"` and `params.max_tokens` are what actually do the work.
 
 <Callout type="warn">
   Cheap models revise more and resolve less on hard tasks, and a run that fails three
@@ -199,15 +183,12 @@ call costs a fraction of a cent.
 
 ## Balanced
 
-The daily driver. The worker emits ~85% of your tokens and the verifier almost none, so
-spend down on the worker and keep a flagship verifier as cheap insurance.
+The daily driver: a capable mid-tier model, the autos left on, and a deterministic test
+as the gate.
 
 ```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
-    "pipeline_worker_model": "zai/glm-5.2",
-    "pipeline_verifier_model": "anthropic/claude-fable-5",
-    "pipeline_triage_model": "deepseek/deepseek-chat",
     "default_model": "zai/glm-5.2",
 
     "allowed_models": [
@@ -217,7 +198,6 @@ spend down on the worker and keep a flagship verifier as cheap insurance.
       "deepseek/deepseek-chat"
     ],
 
-    "auto_mode": "off",
     "effort_auto": "on",
     "reasoning_auto": "on"
   }
@@ -225,23 +205,19 @@ spend down on the worker and keep a flagship verifier as cheap insurance.
 ```
 
 ```bash
-export ZAI_API_KEY="..."                # worker
-export ANTHROPIC_API_KEY="sk-ant-..."   # verifier
-export DEEPSEEK_API_KEY="sk-..."        # triage
+export ZAI_API_KEY="..."
 
 stella run "add pagination to the /orders endpoint and update its tests" \
   --test-command "pnpm test orders"
 ```
 
-The autos encode the sensible mapping — verifier high, worker and plan medium, triage and
-research low; thinking on everywhere except triage and research — and they *override* any
-per-agent `effort`/`reasoning`, which
-is why this profile carries no `agents` block. Roughly 5–7× cheaper than
-[maximum quality](#maximum-quality) with the same class of verifier watching the result.
+The autos choose effort and thinking for you and *override* any `effort`/`reasoning` you
+set, which is why this profile carries no `agents` block at all. Roughly 5–7× cheaper than
+[maximum quality](#maximum-quality).
 
-Swap the worker to `gemini/gemini-3-pro` when tasks need the 1M window; at $1.25/$10.00
-it is exactly `gpt-5.5`'s list price. For one hard task, `--model` outranks the settings
-for that invocation and leaves verifier, triage, and autos in place:
+Swap to `gemini/gemini-3-pro` when tasks need the 1M window; at $1.25/$10.00 it is exactly
+`gpt-5.5`'s list price. For one hard task, `--model` outranks the settings for that
+invocation and leaves the autos in place:
 
 ```bash
 stella --model anthropic/claude-fable-5 run "the hard one"
@@ -249,16 +225,18 @@ stella --model anthropic/claude-fable-5 run "the hard one"
 
 ## Maximum quality
 
-The strongest worker, an equally serious verifier from a *different family*, effort and
-thinking high. For gnarly multi-file changes and unfamiliar codebases.
+The strongest model, effort and thinking high, and — where you have a verification
+plugin installed — a second opinion from a *different family* on a seat of its own. For
+gnarly multi-file changes and unfamiliar codebases.
 
 ```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
-    "pipeline_worker_model": "anthropic/claude-fable-5",
-    "pipeline_verifier_model": "openai/gpt-5.5",
-    "pipeline_triage_model": "deepseek/deepseek-chat",
     "default_model": "anthropic/claude-fable-5",
+
+    "seat_models": {
+      "vera/verifier": "openai/gpt-5.5"
+    },
 
     "allowed_models": [
       "anthropic/claude-fable-5",
@@ -267,44 +245,36 @@ thinking high. For gnarly multi-file changes and unfamiliar codebases.
       "deepseek/deepseek-chat"
     ],
 
-    "auto_mode": "off",
     "effort_auto": "off",
     "reasoning_auto": "off",
 
     "agents": {
-      "worker": { "effort": "xhigh", "reasoning": "on" },
-      "verifier": {
-        "effort": "high",
+      "default": {
+        "effort": "xhigh",
         "reasoning": "on",
-        "prompt": "You are a strict, evidence-first code verifier. Claimed success without deterministic evidence is a FAIL.",
         "params": { "service_tier": "priority" }
-      },
-      "triage": { "effort": "low", "reasoning": "off" },
-      "research": { "effort": "low", "reasoning": "off" }
+      }
     }
   }
 }
 ```
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."   # worker
-export OPENAI_API_KEY="sk-..."          # verifier
-export DEEPSEEK_API_KEY="sk-..."        # triage
+export ANTHROPIC_API_KEY="sk-ant-..."   # the session
+export OPENAI_API_KEY="sk-..."          # the verifier seat
 
-stella --spend-limit 8.00 run \
+stella --spend-limit 8.00 run --pipeline vera \
   "port the auth middleware to the new session store; all tests must pass" \
   --test-command "cargo test -p auth"
 ```
 
-The verifier is GPT-5.5 rather than another Claude because cross-family judging is the point.
-`service_tier: "priority"` is only worth setting here — OpenAI's is the one dialect that
-puts it on the wire. Autos are off so the per-agent values stand.
+The seat is GPT-5.5 rather than another Claude because cross-family judging is the point —
+a reviewer that shares the author's blind spots passes the same mistakes twice.
+`service_tier: "priority"` is only worth setting here: OpenAI's is the one dialect that
+puts it on the wire. Autos are off so the values above stand.
 
-The `research` row stops `xhigh` from being paid for many times over. Research inherits
-the **worker** when it sets nothing, and it is a fan-out — one read-only child per
-triage question — so an `xhigh` worker silently buys an `xhigh` deliberation pass for
-every child, on calls whose job is to grep a tree and report the paths. Turning it down here does
-not touch the model: unset, `pipeline_research_model` still rides whatever the worker runs.
+The seat line is the only thing that buys a second model. Drop it and the plugin's
+verifier runs on the session's model — the same process, one bill.
 
 <Callout type="info">
   If Fable 5 resolves in one attempt what cheaper models need three for, this profile can
@@ -314,37 +284,32 @@ not touch the model: unset, `pipeline_research_model` still rides whatever the w
 
 ## One gateway key (OpenRouter)
 
-Cross-family judging with one billing relationship instead of three.
+Cross-family judging with one billing relationship instead of two.
 
 ```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     "default_model": "openrouter/anthropic/claude-fable-5",
-    "pipeline_worker_model": "openrouter/anthropic/claude-fable-5",
 
-    "auto_mode": "off",
+    "seat_models": {
+      "vera/verifier": "openrouter/openai/gpt-5.5"
+    },
+
     "effort_auto": "on",
-    "reasoning_auto": "on",
-
-    "agents": {
-      "verifier":  { "provider": "openrouter", "model": "openai/gpt-5.5" },
-      "triage": { "provider": "openrouter", "model": "deepseek/deepseek-chat" }
-    }
+    "reasoning_auto": "on"
   }
 }
 ```
 
 ```bash
 export OPENROUTER_API_KEY="sk-or-..."
-stella run "add cursor pagination to /orders" --test-command "pnpm test orders"
+stella run --pipeline vera "add cursor pagination to /orders" --test-command "pnpm test orders"
 ```
 
-Verifier-diversity logic reads the routed slug's vendor prefix, so
-`openrouter/openai/gpt-5.5` counts as OpenAI and `auto_mode` works through the gateway.
-Gateway slugs are unpriced locally, so on an all-OpenRouter `allowed_models` list the
-price tier ties at zero and the choice comes down to family plus written order — put your
-preferred verifier first. The [OpenRouter section](/docs/api-providers#openrouter) covers
-the first-slash split and the `openrouter/openrouter/auto` doubling.
+Family is read from the routed slug's vendor prefix, so `openrouter/openai/gpt-5.5` counts
+as OpenAI and the seat is genuinely cross-family even though both calls bill to one key.
+The [OpenRouter section](/docs/api-providers#openrouter) covers the first-slash split and
+the `openrouter/openrouter/auto` doubling.
 
 ## Local and air-gapped
 
@@ -372,17 +337,18 @@ scope** and it behaves like a built-in:
   },
   "agent_engine_config": {
     "default_model": "ollama/qwen2.5-coder:32b",
-    "pipeline_verifier_model": "ollama/llama3.3",
-    "agents": {
-      "verifier": { "prompt": "You are a strict, evidence-first code verifier." }
+    "seat_models": {
+      "vera/verifier": "ollama/llama3.3"
     }
   }
 }
 ```
 
-`effort` is dropped on local endpoints, so the verifier is differentiated by its `prompt`.
-The [local-server section](/docs/api-providers#local-servers) has the dialect and
-credential rules.
+`effort` is dropped on local endpoints, so shape the run with `prompt` and
+`params.max_tokens` instead. The seat line splits a verification plugin's reviewer onto a
+second local model; drop it and it shares the session's. The
+[local-server section](/docs/api-providers#local-servers) has the dialect and credential
+rules.
 
 For a strict air gap, turn off the one remaining automatic outbound call — the
 model-catalog refresh from `models.dev`, at most once per 24h:
@@ -479,7 +445,7 @@ local state:
   "tools": { "task_assign": "off" },
   "agent_engine_config": {
     "default_model": "zai/glm-5.2",
-    "pipeline_verifier_model": "anthropic/claude-fable-5"
+    "seat_models": { "vera/verifier": "anthropic/claude-fable-5" }
   },
   "hooks": {
     "PreToolUse": [

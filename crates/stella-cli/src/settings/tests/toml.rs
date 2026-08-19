@@ -33,21 +33,19 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
             "vllm": {"base_url": "http://x/v1", "dialect": "openai-compatible"}
           },
           "agent_engine_config": {
-            "default_model": "anthropic/claude-fable-5",
-            "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
+            "default_model": "openrouter/openai/gpt-5.5",
             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
             "auto_mode": "off",
             "effort_auto": "on",
             "headless_scope_bypass": "off",
             "agents": {
-              "verifier": {
+              "default": {
                 "provider": "openrouter",
                 "model": "openai/gpt-5.5",
                 "effort": "high",
                 "reasoning": "on",
                 "params": {"temperature": 0.2, "max_tokens": 4096, "service_tier": "priority"}
-              },
-              "triage": {"reasoning": "off"}
+              }
             }
           },
           "tools": {"bash": "off", "process": "off"},
@@ -82,25 +80,21 @@ dialect = "openai-compatible"
 allowed = ["anthropic/claude-fable-5", "zai/glm-5.2"]
 
 [agents]
-default_model = "anthropic/claude-fable-5"
-pipeline_verifier_model = "openrouter/openai/gpt-5.5"
+default_model = "openrouter/openai/gpt-5.5"
 auto_mode = "off"
 effort_auto = "on"
 headless_scope_bypass = "off"
 
-[agents.verifier]
+[agents.default]
 provider = "openrouter"
 model = "openai/gpt-5.5"
 effort = "high"
 reasoning = "on"
 
-[agents.verifier.params]
+[agents.default.params]
 temperature = 0.2
 max_tokens = 4096
 service_tier = "priority"
-
-[agents.triage]
-reasoning = "off"
 
 [tools]
 bash = "off"
@@ -480,10 +474,10 @@ allowed = ["a/b"]
 [agents]
 default_model = "a/b"
 
-[agents.verifier]
+[agents.default]
 effort = "high"
 
-[agents.verifier.params]
+[agents.default.params]
 temperature = 0.1
 
 [providers.anthropic]
@@ -582,13 +576,13 @@ fn the_document_round_trips_through_parse_without_losing_a_field() {
         r#"
 [agents]
 default_model = "a/b"
-pipeline_worker_model = "c/d"
-pipeline_verifier_model = "e/f"
-pipeline_triage_model = "g/h"
 auto_mode = "on"
 effort_auto = "off"
 reasoning_auto = "on"
 headless_scope_bypass = "on"
+
+[seats]
+"vera/verifier" = "e/f"
 "#,
     );
     let engine = load_toml(&path, ConfigScope::User)
@@ -596,9 +590,15 @@ headless_scope_bypass = "on"
         .agent_engine_config
         .unwrap();
     assert_eq!(engine.default_model.as_deref(), Some("a/b"));
-    assert_eq!(engine.pipeline_worker_model.as_deref(), Some("c/d"));
-    assert_eq!(engine.pipeline_verifier_model.as_deref(), Some("e/f"));
-    assert_eq!(engine.pipeline_triage_model.as_deref(), Some("g/h"));
+    assert_eq!(
+        engine
+            .seat_models
+            .as_ref()
+            .and_then(|s| s.get("vera/verifier"))
+            .map(String::as_str),
+        Some("e/f"),
+        "the seat plane is part of the round trip too"
+    );
     assert!(engine.auto_mode_on());
     assert!(!engine.effort_auto_on());
     assert!(engine.reasoning_auto_on());
@@ -652,17 +652,15 @@ const RICH_SETTINGS: &str = r#"{
     "vllm": {"base_url": "http://x/v1", "dialect": "openai-compatible", "name": "Internal"}
   },
   "agent_engine_config": {
-    "default_model": "anthropic/claude-fable-5",
-    "pipeline_worker_model": "zai/glm-5.2",
+    "default_model": "zai/glm-5.2",
     "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
     "auto_mode": "off",
     "effort_auto": "on",
     "reasoning_auto": "on",
     "headless_scope_bypass": "off",
     "agents": {
-      "verifier": {"effort": "high", "reasoning": "on",
-                "params": {"temperature": 0.2, "top_p": 0.9, "max_tokens": 4096}},
-      "triage": {"reasoning": "off"}
+      "default": {"effort": "high", "reasoning": "on",
+                "params": {"temperature": 0.2, "top_p": 0.9, "max_tokens": 4096}}
     }
   },
   "tools": {"bash": "off", "process": "off"},
@@ -812,7 +810,7 @@ fn a_widened_f32_is_written_back_at_f32_precision() {
     let json = write(
         dir.path(),
         "settings.json",
-        r#"{"agent_engine_config": {"agents": {"verifier": {"params": {"temperature": 0.2}}}}}"#,
+        r#"{"agent_engine_config": {"agents": {"default": {"params": {"temperature": 0.2}}}}}"#,
     );
     let toml_path = dir.path().join("stella.toml");
     super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
@@ -853,7 +851,7 @@ fn nested_sections_render_as_tables_and_parents_stay_implicit() {
     let rendered = std::fs::read_to_string(&toml_path).unwrap();
 
     assert!(rendered.contains("[providers.anthropic]"), "{rendered}");
-    assert!(rendered.contains("[agents.verifier.params]"), "{rendered}");
+    assert!(rendered.contains("[agents.default.params]"), "{rendered}");
     assert!(rendered.contains("[[hooks.PreToolUse]]"), "{rendered}");
     assert!(
         !rendered.contains("{ "),
@@ -901,7 +899,7 @@ fn a_migrated_file_round_trips_through_a_section_save() {
     assert_eq!(after.providers.len(), 2);
     assert_eq!(
         after.agent_engine_config.unwrap().default_model.as_deref(),
-        Some("anthropic/claude-fable-5")
+        Some("zai/glm-5.2")
     );
     // …including the generated header comment.
     let rendered = std::fs::read_to_string(&toml_path).unwrap();

@@ -7,44 +7,37 @@
 //! `stella-cli` and hands the answers over pre-rendered, so the deck never
 //! grows a second opinion about what a role will run.
 
-/// Which pipeline agent a per-agent engine override applies to — the
-/// configurable "agents" of `agent_engine_config`. `Default` is the
-/// interactive/step-loop agent; the rest are the staged pipeline's roles.
+/// Which agent a per-agent engine override applies to — the configurable
+/// "agents" of `agent_engine_config`.
 ///
-/// A mirror of `stella-cli`'s `EngineAgentKind`, in the same order, so
-/// `EngineConfigState::agents[i]` is that enum's `ALL[i]` — the driver maps
-/// one onto the other rather than this crate depending on the settings engine.
+/// One variant, because core has one role. `Worker`, `Verifier`, `Triage`,
+/// `Research` and `Plan` were siblings here until #3908: they mirrored
+/// `stella-cli`'s `EngineAgentKind`, which mirrored the staged pipeline
+/// deleted in #3865, and each rendered an editor for a settings key that had
+/// stopped steering anything. An overlay tab that writes a dead key is worse
+/// than a missing tab — it reports success.
+///
+/// It stays an enum rather than collapsing into a bare struct because the
+/// pane's replacement is a **list**, not a single row: slice 5 (#3909) turns
+/// this into rows from the live session — the installed plugins' declared
+/// seats, each with its assigned model or `default` — the way
+/// `views/tools.rs` already sources MCP and custom tools. Keeping the
+/// role-indexed shape is what lets that land without re-plumbing
+/// `EngineConfigState`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EngineRole {
     Default,
-    Worker,
-    Verifier,
-    Triage,
-    Research,
-    Plan,
 }
 
 impl EngineRole {
     /// Stable settings-key / display order.
-    pub const ALL: [EngineRole; 6] = [
-        EngineRole::Default,
-        EngineRole::Worker,
-        EngineRole::Verifier,
-        EngineRole::Triage,
-        EngineRole::Research,
-        EngineRole::Plan,
-    ];
+    pub const ALL: [EngineRole; 1] = [EngineRole::Default];
 
     /// The `agent_engine_config.agents.<key>` settings key (and display
     /// label) for this agent.
     pub fn key(self) -> &'static str {
         match self {
             EngineRole::Default => "default",
-            EngineRole::Worker => "worker",
-            EngineRole::Verifier => "verifier",
-            EngineRole::Triage => "triage",
-            EngineRole::Research => "research",
-            EngineRole::Plan => "plan",
         }
     }
 }

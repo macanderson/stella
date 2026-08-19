@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use stella_tools::policy::ToolPolicy;
 
 use super::{
-    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, EngineAgentKind, Settings, Toggle,
-    ToolsSettings,
+    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, Settings, Toggle, ToolsSettings,
 };
 
 impl Settings {
@@ -155,28 +154,27 @@ pub(super) fn restore_project_prompts(
     else {
         return;
     };
-    for kind in EngineAgentKind::ALL {
-        if project_agents
-            .get(kind)
-            .and_then(|agent| agent.prompt.as_ref())
-            .is_none()
-        {
-            continue;
-        }
-        let trusted_prompt = trusted
-            .agent_engine_config
-            .as_ref()
-            .and_then(|engine| engine.agent(kind))
-            .and_then(|agent| agent.prompt.clone());
-        let target = merged
-            .agent_engine_config
-            .get_or_insert_with(AgentEngineConfig::default)
-            .agents
-            .get_or_insert_with(AgentEngineAgents::default)
-            .get_mut(kind)
-            .get_or_insert_with(AgentEngineAgent::default);
-        target.prompt = trusted_prompt;
+    if project_agents
+        .default
+        .as_ref()
+        .and_then(|agent| agent.prompt.as_ref())
+        .is_none()
+    {
+        return;
     }
+    let trusted_prompt = trusted
+        .agent_engine_config
+        .as_ref()
+        .and_then(|engine| engine.agent())
+        .and_then(|agent| agent.prompt.clone());
+    let target = merged
+        .agent_engine_config
+        .get_or_insert_with(AgentEngineConfig::default)
+        .agents
+        .get_or_insert_with(AgentEngineAgents::default)
+        .default
+        .get_or_insert_with(AgentEngineAgent::default);
+    target.prompt = trusted_prompt;
 }
 
 /// Force the org-managed denials onto the merged settings, last.
@@ -217,7 +215,7 @@ pub(super) fn apply_tool_ceiling(settings: &mut Settings, ceiling: &ToolPolicy) 
 
 #[cfg(test)]
 mod tests {
-    use super::super::{EngineAgentKind, ProjectTrust, Settings};
+    use super::super::{ProjectTrust, Settings};
 
     fn parsed(json: &str) -> Settings {
         serde_json::from_str(json).unwrap()
@@ -229,7 +227,7 @@ mod tests {
             r#"{
               "tools": {"task_list": "on", "scratch": "off"},
               "agent_engine_config": {
-                "agents": {"verifier": {"prompt": "trusted prompt"}}
+                "agents": {"default": {"prompt": "trusted prompt"}}
               }
             }"#,
         );
@@ -246,7 +244,7 @@ mod tests {
             r#"{
               "tools": {"task_list": "on", "scratch": "on"},
               "agent_engine_config": {
-                "agents": {"verifier": {"prompt": "project prompt"}}
+                "agents": {"default": {"prompt": "project prompt"}}
               }
             }"#,
         );
@@ -270,7 +268,7 @@ mod tests {
             untrusted
                 .agent_engine_config
                 .as_ref()
-                .and_then(|engine| engine.agent(EngineAgentKind::Verifier))
+                .and_then(|engine| engine.agent())
                 .and_then(|agent| agent.prompt.as_deref()),
             Some("trusted prompt")
         );
@@ -294,7 +292,7 @@ mod tests {
             trusted
                 .agent_engine_config
                 .as_ref()
-                .and_then(|engine| engine.agent(EngineAgentKind::Verifier))
+                .and_then(|engine| engine.agent())
                 .and_then(|agent| agent.prompt.as_deref()),
             Some("trusted prompt"),
             "managed prompt denial survives trust"
