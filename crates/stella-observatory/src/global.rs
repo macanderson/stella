@@ -68,9 +68,29 @@ fn open_usage() -> Option<Connection> {
     Some(conn)
 }
 
-/// Every project `usage.db` knows about, with its rollup headline numbers.
-/// The serving workspace is flagged `is_current` and listed first;
-/// `has_store` says whether drilling in will find a live `.stella/private/store.db`.
+/// The projects the switcher can actually drill into, with their rollup
+/// headline numbers. The serving workspace is flagged `is_current` and listed
+/// first; `has_store` says whether drilling in will find a live
+/// `.stella/private/store.db`.
+///
+/// **This is the selector payload, not the hub aggregate.** A row is shipped
+/// only when that store still exists — or when it is the serving workspace,
+/// which labels the switcher's "current" entry whether or not it has
+/// replicated a store yet. `known` and `omitted` report the rest by count, so
+/// a short list is never read as a lost history.
+///
+/// Filtering here rather than in the browser is the whole point: the dashboard
+/// refetches this endpoint inside the same `Promise.all` as eleven other
+/// payloads on every refresh, and `renderProjects` has always discarded
+/// `has_store: false` rows on arrival. On a machine that had run the bench
+/// suites, 2283 of 2338 rows were temp directories under `/var/folders/…`
+/// whose root is long gone — 868 KB of JSON per refresh, ~80% of the cycle,
+/// every byte of it dropped by the client (#3953).
+///
+/// Those rows are **not** deleted and this is not the endpoint that accounts
+/// for them: they carry real spend, and [`hub_telemetry`] — which reads the
+/// `telemetry` replica, never this query — still counts every one, dead root
+/// or not.
 pub fn projects(current_root: &Path) -> Value {
     let current_id = project_id_for(current_root);
     let Some(conn) = open_usage() else {
@@ -78,9 +98,12 @@ pub fn projects(current_root: &Path) -> Value {
             "available": false,
             "current": current_id,
             "projects": [],
+            "known": 0,
+            "omitted": 0,
         });
     };
     let mut rows: Vec<Value> = Vec::new();
+    let mut known: u64 = 0;
     let query = conn.prepare(
         "SELECT p.project_id, p.name, p.root_path, p.last_seen_at,
                 coalesce(r.runs, 0), coalesce(r.cost, 0),
@@ -98,11 +121,18 @@ pub fn projects(current_root: &Path) -> Value {
         let mapped = stmt.query_map([], |r| {
             let project_id: String = r.get(0)?;
             let root_path: String = r.get(2)?;
+            let is_current = project_id == current_id;
             let has_store = Path::new(&root_path)
                 .join(".stella/private/store.db")
                 .exists();
-            Ok(json!({
-                "project_id": project_id.clone(),
+            // Decided before the row is built, not after: assembling a `Value`
+            // for a project the switcher cannot open is the cost, and the
+            // remaining columns are not even read for one.
+            if !(has_store || is_current) {
+                return Ok(None);
+            }
+            Ok(Some(json!({
+                "project_id": project_id,
                 "name": r.get::<_, String>(1)?,
                 "root_path": root_path,
                 "last_seen_at": r.get::<_, String>(3)?,
@@ -111,19 +141,25 @@ pub fn projects(current_root: &Path) -> Value {
                 "input_tokens": r.get::<_, i64>(6)?,
                 "output_tokens": r.get::<_, i64>(7)?,
                 "has_store": has_store,
-                "is_current": project_id == current_id,
-            }))
+                "is_current": is_current,
+            })))
         });
         if let Ok(iter) = mapped {
-            rows = iter.flatten().collect();
+            for row in iter.flatten() {
+                known += 1;
+                rows.extend(row);
+            }
         }
     }
     // Current project first, then most recently seen.
     rows.sort_by_key(|p| !p["is_current"].as_bool().unwrap_or(false) as u8);
+    let omitted = known.saturating_sub(rows.len() as u64);
     json!({
         "available": true,
         "current": current_id,
         "projects": rows,
+        "known": known,
+        "omitted": omitted,
     })
 }
 
