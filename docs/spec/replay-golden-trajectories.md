@@ -1,10 +1,16 @@
 ---
 id: replay-golden-trajectories
 title: "Golden replay trajectories"
-status: living
+status: archived
 ---
 
 # Golden replay trajectories
+
+> **Status (2026-08-19):** this document describes machinery that lived in
+> `crates/stella-pipeline`, which was removed from the workspace (#3865)
+> along with `make record-golden`. It is kept as the design record for the
+> replay-fixture approach; none of the commands below run against the
+> current tree.
 
 How the golden-trajectory fixtures are recorded and refreshed, and what a
 **reference** engine has to do before its runs can join them.

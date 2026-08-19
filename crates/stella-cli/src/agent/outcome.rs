@@ -9,7 +9,7 @@
 //! fresh one exit with the same code (#1637).
 //!
 //! This module used to also carry the staged pipeline's own five-way
-//! [`stella_pipeline::PipelineStatus`] projection (a store label, a JSON
+//! `stella_pipeline::PipelineStatus` projection (a store label, a JSON
 //! `reason`, an episodic-memory outcome, the process exit `Result`, and the
 //! terminal SESSIONS-registry status) — that pipeline is gone from this
 //! build (#3865), and with it every surface that produced a `PipelineStatus`

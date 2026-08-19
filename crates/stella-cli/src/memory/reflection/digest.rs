@@ -34,7 +34,7 @@
 //!    consulted at all.
 //! 2. **Friction** — every message carrying an errored tool result, every
 //!    assistant message that *requested* one, and every message naming a tool
-//!    the event stream flagged as costly or failed ([`TurnFriction`]). This is
+//!    the event stream flagged as costly or failed ([`TurnFriction`](crate::memory::reflection::digest::TurnFriction)). This is
 //!    the middle the tail window dropped.
 //! 3. **Filler** — everything else, in transcript order, while the budget
 //!    lasts.
@@ -49,7 +49,7 @@
 //! filesystem, no store. `reflect_on_turn` reads no clock and assigns no
 //! instant (#2320), and the mining log it feeds is reproducible only while that
 //! holds — a digest that varied with the time of day would break replay
-//! (`memory/replay.rs`) without anything failing. [`TurnFriction`] is a fold
+//! (`memory/replay.rs`) without anything failing. [`TurnFriction`](crate::memory::reflection::digest::TurnFriction) is a fold
 //! over events the caller already observed, never a read-back of the journal:
 //! the journal is written by the renderer task, which is still draining while
 //! reflection runs, so reading it here would race and the digest would stop

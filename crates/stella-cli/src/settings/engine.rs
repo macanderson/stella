@@ -148,62 +148,6 @@ pub struct AgentEngineConfig {
     /// scope thresholds (more than 5 steps by default) ends the run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_scope_bypass: Option<Toggle>,
-    /// Revision turns the pipeline may spend per candidate when verification
-    /// fails (`stella_pipeline::PipelineConfig::max_revisions`). Absent keeps
-    /// the pipeline's own default, which is what every run used before this
-    /// key existed.
-    ///
-    /// Raising it buys near-misses another attempt and nothing else: a
-    /// revision only happens on a *failed* verification, so a run that passes
-    /// first time costs the same at 2 as at 4. The ceiling that actually
-    /// bounds spend is the budget cap, not this number — but each revision is
-    /// a full execute turn, so on a task that cannot be fixed it is the
-    /// difference between failing cheaply and failing expensively.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_max_revisions: Option<u32>,
-    /// Best-of-N: how many candidate executions the pipeline generates before
-    /// selecting one (`stella_pipeline::PipelineConfig::candidates`). Absent
-    /// or `1` is single-shot, the default.
-    ///
-    /// Unlike `pipeline_max_revisions` this is paid *unconditionally* — n
-    /// candidates run whether or not the first one would have passed, so `2`
-    /// is a straight doubling of execution cost. Opt in where the tail matters
-    /// more than the bill.
-    ///
-    /// Wants candidate isolation to be meaningful: with a
-    /// `CandidateWorkspacePort` wired, each candidate runs in its own snapshot
-    /// and only the winner is adopted. Without one the pipeline warns and runs
-    /// them sequentially in the shared tree, where losing candidates' edits
-    /// stay behind.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_candidates: Option<u32>,
-    /// Escalate to the verifier when the diff-coverage overlap could not be
-    /// measured (`stella_pipeline::PipelineConfig::require_diff_coverage`,
-    /// #1291). Absent is off.
-    ///
-    /// This does not decide whether coverage is checked (it always is, where
-    /// tooling exists), nor whether an unmeasured overlap is honest about
-    /// itself — that is unconditional: such a run is scored UNVERIFIED rather
-    /// than as a deterministic pass, whatever this says. What this decides is
-    /// whether it also costs a verifier call. Turn it on in a workspace that has
-    /// coverage tooling wired and wants the overlap enforced; leaving it off
-    /// avoids paying a reviewer per run to be told what the evidence already
-    /// said.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_require_diff_coverage: Option<Toggle>,
-    /// Whether a model verifier's pass with nothing deterministic behind it buys
-    /// one revision demanding corroboration
-    /// (`stella_pipeline::PipelineConfig::verifier_evidence_demand`, #1295).
-    /// Absent keeps the pipeline's own default.
-    ///
-    /// Reachable as a setting because the question it answers is empirical and
-    /// per-workload: the ask is only ever raised where a tracked command could
-    /// answer it, so on a workload that has one it converts near-misses, and
-    /// on one that does not it costs literally nothing. A benchmark arm that
-    /// wants to measure the difference sets it here rather than rebuilding,
-    /// which is what makes the two arms one binary and one posture key apart.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_verifier_evidence_demand: Option<Toggle>,
     /// Seconds of provider silence that end a single generation
     /// (`stella_core::EngineConfig::model_timeout`). Absent keeps the engine's
     /// own default, which is what every run used before this key existed.
@@ -270,62 +214,6 @@ pub struct AgentEngineConfig {
     pub approval_wait_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
-    /// Who performs each pipeline responsibility, and whether it runs at all
-    /// (`stella_pipeline::Roster`, #2381).
-    ///
-    /// Keys are `stella_protocol::ModelCallRole` wire tokens, because that enum
-    /// is already the vocabulary every paid call in the pipeline names itself
-    /// by, so a row here and a row in the paid-call ledger spell the same job
-    /// the same way. The assignable set is exactly the calls the pipeline still
-    /// issues — `triage`, `research`, `plan`, `worker`, `witness_author`.
-    /// `verdict` and `distress_guidance` are **not** assignable: #2584 removed
-    /// both calls, and `stella_pipeline::Roster::apply` rejects either key as
-    /// `NotAssignable` rather than accepting a row that would steer nothing.
-    /// That is structural, not a default — what was removed is authority, and
-    /// an authority a config key can restore is one a deployment will restore.
-    ///
-    /// ```jsonc
-    /// "responsibilities": {
-    ///   "triage": { "enabled": false },              // ablate the stage
-    ///   "witness_author": { "agent": "worker" },     // self-grade, and be told so
-    ///   "research": { "agent": "plan" }              // reassign it
-    /// }
-    /// ```
-    ///
-    /// Absent — the overwhelmingly common case — is
-    /// `stella_pipeline::Roster::default`, which is the pipeline exactly as it
-    /// shipped. This is the ablation control the #2374 measurement plan needs
-    /// and the reassignment surface that replaced a hard-coded `Role` at each
-    /// call site; it deliberately cannot reorder stages, because that ordering
-    /// is what makes the witness a proof (`stella_pipeline::roster`'s module
-    /// docs carry the argument).
-    ///
-    /// A `BTreeMap` here where [`AgentEngineAgents`] is a fixed struct, and for
-    /// the opposite reason: an unknown *agent* key is harmlessly ignorable, but
-    /// an unknown *responsibility* key means an ablation the operator asked for
-    /// is not happening — so this map is parsed loosely and then validated
-    /// strictly, and a bad key refuses the run rather than being dropped.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub responsibilities: Option<std::collections::BTreeMap<String, ResponsibilitySpec>>,
-}
-
-/// One responsibility's overrides. Both fields optional: an absent one keeps
-/// the built-in binding rather than pinning it to today's value.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ResponsibilitySpec {
-    /// Whether the responsibility runs. `false` is the ablation switch: the
-    /// stage emits no event frame and buys no call.
-    ///
-    /// A plain `bool` rather than the [`Toggle`] the mode keys use, because
-    /// this is a predicate and not a mode — and because a bare `bool` makes
-    /// `enabled = "no"` a parse error rather than a silently ignored key,
-    /// which is the refusal an ablation control needs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    /// Which agent performs it: `worker`, `triage`, `plan`, or `verifier` —
-    /// the same names [`AgentEngineAgents`] uses, so one spelling serves both.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<String>,
 }
 
 /// The `agents` map — fixed keys rather than a `BTreeMap` so per-role
@@ -494,7 +382,6 @@ impl AgentEngineConfig {
             };
         }
         take!(default_model);
-        take!(responsibilities);
         take!(pipeline_verifier_model);
         take!(pipeline_worker_model);
         take!(pipeline_triage_model);
@@ -524,10 +411,6 @@ impl AgentEngineConfig {
         // review. Latent while nothing layered underneath the user's file;
         // load-bearing now that `provider_engine_baseline` does.
         take!(headless_scope_bypass);
-        take!(pipeline_max_revisions);
-        take!(pipeline_candidates);
-        take!(pipeline_verifier_evidence_demand);
-        take!(pipeline_require_diff_coverage);
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
         take!(tool_result_horizon_steps);

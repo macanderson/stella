@@ -92,7 +92,7 @@
 //!
 //! Verifier reasoning and distress-guidance text are **steering**, never training
 //! targets — the same discipline as the witness airlock
-//! ([`crate::witness::airlock`]). Here that is enforced structurally rather
+//! (the deleted pipeline's witness airlock, #3865). Here that is enforced structurally rather
 //! than by review: [`RewardLabel`] and everything it contains hold no
 //! free-form `String` field, only enums and numbers, so there is no field a
 //! model-authored sentence could be assigned to. [`Settlement::from_evidence`]
