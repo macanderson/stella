@@ -27,9 +27,9 @@ use serde::de::DeserializeOwned;
 use stella_plugin::{
     AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse,
     BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs, CandidateFanoutResult,
-    CandidateGrant, ChildTurnResult, Continuation, Correction, EvidenceSet, FanoutCandidate,
-    FlipObservation, HostCall, HostCallOk, HostCallResponse, ObservedEvidence, Outcome,
-    PROTOCOL_VERSION, PluginManifest, PublishedSignal, RecallResult, RoundState, Signal,
+    CandidateGrant, ChildTurnResult, Continuation, Correction, EvidenceProvenance, EvidenceSet,
+    FanoutCandidate, FlipObservation, HostCall, HostCallOk, HostCallResponse, ObservedEvidence,
+    Outcome, PROTOCOL_VERSION, PluginManifest, PublishedSignal, RecallResult, RoundState, Signal,
     SignalValue, StageName, StopReason, TamperFinding, TestBaseline, TestPlan, TurnOutcome,
     UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext,
     WrapperPoint, WrapperRequest, WrapperResponse,
