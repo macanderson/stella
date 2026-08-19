@@ -1524,51 +1524,24 @@ pub async fn run_deck_session(
         let end = {
             // Both arms return `Result<(), CliFailure>`, so one pinned future
             // drives either path through the same select loop.
-            let turn = async {
-                if pipeline_on {
-                    run_lead_pipeline_turn(
-                        &*provider,
-                        base_tools,
-                        &custom_tools,
-                        &registry,
-                        memory.as_ref(),
-                        &prompt,
-                        &mut messages,
-                        &mut budget,
-                        cfg,
-                        &active_rules,
-                        execution.clone(),
-                        &in_tx,
-                        &scope_gate,
-                        &sup_tx,
-                        &lead_holder,
-                        &steering,
-                        &lead_pause,
-                        mcp.clone(),
-                    )
-                    .await
-                } else {
-                    run_lead_turn(
-                        &*provider,
-                        base_tools,
-                        &custom_tools,
-                        &registry,
-                        &mut messages,
-                        &mut budget,
-                        &calibration,
-                        cfg,
-                        execution.clone(),
-                        &in_tx,
-                        &sup_tx,
-                        &lead_holder,
-                        &steering,
-                        &lead_pause,
-                        recall_event,
-                        memory.as_ref(),
-                    )
-                    .await
-                }
-            };
+            let turn = run_lead_turn(
+                &*provider,
+                base_tools,
+                &custom_tools,
+                &registry,
+                &mut messages,
+                &mut budget,
+                &calibration,
+                cfg,
+                execution.clone(),
+                &in_tx,
+                &sup_tx,
+                &lead_holder,
+                &steering,
+                &lead_pause,
+                recall_event,
+                memory.as_ref(),
+            );
             tokio::pin!(turn);
             loop {
                 tokio::select! {
