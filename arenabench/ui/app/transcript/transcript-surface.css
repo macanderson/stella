@@ -20,7 +20,10 @@
    copy of this stylesheet spent a release carrying the pre-v3.0 palette while
    claiming to be the instrument. One indirection, and this page cannot drift
    from the dashboard a reader arrives from — and it inherits the light scheme
-   for free, which the crate's dark-only copy still does not have (#3630).
+   for free. The crate's copy now has one too: it gained the scheme in #3813
+   and the tokens for its own derived surfaces afterwards, which is what let
+   the scheme actually reach a well or a diff row rather than only the ramp
+   in `:root` (#3630).
 
    Two rules from the crate carry most of the design, and both are load-bearing
    rather than decorative:

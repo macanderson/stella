@@ -734,3 +734,75 @@ fn identity_comes_from_the_brand_ramp() {
          (#2591)."
     );
 }
+
+/// Every colour the transcript's *rules* use is a token, so a scheme can reach
+/// it.
+///
+/// The two blocks above pin what the tokens are worth. This pins the half that
+/// makes them matter: a colour written inline in a rule is not overridable by
+/// anything, so a page can declare a complete light scheme and still paint a
+/// near-black well on it. That is not a hypothetical either — it is what this
+/// file did. The light scheme (#3813) overrode the fifteen tokens in `:root`
+/// and could not touch the eighteen literals sitting in rules three hundred
+/// lines below it, so `.body-inner` stayed `#070707` on white paper and
+/// `.diff .code` stayed `#c7c7c7`, which on the near-white diff washes is
+/// grey-on-grey and simply cannot be read.
+///
+/// So the rule is mechanical and has no judgement in it: below the scheme
+/// blocks, a colour is spelled `var(--token)` or it is not spelled at all.
+/// `rgba()` is allowed — the washes are derived channel-for-channel from the
+/// semantic pair on purpose, and the header says why.
+#[test]
+fn the_transcript_spells_every_rule_colour_as_a_token() {
+    let css = read("crates/stella-transcript/src/html/transcript.css");
+
+    // Everything after the light scheme's closing brace: the rules. The two
+    // scheme blocks are where literals belong, and are excluded by construction
+    // rather than by a pattern that might also skip a rule.
+    let light_marker = "@media (prefers-color-scheme: light)";
+    let light_at = css
+        .find(light_marker)
+        .expect("transcript.css declares a light scheme");
+    let rules_at = css[light_at..]
+        .find("\n}\n")
+        .map(|offset| light_at + offset)
+        .expect("the light scheme block closes");
+    let rules = &css[rules_at..];
+
+    let mut inline = Vec::new();
+    for (number, line) in rules.lines().enumerate() {
+        // Comments here are page content (see the file's header), so they
+        // legitimately name historical values in prose.
+        let code = line.trim_start();
+        if code.starts_with('*') || code.starts_with("/*") {
+            continue;
+        }
+        let Some(hash) = line.find('#') else {
+            continue;
+        };
+        let digits: String = line[hash + 1..]
+            .chars()
+            .take_while(char::is_ascii_hexdigit)
+            .collect();
+        if matches!(digits.len(), 3 | 6 | 8) {
+            inline.push(format!(
+                "{}: {}",
+                // The slice starts at the light block's closing brace, so the
+                // first line of `rules` is that brace's line.
+                css[..rules_at].lines().count() + number,
+                line.trim()
+            ));
+        }
+    }
+
+    assert!(
+        inline.is_empty(),
+        "crates/stella-transcript/src/html/transcript.css writes a colour \
+         inline in a rule, where no scheme can override it:\n  {}\n\nDeclare it \
+         as a token beside the derived surfaces in `:root`, give it a light \
+         value in the media query, and reference it with `var()`. A literal \
+         here renders the same on paper as on a dark screen, which for a well \
+         or for body text means unreadable.",
+        inline.join("\n  ")
+    );
+}

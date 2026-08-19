@@ -94,6 +94,46 @@
   --del-word: rgba(242, 104, 122, 0.38);
   --add-line: rgba(63, 217, 155, 0.12);
   --add-word: rgba(63, 217, 155, 0.34);
+
+  /* Derived surfaces. Named rather than written inline wherever a hover or a
+     well needed one, because the ramp above is cool and a neutral grey on it
+     reads as a warm smudge — so these are the values that have to move
+     together whenever the ground does, and a literal buried in a rule three
+     hundred lines down is the one that gets left behind. That is not
+     hypothetical: it is what the header describes happening to this whole
+     file. Each is one or two value steps off a token above, in the direction
+     its name says.
+
+     `--sunken` is the instrument's `--void`: an output well is *below* the
+     page, not another card on it. */
+  --sunken: #010306;
+  --sunken-2: #0a1015;
+  --hover: #10161c;
+  --hover-raised: #151c23;
+  --selected: #1b232b;
+  --hairline-soft: #0f151a;
+  /* Body text inside an output well: a step brighter than `--dim`, because a
+     command's output is the thing being read, and a step under `--ink`,
+     because it is not the page's own prose. */
+  --code: #c3ccd6;
+  /* The hunk header's own register — the one place a blue is spent, so a
+     `@@` rule is never mistaken for content. Already cool; unchanged by the
+     v3.0 recolour. */
+  --hunk-bg: #0d1420;
+  --hunk-ink: #6f87a8;
+  /* The two tints of `--cyan` that carry speaker identity into text: the
+     prompt echoed in a turn digest, and the user's own prose. Derived from
+     `--cyan` rather than from the ramp, which is why they are the only two
+     derived surfaces whose light values are a darkening rather than a
+     lightening — the hue has to survive, and on paper that means going down
+     the value scale instead of up. */
+  --pq-ink: #cfe9ec;
+  --you-prose: #d2f3f6;
+  /* The fill text on a categorical roletag. Scheme-independent on purpose:
+     `--cyan` and `--violet` do not change between schemes (see the header),
+     so the ink that has to stay legible on them must not change either. */
+  --on-category: #000000;
+
   --mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
 
@@ -120,6 +160,26 @@
     --del-word: rgba(168, 32, 54, 0.28);
     --add-line: rgba(11, 107, 61, 0.09);
     --add-word: rgba(11, 107, 61, 0.24);
+
+    /* The derived surfaces, each flipped about the ramp it was derived from:
+       a step *below* the ground in the dark scheme is a step *above* the paper
+       here. Skipping this half is not a smaller change but a broken one —
+       these roles are wells, hovers and body text, so leaving them dark puts
+       a near-black box on a white page and, worse, prints `--code` grey on
+       the near-white diff washes, where it cannot be read at all. That was
+       this file's state until now: the values were written inline, and an
+       inline literal is precisely what a scheme cannot override. */
+    --sunken: #f2f5f9;
+    --sunken-2: #eef2f7;
+    --hover: #f0f3f7;
+    --hover-raised: #eaeff5;
+    --selected: #dfe6ee;
+    --hairline-soft: #f1f4f8;
+    --code: #2b323a;
+    --hunk-bg: #eef3fb;
+    --hunk-ink: #4a6285;
+    --pq-ink: #12626b;
+    --you-prose: #0f5b64;
   }
 }
 
@@ -174,7 +234,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   overflow: hidden;
 }
 .zoom span { padding: 2px 10px; font-size: 10.5px; color: var(--dim); }
-.zoom .on { background: #161616; color: var(--cyan); }
+.zoom .on { background: var(--selected); color: var(--cyan); }
 
 /* turn */
 .turn > summary {
@@ -182,7 +242,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   background: var(--raised);
   border-bottom: 1px solid var(--line);
 }
-.turn > summary:hover { background: #141414; }
+.turn > summary:hover { background: var(--hover-raised); }
 .turnline { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
 .turnname { color: var(--violet); font-weight: 700; }
 .st { font-size: 11px; letter-spacing: 0.08em; }
@@ -191,7 +251,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .st.err { color: var(--red); font-weight: 700; }
 .st.run { color: var(--cyan); }
 .tdigest { color: var(--dim); font-size: 12px; min-width: 0; }
-.tdigest .pq { color: #cfe9ec; }
+.tdigest .pq { color: var(--pq-ink); }
 .tdigest .aq { color: var(--ink); }
 .tdigest .sep { color: var(--faint); }
 
@@ -199,7 +259,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .chip {
   font-size: 10.5px;
   color: var(--dim);
-  background: #0d0d0d;
+  background: var(--sunken-2);
   border: 1px solid var(--line);
   padding: 0 8px;
   border-radius: 99px;
@@ -217,7 +277,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   display: grid;
   grid-template-columns: 86px 1fr;
   padding: 12px 18px 12px 0;
-  border-bottom: 1px solid #121212;
+  border-bottom: 1px solid var(--hairline-soft);
 }
 .rolegut { text-align: right; padding-right: 16px; }
 .roletag {
@@ -227,10 +287,10 @@ details[open] > summary .chev { transform: rotate(90deg); }
   padding: 1px 7px;
   border-radius: 4px;
 }
-.you .roletag { color: #000; background: var(--cyan); }
-.agent .roletag { color: #000; background: var(--violet); }
+.you .roletag { color: var(--on-category); background: var(--cyan); }
+.agent .roletag { color: var(--on-category); background: var(--violet); }
 .prose { max-width: 72ch; color: var(--ink); }
-.you .prose { color: #d2f3f6; }
+.you .prose { color: var(--you-prose); }
 .prose p { margin: 0 0 8px; }
 .prose p:last-child { margin: 0; }
 .prose-fold > summary { color: var(--dim); }
@@ -280,8 +340,8 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .dot.df { border-color: var(--red); color: var(--red); }
 .dot.sr { border-color: var(--violet); color: var(--violet); }
 
-.step > summary { padding: 7px 18px 7px 0; border-bottom: 1px solid #101010; }
-.step > summary:hover { background: #0e0e0e; }
+.step > summary { padding: 7px 18px 7px 0; border-bottom: 1px solid var(--hairline-soft); }
+.step > summary:hover { background: var(--hover); }
 .step.err > summary { background: rgba(229, 113, 95, 0.07); }
 .digest {
   display: flex;
@@ -304,7 +364,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .body { padding: 2px 18px 12px 0; }
 .body-inner {
   margin-left: 86px;
-  background: #070707;
+  background: var(--sunken);
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -316,18 +376,18 @@ details[open] > summary .chev { transform: rotate(90deg); }
   border-bottom: 1px solid var(--line);
   color: var(--dim);
   font-size: 12px;
-  background: #0d0d0d;
+  background: var(--sunken-2);
 }
 .cmdbar .ps { color: var(--cyan); font-weight: 700; }
 .echo { padding: 4px 12px; color: var(--faint); font-size: 10.5px; font-style: italic; }
 .out { padding: 8px 12px; }
-.out.tail { border-top: 1px solid #141414; }
+.out.tail { border-top: 1px solid var(--hover-raised); }
 .out pre {
   margin: 0;
   font: 12.5px/1.7 var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
-  color: #c7c7c7;
+  color: var(--code);
 }
 .out .ln { color: var(--faint); font-variant-numeric: tabular-nums; user-select: none; }
 .more > summary { color: var(--cyan); font-size: 11px; padding: 4px 12px 8px; opacity: 0.85; }
@@ -346,7 +406,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   font-size: 12px;
 }
 .args dt { color: var(--faint); }
-.args dd { margin: 0; color: #c7c7c7; word-break: break-word; }
+.args dd { margin: 0; color: var(--code); word-break: break-word; }
 
 /* diff */
 .file > summary {
@@ -354,11 +414,11 @@ details[open] > summary .chev { transform: rotate(90deg); }
   gap: 10px;
   align-items: center;
   padding: 7px 12px;
-  background: #0d0d0d;
+  background: var(--sunken-2);
   border-bottom: 1px solid var(--line);
   font-size: 12px;
 }
-.file > summary:hover { background: #111; }
+.file > summary:hover { background: var(--hover); }
 .fstat { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
 .fstat.mod { background: var(--amber); }
 .fstat.new { background: var(--green); }
@@ -368,7 +428,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .fcount .a { color: var(--green); }
 .fcount .d { color: var(--red); }
 .blunt { padding: 5px 12px; color: var(--amber); font-size: 11px; }
-.hunk-fold > summary { padding: 3px 12px; color: #6f87a8; font-size: 11px; background: #0d1420; }
+.hunk-fold > summary { padding: 3px 12px; color: var(--hunk-ink); font-size: 11px; background: var(--hunk-bg); }
 .hunk-fold > summary .hn { color: var(--faint); }
 
 table.diff { border-collapse: collapse; width: 100%; font: 12.5px/1.65 var(--mono); }
@@ -380,12 +440,12 @@ table.diff { border-collapse: collapse; width: 100%; font: 12.5px/1.65 var(--mon
   color: var(--faint);
   font-size: 11px;
   user-select: none;
-  border-right: 1px solid #141414;
+  border-right: 1px solid var(--hover-raised);
   font-variant-numeric: tabular-nums;
 }
 .diff .sign { width: 16px; color: var(--faint); user-select: none; text-align: center; }
-.diff .code { white-space: pre-wrap; word-break: break-word; color: #c7c7c7; width: 100%; }
-.diff tr.hunk td { background: #0d1420; color: #6f87a8; font-size: 11px; padding: 3px 10px; }
+.diff .code { white-space: pre-wrap; word-break: break-word; color: var(--code); width: 100%; }
+.diff tr.hunk td { background: var(--hunk-bg); color: var(--hunk-ink); font-size: 11px; padding: 3px 10px; }
 .diff tr.del td.code, .diff tr.del td.sign { background: var(--del-line); }
 .diff tr.del td.sign { color: var(--red); }
 .diff tr.add td.code, .diff tr.add td.sign { background: var(--add-line); }
