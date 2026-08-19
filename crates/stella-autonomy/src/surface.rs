@@ -212,6 +212,16 @@ pub const HOST_SURFACE: &[HostVerb] = &[
         summary: "run one issue through the turn loop in an isolated worktree, and report what the tree says",
     },
     HostVerb {
+        path: "triage",
+        emits: Emits::QueryEnvelope,
+        summary: "bring an issue up to this workspace's convention — repairs what is mechanical, reports what needs judgement",
+    },
+    HostVerb {
+        path: "close",
+        emits: Emits::Text,
+        summary: "close an issue with a receipt; a partial closure is refused unless its remainder is filed",
+    },
+    HostVerb {
         path: "deliver open",
         emits: Emits::Text,
         summary: "push the work branch and open a draft pull request that closes its issue",

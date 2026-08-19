@@ -165,6 +165,7 @@ pub(super) async fn file_finding(
     convention: &BacklogConvention,
     seen: &[String],
     draft: &IssueDraft,
+    signature: &str,
 ) -> Result<Filed, IssueError> {
     let digest = finding_digest(&draft.title);
     if seen.iter().any(|s| s == &digest) {
@@ -176,7 +177,15 @@ pub(super) async fn file_finding(
         return Ok(Filed::Refused { violations });
     }
 
-    provider.file(draft).await.map(Filed::New)
+    // Signed at the last moment, so the dedup digest and the conformance check
+    // both see the text a human wrote rather than the loop's own footer — a
+    // signature that varied by distribution would otherwise change the digest
+    // and re-file every finding.
+    let signed = IssueDraft {
+        body: stella_autonomy::sign(&draft.body, signature),
+        ..draft.clone()
+    };
+    provider.file(&signed).await.map(Filed::New)
 }
 
 /// Resolve one issue by key, through the port.
@@ -213,6 +222,55 @@ pub(super) fn resolve(
                 provider.id()
             )
         })
+}
+
+/// Close an issue with a receipt naming the evidence, signed.
+///
+/// The receipt is an issue comment, so it takes the `issue_comment` signature
+/// rather than the `issue` one: the two are read in different places and a
+/// deployment will want different words.
+pub(super) async fn close_with_receipt(
+    provider: &dyn IssueProvider,
+    key: &IssueKey,
+    receipt: &str,
+    signature: &str,
+    state: &str,
+) -> Result<(), IssueError> {
+    provider
+        .close(key, &stella_autonomy::sign(receipt, signature), state)
+        .await
+}
+
+/// Bring an issue's labels up to this workspace's convention.
+///
+/// Stella owns the backlog, so an issue that arrived unclassified is hers to
+/// classify rather than hers to refuse. This is the repair half of
+/// `stella_autonomy::conform`: the same rule that decides whether a filing may
+/// go out decides what an existing issue is missing.
+///
+/// It only ever **adds** what the convention requires and **removes** what it
+/// reserves. Nothing else is touched — a label the loop does not understand is
+/// somebody's deliberate choice, and stripping it would be the loop asserting
+/// authority over a vocabulary it did not learn.
+pub(super) async fn relabel(
+    provider: &dyn IssueProvider,
+    key: &IssueKey,
+    add: &[String],
+    remove: &[String],
+) -> Result<(), IssueError> {
+    provider.relabel(key, add, remove).await
+}
+
+/// Post a comment on an issue, signed.
+pub(super) async fn comment(
+    provider: &dyn IssueProvider,
+    key: &IssueKey,
+    body: &str,
+    signature: &str,
+) -> Result<(), IssueError> {
+    provider
+        .comment(key, &stella_autonomy::sign(body, signature))
+        .await
 }
 
 /// Explain a filing that did not happen.
@@ -342,11 +400,34 @@ mod tests {
             Ok(IssueKey::from(format!("{}", 1000 + filed.len()).as_str()))
         }
 
-        async fn close(&self, _key: &IssueKey, _receipt: &str) -> Result<(), IssueError> {
+        async fn close(
+            &self,
+            _key: &IssueKey,
+            _receipt: &str,
+            _state: &str,
+        ) -> Result<(), IssueError> {
             Ok(())
         }
 
         async fn comment(&self, _key: &IssueKey, _body: &str) -> Result<(), IssueError> {
+            Ok(())
+        }
+
+        async fn relabel(
+            &self,
+            _key: &IssueKey,
+            _add: &[String],
+            _remove: &[String],
+        ) -> Result<(), IssueError> {
+            Ok(())
+        }
+
+        async fn edit(
+            &self,
+            _key: &IssueKey,
+            _title: Option<&str>,
+            _body: Option<&str>,
+        ) -> Result<(), IssueError> {
             Ok(())
         }
     }
@@ -377,11 +458,34 @@ mod tests {
             Err(Self::gone())
         }
 
-        async fn close(&self, _key: &IssueKey, _receipt: &str) -> Result<(), IssueError> {
+        async fn close(
+            &self,
+            _key: &IssueKey,
+            _receipt: &str,
+            _state: &str,
+        ) -> Result<(), IssueError> {
             Err(Self::gone())
         }
 
         async fn comment(&self, _key: &IssueKey, _body: &str) -> Result<(), IssueError> {
+            Err(Self::gone())
+        }
+
+        async fn relabel(
+            &self,
+            _key: &IssueKey,
+            _add: &[String],
+            _remove: &[String],
+        ) -> Result<(), IssueError> {
+            Err(Self::gone())
+        }
+
+        async fn edit(
+            &self,
+            _key: &IssueKey,
+            _title: Option<&str>,
+            _body: Option<&str>,
+        ) -> Result<(), IssueError> {
             Err(Self::gone())
         }
     }
@@ -450,6 +554,7 @@ mod tests {
             &convention(),
             &[],
             &draft("the retry counter survives a goal round", &["P1"]),
+            "Created by stella.",
         ))
         .expect("the port was reachable");
 
@@ -474,6 +579,7 @@ mod tests {
             &convention(),
             &[],
             &draft("the retry counter survives a goal round", &["bug", "P1"]),
+            "Created by stella.",
         ))
         .expect("the port was reachable");
 
@@ -495,6 +601,7 @@ mod tests {
             &convention(),
             &seen,
             &draft(title, &["bug"]),
+            "Created by stella.",
         ))
         .expect("the port was reachable");
 
@@ -515,6 +622,7 @@ mod tests {
             &convention(),
             &seen,
             &draft("driver.rs:987 retry counter leaks", &["bug"]),
+            "Created by stella.",
         ))
         .expect("the port was reachable");
 
@@ -531,6 +639,7 @@ mod tests {
             &convention(),
             &[],
             &draft("something", &["bug"]),
+            "Created by stella.",
         ));
 
         assert!(

@@ -170,7 +170,17 @@ impl IssueProvider for GhIssueProvider {
         Ok(IssueKey::from(key))
     }
 
-    async fn close(&self, key: &IssueKey, receipt: &str) -> Result<(), IssueError> {
+    async fn close(&self, key: &IssueKey, receipt: &str, state: &str) -> Result<(), IssueError> {
+        // GitHub spells the two terminal states `completed` and
+        // `not planned`. Anything this build does not recognise closes as
+        // `completed` rather than failing: an unclosed issue is worse than one
+        // closed under a slightly wrong reason, and the receipt says what
+        // actually happened either way.
+        let reason = if state == "not_planned" {
+            "not planned"
+        } else {
+            "completed"
+        };
         gh_json(&[
             "issue",
             "close",
@@ -178,13 +188,57 @@ impl IssueProvider for GhIssueProvider {
             "--comment",
             receipt,
             "--reason",
-            "completed",
+            reason,
         ])
         .map(|_| ())
     }
 
     async fn comment(&self, key: &IssueKey, body: &str) -> Result<(), IssueError> {
         gh_json(&["issue", "comment", key.as_str(), "--body", body]).map(|_| ())
+    }
+
+    async fn relabel(
+        &self,
+        key: &IssueKey,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<(), IssueError> {
+        if add.is_empty() && remove.is_empty() {
+            return Ok(());
+        }
+        let mut args: Vec<String> = vec!["issue".into(), "edit".into(), key.as_str().to_owned()];
+        for label in add {
+            args.push("--add-label".into());
+            args.push(label.clone());
+        }
+        for label in remove {
+            args.push("--remove-label".into());
+            args.push(label.clone());
+        }
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        gh_json(&borrowed).map(|_| ())
+    }
+
+    async fn edit(
+        &self,
+        key: &IssueKey,
+        title: Option<&str>,
+        body: Option<&str>,
+    ) -> Result<(), IssueError> {
+        if title.is_none() && body.is_none() {
+            return Ok(());
+        }
+        let mut args: Vec<String> = vec!["issue".into(), "edit".into(), key.as_str().to_owned()];
+        if let Some(title) = title {
+            args.push("--title".into());
+            args.push(title.to_owned());
+        }
+        if let Some(body) = body {
+            args.push("--body".into());
+            args.push(body.to_owned());
+        }
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        gh_json(&borrowed).map(|_| ())
     }
 }
 

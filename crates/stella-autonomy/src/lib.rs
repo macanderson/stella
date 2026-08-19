@@ -39,6 +39,8 @@
 //! a host refuse a build it was not written against, instead of meeting the
 //! skew as an `unrecognized subcommand` three cycles in.
 
+mod attribution;
+mod closure;
 mod convention;
 mod deliver;
 mod doctrine;
@@ -50,9 +52,11 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+pub use attribution::{Attribution, DEFAULT_BRANCH_PREFIX, sign};
+pub use closure::{Closure, ClosureRefusal, check as check_closure, receipt, tracker_state};
 pub use convention::{
-    Acceptance, AxisRequirement, BacklogConvention, Conformance, ConventionSource, LabelAxis,
-    Violation, conform,
+    Acceptance, AxisChoice, AxisRequirement, BacklogConvention, ChoiceReason, Conformance,
+    ConventionSource, LabelAxis, Repair, Violation, conform, repair,
 };
 pub use deliver::{
     Action, Attempts, CiConclusion, DeliverPolicy, EscalationReason, Mergeability, Observation,

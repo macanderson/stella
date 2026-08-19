@@ -197,12 +197,14 @@ pub(super) fn observation_from(view: &PrView, base_checks: &[Check]) -> Observat
     }
 }
 
-/// Compose a pull request body that closes its issue.
+/// Compose a pull request body that closes its issue, signed.
 ///
-/// See the module docs on why the trailer is not enough on its own.
+/// See the module docs on why the trailer is not enough on its own, and
+/// `stella_autonomy::sign` on why the signature sits exactly one line break
+/// after the last character.
 #[must_use]
-pub(super) fn pr_body(issue_key: &str, summary: &str) -> String {
-    format!("{summary}\n\nCloses #{issue_key}\n")
+pub(super) fn pr_body(issue_key: &str, summary: &str, signature: &str) -> String {
+    stella_autonomy::sign(&format!("{summary}\n\nCloses #{issue_key}"), signature)
 }
 
 /// The commit trailer that closes the issue on the *other* merge path.
@@ -271,11 +273,16 @@ pub(super) fn open(
     branch: &str,
     issue_key: &str,
     title: &str,
+    signature: &str,
 ) -> Result<String, String> {
     git(root, &["push", "-u", "origin", branch])
         .ok_or_else(|| format!("could not push `{branch}` — is the remote reachable?"))?;
 
-    let body = pr_body(issue_key, &format!("Autonomous fix for #{issue_key}."));
+    let body = pr_body(
+        issue_key,
+        &format!("Autonomous fix for #{issue_key}."),
+        signature,
+    );
     let url = gh(&[
         "pr", "create", "--head", branch, "--title", title, "--body", &body, "--draft",
     ])?;
@@ -452,8 +459,15 @@ mod tests {
     /// different text and either alone is a silent single point of failure.
     #[test]
     fn closing_an_issue_takes_both_the_body_and_the_trailer() {
-        assert!(pr_body("3939", "summary").contains("Closes #3939"));
+        let body = pr_body("3939", "summary", "Created by stella.");
+        assert!(body.contains("Closes #3939"));
         assert_eq!(commit_trailer("3939"), "Closes #3939");
+        // And the signature sits exactly one line break after the last
+        // character, not two.
+        assert!(
+            body.ends_with("Closes #3939\nCreated by stella."),
+            "{body:?}"
+        );
     }
 
     /// The real payload shape, parsed from what `gh pr view` actually returned

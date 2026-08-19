@@ -13,6 +13,7 @@
 //! harness (`make self-driving-test`) drives those delegations end-to-end, so the
 //! two surfaces cannot drift.
 
+mod attribution;
 mod backlog;
 mod convention;
 mod deliver;
@@ -201,6 +202,57 @@ pub(crate) enum SelfDrivingCmd {
         /// Output format.
         #[arg(long, value_enum, default_value = "text")]
         format: QueryFormat,
+    },
+
+    /// Bring an issue up to this workspace's standard.
+    ///
+    /// The loop owns the backlog it draws from, so an issue that arrived
+    /// unclassified is one it may classify. It removes what the convention
+    /// reserves — mechanical, no judgement — and REPORTS what needs deciding
+    /// rather than guessing: choosing between `bug` and `feature` is a reading
+    /// of what the issue says, and a loop that guessed would be manufacturing
+    /// the classification the queue is ranked by.
+    Triage {
+        /// The issue to triage.
+        #[arg(long)]
+        issue: String,
+
+        /// Report what would change without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
+    },
+
+    /// Close an issue, with the discipline that keeps a backlog honest.
+    ///
+    /// Exactly one of `--fixed`, `--not-planned`, or `--partial`. A partial
+    /// closure is REFUSED unless `--remaining` names the issues now carrying
+    /// what was left — closing "mostly fixed" with nothing tracking the rest is
+    /// how work vanishes from a backlog without being done.
+    #[command(group = clap::ArgGroup::new("kind").required(true))]
+    Close {
+        /// The issue to close.
+        #[arg(long)]
+        issue: String,
+
+        /// It was fixed. The value is the evidence — a pull request, a test.
+        #[arg(long, group = "kind", value_name = "EVIDENCE")]
+        fixed: Option<String>,
+
+        /// It is no longer worth doing. The value is why.
+        #[arg(long, group = "kind", value_name = "REASON")]
+        not_planned: Option<String>,
+
+        /// Part of it was fixed. The value is what was done.
+        #[arg(long, group = "kind", value_name = "DONE", requires = "remaining")]
+        partial: Option<String>,
+
+        /// The issues now carrying what was not done. Required by `--partial`.
+        #[arg(long, value_name = "KEY")]
+        remaining: Vec<String>,
     },
 
     /// The pull-request rhythm: open, observe, decide, merge.
@@ -468,6 +520,24 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), 
         } => file_finding(&st, title, body, labels, *format),
         SelfDrivingCmd::Work { issue, format } => work_issue(&st, issue, spend_limit, *format),
         SelfDrivingCmd::Deliver { cmd } => deliver_cmd(cmd),
+        SelfDrivingCmd::Triage {
+            issue,
+            dry_run,
+            format,
+        } => triage_issue(issue, *dry_run, *format),
+        SelfDrivingCmd::Close {
+            issue,
+            fixed,
+            not_planned,
+            partial,
+            remaining,
+        } => close_issue(
+            issue,
+            fixed.as_deref(),
+            not_planned.as_deref(),
+            partial.as_deref(),
+            remaining,
+        ),
         SelfDrivingCmd::Run { cmd } => match cmd {
             RunCmd::Start => run_start(&st),
             RunCmd::End { status, reason } => run_end(&st, status, reason),
@@ -1001,6 +1071,141 @@ fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String
     backlog::render_queue(st, &crate::issue_provider::GhIssueProvider, limit, format)
 }
 
+/// `stella self-driving triage` — bring an issue up to the standard.
+///
+/// Mechanical repairs are applied; judgement is reported. The split is the
+/// point: the loop has authority over the backlog's *hygiene* and none over
+/// what an issue *means*.
+fn triage_issue(key: &str, dry_run: bool, format: QueryFormat) -> Result<(), String> {
+    let root = state::repo_root();
+    let bound = convention::load(&root);
+    let provider = crate::issue_provider::GhIssueProvider;
+    let issue = backlog::resolve(&provider, key)?;
+
+    let labels: Vec<&str> = issue.labels.iter().map(|l| l.name.as_str()).collect();
+    let plan = stella_autonomy::repair(&bound.convention, &labels);
+
+    if format == QueryFormat::Json {
+        println!(
+            "{}",
+            serde_json::to_string(&plan).map_err(|e| e.to_string())?
+        );
+    } else if plan.is_empty() {
+        println!("#{key} already matches this workspace's convention");
+    } else {
+        if !plan.remove.is_empty() {
+            println!("#{key} remove: {}", plan.remove.join(", "));
+        }
+        for choice in &plan.choose {
+            println!(
+                "#{key} needs a `{}` label — one of: {} ({:?})",
+                choice.axis,
+                choice.candidates.join(", "),
+                choice.reason
+            );
+        }
+    }
+
+    if dry_run || plan.remove.is_empty() {
+        return Ok(());
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
+    runtime
+        .block_on(backlog::relabel(&provider, &issue.key, &[], &plan.remove))
+        .map_err(|error| error.to_string())?;
+
+    println!("#{key} relabelled");
+    Ok(())
+}
+
+/// `stella self-driving close` — end an issue, with a receipt.
+///
+/// The refusal happens **before** the tracker is reached, so a partial closure
+/// with nothing tracking its remainder cannot half-happen: `stella_autonomy`'s
+/// `check_closure` is consulted first, and only then does anything write.
+fn close_issue(
+    key: &str,
+    fixed: Option<&str>,
+    not_planned: Option<&str>,
+    partial: Option<&str>,
+    remaining: &[String],
+) -> Result<(), String> {
+    use stella_autonomy::{Closure, ClosureRefusal};
+
+    let closure = match (fixed, not_planned, partial) {
+        (Some(evidence), _, _) => Closure::Fixed {
+            evidence: evidence.to_owned(),
+        },
+        (_, Some(reason), _) => Closure::NotPlanned {
+            reason: reason.to_owned(),
+        },
+        (_, _, Some(done)) => Closure::Partial {
+            done: done.to_owned(),
+            remaining: remaining.to_vec(),
+        },
+        // Unreachable through clap's required group, and an error rather than
+        // a panic because "unreachable" is a claim about today's argument tree.
+        _ => return Err("say how it is closing: --fixed, --not-planned, or --partial".into()),
+    };
+
+    stella_autonomy::check_closure(&closure).map_err(|refusal| match refusal {
+        ClosureRefusal::PartialWithNoRemainder => format!(
+            "#{key} is only partly fixed and nothing is tracking the rest. File the remaining \
+             work as its own issues first, then close with `--remaining <key>` for each. \
+             A backlog that shrinks by more than the work finished is worse than one that \
+             does not shrink."
+        ),
+        ClosureRefusal::MissingRationale { field } => format!(
+            "#{key} cannot close with an empty `{field}` — a closed issue whose comment says \
+             nothing is worse than an open one, because it looks handled."
+        ),
+    })?;
+
+    let root = state::repo_root();
+    let attribution = attribution::load(&root);
+    let provider = crate::issue_provider::GhIssueProvider;
+    let issue_key = stella_protocol::issue::IssueKey::from(key);
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
+
+    // A partial closure comments first and closes second: if the close fails,
+    // the link to the remainder is already on the issue, which is the half a
+    // human needs. The reverse order would leave a closed issue with no trail.
+    if matches!(closure, stella_autonomy::Closure::Partial { .. }) {
+        runtime
+            .block_on(backlog::comment(
+                &provider,
+                &issue_key,
+                &stella_autonomy::receipt(&closure),
+                &attribution.issue_comment,
+            ))
+            .map_err(|error| error.to_string())?;
+    }
+
+    runtime
+        .block_on(backlog::close_with_receipt(
+            &provider,
+            &issue_key,
+            &stella_autonomy::receipt(&closure),
+            &attribution.issue_comment,
+            stella_autonomy::tracker_state(&closure),
+        ))
+        .map_err(|error| error.to_string())?;
+
+    println!(
+        "closed #{key} as {}",
+        stella_autonomy::tracker_state(&closure)
+    );
+    Ok(())
+}
+
 /// `stella self-driving deliver` — the pull-request rhythm.
 ///
 /// Every arm that acts re-derives the decision from a fresh observation rather
@@ -1017,7 +1222,8 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
             branch,
             title,
         } => {
-            let pr = deliver::open(&root, branch, issue, title)?;
+            let attribution = attribution::load(&root);
+            let pr = deliver::open(&root, branch, issue, title, &attribution.pull_request)?;
             println!("opened #{pr} for #{issue} from {branch}");
             Ok(())
         }
@@ -1125,7 +1331,8 @@ fn work_issue(
     let root = state::repo_root();
     let issue = backlog::resolve(&crate::issue_provider::GhIssueProvider, key)?;
 
-    let outcome = work::start(&root, &issue, spend_limit)?;
+    let attribution = attribution::load(&root);
+    let outcome = work::start(&root, &issue, spend_limit, &attribution)?;
 
     match &outcome {
         work::WorkOutcome::Changed { branch, stat, .. } => {
@@ -1171,6 +1378,7 @@ fn file_finding(
 ) -> Result<(), String> {
     let root = std::env::current_dir().map_err(|e| format!("no working directory: {e}"))?;
     let bound = convention::load(&root);
+    let attribution = attribution::load(&root);
 
     let draft = stella_protocol::issue::IssueDraft {
         title: title.to_owned(),
@@ -1192,6 +1400,7 @@ fn file_finding(
             &bound.convention,
             &st.seen(),
             &draft,
+            &attribution.issue,
         ))
         .map_err(|error| error.to_string())?;
 
