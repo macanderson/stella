@@ -2918,7 +2918,6 @@ dependencies = [
  "stella-mcp",
  "stella-model",
  "stella-observatory",
- "stella-pipeline",
  "stella-plugin",
  "stella-protocol",
  "stella-runtime",
@@ -3161,24 +3160,6 @@ name = "stella-parity"
 version = "0.9.105"
 dependencies = [
  "stella-serve",
-]
-
-[[package]]
-name = "stella-pipeline"
-version = "0.9.105"
-dependencies = [
- "async-trait",
- "futures-util",
- "proptest",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "stella-core",
- "stella-plugin",
- "stella-protocol",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
 ]
 
 [[package]]

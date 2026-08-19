@@ -824,14 +824,13 @@ mod pipeline_variant_tests {
         }
     }
 
-    /// The id the CLI records and the id the pipeline calls itself are one
-    /// string, not two that happen to agree.
+    /// `PIPELINE_VARIANT_CLASSIC` is now a pure historical literal (the crate
+    /// it used to cross-check against, `stella_pipeline::variant`, is gone —
+    /// see the constant's own doc comment). This only pins the literal's
+    /// spelling so an edit to it is a deliberate, reviewed change to a join
+    /// key already-written rows depend on.
     #[test]
-    fn the_classic_id_is_the_pipelines_own() {
-        assert_eq!(
-            PIPELINE_VARIANT_CLASSIC,
-            stella_pipeline::variant::CLASSIC_VARIANT_ID
-        );
+    fn the_classic_id_literal_is_unchanged() {
         assert_eq!(PIPELINE_VARIANT_CLASSIC, "classic");
     }
 }

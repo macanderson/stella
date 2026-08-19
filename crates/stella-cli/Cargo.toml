@@ -76,7 +76,6 @@ stella-graph = { path = "../stella-graph" }
 # enables it, so this adds no crate to the tree.
 stella-embed = { path = "../stella-embed", features = ["http"] }
 stella-fleet = { path = "../stella-fleet" }
-stella-pipeline = { path = "../stella-pipeline" }
 stella-tui = { path = "../stella-tui" }
 serde.workspace = true
 serde_json.workspace = true
