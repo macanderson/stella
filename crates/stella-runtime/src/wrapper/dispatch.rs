@@ -430,7 +430,7 @@ impl WrapperDispatch {
             let request = BeforeTurnRequest {
                 protocol_version: PROTOCOL_VERSION,
                 wrapper: self.variant().to_string(),
-                stage: *stage,
+                stage: stage.clone(),
                 round,
                 goal: input.goal.clone(),
                 candidate: input.candidate.clone(),
@@ -492,7 +492,7 @@ impl WrapperDispatch {
         let request = AfterTurnRequest {
             protocol_version: PROTOCOL_VERSION,
             wrapper: self.variant().to_string(),
-            stage: stages.last().copied(),
+            stage: stages.last().cloned(),
             round,
             goal: input.goal.clone(),
             candidate: input.candidate.clone(),

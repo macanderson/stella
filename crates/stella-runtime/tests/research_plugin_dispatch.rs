@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use stella_plugin::{
-    CandidateGrant, PluginManifest, RecallFrame, SignalValues, StageName, TamperFinding,
+    CandidateGrant, HostStage, PluginManifest, RecallFrame, SignalValues, StageName, TamperFinding,
     TurnOutcome,
 };
 use stella_protocol::CandidateHandle;
@@ -211,7 +211,9 @@ async fn the_host_sequence_drives_the_plugin_and_the_turn_gets_its_findings() {
 
     let prelude = driver.prelude.expect("the host was asked to run a turn");
     assert!(
-        prelude.stages().contains(&StageName::Research),
+        prelude
+            .stages()
+            .contains(&StageName::Host(HostStage::Research)),
         "the resolved program runs the stage this plugin exists for"
     );
     let messages = prelude.into_messages();
@@ -262,7 +264,11 @@ async fn a_turn_that_named_no_questions_gets_no_contribution() {
 
     assert!(report.faults.is_empty());
     let prelude = driver.prelude.expect("the host was asked to run a turn");
-    assert!(!prelude.stages().contains(&StageName::Research));
+    assert!(
+        !prelude
+            .stages()
+            .contains(&StageName::Host(HostStage::Research))
+    );
     assert!(
         prelude.into_messages().is_empty(),
         "zero findings must leave the prompt exactly as it was — the advisory \

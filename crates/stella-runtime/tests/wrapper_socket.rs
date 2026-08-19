@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use stella_plugin::{
     AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceProvenance,
-    EvidenceSet, FlipObservation, LoopGrant, Outcome, PROTOCOL_VERSION, Participation,
+    EvidenceSet, FlipObservation, HostStage, LoopGrant, Outcome, PROTOCOL_VERSION, Participation,
     PluginManifest, RoundState, SignalValues, StageName, StopReason, TamperFinding, TestBaseline,
     TestPlan, TurnOutcome, UnmetBecause, Verdict, VerdictRule, VolatileContext, WrapperPoint,
 };
@@ -192,12 +192,15 @@ async fn run_turn(
         })
         .expect("a validated wrapper resolves for every signal set");
     assert_eq!(program.variant(), "reference-v1");
-    assert!(program.runs(StageName::Research), "questions > 0 this turn");
+    assert!(
+        program.runs(&StageName::Host(HostStage::Research)),
+        "questions > 0 this turn"
+    );
 
     let mut messages = Vec::new();
     for stage in program.stages() {
         let response = wrapper
-            .before_turn(before(*stage, goal))
+            .before_turn(before(stage.clone(), goal))
             .await
             .expect("the plugin answers before_turn");
         // The check is what produces the value that gets applied, so there is
@@ -317,7 +320,7 @@ async fn a_response_naming_an_undeclared_role_is_refused() {
 printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"role":"verifier"}}'
 "#;
     let response = plugin(rogue)
-        .before_turn(before(StageName::Triage, "anything"))
+        .before_turn(before(StageName::Host(HostStage::Triage), "anything"))
         .await
         .expect("the plugin answers");
     let error = admissible(&manifest(), response).expect_err("\"verifier\" is not declared");
@@ -330,7 +333,7 @@ printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"role":"verif
 printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"publish":[{"signal":"questions","value":{"boolean":true}}]}}'
 "#;
     let response = plugin(mistyped)
-        .before_turn(before(StageName::Triage, "anything"))
+        .before_turn(before(StageName::Host(HostStage::Triage), "anything"))
         .await
         .expect("the plugin answers");
     let error = admissible(&manifest(), response).expect_err("a count is not a boolean");
@@ -497,10 +500,10 @@ async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
 
     assert_eq!(
         native
-            .before_turn(before(StageName::Triage, goal))
+            .before_turn(before(StageName::Host(HostStage::Triage), goal))
             .await
             .unwrap(),
-        wire.before_turn(before(StageName::Triage, goal))
+        wire.before_turn(before(StageName::Host(HostStage::Triage), goal))
             .await
             .unwrap(),
         "both transports contribute the same thing"
@@ -581,7 +584,7 @@ async fn each_failure_mode_is_named_rather_than_collapsed() {
     let newer = plugin(
         r#"cat >/dev/null; printf '%s\n' '{"point":"before_turn","body":{"protocol_version":99}}'"#,
     )
-    .before_turn(before(StageName::Triage, "x"))
+    .before_turn(before(StageName::Host(HostStage::Triage), "x"))
     .await
     .expect_err("a newer contract may carry a field whose absence changes the answer");
     assert!(

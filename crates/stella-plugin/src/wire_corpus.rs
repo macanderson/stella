@@ -79,9 +79,10 @@ use crate::{
     CandidateGrant, ChildTurnArgs, ChildTurnResult, DriveNext, DriveRequest, DriveResponse,
     DriverCall, DriverCallRequest, DriverCallResponse, DriverOk, FanoutCandidate, FlipObservation,
     HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest,
-    HostCallResponse, ObservedEvidence, PROTOCOL_VERSION, PublishedSignal, RecallArgs, RecallFrame,
-    RecallResult, RunTestArgs, Signal, SignalKind, SignalValue, StageName, TestBaseline, TestPlan,
-    TurnOutcome, VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
+    HostCallResponse, HostStage, ObservedEvidence, PROTOCOL_VERSION, PublishedSignal, RecallArgs,
+    RecallFrame, RecallResult, RunTestArgs, Signal, SignalKind, SignalValue, StageName,
+    TestBaseline, TestPlan, TurnOutcome, VolatileContext, WrapperPoint, WrapperRequest,
+    WrapperResponse,
 };
 
 /// The committed artifact's filename.
@@ -359,7 +360,7 @@ fn parts() -> Result<Value, serde_json::Error> {
 fn vocabulary() -> Result<Value, serde_json::Error> {
     Ok(json!({
         "wrapper_point": values(enumerate(WrapperPoint::BeforeTurn, point_after))?,
-        "stage": values(enumerate(StageName::Triage, stage_after))?,
+        "stage": values(stage_vocabulary())?,
         "test_baseline": values(enumerate(TestBaseline::NotRun, baseline_after))?,
         "flip_observation": values(enumerate(FlipObservation::NotAttempted, flip_after))?,
         "signal_value": values(enumerate(SignalValue::Boolean(true), signal_value_after))?,
@@ -410,20 +411,42 @@ fn point_after(point: WrapperPoint) -> Option<WrapperPoint> {
     }
 }
 
-fn stage_after(stage: StageName) -> Option<StageName> {
+/// The stage vocabulary, which is the one list on this wire that is **not**
+/// closed (#3963).
+///
+/// The host's own twelve are still enumerated by an exhaustive successor —
+/// the compiler still refuses a thirteenth boundary that is not placed in the
+/// chain — and a contributed name rides at the end. That last entry is the
+/// part a reader of the committed corpus most needs: it is what says the field
+/// is a plain string a plugin may fill with its own word, and not the enum the
+/// twelve above could otherwise be mistaken for.
+fn stage_vocabulary() -> Vec<StageName> {
+    enumerate(HostStage::Triage, stage_after)
+        .into_iter()
+        .map(StageName::Host)
+        .chain(std::iter::once(StageName::new(CONTRIBUTED_STAGE_SAMPLE)))
+        .collect()
+}
+
+/// The contributed stage the corpus carries. `triage-lite` is the name
+/// `doc:roleless-core` and #3963 both use for the worked example, so the
+/// committed artifact reads as the same story the spec tells.
+const CONTRIBUTED_STAGE_SAMPLE: &str = "triage-lite";
+
+fn stage_after(stage: HostStage) -> Option<HostStage> {
     match stage {
-        StageName::Triage => Some(StageName::Recall),
-        StageName::Recall => Some(StageName::Research),
-        StageName::Research => Some(StageName::Plan),
-        StageName::Plan => Some(StageName::Scope),
-        StageName::Scope => Some(StageName::Execute),
-        StageName::Execute => Some(StageName::Witness),
-        StageName::Witness => Some(StageName::Verify),
-        StageName::Verify => Some(StageName::Verdict),
-        StageName::Verdict => Some(StageName::Reflect),
-        StageName::Reflect => Some(StageName::ContextWrite),
-        StageName::ContextWrite => Some(StageName::Complete),
-        StageName::Complete => None,
+        HostStage::Triage => Some(HostStage::Recall),
+        HostStage::Recall => Some(HostStage::Research),
+        HostStage::Research => Some(HostStage::Plan),
+        HostStage::Plan => Some(HostStage::Scope),
+        HostStage::Scope => Some(HostStage::Execute),
+        HostStage::Execute => Some(HostStage::Witness),
+        HostStage::Witness => Some(HostStage::Verify),
+        HostStage::Verify => Some(HostStage::Verdict),
+        HostStage::Verdict => Some(HostStage::Reflect),
+        HostStage::Reflect => Some(HostStage::ContextWrite),
+        HostStage::ContextWrite => Some(HostStage::Complete),
+        HostStage::Complete => None,
     }
 }
 
@@ -526,7 +549,7 @@ fn before_turn_request_full() -> BeforeTurnRequest {
     BeforeTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "witness".to_string(),
-        stage: StageName::Execute,
+        stage: StageName::Host(HostStage::Execute),
         round: 1,
         goal: "make the failing test pass".to_string(),
         candidate: Some(candidate_grant_full()),
@@ -538,7 +561,7 @@ fn before_turn_request_minimal() -> BeforeTurnRequest {
     BeforeTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "witness".to_string(),
-        stage: StageName::Triage,
+        stage: StageName::Host(HostStage::Triage),
         round: 0,
         goal: "make the failing test pass".to_string(),
         candidate: None,
@@ -553,7 +576,7 @@ fn after_turn_request_full() -> AfterTurnRequest {
         // The same stage `before_turn_request_full` names for the same round:
         // the corpus shows the correlation the field exists for, not just the
         // key's presence.
-        stage: Some(StageName::Execute),
+        stage: Some(StageName::Host(HostStage::Execute)),
         round: 1,
         goal: "make the failing test pass".to_string(),
         candidate: Some(candidate_grant_full()),

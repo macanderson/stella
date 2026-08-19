@@ -159,9 +159,9 @@ impl Condition {
     ///
     /// [`CompareOp::apply`]: crate::CompareOp::apply
     /// [`WrapperStage::condition`]: crate::WrapperStage::condition
-    pub fn evaluate(self, stage: StageName, values: &SignalValues) -> Result<bool, ManifestError> {
+    pub fn evaluate(self, stage: &StageName, values: &SignalValues) -> Result<bool, ManifestError> {
         let mismatch = |declared: SignalKind| ManifestError::ConditionTypeMismatch {
-            stage,
+            stage: stage.clone(),
             signal: self.signal(),
             declared,
             actual: self.signal().kind(),
@@ -220,8 +220,8 @@ impl StageProgram {
 
     /// Whether this turn runs `stage`.
     #[must_use]
-    pub fn runs(&self, stage: StageName) -> bool {
-        self.stages.contains(&stage)
+    pub fn runs(&self, stage: &StageName) -> bool {
+        self.stages.contains(stage)
     }
 }
 
@@ -262,17 +262,17 @@ impl Wrapper {
                         && !produced.contains(&signal)
                     {
                         return Err(ManifestError::SignalNotProduced {
-                            stage: stage.name,
+                            stage: stage.name.clone(),
                             signal,
                             publisher,
                         });
                     }
-                    condition.evaluate(stage.name, values)?
+                    condition.evaluate(&stage.name, values)?
                 }
             };
             if runs {
-                stages.push(stage.name);
                 produced.extend_from_slice(stage.name.publishes());
+                stages.push(stage.name.clone());
             }
         }
 
@@ -286,7 +286,7 @@ impl Wrapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PluginManifest, WrapperStage};
+    use crate::{HostStage, PluginManifest, WrapperStage};
 
     /// Signal values for a full multi-step turn with no configured test
     /// command — the shape every case below varies one field of.
@@ -334,9 +334,9 @@ mod tests {
         .resolve(&multi_step())
         .unwrap();
         assert_eq!(program.variant(), "probe-v1");
-        assert_eq!(program.stages(), [StageName::Execute]);
-        assert!(program.runs(StageName::Execute));
-        assert!(!program.runs(StageName::Verify));
+        assert_eq!(program.stages(), [StageName::Host(HostStage::Execute)]);
+        assert!(program.runs(&StageName::Host(HostStage::Execute)));
+        assert!(!program.runs(&StageName::Host(HostStage::Verify)));
     }
 
     #[test]
@@ -355,7 +355,11 @@ mod tests {
         let asked = w.resolve(&multi_step()).unwrap();
         assert_eq!(
             asked.stages(),
-            [StageName::Triage, StageName::Research, StageName::Witness]
+            [
+                StageName::Host(HostStage::Triage),
+                StageName::Host(HostStage::Research),
+                StageName::Host(HostStage::Witness)
+            ]
         );
 
         let none = w
@@ -365,7 +369,7 @@ mod tests {
                 ..multi_step()
             })
             .unwrap();
-        assert_eq!(none.stages(), [StageName::Triage]);
+        assert_eq!(none.stages(), [StageName::Host(HostStage::Triage)]);
     }
 
     /// The negation is a property of the condition, not of the value: a `no-`
@@ -377,13 +381,13 @@ mod tests {
                 test_command: value,
                 ..multi_step()
             };
-            let bare = Condition::parse(StageName::Witness, "test-command")
+            let bare = Condition::parse(&StageName::Host(HostStage::Witness), "test-command")
                 .unwrap()
-                .evaluate(StageName::Witness, &values)
+                .evaluate(&StageName::Host(HostStage::Witness), &values)
                 .unwrap();
-            let negated = Condition::parse(StageName::Witness, "no-test-command")
+            let negated = Condition::parse(&StageName::Host(HostStage::Witness), "no-test-command")
                 .unwrap()
-                .evaluate(StageName::Witness, &values)
+                .evaluate(&StageName::Host(HostStage::Witness), &values)
                 .unwrap();
             assert_eq!(bare, value);
             assert_eq!(negated, !value);
@@ -400,11 +404,11 @@ mod tests {
             id: "hand-built".into(),
             stages: vec![
                 WrapperStage {
-                    name: StageName::Triage,
+                    name: StageName::Host(HostStage::Triage),
                     condition: Some("no-test-command".into()),
                 },
                 WrapperStage {
-                    name: StageName::Research,
+                    name: StageName::Host(HostStage::Research),
                     condition: Some("questions > 0".into()),
                 },
             ],
@@ -419,9 +423,9 @@ mod tests {
             matches!(
                 err,
                 ManifestError::SignalNotProduced {
-                    stage: StageName::Research,
+                    stage: StageName::Host(HostStage::Research),
                     signal: Signal::Questions,
-                    publisher: StageName::Triage,
+                    publisher: HostStage::Triage,
                 }
             ),
             "got {err:?}"
@@ -434,7 +438,13 @@ mod tests {
                 ..multi_step()
             })
             .unwrap();
-        assert_eq!(ok.stages(), [StageName::Triage, StageName::Research]);
+        assert_eq!(
+            ok.stages(),
+            [
+                StageName::Host(HostStage::Triage),
+                StageName::Host(HostStage::Research)
+            ]
+        );
     }
 
     /// Reading a count as a boolean is rejected at load; a hand-built
@@ -446,7 +456,7 @@ mod tests {
             signal: Signal::Questions,
             negated: false,
         }
-        .evaluate(StageName::Research, &multi_step())
+        .evaluate(&StageName::Host(HostStage::Research), &multi_step())
         .expect_err("a count is not a boolean");
         assert!(
             matches!(
@@ -466,7 +476,7 @@ mod tests {
             op: crate::CompareOp::Greater,
             value: 0,
         }
-        .evaluate(StageName::Plan, &multi_step())
+        .evaluate(&StageName::Host(HostStage::Plan), &multi_step())
         .expect_err("a boolean is not a count");
         assert!(
             matches!(

@@ -10,7 +10,7 @@ use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
 use crate::package::ContributionKind;
 use crate::wire::WrapperPoint;
-use crate::wrapper::{Signal, SignalKind, StageName};
+use crate::wrapper::{HostStage, Signal, SignalKind, StageName};
 
 /// A manifest failed to parse or failed validation.
 ///
@@ -601,6 +601,55 @@ pub enum ManifestError {
         stage: StageName,
     },
 
+    /// A `[[wrapper.stages]]` entry named a blank stage.
+    ///
+    /// The stage vocabulary is open (#3963), so this is no longer caught by
+    /// failing to match a known name — which is exactly why it needs saying
+    /// out loud. A stage whose name is whitespace dispatches under a word no
+    /// surface can print.
+    #[error("[wrapper] declares a stage with an empty name")]
+    EmptyWrapperStageName,
+
+    /// A contributed stage took a name the workspace's wire vocabulary already
+    /// answers to.
+    ///
+    /// The manifest's own spellings cannot reach this — those resolve to the
+    /// host stage they name — so what this catches is the *wire* spelling of a
+    /// host boundary (`context_recall` for `recall`) or one of its historical
+    /// aliases (`judge` for `verdict`). Left to load, such a stage would stop
+    /// being contributed the moment it crossed the wire:
+    /// `stella_protocol::StageName` resolves those names back into host
+    /// boundaries, so every surface would render this plugin's stage as one of
+    /// Stella's own.
+    #[error(
+        "[wrapper] contributes a stage named \"{stage}\", which is how the wire spells a stage \
+         this host emits — declare \"{spelled}\" to mean that stage, or choose a name that is \
+         not one of the host's"
+    )]
+    ContributedStageShadowsBoundary {
+        /// The name the manifest wrote.
+        stage: String,
+        /// The manifest's own spelling of the boundary it collided with.
+        spelled: &'static str,
+    },
+
+    /// A contributed stage's name is not a shape a surface can render.
+    ///
+    /// The narrowest rule that keeps the open vocabulary safe at its
+    /// **producer**: `stella_protocol::StageName` treats a contributed name as
+    /// opaque and case-sensitive, which is the right posture for a consumer
+    /// reading someone else's stream, and the wrong one for a manifest a human
+    /// consented to. Constraining the name here is what makes "two spellings
+    /// are two stages" harmless rather than a trap, and what keeps a stage name
+    /// from carrying control characters into a terminal cell.
+    #[error("[wrapper] contributes a stage named \"{stage}\", which cannot be used: {reason}")]
+    MalformedContributedStage {
+        /// The name the manifest wrote.
+        stage: String,
+        /// Which rule it broke, in the words a fix would use.
+        reason: String,
+    },
+
     /// A stage's `if` text is outside the closed condition grammar.
     ///
     /// Deliberately not a parser suggestion box: the grammar is two shapes
@@ -672,7 +721,7 @@ pub enum ManifestError {
         /// The signal read before it exists.
         signal: Signal,
         /// The stage that publishes it, declared later or not at all.
-        publisher: StageName,
+        publisher: HostStage,
     },
 
     /// A condition read a signal published by an earlier stage that is itself
@@ -700,7 +749,7 @@ pub enum ManifestError {
         /// The signal whose existence depends on a conditional stage.
         signal: Signal,
         /// The conditional stage that publishes it.
-        publisher: StageName,
+        publisher: HostStage,
     },
 
     /// Resolution reached a condition whose publishing stage did not run.
@@ -722,6 +771,6 @@ pub enum ManifestError {
         /// The signal nothing produced.
         signal: Signal,
         /// The stage that publishes it, skipped this turn.
-        publisher: StageName,
+        publisher: HostStage,
     },
 }

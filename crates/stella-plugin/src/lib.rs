@@ -157,4 +157,7 @@ pub use wire::{
     TestBaseline, TestPlan, TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict,
     VerdictRule, VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
 };
-pub use wrapper::{CompareOp, Condition, Signal, SignalKind, StageName, Wrapper, WrapperStage};
+pub use wrapper::{
+    CompareOp, Condition, HostStage, MAX_CONTRIBUTED_STAGE_LEN, Signal, SignalKind, StageName,
+    Wrapper, WrapperStage,
+};

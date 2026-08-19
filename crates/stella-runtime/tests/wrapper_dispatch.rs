@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use stella_plugin::{
-    EvidenceProvenance, Outcome, PluginManifest, SignalValues, StageName, StopReason,
+    EvidenceProvenance, HostStage, Outcome, PluginManifest, SignalValues, StageName, StopReason,
     TamperFinding, TurnOutcome, UnmetBecause, Verdict,
 };
 use stella_protocol::completion::{CompletionMessage, MessageRole};
@@ -257,7 +257,11 @@ async fn a_wrapper_plugins_verdict_decides_whether_another_turn_runs() {
     assert_eq!(first.round, 0);
     assert_eq!(
         first.stages,
-        [StageName::Triage, StageName::Research, StageName::Execute],
+        [
+            StageName::Host(HostStage::Triage),
+            StageName::Host(HostStage::Research),
+            StageName::Host(HostStage::Execute)
+        ],
         "`questions > 0` is published by triage, so the conditional stage runs"
     );
     assert_eq!(
@@ -299,6 +303,103 @@ async fn a_wrapper_plugins_verdict_decides_whether_another_turn_runs() {
         "the correction cites the declared requirement and what the evidence said: {}",
         correction.content
     );
+}
+
+/// A wrapper whose stage order includes one the host has never heard of — the
+/// producer half of the open stage vocabulary (#3963).
+const CONTRIBUTED_MANIFEST: &str = r#"
+name = "lite-triage"
+description = "does its own cheap triage before the turn"
+
+[loop]
+participation = "arbiter"
+hooks = ["Stop"]
+points = ["before_turn", "after_turn"]
+
+[requirements]
+answered = "the turn produced an answer"
+
+[oracle]
+command = { argv = ["true"], timeout_secs = 5 }
+flip = "not-applicable"
+measurements = ["answers"]
+
+[[oracle.checks]]
+requirement = "answered"
+check = "answers >= 1"
+
+[wrapper]
+id = "lite-v1"
+
+[[wrapper.stages]]
+name = "triage-lite"
+
+[[wrapper.stages]]
+name = "execute"
+"#;
+
+/// A plugin that answers **differently per stage**, so what reaches it is
+/// observable rather than assumed: only the request naming `triage-lite`
+/// produces the lite-triage note.
+const CONTRIBUTED_PLUGIN: &str = r#"
+input=$(cat)
+case "$input" in
+  *'"point":"after_turn"'*)
+    printf '%s\n' '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"answers":1}}}}'
+    ;;
+  *'"stage":"triage-lite"'*)
+    printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"triage-lite","text":"this task is small; skip the plan"}]}}'
+    ;;
+  *)
+    printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"other","text":"a host stage"}]}}'
+    ;;
+esac
+"#;
+
+/// **The witness for #3963.** A stage that exists only because a manifest said
+/// so is dispatched under its own word: the plugin is asked `before_turn` for
+/// `triage-lite`, and what it contributes for that stage reaches the turn.
+///
+/// Fails before the change at load, not at dispatch — `PluginManifest`'s stage
+/// vocabulary was closed, so `CONTRIBUTED_MANIFEST` did not parse and there was
+/// no stage for `WrapperDispatch` to iterate.
+#[tokio::test]
+async fn a_contributed_stage_is_dispatched_under_its_own_word() {
+    let manifest = PluginManifest::from_toml_str(CONTRIBUTED_MANIFEST)
+        .expect("a manifest may contribute a stage");
+    let dispatch = WrapperDispatch::bind(manifest, plugin(CONTRIBUTED_PLUGIN))
+        .expect("[wrapper] declared")
+        .with_host_max_holds(0);
+
+    let mut host = Recorder::new(vec!["renamed the field"]);
+    let report = dispatch
+        .run(input("rename the field"), &mut host)
+        .await
+        .expect("a validated wrapper resolves");
+    assert!(
+        report.faults.is_empty(),
+        "the plugin answered every point: {:?}",
+        report.faults
+    );
+
+    let turn = &host.turns[0];
+    assert_eq!(
+        turn.stages,
+        [
+            StageName::Contributed("triage-lite".to_string()),
+            StageName::Host(HostStage::Execute),
+        ],
+        "the turn ran the stage the manifest invented, in the position it declared"
+    );
+    // The contribution is what proves `before_turn` actually named the stage:
+    // the plugin branches on the wire's `stage` field, and only the
+    // `triage-lite` arm produces this text.
+    assert_eq!(
+        turn.messages[0].content, "this task is small; skip the plan",
+        "the plugin was asked about triage-lite by name, not about some \
+         host stage standing in for it"
+    );
+    assert_eq!(turn.messages[1].content, "a host stage");
 }
 
 /// The falsifier for the test above: with the plugin never able to report a

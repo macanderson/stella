@@ -203,8 +203,11 @@ before it crosses.
   every cross-field validation rule, each documented on the `ManifestError`
   variant that enforces it.
 - `src/wrapper.rs` — the `[wrapper]` block: `Wrapper`, `WrapperStage`, the
-  closed `StageName` and `Signal` vocabularies, the `Condition` grammar and
-  its parser, and the load-time stage-graph check.
+  **open** `StageName` vocabulary over the closed `HostStage` twelve (#3963 —
+  a manifest may contribute a stage under its own word, and the load checks
+  that keep such a name dispatchable, renderable and distinguishable from a
+  host boundary), the still-closed `Signal` vocabulary, the `Condition`
+  grammar and its parser, and the load-time stage-graph check.
 - `src/program.rs` — the reader: `SignalValues` (the host's answer for every
   published signal, total by construction), `Condition::evaluate`,
   `Wrapper::resolve`, and the resolved `StageProgram`.

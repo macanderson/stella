@@ -34,7 +34,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use stella_plugin::{
-    BeforeTurnRequest, HostCallRefusal, PROTOCOL_VERSION, PluginManifest, StageName,
+    BeforeTurnRequest, HostCallRefusal, HostStage, PROTOCOL_VERSION, PluginManifest, StageName,
 };
 use stella_protocol::candidate::CandidateHandle;
 use stella_protocol::event::ModelCallRole;
@@ -230,7 +230,7 @@ fn before() -> BeforeTurnRequest {
     BeforeTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "candidates-v1".into(),
-        stage: StageName::Research,
+        stage: StageName::Host(HostStage::Research),
         round: 0,
         goal: "make tests/test_flip.py pass".into(),
         candidate: None,
