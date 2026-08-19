@@ -8,6 +8,17 @@ yes or no. Nothing a plugin does is inferred.
 | Plugin | Replaces | Points | Status |
 | --- | --- | --- | --- |
 | [`stella-research/`](stella-research/) | the pipeline's research **and recall** stages | `before_turn` | Track B's first extraction (#3380 §7); recall asks the host for the context plane (#3540) |
+| [`stella-plan/`](stella-plan/) | the pipeline's plan stage | `before_turn` | Track B's second extraction (#3380 §7); the plan *is* a model call, so it asks the host for one bounded `child_turn` at the `planner` role intent (#3562, #3576) |
+| [`stella-goal/`](stella-goal/) | `stella goal`'s `Engine::assess` supervision loop, as a generic arbiter wrapper — not a staged-pipeline stage | `before_turn`, `after_turn` | The goal-supervision reference plugin (#3695 goal half; `doc:turn-loop-wrappers` §9.2); its designed home is `stella run --pipeline goal-v1` — `stella goal` itself refuses to load it at bind time, one arbiter per round rather than two (#3832) |
+
+A fourth directory, [`stella-selfdriving/`](stella-selfdriving/), is
+deliberately not in this table: it is a **host, not a wrapper**
+(`participation = "none"`, no `[runtime]`/`[wrapper]`/`[oracle]`) — it drives
+Stella from outside a turn rather than answering a wrapper point, so
+"Replaces" and "Points" do not apply to it. It exists to make the perpetual
+delivery loop's already-held authority expressible and showable before
+install, not to extract a pipeline stage; see its own README for what it is
+and, as pointedly, what it is not yet.
 
 ## Why these are not workspace members
 

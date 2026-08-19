@@ -91,7 +91,7 @@ impl super::Engine<'_> {
     /// preceded by folding in any spend sub-agents incurred since the last
     /// boundary.
     ///
-    /// The fold has to happen *here*, not after the turn: a `task`-style tool
+    /// The fold has to happen *here*, not after the turn: a `delegate`-style tool
     /// spawns a child from inside `ToolExecutor::execute`, where the engine
     /// already holds `budget` mutably, so the child's cost arrives
     /// out-of-band through [`crate::ports::ToolExecutor::drain_sub_agent_spend_usd`].

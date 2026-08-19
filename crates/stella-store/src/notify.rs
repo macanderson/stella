@@ -114,7 +114,7 @@ impl NotificationStore {
     pub fn push(&self, notification: &Notification) -> Result<()> {
         crate::ensure_private_dir(&self.dir)?;
         let json = serde_json::to_string_pretty(notification)
-            .map_err(|e| StoreError(format!("cannot serialize notification: {e}")))?;
+            .map_err(|e| StoreError::serde("cannot serialize notification", e))?;
         let path = self.path_for(&notification.id);
         // sync = true: without it the rename can publish a file whose bytes
         // are still only in the page cache, and a power cut surfaces a
@@ -183,7 +183,7 @@ impl NotificationStore {
                 match std::fs::remove_file(self.path_for(&notification.id)) {
                     Ok(()) => removed += 1,
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(StoreError(format!("cannot prune notification: {e}"))),
+                    Err(e) => return Err(StoreError::io("cannot prune notification", e)),
                 }
             }
         }

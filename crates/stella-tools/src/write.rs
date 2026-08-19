@@ -2,6 +2,31 @@
 //! Successful writes record the written bytes in the session's read-state
 //! ledger (#331): the model knows the content it just produced, so its own
 //! write must never be misattributed later as out-of-band drift.
+//!
+//! # The no-clobber guard (#3738)
+//!
+//! `write_file` takes the whole file as one argument, so a call against a path
+//! that already exists replaces every byte the model did not write — including
+//! the bytes it never looked at. That is not a hypothetical: the tool's own
+//! description invites "create or overwrite", and a model that has seen a
+//! fragment of a file (a ranged read, a `search` hit, a symbol) will
+//! confidently hand back the fragment as the whole thing.
+//!
+//! So an overwrite is refused unless [`ReadLedger::saw_whole_file`] says this
+//! session was shown every line of the file. The predicate is deliberately the
+//! *coverage* one and not "was it read at all": a partial read is exactly the
+//! state that produces a confident truncation. Three consequences, all
+//! intended:
+//!
+//! * **Creating a file needs no read** — there is nothing to clobber, and the
+//!   check costs one confined `stat` off the root descriptor already open for
+//!   the write.
+//! * **A successful write earns its own coverage.** The model authored those
+//!   bytes, so it has now seen the file whole; without this a second write to
+//!   the same path in one turn would be refused for content the model itself
+//!   produced.
+//! * **`edit_file` is untouched.** It replaces a needle it had to know to
+//!   name, and it is the escape hatch the refusal points at.
 
 use std::sync::Arc;
 
@@ -29,7 +54,7 @@ impl Tool for WriteFile {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "write_file".into(),
-            description: "Create or overwrite a file. Creates parent directories as needed.".into(),
+            description: "Create or overwrite a file. Creates parent directories as needed. Overwriting an existing file is refused unless you have already read all of it this session — read_file it in full first, or use edit_file to change part of it in place.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -81,6 +106,22 @@ impl Tool for WriteFile {
             }
         };
 
+        // The no-clobber guard (module header). Asked through the descriptor
+        // already open for the write rather than by path, so the existence
+        // answer and the bytes that follow it name the same file; and asked
+        // *before* the write, because a refusal that arrives after the content
+        // is gone is a report, not a boundary. A `stat` that fails for any
+        // reason — absent, unreadable, an escape — is not evidence that
+        // something is there to destroy, and the write below answers it
+        // properly.
+        if handle.stat(path).is_ok() && !self.ledger.saw_whole_file(root, path) {
+            return ToolOutput::error(format!(
+                "refusing to overwrite `{path}`: this session has not been shown the whole file, \
+                 and `write_file` replaces all of it. Read it first (`read_file` with no \
+                 offset/limit), then write — or use `edit_file` to change part of it in place."
+            ));
+        }
+
         match crate::durable_write::write_file_durably_at(
             handle,
             path.to_string(),
@@ -91,6 +132,11 @@ impl Tool for WriteFile {
         {
             Ok(()) => {
                 self.ledger.record_known(root, path, content);
+                // The model authored every byte now on disk, which is the
+                // question the guard above asks. Recorded separately from the
+                // hash because they are separate facts: `record_known` says
+                // what the content is, this says the model has seen all of it.
+                self.ledger.record_coverage(root, path, true);
                 let bytes = content.len();
                 ToolOutput::ok(format!("wrote {bytes} bytes to {path}"))
             }
@@ -145,6 +191,140 @@ mod tests {
             )
             .await;
         assert!(result.is_error());
+    }
+
+    /// A fresh empty directory unique to one test. The no-clobber tests below
+    /// both create and overwrite, so they cannot share the bare temp dir the
+    /// single-shot tests above use.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("stella_write_guard_{}_{name}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// Witness for #3738: `ReadLedger::saw_whole_file` exists to gate exactly
+    /// this call, and before the guard landed the overwrite went through with
+    /// the ledger never consulted.
+    #[tokio::test]
+    async fn overwriting_a_file_the_model_has_not_read_is_refused() {
+        let dir = scratch("unread");
+        std::fs::write(dir.join("notes.md"), "one\ntwo\nthree\n").expect("seed");
+
+        let result = WriteFile::default()
+            .execute(
+                &serde_json::json!({"path": "notes.md", "content": "clobbered"}),
+                &cx(&dir),
+            )
+            .await;
+
+        let ToolOutput::Error { message, .. } = result else {
+            panic!("expected the no-clobber refusal");
+        };
+        assert!(message.contains("refusing to overwrite"), "{message}");
+        assert!(
+            message.contains("read_file"),
+            "the refusal names the way out: {message}"
+        );
+        // The boundary holds before the bytes move, not after.
+        assert_eq!(
+            std::fs::read_to_string(dir.join("notes.md")).expect("still there"),
+            "one\ntwo\nthree\n"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The coverage the guard wants is a *whole-file* read, and a read that
+    /// showed the model one of three lines is the state that produces a
+    /// confident truncation.
+    #[tokio::test]
+    async fn a_ranged_read_does_not_license_an_overwrite() {
+        let dir = scratch("ranged");
+        std::fs::write(dir.join("notes.md"), "one\ntwo\nthree\n").expect("seed");
+        let ledger = Arc::new(ReadLedger::default());
+
+        let read = crate::read::ReadFile::with_ledger(ledger.clone())
+            .execute(
+                &serde_json::json!({"path": "notes.md", "limit": 1}),
+                &cx(&dir),
+            )
+            .await;
+        assert!(!read.is_error(), "the ranged read itself is fine");
+
+        let result = WriteFile::with_ledger(ledger)
+            .execute(
+                &serde_json::json!({"path": "notes.md", "content": "clobbered"}),
+                &cx(&dir),
+            )
+            .await;
+        assert!(result.is_error(), "a 1-of-3-line read is not coverage");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The other half of the witness: having actually seen the file, the model
+    /// may replace it. A guard that refused here would be a wall, not a gate.
+    #[tokio::test]
+    async fn an_overwrite_after_a_whole_file_read_is_allowed() {
+        let dir = scratch("whole");
+        std::fs::write(dir.join("notes.md"), "one\ntwo\nthree\n").expect("seed");
+        let ledger = Arc::new(ReadLedger::default());
+
+        let read = crate::read::ReadFile::with_ledger(ledger.clone())
+            .execute(&serde_json::json!({"path": "notes.md"}), &cx(&dir))
+            .await;
+        assert!(
+            !read.is_error(),
+            "the read must succeed for the test to mean anything"
+        );
+
+        let result = WriteFile::with_ledger(ledger)
+            .execute(
+                &serde_json::json!({"path": "notes.md", "content": "rewritten"}),
+                &cx(&dir),
+            )
+            .await;
+        match result {
+            ToolOutput::Ok { content, .. } => assert!(content.contains("wrote 9 bytes")),
+            ToolOutput::Error { message, .. } => panic!("expected the write to land: {message}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.join("notes.md")).expect("rewritten"),
+            "rewritten"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A successful write earns its own coverage: the model authored every
+    /// byte on disk, so the guard must not then refuse it access to what it
+    /// just produced.
+    #[tokio::test]
+    async fn a_write_covers_the_file_it_just_wrote() {
+        let dir = scratch("rewrite");
+        let ledger = Arc::new(ReadLedger::default());
+        let tool = WriteFile::with_ledger(ledger);
+
+        let first = tool
+            .execute(
+                &serde_json::json!({"path": "fresh.txt", "content": "v1"}),
+                &cx(&dir),
+            )
+            .await;
+        assert!(!first.is_error(), "creating a file needs no read");
+
+        let second = tool
+            .execute(
+                &serde_json::json!({"path": "fresh.txt", "content": "v2"}),
+                &cx(&dir),
+            )
+            .await;
+        match second {
+            ToolOutput::Ok { .. } => {}
+            ToolOutput::Error { message, .. } => {
+                panic!("a rewrite of content the model authored must pass: {message}")
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]

@@ -121,6 +121,25 @@ fn workspace() -> tempfile::TempDir {
     root
 }
 
+/// Archive a published record in place, the shape `stella ingest --refresh` writes:
+/// a new revision with `status = "archived"` that supersedes the one it replaces,
+/// re-stamped so the file still verifies on load
+/// (`crate::ingest_cmd::refresh::retire`). Written out here rather than driven
+/// through `refresh` because this test is about the *reading* half; the handshake
+/// between the two commands has its own witness in that module's tests.
+fn archive_in_place(root: &Path, lineage_id: &str) {
+    let path = root.join(RULES_DIR).join(format!("{lineage_id}.toml"));
+    let contents = std::fs::read_to_string(&path).expect("published");
+    let mut file: ContextFile = toml::from_str(&contents).expect("parses");
+    let defaults = file.defaults.clone().unwrap_or_default();
+    for record in &mut file.records {
+        record.status = Some(stella_core::context_record::RecordStatus::Archived);
+        record.supersedes_record_id = record.record_id.clone();
+        record.stamp(&defaults).expect("re-stamps");
+    }
+    std::fs::write(&path, toml::to_string_pretty(&file).expect("serializes")).expect("writes");
+}
+
 // Resolution
 
 #[test]
@@ -622,6 +641,30 @@ fn validate_passes_a_clean_workspace_and_fails_a_refuted_one() {
     review::run_keep(root.path(), "node-version", None, false).expect("keep succeeds");
     let err = validate::run_validate(root.path(), QueryFormat::Text).unwrap_err();
     assert!(err.contains("must not steer"), "{err}");
+}
+
+/// #3254: the retirement exemption is for the lifecycle status alone.
+///
+/// `validate` stops counting a record that is out of selection **because somebody
+/// retired it**, which is what lets a completed retirement end green. The half that
+/// keeps this a check is here: a refuted claim beside it must still fail, and the
+/// count must name only it — an exemption that also swallowed the refutation would
+/// turn the whole command into a report nobody acts on.
+#[test]
+fn an_archived_record_does_not_block_but_a_refuted_one_still_does() {
+    let root = workspace();
+    review::run_keep(root.path(), "pkg-manager", None, false).expect("keep succeeds");
+    archive_in_place(root.path(), "ctx.acme.web.pkg-manager");
+    validate::run_validate(root.path(), QueryFormat::Text)
+        .expect("a retired revision does not fail the check");
+    validate::run_validate(root.path(), QueryFormat::Json).expect("and in json");
+
+    review::run_keep(root.path(), "node-version", None, false).expect("keep succeeds");
+    let err = validate::run_validate(root.path(), QueryFormat::Text).unwrap_err();
+    assert_eq!(
+        err, "1 record(s) must not steer anything until this is resolved",
+        "exactly one — the refuted claim, not the retired one"
+    );
 }
 
 /// `list`'s channel column reports where a record actually lands.

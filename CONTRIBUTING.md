@@ -86,6 +86,7 @@ python3 ./scripts/check-doc-links.py check
 python3 ./scripts/check-module-reachability.py
 python3 ./scripts/check-typed-errors.py
 ./scripts/check-diagnostic-codes.sh
+./scripts/check-bench-suites.sh
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check
@@ -134,8 +135,15 @@ your diff can actually reach, so a change confined to one crate no longer pays
 for all 28 members (#1135). It falls back to the whole workspace for a push to
 `main`, a tag, a diff touching a workspace-root manifest / `Cargo.lock` / a
 build script / the gate machinery, and for anything it cannot narrow with
-confidence. See what it would choose with `make impacted`. Under time pressure,
-step down a rung rather than switching the gate off:
+confidence. See what it would choose with `make impacted`.
+
+If the diff touches the Python bench tooling (`bench/**`, `arenabench/**`,
+`crates/stella-model/src/catalog.rs`, or `.github/workflows/bench.yml`) the hook
+also runs `make bench-test`, which runs every pytest suite that workflow gates
+and needs [uv](https://docs.astral.sh/uv/). It is not a `make gate` step — it
+costs minutes, and a Rust-only push cannot have changed its answer (#2847).
+
+Under time pressure, step down a rung rather than switching the gate off:
 
 ```bash
 GATE=fast git push       # guards + fmt + clippy — no rustdoc, no tests
@@ -206,8 +214,9 @@ rule of thumb is one sentence each:
 | Turn text into a vector, or compare two vectors | `stella-embed` |
 | The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) |
 
-`stella-pipeline` drives the default
-`stella run` path, `stella-fleet` powers `stella fleet`, and `stella-tui` is the
+`stella-pipeline` is opt-in — `stella run --pipeline classic` drives it, while
+a plain `stella run` runs the raw step-loop — `stella-fleet` powers
+`stella fleet`, and `stella-tui` is the
 Command Deck (the default interactive shell on a TTY). The context/graph
 plane is wired too — `stella init` builds the code-graph index and recall fans
 out through the CGP host. For what each crate is, see the crate table in the
@@ -245,8 +254,10 @@ For a behavior change or feature, your PR should include a **witness test**:
 - it **passes** with your change (the feature is genuinely present).
 
 You can check this the artisanal way (`git stash && cargo test -p <crate>`),
-or let Stella verify Stella — run your task through `stella run`, whose
-pipeline witness stage enforces exactly this fail→pass contract.
+or let Stella verify Stella — run your task through `stella run --pipeline
+classic`, whose witness stage enforces exactly this fail→pass contract (a
+plain `stella run`, with no `--pipeline` flag, is the raw step-loop and does
+not verify on its own).
 
 Pure refactors, docs, and CI changes don't need a witness — say so in the PR
 template and move on. If a witness is genuinely impractical (e.g. TUI

@@ -1,0 +1,9 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "plan-v1",
+    "stage": "plan",
+    "round": 0
+  }
+}

@@ -135,7 +135,7 @@ fn the_subagent_spawn_tool_is_the_only_parallel_safe_builtin() {
     let names = ToolExecutor::parallel_safe_names(&reg);
     assert_eq!(
         names,
-        std::collections::HashSet::from(["task".to_string()]),
+        std::collections::HashSet::from(["delegate".to_string()]),
         "parallel_safe is a per-tool construction argument, not a default"
     );
 }
@@ -255,5 +255,60 @@ async fn get_environment_reports_the_registrys_scratch_directory() {
     assert!(
         content.contains("Scratch directory: ") && !content.contains("unavailable this session"),
         "the registry-owned scratch dir must be reported by path: {content}"
+    );
+}
+
+/// A `task` delegation dispatched through the registry lands one `agent_uses`
+/// row carrying the child's minted agent id (#3807).
+///
+/// The witness: before the [`crate::ctx::ToolCtx`] attribution seam the tool
+/// had no reach into the ledger at all, so eight delegations drained zero
+/// rows and sub-agent health had no audit trail. Written against
+/// `execute` + `drain_agent_uses` — the same two calls the session driver
+/// makes — so it measures the wiring rather than the new method.
+#[tokio::test]
+async fn a_task_delegation_records_an_agent_use_row() {
+    use stella_core::subagent::{SubAgentOutcome, SubAgentReport};
+
+    struct StubDispatcher;
+
+    #[async_trait::async_trait]
+    impl stella_core::subagent::SubAgentDispatcher for StubDispatcher {
+        async fn dispatch(&self, _spec: stella_core::subagent::SubAgentSpec) -> SubAgentOutcome {
+            SubAgentOutcome::Completed(SubAgentReport {
+                summary: "the retry policy is in stella-core/src/retry.rs".into(),
+                truncated: false,
+                cost_usd: 0.004,
+                steps: 3,
+                absorbed_messages: 7,
+            })
+        }
+    }
+
+    let (_root, reg) = bare_registry();
+    reg.attach_sub_agent_dispatcher(Arc::new(StubDispatcher));
+
+    let out = reg
+        .execute(
+            "task",
+            &serde_json::json!({
+                "description": "find retry policy",
+                "prompt": "Which file defines the retry policy?",
+            }),
+        )
+        .await;
+    assert!(!out.is_error(), "the stub child completes: {out:?}");
+
+    let uses = reg.drain_agent_uses();
+    assert_eq!(uses.len(), 1, "one delegation, one row: {uses:?}");
+    assert_eq!(
+        uses[0].agent, "find-retry-policy",
+        "the row carries the child's minted agent id"
+    );
+    assert_eq!(uses[0].version, 1, "a minted child is un-versioned");
+    assert_eq!(uses[0].reason, "find retry policy");
+    assert!(
+        reg.drain_agent_uses().is_empty(),
+        "the drain discipline holds — a second drain has nothing"
     );
 }

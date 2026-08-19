@@ -13,7 +13,7 @@
 //! - the **working surface** — one shell ([`bash`]), the file CRUD quartet
 //!   ([`read`] / [`mod@write`] / [`edit`] / [`delete`]), and one unified code
 //!   search ([`search`], lexical and semantic in a single `query` parameter);
-//! - the **coordination surface** — the sub-agent spawn tool (`task`), the
+//! - the **coordination surface** — the sub-agent spawn tool (`delegate`), the
 //!   session task board (`task_create` / `task_list` / `task_start` /
 //!   `task_complete` / `task_cancel` / `task_assign`), the session scratch
 //!   state plane (`save_state` / `get_state` / `list_state` / `delete_state`),

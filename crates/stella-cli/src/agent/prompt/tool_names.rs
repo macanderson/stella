@@ -35,10 +35,13 @@ use super::parity::STATIC_PROMPTS;
 
 /// Whether `text` names `word` as a whole word.
 ///
-/// Substring matching cannot answer this question here: `task` is a tool and
-/// so are the six `task_*` rows, so a `contains("task")` is satisfied by
-/// `task_create` alone and the delegation tool could go missing unnoticed.
-/// Underscore counts as a word character for exactly that reason.
+/// Substring matching cannot answer this question here: a retired name sits
+/// inside a live identifier often enough that `contains` reads the wrong
+/// answer in both directions — `read_output` is a deleted tool and
+/// `read_output_buffer` is ordinary prose, and the six `task_*` rows would
+/// satisfy a search for a shorter `task_`-prefixed name that nothing
+/// introduces. Underscore counts as a word character for exactly that
+/// reason.
 fn names_word(text: &str, word: &str) -> bool {
     let is_word_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
     text.match_indices(word).any(|(at, _)| {
@@ -129,8 +132,10 @@ fn no_static_prompt_names_a_retired_tool() {
 /// when it is too lax *and* when it is too strict. This pins the two
 /// confusions that would matter.
 #[test]
-fn whole_word_matching_separates_task_from_task_create() {
-    // Too lax: the six board rows must not satisfy the delegation tool.
+fn whole_word_matching_separates_a_prefix_from_the_name_it_sits_in() {
+    // Too lax: a shorter name must not be satisfied by a longer row that
+    // merely starts with it. `task` is the retired delegation name (#3192)
+    // and the six board rows must not read as a mention of it.
     assert!(!names_word(
         "the board: task_create, task_list, task_start",
         "task"

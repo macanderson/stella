@@ -5,9 +5,13 @@ staged turn flow — **triage → recall → research → plan → scope → exe
 verify → verdict** (`stage_rank` in [`src/replay.rs`](src/replay.rs) is the canonical
 ordering; the witness is authored on demand, *after* execution, once the warrant has read
 the diff, and the revise back-edges land on execute so re-execution never re-authors) —
-over injected ports, emitting an `AgentEvent` at every stage boundary. This is still the
-default `stella run` path today, and it is the crate on its way out of the workspace: see
-"Direction" below before planning anything here.
+over injected ports, emitting an `AgentEvent` at every stage boundary. **This is no longer
+the default `stella run` path.** Since #3381 (shipped #3694), the raw step-loop is the
+default on every door; this crate runs only when a caller passes `--pipeline classic`
+(recorded on `stella-cli`'s side as the `classic` variant — see
+[`crates/stella-cli/src/wrapper_plugin.rs`](../stella-cli/src/wrapper_plugin.rs)). It is
+still the crate on its way out of the workspace: see "Direction" below before planning
+anything here.
 
 Two boundaries define the crate. First, **no I/O**: it never imports a provider SDK, a
 shell, a context store, or a terminal — everything crosses the traits in
@@ -34,11 +38,17 @@ Rust ports or the HTTP surface. Verification is not part of that loop. It is a w
 this crate is that wrapper, and the plan (`doc:turn-loop-wrappers`, sequenced by #3246)
 is for it to leave the workspace and be installed as a plugin instead.
 
-State it plainly, because it changes what Stella *is*: **once this crate is a plugin,
-Stella does not verify its own work unless the plugin is installed.** A raw turn runs the
-loop, reports what it changed, and stops. The witness contract, the flip oracle, the
-evidence ladder and the revise policy all travel with the plugin — they do not become
-weaker, they become opt-in, and the product claim moves with them.
+State it plainly, because it already changed what Stella *is*, ahead of this crate
+literally leaving the workspace: **since the flag inversion (#3381/#3694), Stella does
+not verify its own work unless a wrapper is asked for.** A raw turn runs the loop, reports
+what it changed, and stops — that is now the default on every door. The witness contract,
+the flip oracle, the evidence ladder and the revise policy still exist and still run
+exactly as before, but only when `--pipeline classic` selects this crate; they did not
+become weaker, they became opt-in, and the product claim moved with them (`AGENTS.md`'s
+opening now states "verified done, not claimed done" as a property of the path, not of the
+binary). What has *not* yet happened is this crate leaving the workspace as an installed,
+out-of-process plugin like `plugins/stella-research` — it still ships in-tree and is still
+`stella-cli`'s built-in `classic` variant.
 
 The three moves, in dependency order:
 
@@ -63,12 +73,21 @@ The three moves, in dependency order:
    by a variant id the store's `pipeline_variant` column records (#3388, landed) so two
    pipeline designs can be compared with a `GROUP BY` instead of a rebuild.
    [`src/variant.rs`](src/variant.rs) reads the shipped `classic.toml` and resolves it
-   into the ordered `StageProgram` a turn would run — that reading is real, not a stub.
-   What is still open: `pipeline.rs` does not yet take that `StageProgram` as its
-   instruction, so today the resolved answer and the branches `pipeline.rs` actually
-   executes are two things asserted to agree rather than one thing driving the other.
-   The last step of the same issue inverts the flag: the raw loop becomes the default
-   and `--pipeline <variant>` opts in, with `--no-pipeline` kept as an inert alias.
+   into the ordered `StageProgram` a turn would run. **`pipeline.rs` now takes that answer
+   as its instruction, not just an assertion checked against it** (#3408, #3672):
+   [`src/schedule.rs`](src/schedule.rs) walks `stella_plugin::ProgressiveResolver` stage by
+   stage as each stage's real facts become known, and
+   [`src/pipeline/schedule_wiring.rs`](src/pipeline/schedule_wiring.rs) is the seam that
+   calls it from `Pipeline::run` — `Pipeline::begin_turn_schedule` decides everything
+   through `witness` once, pre-execute, and each best-of-N candidate clones that `Schedule`
+   to decide its own `verify` post-execute, against its own real diff. Three gates the
+   closed condition grammar cannot express — the conversational fast path, the
+   witness-roster requirement, and the simple-lookup zero-diff guard — stay host-internal
+   Rust, each commented at its call site with why it is not in the manifest; every other
+   stage decision in `classic.toml` is the manifest's to make. The flag inversion this item
+   promised has also shipped (#3381, PR #3694): the raw loop is the default on every door,
+   `--pipeline classic` is the opt-in that selects this crate, and `--no-pipeline` is a
+   deprecated no-op kept parseable so no script breaks.
 
 Two planning consequences right now. Anything that would grow
 [`src/pipeline.rs`](src/pipeline.rs) — already a god file closed to growth — is
@@ -155,7 +174,9 @@ as a planning assumption.
 | [`src/candidate_fanout.rs`](src/candidate_fanout.rs) | `fan_out_width` and `FanOutBudget` — how wide a fan-out runs and how one turn's money is split between candidates spending at the same time. Pure; the normative statement of the overshoot window. |
 | [`src/pipeline/fanout_stage.rs`](src/pipeline/fanout_stage.rs) | The concurrent dispatch itself: workspace creation (serialized), `buffer_unordered` over the candidates, results re-ordered by index. |
 | [`src/pipeline/attachments.rs`](src/pipeline/attachments.rs), [`src/pipeline/fallback.rs`](src/pipeline/fallback.rs) | The single funnel every engine this pipeline builds goes through (gate, calibration, breaker feedback, mid-turn fallback), and the router-backed `FallbackResolver` it attaches. Every engine site states a `FallbackPosture` — re-resolve this role, or a named reason for withholding. |
-| [`src/variant.rs`](src/variant.rs) + [`variants/classic.toml`](variants/classic.toml) | The stage order as a manifest instead of branches (#3381/#3408). `classic.toml` is shipped, not a fixture: `variant::classic_program` resolves it through `stella-plugin` into the ordered stage program a turn runs, and `variant::signals` is the host's half — the facts the manifest's conditions read. Consulted, not yet *driving*: `pipeline.rs` still takes its own branches until the wrapper interception points land (#3380). |
+| [`src/variant.rs`](src/variant.rs) + [`variants/classic.toml`](variants/classic.toml) | The stage order as a manifest instead of branches (#3381/#3408). `classic.toml` is shipped, not a fixture: `variant::classic_program` resolves it through `stella-plugin` into the ordered stage program a turn runs, and `variant::signals` is the host's half — the facts the manifest's conditions read. `Pipeline::effective_variant` also runs `refuse_witness_reading_post_triage` here, before the first paid call, so a hand-written variant whose `witness` condition could not be honestly decided at the triage boundary is rejected at load rather than mid-run. |
+| [`src/schedule.rs`](src/schedule.rs) | `Schedule` — a thin, stateful wrapper over `stella_plugin::ProgressiveResolver` that answers `Schedule::decide`: does this stage run, against whichever `SignalValues` the host has learned so far (#3408, #3672). This is what makes the manifest *drive* the turn rather than merely describe it: every call site ANDs the manifest's answer with the small set of grammar-inexpressible host-internal facts (the conversational fast path, the witness-roster requirement, the simple-lookup zero-diff guard), each commented with why it stays in Rust. |
+| [`src/pipeline/schedule_wiring.rs`](src/pipeline/schedule_wiring.rs) | The seam between `schedule.rs` and `Pipeline::run`: `Pipeline::begin_turn_schedule` decides the shared prefix (`triage` through `witness`) once, pre-execute, because `witness` must be known before the user message is assembled; each best-of-N candidate then clones that `Schedule` and decides its own `execute`/`verify` against its own real per-candidate diff, post-execute. Split out of `pipeline.rs` because that file is a grandfathered god file closed to growth. |
 | [`src/mcp_prefetch.rs`](src/mcp_prefetch.rs) | `fold`: shared MCP context gathered once at the top of a fan-out instead of N times. |
 | [`src/replay.rs`](src/replay.rs), [`src/replay/golden.rs`](src/replay/golden.rs) | `validate_stream` / `structural_diff` / `parse_jsonl`, and the golden fixture format with its provenance manifest. |
 

@@ -333,7 +333,7 @@ pub(crate) struct GitCandidateWorkspaces {
     root: PathBuf,
     /// The operator's tool switches, applied over each candidate's own tool
     /// stack — best-of-N must not be a way around a
-    /// `"tools": {"task": "off"}`.
+    /// `"tools": {"delegate": "off"}`.
     policy: stella_tools::policy::ToolPolicy,
     /// The session's custom script tools, re-rooted at each candidate's
     /// snapshot (their subprocesses spawn with the snapshot as cwd, so they
@@ -360,7 +360,7 @@ pub(crate) struct GitCandidateWorkspaces {
     /// fan-out neither widens nor narrows what the session was allowed.
     allowed_write_dirs: Vec<PathBuf>,
     /// The session's sub-agent runner, shared into every candidate registry.
-    /// `None` leaves the `task` tool reporting sub-agents as unavailable —
+    /// `None` leaves the `delegate` tool reporting sub-agents as unavailable —
     /// see [`GitCandidateWorkspaces::with_sub_agents`].
     sub_agents: Option<Arc<dyn stella_core::subagent::SubAgentDispatcher>>,
     /// Where adopted changes are attributed durably (#3419). `None` leaves
@@ -424,7 +424,7 @@ impl GitCandidateWorkspaces {
 
     /// Let every candidate delegate through the session's sub-agent runner.
     ///
-    /// Without this a candidate's `task` tool answers "sub-agents are
+    /// Without this a candidate's `delegate` tool answers "sub-agents are
     /// unavailable in this session — do the work directly with your own
     /// tools", advice a candidate cannot take: the built-in surface has no
     /// command-executing tool, so a worker there could move the task board
@@ -535,7 +535,7 @@ impl GitCandidateWorkspaces {
                 }
                 // Same late-attachment window as the two above, and for the
                 // same reason: while `registry` is still a concrete
-                // `ToolRegistry`. Without it the candidate's `task` tool is
+                // `ToolRegistry`. Without it the candidate's `delegate` tool is
                 // dead schema (#3318).
                 if let Some(dispatcher) = &self.sub_agents {
                     registry.attach_sub_agent_dispatcher(dispatcher.clone());

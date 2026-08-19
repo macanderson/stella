@@ -60,7 +60,9 @@ Nothing here dispatches a stage itself: this crate declares the stage names
 and the wire contract a plugin speaks over them (`wire.rs`), but the trait
 that actually calls `before_turn`/`after_turn` — and the `judge`/`again` that
 follow — lives one crate up, in `stella-runtime` (#3380, landed #3479,
-`doc:wrapper-socket` §2). No live turn calls that trait yet; see
+`doc:wrapper-socket` §2). `stella_runtime::WrapperDispatch` now calls all
+four points for a live turn — `stella-cli` drives it on `--pipeline
+<variant>` for both `stella run` and `stella goal` (#3494) — see
 `stella-runtime`'s own README for exactly what "landed" covers there. The
 crate still takes no engine dependency by contract, which is what let the
 load-time contract ship complete before the runtime half existed, and still
@@ -204,6 +206,13 @@ before it crosses.
 - `src/program.rs` — the reader: `SignalValues` (the host's answer for every
   published signal, total by construction), `Condition::evaluate`,
   `Wrapper::resolve`, and the resolved `StageProgram`.
+- `src/progressive.rs` (#3491) — `ProgressiveResolver`, the stage-at-a-time
+  sibling of `Wrapper::resolve`: a host calls `advance` once per declared
+  stage, in order, handing in only the `SignalValues` known at that boundary,
+  so a condition on an execute/witness/verify signal is answered from a real
+  per-boundary value rather than a pre-run snapshot. `Clone`, so a caller
+  fanning one turn into several candidates gives each its own copy from a
+  shared prefix. `stella-pipeline`'s `Schedule` is a thin wrapper over this.
 - `src/evidence.rs` — the `[oracle]` block's evidence half: `OracleCheck`,
   the `MeasurementRule` grammar and its parser, the load-time rules that keep
   a check readable and every requirement decidable, and `Oracle::unmet`.
@@ -288,10 +297,13 @@ more:
   `project_code_execution_trusted()` — a cloned repository's plugins do not
   load until the workspace is trusted (#3509).
 - **`stella-pipeline`** consumes the `[wrapper]` half: `src/variant.rs`
-  embeds `variants/classic.toml`, fills in `SignalValues` from one turn's
-  facts, and resolves the built-in stage order through `Wrapper::resolve`
-  (#3408). It consults the answer; it is not yet *driven* by it, because
-  binding a stage to the loop is still open.
+  embeds `variants/classic.toml` and resolves it through `Wrapper::resolve`,
+  and `src/schedule.rs`'s `Schedule` walks `ProgressiveResolver` stage by
+  stage as each stage's real facts become known. **It is now driven by the
+  answer, not merely checked against it** (#3408, #3672): `Pipeline::run`
+  calls `Schedule::decide` at each stage boundary and ANDs it with the small
+  set of grammar-inexpressible host-internal facts, so `classic.toml` decides
+  every stage question the closed condition grammar can express.
 
 What is still unconsumed is narrower than it was: the subloop runner, and the
 Stop-gate binding of a plugin's declared hold allowance. Both arrive with the

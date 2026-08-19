@@ -49,6 +49,13 @@ name: auto-tag
 # can never cut another release — the loop terminates after exactly one sync
 # per release.
 #
+# Because that merge bypasses branch protection, the last step re-asks the
+# lockfile question against the MERGE RESULT before merging, not just against
+# the branch ci validated: `Cargo.lock` is a shared cell, and a sync branch cut
+# before a new crate landed composes into a lock that resolves for neither side
+# (#3336). scripts/sync-versions.sh asks the same question about its own output
+# at both call sites, so the tag cannot carry an unresolvable lock either.
+#
 # GATED ON GREEN CI. This runs via `workflow_run` after the `ci` workflow
 # finishes on main, and only tags when that run *succeeded* — a commit that
 # fails to compile or fails tests can never become a tagged release (which is
@@ -375,6 +382,44 @@ jobs:
 
           if ! gh run watch "${run_id}" --exit-status; then
             echo "::warning::the dispatched ci run for ${BRANCH} failed — NOT merging. Fix the failure and re-run ci.yml on the branch."
+            exit 0
+          fi
+
+          # Green is a claim about the BRANCH, not about the tree that lands.
+          # Cargo.lock is one shared cell every version-bumping PR writes, so a
+          # sync branch cut from an older main can merge textually clean and
+          # still compose into a lock that resolves for neither side. That is
+          # exactly how the 0.9.50 sync left stella-plugin alone at 0.9.49 while
+          # 23 crates moved: the sync branch predated the crate, the branch
+          # adding it was green on its own, git had no conflict to report, and
+          # `main` was red for every `--locked` build until #3333 (#3336; the
+          # shape is AGENTS.md § Gotchas' shared-cell collision, and #3332's
+          # post-merge canary is the backstop for when it still gets through).
+          #
+          # This step merges with an admin bypass, so no required check stands
+          # between that composition and `main` — the question has to be asked
+          # here, against the actual merge result, or it is not asked at all.
+          #
+          # Refusing rather than rebuilding the branch on the new tip: a rebuilt
+          # head would be merged past branch protection with ci having run on a
+          # commit that no longer exists. Refusing costs one cycle instead —
+          # whatever merge moved main starts another auto-tag run, which
+          # force-updates this same branch from the then-current tip. The
+          # version write-back is deferred, never dropped, and main stays green.
+          git fetch origin main
+          merge_verdict=0
+          if git merge --no-commit --no-ff FETCH_HEAD >/dev/null 2>&1; then
+            ./scripts/check-lockfile-sync.sh || merge_verdict=$?
+          else
+            merge_verdict=1
+            echo "::warning::${BRANCH} no longer merges cleanly into main."
+          fi
+          # --abort is a no-op error when main was already an ancestor (nothing
+          # was merged); the reset puts the tree back either way.
+          git merge --abort 2>/dev/null || true
+          git reset --hard HEAD >/dev/null
+          if [ "${merge_verdict}" -ne 0 ]; then
+            echo "::warning::merging ${BRANCH} would leave main's Cargo.lock unresolvable — NOT merging (#3336). main moved under this branch; the next release cycle rebuilds it from the current tip, or re-run auto-tag.yml by hand."
             exit 0
           fi
 

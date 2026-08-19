@@ -360,7 +360,7 @@ pub(crate) struct SessionPlane {
     /// plane into the journal (#441).
     events: Option<stella_core::EventSender>,
     /// The session's sub-agent runner, so candidates can delegate through it
-    /// (#3318). `None` leaves a candidate's `task` tool reporting sub-agents
+    /// (#3318). `None` leaves a candidate's `delegate` tool reporting sub-agents
     /// as unavailable — which, with no command-executing built-in, leaves a
     /// worker there unable to act at all.
     sub_agents: Option<Arc<dyn stella_core::subagent::SubAgentDispatcher>>,

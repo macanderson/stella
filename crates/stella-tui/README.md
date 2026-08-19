@@ -49,7 +49,17 @@ new dependency.
 ## Boundary — does this change belong here?
 
 This crate owns what a terminal shows and what a keypress means, and nothing
-upstream of that. The decision rule: if your change can be written as a pure
+upstream of that.
+
+**One exception is worth stating, because it points the other way:** a policy
+that *every* transcript surface must answer identically — how much of a tool
+result a collapsed fold shows, how a JSON body is lexed for colouring — lives
+in [`stella-transcript`](../stella-transcript/README.md), which this crate
+depends on. Both of those started here, and both meant the Command Deck and an
+exported transcript rendered the same run differently (#3644). The paint is
+still this crate's: `theme::SYNTAX_*` and the `Style` a token class resolves to
+need ratatui and stay here. The *decision* does not. If your change is a number
+or a rule the Observatory would also have to know, it belongs downstairs. The decision rule: if your change can be written as a pure
 fold — a function from the inbound `AgentEvent` / `Inbound` stream (plus
 `DeckUi` interaction state) to a `ratatui` buffer or an outbound
 `WorkspaceInput` — it belongs here. Views, keybindings, cards, overlays,
@@ -141,7 +151,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` mirrors the brand kit at `docs/brand/`; `theme.rs` is the only module allowed to reference it. |
 | [`src/statline.rs`](src/statline.rs) | The two-row statline: a micro-label row over its value row, led by `MODEL` (`worker: z-ai/glm-5.2` — the model's vendor, not the gateway) and the stage box (the live stage name over `Step 4 of 5`), then the CPU/CONTEXT meters and CACHE volumes, over the always-on MODELS pins row. `statline_items` is the one decision function — priority drops and the collapse-under-a-card rule included. |
 | [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the unified stage stepper + progress row, the cache formatters behind the statline/context overlay, and the launch mark held over session init. |
-| [`src/views/cards.rs`](src/views/cards.rs) + [`task_card`](src/views/task_card.rs) · [`scope_card`](src/views/scope_card.rs) · [`witness_card`](src/views/witness_card.rs) · [`models_card`](src/views/models_card.rs) · [`budget_card`](src/views/budget_card.rs) | The floating cards over one shared chrome; their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). The witness panel is the staged pipeline's surface (`/pipeline` stays the toggle). |
+| [`src/views/cards.rs`](src/views/cards.rs) + [`plan_card`](src/views/plan_card.rs) · [`models_card`](src/views/models_card.rs) · [`budget_card`](src/views/budget_card.rs) | The three floating cards over one shared chrome; their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). |
 | [`src/views/subagents.rs`](src/views/subagents.rs) | The SESSION tab's nested `└─ ◆` subagent blocks under the lead's header. |
 | [`src/scroll.rs`](src/scroll.rs), [`src/input.rs`](src/input.rs), [`src/graph.rs`](src/graph.rs), [`src/resource.rs`](src/resource.rs), [`src/attach.rs`](src/attach.rs), [`src/clipboard.rs`](src/clipboard.rs) | Small leaf modules: line-exact viewport math, the outbound message enum, the graph snapshot types, CPU/MEM sampling, pasted-path detection, `⌃V` clipboard capture. |
 | [`src/fleet_dashboard.rs`](src/fleet_dashboard.rs) | A separate full-screen surface for `stella fleet` — its own fold (`FleetMsg`), its own `run`, monotonic `Instant` clocks only. |
@@ -189,7 +199,7 @@ it; `SlashKind` only distinguishes built-in from user-authored rows by glyph.
 ([`src/deck_ui.rs`](src/deck_ui.rs)) intercepts only the deck-local ones —
 `/files`, `/diff`, `/graph`, `/agents`, `/skills`, `/mcp`, `/mcp-search`,
 `/settings`, `/sessions`, `/context`, `/inspect`, `/inbox`, and the five
-floating cards `/tasks`, `/scope`, `/witness`, `/models`, `/budget` — because
+floating cards `/plan`, `/models`, `/budget` — because
 they change view state the driver has no say over. (`/budget` renders locally
 but its *edit* leaves as `WorkspaceInput::SetBudget`; the deck shows only the
 cap the budget stream folds back.) Everything else, `/help` included, is
@@ -266,7 +276,7 @@ Two integration tests sit in [`tests/`](tests): `deck_snapshot.rs` renders every
 tab through the real `render_deck` and writes a human-readable text "screenshot"
 to `CARGO_TARGET_TMPDIR` (deliberately outside the source tree, so a test run
 never dirties the working tree), and `progress_brand_fill.rs` is a single-assertion
-witness. `proptest` covers `src/scroll.rs`, `src/syntax.rs`, and `src/proof.rs`.
+witness. `proptest` covers `src/scroll.rs` and `src/syntax.rs`.
 No fixtures, env vars, or feature flags are needed. The one uncovered path is
 [`tests/deck_pty_smoke.rs`](tests/deck_pty_smoke.rs): it is `#[ignore]`d
 because it needs a real TTY.

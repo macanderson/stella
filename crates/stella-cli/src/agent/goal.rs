@@ -1,15 +1,20 @@
 //! Goal-driven turns: judged rounds until a verifier confirms the goal is met.
 //!
-//! `run_goal_cmd` drives either the raw `Engine::run_goal` step-loop (the
-//! default since #3381) or the staged pipeline, opted into with `--pipeline
-//! classic`. The goal verifier is independent of the worker model and
-//! answers "does the whole effort meet the goal?" — distinct from the
-//! pipeline's per-change verification verifier.
+//! `run_goal_cmd` drives the raw `Engine::run_goal` step-loop (the default
+//! since #3381), the staged pipeline (`--pipeline classic`), or an installed
+//! wrapper plugin per round (`--pipeline <variant>`, [`goal_wrapped`],
+//! #3695 goal half). The goal verifier is independent of the worker model
+//! and answers "does the whole effort meet the goal?" — distinct from the
+//! pipeline's per-change verification verifier — and stays the same
+//! `Engine::assess` primitive on all three arms.
 
 use super::*;
 
+mod goal_wrapped;
+
 /// The session task board, tool by tool — everything the catalog files under
-/// the `task` group *except* the delegation tool that shares the group name.
+/// the `task` group *except* `delegate`, the sub-agent delegation tool that
+/// shares the group.
 ///
 /// See [`bare_loop_config`]'s `# Blast radius` for why this is a name list and
 /// not the one-line group key, and for the catalog assertion that keeps it
@@ -46,9 +51,9 @@ const WITHHELD_BOARD_TOOLS: [&str; 6] = [
 ///
 /// The switch names the six board tools one at a time, and deliberately not
 /// the `task` **group** key #2410 shipped: the catalog files sub-agent
-/// delegation — the tool literally named `task` — in that same group, so the
-/// group key took delegation with the board and the bare loop could not spawn
-/// a child at all.
+/// delegation — `delegate`, which was itself named `task` until #3192 — in
+/// that same group, so the group key took delegation with the board and the
+/// bare loop could not spawn a child at all.
 ///
 /// That was collateral, not a decision, and #2580 settled it that way: the
 /// measurement above, #2410's prose, its reviewer-facing behaviour-change note
@@ -119,7 +124,7 @@ pub(crate) async fn run_raw_one_shot(
     // the run it was meant to shape. The grant is minted in the same breath and
     // for the same reason — a `--test-command` the host's parser refuses must
     // stop the run here, not after it is paid for.
-    let bound = match pipeline.plugin() {
+    let resolved = match pipeline.plugin() {
         Some(variant) => Some(
             crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
                 eprintln!("  ! {line}");
@@ -130,7 +135,7 @@ pub(crate) async fn run_raw_one_shot(
     };
     // Pinned *before* the turn runs, which is the whole content of the tamper
     // claim: an identity snapshotted afterwards vouches for nothing.
-    let candidate = match &bound {
+    let candidate = match &resolved {
         Some(_) => Some(
             crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
                 .map_err(crate::failure::CliFailure::from)?,
@@ -144,7 +149,27 @@ pub(crate) async fn run_raw_one_shot(
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
-    crate::subagent::install_for_session(cfg, &registry)?;
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
+    // The gate is built *here*, not beside `resolve` above, and the ordering is
+    // the whole reason the two halves are separate: a `--pipeline` naming
+    // nothing installed must fail as a typo before a paid call, while a
+    // plugin's `child_turn` needs this session's dispatcher, which needs the
+    // provider built two lines up (#3576).
+    let bound = match resolved {
+        Some(resolved) => {
+            let host = crate::wrapper_plugin::session_host(
+                &cfg.workspace_root,
+                resolved.manifest(),
+                sub_agents,
+            );
+            Some(
+                resolved
+                    .serving(host)
+                    .map_err(crate::failure::CliFailure::from)?,
+            )
+        }
+        None => None,
+    };
     // The one derivation of "a human is here to answer" — the #2676 approval
     // responder and the rules-enforcement prompt both read this value.
     let ask = human_is_present(format == OutputFormat::Text);
@@ -268,6 +293,13 @@ pub(crate) async fn run_raw_one_shot(
                     recall_event,
                     memory: memory.as_mut(),
                     watch: &candidate.watch,
+                    // Real ones the day a controlled surface drives a wrapped
+                    // turn (#3554). This door is headless — it publishes no
+                    // pause gate and installs no steering tap, the same reason
+                    // its goal rounds pass `steering: None` — so there is
+                    // nothing here to honour, and `none()` is the honest
+                    // answer rather than a placeholder.
+                    controls: stella_core::ports::TurnControls::none(),
                     results: Vec::new(),
                 },
             )
@@ -371,27 +403,76 @@ pub(crate) async fn run_raw_one_shot(
 /// (`--pipeline classic`) runs the staged pipeline (triage → recall → plan →
 /// execute → witness → verify → verdict); `Raw` — the default since #3381,
 /// with or without `--no-pipeline` — falls back to the raw `Engine::run_goal`
-/// step-loop. A named plugin `Variant` is refused before this is ever called
-/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Goal` arm) —
-/// this door only ever sees `Classic` or `Raw`.
+/// step-loop; `Plugin(variant)` dispatches each round's worker turn through
+/// the named installed wrapper ([`goal_wrapped::run_goal_wrapped_turn`],
+/// #3695 goal half) while the goal verifier stays exactly what `Raw` uses —
+/// **provided the named wrapper is not arbiter-grade**: this door's own
+/// pre-flight rung refuses `participation = "arbiter"` before the provider
+/// is ever built (`wrapper_plugin::reject_arbiter_wrapper_on_goal`, #3832),
+/// because the goal loop is already this door's completion arbiter and a
+/// second one held open inside a judged round is the doubled-supervisor
+/// shape the wrapper design forbids; an arbiter-grade wrapper's designed
+/// home is `stella run --pipeline <variant>` instead. Steering and observer
+/// wrappers reach `Plugin(variant)` unaffected. `stella fleet` still refuses
+/// any named plugin before this is ever called
+/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Fleet` arm).
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
     budget_limit: Option<f64>,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
 ) -> Result<(), crate::failure::CliFailure> {
-    // Only `Classic`/`Raw` reach this door (see the doc above); either reads
-    // as one bool for the rest of this function's branching, same shape as
-    // before #3381.
+    // `Plugin` reads as `Raw` for every branch below except the final
+    // dispatch: the wrapped arm builds the same system prompt, the same
+    // recall block and the same tool stack `Raw` does, and differs only in
+    // which function drives the round loop.
     let use_pipeline = pipeline.is_classic();
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
+    // Resolved before the provider is built and before a single paid call —
+    // exactly the ordering `run_raw_one_shot` uses, and for the same reason:
+    // a `--pipeline` naming nothing installed must fail as a typo, not after
+    // the run it was meant to shape.
+    let resolved = match pipeline.plugin() {
+        Some(variant) => Some(
+            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
+                eprintln!("  ! {line}");
+            })
+            .map_err(crate::failure::CliFailure::from)?,
+        ),
+        None => None,
+    };
+    // Arbiter-grade wrappers are refused here, before binding and before any
+    // paid call — the goal loop is this door's own completion arbiter, and a
+    // wrapper that holds rounds open would run a second hold loop inside one
+    // judged round (#3832). See
+    // `crate::wrapper_plugin::reject_arbiter_wrapper_on_goal`'s doc comment.
+    if let Some(resolved) = &resolved {
+        crate::wrapper_plugin::reject_arbiter_wrapper_on_goal(resolved)
+            .map_err(crate::failure::CliFailure::from)?;
+    }
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
     crate::subagent::install_for_session(cfg, &registry)?;
+    // The goal door's host serves `recall` only — no `child_turn` plane; see
+    // `crate::wrapper_plugin`'s module doc for why a fixed slot is unsafe
+    // across a goal loop's own even/odd round math.
+    let bound = match resolved {
+        Some(resolved) => {
+            let host = crate::wrapper_plugin::WrapperHost::recalling(Box::new(
+                crate::wrapper_recall::SessionRecallHost::open(&cfg.workspace_root),
+            ));
+            Some(
+                resolved
+                    .serving(host)
+                    .map_err(crate::failure::CliFailure::from)?,
+            )
+        }
+        None => None,
+    };
     // Goal mode always renders human-readable output, so its half of the
     // fact is fixed at `true`; the stdio handles settle the rest.
     let ask = human_is_present(true);
@@ -488,6 +569,25 @@ pub async fn run_goal_cmd(
             mcp.clone(),
             recall_event,
             memory.as_mut(),
+        )
+        .await
+    } else if let Some(bound) = &bound {
+        goal_wrapped::run_goal_wrapped_turn(
+            &*provider,
+            base_tools,
+            &custom_tools,
+            &registry,
+            &mut messages,
+            &mut budget,
+            &calibration,
+            cfg,
+            &store,
+            goal,
+            Some(presence.id()),
+            budget_limit,
+            recall_event,
+            memory.as_mut(),
+            bound,
         )
         .await
     } else {
@@ -678,22 +778,22 @@ pub(crate) async fn run_goal_turn(
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
 
-    if let Some((store, id)) = &execution {
-        let (outcome_label, cost) = match &outcome {
-            GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
-            GoalOutcome::Unmet { cost_usd, .. } => ("goal_unmet", *cost_usd),
-        };
-        if !record_execution_end(
-            store,
-            *id,
-            registry,
-            outcome_label,
-            cost,
+    let (outcome_label, cost) = match &outcome {
+        GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
+        GoalOutcome::Unmet { cost_usd, .. } => ("goal_unmet", *cost_usd),
+    };
+    crate::agent::turn_close::close_turn(
+        cfg,
+        store,
+        &execution,
+        registry,
+        session,
+        crate::agent::turn_close::TurnOutcomeRecord {
+            label: outcome_label,
+            cost_usd: cost,
             persistence_complete,
-        ) {
-            warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
-        }
-    }
+        },
+    );
 
     match outcome {
         GoalOutcome::Met {
@@ -1057,22 +1157,22 @@ async fn run_goal_pipeline_turn(
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, total_cost_usd);
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
-    if let Some((store, id)) = &execution {
-        let outcome_label = match &goal_result {
-            Ok(()) => "goal_met",
-            Err(_) => "goal_unmet",
-        };
-        if !record_execution_end(
-            store,
-            *id,
-            registry,
-            outcome_label,
-            total_cost_usd,
+    let outcome_label = match &goal_result {
+        Ok(()) => "goal_met",
+        Err(_) => "goal_unmet",
+    };
+    crate::agent::turn_close::close_turn(
+        cfg,
+        store,
+        &execution,
+        registry,
+        session,
+        crate::agent::turn_close::TurnOutcomeRecord {
+            label: outcome_label,
+            cost_usd: total_cost_usd,
             persistence_complete,
-        ) {
-            warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
-        }
-    }
+        },
+    );
     goal_result
 }
 
@@ -1165,6 +1265,13 @@ impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
     fn live_services(&self) -> Vec<stella_core::LiveService> {
         self.inner.live_services()
     }
+
+    /// Forwarded: a narrower allowlist is not a narrower policy plane. This
+    /// view dispatches no name of its own, so the gate it hands back is the
+    /// inner stack's (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.dispatch_gate()
+    }
 }
 
 #[cfg(test)]
@@ -1218,7 +1325,7 @@ mod bare_loop_board_tests {
     /// Sub-agent delegation survives the board's withdrawal.
     ///
     /// #2410 narrowed with the `task` **group** key, and the catalog files
-    /// delegation — the tool named `task` — in that group, so the bare loop
+    /// delegation — `delegate` — in that group, so the bare loop
     /// silently lost the capability too. #2580 settled that as collateral
     /// rather than a decision: the evidence for withholding the board is about
     /// bookkeeping that reads nothing and changes nothing, and reaches no
@@ -1227,7 +1334,7 @@ mod bare_loop_board_tests {
     fn withholding_the_board_leaves_sub_agent_delegation_alone() {
         let policy = bare_loop_policy(ToolPolicy::allow_all());
         assert!(
-            policy.allows("task"),
+            policy.allows("delegate"),
             "sub-agent delegation shares the board's group but not its rationale"
         );
     }
@@ -1244,7 +1351,7 @@ mod bare_loop_board_tests {
     fn the_withheld_list_is_the_whole_board_minus_delegation() {
         let expected: Vec<&str> = stella_tools::catalog::CATALOG
             .iter()
-            .filter(|entry| entry.group == "task" && entry.name != "task")
+            .filter(|entry| entry.group == "task" && entry.name != "delegate")
             .map(|entry| entry.name)
             .collect();
         let mut withheld = WITHHELD_BOARD_TOOLS.to_vec();
@@ -1293,7 +1400,7 @@ mod bare_loop_board_tests {
     fn an_operator_who_denied_the_task_group_keeps_delegation_denied() {
         let policy = bare_loop_policy(ToolPolicy::from_switches([("task".to_string(), false)]));
         assert!(
-            !policy.allows("task"),
+            !policy.allows("delegate"),
             "the operator's group denial covers delegation and must survive"
         );
         assert!(
@@ -1346,7 +1453,7 @@ mod verifier_tools_tests {
             .map(|schema| schema.name)
             .collect();
         assert_eq!(names, vec!["task_list", "get_state"]);
-        for denied in ["mcp__srv__read", "save_state", "task"] {
+        for denied in ["mcp__srv__read", "save_state", "delegate"] {
             assert!(
                 scoped
                     .execute(denied, &serde_json::json!({}))

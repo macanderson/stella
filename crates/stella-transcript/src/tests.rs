@@ -371,11 +371,45 @@ fn collapsing_a_parent_preserves_child_fold_state() {
 
 #[test]
 fn the_output_fold_control_has_something_behind_it() {
-    let out = output(&["1", "2", "3", "4", "5", "6"]);
+    // Nine lines: past `PREVIEW_LINES` but short of `TAIL_FOLD_THRESHOLD`, so
+    // this is the head-only fold. It used to be six, which was past the old
+    // three-line head — the same shape, restated against the shared preview
+    // budget the deck also uses now (#3644).
+    let out = output(&["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
     let fold = digest::fold_output(&out, "cmd");
-    assert_eq!(fold.head.len(), digest::HEAD_LINES);
+    assert_eq!(fold.head.len(), digest::PREVIEW_LINES);
+    assert!(fold.tail.is_empty(), "a short fold keeps no tail");
     assert_eq!(fold.hidden, 3);
     assert_eq!(fold.more_label(), "▸ 3 more lines");
+}
+
+/// The invariant `PREVIEW_LINES` exists to state: **however** an output folds,
+/// a reader sees the same number of lines of it.
+///
+/// Before this, the head-only fold and the head…tail fold showed different
+/// totals (three against five), and the Command Deck showed a third number
+/// again (six) from its own constant — so "how much of this tool's output do I
+/// get" depended on both which surface you opened and how long the output
+/// happened to be. `crates/stella-tui/src/render/tests/tool_output.rs` is the other half
+/// of this: the same assertion made against the deck's renderer.
+#[test]
+fn every_fold_shows_the_same_number_of_lines_whatever_its_shape() {
+    for total in 0..40usize {
+        let lines: Vec<String> = (0..total).map(|i| format!("line {i}")).collect();
+        let out = Output { lines, clipped: 0 };
+        let fold = digest::fold_output(&out, "cmd");
+        let shown = fold.head.len() + fold.tail.len();
+        assert_eq!(
+            shown,
+            total.min(digest::PREVIEW_LINES),
+            "a {total}-line output shows {shown} lines, not the shared preview budget"
+        );
+        assert_eq!(
+            fold.hidden,
+            total - shown,
+            "a {total}-line output must account for every line it does not show"
+        );
+    }
 }
 
 #[test]

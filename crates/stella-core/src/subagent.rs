@@ -99,7 +99,7 @@
 //!
 //! [`SubAgentSpec::depth`] is checked against [`MAX_SUB_AGENT_DEPTH`] before
 //! the first model call. There is deliberately no engine-level depth counter:
-//! the one model-callable spawn surface (`stella-tools`' `task` tool) pins
+//! the one model-callable spawn surface (`stella-tools`' `delegate` tool) pins
 //! `depth: 1`, and a child runs behind [`ReadOnlyTools`], which never
 //! advertises that tool — so recursion is not reachable from a prompt. Any
 //! further spawn surface MUST thread `parent_depth + 1` into the spec it
@@ -164,6 +164,22 @@ pub const MAX_SUB_AGENT_DEPTH: u8 = 2;
 #[async_trait]
 pub trait SubAgentDispatcher: Send + Sync {
     async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome;
+}
+
+/// Dispatching through a handle a host still holds.
+///
+/// A session installs exactly one dispatcher and keeps an `Arc` to it, because
+/// two of them would be two pools, two carves and two ledgers over the same
+/// session. Anything else that wants to spend a child turn — the plugin
+/// host's child-turn plane is the standing example — therefore has an
+/// `Arc<dyn SubAgentDispatcher>` in hand and nothing to convert it into.
+/// Without this impl each such caller writes the same one-method forwarding
+/// newtype, which is a second place for the contract above to drift.
+#[async_trait]
+impl<D: SubAgentDispatcher + ?Sized> SubAgentDispatcher for std::sync::Arc<D> {
+    async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome {
+        (**self).dispatch(spec).await
+    }
 }
 
 impl<'a> Engine<'a> {

@@ -144,8 +144,6 @@ fn deck_renders_every_tab_with_real_content() {
                 "budget",
                 "think",
                 "verify",
-                "oracle flips red → green",
-                "(confirmed from evidence, not self-report)",
             ],
         ),
         (
@@ -389,7 +387,7 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
             ("get_environment", "environment"),
             ("get_state", "scratch"),
             ("save_state", "scratch"),
-            ("task", "task"),
+            ("delegate", "task"),
             ("task_assign", "task"),
             ("mcp__github__create_issue", "mcp"),
             ("deploy_to_staging", "custom"),

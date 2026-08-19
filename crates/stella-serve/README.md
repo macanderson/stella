@@ -89,7 +89,7 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
 | [`src/pending.rs`](src/pending.rs) | `Pending`, the `request_id` → one-shot registry shared across the two runtimes. Open it when a resolve POST returns 409. |
 | [`src/frame.rs`](src/frame.rs) | The wire vocabulary: `ServerFrame`, `TurnOutcomeWire`, `ToolResultIn`, `ProviderResultIn`, `ProviderErrorWire`. Every wire-shape change starts here. |
 | [`src/goal.rs`](src/goal.rs) | Judged multi-round runs (#1297): `GoalRun`, and the round loop driven over the same step driver a single turn uses. |
-| [`src/subagents.rs`](src/subagents.rs) | Sub-agents (#1297): the operator's `SubAgentPolicy`, the dispatcher that runs a child on the same remoted ports, and the `task` tool layered over the host's stack. |
+| [`src/subagents.rs`](src/subagents.rs) | Sub-agents (#1297): the operator's `SubAgentPolicy`, the dispatcher that runs a child on the same remoted ports, and the `delegate` tool layered over the host's stack. |
 | [`src/server.rs`](src/server.rs) | `serve` — accept loop, bearer auth, the connection fold (one record per connection), route classification, the turn registry, and a rustdoc list of the operational limits the deployment must supply. |
 | [`src/routes.rs`](src/routes.rs) | The endpoint handlers and the wire types they parse — the five `/v1/turns` routes (including `cancel`), `/healthz`, `/v1/metrics`, `/v1/calibration`, and the host-supplied ceilings (`max_steps`, `reverse_request_timeout_ms`). |
 | [`src/extensions.rs`](src/extensions.rs) | `ServeExtension` — the operator's per-turn hook plane (#1298), and the argument for why registration is operator-only and no route reaches it. |

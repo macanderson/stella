@@ -45,20 +45,29 @@ use recall::recall_lines;
 /// output *is* the answer — a `search`, a `read_file`, a `get_state` — where
 /// one line plus a count told a reader only that something had been found, and
 /// left the finding itself behind a keystroke they had no reason to press.
-/// Matching [`FAIL_PREVIEW`] keeps one preview rule instead of two.
-const OK_PREVIEW: usize = FAIL_PREVIEW;
+///
+/// It is now [`stella_transcript::digest::PREVIEW_LINES`] rather than a number
+/// of this crate's own, because the export and Observatory surfaces fold the
+/// same result through `digest::fold_output` and were answering "how much do I
+/// see" differently — six lines here against three there, for one run (#3644).
+/// Equality by *construction*; `render::tests::tool_output` then asserts the two
+/// renderers really do show the same count, since sharing a constant does not
+/// by itself prove two fold implementations agree.
+///
+/// It still equals [`FAIL_PREVIEW`], which keeps one preview rule instead of
+/// two; that is now a fact a test pins rather than a definition.
+const OK_PREVIEW: usize = stella_transcript::digest::PREVIEW_LINES;
 
 /// Does this payload read as JSON, and so earn syntax coloring?
 ///
-/// Deliberately the opening delimiter rather than a parse: a tool result is
-/// middle-elided at `OUTPUT_BUDGET` (`crate::model::summarize`) before it ever
-/// reaches here, so a large JSON body no longer parses and a parse test would
-/// color exactly the short results that need it least. The lexer degrades to
-/// untagged runs on anything it cannot classify, so the cost of a false
-/// positive is a line that renders plain — not one that renders wrong.
+/// Delegates to [`stella_transcript::syntax::reads_as_json`], which carries the
+/// reasoning: the opening delimiter rather than a parse, because a tool result
+/// is middle-elided at `OUTPUT_BUDGET` (`crate::model::summarize`) before it
+/// ever reaches here. Shared with the export surfaces so the deck and an
+/// exported transcript cannot disagree about *which* bodies are JSON, having
+/// already disagreed about whether any of them get coloured at all.
 fn reads_as_json(text: &str) -> bool {
-    let t = text.trim_start();
-    t.starts_with('{') || t.starts_with('[')
+    stella_transcript::syntax::reads_as_json(text)
 }
 
 /// Emit one body line, syntax-colored when `json`, at the detail column.
@@ -467,7 +476,22 @@ fn entry_body(
                     // reading. A JSON body has no preamble — its first line is
                     // the opening delimiter, and starting anywhere else shows
                     // an object with its shape cut off.
-                    let skip = if json { 0 } else { salient_line(full) };
+                    //
+                    // Clamped so the window is never starved: anchoring on a
+                    // salient line near the *end* of the output would otherwise
+                    // leave fewer than `budget` lines to take, and the fold
+                    // would show one line where the export surfaces showed six
+                    // — the same cross-surface divergence #3644 closed, sneaking
+                    // back in through the offset instead of the budget. Sliding
+                    // the window back to fill keeps the salient line on screen
+                    // (it is the last thing shown rather than the first) while
+                    // honouring the shared preview budget.
+                    let skip = if json {
+                        0
+                    } else {
+                        let total = full.lines().count();
+                        salient_line(full).min(total.saturating_sub(budget))
+                    };
                     full.lines().skip(skip).take(budget).collect()
                 };
                 // A JSON preview stays whole in the body column. Promoting its
@@ -776,7 +800,7 @@ fn entry_body(
             // — a whole other agent starts working here, with its own budget
             // and its own tool calls — and it rendered in the quiet tier, the
             // same one the bookkeeping notes use. It gets the delegation class
-            // hue, the same one `task`/`task_*` wear on the call rows around
+            // hue, the same one `delegate`/`task_*` wear on the call rows around
             // it, so the hand-off and the board it moves read as one family.
             None => push_note(
                 "⤷ sub-agent",

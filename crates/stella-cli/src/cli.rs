@@ -551,7 +551,8 @@ pub(crate) enum Command {
         /// a change that flips a failing test to passing is proven done.
         /// Omitted, the pipeline's witness stage is the remaining oracle,
         /// and a turn that reaches neither is reported unverified — not
-        /// passed.
+        /// passed. Refused without `--pipeline classic` or `--pipeline
+        /// <variant>` — nothing on the raw loop consumes it (#3696).
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
 
@@ -560,6 +561,7 @@ pub(crate) enum Command {
         /// inside the candidate workspace and is discarded with it, so an
         /// already-satisfied test is never left behind in your test tree.
         /// Pass this to promote it to a real test you can commit.
+        /// Pipeline-only: refused without `--pipeline classic` (#3696).
         #[arg(long)]
         keep_witness: bool,
 
@@ -571,7 +573,8 @@ pub(crate) enum Command {
         /// ordinary outcome and flipping it would break every existing script.
         /// Pass this in a delivery gate that must not ship unproven work — it
         /// turns "completed but unproven" into a failure exactly like a
-        /// refuted verification.
+        /// refuted verification. Pipeline-only: refused without `--pipeline
+        /// classic` (#3696).
         #[arg(long)]
         require_verified: bool,
 
@@ -622,7 +625,21 @@ pub(crate) enum Command {
         #[arg(long, hide = true)]
         no_pipeline: bool,
 
+        /// Run each episode under a wrapper, by the `[wrapper] id` its
+        /// manifest declares (`stella plugin list`). `classic` names the
+        /// built-in staged pipeline; omitted, the raw step-loop runs with
+        /// nothing over it (the default since #3381). The same flag
+        /// [`stella run`](crate::cli::Command::Run) takes, so a panel can
+        /// measure either driver rather than only the one the default
+        /// happens to name.
+        #[arg(long, value_name = "VARIANT")]
+        pipeline: Option<String>,
+
         /// Test command for the pipeline's deterministic verify ladder.
+        ///
+        /// Belongs to the staged pipeline's verify machinery, so it is
+        /// refused rather than silently ignored unless `--pipeline` selects
+        /// a driver that can honor it.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
     },
@@ -647,14 +664,14 @@ pub(crate) enum Command {
         #[arg(long, hide = true)]
         no_pipeline: bool,
 
-        /// Run each working round through an installed wrapper plugin, by
-        /// the `[wrapper] id` its manifest declares (`stella plugin list`).
-        /// `classic` names the built-in staged pipeline (triage → recall →
-        /// plan → witness → execute → verify); omitted, the raw step-loop
-        /// runs with nothing over it (the default since #3381). A named
-        /// plugin variant is refused today — wrapper plugins run only on
-        /// `stella run --pipeline <variant>` (#3684 tracks driving them
-        /// through a judged round).
+        /// Run each round's working turn through an installed wrapper
+        /// plugin, by the `[wrapper] id` its manifest declares (`stella
+        /// plugin list`). `classic` names the built-in staged pipeline
+        /// (triage → recall → plan → witness → execute → verify); omitted,
+        /// the raw step-loop runs with nothing over it (the default since
+        /// #3381). A named plugin variant dispatches every round's worker
+        /// turn through the wrapper; the goal verifier that decides met/unmet
+        /// is unchanged either way.
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
     },
@@ -852,7 +869,7 @@ pub(crate) enum Command {
         /// witness, execute, verify); omitted, the raw step-loop runs with
         /// nothing over it (the default since #3381). A named plugin variant
         /// is refused today — wrapper plugins run only on `stella run
-        /// --pipeline <variant>` (#3684 tracks driving them through a fleet
+        /// --pipeline <variant>` (#3695 tracks driving them through a fleet
         /// worker).
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,

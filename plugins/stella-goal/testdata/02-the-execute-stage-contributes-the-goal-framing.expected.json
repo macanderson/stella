@@ -1,0 +1,12 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "context": [
+      {
+        "label": "goal:framing",
+        "text": "GOAL: fix the retry loop\n\nWork toward this goal. An independent verifier will assess the result after each working round from the transcript evidence; keep your work verifiable (run tests, show outputs)."
+      }
+    ]
+  }
+}

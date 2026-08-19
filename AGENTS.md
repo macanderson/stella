@@ -9,12 +9,15 @@ Stella is a fast, BYOK ("bring your own key"), model-agnostic terminal coding
 agent, written in Rust. Proving a task **done** with a **witness test** — one
 that fails on the old code and passes on the new — is what "verified done,
 not claimed done" means here, and that guarantee is **a property of the path
-that produced the evidence, not of the binary**: the built-in staged pipeline
-runs the check itself and watches the fail→pass flip, but verification
-supplied by an installed plugin is the plugin's own self-reported evidence,
-which Stella evaluates against a declared rule and does not re-run or
-re-check (#3511; `doc:pipeline-as-plugins` is the extraction plan moving the
-former into the latter). It is the open-source reference implementation of
+that produced the evidence, not of the binary**: opted into with `stella run
+--pipeline classic`, the built-in staged pipeline runs the check itself and
+watches the fail→pass flip, but verification supplied by an installed
+wrapper plugin (`stella run --pipeline <plugin-id>`) is the plugin's own
+self-reported evidence, which Stella evaluates against a declared rule and
+does not re-run or re-check (#3511; `doc:pipeline-as-plugins` is the
+extraction plan moving the former into the latter). Neither path runs by
+default — a plain `stella run` is the raw step-loop with no verification
+stage over it. It is the open-source reference implementation of
 Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---
@@ -72,6 +75,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + stat-portability + module-reachability
                          #   + typed-errors
                          #   + diagnostic-codes
+                         #   + bench-suites
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
@@ -209,6 +213,18 @@ SKIP_GATE=1 git push     # nothing at all (emergencies)
 
 `make impacted-test` covers the scoping rules; it is hermetic and deliberately
 not part of `gate`.
+
+The same diff also decides whether the hook runs `make bench-test` — the Python
+bench suites, which are gated by `.github/workflows/bench.yml` and are not a
+`make gate` step because they cost minutes. The hook selects on that workflow's
+own scope filter, read from it by `scripts/bench-suites.sh filter` rather than
+copied, so a push touching `bench/**`, `arenabench/**`,
+`crates/stella-model/src/catalog.rs` or the workflow itself runs them before it
+leaves the machine. `GATE=fast` skips them out loud, on the same "no tests"
+contract it applies to cargo. This existed nowhere until #2847: the workflow ran
+seven pytest suites, `make bench-test` ran three, and `main` went red on
+2026-08-11 on a deterministic arenabench failure with no local command that
+would have caught it.
 
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
 `cargo deny check advisories bans sources licenses`). All four are real
@@ -426,14 +442,21 @@ template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
 **What follows is the staged pipeline's own witness/verify machinery, which is
-a different thing from the contract above.** It ships in-tree today and
-genuinely runs the check itself — this is the host-run half of the guarantee
-(see AGENTS.md's opening). Per the product decision recorded in
-`doc:pipeline-as-plugins` (#3511) it is being extracted into an installable
-verification plugin (Oxagen's Vera is the reference one); once it lands, a
-plugin reports its own evidence instead of Stella running the check, and this
-section's guarantee does not automatically transfer to that path. Until then,
-this section documents the mechanism as it exists: when no
+a different thing from the contract above.** It is **opt-in**, not the
+default: since #3381 a plain `stella run` resolves to the raw step-loop, and
+this machinery runs only when a turn is explicitly wrapped with `stella run
+--pipeline classic` (`crates/stella-cli/src/wrapper_plugin.rs` —
+`PipelineChoice::Classic`). It ships in-tree today and genuinely runs the
+check itself when invoked — this is the host-run half of the guarantee (see
+AGENTS.md's opening) — and `--test-command`/`--keep-witness`/
+`--require-verified` are refused on any other resolution (the raw loop, or an
+installed wrapper plugin), naming `--pipeline classic` as the remedy, rather
+than silently doing nothing. Per the product decision recorded in
+`doc:pipeline-as-plugins` (#3511) the mechanism is being extracted into an
+installable verification plugin (Oxagen's Vera is the reference one); once it
+lands, a plugin reports its own evidence instead of Stella running the check,
+and this section's guarantee does not automatically transfer to that path.
+Until then, this section documents the mechanism as it exists: when no
 `--test-command` is configured, its **witness stage** has an independent model
 (the verifier's resolution, never the worker) author the failing witness test,
 tracks its fail→pass flip in the flip oracle, and refuses to credit the flip if
@@ -443,7 +466,12 @@ executed diff and found something worth proving — so the stage order is
 triage → recall → research → plan → scope → **execute → witness** → verify → verdict
 (`stage_rank` in `crates/stella-pipeline/src/replay.rs` is the canonical
 ordering; the revise back-edges land on execute, so re-execution never
-re-authors). The witness
+re-authors). That order is not hard-coded: it is resolved at load time from
+the shipped `[wrapper]` manifest (`crates/stella-pipeline/variants/classic.toml`,
+via `src/schedule.rs` and `src/pipeline/schedule_wiring.rs`) — a witness
+condition written to read a post-triage (post-execute) signal is refused at
+load rather than silently accepted, so a manifest cannot describe an ordering
+the schedule cannot honor. The witness
 is **scaffolding for that one run**: it lives in the candidate workspace and is
 discarded with it, so an already-satisfied test is never left behind in the
 project's test tree. `stella run --keep-witness` promotes it instead.
@@ -644,7 +672,8 @@ alone, because a number in two places is how the last limit died.
 **Status — what ships.** The live runtime path is
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /
 `stella-context` (recall only) / `stella-mcp`, and the CLI also drives
-`stella-pipeline` (the default `stella run` path), `stella-fleet` (`stella fleet`),
+`stella-pipeline` (opt-in on every door via `stella run --pipeline classic`;
+the raw step-loop is the default), `stella-fleet` (`stella fleet`),
 and `stella-tui` (the Command Deck, the default interactive shell on a TTY).
 The fuller
 `stella-graph` retrieval + context plane (`stella init` builds the code-graph
@@ -665,7 +694,7 @@ editing Stella's own code should know what lives where:
 | `.stella/skills/<slug>/SKILL.md` | Auto-promoted skills from recurring reflection lessons. Never enforced — selected and injected as volatile context. |
 | `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/spec/adaptive-context/context-pr.md`](docs/spec/adaptive-context/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants and record lifecycle events (retirements and supersessions, #2728); `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
-| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.task_assign: "off"` withholds the delegation tool — every built-in is registered by default since #710). Merged per-field with org-managed and user scopes. |
+| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.delegate: "off"` withholds the sub-agent delegation tool — every built-in is registered by default since #710). Merged per-field with org-managed and user scopes. |
 | `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. |
 | `.stella/domains.toml` | Domain taxonomy for memory/reflection tagging, inferred by `stella init`. |
 | `.stella/workspace.json` | Durable per-workspace telemetry identity (`workspace_id`), written by `stella cloud register`. Deliberately **outside** `private/` and safe to commit — sharing it makes every clone/machine report under one `workspace_id` to a cloud org. |

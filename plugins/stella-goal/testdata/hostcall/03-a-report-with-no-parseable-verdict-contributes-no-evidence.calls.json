@@ -1,0 +1,21 @@
+[
+  {
+    "expect": {
+      "call": "child_turn",
+      "id": 1,
+      "args": {
+        "role": "verifier",
+        "instruction": "You are an impartial verifier assessing whether a coding agent has fully met a stated goal. Judge from EVIDENCE, never from claims: use whatever read-only tools you are offered to verify the work directly whenever the transcript alone is not conclusive \u2014 read the changed files, check the tests exist, inspect CI. Claimed success without supporting evidence is NOT met. The strongest completion evidence is a witness test observed to fail on the previous code and pass on the new code; a merely green test suite is weak evidence, since it cannot distinguish real work from vacuous tests or unwired code. If you need something only the worker can provide (a trace, a screenshot, a system log, an explanation), set met:false and put the request in feedback \u2014 the worker acts on it next round. When decided, end your reply with ONLY a JSON object, no prose after it:\n{\"met\": true|false, \"reasoning\": \"why, in one or two sentences\", \"feedback\": \"if not met: the single most useful next action or evidence request\"}\n\n## Goal\nfix the retry loop\n\n## The working turn that just ran\nCompleted: true\n\n### Final answer\nFixed the retry loop and added a regression test.\n\n### Tools dispatched\nread_file, edit_file\n\n### Files changed\nsrc/retry.rs\n\n(This is the working turn's final answer and, where this host reports them, the tools it dispatched and the files it changed \u2014 not the full transcript. Judge from what is here; do not assume a fuller record exists.)"
+      }
+    },
+    "answer": {
+      "result": 1,
+      "ok": {
+        "role": "verifier",
+        "seat": "witness_author",
+        "report": "I looked at it and it seems fine.",
+        "completed": true
+      }
+    }
+  }
+]

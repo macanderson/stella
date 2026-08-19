@@ -42,6 +42,7 @@ class TestEachFamilyLandsInItsOwnClass:
             ("repo_push", "repo"),
             ("repo_status", "repo"),
             ("create_issue", "repo"),
+            ("delegate", "delegate"),
             ("task", "delegate"),
             ("task_complete", "delegate"),
             ("invoke_skill", "delegate"),

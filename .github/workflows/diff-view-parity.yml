@@ -1,22 +1,36 @@
 name: diff-view-parity
 
-# The diff view policy has two implementations, and they must not drift.
+# The transcript's rendering policies have two implementations each, and they
+# must not drift. Two are guarded here; the workflow keeps its original name so
+# a run history stays continuous.
 #
-# `crates/stella-diff/src/view.rs::plan` decides how much of a diff every
-# Stella surface draws and which part. Four surfaces consume it in Rust (the
-# Command Deck, the plain `stella run` scrollback, the Observatory, `stella
-# export`); the arena transcript reimplements it in TypeScript
-# (`arenabench/ui/lib/diff-view.ts`) because it is a Next.js client with no way
-# to call into the workspace. An arena transcript is read *beside* the deck and
-# the Observatory when someone is arguing about what a run did, which is
-# exactly when one edit must not look like two.
+#   1. the diff *view* policy — how much of a diff is drawn, and which part;
+#   2. word-level *highlighting* — which spans of a modified line pair get the
+#      stronger tint, and which removal is paired with which addition (#3676).
 #
-# They cannot share a test runner, so they share a file:
-# `crates/stella-diff/tests/fixtures/view-plan-matrix.txt`, generated from the
-# Rust and pinned by `cargo test -p stella-diff --test view_plan_matrix` (which
-# `make gate` already runs). This job runs the TypeScript over the same matrix
-# and asserts it reproduces that file — so a re-blessed golden fails here until
-# the port catches up.
+# Both follow the same shape, described below in terms of the first.
+#
+# **How much of a diff is drawn** — `crates/stella-diff/src/view.rs::plan`.
+# Four surfaces consume it in Rust (the Command Deck, the plain `stella run`
+# scrollback, the Observatory, `stella export`); the arena transcript
+# reimplements it in TypeScript (`arenabench/ui/lib/diff-view.ts`).
+#
+# **What inside a changed line is tinted** —
+# `crates/stella-transcript/src/word.rs::highlight`. The deck's character grid
+# and the jet-black web transcript consume it in Rust; the arena transcript
+# reimplements it in `arenabench/ui/lib/word-highlight.ts`.
+#
+# Both ports exist for the same reason: the arena UI is a Next.js client with
+# no way to call into the workspace. And both matter for the same reason: an
+# arena transcript is read *beside* the deck and the Observatory when someone
+# is arguing about what a run did, which is exactly when one edit must not look
+# like two.
+#
+# Neither pair can share a test runner, so each shares a file — a golden matrix
+# generated from the Rust and pinned by a `cargo test` that `make gate` already
+# runs (`view_plan_matrix`, `word_highlight_matrix`). This job runs each
+# TypeScript port over its own matrix and asserts it reproduces that file — so
+# a re-blessed golden fails here until the port catches up.
 #
 # Why not a `make gate` step: the gate is toolchain-free guards plus cargo, and
 # this needs Node (AGENTS.md § "The gate"). The Rust half of the check IS in
@@ -34,15 +48,21 @@ on:
   pull_request:
     paths:
       - "crates/stella-diff/**"
+      - "crates/stella-transcript/**"
       - "arenabench/ui/lib/diff-view.ts"
+      - "arenabench/ui/lib/word-highlight.ts"
       - "arenabench/ui/scripts/check-diff-view-parity.mjs"
+      - "arenabench/ui/scripts/check-word-highlight-parity.mjs"
       - ".github/workflows/diff-view-parity.yml"
   push:
     branches: [main]
     paths:
       - "crates/stella-diff/**"
+      - "crates/stella-transcript/**"
       - "arenabench/ui/lib/diff-view.ts"
+      - "arenabench/ui/lib/word-highlight.ts"
       - "arenabench/ui/scripts/check-diff-view-parity.mjs"
+      - "arenabench/ui/scripts/check-word-highlight-parity.mjs"
       - ".github/workflows/diff-view-parity.yml"
   workflow_dispatch:
 
@@ -52,7 +72,7 @@ permissions:
 
 jobs:
   parity:
-    name: the TypeScript port matches the Rust policy
+    name: the TypeScript ports match the Rust policies
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -65,6 +85,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: the port reproduces the committed matrix
+      - name: the diff-view port reproduces the committed matrix
         working-directory: arenabench/ui
         run: node scripts/check-diff-view-parity.mjs
+
+      # Deliberately not gated behind the step above: when both ports have
+      # drifted, one run should name both, not send the reader back for a
+      # second.
+      - name: the word-highlight port reproduces the committed matrix
+        if: '!cancelled()'
+        working-directory: arenabench/ui
+        run: node scripts/check-word-highlight-parity.mjs

@@ -16,7 +16,7 @@ stella chat
 ## Subcommands
 
 The six groups below are `stella --help`'s own — same headings, same order, and
-each one-line summary is the exact string the CLI prints, so the index you read
+each one-line summary is the exact string the CLI prints. The index you read
 here and the index your terminal shows can never drift apart.
 
 ### Run the agent
@@ -265,7 +265,7 @@ stella run "…" --model openrouter/anthropic/claude-fable-5 \
   --upstream-pin z-ai --upstream-pin anthropic
 ```
 
-Reach for it when **two runs must be comparable**. A gateway otherwise picks per app identity and may serve the same model slug from a different vendor between runs, which silently varies the thing a head-to-head claims to hold fixed. It is a flag rather than settings-only because a measured trial runs with settings isolation (`STELLA_NO_SETTINGS`), where an argument is the only authority that reaches it — the same reason `--base-url` is one.
+Reach for it when **two runs must be comparable**. A gateway otherwise picks per app identity and may serve the same model slug from a different vendor between runs, silently varying the thing a head-to-head claims to hold fixed. It is a flag rather than settings-only because a measured trial runs with settings isolation (`STELLA_NO_SETTINGS`), where an argument is the only authority that reaches it — the same reason `--base-url` is one.
 
 ### `--tools`: narrowing for one run
 
@@ -294,7 +294,7 @@ For a crash you did not anticipate you need no flag at all: stella writes `.stel
 
 ### `--output-format` (a flag of `run` and `fleet`, not a global)
 
-`--output-format <text|json|stream-json>` (env `STELLA_OUTPUT_FORMAT`) is deliberately **not** in the table above: it is a promise about what reaches stdout, and only the commands that keep that promise declare it — [`stella run`](/docs/commands/run) and [`stella fleet`](/docs/commands/fleet). As a subcommand flag it goes after the subcommand token — `stella run "…" --output-format json` — and passing it anywhere else is a parse error, not a silently ignored flag. [`stella arena`](/docs/commands/arena) emits stream-json unconditionally (the benchmark runner is its only reader), the interactive `chat`, `goal`, and `monitor` modes render text, and query commands with a machine shape declare their own flag (`stella stats --format json`, `stella inspect --format json`, `stella memory list --format json`).
+`--output-format <text|json|stream-json>` (env `STELLA_OUTPUT_FORMAT`) is deliberately **not** in the table above: it is a promise about what reaches stdout, and only the commands that keep that promise declare it — [`stella run`](/docs/commands/run) and [`stella fleet`](/docs/commands/fleet). As a subcommand flag it goes after the subcommand token — `stella run "…" --output-format json` — and passing it anywhere else is a parse error, not a silently ignored flag. [`stella arena`](/docs/commands/arena) emits stream-json unconditionally (the benchmark runner is its only reader). The interactive `chat`, `goal`, and `monitor` modes render text, and query commands with a machine shape declare their own flag (`stella stats --format json`, `stella inspect --format json`, `stella memory list --format json`).
 
 <CardGrid size="sm">
   <OptionCard name="text">

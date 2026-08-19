@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The `task` tool — the model's handle on the sub-agent primitive
+//! The `delegate` tool — the model's handle on the sub-agent primitive
 //! (`stella_core::subagent`, #922).
 //!
 //! Delegate a bounded piece of research to a child turn that reads whatever
@@ -34,7 +34,7 @@
 //!
 //! # Sibling spawns run concurrently
 //!
-//! `read_only: false` used to also mean sibling `task` calls in one step
+//! `read_only: false` used to also mean sibling `delegate` calls in one step
 //! were serialized — the engine's dispatch scheduler made every
 //! non-read-only call its own barrier, so the fan-out this dispatcher was
 //! built for (thread per child, snapshot-carve, delta settle) was
@@ -68,7 +68,7 @@
 //! are turn-scoped. [`TurnControlsSlot`] is the join: the driver publishes
 //! its gate and steering tap for the duration of the turn
 //! ([`crate::ToolRegistry::attach_turn_controls`]), and the dispatcher reads
-//! them when a `task` call arrives. Without it, Esc ended the parent while
+//! them when a `delegate` call arrives. Without it, Esc ended the parent while
 //! its children spent on.
 
 use std::sync::{Arc, RwLock};
@@ -76,7 +76,7 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use stella_core::ports::TurnControls;
-use stella_core::subagent::{SubAgentDispatcher, SubAgentOutcome, SubAgentSpec};
+use stella_core::subagent::{SubAgentDispatcher, SubAgentOutcome, SubAgentReport, SubAgentSpec};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
@@ -160,7 +160,7 @@ const CHILD_SYSTEM_PROMPT: &str = "You are a research sub-agent. You have been g
      did, and never a plan. If you could not determine the answer, say so plainly and state \
      what you ruled out; a confident wrong answer is far worse than an honest gap.";
 
-/// `task` — delegate a bounded research question to a read-only sub-agent.
+/// `delegate` — hand a bounded research question to a read-only sub-agent.
 pub struct SpawnSubAgent {
     dispatcher: DispatcherSlot,
     /// How many children this session has already minted per slug, so a
@@ -186,7 +186,7 @@ impl SpawnSubAgent {
     ///
     /// `slug(description)` alone is a pure function of model-supplied text, so
     /// two siblings described "research X" got the SAME id. Since sibling
-    /// `task` calls from one step run concurrently, their
+    /// `delegate` calls from one step run concurrently, their
     /// `SubAgent::Started`/`Finished` brackets then interleave under one id on
     /// the parent's stream: the deck renders indistinguishable rows and any
     /// consumer that pairs by `agent_id` mis-correlates which child finished.
@@ -212,7 +212,7 @@ impl SpawnSubAgent {
 impl Tool for SpawnSubAgent {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
-            name: "task".into(),
+            name: "delegate".into(),
             description: "Delegate a self-contained research question to a sub-agent that \
                  investigates with read-only tools and returns only its findings. Its \
                  intermediate work never enters this conversation, so use it when answering \
@@ -220,7 +220,7 @@ impl Tool for SpawnSubAgent {
                  these modules defines X', 'how is Y wired end to end', 'find every caller of \
                  Z and summarize the patterns'. Prefer it over running the same searches \
                  yourself whenever the evidence is bulky and only the conclusion matters. \
-                 Independent questions should be dispatched as SEVERAL task calls in the \
+                 Independent questions should be dispatched as SEVERAL delegate calls in the \
                  same step — they run concurrently, so three parallel investigations cost \
                  the wall-clock of the slowest, not the sum. Not \
                  for work that must edit files (the sub-agent cannot write), and not for a \
@@ -314,6 +314,19 @@ impl Tool for SpawnSubAgent {
             "description": description,
         }));
 
+        // The durable half of that announcement (#3807): the progress event is
+        // live telemetry nobody stores, so before this change a session that
+        // delegated eight children exported zero `agent_uses` rows and no
+        // reader could tell afterwards that any child had run. Recorded
+        // *before* the await for the same reason the dispatcher settles spend
+        // from the child's own thread — a hard cancel means the line after it
+        // never executes, and a delegation that vanished is exactly what this
+        // row exists to make visible. Version 1: a `task` child is minted here
+        // rather than loaded from a versioned definition on disk, so there is
+        // no pinned version to carry and the un-versioned agent's 1 is the
+        // ledger's own convention.
+        ctx.record_agent_use(&spec.agent_id, 1, description);
+
         // Already settled by the time this resolves — the dispatcher charges
         // the ledger from the child's own thread, which is the only place
         // that still runs when a hard cancel means this `await` never
@@ -330,8 +343,32 @@ impl Tool for SpawnSubAgent {
 /// the salvaged text is real evidence the parent paid for, and burying it in
 /// an error message invites the model to discard it and redo the work.
 /// A child that never ran IS an error, because there is nothing to use.
+///
+/// # Why the metrics ride `data` and never the content
+///
+/// A delegation that spent minutes and several model calls to return two
+/// sentences is indistinguishable, in the prose alone, from one that answered
+/// cheaply — so a lost or truncated child result reads downstream as an
+/// unremarkable success, and nothing in a run export can mark it as anomalous.
+/// The facts that separate the two (how many steps it took, what it cost, how
+/// much report came back) are already on [`SubAgentReport`]; what was missing
+/// was a channel to carry them.
+///
+/// That channel is [`ToolOutput::Ok`]'s `data`, which is specified to leave the
+/// content bytes the model reads untouched. That property is load-bearing here
+/// rather than incidental: these values move on every call, and the loop
+/// detector compares tool-output bytes, so putting a step count or a cost in
+/// `content` would make two identical delegations look different to it. It is
+/// the same reason the dispatch heartbeat above is a progress event and not a
+/// line of output.
 fn render(outcome: &SubAgentOutcome) -> ToolOutput {
     match outcome {
+        SubAgentOutcome::Completed(report) if report.summary.trim().is_empty() => {
+            ToolOutput::error(
+                "the sub-agent finished without reporting anything — its answer was empty. \
+                 Do the work directly, or re-ask with a narrower, self-contained question.",
+            )
+        }
         SubAgentOutcome::Completed(report) => ToolOutput::Ok {
             content: if report.truncated {
                 format!(
@@ -342,7 +379,7 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
             } else {
                 report.summary.clone()
             },
-            data: None,
+            data: Some(metrics("completed", report)),
         },
         SubAgentOutcome::Incomplete { report, reason } if !report.summary.is_empty() => {
             ToolOutput::Ok {
@@ -351,7 +388,7 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
                      the above as incomplete evidence, not a final answer.]",
                     report.summary
                 ),
-                data: None,
+                data: Some(metrics("partial", report)),
             }
         }
         SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::error(format!(
@@ -363,6 +400,27 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
                  own tools"
         )),
     }
+}
+
+/// The structured half of a delegation's result: what the child cost and how
+/// much came back, keyed to the schema `delegate` declares in
+/// `crate::contracts::declared_output_schema`.
+///
+/// `report_chars` is the answer's size in UTF-8 bytes rather than a verdict on
+/// it. There is deliberately no "this looks too thin" threshold: a two-sentence
+/// answer to a narrow question is correct, and a rule that called it a failure
+/// would be wrong more often than the loss it caught. Reporting the size beside
+/// the steps and the spend is what lets a reader — or a surface that ranks
+/// delegations by cost-per-byte — reach that judgement with the evidence in
+/// hand, which is the half that did not exist.
+fn metrics(status: &str, report: &SubAgentReport) -> Value {
+    json!({
+        "status": status,
+        "steps": report.steps,
+        "cost_usd": report.cost_usd,
+        "report_chars": report.summary.len(),
+        "truncated": report.truncated,
+    })
 }
 
 /// A short, stable, filesystem-safe id from the model's description, for

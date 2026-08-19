@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! `task` tool tests (#922) — the model-callable face of the sub-agent
+//! `delegate` tool tests (#922) — the model-callable face of the sub-agent
 //! primitive.
 
 use std::sync::Mutex;
@@ -160,6 +160,28 @@ async fn a_child_that_produced_nothing_is_an_error() {
     assert!(matches!(out, ToolOutput::Error { .. }), "{out:?}");
 }
 
+/// The silent-loss shape: a child that *completed* and reported nothing used
+/// to render as a plain `ok` with empty content, indistinguishable from a
+/// sweep that genuinely found nothing to say. The parent could only recover by
+/// noticing the thinness itself and paying for the whole delegation again.
+#[tokio::test]
+async fn a_completed_child_with_an_empty_report_is_an_error_not_a_silent_ok() {
+    for blank in ["", "   \n\t "] {
+        let (tool, _) = tool_with(SubAgentOutcome::Completed(report(blank, 0.42, false)));
+
+        let out = tool
+            .execute(
+                &call("x", "y"),
+                &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+            )
+            .await;
+        assert!(
+            matches!(out, ToolOutput::Error { .. }),
+            "a completed child that said nothing must not read as success: {out:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_truncated_report_says_so_to_the_model() {
     let (tool, _) = tool_with(SubAgentOutcome::Completed(report(
@@ -217,7 +239,7 @@ async fn a_missing_prompt_is_a_self_correcting_error_and_dispatches_nothing() {
 }
 
 /// A sub-agent runs behind `ReadOnlyTools`, and this tool is truthfully NOT
-/// read-only (it spends money). So a child cannot see `task` in its schema
+/// read-only (it spends money). So a child cannot see `delegate` in its schema
 /// list and cannot execute it by guessing the name — nesting is capped at one
 /// level by construction, with no depth counter to thread through concurrent
 /// sibling spawns and get wrong.
@@ -241,14 +263,14 @@ async fn a_child_structurally_cannot_spawn_a_grandchild() {
 
     let (tool, _) = tool_with(SubAgentOutcome::Completed(report("nope", 0.0, false)));
     let parent = OneTool(tool);
-    assert_eq!(parent.schemas().len(), 1, "the parent can see `task`");
+    assert_eq!(parent.schemas().len(), 1, "the parent can see `delegate`");
 
     let child_view = ReadOnlyTools::new(&parent);
     assert!(
         child_view.schemas().is_empty(),
-        "a child must not be offered `task`"
+        "a child must not be offered `delegate`"
     );
-    let refused = child_view.execute("task", &call("x", "y")).await;
+    let refused = child_view.execute("delegate", &call("x", "y")).await;
     match refused {
         ToolOutput::Error { message, .. } => assert!(
             message.contains("read-only"),
@@ -271,7 +293,7 @@ fn slug_is_stable_short_and_never_empty() {
 fn the_schema_is_not_read_only_which_is_what_makes_nesting_structural() {
     let tool = SpawnSubAgent::new(Arc::default());
     let schema = tool.schema();
-    assert_eq!(schema.name, "task");
+    assert_eq!(schema.name, "delegate");
     assert!(
         !schema.read_only,
         "marking this read_only would let children spawn children"
@@ -359,7 +381,7 @@ fn attaching_replaces_rather_than_stacking() {
 ///
 /// `agent_id` was `slug(description)` — a pure function of model-supplied
 /// text — so two siblings both described "research X" got the SAME id. Since
-/// sibling `task` calls from one step run concurrently (#1836), their
+/// sibling `delegate` calls from one step run concurrently (#1836), their
 /// `SubAgent::Started`/`Finished` brackets then interleave under one id on the
 /// parent's stream: the deck renders indistinguishable rows, and any consumer
 /// that pairs by `agent_id` cannot tell which child finished. The child
@@ -413,7 +435,7 @@ fn minting_is_a_function_of_call_order_alone() {
 
 /// The #3284 witness: the one long-running built-in announces its child as
 /// `tool.call.progress` on the session bus — through a `ToolCtx` scoped to
-/// exactly the events `contracts::contract_for` declares for `task`, so this
+/// exactly the events `contracts::contract_for` declares for `delegate`, so this
 /// test also pins the allowlist table. Fails on `main`, where
 /// `Tool::execute` has no event handle at all.
 #[tokio::test]
@@ -434,14 +456,82 @@ async fn dispatching_a_child_emits_declared_progress_on_the_bus() {
         declared.contains(&"tool.call.progress".to_string()),
         "the contract table must declare the event this test asserts"
     );
-    let ctx = crate::ctx::ToolCtx::new(std::path::PathBuf::from("."), "task", Some(bus), declared);
+    let ctx = crate::ctx::ToolCtx::new(
+        std::path::PathBuf::from("."),
+        "delegate",
+        Some(bus),
+        declared,
+    );
 
     tool.execute(&call("find retry policy", "where is retry?"), &ctx)
         .await;
 
     let events = seen.lock().unwrap();
     assert_eq!(events.len(), 1, "exactly one progress event: {events:?}");
-    assert_eq!(events[0]["tool"], "task");
+    assert_eq!(events[0]["tool"], "delegate");
     assert_eq!(events[0]["stage"], "dispatched");
     assert_eq!(events[0]["agent_id"], "find-retry-policy");
+}
+
+/// A delegation's cost and answer size cross back as structured `data`, so a
+/// thin or truncated child result can be recognised downstream instead of
+/// reading as an unremarkable success.
+///
+/// Before this, `render` returned `data: None` on both `Ok` arms: the only
+/// thing that crossed back was prose, and a child that spent minutes and
+/// several model calls to return two sentences was indistinguishable from one
+/// that answered cheaply. Nothing in a run export could mark it.
+#[tokio::test]
+async fn a_finding_carries_the_delegations_cost_and_size_as_data() {
+    let (tool, _dispatcher) = tool_with(SubAgentOutcome::Completed(report("thin", 0.42, false)));
+
+    let out = tool
+        .execute(
+            &call("sweep", "sweep the prose"),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+        )
+        .await;
+
+    let ToolOutput::Ok { content, data } = out else {
+        panic!("a completed child is an Ok");
+    };
+    assert_eq!(
+        content, "thin",
+        "the model-visible bytes are the report alone"
+    );
+    let data = data.expect("the structured half is present");
+    assert_eq!(data["status"], "completed");
+    assert_eq!(data["steps"], 4);
+    assert_eq!(data["cost_usd"], 0.42);
+    assert_eq!(
+        data["report_chars"], 4,
+        "the answer's size, so cost-per-byte is computable"
+    );
+    assert_eq!(data["truncated"], false);
+}
+
+/// The same for a salvaged partial, which is where a lost result most often
+/// lands — and the one case where knowing the spend behind an empty-looking
+/// answer matters most.
+#[tokio::test]
+async fn a_partial_finding_is_marked_partial_in_its_data() {
+    let (tool, _dispatcher) = tool_with(SubAgentOutcome::Incomplete {
+        report: report("half an answer", 0.9, true),
+        reason: "it ran out of steps".to_string(),
+    });
+
+    let out = tool
+        .execute(
+            &call("sweep", "sweep the prose"),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+        )
+        .await;
+
+    let ToolOutput::Ok { data, .. } = out else {
+        panic!("a salvaged partial is an Ok");
+    };
+    let data = data.expect("the structured half is present");
+    assert_eq!(data["status"], "partial");
+    assert_eq!(data["truncated"], true);
+    assert_eq!(data["cost_usd"], 0.9);
 }

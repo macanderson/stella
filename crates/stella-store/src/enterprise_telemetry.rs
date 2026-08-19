@@ -141,9 +141,10 @@ pub fn load_or_create_installation_uuid(data_dir: &Path) -> Result<String> {
             return create_installation_uuid(&path);
         }
         Err(error) => {
-            return Err(StoreError(format!(
-                "cannot inspect installation identity: {error}"
-            )));
+            return Err(StoreError::io(
+                "cannot inspect installation identity",
+                error,
+            ));
         }
     }
     let value = crate::read_private_to_string(&path)?;
@@ -151,7 +152,7 @@ pub fn load_or_create_installation_uuid(data_dir: &Path) -> Result<String> {
     if valid_uuid(&value) {
         Ok(value)
     } else {
-        Err(StoreError(
+        Err(StoreError::Other(
             "invalid enterprise installation identity".into(),
         ))
     }
@@ -165,14 +166,12 @@ pub fn ensure_trusted_host_data_dir(data_dir: &Path) -> Result<()> {
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let metadata = std::fs::symlink_metadata(data_dir).map_err(|error| {
-            StoreError(format!(
-                "cannot inspect enterprise host data directory: {error}"
-            ))
+            StoreError::io("cannot inspect enterprise host data directory", error)
         })?;
         if metadata.uid() != unsafe { libc::geteuid() }
             || metadata.permissions().mode() & 0o077 != 0
         {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "enterprise host data directory is not owner-controlled".into(),
             ));
         }
@@ -187,12 +186,10 @@ fn create_installation_uuid(path: &Path) -> Result<String> {
     options.write(true).create_new(true);
     match crate::private::open_private_file(path, options) {
         Ok(mut file) => {
-            file.write_all(generated.as_bytes()).map_err(|error| {
-                StoreError(format!("cannot write installation identity: {error}"))
-            })?;
-            file.sync_data().map_err(|error| {
-                StoreError(format!("cannot sync installation identity: {error}"))
-            })?;
+            file.write_all(generated.as_bytes())
+                .map_err(|error| StoreError::io("cannot write installation identity", error))?;
+            file.sync_data()
+                .map_err(|error| StoreError::io("cannot sync installation identity", error))?;
             Ok(generated)
         }
         Err(_) => {
@@ -201,7 +198,7 @@ fn create_installation_uuid(path: &Path) -> Result<String> {
             if valid_uuid(&value) {
                 Ok(value)
             } else {
-                Err(StoreError(
+                Err(StoreError::Other(
                     "invalid enterprise installation identity".into(),
                 ))
             }
@@ -222,7 +219,7 @@ impl BoundedIdentifier {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
             });
         if !valid {
-            return Err(StoreError(format!(
+            return Err(StoreError::Other(format!(
                 "enterprise telemetry identifier must be 1..={IDENTIFIER_MAX_BYTES} ASCII bytes from [A-Za-z0-9._:-]"
             )));
         }
@@ -260,7 +257,7 @@ impl TryFrom<String> for EventId {
         if valid {
             Ok(Self(value))
         } else {
-            Err(StoreError("invalid operational event id".into()))
+            Err(StoreError::Other("invalid operational event id".into()))
         }
     }
 }
@@ -286,7 +283,9 @@ impl ModelDimension {
         if valid {
             Ok(Self(value.to_string()))
         } else {
-            Err(StoreError("invalid operational model dimension".into()))
+            Err(StoreError::Other(
+                "invalid operational model dimension".into(),
+            ))
         }
     }
 }
@@ -324,7 +323,9 @@ impl ProviderDimension {
         if valid_dimension_segment(value) {
             Ok(Self(value.to_string()))
         } else {
-            Err(StoreError("invalid operational provider dimension".into()))
+            Err(StoreError::Other(
+                "invalid operational provider dimension".into(),
+            ))
         }
     }
 }
@@ -378,7 +379,7 @@ pub struct OperationalIdentity {
 impl OperationalIdentity {
     pub fn new(installation_uuid: &str, store_uuid: &str) -> Result<Self> {
         if !valid_uuid(installation_uuid) || !valid_uuid(store_uuid) {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "enterprise telemetry identities must be lowercase UUIDs".into(),
             ));
         }
@@ -436,10 +437,10 @@ impl OperationalOutcome {
             "verification_failed" => Ok(Self::VerificationFailed),
             "goal_met" => Ok(Self::GoalMet),
             "goal_unmet" => Ok(Self::GoalUnmet),
-            "" => Err(StoreError(
+            "" => Err(StoreError::Other(
                 "enterprise telemetry requires a finalized execution rollup".into(),
             )),
-            other => Err(StoreError(format!(
+            other => Err(StoreError::Other(format!(
                 "unsupported finalized execution outcome `{other}`"
             ))),
         }
@@ -475,7 +476,7 @@ impl OperationalEventContext {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
-            return Err(StoreError("invalid enterprise export nonce".into()));
+            return Err(StoreError::Other("invalid enterprise export nonce".into()));
         }
         Ok(Self {
             enrollment_id: BoundedIdentifier::parse(enrollment_id)?,
@@ -517,7 +518,7 @@ impl StellaOperationalEventV1 {
         rollup: &ExecutionRollupRow,
     ) -> Result<Self> {
         if !rollup.usage_complete {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "enterprise telemetry requires complete paid-call accounting".into(),
             ));
         }
@@ -556,7 +557,7 @@ impl StellaOperationalEventV1 {
         let mut event_id = String::from("evt_");
         for byte in hash.finalize() {
             write!(&mut event_id, "{byte:02x}")
-                .map_err(|_| StoreError("cannot format operational event id".into()))?;
+                .map_err(|_| StoreError::Other("cannot format operational event id".into()))?;
         }
         let event_id = EventId(event_id);
 
@@ -593,13 +594,13 @@ fn hash_part(hash: &mut Sha256, bytes: &[u8]) {
 
 fn nonnegative_u64(name: &str, value: i64) -> Result<u64> {
     u64::try_from(value)
-        .map_err(|_| StoreError(format!("enterprise telemetry {name} must be non-negative")))
+        .map_err(|_| StoreError::Other(format!("enterprise telemetry {name} must be non-negative")))
 }
 
 fn finite_nonnegative_microusd(value: f64) -> Result<u64> {
     let scaled = value * 1_000_000.0;
     if !scaled.is_finite() || scaled < 0.0 || scaled >= u64::MAX as f64 {
-        return Err(StoreError(
+        return Err(StoreError::Other(
             "enterprise telemetry cost must be finite and non-negative".into(),
         ));
     }
@@ -673,7 +674,7 @@ impl EnterpriseTelemetrySpool {
     /// Open a host-owned spool at an already policy-checked path.
     pub fn open_at(path: &Path, limits: SpoolLimits) -> Result<Self> {
         if limits.max_rows == 0 || limits.max_bytes == 0 {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "enterprise telemetry spool limits must be non-zero".into(),
             ));
         }
@@ -745,14 +746,14 @@ impl EnterpriseTelemetrySpool {
     ) -> Result<EnqueueOutcome> {
         validate_sink_fingerprint(sink_fingerprint)?;
         if created_at_ms < 0 {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "enterprise telemetry enqueue time must be non-negative".into(),
             ));
         }
         let payload = serde_json::to_vec(event)
-            .map_err(|error| StoreError(format!("cannot serialize operational event: {error}")))?;
+            .map_err(|error| StoreError::serde("cannot serialize operational event", error))?;
         let payload_bytes = i64::try_from(payload.len())
-            .map_err(|_| StoreError("operational event is too large".into()))?;
+            .map_err(|_| StoreError::Other("operational event is too large".into()))?;
         let mut conn = self.lock();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let inserted = tx.execute(
@@ -794,7 +795,7 @@ impl EnterpriseTelemetrySpool {
     ) -> Result<ObservedClaimClock> {
         validate_sink_fingerprint(sink_fingerprint)?;
         if now_ms < 0 {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "enterprise telemetry claim time must be non-negative".into(),
             ));
         }
@@ -870,7 +871,7 @@ impl EnterpriseTelemetrySpool {
             || max_payload_bytes == 0
             || max_payload_bytes > MAX_CLAIM_PAYLOAD_BYTES
         {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "invalid enterprise telemetry claim limits".into(),
             ));
         }
@@ -878,7 +879,7 @@ impl EnterpriseTelemetrySpool {
             .saturating_add(MAX_CORRUPT_SCAN_ROWS)
             .min(MAX_CLAIM_SCAN_ROWS);
         let sql_limit = i64::try_from(scan_limit)
-            .map_err(|_| StoreError("invalid enterprise telemetry claim limits".into()))?;
+            .map_err(|_| StoreError::Other("invalid enterprise telemetry claim limits".into()))?;
         let mut conn = self.lock();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current_clock: Option<(i64, i64)> = tx
@@ -949,7 +950,7 @@ impl EnterpriseTelemetrySpool {
                     continue;
                 }
                 let event = decoded.map_err(|error| {
-                    StoreError(format!("invalid operational event in spool: {error}"))
+                    StoreError::serde("invalid operational event in spool", error)
                 })?;
                 let size = payload.len();
                 if bytes.saturating_add(size) > max_payload_bytes {
@@ -981,7 +982,7 @@ impl EnterpriseTelemetrySpool {
                 params![owner, lease_until_ms, sink_fingerprint, id],
             )?;
             if changed != 1 {
-                return Err(StoreError(
+                return Err(StoreError::Other(
                     "operational telemetry claim does not match its exact sink row".into(),
                 ));
             }
@@ -1011,7 +1012,9 @@ impl EnterpriseTelemetrySpool {
             .iter()
             .any(|item| item.sink_fingerprint != sink_fingerprint)
         {
-            return Err(StoreError("claimed event belongs to another sink".into()));
+            return Err(StoreError::Other(
+                "claimed event belongs to another sink".into(),
+            ));
         }
         let mut conn = self.lock();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -1022,7 +1025,7 @@ impl EnterpriseTelemetrySpool {
                 params![sink_fingerprint, item.event.event_id(), owner],
             )?;
             if changed != 1 {
-                return Err(StoreError(
+                return Err(StoreError::Other(
                     "operational telemetry acknowledgement does not match its exact lease".into(),
                 ));
             }
@@ -1044,10 +1047,12 @@ impl EnterpriseTelemetrySpool {
             .iter()
             .any(|item| item.sink_fingerprint != sink_fingerprint)
         {
-            return Err(StoreError("claimed event belongs to another sink".into()));
+            return Err(StoreError::Other(
+                "claimed event belongs to another sink".into(),
+            ));
         }
         if now_ms < 0 {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "enterprise telemetry retry time must be non-negative".into(),
             ));
         }
@@ -1066,7 +1071,7 @@ impl EnterpriseTelemetrySpool {
             .iter()
             .any(|item| item.clock_generation != claimed_generation)
         {
-            return Err(StoreError(
+            return Err(StoreError::Other(
                 "operational telemetry retry mixes clock generations".into(),
             ));
         }
@@ -1118,7 +1123,7 @@ impl EnterpriseTelemetrySpool {
                 ],
             )?;
             if changed != 1 {
-                return Err(StoreError(
+                return Err(StoreError::Other(
                     "operational telemetry retry does not match its exact lease".into(),
                 ));
             }
@@ -1213,7 +1218,7 @@ impl EnterpriseTelemetrySpool {
         )?;
         tx.commit()?;
         u64::try_from(discarded)
-            .map_err(|_| StoreError("rollover discard count exceeds u64".into()))
+            .map_err(|_| StoreError::Other("rollover discard count exceeds u64".into()))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
@@ -1232,7 +1237,7 @@ pub(crate) fn validate_sink_fingerprint(value: &str) -> Result<()> {
     if valid {
         Ok(())
     } else {
-        Err(StoreError(
+        Err(StoreError::Other(
             "invalid enterprise telemetry sink fingerprint".into(),
         ))
     }

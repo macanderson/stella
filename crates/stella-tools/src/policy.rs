@@ -7,7 +7,7 @@
 //!
 //! ```json
 //! "tools": {
-//!   "task": "off",
+//!   "delegate": "off",
 //!   "scratch": "off",
 //!   "task_assign": "off"
 //! }
@@ -127,6 +127,20 @@ impl ToolPolicy {
         }
     }
 
+    /// The answer for a member of `group` that no exact key names: the
+    /// group's own switch, else the wildcard, else on.
+    ///
+    /// [`allows`](Self::allows) cannot be asked this question, because it
+    /// takes a *tool* name: handed a group name it resolves through
+    /// [`catalog::group_for`], which reads it as a tool the catalog has never
+    /// heard of and answers for the `custom` group instead (#2800).
+    fn group_default(&self, group: &str) -> bool {
+        match self.switches.get(group) {
+            Some(&enabled) => enabled,
+            None => self.switches.get(WILDCARD).copied().unwrap_or(true),
+        }
+    }
+
     /// Narrow this policy by another scope: a tool ends up allowed only if
     /// **both** policies allow it.
     ///
@@ -144,9 +158,41 @@ impl ToolPolicy {
     /// because `other.allows("task_list")` is `true` while
     /// `other.allows("*")` is `false`.
     ///
-    /// The narrowing guarantee is unchanged and still structural: every entry
-    /// is `self.allows(k) && other.allows(k)`, so a tool this policy denies
-    /// stays denied whatever `other` says.
+    /// The narrowing guarantee is unchanged and still structural: every tool
+    /// name's entry is `self.allows(n) && other.allows(n)`, so a tool this
+    /// policy denies stays denied whatever `other` says.
+    ///
+    /// # Why a key is not resolved as written
+    ///
+    /// A key is a tool name, a group, or the wildcard, and only the first can
+    /// go through [`allows`](Self::allows). Resolving all three that way
+    /// could **widen** past the per-name intersection (#2800): `allows`
+    /// classifies a group key through [`catalog::group_for`], which reads
+    /// `"scratch"` as an unknown *tool* and answers for the dynamic `custom`
+    /// group — so a scope of `{"*": off, "custom": on}` folded onto an
+    /// operator's `{"scratch": on}` used to resolve to `{"scratch": on}` and
+    /// keep the whole scratch family alive, though the scope denies every one
+    /// of them by name. So each key is resolved as the kind of key it is:
+    ///
+    /// - a **catalog group** expands to its member names
+    ///   ([`catalog::names_in_group`]) and each is resolved as a name. The
+    ///   group key itself is then dropped, because every member now carries a
+    ///   more specific entry that outranks it, and leaving a `{"scratch": on}`
+    ///   behind a family that is entirely off would misreport the posture to
+    ///   [`switches`](Self::switches)' readers.
+    /// - a **dynamic group** (`"mcp"`, `"custom"` — see
+    ///   [`catalog::DYNAMIC_GROUPS`]) has no fixed member list, so there is
+    ///   nothing to expand to: it stays a group key and is resolved at group
+    ///   level on both sides. That is exact for its members, which are
+    ///   precisely the names neither side keys individually.
+    /// - the **wildcard**, likewise, at wildcard level.
+    /// - anything else is a tool name, resolved by [`allows`](Self::allows)
+    ///   as before.
+    ///
+    /// The result is the exact per-name intersection —
+    /// `narrow_with` now agrees with [`crate::skill_grant::effective_allows`],
+    /// which computes it one concrete name at a time — pinned as a property
+    /// by `the_fold_is_exactly_the_per_name_intersection`.
     pub fn narrow_with(&mut self, other: &ToolPolicy) {
         let keys: std::collections::BTreeSet<String> = self
             .switches
@@ -154,13 +200,30 @@ impl ToolPolicy {
             .chain(other.switches.keys())
             .cloned()
             .collect();
-        let resolved: Vec<(String, bool)> = keys
-            .into_iter()
-            .map(|key| {
+        let mut resolved: Vec<(String, bool)> = Vec::new();
+        let mut expanded: Vec<String> = Vec::new();
+        for key in keys {
+            let members = catalog::names_in_group(&key);
+            if !members.is_empty() {
+                resolved.extend(
+                    members
+                        .into_iter()
+                        .map(|name| (name.to_string(), self.allows(name) && other.allows(name))),
+                );
+                expanded.push(key);
+            } else if key == WILDCARD || catalog::DYNAMIC_GROUPS.contains(&key.as_str()) {
+                let allowed = self.group_default(&key) && other.group_default(&key);
+                resolved.push((key, allowed));
+            } else {
                 let allowed = self.allows(&key) && other.allows(&key);
-                (key, allowed)
-            })
-            .collect();
+                resolved.push((key, allowed));
+            }
+        }
+        // After the reads above, never during them: `allows` answers against
+        // the pre-narrowing policy for every key.
+        for key in expanded {
+            self.switches.remove(&key);
+        }
         self.switches.extend(resolved);
     }
 
@@ -208,6 +271,7 @@ impl ToolPolicy {
 #[cfg(test)]
 mod narrowing_tests {
     use super::*;
+    use proptest::prelude::*;
 
     /// The read-only idiom, and the reason `narrow_with` exists at all:
     /// `deny_all_from` folds key by key, drops the `task_list:on` grant, and
@@ -221,7 +285,7 @@ mod narrowing_tests {
 
         assert!(effective.allows("task_list"), "the exception must survive");
         assert!(effective.allows("get_state"));
-        assert!(!effective.allows("task"));
+        assert!(!effective.allows("delegate"));
         assert!(!effective.allows("save_state"));
 
         // The old fold is what this replaces — pinned so a future
@@ -239,10 +303,10 @@ mod narrowing_tests {
     /// narrow, never widen.
     #[test]
     fn a_cli_scope_cannot_re_enable_what_settings_denied() {
-        let mut effective = ToolPolicy::from_switches([("task".to_string(), false)]);
-        let scope = ToolPolicy::parse_spec("task:on").unwrap();
+        let mut effective = ToolPolicy::from_switches([("delegate".to_string(), false)]);
+        let scope = ToolPolicy::parse_spec("delegate:on").unwrap();
         effective.narrow_with(&scope);
-        assert!(!effective.allows("task"), "a grant must never transfer");
+        assert!(!effective.allows("delegate"), "a grant must never transfer");
     }
 
     /// A narrowing scope must not disturb tools neither side mentions.
@@ -255,11 +319,163 @@ mod narrowing_tests {
         assert!(effective.allows("save_state"));
     }
 
+    /// **The #2800 witness.** A scope that grants a dynamic group (`custom`)
+    /// must not, by that grant alone, keep a *catalog* group alive.
+    ///
+    /// The issue's own pair is `operator = {"build": on}` folded with
+    /// `scope = {"*": off, "custom": on}`, asserting on `verify_done`; #3244
+    /// retired both that tool and the `build` group, so this is the same pair
+    /// on live names — `scratch` / `save_state` — and the same mechanism:
+    /// `scope.allows("scratch")` routes a *group* key through
+    /// `catalog::group_for`, which reads it as an unknown TOOL name and
+    /// answers with the dynamic `custom` group.
+    #[test]
+    fn a_scope_granting_custom_does_not_keep_a_catalog_group_alive() {
+        let operator = ToolPolicy::from_switches([("scratch".to_string(), true)]);
+        let scope = ToolPolicy::parse_spec("*:off,custom:on").unwrap();
+
+        // What the scope says about the tool, by name: nothing grants
+        // `scratch`, so `*:off` denies it.
+        assert!(!scope.allows("save_state"), "premise: the scope denies it");
+
+        let mut folded = operator.clone();
+        folded.narrow_with(&scope);
+        assert!(
+            !folded.allows("save_state"),
+            "the fold widened past `operator ∧ scope`: the scope denies \
+             `save_state` and the operator's `scratch` key resolved through \
+             the scope's `custom` grant"
+        );
+    }
+
+    /// The same defect as an operator meets it: `--tools "*:off,custom:on"`
+    /// is "only my own tools", and it must not leave four built-ins on the
+    /// wire because a settings file happened to spell a group key.
+    #[test]
+    fn a_custom_only_scope_leaves_no_builtin_on() {
+        // Settings: nothing but the scratch plane and the operator's own
+        // tools. The scope below then keeps only the second half.
+        let mut effective = ToolPolicy::from_switches([
+            (WILDCARD.to_string(), false),
+            ("scratch".to_string(), true),
+            ("custom".to_string(), true),
+        ]);
+        effective.narrow_with(&ToolPolicy::parse_spec("*:off,custom:on").unwrap());
+
+        for name in catalog::ALL_NAMES {
+            assert!(
+                !effective.allows(name),
+                "`{name}` survived a custom-only scope"
+            );
+        }
+        assert!(
+            effective.allows("deploy_to_staging"),
+            "...and the custom tools the scope asked for are still there"
+        );
+        assert!(
+            !effective.allows("mcp__github__create_issue"),
+            "`custom:on` grants the custom group, never the mcp one"
+        );
+    }
+
+    /// The dynamic groups have no member list to expand into, so they stay
+    /// group keys and are resolved at group level. Both directions: a
+    /// dynamic-group denial on either side reaches every member of it, and
+    /// reaches nothing else.
+    #[test]
+    fn a_dynamic_group_key_narrows_its_own_members_only() {
+        let mut effective = ToolPolicy::allow_all();
+        effective.narrow_with(&ToolPolicy::parse_spec("mcp:off").unwrap());
+        assert!(!effective.allows("mcp__github__create_issue"));
+        assert!(effective.allows("deploy_to_staging"), "custom is a sibling");
+        assert!(effective.allows("task_list"), "so is every built-in");
+
+        // ...and the other side: an operator-level `custom:off` is not
+        // re-openable by a scope that grants the tool's exact name.
+        let mut effective = ToolPolicy::from_switches([("custom".to_string(), false)]);
+        effective.narrow_with(&ToolPolicy::parse_spec("deploy_to_staging:on").unwrap());
+        assert!(
+            !effective.allows("deploy_to_staging"),
+            "a grant never transfers"
+        );
+    }
+
+    /// Expanding a catalog group leaves the policy honest: the family's
+    /// resolved members are what `switches()` reports, not a stale group key
+    /// saying `on` over four tools that are all off.
+    #[test]
+    fn an_expanded_group_key_does_not_outlive_its_members() {
+        let mut effective = ToolPolicy::from_switches([("scratch".to_string(), true)]);
+        effective.narrow_with(&ToolPolicy::parse_spec("*:off,custom:on").unwrap());
+
+        assert!(
+            !effective.switches().contains_key("scratch"),
+            "the group key must not survive its expansion: {:?}",
+            effective.switches()
+        );
+        for name in catalog::names_in_group("scratch") {
+            assert_eq!(effective.switches().get(name), Some(&false));
+        }
+    }
+
+    /// The tool-name universe the property quantifies over: every catalog
+    /// name (so group resolution is exercised for real) plus an MCP and a
+    /// custom name the catalog has never heard of. Mirrors
+    /// [`crate::skill_grant`]'s, which pins the same intersection per name.
+    fn universe() -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = catalog::ALL_NAMES.to_vec();
+        names.push("mcp__github__create_issue");
+        names.push("deploy_to_staging");
+        names
+    }
+
+    fn any_key() -> impl Strategy<Value = String> {
+        let mut keys: Vec<String> = universe().iter().map(|s| s.to_string()).collect();
+        keys.extend(catalog::groups().iter().map(|g| g.to_string()));
+        keys.push(WILDCARD.to_string());
+        proptest::sample::select(keys)
+    }
+
+    fn any_policy() -> impl Strategy<Value = ToolPolicy> {
+        proptest::collection::vec((any_key(), any::<bool>()), 0..6)
+            .prop_map(ToolPolicy::from_switches)
+    }
+
+    proptest! {
+        /// **The #2800 property.** The fold is the intersection *exactly*,
+        /// per concrete tool name — the semantics
+        /// [`crate::skill_grant::effective_allows`] already computed one name
+        /// at a time, and which the folded form is now safe to stand in for.
+        ///
+        /// Widening is the failure this catches (a name the scope denies that
+        /// the fold allows); the assertion is equality, so an over-narrowing
+        /// fold — safe, but no longer the intersection — fails it too.
+        #[test]
+        fn the_fold_is_exactly_the_per_name_intersection(
+            operator in any_policy(),
+            scope in any_policy(),
+        ) {
+            let mut folded = operator.clone();
+            folded.narrow_with(&scope);
+            for name in universe() {
+                prop_assert_eq!(
+                    folded.allows(name),
+                    operator.allows(name) && scope.allows(name),
+                    "`{}` diverged from operator ∧ scope; operator {:?}, scope {:?}, folded {:?}",
+                    name,
+                    operator.switches(),
+                    scope.switches(),
+                    folded.switches()
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_spec_is_parsed_or_named_as_malformed() {
         let p = ToolPolicy::parse_spec(" *:off , task_list:on ").unwrap();
         assert!(p.allows("task_list"));
-        assert!(!p.allows("task"));
+        assert!(!p.allows("delegate"));
 
         for bad in ["task_list", "task_list:yes", ":on", ""] {
             assert!(
@@ -277,7 +493,7 @@ mod tests {
     #[test]
     fn the_default_policy_allows_every_tool() {
         let policy = ToolPolicy::allow_all();
-        assert!(policy.allows("task"));
+        assert!(policy.allows("delegate"));
         assert!(policy.allows("save_state"));
         assert!(policy.allows("get_environment"));
         assert!(policy.is_default());

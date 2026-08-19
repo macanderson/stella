@@ -9,7 +9,7 @@ configures each engine agent individually:
 <CardGrid size="md">
   <OptionCard name="default">
     The interactive / step-loop agent — `stella chat`, the Command Deck,
-    `stella run --no-pipeline`. Its model is also the **session default** every
+    a plain `stella run`. Its model is also the **session default** every
     other role falls back to.
   </OptionCard>
   <OptionCard name="worker">
@@ -123,9 +123,9 @@ pin just the verifier model while your user scope keeps everything else.
 
 Every role resolves on its own chain. `--model` sets the **session default** —
 the model the interactive agent runs on and the one every unconfigured role
-falls back to — and it additionally pins the **worker**, since overriding the
+falls back to — and also pins the **worker**, since overriding the
 worker model for one invocation is the flag's whole purpose. Research and plan
-follow the worker there, so the flag moves all three together. An explicitly
+follow the worker, so the flag moves all three together. An explicitly
 configured **verifier, triage, research or plan** keeps its own model even under
 a `--model` flag.
 
@@ -176,7 +176,7 @@ still reaches the planner when `agents.plan.prompt` is unset, and setting
 resolves to, not the session default. A `--model` flag does **not** override an
 explicitly configured verifier or triage — `stella --model anthropic/claude-fable-5 goal "…"`
 with `pipeline_verifier_model: openrouter/openai/gpt-5.5` runs a Fable worker under
-a GPT verifier, which is usually exactly what you want from a cross-family setup.
+a GPT verifier — usually exactly what you want from a cross-family setup.
 
 <Callout type="info">
   `--model` always changes what the pipeline executes on. When it suppresses a

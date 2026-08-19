@@ -230,9 +230,14 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
                     stella_diff::view::VIEW_CAP
                 };
                 let view = stella_diff::view::elide(&stella_diff::parse::hunks(text), cap);
-                out["hunks"] = stella_diff::json::hunks(&view.hunks);
-                out["elided"] = json!(view.hidden);
-                out["fold_before"] = json!(view.fold_before);
+                // `stella_diff::json::view` is the one place `{hunks, elided,
+                // fold_before}` is assembled (#1511) — merged onto `out`
+                // rather than hand-written here too.
+                if let Value::Object(view_fields) = stella_diff::json::view(&view) {
+                    out.as_object_mut()
+                        .expect("object literal")
+                        .extend(view_fields);
+                }
             }
         }
         "speculation_discarded" => {

@@ -201,6 +201,40 @@ fn surfaces() -> Vec<Surface> {
                 // otherwise sit.
             ],
         },
+        // The shared transcript page. The Observatory's `render_transcript`
+        // route serves it, so a reader clicking a run in the dashboard lands
+        // on it — which is what makes it an instrument surface rather than a
+        // published one, and puts it outside #2594's carve-out. It is also the
+        // standalone artifact people mail around.
+        //
+        // It was outside this matrix until #3630, and had drifted exactly the
+        // way an unchecked surface does: ground `#0a0a0a` against the
+        // instrument's `#070B10`, and a different green, red and amber, so
+        // "passed" was one colour in the dashboard and another in the
+        // transcript of the same run. The file's own header comment claimed
+        // the values WERE the instrument palette the whole time — which is the
+        // argument for the row rather than for a third alignment pass.
+        //
+        // No `identity`: a transcript renders a run, and nothing on it is a
+        // brand mark. Its two categorical hues (`--cyan`, `--violet`, tool
+        // kind and speaker) are deliberately outside the instrument palette
+        // and so outside this matrix; the file's header carries that decision
+        // and its reasoning.
+        Surface {
+            file: "crates/stella-transcript/src/html/transcript.css",
+            dark: (":root {", "\n}"),
+            light: ("@media (prefers-color-scheme: light)", "\n  }"),
+            names: &[
+                ("ground", "--bg"),
+                ("surface", "--panel"),
+                ("text", "--ink"),
+                ("text-2", "--dim"),
+                ("text-3", "--faint"),
+                ("ok", "--green"),
+                ("bad", "--red"),
+                ("warn", "--amber"),
+            ],
+        },
         Surface {
             file: "arenabench/web/app/globals.css",
             dark: (":root {", "\n}"),
@@ -333,6 +367,56 @@ fn every_web_surface_agrees_with_the_observatory_palette() {
         "the web instrument surfaces have drifted from the observatory, \
          which is the single definition:\n  {}\n\nFix the derived file, or \
          change the observatory and let this test tell you what follows.",
+        divergences.join("\n  ")
+    );
+}
+
+/// The transcript's *neutral ramp steps* match the observatory's too.
+///
+/// The `Surface` row above holds this page to the eight canonical roles —
+/// ground, the two surfaces, the three text steps and the semantic triad. The
+/// ramp steps beside them (`--raised`, `--line`, `--line2`) are not in `ROLES`
+/// because no other surface spells them, so they need their own assertion or
+/// they have none: a transcript that took its ground from the observatory's
+/// palette block and its hairline from somewhere else would look assembled
+/// from two systems.
+///
+/// That is not hypothetical. This file was outside the matrix entirely until
+/// #3630, and drifted exactly the way an unchecked surface does — the v3.0
+/// recolour moved the observatory and every surface the matrix covered to Ion
+/// on Obsidian and left this one on the previous ground, while its own header
+/// comment claimed the values *were* the instrument palette.
+#[test]
+fn the_transcript_ramp_steps_agree_with_the_observatory() {
+    let css = read("crates/stella-transcript/src/html/transcript.css");
+    let tokens = declarations(between(&css, ":root {", "\n}"));
+    let observatory = read("crates/stella-observatory/src/assets/index.html");
+    let instrument = declarations(between(&observatory, "BEGIN palette", "END palette"));
+
+    let mut divergences = Vec::new();
+    for (token, canonical_name) in [
+        ("--raised", "--raised"),
+        ("--line", "--hairline"),
+        ("--line2", "--hairline-strong"),
+    ] {
+        let want = instrument
+            .get(canonical_name)
+            .unwrap_or_else(|| panic!("observatory defines no {canonical_name}"));
+        match tokens.get(token) {
+            None => divergences.push(format!("declares no `{token}`")),
+            Some(got) if got != want => divergences.push(format!(
+                "`{token}` is {got}, the observatory's `{canonical_name}` is {want}"
+            )),
+            Some(_) => {}
+        }
+    }
+
+    assert!(
+        divergences.is_empty(),
+        "crates/stella-transcript/src/html/transcript.css has drifted from the \
+         observatory, which is the single definition:\n  {}\n\nThe Observatory \
+         serves this page, so a reader arrives here from a dashboard painted in \
+         those values.",
         divergences.join("\n  ")
     );
 }
@@ -648,5 +732,77 @@ fn identity_comes_from_the_brand_ramp() {
          has to clear contrast on --surface, not only on the page ground, and \
          brand-800 measures 4.93:1 there and 5.20:1 as the identity fill pair \
          (#2591)."
+    );
+}
+
+/// Every colour the transcript's *rules* use is a token, so a scheme can reach
+/// it.
+///
+/// The two blocks above pin what the tokens are worth. This pins the half that
+/// makes them matter: a colour written inline in a rule is not overridable by
+/// anything, so a page can declare a complete light scheme and still paint a
+/// near-black well on it. That is not a hypothetical either — it is what this
+/// file did. The light scheme (#3813) overrode the fifteen tokens in `:root`
+/// and could not touch the eighteen literals sitting in rules three hundred
+/// lines below it, so `.body-inner` stayed `#070707` on white paper and
+/// `.diff .code` stayed `#c7c7c7`, which on the near-white diff washes is
+/// grey-on-grey and simply cannot be read.
+///
+/// So the rule is mechanical and has no judgement in it: below the scheme
+/// blocks, a colour is spelled `var(--token)` or it is not spelled at all.
+/// `rgba()` is allowed — the washes are derived channel-for-channel from the
+/// semantic pair on purpose, and the header says why.
+#[test]
+fn the_transcript_spells_every_rule_colour_as_a_token() {
+    let css = read("crates/stella-transcript/src/html/transcript.css");
+
+    // Everything after the light scheme's closing brace: the rules. The two
+    // scheme blocks are where literals belong, and are excluded by construction
+    // rather than by a pattern that might also skip a rule.
+    let light_marker = "@media (prefers-color-scheme: light)";
+    let light_at = css
+        .find(light_marker)
+        .expect("transcript.css declares a light scheme");
+    let rules_at = css[light_at..]
+        .find("\n}\n")
+        .map(|offset| light_at + offset)
+        .expect("the light scheme block closes");
+    let rules = &css[rules_at..];
+
+    let mut inline = Vec::new();
+    for (number, line) in rules.lines().enumerate() {
+        // Comments here are page content (see the file's header), so they
+        // legitimately name historical values in prose.
+        let code = line.trim_start();
+        if code.starts_with('*') || code.starts_with("/*") {
+            continue;
+        }
+        let Some(hash) = line.find('#') else {
+            continue;
+        };
+        let digits: String = line[hash + 1..]
+            .chars()
+            .take_while(char::is_ascii_hexdigit)
+            .collect();
+        if matches!(digits.len(), 3 | 6 | 8) {
+            inline.push(format!(
+                "{}: {}",
+                // The slice starts at the light block's closing brace, so the
+                // first line of `rules` is that brace's line.
+                css[..rules_at].lines().count() + number,
+                line.trim()
+            ));
+        }
+    }
+
+    assert!(
+        inline.is_empty(),
+        "crates/stella-transcript/src/html/transcript.css writes a colour \
+         inline in a rule, where no scheme can override it:\n  {}\n\nDeclare it \
+         as a token beside the derived surfaces in `:root`, give it a light \
+         value in the media query, and reference it with `var()`. A literal \
+         here renders the same on paper as on a dark screen, which for a well \
+         or for body text means unreadable.",
+        inline.join("\n  ")
     );
 }

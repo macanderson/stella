@@ -84,7 +84,7 @@ use stella_protocol::{
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
 use crate::bus;
-use crate::compaction::compact_measured;
+use crate::compaction::compact_and_digest;
 use crate::receipts::TranscriptRevision;
 pub use config::{DEFAULT_STOP_HOLDS, EngineConfig, STOP_HOLD_CEILING, TurnHalt, clamp_stop_holds};
 // These moved to `config` with the fields that use them; the test modules
@@ -975,18 +975,18 @@ impl<'a> Engine<'a> {
     /// This is for a host that continues an interrupted turn: it hands back a
     /// state to keep stepping, via [`Self::drive`] (the ordinary case, and
     /// what `stella-pipeline`'s resumed execute stage does) or
-    /// [`Self::run_step`]. Neither shipping surface accepts one from the
-    /// outside today, and that is a declaration rather than an oversight:
-    /// the CLI resumes at *transcript* granularity instead (its turns are
-    /// dispatched through `stella-pipeline`, which owns turn framing and
-    /// builds its own state via `run_turn`; it reopens the conversation at
-    /// the checkpoint's step boundary so completed steps' work is not re-run
-    /// — see `stella-parity`'s `turn.checkpoint_resume` row), and
-    /// `stella-serve` stores one and hands it back on request but accepts
-    /// none in return (same row, API side). So the production callers are
-    /// embedders, and the in-tree exercise is `stella-engine`'s test suite.
-    /// Anything that changes on either surface changes that row in the same
-    /// PR.
+    /// [`Self::run_step`]. No shipping surface calls this *method* today: the
+    /// CLI's raw door (the default since #3381 — `--pipeline classic`/`<variant>`
+    /// is the sole opt-in into `stella-pipeline`) rebuilds the identical state
+    /// via `TurnState::from_checkpoint` directly in its daemon-resume path and
+    /// drives it the same way, rather than going through this wrapper; a
+    /// killed pipeline-wrapped turn resumes instead through
+    /// `stella_pipeline::Pipeline::resume`, which owns turn framing and builds
+    /// its own state via `run_turn` — see `stella-parity`'s
+    /// `turn.checkpoint_resume` row. `stella-serve` stores a checkpoint and
+    /// hands it back on request but accepts none in return (same row, API
+    /// side). So the production callers of *this method* are embedders, and
+    /// the in-tree exercise is `stella-engine`'s test suite.
     #[must_use]
     pub fn resume_turn(&self, checkpoint: crate::step::Checkpoint) -> TurnState {
         TurnState::from_checkpoint(checkpoint, &self.config)
@@ -1038,7 +1038,7 @@ impl<'a> Engine<'a> {
         // Whether anything was rewritten IN PLACE, decided at the mutation sites
         // below and reported through a `#[must_use]` return.
         let mut rewrote = false;
-        // Post-pass size, for the overflow decision below. `compact_measured`
+        // Post-pass size, for the overflow decision below. `compact_and_digest`
         // returns the count it already computed on every path — including both
         // `None` paths, the common case — so this walks the transcript once per
         // step rather than eagerly re-deriving a number the callee just discarded.
@@ -1046,7 +1046,7 @@ impl<'a> Engine<'a> {
             .config
             .tool_result_horizon_steps
             .map(|keep_recent_steps| crate::compaction::RetentionPolicy { keep_recent_steps });
-        let (after_tokens, report) = compact_measured(messages, compaction_budget, retention);
+        let (after_tokens, report) = compact_and_digest(messages, compaction_budget, retention);
         if let Some(report) = report {
             // `Some` means a pass actually stubbed, aged or superseded something,
             // so positions at or after the first rewrite name different bytes now.

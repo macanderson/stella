@@ -187,10 +187,10 @@ clock, not the moment you typed `/export`. Every entry nests under a matching
 That is a safety property, not a convenience: the archive is built to be
 shared, so credentials in the telemetry are masked and the file is written
 `0600`, and both of those defences assume the blast radius is one session.
-Until [#2558](https://github.com/macanderson/stella/issues/2558) it was every
-run the workspace had ever recorded, so attaching an export to a public PR to
-show one run disclosed every unrelated run in that project — its prompts, its
-tool arguments, its touched files' contents.
+  Until [#2558](https://github.com/macanderson/stella/issues/2558) it was every
+  run the workspace had ever recorded. Attaching an export to a public PR to
+  show one run disclosed every unrelated run in that project — its prompts, its
+  tool arguments, its touched files' contents.
 
 Because rows are excluded rather than absent, the archive says so. The
 manifest's `excluded` object counts the executions belonging to other sessions,

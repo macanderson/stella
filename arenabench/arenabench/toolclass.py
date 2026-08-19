@@ -45,7 +45,7 @@ _CURRENT: dict[str, tuple[bool, str]] = {
     "task_complete": (False, "task"),
     "task_cancel": (False, "task"),
     "task_assign": (False, "task"),
-    "task": (False, "task"),
+    "delegate": (False, "task"),
     "save_state": (False, "scratch"),
     "get_state": (True, "scratch"),
     "list_state": (True, "scratch"),
@@ -117,6 +117,9 @@ _LEGACY: dict[str, tuple[bool, str]] = {
     "list_labels": (True, "issue"),
     "list_members": (True, "issue"),
     "start_work_on_issue": (False, "issue"),
+    # Delegation's dispatch name until #3192 renamed it `delegate`; the group
+    # it ran under is unchanged, so archived transcripts still render true.
+    "task": (False, "task"),
     "ask_user": (False, "session"),
     "search_skills": (True, "session"),
     "install_skill": (False, "session"),

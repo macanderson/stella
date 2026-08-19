@@ -107,9 +107,9 @@ impl ToolClass {
 /// Group first, then the read/write bit *within* the group that holds both.
 /// The `task` group is orchestration whole — the reader's question there is
 /// "what moved on the board", and `task_list` beside `task_create` is part of
-/// that answer, not a file read. The `scratch` group genuinely mixes, so it
-/// splits on mutation, because there the read/write distinction *is* the
-/// question.
+/// that answer, not a file read; `delegate` shares the group for the same
+/// reason. The `scratch` group genuinely mixes, so it splits on mutation,
+/// because there the read/write distinction *is* the question.
 ///
 /// An unknown name — an MCP server's tool, a customer's own manifest tool —
 /// falls back to the same read-only bit, so a third-party read never renders
@@ -183,7 +183,7 @@ mod tests {
             ("get_environment", ToolClass::Inspect),
             ("save_state", ToolClass::Mutate),
             ("delete_state", ToolClass::Mutate),
-            ("task", ToolClass::Delegate),
+            ("delegate", ToolClass::Delegate),
             ("task_create", ToolClass::Delegate),
             ("task_list", ToolClass::Delegate),
             ("task_complete", ToolClass::Delegate),

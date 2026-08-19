@@ -19,9 +19,21 @@ stella-diag = { path = "../stella-diag" }
 # policy, so the deck, the plain surface, the Observatory and an export all
 # elide one edit identically. Also a dependency-free leaf, so no cycle.
 stella-diff = { path = "../stella-diff" }
-# The shared transcript model + character-grid renderer (#3578). This crate
-# owns the fold from `AgentEvent` into `stella_transcript::Run`, because
-# stella-transcript is a near-leaf that must not learn about the protocol.
+# The shared transcript information model. Taken for the two policies the deck
+# and the export surfaces must not answer differently: how much of a tool
+# result a collapsed fold shows (`digest::PREVIEW_LINES`) and how a JSON body
+# is lexed for colouring (`syntax::json_runs`). Both used to live here, which
+# meant the Observatory and an exported transcript got neither (#3644).
+#
+# The edge goes this way round because `stella-transcript` is a near-leaf by
+# contract — its only workspace dependency is `stella-diff`, which this crate
+# already carries — so the shared policy had to move down rather than the
+# renderer reach up. It is also the direction #3578 wants: rendering the deck's
+# own session view through `stella_transcript::grid`.
+#
+# This crate also owns the fold from `AgentEvent` into `stella_transcript::Run`
+# (`transcript_build`), for the same near-leaf reason: the model must not learn
+# about the protocol, so the adapter lives on this side of the edge.
 stella-transcript = { path = "../stella-transcript" }
 arboard.workspace = true
 png.workspace = true

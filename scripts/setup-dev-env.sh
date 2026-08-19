@@ -132,7 +132,7 @@ if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
 fi
 repo_root="$(cd "$repo_root" && pwd -P)"
 
-if [ ! -f "$repo_root/rust-toolchain.toml" ] || [ ! -d "$repo_root/stella-core" ]; then
+if [ ! -f "$repo_root/rust-toolchain.toml" ] || [ ! -d "$repo_root/crates/stella-core" ]; then
   echo "setup-dev-env: $repo_root does not look like the stella workspace." >&2
   exit 1
 fi
@@ -235,8 +235,10 @@ fi
 # git and cargo are deliberately absent from this table: we could not have
 # reached this line without git (repo detection above uses it), and cargo is
 # covered by the toolchain section. A row for either would be unreachable.
-# The hard-failure count therefore comes from the toolchain section alone —
-# nothing below is fatal, because `make gate` runs without all of it.
+# The hard-failure count comes from the toolchain section AND from every `ci`
+# row below it. That tier is fatal precisely because `make gate` does NOT run
+# without it: a missing shellcheck aborts the gate at that step on every rung
+# of the ladder (#3615), so reporting it as advisory would be false.
 #
 # Tiers, in the order they will actually cost you:
 #   ci    — a REQUIRED GitHub check you cannot reproduce locally without it
@@ -247,6 +249,7 @@ fi
 tool_table() {
   cat <<'EOF'
 cargo-deny|ci|CI job "cargo deny + cargo audit" (name kept for branch protection; only cargo-deny actually runs, see #919) is a required check; make deny|cargo|cargo-deny
+shellcheck|ci|the `shellcheck` step of make gate / make guards-fast, and of ci.yml's "fmt + clippy + test" job; without it that step cannot run at all (#3615)|brew|shellcheck
 gh|repo|PR + release flow (scripts/release.sh hard-requires it)|brew|gh
 rg|repo|repo convention: rg over grep, and it is gitignore-aware|brew|ripgrep
 fd|repo|repo convention: fd over find|brew|fd
@@ -255,7 +258,7 @@ cargo-watch|opt|make watch / watch-core / watch-lint (hard-errors without it)|ca
 docker|opt|make serve-image + scripts/smoke-serve-image.sh|manual|
 node|opt|the website/ docs build|brew|node
 pnpm|opt|website/ uses pnpm exclusively (never npm)|brew|pnpm
-uv|opt|make bench-test (bench/harbor_adapter, bench/terminal_bench_analysis)|brew|uv
+uv|opt|make bench-test — every Python suite .github/workflows/bench.yml gates; .githooks/pre-push runs it for a push that touches bench/ or arenabench/ (#2847)|brew|uv
 gsed|opt|scripts/release.sh + release.yml use GNU-only sed ranges; BSD sed no-ops them|brew|gnu-sed
 zig|opt|scripts/release.sh cross-builds via cargo-zigbuild|brew|zig
 EOF
@@ -272,7 +275,12 @@ while IFS='|' read -r name tier why installer pkg; do
     continue
   fi
   case "$tier" in
-    ci) bad "$name — $why" ;;
+    # A `ci` row is a REQUIRED check you cannot reproduce locally without it,
+    # so its absence has to reach the exit code. It did not: the row printed a
+    # red `miss` line and the run still ended "all required tools present" with
+    # exit 0, which is the same shape as the gate step this tier exists to
+    # protect (#3615). A red line over a green verdict is worse than no line.
+    ci) bad "$name — $why"; missing_required=$((missing_required + 1)) ;;
     *)  warn "$name — $why" ;;
   esac
   case "$installer" in
@@ -468,9 +476,22 @@ fi
 
 # ── The part that is easy to get wrong ───────────────────────────────────────
 hdr "make gate vs CI"
+# Derived, never transcribed. This used to be a hand-written nine-step list
+# against a real twenty-nine, and it omitted `shellcheck` — the very step whose
+# absence #3615 is about. check-gate-parity.sh holds AGENTS.md and
+# CONTRIBUTING.md to GATE_STEPS, but it never saw this third copy, so it rotted
+# unguarded in exactly the direction #1437 warns about: under-reporting, which
+# lets a reader run the short list, see green, and believe the gate is green.
+# `|| true` is load-bearing, not defensive noise: this script runs under
+# `set -euo pipefail`, where a command substitution that exits non-zero
+# aborts the assignment and therefore the whole run -- which would make the
+# fallback on the next line unreachable and kill setup outright on a machine
+# with no make. Swallowing the status is what lets the next line answer.
+gate_steps="$(make -s -C "$repo_root" print-gate-steps 2>/dev/null || true)"
+[ -n "$gate_steps" ] || gate_steps="(unavailable here -- run: make print-gate-steps)"
+printf '  make gate  runs, in order:\n'
+printf '%s\n' "$gate_steps" | fold -s -w 62 | sed 's/^/             /'
 cat <<'EOF'
-  make gate  runs: no-scratch, action-pins, invariants, doc-links, file-size,
-             doc-warnings (RUSTDOCFLAGS=-D warnings), fmt --check, clippy, test.
              It stops at the FIRST failure; CI reports all of them in one run.
 
   make check is the fast subset — it skips tests AND rustdoc.

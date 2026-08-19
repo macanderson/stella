@@ -1,0 +1,1 @@
+stella-goal: the verifier turn did not reach a final answer — its budget or step cap was reached; a partial judgement is not a judgement, contributing no evidence

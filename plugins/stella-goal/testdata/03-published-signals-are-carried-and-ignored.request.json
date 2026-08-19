@@ -1,0 +1,14 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "goal-v1",
+    "stage": "recall",
+    "round": 0,
+    "goal": "fix the retry loop",
+    "published": [
+      { "signal": "questions", "value": { "count": 2 } },
+      { "signal": "plans", "value": { "boolean": true } }
+    ]
+  }
+}

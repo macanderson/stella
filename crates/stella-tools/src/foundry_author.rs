@@ -42,8 +42,9 @@ use stella_core::{ParamKind, ProposedTool, ToolParameter};
 /// invisible to discovery's non-recursive `*.toml` scan.
 pub const PROPOSED_DIR: &str = ".stella/tools/proposed";
 
-/// Suffix appended when a synthesized name collides with a reserved built-in
-/// (`task`, `save_state`, …): `task` → `task_cmd`.
+/// Suffix appended when a synthesized name collides with a reserved name —
+/// a live built-in (`bash`, `save_state`, …) or a retired one (`run_tests`,
+/// `graph_query`, …): `bash` → `bash_cmd`.
 const DECONFLICT_SUFFIX: &str = "_cmd";
 
 /// A fully authored, self-validated tool definition, rendered as file text.
@@ -52,7 +53,7 @@ const DECONFLICT_SUFFIX: &str = "_cmd";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthoredTool {
     /// Final tool name — the proposal's name, deconflicted against
-    /// [`crate::custom::RESERVED_NAMES`].
+    /// [`crate::catalog::is_reserved`].
     pub name: String,
     /// Complete manifest file text: provenance comment header + TOML body.
     pub manifest_toml: String,
@@ -134,11 +135,16 @@ pub fn author(proposal: &ProposedTool) -> Result<AuthoredTool, String> {
     })
 }
 
-/// The proposal's name, made safe to adopt: reserved built-in names get
+/// The proposal's name, made safe to adopt: reserved names get
 /// [`DECONFLICT_SUFFIX`], with the base truncated first so the result stays
 /// within the 64-char name rule.
+///
+/// Reserved is [`crate::catalog::is_reserved`], not the live catalog alone —
+/// a retired name is refused by [`crate::custom::parse_manifest`] too
+/// (#3237), so synthesizing one would author a manifest that can never be
+/// adopted.
 fn deconflict_name(proposed: &str) -> String {
-    if !crate::custom::RESERVED_NAMES.contains(&proposed) {
+    if !crate::catalog::is_reserved(proposed) {
         return proposed.to_string();
     }
     let mut base = proposed.to_string();
@@ -371,16 +377,35 @@ mod tests {
 
     #[test]
     fn a_reserved_name_is_deconflicted() {
-        // A program named `task` (taskwarrior, say) synthesizes the name
-        // `task`, which is a reserved built-in — the authored tool must not
-        // shadow it.
+        // A program named `bash` synthesizes the name `bash`, which is a
+        // live built-in — the authored tool must not shadow it.
         let authored = author_one(&[
-            "task 'todo' src/a.rs",
-            "task 'fixme' src/b.rs",
-            "task 'hack' src/c.rs",
+            "bash 'todo' src/a.rs",
+            "bash 'fixme' src/b.rs",
+            "bash 'hack' src/c.rs",
         ]);
-        assert_eq!(authored.name, "task_cmd");
-        assert!(authored.manifest_toml.contains("name = \"task_cmd\""));
+        assert_eq!(authored.name, "bash_cmd");
+        assert!(authored.manifest_toml.contains("name = \"bash_cmd\""));
+    }
+
+    /// #3237: the authored name must clear the retired surface too, or the
+    /// foundry stages a manifest `parse_manifest` will refuse to adopt.
+    #[test]
+    fn a_retired_name_is_deconflicted_too() {
+        // `grep` is a real program and a retired tool name — the synthesized
+        // manifest has to survive the parser that adopts it.
+        let authored = author_one(&[
+            "grep 'todo' src/a.rs",
+            "grep 'fixme' src/b.rs",
+            "grep 'hack' src/c.rs",
+        ]);
+        assert_eq!(authored.name, "grep_cmd");
+        assert!(
+            crate::custom::parse_manifest(&authored.manifest_toml, std::path::Path::new("t.toml"))
+                .is_ok(),
+            "a staged manifest must parse: {}",
+            authored.manifest_toml
+        );
     }
 
     #[test]

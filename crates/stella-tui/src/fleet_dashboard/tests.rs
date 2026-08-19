@@ -228,7 +228,7 @@ fn clock_formats_match_the_spec() {
 
 #[test]
 fn tool_names_and_primary_args_render_for_the_row() {
-    assert_eq!(tool_display_name("task"), "Task");
+    assert_eq!(tool_display_name("delegate"), "Delegate");
     assert_eq!(tool_display_name("bash"), "Bash");
     assert_eq!(tool_display_name("save_state"), "Save_state");
     assert_eq!(

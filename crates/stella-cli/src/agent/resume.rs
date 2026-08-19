@@ -445,18 +445,18 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     let persistence_complete = close_event_stream(&tools_registry, events, renderer)
         .await
         .persistence_complete;
-    if let Some((store, id)) = &execution
-        && !record_execution_end(
-            store,
-            *id,
-            &tools_registry,
+    crate::agent::turn_close::close_turn(
+        cfg,
+        &store,
+        &execution,
+        &tools_registry,
+        Some(&record.id),
+        crate::agent::turn_close::TurnOutcomeRecord {
             label,
             cost_usd,
             persistence_complete,
-        )
-    {
-        warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
-    }
+        },
+    );
     if let Some(set) = &mcp {
         set.close_all().await;
     }

@@ -118,15 +118,22 @@ fn file_entry(journal: &WorkJournal, turn: u32, path: &str) -> serde_json::Value
     // and the plain surface use. `added`/`removed` stay the measured delta —
     // the tally must not shrink to whatever the view drew.
     let view = stella_diff::view::elide(&diff.hunks, stella_diff::view::VIEW_CAP);
-    serde_json::json!({
+    // `stella_diff::json::view` is the one place `{hunks, elided,
+    // fold_before}` is assembled (#1511) — merged onto this row's own fields
+    // rather than hand-written here too.
+    let mut payload = serde_json::json!({
         "path": path,
         "added": diff.added,
         "removed": diff.removed,
-        "hunks": stella_diff::json::hunks(&view.hunks),
-        "elided": view.hidden,
-        "fold_before": view.fold_before,
         "skipped": false,
-    })
+    });
+    if let serde_json::Value::Object(view_fields) = stella_diff::json::view(&view) {
+        payload
+            .as_object_mut()
+            .expect("object literal")
+            .extend(view_fields);
+    }
+    payload
 }
 
 #[cfg(test)]

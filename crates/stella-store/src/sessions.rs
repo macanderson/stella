@@ -301,7 +301,7 @@ impl SessionRegistry {
         let mut stamped = record.clone();
         stamped.updated_at_ms = now_ms();
         let json = serde_json::to_string_pretty(&stamped)
-            .map_err(|e| StoreError(format!("cannot serialize session record: {e}")))?;
+            .map_err(|e| StoreError::serde("cannot serialize session record", e))?;
         let path = self.path_for(&record.id);
         // sync = true: an unfsynced rename can publish a directory entry whose
         // bytes never left the page cache, so a power cut leaves a
@@ -429,10 +429,10 @@ impl SessionRegistry {
                 continue;
             }
             std::fs::remove_dir_all(&dir).map_err(|error| {
-                StoreError(format!(
-                    "cannot remove orphan session sidecar {}: {error}",
-                    dir.display()
-                ))
+                StoreError::io(
+                    format!("cannot remove orphan session sidecar {}", dir.display()),
+                    error,
+                )
             })?;
             removed.push(id);
         }
@@ -463,12 +463,12 @@ impl SessionRegistry {
         let existed = match std::fs::remove_file(self.path_for(id)) {
             Ok(()) => true,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-            Err(e) => return Err(StoreError(format!("cannot remove session record: {e}"))),
+            Err(e) => return Err(StoreError::io("cannot remove session record", e)),
         };
         if let Err(e) = std::fs::remove_dir_all(self.sidecar_dir(id))
             && e.kind() != std::io::ErrorKind::NotFound
         {
-            return Err(StoreError(format!("cannot remove session state: {e}")));
+            return Err(StoreError::io("cannot remove session state", e));
         }
         Ok(existed)
     }

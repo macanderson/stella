@@ -202,7 +202,7 @@ agent key is silently ignored.
 
 Two things already exist that this closed set strands:
 
-- The **`task` tool** (#922 → #976/#983) dispatches to one hard-coded
+- The **`delegate` tool** (#922 → #976/#983) dispatches to one hard-coded
   read-only persona. Its input schema has `description` and `prompt` — there
   is no `agent_type`.
 - **`.stella/agents/*.md`** holds named markdown personas, listed by
@@ -210,7 +210,7 @@ Two things already exist that this closed set strands:
   tool scope.
 
 Opening the set joins them: `[agents.<name>]` becomes a real engine posture,
-and `task` gains an `agent_type` parameter that selects one.
+and `delegate` gains an `agent_type` parameter that selects one.
 
 **Migration:** `AgentEngineAgents` becomes `BTreeMap<String, AgentEngineAgent>`
 with the built-in names **reserved**. `EngineAgentKind` stays for the
@@ -220,7 +220,7 @@ settings rather than `default_model`), gaining a `Custom(String)` variant.
 **Cost of opening it:** the silent-ignore tolerance becomes a liability — a
 misspelled `[agents.wrker]` currently does nothing loudly, and after this
 change it defines a real but unreachable agent. `settings/unknown.rs` must
-learn to flag an agent name that no `task` call and no pipeline stage
+learn to flag an agent name that no `delegate` call and no pipeline stage
 references.
 
 ### 4.2 Provider fallback (`provider_preference`)
@@ -278,9 +278,17 @@ test asserting the result is never more permissive than either input.
 
 ### 4.5 Pipeline stages
 
-Today the staged pipeline (triage → plan → witness → execute → verify →
-verifier) is hard-coded in `stella-pipeline`, and `--no-pipeline` is the only
-control — it turns the whole thing off and drops to the raw step-loop.
+The raw step loop is the default on every door; `stella run --pipeline
+classic` opts into the staged pipeline (`stella run --pipeline <variant>`
+opts into any other installed wrapper plugin instead, `--no-pipeline` is now
+a deprecated hidden no-op). The `classic` variant's stage order itself is no
+longer hard-coded: it is declared in `crates/stella-pipeline/variants/classic.toml`'s
+`[wrapper]` block and resolved through `Pipeline::begin_turn_schedule`
+(`src/pipeline/schedule_wiring.rs`) into the `Schedule` that actually drives
+dispatch (#3408). The manifest declares only the order and what its closed
+condition grammar can express, so the proposal below — a
+`[pipeline.stages.<name>]` config block — would need to compose with that
+manifest rather than with a single on/off switch.
 
 `[pipeline.stages.<name>]` gives each stage `enabled`, `on_disable`
 (`skip` | `fail`), and where relevant `max_revisions` / `routes_to`.
@@ -565,7 +573,7 @@ more code, for a shape that reads worse. Keyed tables throughout.
 | **Secrets committed** now that the file is at the repo root | `api_key` is an error at project scope on both the load and the migration path, from one shared check (§6.2) |
 | **Per-agent tool scope grants rather than narrows** | `ToolPolicy::intersect` + a property test that the result is never more permissive than either input (§4.4) |
 | **Fallback corrupts cost attribution** | Record resolved provider + model id per call, not the configured intent (§4.2) |
-| **Opened agent set turns silent-ignore into silent-orphan** | Flag agent names no `task` call or pipeline stage references (§4.1) |
+| **Opened agent set turns silent-ignore into silent-orphan** | Flag agent names no `delegate` call or pipeline stage references (§4.1) |
 | **`stella.toml` at the root reads as an invitation** to configure things a repo should not | The trust boundary already assumes project config is hostile; §6.2 closes the one field that was tolerable only through obscurity |
 | **Documented defaults drift from real ones** — already happened, 7 of 10 in one block | Generate examples from `Default::default()`; test the round-trip (§6.5) |
 
@@ -582,7 +590,7 @@ features could technically be built against JSON.
 | **0** | `toml_edit` round-trip harness + comment-preservation test | — |
 | **1** | Format port, `[meta]`, `stella migrate config`, dual-read, unknown-key walker (§3, §6) | 0 |
 | **2** | Pipeline stages (§4.5) | 1 (or JSON) |
-| **3** | Per-agent tool scope (§4.4) + open agent set + `task` `agent_type` (§4.1) | 1 |
+| **3** | Per-agent tool scope (§4.4) + open agent set + `delegate` `agent_type` (§4.1) | 1 |
 | **4** | `[models]` policy: `allowed` / `pin` / `track_latest` (§7.2–7.3) | 1 |
 | **5** | Provider fallback (§4.2) | 1 |
 | **6** | Integrations + multi-backend tools (§5) | 1 |

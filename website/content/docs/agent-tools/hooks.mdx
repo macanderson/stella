@@ -173,7 +173,7 @@ esac
 exit 0
 ```
 
-Blocking is **fail-closed** on `PreToolUse`: a hook that times out, fails to start, exits non-zero, or prints a malformed decision blocks the tool, with the failure message as the reason — a missing or broken guard script never silently waves a call through, and no enforcement-softening switch changes that. (`PostToolUse` and `SessionStart` never block on either failure mode, and `Stop`/`PreCompact` deliberately fail open — see their sections.)
+Blocking is **fail-closed** on `PreToolUse`: a hook that times out, fails to start, exits non-zero, or prints a malformed decision blocks the tool, with the failure message as the reason. A missing or broken guard script never silently waves a call through, and no enforcement-softening switch changes that. (`PostToolUse` and `SessionStart` never block on either failure mode, and `Stop`/`PreCompact` deliberately fail open — see their sections.)
 
 ## Decisions on stdout
 
@@ -187,7 +187,7 @@ A hook that exits `0` may print **one JSON decision document** on stdout (the wh
 ```
 
 - **`deny`** blocks with your reason (on `PreToolUse`), holds the turn open (on `Stop`), or vetoes the round (on `PreCompact`).
-- **`require_approval`** (on `PreToolUse`) parks the call on the same approval flow the extension bus's gates use: the question is emitted before the wait, a human answers through the interactive surface, and the wait is bounded — on an interactive run you get the yes/no prompt; headless runs refuse with a message naming the grant path.
+- **`require_approval`** (on `PreToolUse`) parks the call on the same approval flow the extension bus's gates use. The question is emitted before the wait, a human answers through the interactive surface, and the wait is bounded. On an interactive run you get the yes/no prompt; headless runs refuse with a message naming the grant path.
 - **`modify`** rewrites the tool input (`payload.input`, on `PreToolUse` — later hooks in the chain see the rewritten payload) or steers the summarizer (`payload.instructions`, on `PreCompact`).
 - **`allow`** — or any stdout that is *not* a decision document — continues the chain; a chain that only modified ends allowed. Precedence is fixed: an operator deny outranks everything, `require_approval` outranks any allow.
 

@@ -26,10 +26,10 @@ stella run --test-command "pnpm test orders" \
 stella init
 ```
 
-`stella init` does three things worth knowing here: it infers a **domain
+`stella init` does three things worth knowing here. It infers a **domain
 taxonomy** into `.stella/domains.toml` (the tagging vocabulary memories and
-graph nodes use), it builds the **code-graph index** at
-`.stella/private/codegraph.db`, and it adopts any commands, skills, and agents
+graph nodes use), builds the **code-graph index** at
+`.stella/private/codegraph.db`, and adopts any commands, skills, and agents
 already sitting in `.claude/` or `.agents/` directories as symlinks.
 
 It works **offline** through a heuristic fallback, so it succeeds even with no
@@ -164,8 +164,8 @@ stella context keep a1b2c3       # publish the ones that are actually true
 ```
 
 [`stella ingest`](/docs/commands/ingest) mines that prose into atomic claims,
-each carrying its provenance and each **probed against the tree for staleness**
-— which is the part that matters in an inherited repository, where the README
+each carrying its provenance and each **probed against the tree for staleness**.
+That probing is the part that matters in an inherited repository, where the README
 confidently describes a build system that was replaced two years ago. Nothing
 steers anything until you keep it. [`stella context`](/docs/commands/context) is
 the review surface.

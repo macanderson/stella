@@ -41,11 +41,12 @@ The built-in stage is two files:
 
 **This plugin cannot do that, and the difference is the point of the honest
 part of this README.** A plugin gets no engine, no provider and no credential
-(`doc:wrapper-socket` §7). The host-call channel now carries a `child_turn`
-capability — the shape that would let a plugin *ask* for one bounded turn at a
-declared role intent — but no shipped host performs it (`RecallOnly` answers
-`unsupported`, #3555), and this plugin declares neither it nor a `[roles]`
-entry to name (#3541). It also never receives the questions triage named — the
+(`doc:wrapper-socket` §7). The host-call channel carries a `child_turn`
+capability — the shape that lets a plugin *ask* for one bounded turn at a
+declared role intent — and `stella run --pipeline <variant>` now performs it,
+over the session's own sub-agent dispatcher (#3576). **This plugin still
+cannot use it**: it declares neither the capability nor a `[roles]` entry to
+name, so every ask it could make would be refused as undeclared (#3541). It also never receives the questions triage named — the
 request carries `Signal::Questions`, a *count* (#3539).
 
 So it does the half that is checkable without a model: a deterministic literal

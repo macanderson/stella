@@ -38,10 +38,11 @@ in Rust as a workspace of focused crates.
 
 - **BYOK, auto-detected** — Set one provider's API key and Stella detects it.
   Pin a specific model per run or shell with `--model`.
-- **Deterministic definition of done** — the staged pipeline's witness stage
-  has an independent model author a test that fails on the old code and passes
-  on the new, and tracks that fail→pass flip, host-run out of the box. A green
-  suite alone is not accepted. This machinery is also becoming Vera, an
+- **Deterministic definition of done, opt-in** — `stella run --pipeline
+  classic` runs the built-in staged pipeline, whose witness stage has an
+  independent model author a test that fails on the old code and passes on
+  the new, and tracks that fail→pass flip, host-run. A green suite alone is
+  not accepted on that path. This machinery is also becoming Vera, an
   installable verification plugin — a plugin's oracle reports its own
   evidence instead of Stella re-running the check.
 - **Single-threaded engine** — One deterministic step loop: plan, fan tools out
@@ -363,7 +364,7 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 
 | Command                                                                     | What it does                                                                                                      |
 | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run)                | Send a one-shot prompt, non-interactive — the staged pipeline by default                                          |
+| [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run)                | Send a one-shot prompt, non-interactive — the raw step-loop by default; `--pipeline classic` opts into the staged pipeline                                          |
 | [`chat`](https://stella.oxagen.sh/docs/commands/chat)                       | Interactive session: the Command Deck TUI (also what a bare `stella` opens)                                       |
 | [`resume [id]`](https://stella.oxagen.sh/docs/commands/resume)              | Reopen a durable past session exactly where it stood; `--list` browses them                                       |
 | [`daemon <cmd>`](https://stella.oxagen.sh/docs/commands/daemon)             | Find, watch, and stop runs that outlived the terminal that started them                                           |
@@ -493,11 +494,15 @@ deliberately **not** global: it is declared by the commands that honor it —
 `stella run` and `stella fleet` — and goes after the subcommand token
 (`stella run "…" --output-format json`); interactive
 `chat` / `goal` / `monitor` modes render human-readable output. `stella run`
-uses the staged pipeline by default; `--no-pipeline` falls back to the raw
-step-loop. In pipeline mode, `--test-command <cmd>` arms deterministic
-verification with your own test; without it an independent witness author
-writes a failing test whose fail→pass flip proves the work
-([the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)).
+runs the raw step-loop by default; `--pipeline classic` opts into the
+built-in staged pipeline (`--pipeline <plugin-id>` opts into an installed
+wrapper plugin instead), and `--no-pipeline` is a deprecated no-op kept
+parseable so no script breaks. In staged-pipeline mode, `--test-command
+<cmd>` arms deterministic verification with your own test; without it an
+independent witness author writes a failing test whose fail→pass flip proves
+the work ([the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)).
+`--test-command`/`--keep-witness`/`--require-verified` are refused outside
+`--pipeline classic`, naming it as the remedy.
 Post-turn reflection remains enabled for one-shot text, JSON, and stream-JSON
 runs. Ephemeral automation can suppress that additional model call explicitly
 with `STELLA_DISABLE_REFLECTION=1`; the truthy values `true`, `yes`, and `on`
@@ -516,7 +521,7 @@ the process); the rest are coordination:
 | `read_file` · `write_file` · `edit_file` · `delete_file`                                     | File CRUD confined to the workspace: numbered reads with an offset/limit window, whole-file writes, exact-substring edits that refuse an ambiguous match, and a delete that removes a symlink as the link rather than its target         |
 | `search`                                                                                     | Find code by meaning as well as by text — one call returns the answering files with their symbols, callers, imports and source attached, and always states which strategies ran and whether it truncated                                 |
 | `task_create` · `task_list` · `task_start` · `task_complete` · `task_cancel` · `task_assign` | The session task board — one row per deliverable, exactly one in progress, `task_assign` delegates a board task to a parallel sub-agent                                                                                                 |
-| `task`                                                                                       | Delegate a self-contained research question to a read-only sub-agent that returns only its findings — bulky evidence stays out of the parent conversation, and independent questions dispatched in one step run concurrently             |
+| `delegate`                                                                                   | Hand a self-contained research question to a read-only sub-agent that returns only its findings — bulky evidence stays out of the parent conversation, and independent questions dispatched in one step run concurrently             |
 | `save_state` · `get_state` · `list_state` · `delete_state`                                   | The scratch state plane: session-private key/value state (parse results, extracted lists, computed digests) saved once and referenced later instead of re-derived — paged reads by byte offset, deleted automatically at session end     |
 | `get_environment`                                                                            | Report the session's environment: workspace root, git status, platform/arch, OS release, shell dialect, and the scratch directory path                                                                                                  |
 
@@ -568,9 +573,12 @@ document binds issuer, audience, organization/workspace, expiry, the single
 isolation, bearer-secret references, and one endpoint that must exactly match
 the administrator's credential-free HTTPS allowlist.
 
-While enrolled, only `stella run --no-pipeline` is eligible. Stella rejects
-pipeline, goal, fleet, deck/chat, interactive, workspace-port, and candidate
-workspace execution paths because they cannot prove the process-free boundary.
+While enrolled, only the default raw `stella run` (no `--pipeline` flag —
+`--no-pipeline` is a deprecated no-op and does not change eligibility) is
+eligible. Stella rejects `--pipeline classic`, an installed wrapper plugin,
+goal, fleet, deck/chat, interactive, workspace-port, and candidate workspace
+execution paths because none of them can prove the process-free boundary: a
+wrapper, of any kind, spawns a process the boundary is drawn to exclude.
 Eligible finalized runs may export only managed organization/workspace/enrollment
 identifiers; allowlisted provider/model or `other`; outcome; duration; input and
 output token counts; cost in micro-USD; tool-call and changed-file counts; and a
@@ -685,14 +693,14 @@ extending it.
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`stella-cli`](crates/stella-cli/README.md)                 | CLI binary — clap surface + agent loop wiring                                                                                                                                                                                          |
 | [`stella-core`](crates/stella-core/README.md)               | The step-driver engine (no I/O): parallel tools, goal loop, budget, retry, compaction, loop detection, router                                                                                                                          |
-| [`stella-tools`](crates/stella-tools/README.md)             | The built-in tools (`bash`, file CRUD, `search`, the task board, the `task` sub-agent, the scratch state plane, `get_environment` — every one registered by default, each withholdable via `tools` switches)                                |
+| [`stella-tools`](crates/stella-tools/README.md)             | The built-in tools (`bash`, file CRUD, `search`, the task board, the `delegate` sub-agent, the scratch state plane, `get_environment` — every one registered by default, each withholdable via `tools` switches)                                |
 | [`stella-model`](crates/stella-model/README.md)             | The `Provider` port's adapters: anthropic, openai, gemini, vertex, bedrock, zai (SSE, tool-call dialects, SigV4, pricing)                                                                                                              |
 | [`stella-store`](crates/stella-store/README.md)             | SQLite persistence — executions, events, telemetry, files-touched                                                                                                                                                                      |
 | [`stella-mcp`](crates/stella-mcp/README.md)                 | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry                                                                                                                                              |
 | [`stella-protocol`](crates/stella-protocol/README.md)       | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports                                                                                                                                                |
 | [`stella-context`](crates/stella-context/README.md)         | The context plane: reflection-memory recall + embedding index, episodes, bi-temporal facts                                                                                                                                             |
 | [`stella-graph`](crates/stella-graph/README.md)             | Tree-sitter symbol + import-edge indexer (Rust/Python/JS/TS/TSX/SQL/Go/Java/C/PHP)                                                                                                                                                     |
-| [`stella-pipeline`](crates/stella-pipeline/README.md)       | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → witness → execute → verify → verdict ([docs](https://stella.oxagen.sh/docs/inference-pipeline))                                 |
+| [`stella-pipeline`](crates/stella-pipeline/README.md)       | The orchestration plane above the engine, opt-in via `stella run --pipeline classic` — triage, plan, execute, witness, verify, verdict, in the order its `[wrapper]` manifest declares ([docs](https://stella.oxagen.sh/docs/inference-pipeline))                                 |
 | [`stella-fleet`](crates/stella-fleet/README.md)             | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, a shared tree with cooperative file claims by default, opt-in git-worktree isolation per task                                                              |
 | [`stella-media`](crates/stella-media/README.md)             | Multimodal generation behind one `MediaProvider` port                                                                                                                                                                                 |
 | [`stella-tui`](crates/stella-tui/README.md)                 | The Command Deck — a pure event-fold core + thin crossterm shell                                                                                                                                                                       |

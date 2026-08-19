@@ -23,6 +23,7 @@ use crate::digest::{self, Chip};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::FoldState;
 use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, ToolKind, Turn};
+use crate::syntax;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Width of the elapsed-offset gutter, including its trailing space.
@@ -504,6 +505,10 @@ fn body_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, call: &Call, shown: &str, ti: 
         out.push(vec![body_gutter(), Cell::new("echo hidden", Color::Faint)]);
     }
     let output_open = ctx.open(NodeId::Output { turn: ti, step: si });
+    // Decided once from the whole body, not per line: a JSON object's inner
+    // lines do not start with a delimiter. Same predicate the HTML renderer and
+    // the Command Deck ask (#3644).
+    let json = syntax::body_reads_as_json(&fold.body);
     let body = if output_open {
         fold.body.clone()
     } else {
@@ -514,7 +519,7 @@ fn body_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, call: &Call, shown: &str, ti: 
         if numbered {
             line.push(Cell::new(format!("{:>4}  ", i + 1), Color::Faint));
         }
-        line.push(Cell::new(text, output_color(text)));
+        push_output_text(&mut line, text, json);
         out.push(line);
     }
     if !output_open && fold.has_more() {
@@ -523,8 +528,47 @@ fn body_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, call: &Call, shown: &str, ti: 
             Cell::new(fold.more_label(), Color::Blue),
         ]);
         for text in &fold.tail {
-            out.push(vec![body_gutter(), Cell::new(text, output_color(text))]);
+            let mut line = vec![body_gutter()];
+            push_output_text(&mut line, text, json);
+            out.push(line);
         }
+    }
+}
+
+/// Append one result-body line to a row, as syntax-coloured cells when `json`.
+///
+/// A terminal cell carries one foreground, so a coloured line becomes several
+/// cells rather than one — which is exactly why the *lexer* is what this shares
+/// with the HTML renderer and not the paint (`syntax::json_runs`). Both split a
+/// line into the same runs and classify them identically; one wraps each in a
+/// class, the other gives each its own cell.
+///
+/// A plain line stays a single cell, so nothing about the non-JSON path — and
+/// nothing about the row widths the grid pads to — changes.
+fn push_output_text(line: &mut Vec<Cell>, text: &str, json: bool) {
+    if !json {
+        line.push(Cell::new(text, output_color(text)));
+        return;
+    }
+    for (run, tok) in syntax::json_runs(text) {
+        line.push(Cell::new(run, tok.map_or(Color::Ink, tok_color)));
+    }
+}
+
+/// The grid colour for a token class.
+///
+/// The Command Deck's own mapping, restated in this crate's vocabulary:
+/// `stella-tui`'s `theme::SYNTAX_KEYWORD` is amber, `SYNTAX_NUMBER` violet, and
+/// `SYNTAX_COMMENT` the tertiary text step this crate calls `Faint`. So a JSON
+/// body in an exported grid reads in the same hues as the live deck, which is
+/// the whole point — a shared lexer that painted different colours would have
+/// closed half the gap.
+fn tok_color(t: syntax::Tok) -> Color {
+    match t {
+        syntax::Tok::Keyword => Color::Amber,
+        syntax::Tok::Str => Color::Green,
+        syntax::Tok::Number => Color::Violet,
+        syntax::Tok::Comment => Color::Faint,
     }
 }
 

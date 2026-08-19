@@ -8,17 +8,28 @@
  *      an error tints its digest and pins itself open.
  *
  * The ground, the neutral ramp and the three semantic colours are the web
- * instrument palette, whose single definition is the delimited block in
- * `crates/stella-observatory/src/assets/index.html`. They are not a separate
- * system that happens to look similar: the Observatory renders this page (its
- * `render_transcript` route serves `html::render_page`), so a reader clicking
- * a run in the dashboard lands here. It used to land on a different ground —
- * `#000` against the instrument's `#0A0A0A` — with "passed" a different green
- * in the two views of the same run, which is the drift
- * `crates/stella-cli/tests/design_token_parity.rs` exists to prevent
- * everywhere it can see. It cannot see this file yet: that matrix requires a
- * dark *and* a light scheme per surface and this page has only the one.
- * Adding both is #3630.
+ * instrument palette, whose single definition is the delimited block in the
+ * Observatory's index asset. They are not a separate system that happens to
+ * look similar: the Observatory renders this page (its `render_transcript`
+ * route serves `html::render_page`), so a reader clicking a run in the
+ * dashboard lands here, and "passed" must not be one green in the dashboard
+ * and another in the transcript of the same run.
+ *
+ * That claim is now enforced rather than asserted. The design-token parity
+ * test carries a row for this file, so a value drifting from the Observatory's
+ * fails the gate. Standing it up found the claim had already been false for as
+ * long as it had been written: the ground was `#0a0a0a` against the
+ * instrument's `#070B10`, and all three semantic colours differed. A one-time
+ * hand-sync is not a system — this is what #3630 meant by asking for the row
+ * rather than for another alignment pass.
+ *
+ * The matrix requires a dark **and** a light scheme per surface, and this page
+ * now carries both. A light scheme is the right answer here rather than
+ * declaring the page ink-only: a transcript is the standalone artifact people
+ * mail around and print, and a mailed artifact does not get to assume a dark
+ * screen. Both schemes are declared at `:root`, with the media query only
+ * overriding — never define a colour solely inside a media query. There is no
+ * `data-theme` gate because this page has no toggle to hang one on.
  *
  * **Comments here are page content.** This file is `include_str!`-ed and
  * inlined into every rendered transcript, so anything written in it ships to
@@ -31,37 +42,145 @@
  * comment about its *colours*. So: cite modules and routes by name here, and
  * never by source path.
  *
- * `--cyan` and `--violet` are deliberately NOT instrument values. They encode
- * tool *kind* and speaker, and the instrument system separates categories by
- * lightness (`--c1`..`--c4`) rather than hue on purpose. Which of the two this
- * dense a surface should use is a design question, not a drift, and it is open
- * — see #3630. Until it settles they stay as they are rather than
- * being half-migrated into a palette that would then match nothing.
+ * `--cyan` and `--violet` are deliberately NOT instrument values, and that is
+ * now a settled decision rather than an open note (#3630). They encode tool
+ * *kind* and speaker; the instrument system separates categories by lightness
+ * (`--c1`..`--c4`) rather than hue, because lightness is the one channel that
+ * survives greyscale, colour-vision deficiency and a projector.
+ *
+ * This surface keeps hue anyway, for a reason that does not generalise to the
+ * charts that rule was written for. A chart's categories are read *compared*
+ * with each other, a few at a time, in one glance at one figure — lightness
+ * separates them well there. A transcript's tool kinds are read *found*: a
+ * reader scrolling a hundred steps is looking for "where did it run a
+ * command", and hue is what makes a row findable in peripheral vision when
+ * every row already spans the full neutral ramp for its own text. Spending
+ * lightness on category here would collide with the ramp the body text
+ * already uses, and the fallback the value ramp protects — greyscale — is a
+ * case this page does not have, since it is read on a screen or printed in
+ * colour from a browser.
+ *
+ * Consequences, which are the price of the decision: these two are outside the
+ * parity matrix by design, so the row below covers the ground, the neutral
+ * ramp and the semantic triad only; and the `.you`/`.agent` roletag rules put
+ * near-black text on these two as fills, so a future replacement has to keep a
+ * legible fill pair and not merely a legible glyph.
  */
 
 :root {
-  /* Instrument ground / neutral ramp — observatory `BEGIN palette` block. */
-  --bg: #0a0a0a;
-  --panel: #0f0f0f;
-  --raised: #111111;
-  --line: #1f1f1f;
-  --line2: #2e2e2e;
-  --ink: #ededed;
-  --dim: #a1a1a1;
-  --faint: #6e6e6e;
-  /* Categorical — see the header note; not instrument values. */
+  color-scheme: dark light;
+  /* Instrument ground / neutral ramp — the Observatory's `BEGIN palette`
+     block, value for value. Checked by the design-token parity test. */
+  --bg: #070b10;
+  --panel: #0d1319;
+  --raised: #11171d;
+  --line: #1f262d;
+  --line2: #333b43;
+  --ink: #e9edf2;
+  --dim: #a4abb3;
+  --faint: #737c88;
+  /* Categorical — see the header note; deliberately not instrument values,
+     and deliberately outside the parity matrix. */
   --cyan: #4ed6e0;
   --violet: #a8a3f5;
   /* The three semantic colours: instrument `--ok` / `--bad` / `--warn`. */
-  --green: #4cc38a;
-  --red: #e5715f;
-  --amber: #c9a227;
-  /* Diff washes, derived from the semantic pair above at the same alphas. */
-  --del-line: rgba(229, 113, 95, 0.13);
-  --del-word: rgba(229, 113, 95, 0.38);
-  --add-line: rgba(76, 195, 138, 0.12);
-  --add-word: rgba(76, 195, 138, 0.34);
+  --green: #3fd99b;
+  --red: #f2687a;
+  --amber: #d9a62e;
+  /* Diff washes, derived from the semantic pair above at the same alphas.
+     Derived, not picked: change `--green`/`--red` and these follow, which is
+     why they are spelled as the same channels rather than as new hex. */
+  --del-line: rgba(242, 104, 122, 0.13);
+  --del-word: rgba(242, 104, 122, 0.38);
+  --add-line: rgba(63, 217, 155, 0.12);
+  --add-word: rgba(63, 217, 155, 0.34);
+
+  /* Derived surfaces. Named rather than written inline wherever a hover or a
+     well needed one, because the ramp above is cool and a neutral grey on it
+     reads as a warm smudge — so these are the values that have to move
+     together whenever the ground does, and a literal buried in a rule three
+     hundred lines down is the one that gets left behind. That is not
+     hypothetical: it is what the header describes happening to this whole
+     file. Each is one or two value steps off a token above, in the direction
+     its name says.
+
+     `--sunken` is the instrument's `--void`: an output well is *below* the
+     page, not another card on it. */
+  --sunken: #010306;
+  --sunken-2: #0a1015;
+  --hover: #10161c;
+  --hover-raised: #151c23;
+  --selected: #1b232b;
+  --hairline-soft: #0f151a;
+  /* Body text inside an output well: a step brighter than `--dim`, because a
+     command's output is the thing being read, and a step under `--ink`,
+     because it is not the page's own prose. */
+  --code: #c3ccd6;
+  /* The hunk header's own register — the one place a blue is spent, so a
+     `@@` rule is never mistaken for content. Already cool; unchanged by the
+     v3.0 recolour. */
+  --hunk-bg: #0d1420;
+  --hunk-ink: #6f87a8;
+  /* The two tints of `--cyan` that carry speaker identity into text: the
+     prompt echoed in a turn digest, and the user's own prose. Derived from
+     `--cyan` rather than from the ramp, which is why they are the only two
+     derived surfaces whose light values are a darkening rather than a
+     lightening — the hue has to survive, and on paper that means going down
+     the value scale instead of up. */
+  --pq-ink: #cfe9ec;
+  --you-prose: #d2f3f6;
+  /* The fill text on a categorical roletag. Scheme-independent on purpose:
+     `--cyan` and `--violet` do not change between schemes (see the header),
+     so the ink that has to stay legible on them must not change either. */
+  --on-category: #000000;
+
   --mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+
+/* The light scheme: the Observatory's `:root[data-theme="light"]` block, value
+   for value, for the roles this page shares with it. Overrides only — every
+   colour above is already defined, so a scheme that sets nothing still renders.
+   The two categorical hues are unchanged across schemes on purpose: they are
+   identity for a tool kind, and a category that changed colour with the ambient
+   theme would stop being one. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --panel: #f7f9fc;
+    --raised: #ffffff;
+    --line: #e7ebf0;
+    --line2: #cfd6dd;
+    --ink: #070b10;
+    --dim: #4d535a;
+    --faint: #828c97;
+    --green: #0b6b3d;
+    --red: #a82036;
+    --amber: #7a5200;
+    --del-line: rgba(168, 32, 54, 0.1);
+    --del-word: rgba(168, 32, 54, 0.28);
+    --add-line: rgba(11, 107, 61, 0.09);
+    --add-word: rgba(11, 107, 61, 0.24);
+
+    /* The derived surfaces, each flipped about the ramp it was derived from:
+       a step *below* the ground in the dark scheme is a step *above* the paper
+       here. Skipping this half is not a smaller change but a broken one —
+       these roles are wells, hovers and body text, so leaving them dark puts
+       a near-black box on a white page and, worse, prints `--code` grey on
+       the near-white diff washes, where it cannot be read at all. That was
+       this file's state until now: the values were written inline, and an
+       inline literal is precisely what a scheme cannot override. */
+    --sunken: #f2f5f9;
+    --sunken-2: #eef2f7;
+    --hover: #f0f3f7;
+    --hover-raised: #eaeff5;
+    --selected: #dfe6ee;
+    --hairline-soft: #f1f4f8;
+    --code: #2b323a;
+    --hunk-bg: #eef3fb;
+    --hunk-ink: #4a6285;
+    --pq-ink: #12626b;
+    --you-prose: #0f5b64;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -115,7 +234,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   overflow: hidden;
 }
 .zoom span { padding: 2px 10px; font-size: 10.5px; color: var(--dim); }
-.zoom .on { background: #161616; color: var(--cyan); }
+.zoom .on { background: var(--selected); color: var(--cyan); }
 
 /* turn */
 .turn > summary {
@@ -123,7 +242,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   background: var(--raised);
   border-bottom: 1px solid var(--line);
 }
-.turn > summary:hover { background: #141414; }
+.turn > summary:hover { background: var(--hover-raised); }
 .turnline { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
 .turnname { color: var(--violet); font-weight: 700; }
 .st { font-size: 11px; letter-spacing: 0.08em; }
@@ -132,7 +251,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .st.err { color: var(--red); font-weight: 700; }
 .st.run { color: var(--cyan); }
 .tdigest { color: var(--dim); font-size: 12px; min-width: 0; }
-.tdigest .pq { color: #cfe9ec; }
+.tdigest .pq { color: var(--pq-ink); }
 .tdigest .aq { color: var(--ink); }
 .tdigest .sep { color: var(--faint); }
 
@@ -140,7 +259,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .chip {
   font-size: 10.5px;
   color: var(--dim);
-  background: #0d0d0d;
+  background: var(--sunken-2);
   border: 1px solid var(--line);
   padding: 0 8px;
   border-radius: 99px;
@@ -158,7 +277,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   display: grid;
   grid-template-columns: 86px 1fr;
   padding: 12px 18px 12px 0;
-  border-bottom: 1px solid #121212;
+  border-bottom: 1px solid var(--hairline-soft);
 }
 .rolegut { text-align: right; padding-right: 16px; }
 .roletag {
@@ -168,10 +287,10 @@ details[open] > summary .chev { transform: rotate(90deg); }
   padding: 1px 7px;
   border-radius: 4px;
 }
-.you .roletag { color: #000; background: var(--cyan); }
-.agent .roletag { color: #000; background: var(--violet); }
+.you .roletag { color: var(--on-category); background: var(--cyan); }
+.agent .roletag { color: var(--on-category); background: var(--violet); }
 .prose { max-width: 72ch; color: var(--ink); }
-.you .prose { color: #d2f3f6; }
+.you .prose { color: var(--you-prose); }
 .prose p { margin: 0 0 8px; }
 .prose p:last-child { margin: 0; }
 .prose-fold > summary { color: var(--dim); }
@@ -249,8 +368,8 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .dot.df { border-color: var(--red); color: var(--red); }
 .dot.sr { border-color: var(--violet); color: var(--violet); }
 
-.step > summary { padding: 7px 18px 7px 0; border-bottom: 1px solid #101010; }
-.step > summary:hover { background: #0e0e0e; }
+.step > summary { padding: 7px 18px 7px 0; border-bottom: 1px solid var(--hairline-soft); }
+.step > summary:hover { background: var(--hover); }
 .step.err > summary { background: rgba(229, 113, 95, 0.07); }
 .digest {
   display: flex;
@@ -273,7 +392,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .body { padding: 2px 18px 12px 0; }
 .body-inner {
   margin-left: 86px;
-  background: #070707;
+  background: var(--sunken);
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -285,18 +404,18 @@ details[open] > summary .chev { transform: rotate(90deg); }
   border-bottom: 1px solid var(--line);
   color: var(--dim);
   font-size: 12px;
-  background: #0d0d0d;
+  background: var(--sunken-2);
 }
 .cmdbar .ps { color: var(--cyan); font-weight: 700; }
 .echo { padding: 4px 12px; color: var(--faint); font-size: 10.5px; font-style: italic; }
 .out { padding: 8px 12px; }
-.out.tail { border-top: 1px solid #141414; }
+.out.tail { border-top: 1px solid var(--hover-raised); }
 .out pre {
   margin: 0;
   font: 12.5px/1.7 var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
-  color: #c7c7c7;
+  color: var(--code);
 }
 .out .ln { color: var(--faint); font-variant-numeric: tabular-nums; user-select: none; }
 .more > summary { color: var(--cyan); font-size: 11px; padding: 4px 12px 8px; opacity: 0.85; }
@@ -315,7 +434,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   font-size: 12px;
 }
 .args dt { color: var(--faint); }
-.args dd { margin: 0; color: #c7c7c7; word-break: break-word; }
+.args dd { margin: 0; color: var(--code); word-break: break-word; }
 
 /* diff */
 .file > summary {
@@ -323,11 +442,11 @@ details[open] > summary .chev { transform: rotate(90deg); }
   gap: 10px;
   align-items: center;
   padding: 7px 12px;
-  background: #0d0d0d;
+  background: var(--sunken-2);
   border-bottom: 1px solid var(--line);
   font-size: 12px;
 }
-.file > summary:hover { background: #111; }
+.file > summary:hover { background: var(--hover); }
 .fstat { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
 .fstat.mod { background: var(--amber); }
 .fstat.new { background: var(--green); }
@@ -337,7 +456,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .fcount .a { color: var(--green); }
 .fcount .d { color: var(--red); }
 .blunt { padding: 5px 12px; color: var(--amber); font-size: 11px; }
-.hunk-fold > summary { padding: 3px 12px; color: #6f87a8; font-size: 11px; background: #0d1420; }
+.hunk-fold > summary { padding: 3px 12px; color: var(--hunk-ink); font-size: 11px; background: var(--hunk-bg); }
 .hunk-fold > summary .hn { color: var(--faint); }
 
 table.diff { border-collapse: collapse; width: 100%; font: 12.5px/1.65 var(--mono); }
@@ -349,15 +468,34 @@ table.diff { border-collapse: collapse; width: 100%; font: 12.5px/1.65 var(--mon
   color: var(--faint);
   font-size: 11px;
   user-select: none;
-  border-right: 1px solid #141414;
+  border-right: 1px solid var(--hover-raised);
   font-variant-numeric: tabular-nums;
 }
 .diff .sign { width: 16px; color: var(--faint); user-select: none; text-align: center; }
-.diff .code { white-space: pre-wrap; word-break: break-word; color: #c7c7c7; width: 100%; }
-.diff tr.hunk td { background: #0d1420; color: #6f87a8; font-size: 11px; padding: 3px 10px; }
+.diff .code { white-space: pre-wrap; word-break: break-word; color: var(--code); width: 100%; }
+.diff tr.hunk td { background: var(--hunk-bg); color: var(--hunk-ink); font-size: 11px; padding: 3px 10px; }
 .diff tr.del td.code, .diff tr.del td.sign { background: var(--del-line); }
 .diff tr.del td.sign { color: var(--red); }
 .diff tr.add td.code, .diff tr.add td.sign { background: var(--add-line); }
 .diff tr.add td.sign { color: var(--green); }
 .dw { background: var(--del-word); border-radius: 2px; padding: 0 1px; }
 .aw { background: var(--add-word); border-radius: 2px; padding: 0 1px; }
+
+/* JSON syntax colouring for a tool result body.
+ *
+ * The runs come from the shared lexer the Command Deck also colours with
+ * (`syntax::json_runs`), so the page and the live deck break a body into the
+ * same tokens; only the paint differs, because HTML has classes where a
+ * terminal cell has one foreground. Before this, an exported transcript and the
+ * Observatory rendered every JSON result as flat text while the deck coloured
+ * it (#3644).
+ *
+ * The hues match the deck's `theme::SYNTAX_*`: a key takes the warn hue, a
+ * string the ok hue, a scalar the categorical violet. Untagged runs — the
+ * punctuation and indentation that are most of a pretty-printed object — get no
+ * element at all and inherit the body colour.
+ */
+.out .tk { color: var(--amber); }
+.out .ts { color: var(--green); }
+.out .tn { color: var(--violet); }
+.out .tc { color: var(--faint); font-style: italic; }

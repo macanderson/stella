@@ -37,7 +37,16 @@ impl ToolExecutor for ToolRegistry {
         ToolRegistry::execute(self, name, input).await
     }
 
-    /// Take what the `task` tool's children cost since the last step
+    /// The registry IS the session's dispatch gate (#2793) — see
+    /// `impl DispatchGate for ToolRegistry` in `registry/approval.rs`. This
+    /// accessor is how a decorator that dispatches a name of its own (the MCP
+    /// set, the custom-script set) reaches the same chains a built-in passes
+    /// through, instead of running a second copy of the rule or none at all.
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        Some(self)
+    }
+
+    /// Take what the `delegate` tool's children cost since the last step
     /// boundary. Destructive by the port's contract: the engine charges
     /// whatever this returns, so reporting twice would bill twice.
     fn drain_sub_agent_spend_usd(&self) -> f64 {

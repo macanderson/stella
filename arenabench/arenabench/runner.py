@@ -33,7 +33,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import adapter, harbor, preflight, provenance, reap, reauth, reauth_wiring, sut
+from . import adapter, adopt, harbor, preflight, provenance, reap, reauth, reauth_wiring, sut
 from .adapter import AdapterUnavailableError, seat_import_roots
 from .agents import (
     credential_env_for,
@@ -329,6 +329,11 @@ class Match:
         self.started_at: float | None = None
         self.finished_at: float | None = None
         self.status = "created"  # created | running | finished | cancelled | failed
+        #: Whether this process found the match on disk rather than launching
+        #: it (:mod:`.adopt`). An adopted match has no supervisor here, so
+        #: `restore_from_disk` re-derives its status on every sweep, and leaves
+        #: a launched match's to the poll loop that owns it.
+        self.adopted = False
         #: What this match's numbers were measured with. Set at `start`, and
         #: read back from disk for a match reconstructed after the fact.
         self.provenance: provenance.Provenance | None = None
@@ -713,13 +718,19 @@ class MatchRunner:
     # -- restoring --------------------------------------------------------
 
     def restore_from_disk(self) -> int:
-        """Re-list finished matches from the workspace, after a restart.
+        """Re-list matches from the workspace, and re-read the ones adopted.
 
         The runner's live state is memory-only, so before this every restart
         silently erased the UI's history while the artifacts sat intact on
-        disk (#1885). A restored match is history: no process, no supervisor,
-        no recorder — every reader (snapshot, metrics, transcripts, files)
-        already works straight off the job directories.
+        disk (#1885). A restored match has no process, no supervisor and no
+        recorder in *this* process — every reader (snapshot, metrics,
+        transcripts, files) already works straight off the job directories.
+
+        **A restored match is not necessarily history**, which is why the
+        status comes from :func:`.adopt.status_for` — see that module on what
+        stamping ``finished`` unconditionally cost. Adopted matches are re-read
+        on every sweep rather than skipped, because nothing in this process
+        will ever update one otherwise.
         """
         root = self.workspace / "matches"
         if not root.is_dir():
@@ -727,7 +738,16 @@ class MatchRunner:
         restored = 0
         for match_dir in sorted(p for p in root.iterdir() if p.is_dir()):
             match_id = match_dir.name
-            if match_id in self.matches or not (match_dir / "jobs").is_dir():
+            if not (match_dir / "jobs").is_dir():
+                continue
+            known = self.matches.get(match_id)
+            if known is not None:
+                # Only a match this process adopted: one it launched has a
+                # supervisor that owns the status, and second-guessing that
+                # from file timestamps would fight it.
+                if known.adopted:
+                    with contextlib.suppress(Exception):
+                        adopt.refresh(known)
                 continue
             try:
                 match = self._restore_one(match_id, match_dir)
@@ -740,7 +760,7 @@ class MatchRunner:
                 self.matches.setdefault(match_id, match)
             restored += 1
         if restored:
-            log.info("restored %d finished match(es) from disk", restored)
+            log.info("adopted %d match(es) from disk", restored)
         return restored
 
     def _restore_one(self, match_id: str, match_dir: Path) -> Match | None:
@@ -768,6 +788,7 @@ class MatchRunner:
             return None
 
         match = Match(spec, dataset, match_dir)
+        match.adopted = True
         record_path = match_dir / "provenance.json"
         started = (
             record_path.stat().st_mtime
@@ -778,10 +799,7 @@ class MatchRunner:
         for result in match_dir.glob("jobs/*/*/result.json"):
             finished = max(finished, result.stat().st_mtime)
         match.created_at = match.started_at = min(started, finished)
-        match.finished_at = finished
-        match.status = "finished"
         match.provenance = provenance.read_match(match_dir)
-        match.note = "restored from artifacts on disk after a server restart"
         for contestant in spec.contestants:
             job_name = f"{match_id}-{contestant.slug}"
             run = ContestantRun(
@@ -791,9 +809,16 @@ class MatchRunner:
                 log_path=match_dir / f"{contestant.slug}.log",
             )
             run.started_at = match.started_at
-            run.finished_at = finished
             run.dispatched = tuple(spec.tasks)
             match.record_run(run)
+        # After `record_run`: every signal the status derives from is read
+        # through the seats' job directories.
+        match.status, match.note = adopt.status_for(match)
+        # A live match has no finish time, and inventing one stops its clock:
+        # `snapshot` reports `finished_at - started_at` whenever it is set.
+        match.finished_at = finished if match.status in reap.OVER else None
+        for run in match.runs.values():
+            run.finished_at = match.finished_at
         return match
 
     # -- launching --------------------------------------------------------
@@ -1479,23 +1504,26 @@ class MatchRunner:
         log.info("match %s %s", match.spec.id, match.status)
 
     def cancel(self, match: Match) -> None:
+        """Stop everything this match owns, and say what survived.
+
+        The mechanics are :func:`.reauth_wiring.stop_match` — processes first
+        and *waited for*, then the containers they are not the parent of. What
+        stays here is the decision: the status and the note an operator reads.
+        """
         match.status = "cancelled"
         match.note = "cancelled by operator"
-        for run in match.runs.values():
-            process = run.process
-            if process is None or process.poll() is not None:
-                continue
-            reauth_wiring.terminate_process_group(process)
-        # The process group does not contain the task containers: Harbor starts
-        # them through the Docker daemon, so killing the group stops the
-        # harness and leaves the containers running, owned by nothing. Ten of
-        # them accumulated over three stopped matches on one host and cost the
-        # *next* match five of six trials to `Docker compose command failed` —
-        # scored as agent losses (#2329).
-        reaped = reap.reap_match(match)
+        reaped, survivors = reauth_wiring.stop_match(match)
+        notes: list[str] = []
         if reaped:
-            match.note = f"{match.note}; reaped {len(reaped)} container(s)"
-        if match.recorder is not None:
-            match.recorder.stop()
-        if match.snapshots is not None:
-            match.snapshots.stop()
+            notes.append(f"reaped {len(reaped)} container(s)")
+        if survivors:
+            # Said out loud rather than logged only: this is the one outcome
+            # where the operator's stop did not fully stop, and the containers
+            # that process is still holding are exactly the ones that will cost
+            # the next match its trials.
+            notes.append(
+                f"{len(survivors)} seat process(es) survived SIGKILL — "
+                "containers they still hold could not be reaped"
+            )
+        if notes:
+            match.note = "; ".join([match.note, *notes])

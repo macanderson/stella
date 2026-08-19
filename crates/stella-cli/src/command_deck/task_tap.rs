@@ -103,9 +103,17 @@ impl ToolExecutor for TaskTap<'_> {
 
     /// Forwarded: letting the empty default stand would silently serialize
     /// the inner executor's sibling spawns (see the port's contract). The
-    /// spawn tool is `task`, not `task_*` — the tap never fires for it.
+    /// spawn tool is `delegate`, not `task_*` — the tap never fires for it.
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()
+    }
+
+    /// Forwarded: the deck's lead lane wraps the discovery mount (which owns
+    /// the invocation plane) in this tap, so a tap that let the empty default
+    /// stand would silently stop active skill bodies surviving summarization
+    /// (#2685) for every deck session.
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.dispatch_gate()
     }
 
     /// Forwarded: the deck's lead lane wraps the discovery mount (which owns
@@ -136,7 +144,7 @@ mod tests {
             }
         }
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-            std::collections::HashSet::from(["task".to_string()])
+            std::collections::HashSet::from(["delegate".to_string()])
         }
         fn active_skill_slugs(&self) -> Vec<String> {
             vec!["deploy".to_string()]
@@ -158,7 +166,7 @@ mod tests {
             supervisor: None,
         };
         assert!(
-            tap.parallel_safe_names().contains("task"),
+            tap.parallel_safe_names().contains("delegate"),
             "the tap must forward the inner executor's concurrency claims"
         );
     }

@@ -77,9 +77,26 @@ mapping as a pure function (`tests/wrapper_verdict.rs`,
 is `WrapperDispatch`, which resolves the declared stage program, calls
 `before_turn` per stage, hands a `TurnPrelude` to the host's `TurnDriver`,
 calls `after_turn`, and settles with `judge` + `again` — looping while the
-verdict asks for another turn. `stella run --pipeline <variant>` is its first
-driver, so an installed wrapper plugin now participates in a live turn and its
-id reaches `executions.pipeline_variant`.
+verdict asks for another turn. `crates/stella-cli` drives it from **two**
+doors, not one, each calling `WrapperDispatch::run` a different number of
+times per invocation: `stella run --pipeline <variant>` was its first driver
+and calls it exactly once per process, over the one raw turn the process
+runs; `stella goal --pipeline <variant>` (#3695, goal half) calls it once
+**per judged round** — the goal loop's own round loop, not
+`WrapperDispatch`'s, decides how many rounds run, because the goal verifier
+(`stella_core::Engine::assess`) stays outside `judge`/`again` entirely. That
+per-round shape is why `stella goal` refuses an arbiter-grade wrapper before
+ever calling `WrapperDispatch::run`
+(`crates/stella-cli/src/wrapper_plugin.rs::reject_arbiter_wrapper_on_goal`,
+#3832): only an arbiter grade can make `again` hold a round open past its
+first internal turn, and holding one open *inside* an already-judged goal
+round would be a second arbiter judging the round the goal loop's own
+`Engine::assess` is already judging — a shape this door refuses outright
+rather than let `WrapperDispatch`'s hold loop and the goal loop's hold loop
+collide. An arbiter-grade wrapper's designed home is `stella run --pipeline
+<variant>` instead, where `WrapperDispatch` is the only thing holding a turn
+open. Either door, an installed wrapper plugin participates in a live turn and
+its id reaches `executions.pipeline_variant`.
 
 What has **not** landed: the other two drivers `doc:wrapper-socket` §6 makes an
 acceptance criterion — `stella-serve` over HTTP and a minimal embedded host
@@ -92,18 +109,47 @@ crate's `TurnWrapper` socket, not this socket wearing a new caller.
 Candidate-workspace grants on the CLI path landed (#3553,
 `crates/stella-cli/src/wrapper_candidate.rs`): `RoundInput::candidate` now
 carries a real grant over the shared work tree a `flip = "required"` oracle
-can observe. A wrapper is also meant to be handed a child-turn **port** that
+can observe. A wrapper is also handed a child-turn **port** that
 names a role intent (`triage`, `planner`, `witness_author`) — never a
 provider, an `Engine`, or a credential; the host resolves the intent against
 the user's BYOK providers, carves the budget, attaches gate/steering/hooks,
-and settles once. That port now has a name and a type in this crate —
+and settles once. That port is
 [`ChildTurnPlane`](src/wrapper/child_turn.rs), implemented by
 [`ChildTurns`](src/wrapper/child_turn.rs) over the host's own sub-agent
-dispatcher, taking `ChildTurnArgs` on the wire — built and tested
-end-to-end in `child_turn.rs`'s own suite. What remains is attaching it at a
-live call site: no host builds a `HostCallGate` with `.with_child_turns(..)`
-yet, so a real plugin cannot reach it today even though the port itself is
-no longer design (`doc:pipeline-as-plugins` §9.3) but code.
+dispatcher, taking `ChildTurnArgs` on the wire. It is now attached at one live
+call site of the two doors above (#3576): `stella run --pipeline <variant>`
+builds its `HostCallGate` with `.with_child_turns(..)` over the session's own
+`SubAgentDispatcher` — the one `task_assign` runs on — so an installed plugin
+declaring `[loop] calls = ["child_turn"]` and a `[roles.<name>]` gets a real
+turn, read-only, attributed to the seat its tier resolves to, with what it
+spent printed beside what it was refused
+(`crates/stella-cli/src/wrapper_plugin.rs`). `stella goal` builds no such
+plane at all — its `WrapperHost` serves `recall` only — because the fixed
+`turn_instance` slot `stella run`'s one-shot worker can afford would collide
+with a goal round's own even/odd worker/verifier slots (#3833); a wrapper
+that named `child_turn` there would be answered `Unavailable`, exactly like
+naming the `verifier` tier is answered on `stella run`. Two more limits
+stand on the door that does attach the plane: the `verifier`
+tier is deliberately bound to no seat, so a plugin naming it is answered
+`Unavailable` rather than having its call attributed to a role the host never
+made (`ChildTurns::with_seat` is how a driver that wants it owns the claim);
+and a plugin's points run *between* the parent's turns, where the tool
+registry's event sender is a sink — so the child's `step_usage` reaches the
+run's report and the session's budget guard, but not the store's receipt
+(#3802).
+
+**The driver channel now moves bytes, and still has no production caller.**
+`SubprocessDriver` (#3634) is the transport between the wire
+(`stella_plugin::driver`) and the gate (`src/wrapper/driver_call.rs`): it
+spawns a driver, opens a session, relays every capability ask through the
+grant a human consented to, and reads back the `next` that ends it —
+`tests/driver_socket.rs` drives a `/bin/sh` driver through all of it. Two
+things are deliberately still absent. Every capability answers `unsupported`,
+because `NoDriverCapabilities` is the only implementation and B1-B6 (#3599)
+are what give the verbs something to do; and nothing in `stella-cli` opens a
+driver session yet, so `plugins/stella-selfdriving`'s `[driver]` grant remains
+a declaration rather than a running program. Read the transport as "a
+capability can now be held", not as "the loop drives".
 
 One piece of that design is no longer the open risk `doc:turn-loop-wrappers`
 §9.3 described it as, though it is not wired to this socket: `TurnCapabilities`
@@ -158,8 +204,10 @@ it crosses.
 | `src/wrapper/subprocess.rs` | `SubprocessWrapper` — the transport CI exercises: spawns `[runtime].argv`, writes the request as one line of JSON on stdin, reads the response on stdout, and `refuses_env_name` — the default-deny env-allowlist check `stella-cli`'s consent prompt also renders. |
 | `src/wrapper/in_process.rs` | `InProcessWrapper`/`WrapperHandler` — the fast path §3 permits for Rust, over the identical owned request/response types the subprocess transport uses. |
 | `src/wrapper/verdict.rs` | `judge` and `again` — synchronous, total, I/O-free functions over `VerdictRule` and `EvidenceSet`; property-tested (`tests/wrapper_verdict.rs`) over the closed evidence vocabulary. |
-| `src/wrapper/error.rs` | `WrapperError`, typed per failure mode (unreachable, over budget, unusable, undeclared role, mistyped signal). |
+| `src/wrapper/error.rs` | `WrapperError`, typed per failure mode (unreachable, over budget, unusable, undeclared role, mistyped signal), and `DriverError` beside it — the driver channel's own failures, minus every variant that is about standing inside a turn. |
 | `src/wrapper/driver_call.rs` | The host half of the driver channel: the gate, the ceiling, and the report for a plugin that drives turns instead of sitting inside one (`doc:backlog-self-driving` §3.0). |
+| `src/wrapper/driver_subprocess.rs` | `SubprocessDriver` — the driver channel's transport (#3634): spawns the driver, writes the `DriveRequest` on stdin, relays every capability ask through the gate, and reads back the `next` that ends the session. One budget covers the whole session, and `refuses_env_name` withholds model credentials here exactly as it does for a wrapper. |
+| `src/wrapper/framing.rs` | Where one message ends on a child's stdout, and the one task that owns its stdin — shared by both transports, because a second framer would be quadratic and pass its tests. |
 | `src/wrapper/host_call.rs` | The host half of the host-call channel: a plugin may ask the host for a capability, never reach for one itself — this module is the half that decides and applies the install-time grant (`doc:wrapper-socket` §6b). |
 | `src/wrapper/child_turn.rs` | The `ChildTurn` port: the host spends a model call at a declared role intent (`triage`, `planner`, `witness_author`, …) so a plugin never holds a provider credential itself (`doc:turn-loop-wrappers` §9.3). |
 | `tests/no_ambient_reads.rs` | The executable form of the invariant above. |
@@ -170,6 +218,7 @@ it crosses.
 | `tests/host_owned_tamper.rs` | #3499's split: `ObservedEvidence` carries no tamper field: `EvidenceSet::from_observed` is where the host's own finding is merged in. |
 | `tests/no_pipeline_edge.rs` | Executable proof that this crate declares no dependency on `stella-pipeline` — a wrapper `stella-cli` can drive and `stella-serve` cannot is a CLI feature wearing a socket's name. |
 | `tests/wrapper_host_call.rs` | The witness for the host-call channel (#3540, `doc:wrapper-socket` §6b): a plugin asks the host for a capability mid-point and is handed real frames. |
+| `tests/driver_socket.rs` | The witness for the driver channel's transport (#3634, #3599 B0): a `/bin/sh` driver is handed a session, is served a capability it declared and refused one it did not, and ends the session with each of the two terminal answers. Two of its twelve ask the **child** rather than the constructor — what environment the process actually received, and whether a driver that keeps writing after deciding wedges the session — because a constructor interrogated about itself only ever agrees. |
 | `tests/wrapper_transport_limits.rs` | Witnesses for #3380's transport audit: the two resources a plugin process can spend that are not its own — the host's memory, and the machine after the turn ended. |
 | `tests/wrapper_child_turn.rs` | The witness for `child_turn` (#3564, #3541, `doc:turn-loop-wrappers` §9.3): the host, not the plugin, spends the model call at a declared role intent. |
 | `tests/wrapper_decided_flip.rs` | The witness for #3553: a plugin whose `[oracle]` declares `flip = "required"` reaches a decided verdict through the real dispatch. |

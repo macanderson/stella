@@ -55,7 +55,7 @@ pub trait ToolExecutor: Send + Sync {
     ///
     /// # Why the executor and not the engine
     ///
-    /// A `task`-style tool spawns a child turn *from inside*
+    /// A `delegate`-style tool spawns a child turn *from inside*
     /// `ToolExecutor::execute`, while the engine holds the budget guard
     /// mutably for the whole turn — so the tool structurally cannot charge
     /// the parent as it goes. This is the same "written by one object,
@@ -189,6 +189,99 @@ pub trait ToolExecutor: Send + Sync {
     fn live_services(&self) -> Vec<LiveService> {
         Vec::new()
     }
+
+    /// The dispatch gate governing calls this executor's *base* runs — the
+    /// blocking policy chain and the approval flow behind it (#2793).
+    ///
+    /// The registry owns the one implementation; everything above it in a
+    /// tool chain reaches it through this accessor. Two kinds of executor
+    /// answer differently, and the difference is the whole contract:
+    ///
+    /// - **A decorator that dispatches a name of its own** — the MCP set,
+    ///   the custom-script set — must run [`admit_dispatch`] with this gate
+    ///   before executing that name, because its own dispatch never reaches
+    ///   the base and so never reaches the base's chains. That is exactly
+    ///   the hole #2793 named: a gated built-in asked a human, an MCP tool
+    ///   with the same effect did not.
+    /// - **A decorator that only forwards** — a tap, a filter, a policy
+    ///   layer — dispatches nothing itself and must instead **forward this**,
+    ///   or the dispatching decorator *above* it finds no gate and silently
+    ///   goes ungated. The default `None` reads as "no gate governs this
+    ///   executor", correct for a leaf and **wrong for a wrapper**, exactly
+    ///   like the drains above; and taps do sit between the custom set and
+    ///   the registry in shipped stacks (`ClaimTap` in the deck's lead
+    ///   turn), so a wrapper that forgets is not hypothetical.
+    ///
+    /// Answering `None` is never an error, only a loss of enforcement:
+    /// [`admit_dispatch`] admits when there is no gate, so a session with no
+    /// hook bus attached behaves exactly as it did before.
+    fn dispatch_gate(&self) -> Option<&dyn DispatchGate> {
+        None
+    }
+}
+
+/// The one entry every tool dispatch passes through before it runs: the
+/// `tool.call.requested` blocking chain, the precedence fold over it, and
+/// the approval flow a `RequireApproval` parks on (#2676, #2793).
+///
+/// Deliberately **one** port rather than a rule each decorator re-implements:
+/// the shape this fixes is two copies of one policy drifting apart, and the
+/// second copy is always the one that forgets the approval half. The
+/// implementation lives with the registry (`stella-tools`), which owns the
+/// bus and the approval broker; `stella-core` holds only the seam, so a
+/// crate that never depends on `stella-tools` — the MCP client — can still
+/// route its own dispatches through the same gate (invariant #1).
+///
+/// Distinct from [`AuthzGate`], which answers "may this *principal* call
+/// this tool at all" from a contract and runs as its own decorator. This one
+/// answers "what did the session's extension policy decide about this exact
+/// call, and did a human agree", and it carries the input a `modify`
+/// decision rewrote.
+#[async_trait]
+pub trait DispatchGate: Send + Sync {
+    /// Decide whether `name` may run with `input`, parking on the approval
+    /// flow if the chain asked for a human. Returns the input the call must
+    /// actually run on, or the output the model sees instead of a result.
+    async fn admit(&self, name: &str, input: &Value) -> DispatchAdmission;
+}
+
+/// What a [`DispatchGate`] decided about one call.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DispatchAdmission {
+    /// Run the call on the input the caller already holds.
+    Admit,
+    /// Run the call, but on this replacement input — a `modify` decision
+    /// rewrote it, and everything downstream must see the rewrite.
+    AmendedInput(Value),
+    /// Do not run the call. This is the model-visible output instead: a
+    /// policy deny, a human's refusal, an approval timeout, or the headless
+    /// refusal naming the grant path.
+    Refuse(ToolOutput),
+}
+
+/// Run `gate` over a dispatch a decorator is about to perform itself.
+///
+/// The free function rather than a method so the "no gate attached" case is
+/// written once instead of at every call site — and so the call site reads
+/// as the single line it is:
+///
+/// ```ignore
+/// let admitted = admit_dispatch(self.dispatch_gate(), name, input).await;
+/// let input = match &admitted {
+///     DispatchAdmission::Admit => input,
+///     DispatchAdmission::AmendedInput(amended) => amended,
+///     DispatchAdmission::Refuse(refusal) => return refusal.clone(),
+/// };
+/// ```
+pub async fn admit_dispatch(
+    gate: Option<&dyn DispatchGate>,
+    name: &str,
+    input: &Value,
+) -> DispatchAdmission {
+    match gate {
+        Some(gate) => gate.admit(name, input).await,
+        None => DispatchAdmission::Admit,
+    }
 }
 
 /// One long-running process a tool started and nothing has stopped.
@@ -272,6 +365,13 @@ impl ToolExecutor for ReadOnlyTools<'_> {
             ));
         }
         self.inner.execute(name, input).await
+    }
+
+    /// Forwarded: a view that restricts *which* tools may run is not a
+    /// narrower policy plane. A dispatching decorator composed over this
+    /// view would otherwise find no gate and go ungated (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn DispatchGate> {
+        self.inner.dispatch_gate()
     }
 
     /// Forwarded, not zeroed. A sub-agent runs behind this view, so a
@@ -369,6 +469,13 @@ impl ToolExecutor for GrantedTools<'_> {
             ));
         }
         self.inner.execute(name, input).await
+    }
+
+    /// Forwarded: a view that restricts *which* tools may run is not a
+    /// narrower policy plane. A dispatching decorator composed over this
+    /// view would otherwise find no gate and go ungated (#2793).
+    fn dispatch_gate(&self) -> Option<&dyn DispatchGate> {
+        self.inner.dispatch_gate()
     }
 
     /// Forwarded, not zeroed, for the same reason as [`ReadOnlyTools`]: a

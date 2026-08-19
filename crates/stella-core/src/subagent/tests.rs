@@ -1122,7 +1122,7 @@ async fn the_child_claims_its_own_receipt_turn_slot() {
 // ---- the out-of-band spend fold (tool-dispatched children) ------------
 
 /// An executor whose tools "spawn" sub-agents: it reports a fixed spend per
-/// `execute`, exactly as a real `task` tool would after its child settled.
+/// `execute`, exactly as a real `delegate` tool would after its child settled.
 struct SpendingTools {
     ledger: SubAgentSpendLedger,
     per_call_usd: f64,
@@ -1133,7 +1133,7 @@ struct SpendingTools {
 impl ToolExecutor for SpendingTools {
     fn schemas(&self) -> Vec<ToolSchema> {
         vec![ToolSchema {
-            name: "task".into(),
+            name: "delegate".into(),
             description: "spawn a sub-agent".into(),
             input_schema: json!({"type": "object"}),
             // Mutating on purpose: a read-only schema would let the engine
@@ -1167,8 +1167,8 @@ impl ToolExecutor for SpendingTools {
 async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary() {
     let provider = ScriptedProvider::new(vec![
         // The parent's own calls are free; every dollar here is the child's.
-        Ok(tool_call_result("task", "c1", 0.0)),
-        Ok(tool_call_result("task", "c2", 0.0)),
+        Ok(tool_call_result("delegate", "c1", 0.0)),
+        Ok(tool_call_result("delegate", "c2", 0.0)),
         Ok(text_result("should never be reached", 0.0)),
     ]);
     let tools = SpendingTools {
@@ -1234,7 +1234,7 @@ async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary
 #[tokio::test]
 async fn the_drain_is_destructive_so_child_spend_is_never_charged_twice() {
     let provider = ScriptedProvider::new(vec![
-        Ok(tool_call_result("task", "c1", 0.0)),
+        Ok(tool_call_result("delegate", "c1", 0.0)),
         Ok(text_result("done", 0.0)),
     ]);
     let tools = SpendingTools {

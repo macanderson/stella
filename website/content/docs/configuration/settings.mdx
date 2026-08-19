@@ -177,9 +177,9 @@ default:
 </Callout>
 
 The map key **is** the provider id (`zai` above). Leave a field out entirely to inherit the
-built-in default — note that an **empty string** for `base_url`, `name`, or
-`default_model` overwrites the built-in with an empty value (breaking the provider or its
-model selection) rather than being ignored; only `api_key` treats empty as unset.
+built-in default. An **empty string** for `base_url`, `name`, or
+`default_model` overwrites the built-in with an empty value, breaking the provider or its
+model selection; only `api_key` treats empty as unset.
 
 <Callout type="info">
   `providers` both overrides built-ins and **defines brand-new providers**: use an id that
@@ -295,8 +295,8 @@ The merged result for `zai` — **with the project trusted** (`STELLA_TRUST_PROJ
   trust — the project's `base_url` is a **credential-routing field** and is dropped by the
   [trust boundary](#the-project-trust-boundary): the merged `base_url` above would be the
   org gateway's, with a stderr notice naming the skipped field. Project-scope
-  `base_url`/`api_key`/`api_key_env` examples anywhere in these docs assume a trusted
-  project; for personal routing, user scope needs no flag.
+  `base_url`/`api_key`/`api_key_env` examples in these docs assume a trusted
+  project; personal routing in user scope needs no flag.
 </Callout>
 
 ## Precedence within a field
@@ -380,16 +380,21 @@ built-ins, MCP-server tools, and tools you registered yourself:
 
 A key is one of three things, and the most specific one wins:
 
-1. an exact **tool name** — `task_assign`, `mcp__github__create_issue`, your own
-   `deploy_to_staging`;
-2. a **group** — the families in [Built-in tools](/docs/agent-tools): `task`,
-   `scratch`, `environment`, plus
+1. an exact **tool name** — `task_assign`, `delegate`, `mcp__github__create_issue`,
+   your own `deploy_to_staging`;
+2. a **group** — the families in [Built-in tools](/docs/agent-tools): `shell`,
+   `file`, `search`, `task`, `scratch`, `environment`, plus
    `mcp` and `custom` for anything the built-in catalog has never heard of;
 3. `"*"`, every tool.
 
 Anything unmentioned is on. So `{"*": "off", "task_list": "on"}` is an agent that can
 read the board and nothing else, and `{"task": "off", "task_list": "on"}` keeps exactly
 the read-only member of the task family.
+
+No group shares a name with a tool, so a key is never ambiguous: `task` is the family
+(the six board tools plus `delegate`), and `delegate` alone is the sub-agent spawn. That
+is why `{"delegate": "off"}` stops sub-agents without touching the board — a distinction
+`task` could not express while it was both a tool name and a group name.
 
 A switched-off tool is **withheld from the schema list and refused if it is called
 anyway** — the refusal reads like the unknown-tool error, so a disabled tool is
@@ -466,9 +471,9 @@ the same delta are attributed exactly as before.
 Two boundaries keep the filter honest. It consults only the repository rooted **at
 the workspace itself** — a workspace that merely sits under someone else's repository
 (say, a scratch directory beneath a `$HOME` dotfiles repo whose `.gitignore` says
-`*`) inherits nothing, so an ancestor's rules can never blind the probe. And outside
+`*`) inherits nothing, so an ancestor's rules can never blind the probe. Outside
 a git repository the switch is inert: nothing is ignored, and the probe stays fully
-sighted — producing build output there is frequently the whole job.
+sighted — producing build output there is often the whole job.
 
 ## The `ui` section
 

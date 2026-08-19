@@ -39,7 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    diagnostic-codes
+                    diagnostic-codes bench-suites
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -179,11 +179,21 @@ record-demo-video: ## Re-cut docs/demo/stella-deck.mp4 from the command deck (FI
 	@echo "deck's own layout decides, so a layout change can move content out"
 	@echo "of shot without failing anything."
 
+# Every Python suite `.github/workflows/bench.yml` runs, and no other. The list
+# is NOT here: scripts/bench-suites.sh reads it out of that workflow, because a
+# second hand-written copy is what produced #2847 — the workflow ran seven
+# suites, this target ran three, and the arenabench failure that reddened `main`
+# on 2026-08-11 had no local command that would have caught it.
+#
+# Deliberately NOT a `make gate` step. It takes minutes (arenabench alone is
+# ~70s) and would tax every Rust-only push for a question that push cannot have
+# changed. .githooks/pre-push runs it instead for a push whose diff matches the
+# workflow's own scope filter, so the suites are gated where they are relevant
+# and free where they are not. `make bench-suites` — which IS a gate step —
+# holds the arrangement together without running a single test.
 .PHONY: bench-test
-bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer + trace triage)
-	cd bench/harbor_adapter && uv sync --locked --extra dev && uv run --no-sync pytest -q
-	cd bench/terminal_bench_analysis && uv sync --locked --extra dev && uv run --no-sync pytest -q
-	python3 -m pytest -q bench/trace_triage/tests
+bench-test: ## Run every Python bench suite .github/workflows/bench.yml runs (#2847)
+	@./scripts/bench-suites.sh run
 
 # Deliberately NOT a `make gate` step: it reads S3 and talks to GitHub, and the
 # gate must stay runnable offline and side-effect-free. `gate-parity` would fail
@@ -305,6 +315,14 @@ typed-errors: ## Assert no library crate's public API returns Result<_, String> 
 typed-errors-update: ## Retighten the invariant-#5 ratchet (run after typing signatures)
 	@python3 ./scripts/check-typed-errors.py --update
 
+.PHONY: typed-errors-test
+typed-errors-test: ## Test the invariant-#5 ratchet's direction (hermetic; not part of `gate`)
+	./scripts/test-typed-errors.sh
+
+.PHONY: shellcheck-guard-test
+shellcheck-guard-test: ## Test the shellcheck step's presence guard (hermetic; not part of `gate`)
+	./scripts/test-shellcheck-guard.sh
+
 .PHONY: diagnostic-codes
 diagnostic-codes: ## Assert docs/reference/diagnostics.md documents every emitted diagnostic code (#2507)
 	@./scripts/check-diagnostic-codes.sh
@@ -317,8 +335,43 @@ diag-reference: ## Regenerate the diagnostic-code reference from the tree, prese
 doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included (#634, #2336; CARGO_SCOPE to narrow)
 	RUSTDOCFLAGS="-D warnings" cargo doc $(CARGO_SCOPE) --no-deps --document-private-items --keep-going
 
+# The presence guard exists because the failure it replaces was
+# indistinguishable from a real finding: on a machine without the binary this
+# recipe died with `/bin/sh: 1: shellcheck: not found` and `make: *** Error
+# 127`, which reads exactly like a shell-lint failure in a script somebody just
+# edited (#3615). It fails rather than skipping — a gate step that can no-op is
+# a gate step that will, and a green tick over an unrun check is the one
+# outcome the gate exists to prevent. The MESSAGE carries the
+# distinction, never the exit code: GNU make normalises any recipe failure to
+# its own status 2, so no caller can tell "could not run" from "ran and found
+# something" by the number -- measured, a real finding exits the recipe 1 and
+# make still reports 2. The lint invocation below is byte-identical to what it
+# always was, so a machine that has shellcheck sees no change at all.
+# Covered by scripts/test-shellcheck-guard.sh (`make shellcheck-guard-test`),
+# which pins both halves: the notice on an absent binary, and that a present
+# one is still invoked with its argv intact and its findings still fatal.
 .PHONY: shellcheck
 shellcheck: ## Lint install.sh, scripts/*.sh, and .githooks/* (#916)
+	@command -v shellcheck >/dev/null 2>&1 || { \
+	  printf '%s\n' \
+	    'shellcheck: UNAVAILABLE — THIS STEP DID NOT RUN.' \
+	    '' \
+	    '  shellcheck is not on PATH. No shell script was linted, so this is' \
+	    '  NOT a lint finding: nothing was checked, and nothing has been' \
+	    '  established about install.sh, scripts/*.sh, scripts/lib/*.sh or' \
+	    '  .githooks/*.' \
+	    '' \
+	    '  Install it, then re-run `make shellcheck`:' \
+	    '' \
+	    '    apt-get install -y shellcheck   # Debian/Ubuntu (most dev containers)' \
+	    '    brew install shellcheck         # macOS' \
+	    '    dnf install -y ShellCheck       # Fedora' \
+	    '' \
+	    '  ./scripts/setup-dev-env.sh --check reports it alongside the rest of' \
+	    '  the tooling the gate needs. CI runs the same lint on a runner where' \
+	    '  shellcheck is preinstalled (.github/workflows/ci.yml), so a missing' \
+	    '  binary here is a gap in this machine, never a red tree.' >&2; \
+	  exit 2; }
 	shellcheck install.sh scripts/*.sh scripts/lib/*.sh .githooks/*
 
 # Deliberately not part of `gate`: it needs a Docker daemon, which the gate
@@ -365,6 +418,10 @@ print-gate-steps:
 gate-parity: ## Assert AGENTS.md and CONTRIBUTING.md list the real gate steps (#1437)
 	@./scripts/check-gate-parity.sh
 
+.PHONY: bench-suites
+bench-suites: ## Assert `make bench-test` runs every suite bench.yml runs, by derivation (#2847)
+	@./scripts/check-bench-suites.sh
+
 .PHONY: left-behind
 left-behind: ## Assert every TODO/FIXME/XXX/HACK in code names a tracking issue (#1454)
 	@./scripts/check-left-behind.sh
@@ -400,6 +457,10 @@ lockfile-sync: ## Assert Cargo.lock resolves against the manifests as committed 
 .PHONY: lockfile-sync-test
 lockfile-sync-test: ## Test the lockfile guard against synthetic skewed workspaces (hermetic; not part of `gate`)
 	./scripts/test-lockfile-sync.sh
+
+.PHONY: release-lockfile-test
+release-lockfile-test: ## Test that the release version stamp leaves Cargo.lock resolvable, new members included (hermetic; not part of `gate`)
+	./scripts/test-release-lockfile.sh
 
 # Deliberately not a gate step: it judges the MERGED tree, which is a question
 # no pre-merge run can answer. .github/workflows/main-canary.yml is where it

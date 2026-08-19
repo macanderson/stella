@@ -533,6 +533,15 @@ validate` for the `cargo run` invocation. Because the promotion ledger and
 the governance settings live under `.stella/rules/`, the check re-verifies
 every enforcement grant on every pull request that could have touched one.
 
+**A retired revision is not a failure.** Retirement archives a record *in
+place* (§4): the file stays in `.stella/rules/` as the audit trail, and the
+loader stops selecting it — which is what retiring it means. So a record whose
+only reason for not steering is a lifecycle status somebody set is listed under
+"Retired" and does not affect the exit code; without that, a completed
+retirement left the check permanently red with no edit that could ever clear it.
+The exemption is exactly that narrow: a refuted claim still fails, and so does
+an archived record that also carries a blocking finding.
+
 ## 13. Compilation, selection, and explainability
 
 On publication (merge or local commit), the rule loader picks up the new
