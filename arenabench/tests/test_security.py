@@ -91,7 +91,9 @@ class TestSeatEnvironmentIsScreened:
         assert seat.ignored_env == ("PATH", "STELLA_BINARY")
         assert seat.redacted()["ignored_env_keys"] == ["PATH", "STELLA_BINARY"]
 
-    def test_nothing_rejected_reaches_the_subprocess(self, tmp_path: Path, monkeypatch):
+    def test_nothing_rejected_reaches_the_subprocess(
+        self, tmp_path: Path, monkeypatch, stella_adapter
+    ):
         """The screen at the launch line, not only at the parser: a seat built
         by any other path must not be able to hand `Popen` a `PATH`."""
         # Stubbed at the `arenabench.harbor` seam: `_launch` resolves the

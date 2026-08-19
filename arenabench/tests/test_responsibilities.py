@@ -29,18 +29,35 @@ from arenabench.config import MatchTemplateError, dump_match, match_from_toml
 from arenabench.harbor_agent import arena_posture
 from arenabench.model import (
     RESPONSIBILITY_AGENTS,
+    ROLES,
     Engine,
     MatchSpec,
     ResponsibilityConfig,
 )
 
-_ROSTER_RS = (
-    Path(__file__).resolve().parents[2]
-    / "crates"
-    / "stella-pipeline"
-    / "src"
-    / "roster.rs"
-)
+#: Stella's normative home for the role vocabulary, relative to a checkout.
+#: ``scripts/check-role-names.sh`` names this same function as "the truth" and
+#: reads its match arms the same way, so the two halves of the contract are
+#: anchored to one file rather than to each other.
+_ROLE_KEY_RS = Path("crates") / "stella-cli" / "src" / "config_wiring.rs"
+
+#: One match arm of ``role_key()``: ``EngineAgentKind::Verifier => "verifier",``
+_ROLE_ARM = re.compile(r'EngineAgentKind::\w+\s*=>\s*"([a-z_]+)"')
+
+
+def _role_key_names(source: str) -> frozenset[str]:
+    """Every role spelling ``role_key()`` returns, read out of the Rust.
+
+    Scoped to that function's body — a bare sweep for the arm shape would also
+    collect every other ``match kind`` in the file, and those are legitimately
+    partial (``model_source`` skips ``Default``). The body ends at the first
+    column-zero ``}``, which is how ``check-role-names.sh``'s awk delimits it.
+    """
+    body = re.search(r"pub fn role_key\b.*?\n\}", source, re.DOTALL)
+    if body is None:
+        return frozenset()
+    return frozenset(_ROLE_ARM.findall(body.group()))
+
 
 HEADER = """
 [match]
@@ -255,31 +272,57 @@ class TestReassignmentTargets:
     """`RESPONSIBILITY_AGENTS` is derived, so the derivation gets asserted.
 
     The list an authoring surface offers as reassignment targets is Stella's
-    `AgentId::BUILTIN`, and ArenaBench derives it as `ROLES` minus `default`
+    role vocabulary, and ArenaBench derives it as `ROLES` minus `default`
     rather than keeping a fourth hand-maintained copy of a Rust vocabulary —
     the drift `scripts/check-role-names.sh` exists for (#1449).
 
-    The premise, that Stella's bindable agents are exactly its configurable
-    non-default roles, is an *inference*. It holds today, and this reads the
-    Rust source to say so out loud: an unresolvable name is a
-    `RosterError::UnknownAgent` raised inside the container after the image is
-    built, so a select offering one spends a container build on a typo and
-    reports it as the seat failing.
+    **What this reads, and why it changed.** It used to read
+    `AgentId::BUILTIN` out of `crates/stella-pipeline/src/roster.rs`. That
+    crate was deleted (#3865), and because the file simply vanished the test
+    became a `FileNotFoundError` that nothing surfaced — Stella's bench
+    workflow gates this suite behind a path filter, so only a PR touching
+    `bench/` or `arenabench/` ever saw it (#3919). The surviving normative
+    home for the vocabulary is `role_key()` in
+    `crates/stella-cli/src/config_wiring.rs`, which is the same file
+    `check-role-names.sh` calls "the truth", so both halves of the contract
+    now anchor to it.
+
+    That swap narrows the claim, and the narrowing is deliberate rather than
+    incidental. The old assertion was about the *bindable* set — the names a
+    roster would resolve — and inferred that it equals the configurable
+    non-default roles. With the roster gone there is no Rust list of bindable
+    agents left in the workspace to check that inference against, so it is no
+    longer asserted here and must not be read as if it were. What remains
+    assertable is the part that still has an authority: the spellings agree,
+    and the derivation drops exactly `default`. Whether `responsibilities`
+    reaches a live engine at all is a separate open question (#3879).
     """
 
-    def test_the_derived_list_is_stellas_builtin_agent_set(self) -> None:
-        source = _ROSTER_RS.read_text(encoding="utf-8")
-        match = re.search(
-            r"BUILTIN:\s*&'static\s*\[&'static\s*str\]\s*=\s*&\[(?P<names>[^\]]*)\]",
-            source,
+    def test_the_derived_list_is_stellas_configurable_role_set(
+        self, stella_checkout: Path
+    ) -> None:
+        path = stella_checkout / _ROLE_KEY_RS
+        assert path.is_file(), (
+            f"{path} does not exist. `role_key()` is Stella's normative home "
+            "for the role vocabulary; if it moved, repoint `_ROLE_KEY_RS` "
+            "here and in `scripts/check-role-names.sh` in the same change. "
+            "Do not delete this test — the last time this file's target "
+            "vanished, the failure sat unread behind a path filter (#3919)."
         )
-        assert match, f"could not find AgentId::BUILTIN in {_ROSTER_RS}"
-        builtin = tuple(re.findall(r'"([^"]+)"', match.group("names")))
-        assert builtin, "AgentId::BUILTIN parsed to zero names"
-        assert set(RESPONSIBILITY_AGENTS) == set(builtin), (
-            "the reassignment targets ArenaBench offers and the agents Stella "
-            f"resolves have diverged: {sorted(RESPONSIBILITY_AGENTS)} vs "
-            f"{sorted(builtin)}"
+        roles = _role_key_names(path.read_text(encoding="utf-8"))
+        assert roles, (
+            f"could not read any role from `role_key()` in {path}. The "
+            "function changed shape; repoint `_role_key_names`, which "
+            "deliberately fails rather than returning a silently empty set."
+        )
+        assert set(ROLES) == roles, (
+            "ArenaBench's ROLES and Stella's role_key() have diverged: "
+            f"{sorted(ROLES)} vs {sorted(roles)}"
+        )
+        assert set(RESPONSIBILITY_AGENTS) == roles - {"default"}, (
+            "the reassignment targets ArenaBench offers and the roles Stella "
+            f"configures have diverged: {sorted(RESPONSIBILITY_AGENTS)} vs "
+            f"{sorted(roles - {'default'})}"
         )
 
     def test_the_interactive_default_is_not_a_reassignment_target(self) -> None:

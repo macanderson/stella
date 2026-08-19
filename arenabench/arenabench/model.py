@@ -323,10 +323,15 @@ class RoleConfig:
         return self.model is None and self.reasoning is None and self.effort is None
 
 
-#: The pipeline responsibilities an arm may ablate or reassign, matching
-#: ``stella_pipeline::roster`` (#2381). Names are Stella's ``ModelCallRole``
-#: wire tokens, so a match template and the engine it configures spell each job
-#: identically — the same agreement :data:`ROLES` has with the settings keys.
+#: The pipeline responsibilities an arm may ablate or reassign (#2381). Names
+#: are Stella's ``ModelCallRole`` wire tokens, so a match template and the
+#: engine it configures spell each job identically — the same agreement
+#: :data:`ROLES` has with the settings keys.
+#:
+#: These matched ``stella_pipeline::roster`` when that crate existed; it has
+#: since been deleted from the Stella workspace (#3865), so no Rust list in
+#: that tree pins this tuple today. Whether a declared roster still reaches a
+#: live engine is open — see #3879.
 #:
 #: This is what makes a single-stage ablation expressible at all. ``bare_loop``
 #: settles triage, plan, witness and verify together because all four ARE the
@@ -342,20 +347,26 @@ RESPONSIBILITIES: tuple[str, ...] = (
     "verdict",
 )
 
-#: The agents a responsibility may be reassigned *to* — Stella's
-#: ``AgentId::BUILTIN`` (``crates/stella-pipeline/src/roster.rs``). Anything else
-#: is a ``RosterError::UnknownAgent`` that fails the run inside the container,
-#: after the image is built and the clock is running, so an authoring surface
-#: that offers free text charges a container build for a typo.
+#: The agents a responsibility may be reassigned *to*. An unresolvable name
+#: fails the run inside the container, after the image is built and the clock
+#: is running, so an authoring surface that offers free text charges a
+#: container build for a typo.
+#:
+#: This named Stella's ``AgentId::BUILTIN``
+#: (``crates/stella-pipeline/src/roster.rs``) until that crate was deleted
+#: (#3865). The vocabulary's surviving normative home is ``role_key()`` in
+#: ``crates/stella-cli/src/config_wiring.rs``, which is what the test below
+#: reads.
 #:
 #: **Derived, not copied.** It is :data:`ROLES` without ``default``, because
 #: ``default`` is the interactive step loop and owns no pipeline responsibility.
 #: A fourth hand-maintained spelling of a Rust vocabulary is precisely the drift
 #: ``scripts/check-role-names.sh`` was written for (#1449) — deriving from a set
 #: that guard already pins inherits the guard instead of needing a new one. The
-#: premise (that Stella's bindable agents are exactly its configurable non-default
-#: roles) is an inference, so it is asserted against the Rust source itself in
-#: ``tests/test_responsibilities.py::TestReassignmentTargets``.
+#: derivation — that ``default`` is the one role owning no responsibility — is
+#: asserted against the Rust source itself in
+#: ``tests/test_responsibilities.py::TestReassignmentTargets``, which skips
+#: when no Stella checkout is configured.
 RESPONSIBILITY_AGENTS: tuple[str, ...] = tuple(
     role for role in ROLES if role != "default"
 )
