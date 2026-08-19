@@ -89,7 +89,6 @@ pub fn journal_record(inbound: &Inbound) -> Option<JournalRecord> {
         Inbound::SessionReset { agent } => Some(JournalRecord::SessionReset {
             agent: agent.clone(),
         }),
-        Inbound::Pipeline(on) => Some(JournalRecord::Pipeline { on: *on }),
         // Deregister is visual lifecycle only — a row removal during THIS
         // process's dashboard handover (session switch), never part of any
         // session's history. Journaling it would erase the departing
