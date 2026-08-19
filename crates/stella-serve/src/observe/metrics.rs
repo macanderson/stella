@@ -86,9 +86,6 @@ pub struct Metrics {
 
     reverse_dispatched_provider_total: AtomicU64,
     reverse_dispatched_tool_total: AtomicU64,
-    /// A pipeline-driven turn's scope-review gate, dispatched over the wire
-    /// exactly like a tool or provider request (#1288).
-    reverse_dispatched_scope_review_total: AtomicU64,
     reverse_answered_total: AtomicU64,
     reverse_wait_ms_total: AtomicU64,
     reverse_timed_out_total: AtomicU64,
@@ -153,7 +150,6 @@ pub struct Snapshot {
 
     pub reverse_dispatched_provider_total: u64,
     pub reverse_dispatched_tool_total: u64,
-    pub reverse_dispatched_scope_review_total: u64,
     pub reverse_answered_total: u64,
     pub reverse_wait_ms_total: u64,
     pub reverse_timed_out_total: u64,
@@ -227,9 +223,6 @@ impl Metrics {
 
             reverse_dispatched_provider_total: self.reverse_dispatched_provider_total.load(ORDER),
             reverse_dispatched_tool_total: self.reverse_dispatched_tool_total.load(ORDER),
-            reverse_dispatched_scope_review_total: self
-                .reverse_dispatched_scope_review_total
-                .load(ORDER),
             reverse_answered_total: self.reverse_answered_total.load(ORDER),
             reverse_wait_ms_total: self.reverse_wait_ms_total.load(ORDER),
             reverse_timed_out_total: self.reverse_timed_out_total.load(ORDER),
@@ -358,7 +351,6 @@ impl Observer for Metrics {
                 match kind {
                     ReverseKind::Provider => &self.reverse_dispatched_provider_total,
                     ReverseKind::Tool => &self.reverse_dispatched_tool_total,
-                    ReverseKind::ScopeReview => &self.reverse_dispatched_scope_review_total,
                 }
                 .fetch_add(1, ORDER);
                 self.reverse_in_flight.fetch_add(1, ORDER);

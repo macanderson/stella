@@ -94,6 +94,7 @@ mod prompt_source;
 mod proposals_cmd;
 mod query_format;
 mod resume_frame;
+mod reward;
 mod rules;
 mod runtime;
 mod search_cmd;
