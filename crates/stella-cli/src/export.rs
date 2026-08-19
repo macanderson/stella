@@ -486,8 +486,9 @@ fn render_dashboard(
 
      The palette used to be interpolated from `stella_tui::theme`, which was
      right when the export's only sibling was the terminal. It is wrong now:
-     the TUI palette is accent-chromed by design (ACCENT == BRAND == Ion
-     #00D1F9, and that hue marks a Running state), while a web instrument's
+     the TUI palette is accent-chromed by design (ACCENT == BRAND == its own
+     gold #FFB81A, and that hue marks a Running state), while a web
+     instrument's
      chrome must not carry a hue at all. Generating from the terminal guaranteed the
      export matched the one surface it should no longer match. The parity
      test replaces that guarantee with the correct one.
@@ -499,9 +500,19 @@ fn render_dashboard(
                                hue, so a series survives greyscale printing,
                                colour-vision deficiency and a projector.
        --identity              the wordmark and at most one primary action.
-                               Never a state: --identity #00D1F9 against
-                               --warn #D9A62E is 1.23:1, so a reader cannot
-                               tell them apart by hue.
+                               Never a state, and --warn was moved to keep
+                               that honest: the gold identity sits at OKLCH
+                               hue 73.2°, and the amber --warn it replaced sat
+                               10.7° from it — the same colour, to a reader
+                               glancing at a row. The shipped one is 32.0°
+                               away. Hue, not contrast ratio: two chromatic
+                               marks of equal lightness score ~1:1 however
+                               different they look, so a luminance ratio
+                               cannot answer this question. (The retired hexes
+                               are deliberately not spelled here — this
+                               comment ships inside the exported document, and
+                               export/tests.rs asserts no retired value
+                               appears in it.)
        --accent                what is selected. It IS the text colour, so
                                "active" is an ink/paper inversion rather than
                                a colour — the one dimension a reader cannot
@@ -512,9 +523,9 @@ fn render_dashboard(
   :root {{
     --void: #010306; --ground: #070B10; --surface: #0D1319; --raised: #11171D;
     --hairline: #1F262D; --hairline-strong: #333B43;
-    --identity: #00D1F9; --identity-ink: #070B10;
+    --identity: #C58A32; --identity-ink: #070B10;
     --text: #E9EDF2; --text-2: #A4ABB3; --text-3: #737C88;
-    --ok: #3FD99B; --warn: #D9A62E; --bad: #F2687A;
+    --ok: #3FD99B; --warn: #FF7A45; --bad: #F2687A;
     --c1: #E9EDF2; --c2: #A4ABB3; --c3: #737C88; --c4: #4A535D;
     --neutral-mark: #4A535D;
     --ink: #070B10;
@@ -586,9 +597,9 @@ fn render_dashboard(
       color-scheme: light;
       --void: #E9EDF2; --ground: #FFFFFF; --surface: #F7F9FC; --raised: #FFFFFF;
       --hairline: #E7EBF0; --hairline-strong: #CFD6DD;
-      --identity: #00778F; --identity-ink: #FFFFFF;
+      --identity: #674415; --identity-ink: #FFFFFF;
       --text: #070B10; --text-2: #4D535A; --text-3: #828C97;
-      --ok: #0B6B3D; --warn: #7A5200; --bad: #A82036;
+      --ok: #0B6B3D; --warn: #913200; --bad: #A82036;
       --c1: #070B10; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
       --neutral-mark: #C2C9D1;
       --ink: #FFFFFF;
@@ -603,9 +614,9 @@ fn render_dashboard(
     color-scheme: light;
     --void: #E9EDF2; --ground: #FFFFFF; --surface: #F7F9FC; --raised: #FFFFFF;
     --hairline: #E7EBF0; --hairline-strong: #CFD6DD;
-    --identity: #00778F; --identity-ink: #FFFFFF;
+    --identity: #674415; --identity-ink: #FFFFFF;
     --text: #070B10; --text-2: #4D535A; --text-3: #828C97;
-    --ok: #0B6B3D; --warn: #7A5200; --bad: #A82036;
+    --ok: #0B6B3D; --warn: #913200; --bad: #A82036;
     --c1: #070B10; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
     --neutral-mark: #C2C9D1;
     --ink: #FFFFFF;
@@ -799,7 +810,7 @@ fn render_dashboard(
       --ground: #FFFFFF; --surface: #FFFFFF; --raised: #FFFFFF; --sunken: #FFFFFF;
       --hairline: #CFD6DD; --hairline-strong: #828C97;
       --text: #070B10; --text-2: #333333; --text-3: #555555;
-      --accent: #070B10; --ink: #FFFFFF; --identity: #00778F;
+      --accent: #070B10; --ink: #FFFFFF; --identity: #674415;
       --accent-wash: transparent;
     }}
     body {{ padding: 0; }}

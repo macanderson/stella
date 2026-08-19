@@ -806,3 +806,103 @@ fn the_transcript_spells_every_rule_colour_as_a_token() {
         inline.join("\n  ")
     );
 }
+
+/// The identity is separated from every semantic state by **hue**, and the
+/// separation is measured rather than asserted in prose.
+///
+/// This is the rule "the brand hue may never encode a state" made
+/// enforceable. It was prose for three releases, and the prose cited the
+/// wrong measurement every time: `--identity` against `--warn` was reported
+/// as 1.23:1 under the bronze kit (called unreadable, correctly) and 1.22:1
+/// under the ion one (waved through as "separated by hue, not by weight").
+/// Both figures are WCAG contrast — a *luminance* ratio. Two chromatic marks
+/// of equal lightness score near 1:1 however far apart their hues are, so
+/// that number scored the cyan and the gold the same and could not tell the
+/// safe case from the broken one. A test built on it would have passed in
+/// both and meant nothing.
+///
+/// OKLCH hue distance answers the question actually being asked — can a
+/// reader glancing at a row tell the mark from the state — so it is what is
+/// enforced. The floor sits below every shipped gap (the tightest is `--warn`
+/// to `--bad`) and well above the 10.7° the amber `--warn` sat at when the
+/// brand returned to gold, which is the regression this pins. Moving a hue
+/// inside the floor is a real design decision and should cost a conversation
+/// rather than pass silently.
+#[test]
+fn identity_and_states_are_separated_by_hue_not_by_luminance() {
+    /// sRGB hex -> OKLCH hue in degrees, using Ottosson's Oklab matrices
+    /// transcribed rather than approximated.
+    fn oklch_hue(hex: &str) -> f64 {
+        let to_linear = |c: u8| {
+            let c = f64::from(c) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let hex = hex.trim_start_matches('#');
+        let channel =
+            |i: usize| to_linear(u8::from_str_radix(&hex[i..i + 2], 16).expect("six hex digits"));
+        let (r, g, b) = (channel(0), channel(2), channel(4));
+        let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
+        let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
+        let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
+        let a = 1.977_998_495_1 * l - 2.428_592_205_0 * m + 0.450_593_709_9 * s;
+        let bb = 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766_0 * s;
+        bb.atan2(a).to_degrees().rem_euclid(360.0)
+    }
+
+    /// The shorter way round the wheel: 350° and 10° are 20° apart, not 340°.
+    fn hue_gap(a: &str, b: &str) -> f64 {
+        let d = (oklch_hue(a) - oklch_hue(b)).abs().rem_euclid(360.0);
+        d.min(360.0 - d)
+    }
+
+    /// Below this, two marks read as one colour at a glance.
+    const FLOOR_DEGREES: f64 = 20.0;
+
+    let canon = canonical();
+    let value = |role: &str| -> (String, String) {
+        canon
+            .iter()
+            .find(|(r, _, _)| *r == role)
+            .map(|(_, dark, light)| (dark.clone(), light.clone()))
+            .unwrap_or_else(|| panic!("no canonical value for {role}"))
+    };
+
+    let identity = value("identity");
+    let warn = value("warn");
+    let bad = value("bad");
+    let ok = value("ok");
+
+    // Both schemes. `--ok` is checked too, though it is nowhere near the
+    // others: the point is that the whole set is held, not that today's
+    // values happen to be safe.
+    for (scheme, identity, warn, bad, ok) in [
+        ("dark", &identity.0, &warn.0, &bad.0, &ok.0),
+        ("light", &identity.1, &warn.1, &bad.1, &ok.1),
+    ] {
+        for (name, state) in [("warn", warn), ("bad", bad), ("ok", ok)] {
+            let gap = hue_gap(identity, state);
+            assert!(
+                gap >= FLOOR_DEGREES,
+                "{scheme}: --identity ({identity}) and --{name} ({state}) are \
+                 {gap:.1}° apart in OKLCH hue, under the {FLOOR_DEGREES:.0}° \
+                 floor. The identity may never be mistaken for a state — \
+                 crates/stella-observatory/src/assets/index.html's header \
+                 carries the rule. Do NOT reach for a contrast ratio to argue \
+                 these are fine: a luminance ratio cannot separate two \
+                 chromatic marks, and it is what let this through twice."
+            );
+        }
+        let gap = hue_gap(warn, bad);
+        assert!(
+            gap >= FLOOR_DEGREES,
+            "{scheme}: --warn ({warn}) and --bad ({bad}) are {gap:.1}° apart \
+             in OKLCH hue, under the {FLOOR_DEGREES:.0}° floor — \"needs \
+             attention\" and \"failed\" are different verdicts and have to \
+             look it."
+        );
+    }
+}
