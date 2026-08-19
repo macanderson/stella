@@ -125,8 +125,7 @@ fn no_flag_at_all_resolves_to_the_raw_loop() {
     );
 }
 
-/// **Witness (#3865 slice
-/// 1).** `--pipeline classic` used to resolve to [`PipelineChoice::Classic`];
+/// **Witness (#3865).** `--pipeline classic` used to resolve to [`PipelineChoice::Classic`];
 /// the built-in staged pipeline is gone, so it must now refuse instead. This
 /// assertion fails on the pre-slice-1 code (which still resolves `Ok`) and
 /// passes on this one. An unknown/plugin variant is unaffected — it still
