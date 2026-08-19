@@ -482,7 +482,12 @@ hdr "make gate vs CI"
 # CONTRIBUTING.md to GATE_STEPS, but it never saw this third copy, so it rotted
 # unguarded in exactly the direction #1437 warns about: under-reporting, which
 # lets a reader run the short list, see green, and believe the gate is green.
-gate_steps="$(make -s -C "$repo_root" print-gate-steps 2>/dev/null)"
+# `|| true` is load-bearing, not defensive noise: this script runs under
+# `set -euo pipefail`, where a command substitution that exits non-zero
+# aborts the assignment and therefore the whole run -- which would make the
+# fallback on the next line unreachable and kill setup outright on a machine
+# with no make. Swallowing the status is what lets the next line answer.
+gate_steps="$(make -s -C "$repo_root" print-gate-steps 2>/dev/null || true)"
 [ -n "$gate_steps" ] || gate_steps="(unavailable here -- run: make print-gate-steps)"
 printf '  make gate  runs, in order:\n'
 printf '%s\n' "$gate_steps" | fold -s -w 62 | sed 's/^/             /'
