@@ -33,21 +33,78 @@ pub enum StorageCmd {
     Prune(crate::stats::PruneArgs),
 }
 
+/// Whether the workspace `stella observe` rooted on has ever recorded
+/// telemetry, decided by the preflight before the socket binds.
+///
+/// The dashboard roots on `current_dir()`, and until it said so a reader had
+/// no way to tell a healthy-but-quiet workspace from a broken dashboard —
+/// the two look identical, and `$HOME` is itself a plausible workspace with
+/// its own sparse `store.db`, because `~/.stella` doubles as the global home
+/// and as the per-workspace `.stella` when the shell starts there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ObservedWorkspace {
+    /// `.stella/private/store.db` is present: runs have been recorded here.
+    Recorded,
+    /// No telemetry store under this root. Every panel will be empty, and
+    /// that is a fact about the directory, not about the dashboard.
+    Unrecorded,
+}
+
+/// The banner's advisory for a rooted workspace, or `None` when the store is
+/// present and the ordinary banner already says enough.
+///
+/// Pure, and separated from the printing for exactly that reason: the
+/// deliverable here *is* the sentence a reader sees, so it is the thing worth
+/// asserting on without binding a socket or touching a filesystem.
+pub(crate) fn observatory_workspace_notice(
+    root: &std::path::Path,
+    observed: ObservedWorkspace,
+) -> Option<String> {
+    match observed {
+        ObservedWorkspace::Recorded => None,
+        ObservedWorkspace::Unrecorded => Some(format!(
+            "no telemetry recorded under {} — every panel will be empty. \
+             `cd` to the workspace you meant, then run `stella observe` again.",
+            root.display()
+        )),
+    }
+}
+
 /// `stella observe` — serve the Observatory dashboard for this workspace on
 /// `127.0.0.1` until interrupted. Telemetry stores are opened read-only; the
 /// page and its assets are embedded, so nothing is fetched from anywhere.
-pub(crate) fn preflight_observatory_stores(root: &std::path::Path) -> Result<(), String> {
+///
+/// Returns what it learned about `store.db` on the way past. The resolver
+/// already distinguishes present from absent to do its migration work, so
+/// reporting it costs nothing and is the difference between a banner that
+/// names an empty workspace and one that leaves the reader guessing.
+pub(crate) fn preflight_observatory_stores(
+    root: &std::path::Path,
+) -> Result<ObservedWorkspace, String> {
+    let mut recorded = false;
     for name in ["store.db", "fleet.db", "context.db", "codegraph.db"] {
-        stella_store::existing_workspace_private_sqlite_path(root, name)
+        let resolved = stella_store::existing_workspace_private_sqlite_path(root, name)
             .map_err(|e| format!("cannot resolve private Observatory state `{name}`: {e}"))?;
+        // `store.db` alone decides this: the other three can each be absent in
+        // a workspace that has plenty of runs to show.
+        if name == "store.db" && resolved.is_some() {
+            recorded = true;
+        }
     }
-    Ok(())
+    Ok(if recorded {
+        ObservedWorkspace::Recorded
+    } else {
+        ObservedWorkspace::Unrecorded
+    })
 }
 
 pub fn run_observe(port: u16, open: bool) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    preflight_observatory_stores(&root)?;
+    let observed = preflight_observatory_stores(&root)?;
+    // The banner outlives `root`, which `serve` takes by value.
+    let workspace = root.display().to_string();
+    let notice = observatory_workspace_notice(&root, observed);
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -59,10 +116,19 @@ pub fn run_observe(port: u16, open: bool) -> Result<(), String> {
         // gold), lowercase always.
         println!("  {} {}", "◆".yellow(), "stella observatory".bold());
         println!("  {} {}", "→".yellow(), url);
+        // Which workspace is on screen. Unconditional, because the reader who
+        // needs it most is the one who does not yet suspect they are in the
+        // wrong directory — an advisory that only fires on an absent store
+        // would have stayed silent for the sparse-but-present case that
+        // motivated this.
+        println!("  {} {}", "·".dimmed(), workspace.dimmed());
         println!(
             "  {}",
             "reads .stella (read-only) · binds 127.0.0.1 only · Ctrl+C to stop".dimmed()
         );
+        if let Some(notice) = &notice {
+            println!("  {} {notice}", "!".yellow());
+        }
         if open {
             // Best-effort convenience; the printed URL is the contract.
             let opener = if cfg!(target_os = "macos") {
