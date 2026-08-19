@@ -18,6 +18,7 @@ mod convention;
 pub(crate) mod probes;
 pub(crate) mod state;
 mod surface;
+mod work;
 
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -184,6 +185,23 @@ pub(crate) enum SelfDrivingCmd {
         format: QueryFormat,
     },
 
+    /// Run one issue through Stella's turn loop, in an isolated worktree.
+    ///
+    /// Spawns a real `stella run` rather than embedding a turn: self-driving
+    /// is a host, and what a work unit gets is exactly what a `stella run`
+    /// gets on this machine, installed plugins included. With no verification
+    /// plugin installed that means the turn's own outcome — see
+    /// `doc:backlog-self-driving` §3.2 on what it is and is not worth.
+    Work {
+        /// The issue key to resolve, as the tracker spells it.
+        #[arg(long)]
+        issue: String,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
+    },
+
     /// Run lifecycle — a RUN spans many cycles and is the unit a person
     /// starts, stops, and drills into.
     Run {
@@ -295,7 +313,7 @@ pub(crate) enum RunCmd {
 // Dispatch
 // ---------------------------------------------------------------------------
 
-pub(crate) fn run(cmd: &SelfDrivingCmd) -> Result<(), String> {
+pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), String> {
     // Answered before the state directory is opened, and deliberately: a host
     // asking "which verbs does this build carry" has not decided to drive
     // anything yet, and a compatibility probe that fails because a state dir
@@ -367,6 +385,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd) -> Result<(), String> {
             labels,
             format,
         } => file_finding(&st, title, body, labels, *format),
+        SelfDrivingCmd::Work { issue, format } => work_issue(&st, issue, spend_limit, *format),
         SelfDrivingCmd::Run { cmd } => match cmd {
             RunCmd::Start => run_start(&st),
             RunCmd::End { status, reason } => run_end(&st, status, reason),
@@ -898,6 +917,52 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
 /// The queue verb: the ranked defect batch this cycle draws from.
 fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
     backlog::render_queue(st, &crate::issue_provider::GhIssueProvider, limit, format)
+}
+
+/// `stella self-driving work` — run one issue to a diff.
+///
+/// The issue is resolved through the port **before** anything touches git, so
+/// an unknown key costs a tracker read rather than a worktree that has to be
+/// torn down again.
+fn work_issue(
+    st: &LoopState,
+    key: &str,
+    spend_limit: Option<f64>,
+    format: QueryFormat,
+) -> Result<(), String> {
+    let root = state::repo_root();
+    let issue = backlog::resolve(&crate::issue_provider::GhIssueProvider, key)?;
+
+    let outcome = work::start(&root, &issue, spend_limit)?;
+
+    match &outcome {
+        work::WorkOutcome::Changed { branch, stat, .. } => {
+            if format == QueryFormat::Json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "outcome": "changed", "branch": branch, "stat": stat })
+                );
+            } else {
+                println!("worked #{key} — {stat}\n  branch: {branch}");
+            }
+            let _ = st;
+            Ok(())
+        }
+        work::WorkOutcome::NoChange { why } => {
+            if format == QueryFormat::Json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "outcome": "no_change", "why": why })
+                );
+            } else {
+                println!("worked #{key} — the turn changed nothing ({why}); worktree released");
+            }
+            Ok(())
+        }
+        // A failure exits non-zero: a caller that scripted this must not read
+        // "the command returned" as "the issue was worked".
+        work::WorkOutcome::Failed { reason } => Err(format!("#{key} was not worked: {reason}")),
+    }
 }
 
 /// `stella self-driving file` — file a finding, if it is novel and conformant.
