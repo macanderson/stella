@@ -119,7 +119,27 @@ pub(super) fn drive(
                 let resolved = super::backlog::resolve(&provider, &issue.0)?;
                 eprintln!("working #{} — {}", issue.0, resolved.title);
 
-                match super::work::start(&root, &resolved, spend_limit, &cfg.attribution)? {
+                // A `work` that cannot start — a leftover branch from a killed
+                // run, an unreachable worktree — is one issue's problem, not
+                // the loop's. Propagating it would let a single stale branch
+                // halt a run that has three other issues it could be getting
+                // on with, and the operator would have to intervene for
+                // something the loop can simply route around.
+                //
+                // Reported at full volume rather than swallowed: the branch is
+                // still there, still holds whatever the dead run left, and
+                // still needs a human eventually.
+                let outcome =
+                    match super::work::start(&root, &resolved, spend_limit, &cfg.attribution) {
+                        Ok(outcome) => outcome,
+                        Err(reason) => {
+                            eprintln!("  could not start: {reason}");
+                            eprintln!("  moving on to the next issue");
+                            continue;
+                        }
+                    };
+
+                match outcome {
                     super::work::WorkOutcome::Changed { branch, stat, .. } => {
                         eprintln!("  changed: {stat}");
                         let title = format!("{} (#{})", resolved.title, issue.0);
