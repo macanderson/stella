@@ -10,7 +10,10 @@ status: living
 `crates/stella-pipeline` — §7's "last slice" — has been deleted from the
 workspace (#3865, landed on this branch). `stella run --pipeline classic` is
 refused outright, naming `stella plugin install` as the remedy. Host-run
-verification is now exclusively an installed-plugin concern; Oxagen's Vera is
+verification no longer exists in this workspace at all: the only
+verification path left is an installed verification plugin, which supplies
+its own self-reported evidence — Stella evaluates that evidence against the
+plugin's declared rule and never re-runs or re-checks it. Oxagen's Vera is
 the reference verification plugin, private and not shipped in this
 repository. §7 and §8 below are updated in place to say so; the rest of this
 document's Track A/C/D narrative and file:line citations into the deleted
@@ -673,10 +676,12 @@ keeps. What was already true here — "a plugin supplies evidence
 out-of-process" — is exactly what #3511 makes explicit: the oracle's evidence
 was always plugin-produced, and a host that let a manifest suggest otherwise
 (that the oracle's finding was host-run) was the gap #3511 closes, not
-`judge`'s purity. This is the plugin path specifically — it does not withdraw
-the guarantee from the built-in staged pipeline (§7, §8), which still runs its
-own check and watches the flip; see `AGENTS.md`'s opening description for the
-corrected, path-scoped wording.
+`judge`'s purity. This was the plugin path specifically, stated against a
+built-in staged pipeline (§7, §8) that at the time still ran its own check
+and watched the flip; that built-in pipeline is now deleted from this
+workspace (#3865), so host-run verification described here no longer exists
+at all — every verification path is the plugin path, self-reported. See
+`AGENTS.md`'s opening description for the corrected, post-removal wording.
 
 ---
 

@@ -14,12 +14,14 @@ pipeline that used to run the check itself and watch the fail→pass flip has
 been deleted from this workspace (#3865; `docs/spec/pipeline-as-plugins.md`
 §7 names it "the last slice" of the extraction plan, and it has now landed) —
 `stella run --pipeline classic` is refused outright, naming `stella plugin
-install` as the remedy. Host-run verification now requires an **installed
-verification plugin**: `stella run --pipeline <plugin-id>` hands the turn to
-that plugin, whose evidence is self-reported — Stella evaluates it against
-the plugin's declared rule and does not re-run or re-check it (#3511;
-`doc:pipeline-as-plugins` is the extraction plan, and Oxagen's Vera is the
-reference verification plugin, private and not shipped in this repository).
+install` as the remedy. Host-run verification no longer exists in this
+workspace at all: the only verification path left is an **installed
+verification plugin** — `stella run --pipeline <plugin-id>` hands the turn to
+that plugin, whose evidence is self-reported. Stella evaluates that evidence
+against the plugin's declared rule and never re-runs or re-checks it itself
+(#3511; `doc:pipeline-as-plugins` is the extraction plan, and Oxagen's Vera is
+the reference verification plugin, private and not shipped in this
+repository).
 Neither path runs by default — a plain `stella run` is the raw step-loop
 with no verification stage over it. It is the open-source reference
 implementation of
@@ -105,9 +107,9 @@ leaving `main` red for everyone (#1883).
 
 CI enforces the same steps split across three workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`
-and `doc-links`, and adds a `Cargo.lock` sync check, the prompt-cache golden
-fixtures, `stella context validate`, a release smoke build (thin LTO), and the
-deleted-test guard (`scripts/check-deleted-tests.sh`);
+and `doc-links`, and adds a `Cargo.lock` sync check, `stella context
+validate`, a release smoke build (thin LTO), and the deleted-test guard
+(`scripts/check-deleted-tests.sh`);
 `docs-guards.yml` runs those two plus a second run of `command-docs`, because
 all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,

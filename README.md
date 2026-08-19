@@ -39,12 +39,15 @@ in Rust as a workspace of focused crates.
 - **BYOK, auto-detected** — Set one provider's API key and Stella detects it.
   Pin a specific model per run or shell with `--model`.
 - **Deterministic definition of done, opt-in** — `stella run --pipeline
-  classic` runs the built-in staged pipeline, whose witness stage has an
-  independent model author a test that fails on the old code and passes on
-  the new, and tracks that fail→pass flip, host-run. A green suite alone is
-  not accepted on that path. This machinery is also becoming Vera, an
-  installable verification plugin — a plugin's oracle reports its own
-  evidence instead of Stella re-running the check.
+  <plugin-id>` hands the turn to an installed verification plugin, whose
+  oracle authors a test that fails on the old code and passes on the new and
+  tracks that fail→pass flip itself. A green suite alone is not accepted on
+  that path — but the evidence is self-reported: Stella evaluates it against
+  the plugin's declared rule and never re-runs or re-checks it. The built-in
+  staged pipeline that once ran this check itself (`--pipeline classic`) has
+  been deleted from this workspace (#3865) — that flag is refused outright,
+  naming `stella plugin install` as the remedy. Oxagen's Vera is the
+  reference verification plugin, private and not shipped in this repository.
 - **Single-threaded engine** — One deterministic step loop: plan, fan tools out
   in parallel, observe, compact if noisy, repeat. No coordinator or multi-agent
   swarm.
