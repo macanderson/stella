@@ -2436,6 +2436,10 @@ export type ProviderErrorWire = {
   message: string;
   retry_after_ms?: number | null;
 } | {
+  kind: "overloaded";
+  message: string;
+  retry_after_ms?: number | null;
+} | {
   kind: "auth";
   message: string;
 } | {

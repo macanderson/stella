@@ -60,12 +60,12 @@ impl Provider for TwoSpawnsThenDone {
                 vec![
                     ToolCall {
                         call_id: "c1".into(),
-                        name: "task".into(),
+                        name: "delegate".into(),
                         input: serde_json::json!({"prompt": "question one"}),
                     },
                     ToolCall {
                         call_id: "c2".into(),
-                        name: "task".into(),
+                        name: "delegate".into(),
                         input: serde_json::json!({"prompt": "question two"}),
                     },
                 ],
@@ -98,7 +98,7 @@ struct BarrierSpawns {
 impl ToolExecutor for BarrierSpawns {
     fn schemas(&self) -> Vec<ToolSchema> {
         vec![ToolSchema {
-            name: "task".into(),
+            name: "delegate".into(),
             description: "delegate research".into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only: false,
@@ -113,12 +113,12 @@ impl ToolExecutor for BarrierSpawns {
         }
     }
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-        std::iter::once("task".to_string()).collect()
+        std::iter::once("delegate".to_string()).collect()
     }
 }
 
 #[tokio::test]
-async fn sibling_task_calls_in_one_step_execute_concurrently() {
+async fn sibling_delegate_calls_in_one_step_execute_concurrently() {
     let provider = TwoSpawnsThenDone {
         calls: std::sync::atomic::AtomicU32::new(0),
     };
@@ -169,7 +169,7 @@ impl Provider for SpawnEditSpawn {
             tool_calls: vec![
                 ToolCall {
                     call_id: "c1".into(),
-                    name: "task".into(),
+                    name: "delegate".into(),
                     input: serde_json::json!({"prompt": "one"}),
                 },
                 ToolCall {
@@ -179,7 +179,7 @@ impl Provider for SpawnEditSpawn {
                 },
                 ToolCall {
                     call_id: "c3".into(),
-                    name: "task".into(),
+                    name: "delegate".into(),
                     input: serde_json::json!({"prompt": "two"}),
                 },
             ],
@@ -200,7 +200,7 @@ impl ToolExecutor for BarrierSpawnsAndEdit {
     fn schemas(&self) -> Vec<ToolSchema> {
         vec![
             ToolSchema {
-                name: "task".into(),
+                name: "delegate".into(),
                 description: "delegate research".into(),
                 input_schema: serde_json::json!({"type": "object"}),
                 read_only: false,
@@ -216,7 +216,7 @@ impl ToolExecutor for BarrierSpawnsAndEdit {
         ]
     }
     async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
-        if name == "task" {
+        if name == "delegate" {
             self.barrier.wait().await;
         }
         ToolOutput::Ok {
@@ -225,7 +225,7 @@ impl ToolExecutor for BarrierSpawnsAndEdit {
         }
     }
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-        std::iter::once("task".to_string()).collect()
+        std::iter::once("delegate".to_string()).collect()
     }
 }
 

@@ -1366,10 +1366,9 @@ async fn complete_forwards_temperature_to_the_request_body() {
 #[tokio::test]
 async fn complete_maps_5xx_to_retryable_transport() {
     let server = MockServer::start().await;
-    // 529 is Anthropic's "overloaded" load-shedding status.
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
-        .respond_with(ResponseTemplate::new(529).set_body_string("overloaded"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("upstream down"))
         .mount(&server)
         .await;
 
@@ -1387,7 +1386,7 @@ async fn complete_maps_5xx_to_retryable_transport() {
 
     let err = provider.complete(req).await.unwrap_err();
     assert!(matches!(err, ProviderError::Transport { .. }));
-    assert!(err.is_retryable(), "5xx/529 must be retryable");
+    assert!(err.is_retryable(), "5xx must be retryable");
 }
 
 #[tokio::test]
@@ -1778,4 +1777,5 @@ fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
 
 mod cache_breakpoints;
 mod context_editing;
+mod overload;
 mod thinking;

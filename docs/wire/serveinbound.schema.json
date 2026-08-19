@@ -538,6 +538,32 @@
               "type": "object"
             },
             {
+              "description": "The host's provider is shedding load (HTTP 529). Carried distinctly\nrather than folded into `Transport` because the engine branches on it:\na sustained overload that outlives the inline ladder converts into a\nsupervised parked wait, which `Transport` declines (#2742). A remote\nprovider's brownout must recover exactly as a local one's does.",
+              "properties": {
+                "kind": {
+                  "const": "overloaded",
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "retry_after_ms": {
+                  "default": null,
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "message"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "kind": {
                   "const": "auth",

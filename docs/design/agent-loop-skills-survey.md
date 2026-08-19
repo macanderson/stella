@@ -53,6 +53,14 @@ description, and it means "before `search_skills`", not "before the work".
 
 ## 2. Agent dispatch: yes, the `task` tool
 
+> **Renamed since this survey was written.** The spawn tool is now
+> **`delegate`** (#3192): its catalog row's `group` was `task` while its
+> `name` was also `task`, so one settings key addressed both the tool and
+> the six-row board. `task` remains the *group* key and still withholds
+> all seven coordination tools. This section is left as written because
+> it is a record of the surface at the time; read `task` below as
+> `delegate`.
+
 The model-visible spawn tool is **`task`**
 (`crates/stella-tools/src/subagent.rs:215`, registered at
 `crates/stella-tools/src/registry.rs:449-453`). `parallel_safe() -> true`

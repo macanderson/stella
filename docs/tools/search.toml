@@ -26,8 +26,29 @@ available_for_speculation = false
 # unreviewed.
 risk_level = "low"
 
+# The description below is the BASELINE: what a host with no embedder
+# configured advertises. `search` chooses it at construction from whether
+# `stella_embed::from_env()` resolved (#3139) — a session that has one
+# advertises meaning-matching instead, because that is what its ladder runs.
+# Both strings are declared in crates/stella-tools/src/search.rs; this page
+# pins the baseline so it stays a function of the source tree rather than of
+# the environment the generator ran in.
+#
+# With an embedder resolved, the description reads:
+#
+# Find code. This is the ONLY search you need: describe what you are looking
+# for, in whatever form you have it, and get back the files that answer it
+# with their symbols, callers, imports and source already attached — so one
+# call usually replaces a run of grep/glob/read_file round trips. It matches
+# by MEANING, not just by text, so a description works as well as a name:
+# search("where are request headers sanitized before logging"), search("what
+# calls resolve_provider"), search("the retry/backoff policy for failed HTTP
+# requests"), search("CredentialStore"). Use read_file when you already know
+# the exact path and want the whole file, and `bash` with `grep -n` when you
+# need every occurrence of one exact literal string. The answer always states
+# which strategies ran and whether it was truncated.
 description = '''
-Find code. This is the ONLY search you need: describe what you are looking for, in whatever form you have it, and get back the files that answer it with their symbols, callers, imports and source already attached — so one call usually replaces a run of grep/glob/read_file round trips. It matches by MEANING, not just by text, so a description works as well as a name: search("where are request headers sanitized before logging"), search("what calls resolve_provider"), search("the retry/backoff policy for failed HTTP requests"), search("CredentialStore"). Use read_file when you already know the exact path and want the whole file, and `bash` with `grep -n` when you need every occurrence of one exact literal string. The answer always states which strategies ran and whether it was truncated.
+Find code. This is the ONLY search you need: describe what you are looking for, in whatever form you have it, and get back the files that answer it with their symbols, callers, imports and source already attached — so one call usually replaces a run of grep/glob/read_file round trips. In this session it matches the WORDS of your query literally — against file paths, symbol names, and file text — and not by meaning, so give it terms the code itself would use: search("resolve_provider"), search("CredentialStore"), search("retry backoff"), search("sanitize header log"). A miss means those words were not found; it is NOT evidence that the behaviour is absent, so try the other names it might go by before concluding it does not exist. It is still the call to make first: it resolves exact symbols, ranks names across the code graph, and scans the tree where there is no index, and every hit arrives with its neighborhood attached. Use read_file when you already know the exact path and want the whole file, and `bash` with `grep -n` when you need every occurrence of one exact literal string. The answer always states which strategies ran and whether it was truncated.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.

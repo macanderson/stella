@@ -77,38 +77,7 @@ fn clone_result(
 ) -> Result<CompletionResultAlias, ProviderError> {
     match r {
         Ok(v) => Ok(v.clone()),
-        Err(e) => Err(clone_provider_error(e)),
-    }
-}
-
-fn clone_provider_error(e: &ProviderError) -> ProviderError {
-    match e {
-        ProviderError::Transport { message, partial } => ProviderError::Transport {
-            message: message.clone(),
-            partial: *partial,
-        },
-        ProviderError::RateLimited {
-            message,
-            retry_after_ms,
-        } => ProviderError::RateLimited {
-            message: message.clone(),
-            retry_after_ms: *retry_after_ms,
-        },
-        ProviderError::Auth(m) => ProviderError::Auth(m.clone()),
-        ProviderError::UnknownModel { slug } => ProviderError::UnknownModel { slug: slug.clone() },
-        ProviderError::Malformed(m) => ProviderError::Malformed(m.clone()),
-        ProviderError::Cancelled => ProviderError::Cancelled,
-        ProviderError::ContextOverflow { message } => ProviderError::ContextOverflow {
-            message: message.clone(),
-        },
-        ProviderError::OutputBudgetExceeded {
-            message,
-            affordable_output_tokens,
-        } => ProviderError::OutputBudgetExceeded {
-            message: message.clone(),
-            affordable_output_tokens: *affordable_output_tokens,
-        },
-        ProviderError::Terminal(m) => ProviderError::Terminal(m.clone()),
+        Err(e) => Err(e.clone()),
     }
 }
 

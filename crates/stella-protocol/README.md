@@ -254,9 +254,17 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
 - **There is no `"auto"` model slug.** Selection is `Option<ModelRef>`; `None`
   *is* auto. `ModelRef` deliberately has no auto variant — the TS-era bug where
   a pseudo-slug leaked into resolver paths is structurally excluded (L-M3).
-- **`ProviderError::RateLimited` interpolates its hint by hand.** The obvious
-  `{retry_after_ms:?}` renders "retry after Some(500)ms", or the nonsense
-  "retry after Nonems", into a message the user reads on the TUI.
+- **`ProviderError::RateLimited` and `::Overloaded` interpolate their hint by
+  hand.** The obvious `{retry_after_ms:?}` renders "retry after Some(500)ms",
+  or the nonsense "retry after Nonems", into a message the user reads on the
+  TUI.
+- **`ProviderError::is_park_eligible` is narrower than `is_retryable`, on
+  purpose.** Every retryable failure gets the inline backoff ladder, but only a
+  failure whose recovery is a function of *waiting* (a 429, a 529) may be
+  converted into `stella-core`'s multi-minute supervised park (#2742). A
+  dropped connection is retryable and not park-eligible; keeping the two
+  predicates separate is what stops "retry this" from silently becoming "wait
+  six hours for this".
 - **`ContextUsage`'s sums saturate rather than wrap** — these predicates run
   over journal bytes the consumer did not write, and an audit check must answer
   `false` on a corrupt report, never panic on a debug-build overflow.
