@@ -406,11 +406,11 @@ fn a_raw_worker_closes_the_stage_it_opened() {
             seen.as_slice(),
             [
                 AgentEvent::Stage {
-                    name: stella_protocol::StageKind::Complete,
+                    name,
                     scope: stella_protocol::StageScope::Run,
                 },
                 AgentEvent::TurnComplete { .. },
-            ]
+            ] if name.kind() == Some(stella_protocol::StageKind::Complete)
         ),
         "the closing boundary rides ahead of the terminal event it annotates: {seen:?}"
     );

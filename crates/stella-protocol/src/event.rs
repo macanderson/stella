@@ -74,6 +74,13 @@
 //! and [`CacheZone`] carry a `serde(other)` catch-all today. Adding a variant
 //! to a nested vocabulary is therefore still a one-directional change, and
 //! the reader that meets it drops the whole event, not just the field.
+//!
+//! One field is deliberately outside that rule: [`AgentEvent::Stage`]'s `name`
+//! is a [`crate::StageName`], an open vocabulary, because a stage a plugin
+//! contributed has a name this crate cannot enumerate ahead of time
+//! (`doc:roleless-core`). It is not a `serde(other)` catch-all — a catch-all
+//! variant is unit-only and *discards* the name, which for a stage is the one
+//! piece of information a reader needs. It carries the word instead.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -110,9 +117,6 @@ pub use payload::{
     ProposedHunk, ScopeProposal, TaskItem, TaskStatus, VerdictEvidence,
 };
 
-/// A named point in the turn's data flow. Exactly one stage vocabulary
-/// exists in this workspace — never duplicated per-crate (the TS-era
-/// `StageKind` duplication this structurally forbids, L-E1).
 /// Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
 ///
 /// Deliberately **not** `#[serde(default)]`. A default would silently claim
@@ -131,6 +135,17 @@ pub enum StageScope {
     Run,
 }
 
+/// A named point in the turn's data flow — **the boundaries this host emits**,
+/// and only those. Exactly one such vocabulary exists in this workspace, never
+/// duplicated per-crate (the TS-era `StageKind` duplication this structurally
+/// forbids, L-E1).
+///
+/// This is deliberately no longer the same thing as "every stage a turn can
+/// have". [`crate::StageName`] is what [`AgentEvent::Stage`] carries, and it is
+/// open: a stage a plugin contributed has a name here that this enum does not
+/// and should not know (`doc:roleless-core`). Staying closed is what keeps this
+/// type useful to the consumers that genuinely need a fixed set — the
+/// diagnostics bridge, whose field values cannot hold a runtime string at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -319,7 +334,20 @@ pub enum AgentEvent {
             description = "A stage boundary was crossed. `scope` says whose stage it is, and it is not decoration: two disjoint authorities emit stages. The engine emits its own, once per turn, with scope `turn`. A wrapper -- the staged pipeline, a goal loop -- emits its own vocabulary once per run, with scope `run`. A consumer that branches on stage transitions must select on `scope` first, or it will see two interleaved vocabularies as one and read a wrapper's backwards-looking boundary as an engine regression."
         )
     )]
-    Stage { name: StageKind, scope: StageScope },
+    Stage {
+        /// Which stage. An **open** vocabulary ([`crate::StageName`]): one of
+        /// [`StageKind`]'s twelve when this host emitted the boundary, or a
+        /// contributed stage's own word. On the wire it is a plain string
+        /// either way, so the twelve encode exactly as they always have.
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which stage the boundary belongs to, as a plain string. An OPEN vocabulary: the host's own boundaries take the names listed in this field's type examples, and a stage contributed by an installed plugin takes whatever name that plugin declared. Every one of the host's own names encodes exactly as it always has, so an existing consumer keeps reading; a consumer must branch on the names it knows and keep a default arm, because a name it has never seen is now reachable."
+            )
+        )]
+        name: crate::StageName,
+        scope: StageScope,
+    },
     /// The step's answer text, in full — the authoritative, durable record.
     /// Not a fragment, despite the live preview sibling
     /// [`AgentEvent::TextDelta`]: consumers must REPLACE any accumulated

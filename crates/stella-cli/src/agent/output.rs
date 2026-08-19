@@ -174,7 +174,7 @@ pub(super) fn open_raw_turn(events: &EventSender, recall_event: Option<AgentEven
         let _ = events.send(event);
     }
     let _ = events.send(AgentEvent::Stage {
-        name: stella_protocol::StageKind::Execute,
+        name: stella_protocol::StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     });
 }
@@ -374,7 +374,7 @@ mod durable_stream_tests {
 
         sender
             .send(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute,
+                name: stella_protocol::StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Run,
             })
             .unwrap();
@@ -399,7 +399,7 @@ mod durable_stream_tests {
         let (raw_tx, mut paused_renderer) = mpsc::unbounded_channel();
         let sender = ordered_durable_event_sender(raw_tx, path.clone(), Arc::new(FixedClock(7)));
         let stage = AgentEvent::Stage {
-            name: stella_protocol::StageKind::Execute,
+            name: stella_protocol::StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         };
         let usage = AgentEvent::StepUsage {

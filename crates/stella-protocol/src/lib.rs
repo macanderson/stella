@@ -75,6 +75,7 @@ pub mod receipt;
 pub mod role;
 #[cfg(feature = "schema")]
 pub mod schema_export;
+pub mod stage;
 pub mod subagent_event;
 pub mod tokens;
 pub mod tool;
@@ -110,6 +111,10 @@ pub use event::{
     PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare, ScopeProposal, StageKind,
     StageScope, TaskItem, TaskStatus, UNKNOWN_MODEL, UsageIncompleteReason, VerdictEvidence,
 };
+// The *open* stage vocabulary (`doc:roleless-core`). `StageKind` above stays
+// the closed set of boundaries this host emits; `StageName` is what the wire
+// carries, so a stage a plugin contributed can be named at all.
+pub use stage::StageName;
 // The journal line is the event plus the wall-clock stamp its sink adds
 // (#2111). Deliberately a separate type from `AgentEvent`: a stamp is a fact
 // about a write, and the engine that produces events owns no clock.

@@ -376,11 +376,11 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
     };
     let steps = vec![
         ev(AgentEvent::Stage {
-            name: StageKind::Triage,
+            name: StageKind::Triage.into(),
             scope: stella_protocol::StageScope::Run,
         }),
         ev(AgentEvent::Stage {
-            name: StageKind::Execute,
+            name: StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         }),
         ev(AgentEvent::ToolStart {

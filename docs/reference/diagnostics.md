@@ -265,7 +265,9 @@ A scope-level review decision crossed the event stream. Placement only; content 
 - **Fields:** `seq`, `stage`
 <!-- facts:end -->
 
-The pipeline entered a named `stage` (a closed enum). These records partition the timeline; the gap between consecutive ones is where a slow run spent its time.
+The run entered a named `stage`. These records partition the timeline; the gap between consecutive ones is where a slow run spent its time.
+
+`stage` is an **open** vocabulary (`doc:roleless-core`). One of the host's own twelve boundaries records as a plain closed-vocabulary value; a stage contributed by an installed plugin records its own name through the reviewed hatch (§5.5), justified there as configuration rather than content — it is declared in a manifest the operator chose to install, and nothing in a turn authors it. Dropping the name instead would leave the record unable to say which stage a run spent its time in, which is the question this code exists to answer.
 
 ### `agent.steered`
 

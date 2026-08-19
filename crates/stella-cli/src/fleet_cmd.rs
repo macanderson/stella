@@ -899,7 +899,7 @@ async fn run_task(
             // closer rides `worker_event_sender` below, ahead of the
             // engine's `TurnComplete` (#3428).
             let _ = tx.send(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute,
+                name: stella_protocol::StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Run,
             });
             match &wrapped {

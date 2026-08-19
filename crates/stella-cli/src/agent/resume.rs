@@ -323,7 +323,7 @@ pub(crate) async fn drive_resumed_turn(
     // render `hud.stage` cannot tell one from a fresh one.
     let events = events.pairing_stage_complete();
     let _ = events.send(stella_protocol::AgentEvent::Stage {
-        name: stella_protocol::StageKind::Execute,
+        name: stella_protocol::StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     });
     engine.drive(&mut state, &events).await
@@ -528,9 +528,9 @@ mod tests {
         assert!(matches!(
             first,
             AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute,
+                name,
                 scope: stella_protocol::StageScope::Run
-            }
+            } if name.kind() == Some(stella_protocol::StageKind::Execute)
         ));
     }
 

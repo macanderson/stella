@@ -160,7 +160,7 @@ fn a_stage_between_text_deltas_breaks_coalescing() {
     let mut model = SessionModel::new();
     model.apply(&text("a"));
     model.apply(&AgentEvent::Stage {
-        name: StageKind::Verify,
+        name: StageKind::Verify.into(),
         scope: stella_protocol::StageScope::Run,
     });
     model.apply(&text("b"));
@@ -403,13 +403,13 @@ fn scope_review_sets_then_clears_on_next_stage() {
     assert!(model.pending_scope_review.is_some());
     // The scope-review stage marker itself must NOT clear it.
     model.apply(&AgentEvent::Stage {
-        name: StageKind::ScopeReview,
+        name: StageKind::ScopeReview.into(),
         scope: stella_protocol::StageScope::Run,
     });
     assert!(model.pending_scope_review.is_some());
     // The engine moving on to execute clears it.
     model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute,
+        name: StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     });
     assert!(model.pending_scope_review.is_none());
@@ -436,7 +436,7 @@ fn an_approved_plan_outlives_the_gate_that_carried_it() {
         },
     });
     model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute,
+        name: StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     });
     model.apply(&AgentEvent::RunComplete {
@@ -453,7 +453,7 @@ fn an_approved_plan_outlives_the_gate_that_carried_it() {
     // And it belongs to *that* turn: the next one starts unapproved rather
     // than inheriting consent it was never given.
     model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute,
+        name: StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     });
     assert!(
@@ -556,7 +556,7 @@ fn complete_populates_hud() {
     assert_eq!(model.hud.model.as_deref(), Some("glm-5.2"));
     assert_eq!(model.hud.final_cost_usd, Some(0.033));
     assert!(model.hud.complete);
-    assert_eq!(model.hud.stage, Some(StageKind::Complete));
+    assert_eq!(model.hud.stage, Some(StageKind::Complete.into()));
 }
 
 #[test]
@@ -1090,7 +1090,7 @@ fn replay_past_the_cap_stays_deterministic() {
 fn replay_of_the_same_log_yields_identical_models() {
     let log = vec![
         AgentEvent::Stage {
-            name: StageKind::Execute,
+            name: StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         },
         text("hi "),
@@ -1167,7 +1167,7 @@ fn a_settled_progress_line_is_never_overwritten_by_a_later_pass() {
     let mut model = SessionModel::new();
     model.set_progress_line("· semantic index: 12 files embedded…");
     model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute,
+        name: StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     });
     model.set_progress_line("· chunk index: 4 files embedded…");

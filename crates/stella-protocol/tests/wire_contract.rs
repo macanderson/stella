@@ -437,8 +437,14 @@ fn every_nested_vocabulary_is_fully_sampled() {
             .len()
     };
 
+    // `StageKind` is deliberately absent. It stopped being a nested *wire*
+    // vocabulary when `AgentEvent::Stage::name` became an open string
+    // (`doc:roleless-core`): the schema has no `$defs/StageKind` to count arms
+    // in, because nothing on the wire is constrained to the twelve any more.
+    // Its totality is proved at the source instead — `stella_protocol::stage`'s
+    // `all_lists_every_kind_exactly_once` — and `all_stage_kinds()` reads that
+    // array, so this corpus still samples every one of them.
     let counts: BTreeMap<&str, usize> = BTreeMap::from([
-        ("StageKind", all_stage_kinds().len()),
         ("StageScope", all_stage_scopes().len()),
         ("BudgetMode", all_budget_modes().len()),
         ("BudgetScope", all_budget_scopes().len()),
@@ -489,8 +495,10 @@ fn every_nested_vocabulary_is_fully_sampled() {
         .filter(|(_, def)| def.get("oneOf").is_some())
         .map(|(name, _)| name.as_str())
         .collect();
+    // No `StageKind` — see the comment on `counts` above: it left the schema
+    // when the stage field became an open string, so it is no longer an enum
+    // in the payload graph at all.
     let rows: BTreeSet<&str> = BTreeSet::from([
-        "StageKind",
         "StageScope",
         "BudgetMode",
         "BudgetScope",

@@ -170,7 +170,11 @@ impl ProgressState {
             return Self::idle();
         }
 
-        let active = hud.stage.map(stage_phase);
+        // From `host_stage`, not `stage`: the bar draws the host's own three
+        // phases, and a contributed stage has none of them (see
+        // `model::Hud::host_stage`). Reading `stage` would make a plugin's
+        // stage phase-less and snap the bar back to "plan".
+        let active = hud.host_stage.map(stage_phase);
 
         if complete {
             return Self {
@@ -568,7 +572,7 @@ mod tests {
         m.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::Stage {
-                name: stage,
+                name: stage.into(),
                 scope: stella_protocol::StageScope::Run,
             },
         });
@@ -577,6 +581,46 @@ mod tests {
 
     fn focused(m: &WorkspaceModel) -> Option<&AgentEntry> {
         m.agents.first()
+    }
+
+    /// **The witness that a contributed stage is not a regression.**
+    ///
+    /// The bar draws the host's three phases. A stage a plugin contributed
+    /// belongs to none of them, so it must leave the bar exactly where the last
+    /// host stage put it.
+    ///
+    /// The failure this pins is specific and ugly: fold the contributed stage
+    /// into the same field the bar reads and it becomes phase-less, phase-less
+    /// falls back to phase 0, and a plugin stage running *after* `execute`
+    /// would drag the bar backwards to "plan" — the deck telling the user the
+    /// run had regressed when nothing had.
+    #[test]
+    fn a_contributed_stage_leaves_the_bar_where_the_last_host_stage_put_it() {
+        let mut m = agent_running(StageKind::Execute);
+        let before = ProgressState::derive(focused(&m), m.now_ms, false);
+        assert_eq!(before.segments[1], SegState::Active, "execute is phase 1");
+
+        m.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Stage {
+                name: stella_protocol::StageName::new("triage-lite"),
+                scope: stella_protocol::StageScope::Run,
+            },
+        });
+        let after = ProgressState::derive(focused(&m), m.now_ms, false);
+        assert_eq!(
+            after.fill, before.fill,
+            "a contributed stage moved the bar; it has no phase to move it to"
+        );
+        assert_eq!(after.segments, before.segments);
+
+        // And the statline still says what is happening — the bar holding
+        // still is not the deck going quiet about the stage.
+        let hud_stage = focused(&m).unwrap().model.hud.stage.clone();
+        assert_eq!(
+            hud_stage.as_ref().map(stella_protocol::StageName::as_str),
+            Some("triage-lite")
+        );
     }
 
     #[test]
