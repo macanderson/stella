@@ -25,14 +25,6 @@ use stella_protocol::ReasoningEffort;
 use crate::loop_detect::LoopDetectionConfig;
 use crate::retry::RetryPolicy;
 
-// Named only by this module's doc comments, which moved here with the fields
-// that carry them. Importing them keeps those intra-doc links resolving
-// instead of degrading the prose to plain text.
-#[allow(unused_imports)]
-use super::Engine;
-#[allow(unused_imports)]
-use crate::budget::BudgetGuard;
-
 /// Everything about a turn's execution that isn't the provider/tools
 /// themselves: prompt shape, retry/compaction/loop tuning, and hard
 /// backstops. `Default` gives sensible starting values for `stella-cli`.
@@ -52,7 +44,7 @@ pub struct EngineConfig {
     pub loop_detection: LoopDetectionConfig,
     /// Compaction fires once the estimated conversation size exceeds this
     /// many tokens (`crate::estimator`). When calibration is attached
-    /// ([`Engine::with_calibration`]) the comparison uses the
+    /// ([`Engine::with_calibration`](super::Engine::with_calibration)) the comparison uses the
     /// drift-corrected estimate, so this budget is honored in the model's
     /// own observed tokens rather than raw heuristic tokens.
     pub compaction_budget_tokens: u64,
@@ -72,7 +64,7 @@ pub struct EngineConfig {
     /// stubbed), replace the oldest span of the conversation with a
     /// model-written summary instead of letting the next call overflow the
     /// provider's context window. Costs one cheap completion, metered into
-    /// the same [`BudgetGuard`] as every other call.
+    /// the same [`BudgetGuard`](crate::budget::BudgetGuard) as every other call.
     pub summarize_overflow: bool,
     /// Messages at the conversation tail the summarizer never touches —
     /// the recent work the model is actively reasoning over.
@@ -191,7 +183,7 @@ pub struct EngineConfig {
     /// interrupted mid-flight is gone, and the host recovers by re-dispatching
     /// the prompt and paying for the work again. Attaching a sink makes the
     /// turn itself recoverable; see [`crate::step::CheckpointSink`] for the failure
-    /// contract, and [`Engine::resume_turn`] for the other half.
+    /// contract, and [`Engine::resume_turn`](super::Engine::resume_turn) for the other half.
     ///
     /// Kept here rather than passed to `run_turn` because it is a property of
     /// the host's durability arrangement, not of any one turn — the same

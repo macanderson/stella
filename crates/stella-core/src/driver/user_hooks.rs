@@ -36,7 +36,7 @@
 //! [`STOP_HOOK_MARKER_PREFIX`] (registered in
 //! [`crate::engine_markers::ENGINE_MARKERS`]) and the model gets another
 //! chance to act on it. The bound — [`crate::step::TurnState`]'s
-//! `stop_hook_consults` against [`EngineConfig::stop_holds`], counted BEFORE
+//! `stop_hook_consults` against [`EngineConfig::stop_holds`](super::config::EngineConfig::stop_holds), counted BEFORE
 //! the hooks run — caps how many rounds. Without it, a hook that always denies
 //! chains completion-attempt → feedback → completion-attempt forever (the
 //! compact→error→stop-hook→retry death spiral: every held-open round can
@@ -49,7 +49,7 @@
 //! and *re-check*, and a fail→pass observation is by definition two
 //! consultations. So the latch became a counter, with two properties the
 //! boolean version already taught: the spiral stays capped (at
-//! [`EngineConfig::stop_holds`] held-open rounds now, not one), and the last
+//! [`EngineConfig::stop_holds`](super::config::EngineConfig::stop_holds) held-open rounds now, not one), and the last
 //! permitted round says it is the last ([`STOP_FINAL_ROUND_NOTE`]) — the
 //! #2810 lesson that a bound nobody announces reads as an infinite
 //! allowance from inside the loop. A Stop hook that *fails* (non-zero
@@ -60,8 +60,8 @@
 //!
 //! The bound was a hardcoded 3 until #3380, which is the same shape one layer
 //! up: an extension that genuinely needs a fourth round could not ask for one.
-//! It is now [`EngineConfig::stop_hold_allowance`] — a host's number, clamped
-//! by the engine to [`STOP_HOLD_CEILING`] every time it is read, because the
+//! It is now [`EngineConfig::stop_hold_allowance`](super::config::EngineConfig::stop_hold_allowance) — a host's number, clamped
+//! by the engine to [`STOP_HOLD_CEILING`](super::config::STOP_HOLD_CEILING) every time it is read, because the
 //! declaration a plugin manifest makes (`LoopGrant::max_holds`) is an *ask*
 //! and a manifest must never be able to buy an unbounded loop.
 //!
@@ -90,11 +90,6 @@ use serde_json::Value;
 use stella_protocol::{AgentEvent, Denial, DenialEvidence, ToolCall, ToolOutput};
 
 use super::{Engine, HooksHandle};
-// Named only by this module's doc comments. Importing them keeps those
-// intra-doc links resolving instead of degrading the prose to plain text —
-// the same arrangement `driver/config.rs` makes for `Engine`.
-#[allow(unused_imports)]
-use super::config::{EngineConfig, STOP_HOLD_CEILING};
 use crate::bus::names as bus_names;
 use crate::event_sender::EventSender;
 use crate::hooks::decision::{
@@ -340,7 +335,7 @@ impl<'a> Engine<'a> {
     /// `stop_consults` is the turn's bounded consultation counter (module
     /// docs), spent BEFORE the hooks run so a hook that fails mid-flight
     /// has still consumed its round. The allowance is
-    /// [`EngineConfig::stop_holds`] — the host's ask, already clamped — and
+    /// [`EngineConfig::stop_holds`](super::config::EngineConfig::stop_holds) — the host's ask, already clamped — and
     /// the last permitted `deny` carries [`STOP_FINAL_ROUND_NOTE`] so the
     /// model knows the next completion stands unchecked.
     pub(super) async fn stop_hook_feedback(

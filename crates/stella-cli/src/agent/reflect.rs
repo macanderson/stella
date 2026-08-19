@@ -104,26 +104,25 @@ pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat
             }
         }
     }
+    // What the turn actually learned. Until now the only production reader of
+    // `recorded` was the staged pipeline's JSON envelope, so on every surface a
+    // user can see, reflection paid for a model call and then never said
+    // whether it had come back with anything — a silent success and a silent
+    // "nothing worth keeping" were the same output. Text mode only, for the
+    // same reason as the loop above: a machine stream's `Complete` stays the
+    // unique final frame.
+    if format == OutputFormat::Text && report.recorded > 0 {
+        let plural = if report.recorded == 1 { "" } else { "s" };
+        eprintln!(
+            "  {} reflection recorded {} lesson{plural}",
+            "✦".magenta(),
+            report.recorded
+        );
+    }
     if let Some(err) = &report.model_error {
         eprintln!(
             "  {} post-turn reflection skipped — model call failed: {err}",
             "!".yellow()
         );
     }
-}
-
-/// No production caller since #3865 — its one use was the staged pipeline's
-/// `--output-format json` envelope, whose `reflection` key does not exist on
-/// [`crate::agent::RawRunSummary`] (the raw step-loop's own JSON envelope
-/// never carried one). Kept for `reflection_json_preserves_full_paid_call_envelope_and_cost`'s
-/// coverage of the shape rather than deleted outright, since a future
-/// envelope wanting a reflection summary would want this exact mapping.
-#[allow(dead_code)]
-pub(super) fn reflection_json(report: &ReflectionReport) -> serde_json::Value {
-    serde_json::json!({
-        "recorded": report.recorded,
-        "error": report.model_error,
-        "cost_usd": report.cost_usd,
-        "events": report.events,
-    })
 }

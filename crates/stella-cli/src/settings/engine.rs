@@ -523,11 +523,14 @@ impl AgentEngineConfig {
     /// Choosing between those is a maintainer's call about published numbers,
     /// not a cleanup; #3870 carries the analysis.
     ///
-    /// So the `#[allow]` below is a declared, issue-cited gap — NOT the
-    /// "dies with the pipeline removal" justification that #3872's definition
-    /// of done forbids surviving. Settings-merge tests still exercise the
-    /// scope-chain precedence rule through this accessor meanwhile.
-    #[allow(dead_code)]
+    /// That gap is about the **field**, which must keep parsing and merging.
+    /// The *accessor* is a separate question with a plain answer: its only
+    /// callers are the settings-merge tests that exercise the scope-chain
+    /// precedence rule through this name. So it is `cfg(test)` rather than
+    /// `#[allow(dead_code)]` — the field stays in `ENGINE_ROOT_FIELDS` and the
+    /// registered posture digest is untouched, while nothing claims the
+    /// dead-code lint was wrong about a function no shipped path calls.
+    #[cfg(test)]
     pub fn headless_scope_bypass_on(&self) -> bool {
         self.headless_scope_bypass.is_some_and(Toggle::is_on)
     }

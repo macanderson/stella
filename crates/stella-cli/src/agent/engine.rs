@@ -270,6 +270,35 @@ pub(crate) fn engine_config_for_kind(cfg: &Config, kind: &str) -> EngineConfig {
     engine
 }
 
+/// EngineConfig for the goal loop's standalone verifier engine — the VERIFIER
+/// agent's tuning.
+///
+/// Its production caller (`run_goal_pipeline_turn`, `agent/goal.rs`) was
+/// deleted along with the staged pipeline's goal arm (#3865) — `stella goal`'s
+/// surviving `Raw`/`Plugin` arms route their verifier through
+/// `stella_core::Engine::run_goal` directly rather than building a separate
+/// tuned config for it.
+///
+/// **Test-gated (#3872), not deleted.** `agent/tests/engine_wiring.rs`'s
+/// cross-role invariant tests (`checkpoint_sink_reaches_every_role`,
+/// `every_role_shares_one_session_view_of_affordable_output_ceilings`, the
+/// turn-timeout/max-output-tokens propagation tests) assert that
+/// `tuned_engine_config`'s session-wide plumbing (checkpoint sink, budget
+/// ceiling, flag propagation) reaches every `EngineAgentKind`, VERIFIER
+/// included; deleting this wrapper would either lose that coverage or force
+/// four tests to re-derive the config inline for no behavioral gain. `cfg(test)`
+/// keeps it out of the shipped binary while saying plainly that its only
+/// callers are tests — which the roleless-core work (#3903) will settle
+/// properly by retiring the VERIFIER kind from this crate's vocabulary.
+#[cfg(test)]
+pub(crate) fn verifier_engine_config_for(cfg: &Config) -> EngineConfig {
+    tuned_engine_config(
+        cfg,
+        crate::settings::EngineAgentKind::Verifier,
+        (cfg.provider.id, &cfg.model_id),
+    )
+}
+
 /// Fire `SessionStart` hooks once and return their stdout — the additional
 /// session context `stella_core::hooks` documents. `None` when no hooks are
 /// configured or they printed nothing. Called once per session by each
