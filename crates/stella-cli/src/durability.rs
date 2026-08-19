@@ -149,7 +149,9 @@ impl SessionDurability {
     /// The staged-pipeline frame the interrupted turn was running inside, or
     /// `None` when it was a plain engine turn.
     ///
-    /// The read side of [`Self::set_pipeline_frame`], and the reason
+    /// The read side of `set_pipeline_frame` — deliberately not an intra-doc
+    /// link, because that setter is `#[cfg(test)]` and so does not exist in a
+    /// docs build, where the link is unresolvable by construction. The reason
     /// `stella daemon resume` can tell an operator which stages a resumed run
     /// is *not* getting back (#1615) instead of quietly finishing as a bare
     /// turn.
