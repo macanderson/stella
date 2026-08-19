@@ -67,7 +67,6 @@ pub(crate) fn begin_execution(
     }
 }
 
-
 /// Emit the run's ending — the single terminator of one run's event stream
 /// (#3379, #3398).
 ///

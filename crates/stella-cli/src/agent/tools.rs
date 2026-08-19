@@ -49,7 +49,6 @@ pub(crate) fn custom_tool_report_for_scopes(
     }
 }
 
-
 /// Identity for the workspace-relative `rel` under `root`, attesting the
 /// location the artifact was actually observed at: `path` carries the opened
 /// file's canonical position relative to the canonical root. A witness that
@@ -58,10 +57,7 @@ pub(crate) fn custom_tool_report_for_scopes(
 /// its real location, which the pipeline's pinned-path equality rejects as
 /// tampering. A file whose canonical position cannot be stated inside `root`
 /// has no identity at all — fail closed, exactly like a symlink.
-pub(crate) fn fs_artifact_identity(
-    root: &std::path::Path,
-    rel: &str,
-) -> Option<ArtifactIdentity> {
+pub(crate) fn fs_artifact_identity(root: &std::path::Path, rel: &str) -> Option<ArtifactIdentity> {
     let full = root.join(rel);
     let identity = OpenedWitnessArtifact::open(&full)?.identity_for_path(&full)?;
     Some(ArtifactIdentity {

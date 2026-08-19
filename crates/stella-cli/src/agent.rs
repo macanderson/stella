@@ -33,8 +33,8 @@ use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
 use crate::interactive::human_is_present;
 use crate::memory::{
-    ReflectionReport, SessionMemory, TurnEvidence, inject_recall_block,
-    reflect_routed, should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, SessionMemory, TurnEvidence, inject_recall_block, reflect_routed,
+    should_reflect_on, turn_warrants_reflection,
 };
 use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -75,8 +75,8 @@ pub(crate) use persistence::{
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
-pub(crate) use reflect::surface_reflection;
 use reflect::reflect_on_interactive_turn;
+pub(crate) use reflect::surface_reflection;
 pub(crate) use skill_usage::stamp_and_record_skill_usage;
 pub(crate) use tools::*;
 

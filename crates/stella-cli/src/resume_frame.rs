@@ -251,7 +251,6 @@ impl ResumeFrame {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,7 +427,10 @@ mod tests {
         // that is the refusal. What remains is that the resume reports it
         // honestly rather than silently degrading or panicking.
         assert!(frame.degrades());
-        let text = frame.advisory().expect("a pipeline frame advises").join("\n");
+        let text = frame
+            .advisory()
+            .expect("a pipeline frame advises")
+            .join("\n");
         assert!(
             text.contains("no longer exists"),
             "the advisory must name the removed restoration path explicitly: {text}"

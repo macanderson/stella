@@ -29,9 +29,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::reward::{OutcomeWeights, RewardPolicy, RewardShaping};
 use serde::{Deserialize, Serialize};
 use stella_core::hooks::Hooks;
-use crate::reward::{OutcomeWeights, RewardPolicy, RewardShaping};
 use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 
 use crate::config::Dialect;

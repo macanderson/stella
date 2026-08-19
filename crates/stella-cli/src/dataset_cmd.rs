@@ -92,12 +92,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use stella_core::redact::{PLACEHOLDER, redact_secrets};
-use crate::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::AgentEvent;
 use stella_store::{FinishedExecution, MismatchSeverity, RecordedCall, Store};
 

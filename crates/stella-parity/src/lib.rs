@@ -118,7 +118,7 @@ pub const COMPOSITION_SEAMS: &[&str] = &[
 /// forces this DOWN in the same PR (the win is recorded), and adding a new
 /// unwitnessed claim forces it UP — a visible review decision instead of a
 /// silent one.
-pub const UNWITNESSED_BASELINE: usize = 5;
+pub const UNWITNESSED_BASELINE: usize = 4;
 
 /// The matrix. Ordered by area; ids are stable and unique.
 pub static CAPABILITIES: &[Capability] = &[
@@ -134,8 +134,10 @@ pub static CAPABILITIES: &[Capability] = &[
             "new_turn",
         ],
         cli: SurfacePosture::Shipped {
-            mechanism: "`stella run` / deck turns via agent::run_turn and the pipeline drivers",
-            witness: "non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_scope_review",
+            mechanism: "`stella run` / deck turns via agent::run_turn and the raw step-loop driver \
+                        (#3381; the staged pipeline that used to sit over it is gone — see \
+                        `pipeline.verified_run` below)",
+            witness: "a_piped_stdin_text_run_denies_every_consumer_of_the_human_present_fact",
         },
         api: SurfacePosture::Shipped {
             mechanism: "POST /v1/turns — a stateless turn driven as a step loop on a session thread",
@@ -181,8 +183,10 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_home: "stella-protocol AgentEvent over the engine's EventSender",
         engine_entries: &[],
         cli: SurfacePosture::Shipped {
-            mechanism: "TUI transcript rendering and --output-format json event stream",
-            witness: "non_tty_text_output_is_headless_without_losing_text_rendering",
+            mechanism: "the plain-surface renderer (`stella-cli/src/plain.rs`) composes each \
+                        AgentEvent into its text line; --output-format json instead serializes \
+                        the raw event stream",
+            witness: "styled_event_line_composes_glyph_body_detail_with_single_spaces",
         },
         api: SurfacePosture::Shipped {
             mechanism: "GET /v1/turns/{id}/events — SSE ServerFrames with monotonic seq, \
@@ -254,23 +258,23 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_home: "stella-core TurnHalt port — end a turn at a step boundary because the goal \
                       is MET, the one exit that is not a limit being reached",
         engine_entries: &["with_turn_halt"],
-        cli: SurfacePosture::ShippedUnwitnessed {
-            mechanism: "stella-pipeline arms a FlipHalt from the failing pre-execute test \
-                        baseline and feeds it the worker's own shell results, so the execute \
-                        turn ends the moment the tracked command goes fail→pass",
-            // The engine seam itself IS witnessed, in stella-core
-            // (`a_halt_ends_the_turn_at_the_next_step_boundary_as_completed`
-            // plus its never-fires control). What no test yet pins is the
-            // ARMING: that a candidate whose baseline failed reaches
-            // `run_engine_turn` with a halt attached, and that a candidate
-            // whose baseline passed does not. That needs a pipeline-level
-            // harness (CandidateSurface + ports), and this crate's
-            // `cli_sources` does not sweep stella-pipeline — claiming a
-            // stella-core test here would report the seam as proof of the
-            // wiring, which is the exact substitution this matrix exists to
-            // prevent.
-            missing: "a pipeline test that a failing baseline arms the halt and a passing one \
-                      leaves it unarmed",
+        // Was `ShippedUnwitnessed`: `stella-pipeline` armed a FlipHalt from
+        // the failing pre-execute test baseline and fed it the worker's own
+        // shell results, so the execute turn ended the moment the tracked
+        // command went fail→pass. That crate — and the candidate/baseline
+        // machinery the arming depended on — is gone (removal census,
+        // `docs/spec/pipeline-as-plugins.md` §7 slice 2); the raw step-loop
+        // that is the sole CLI path today has no baseline to arm a halt
+        // from. The engine seam itself stays witnessed in stella-core
+        // (`a_halt_ends_the_turn_at_the_next_step_boundary_as_completed`
+        // plus its never-fires control) — only the CLI-side arming is gone,
+        // which is why this posture moved to `Deferred` rather than staying
+        // a debt this matrix promises to pay down.
+        cli: SurfacePosture::Deferred {
+            waiting_on: "a CLI-side source of a halt-worthy baseline now that the staged \
+                         pipeline's candidate/baseline machinery is gone — `doc:pipeline-as-plugins` \
+                         moves fail→pass verification to an installed wrapper plugin's own \
+                         evidence, which has not wired anything back to TurnHalt",
         },
         api: SurfacePosture::Deferred {
             waiting_on: "a served turn has no test baseline of its own — the host, not the \
@@ -328,11 +332,14 @@ pub static CAPABILITIES: &[Capability] = &[
         // terminal path discards, one existing means a turn was interrupted —
         // so a resumed session reopens with the completed steps' work already
         // in the conversation and does not re-run it. What it does NOT do is
-        // call `resume_turn`: CLI turns are dispatched through stella-pipeline,
-        // which owns turn framing and builds its own TurnState, so handing the
-        // engine a resumed one would mean threading a checkpoint through the
-        // whole verification ladder. See `Engine::resume_turn`'s own docs for
-        // that gap, declared where a caller reads it.
+        // call `resume_turn`: CLI turns are dispatched through the raw
+        // step-loop directly (`agent::run_turn`), optionally wrapped by an
+        // installed verification plugin over `stella-runtime`'s `TurnWrapper`
+        // socket — neither owns a resumable `TurnState` of its own the way
+        // the removed staged pipeline once did, so there is simply nothing
+        // here yet that hands the engine a resume point to restore. See
+        // `Engine::resume_turn`'s own docs for that gap, declared where a
+        // caller reads it.
         cli: SurfacePosture::Shipped {
             mechanism: "`stella resume` / the SESSIONS overlay via \
                         session_persist::restore_conversation, which prefers the work journal's \
@@ -591,25 +598,24 @@ pub static CAPABILITIES: &[Capability] = &[
                       fails over from observed outcomes, not configuration (#2673)",
         engine_entries: &["with_provider_outcomes"],
         cli: SurfacePosture::ShippedUnwitnessed {
-            mechanism: "the pipeline paths feed the router in PipelinePorts (attach() wires \
-                        every engine; raw_usage records management calls) — witnessed in \
-                        stella-pipeline by `pipeline_call_outcomes_reach_the_router_breaker`, \
-                        which this sweep cannot see — and the bare loops feed a session-scoped \
-                        `session_router` (run_interactive/run_raw_one_shot via run_turn, the \
-                        goal loop's round verifier)",
+            // Was ALSO fed from PipelinePorts.attach() before the staged
+            // pipeline was removed (removal census, `docs/spec/pipeline-as-plugins.md`
+            // §7 slice 2); that feed is gone with the crate, and every CLI
+            // one-shot path is the raw loop today, so this is the whole
+            // story now rather than half of it.
+            mechanism: "the bare loops feed a session-scoped `session_router` \
+                        (run_interactive/run_raw_one_shot via run_turn, the goal loop's round \
+                        verifier)",
             missing: "a CLI-side test pinning that `run_turn`'s engines actually attach the \
-                      session router (the stella-pipeline and stella-core witnesses prove the \
-                      layers below; the run_turn attachment itself has no witness because the \
-                      engine assembly is inline in a function that drives a full turn)",
+                      session router (the stella-core witness proves the layer below; the \
+                      run_turn attachment itself has no witness because the engine assembly is \
+                      inline in a function that drives a full turn)",
         },
         api: SurfacePosture::NotApplicable {
             reason: "a served run remotes every model call to the host, which owns keys and \
                      real provider selection — Stella-side failover between BYOK providers \
                      has nothing to fail over TO (the served router carries one profile per \
-                     role). The pipeline still feeds that breaker, so a host failing the \
-                     threshold of consecutive calls surfaces as AllProvidersUnavailable until \
-                     the cooldown's half-open trial (see stella-serve pipeline_run's WallClock \
-                     doc), but cross-provider failover is the host's concern by design",
+                     role), and cross-provider failover is the host's concern by design",
         },
     },
     Capability {
@@ -620,19 +626,17 @@ pub static CAPABILITIES: &[Capability] = &[
                       the replacement, transcript repaired, at most one swap per engine (#2679)",
         engine_entries: &["with_fallback_resolver"],
         cli: SurfacePosture::ShippedUnwitnessed {
-            mechanism: "the pipeline's execute/revise engines attach a router-backed \
-                        `StageFallback` that re-resolves the engine's own role (attach() wires \
-                        every worker-role engine) — witnessed in stella-pipeline by \
-                        `an_exhausted_execute_turn_re_resolves_the_worker_and_finishes_on_the_fallback`, \
-                        which this sweep cannot see — and the bare loops attach a \
-                        `SessionFallback` (agent/engine.rs) beside the session router at both \
-                        `run_turn` engine sites, whose seam is witnessed in stella-core by \
+            // Was ALSO attached by the staged pipeline's execute/revise
+            // engines before it was removed (removal census,
+            // `docs/spec/pipeline-as-plugins.md` §7 slice 2); that attach
+            // site is gone with the crate, so the bare loops' attach is the
+            // whole story now rather than half of it.
+            mechanism: "the bare loops attach a `SessionFallback` (agent/engine.rs) beside the \
+                        session router at both `run_turn` engine sites, whose seam is witnessed \
+                        in stella-core by \
                         `exhausted_retries_swap_to_the_resolved_fallback_and_the_turn_completes`",
             missing: "a CLI-side test pinning that `run_turn`'s engines actually attach the \
-                      resolver (#2733 tracks the same gap for the router attachment). The \
-                      pipeline's witness-author and research engines withhold the swap by \
-                      declared posture rather than by omission (#2806), which is a design \
-                      choice this row does not claim as coverage",
+                      resolver (#2733 tracks the same gap for the router attachment)",
         },
         api: SurfacePosture::NotApplicable {
             reason: "a served run remotes every model call to the host, which owns keys and \
@@ -672,9 +676,17 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 10] {
+    fn cli_sources() -> [&'static str; 12] {
         [
             include_str!("../../stella-cli/src/agent/tests.rs"),
+            // Home of `a_piped_stdin_text_run_denies_every_consumer_of_the_human_present_fact`
+            // — the `turn.run` CLI witness since the staged pipeline's own
+            // scope-review-bypass witness was removed with the crate
+            // (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice 2).
+            include_str!("../../stella-cli/src/interactive.rs"),
+            // Home of `styled_event_line_composes_glyph_body_detail_with_single_spaces`
+            // — the `turn.stream_events` CLI witness, for the same reason.
+            include_str!("../../stella-cli/src/plain.rs"),
             // The steering-plane selection suite — home of the
             // `turn.steering_requery` witness (#3243 Phase 3).
             include_str!("../../stella-cli/src/memory/tests/steering_selection.rs"),

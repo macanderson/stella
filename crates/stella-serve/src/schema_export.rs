@@ -286,7 +286,12 @@ mod tests {
 
         assert_eq!(
             published,
-            ["EngineOverrides", "ProviderDeltaIn", "ProviderResultIn", "ToolResultIn"],
+            [
+                "EngineOverrides",
+                "ProviderDeltaIn",
+                "ProviderResultIn",
+                "ToolResultIn"
+            ],
             "the published inbound bodies drifted from the ones a host can POST"
         );
     }

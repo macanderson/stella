@@ -50,7 +50,6 @@ fn the_turn_timeout_flag_reaches_every_role_that_can_continue() {
     assert_eq!(crate::agent::engine_config_for(&plain).turn_budget, None);
 }
 
-
 #[test]
 fn a_bound_session_checkpoints_from_every_role() {
     // The same argument as the turn budget above, for the same reason: the
@@ -1122,4 +1121,3 @@ fn reflection_rides_the_worker_when_the_triage_tier_is_unroutable() {
         .expect("a pin naming the session default is still a triage pin");
     assert!(route.provider.is_none());
 }
-
