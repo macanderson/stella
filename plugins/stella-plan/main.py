@@ -460,7 +460,10 @@ def strip_list_marker(line):
     i = 0
     n = len(t)
     saw_digit = False
-    while i < n and t[i].isdigit():
+    # ASCII only, mirroring `plan.rs`'s `char::is_ascii_digit` — Python's
+    # `str.isdigit` also accepts non-ASCII numerals, which the Rust parser
+    # deliberately does not treat as a list marker.
+    while i < n and t[i] in "0123456789":
         saw_digit = True
         i += 1
     if saw_digit and i < n and t[i] in ".)":
@@ -571,7 +574,7 @@ def parse_plan(text):
     return parse_plan_list(text)
 
 
-def plan_context(goal, steps, completed):
+def plan_context(steps, completed):
     """The one contribution this stage makes: the parsed steps, as prose a
     worker reads before its own turn — not a host-executed step loop (see
     module docstring)."""
@@ -614,7 +617,7 @@ def contribute(body, host_calls):
             "contributing nothing"
         )
         return []
-    return [plan_context(body["goal"], steps, result["completed"])]
+    return [plan_context(steps, result["completed"])]
 
 
 def main():
