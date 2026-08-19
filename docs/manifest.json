@@ -81,7 +81,7 @@
       "title": "The agent monitor protocol"
     },
     "agent-native-delivery": {
-      "path": "docs/design/agent-native-delivery.md",
+      "path": "docs/spec/agent-native-delivery.md",
       "sections": [
         0,
         1,
