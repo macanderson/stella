@@ -1,0 +1,19 @@
+[
+  {
+    "expect": {
+      "call": "child_turn",
+      "id": 1,
+      "args": {
+        "role": "planner",
+        "instruction": "You are the planner for a coding agent. Produce a short ordered plan of concrete steps to accomplish the goal. Respond with a JSON array of step strings, e.g. [\"step one\", \"step two\"]. Keep it minimal \u2014 the fewest steps that fully accomplish the goal. You have no tool access and cannot see the real repository: state each step as an OUTCOME (what should be true when it is done), never as a literal absolute path or a specific shell command \u2014 a path or command you have not verified exists may be wrong, and the worker that carries out the step can see the tree and choose one correctly.\n\n## Goal\nretry_budget is not honoured\n\n## Plan (JSON array of step strings)\n"
+      }
+    },
+    "answer": {
+      "result": 1,
+      "err": {
+        "refusal": "allowance-spent",
+        "detail": "this plugin's allowance of 1 child turn(s) is spent; answer with what you have"
+      }
+    }
+  }
+]

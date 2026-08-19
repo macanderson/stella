@@ -1,0 +1,10 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "plan-v1",
+    "stage": "witness",
+    "round": 1,
+    "goal": "retry_budget is not honoured"
+  }
+}

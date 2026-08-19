@@ -1,0 +1,12 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "context": [
+      {
+        "label": "plan:steps",
+        "text": "## Plan\n\nA planner turn asked to accomplish this goal proposed these steps, in order. They are sequencing hints, not specs \u2014 earlier steps may already cover a later one, and the goal is the authority where they disagree:\n1. add a regression test for the retry budget\n2. fix the retry loop to honour the budget"
+      }
+    ]
+  }
+}
