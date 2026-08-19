@@ -670,10 +670,12 @@ alone, because a number in two places is how the last limit died.
 **Status — what ships.** The live runtime path is
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /
 `stella-context` (recall only) / `stella-mcp`, and the CLI also drives
-`stella-pipeline` (opt-in on every door via `stella run --pipeline classic`;
-the raw step-loop is the default), `stella-fleet` (`stella fleet`),
-and `stella-tui` (the Command Deck, the default interactive shell on a TTY).
-The fuller
+`stella-fleet` (`stella fleet`) and `stella-tui` (the Command Deck, the
+default interactive shell on a TTY). Verification is opt-in on every door via
+`stella run --pipeline <variant>`, naming an installed wrapper plugin — the
+built-in staged pipeline this flag used to be able to name (`classic`) has
+been deleted from the workspace (#3865) and is refused outright; the raw
+step-loop is the default with or without the flag. The fuller
 `stella-graph` retrieval + context plane (`stella init` builds the code-graph
 index; recall fans out through the CGP host) is also wired. `stella-serve` is
 the exception: it builds its own binary and nothing in `stella-cli` links it,

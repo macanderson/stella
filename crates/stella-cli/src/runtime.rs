@@ -92,7 +92,7 @@ impl Sleeper for TokioSleeper {
 /// this deadline has been unarmed on every one-shot run for as long as raw
 /// has been the default, not only since this crate's removal. Left as a
 /// gap for a maintainer to re-wire deliberately (with its own bench-effect
-/// read) rather than silently inside this deletion; see the filed issue.
+/// read) rather than silently inside this deletion; tracked in #3868.
 /// Kept, not deleted: it is well-tested and is the correct fix's shape.
 #[allow(dead_code)]
 pub(crate) fn one_shot_budget_guard(

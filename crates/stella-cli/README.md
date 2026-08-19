@@ -3,15 +3,15 @@
 The shipping binary. `[[bin]] name = "stella"` over [`src/main.rs`](src/main.rs) —
 the clap surface, the credential/settings/provider resolution that has to happen
 before a turn can start, and the composition root that hands `stella-core` its
-ports and drives `stella-pipeline`, `stella-fleet`, `stella-tui`, and
-`stella-media`.
+ports and drives `stella-fleet`, `stella-tui`, an installed wrapper plugin over
+`stella-runtime`'s `TurnWrapper` socket, and `stella-media`.
 
 This crate is **wiring, not decisions**. Anything that could be a pure function
 over owned data belongs in `stella-core`; a provider's wire dialect in
 `stella-model`; a tool's behaviour in `stella-tools`. What stays is the half that
 touches the process — the concrete `Clock`/`Sleeper` ([`src/runtime.rs`](src/runtime.rs)),
-the real-git `CandidateWorkspacePort` ([`src/candidate_ws.rs`](src/candidate_ws.rs)),
-the pipeline's ports ([`src/agent/tools.rs`](src/agent/tools.rs)), the
+the witness-artifact identity primitives a wrapper plugin's tamper watch builds
+on ([`src/agent/tools.rs`](src/agent/tools.rs)), the
 directory-reading `RuleSource` ([`src/rules.rs`](src/rules.rs)). `rules.rs` and
 [`src/extensions.rs`](src/extensions.rs) say it outright in their module docs:
 the semantics live in `stella-core`, only the I/O is here.
@@ -41,18 +41,21 @@ Specific changes this crate is the far end of:
 
 - **Verification is opt-in.** The raw step-loop is the default on every door
   (`stella run`, `arena`, `goal`, `fleet`, the deck) since #3381/#3694;
-  `--pipeline <variant>` opts a turn into a wrapper (`classic` names the
-  built-in staged pipeline), and `--no-pipeline` is a deprecated, hidden
-  no-op kept parseable so no script breaks (`crates/stella-cli/src/cli.rs`
-  `Command::Run::no_pipeline`). A plain `stella run` does not verify its own
-  work unless a wrapper is named — which is a claim on the user-facing
-  surface, so the flip was gated on a side-by-side bench reported even when
-  the raw loop looked worse (`doc:turn-loop-wrappers` §9.6). The crate the
-  flag drives is itself leaving the workspace to become a plugin (#3246).
-- **The pipeline dependency is the extraction's last mile.** 169 references across
-  41 files in this crate name `stella-pipeline` (#3280), and cutting them is gated
-  on the authority vocabulary for a plugin lane (#2716). Do not add a 170th without
-  asking whether it belongs behind a port.
+  `--pipeline <variant>` opts a turn into an installed wrapper plugin, and
+  `--no-pipeline` is a deprecated, hidden no-op kept parseable so no script
+  breaks (`crates/stella-cli/src/cli.rs` `Command::Run::no_pipeline`). A
+  plain `stella run` does not verify its own work unless a wrapper is named
+  — which is a claim on the user-facing surface, so the flip was gated on a
+  side-by-side bench reported even when the raw loop looked worse
+  (`doc:turn-loop-wrappers` §9.6). `classic` — the built-in staged pipeline
+  this flag used to be able to name — is refused outright now: the crate it
+  drove left the workspace entirely (#3865), completing the move to a
+  plugin the flag inversion started (#3246).
+- **The pipeline dependency is gone.** `crates/stella-pipeline` — once 169+
+  references across 44+ files in this crate, per `doc:pipeline-as-plugins`
+  §7's last recorded count — has been deleted from the workspace (#3865).
+  This crate declares no `stella-pipeline` dependency any more; a reference
+  to `stella_pipeline::` anywhere in this crate is a regression.
 - **`kind` is the door, `pipeline_variant` is the wrapper.**
   `executions.kind` records where the turn came in (`run`, `deck`,
   `deck-sub`, `goal`, `fleet`) and `executions.pipeline_variant` records
@@ -139,26 +142,25 @@ to growth — and the pressure to grow them is worst in this crate, because
 every feature ends in a flag or a subcommand and the path of least resistance
 is always one more match arm in the file that already dispatches the command
 family. Plan changes so no new line lands in them: new logic goes in a
-submodule beside the file, the split this crate has already made four times —
-[`src/agent/`](src/agent) (`tools.rs`, `engine.rs`, `goal.rs`, `coverage.rs`, …)
+submodule beside the file, the split this crate has already made several
+times — [`src/agent/`](src/agent) (`tools.rs`, `engine.rs`, `goal.rs`, …)
 beside [`src/agent.rs`](src/agent.rs), [`src/command_deck/`](src/command_deck)
-beside [`src/command_deck.rs`](src/command_deck.rs),
+beside [`src/command_deck.rs`](src/command_deck.rs), and
 [`src/agent/tests/`](src/agent/tests) beside
-[`src/agent/tests.rs`](src/agent/tests.rs), and
-[`src/candidate_ws/`](src/candidate_ws) beside
-[`src/candidate_ws.rs`](src/candidate_ws.rs) — and code you touch in a god
+[`src/agent/tests.rs`](src/agent/tests.rs) — and code you touch in a god
 file is a candidate to extract into one.
 
-- [`src/agent.rs`](src/agent.rs)
 - [`src/command_deck.rs`](src/command_deck.rs)
 
-([`src/candidate_ws.rs`](src/candidate_ws.rs) left this list when adoption
-moved into [`src/candidate_ws/adopt.rs`](src/candidate_ws/adopt.rs) — the
-extraction pattern above, taken all the way back under the limit.
-[`src/fleet_cmd.rs`](src/fleet_cmd.rs) left it the same way: its reading of a
-finished pipeline run moved to
-[`src/agent/outcome.rs`](src/agent/outcome.rs), where the other three surfaces
-already read one, and the file came back under 1500 lines.)
+([`src/candidate_ws.rs`](src/candidate_ws.rs)/`src/candidate_ws/` left the
+crate entirely, not just this list, when `crates/stella-pipeline` — its only
+caller — was deleted (#3865): best-of-N candidate isolation over detached git
+worktrees was pipeline-only machinery, and the raw step-loop that is the sole
+production path today never needed it. [`src/agent.rs`](src/agent.rs) left
+this list the same way `src/fleet_cmd.rs` once did: the pipeline-era code it
+carried (`run_pipeline_one_shot` and its own support cluster) was deleted
+along with the crate, and the file came back under 1500 lines without a
+submodule split.)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an
@@ -170,10 +172,10 @@ file), never as a planning assumption.
 | Path | What it holds |
 |---|---|
 | [`src/main.rs`](src/main.rs), [`src/tests.rs`](src/tests.rs) | The whole clap surface (`Cli`, `GlobalArgs`, `Command` and its nested subcommand enums) and the two-phase `run()` dispatch — open it to add a command or a global flag — plus the argument-surface fence guarding it. |
-| [`src/agent.rs`](src/agent.rs) + [`src/agent/`](src/agent) | Agent wiring: `run_one_shot` / `run_interactive` / `run_init`, and submodules for engine tuning (`engine.rs`), judged rounds (`goal.rs`), the session code-graph (`graph.rs`), the `stella init` flow (`init.rs`), pipeline-status projection (`outcome.rs`), headless output (`output.rs`), event persistence (`persistence.rs`), prompt assembly (`prompt.rs`), registry/port construction (`tools.rs`), and the one tool-chain assembly every driver builds through (`tool_stack.rs`, #3283). |
+| [`src/agent.rs`](src/agent.rs) + [`src/agent/`](src/agent) | Agent wiring: `run_one_shot` / `run_interactive` / `run_init`, and submodules for engine tuning (`engine.rs`), judged rounds (`goal.rs`), the session code-graph (`graph.rs`), the `stella init` flow (`init.rs`), turn-outcome/cost settlement (`outcome.rs`), headless output (`output.rs`), event persistence (`persistence.rs`), prompt assembly (`prompt.rs`), registry/port construction (`tools.rs`), and the one tool-chain assembly every driver builds through (`tool_stack.rs`, #3283). |
 | [`src/config.rs`](src/config.rs), [`src/settings.rs`](src/settings.rs) + [`src/settings/`](src/settings), [`src/engine_config.rs`](src/engine_config.rs), [`src/settings_check.rs`](src/settings_check.rs) | Which provider/model/key this invocation runs on; the three-scope `settings.json` merge behind it; `agent_engine_config` → per-agent resolution; and the launch-time slug validation that turns a typo into a startup warning instead of a provider `400`. |
 | [`src/env_files.rs`](src/env_files.rs) | Project-scoped `.env` loading with shell-wins precedence and the execution-hijack refusal list. |
-| [`src/memory.rs`](src/memory.rs) + [`src/memory/`](src/memory), [`src/contextgraph.rs`](src/contextgraph.rs) | `SessionMemory` (per-turn recall, post-turn reflection, skill auto-promotion, CGP→pipeline projection) and the session's `contextgraph-host`, which serves the in-tree workspace-memory and code-graph sources as real CGP providers. |
+| [`src/memory.rs`](src/memory.rs) + [`src/memory/`](src/memory), [`src/contextgraph.rs`](src/contextgraph.rs) | `SessionMemory` (per-turn recall, post-turn reflection, skill auto-promotion) and the session's `contextgraph-host`, which serves the in-tree workspace-memory and code-graph sources as real CGP providers. |
 | [`src/rules.rs`](src/rules.rs), [`src/domains.rs`](src/domains.rs) | Workspace-rule wiring (Tier-2 guards armed at the tool boundary) and `stella init`'s domain inference. |
 | [`src/search_cmd.rs`](src/search_cmd.rs) + [`src/search_cmd/`](src/search_cmd) | `stella search`: the code-graph query surface — semantic, symbol, and keyword matching over `.stella/private/codegraph.db`, with result enrichment and the session graph spawn. |
 | [`src/command_deck.rs`](src/command_deck.rs) + [`src/command_deck/`](src/command_deck), [`src/subsession.rs`](src/subsession.rs), [`src/session_persist.rs`](src/session_persist.rs), [`src/claims.rs`](src/claims.rs), [`src/cache_insight.rs`](src/cache_insight.rs) | The deck driver: bridges engine `AgentEvent`s into `stella-tui`'s `Inbound` fold, runs per-prompt sub-sessions, tees every fold-relevant envelope to the resume journal, and coordinates concurrent writers by claim-on-first-write. |
@@ -181,7 +183,7 @@ file), never as a planning assumption.
 | [`src/auth_cmd.rs`](src/auth_cmd.rs), [`src/mcp_cmd.rs`](src/mcp_cmd.rs), [`src/memory_cmd.rs`](src/memory_cmd.rs), [`src/usage_cmd.rs`](src/usage_cmd.rs), [`src/fleet_cmd.rs`](src/fleet_cmd.rs), [`src/inspect.rs`](src/inspect.rs), [`src/stats.rs`](src/stats.rs), [`src/export.rs`](src/export.rs) | One module per command family. Everything but `fleet_cmd` runs without a resolved provider. |
 | [`src/plugin_cmd.rs`](src/plugin_cmd.rs) + [`src/plugin_cmd/`](src/plugin_cmd) (`roster.rs`, `process.rs`) | `stella plugin install\|list\|remove` (#3380/#3479): resolves `.stella/plugins/` and `~/.stella/plugins/`, renders `stella_plugin::consent_text` before anything executes, gates the project scope on `project_code_execution_trusted()` (#3509), and is the one place `LoopGrant::permits_hook`/`permits_point` are consulted against an installed manifest. Loads and shows consent for a manifest; does not yet drive a turn through one — `stella-runtime` has no host sequence for it to call (see that crate's README). |
 | [`src/model_catalog.rs`](src/model_catalog.rs), [`src/credential_handoff.rs`](src/credential_handoff.rs), [`src/credential_status.rs`](src/credential_status.rs), [`src/enterprise_telemetry.rs`](src/enterprise_telemetry.rs) | The only place that knows both models.dev's provider ids and stella's (`bootstrap()` installs the catalog slug validation and pricing resolve against); launcher FD key handoff; the shared "where did this key come from" verdict for `models`/`config`/`auth list`; the managed-only operational spool. |
-| [`src/arena.rs`](src/arena.rs), [`src/candidate_ws.rs`](src/candidate_ws.rs) | The arena-bench adapter (`--task-dir/--journal/--state-dir/--resume`) and best-of-N candidate isolation over detached git worktrees. |
+| [`src/arena.rs`](src/arena.rs) | The arena-bench adapter (`--task-dir/--journal/--state-dir/--resume`). |
 | [`src/skill_manager.rs`](src/skill_manager.rs), [`src/agents_installed.rs`](src/agents_installed.rs), [`src/extensions.rs`](src/extensions.rs) | Disk I/O for the deck's SKILLS and INSTALLED AGENTS panes, and the `.claude/`/`.agents/` adoption sync. |
 | [`src/paths.rs`](src/paths.rs), [`src/startup.rs`](src/startup.rs) | The two things `main` establishes before anything else runs. `paths` resolves every user-global anchor (home, XDG state home, the user-tier data dir, the filesystem-isolation boundary) **once** and hands it out — nothing else in the crate reads `HOME` from `std::env`, and tests redirect it per-thread instead of mutating the process environment. `startup` mints the one `StartupPhase` token the three environment-writing paths require, and marks the point where the process stops being single-threaded. |
 | [`src/attachments.rs`](src/attachments.rs), [`src/accounted_call.rs`](src/accounted_call.rs), [`src/runtime.rs`](src/runtime.rs), [`src/signals.rs`](src/signals.rs) | Prompt-text → multimodal attachments, cost accounting for paid calls outside a turn, the production time ports, SIGINT/SIGTERM handling. |
