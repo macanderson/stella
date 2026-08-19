@@ -64,6 +64,7 @@ pub mod denial;
 pub mod error;
 pub mod event;
 pub mod hook;
+pub mod issue;
 pub mod journal;
 pub mod ladder;
 pub mod lane;
@@ -120,6 +121,7 @@ pub use journal::{StampedEvent, stamped_line};
 pub use lane::{BuiltinLane, LaneId, TurnLane};
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
+pub use issue::{Issue, IssueClass, IssueError, IssueKey, IssueLabel, IssueProvider, IssueState};
 pub use ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation, ProofTree};
 pub use provider::{Provider, ToolCallObserver};
 // The context-recall port every door's memory injection shares (removal
