@@ -223,9 +223,11 @@ pub(super) fn extract_all(
             &cfg.model_id,
             root,
             doc,
-            &set_id,
-            &ingest_run_id,
-            &observed_at,
+            RunStamp {
+                set_id: &set_id,
+                ingest_run_id: &ingest_run_id,
+                observed_at: &observed_at,
+            },
         )) {
             Ok(summary) => {
                 any = true;
@@ -286,44 +288,50 @@ pub(super) fn extract_all(
 /// Takes `model_hint` rather than the whole `Config` so the assembly path is
 /// testable with a mock provider — the only thing extraction needs from config
 /// is which model to attribute the call to.
-#[allow(clippy::too_many_arguments)]
 async fn extract_document(
     provider: &dyn Provider,
     model_hint: &str,
     root: &Path,
     doc: &NamedDoc,
-    set_id: &str,
-    ingest_run_id: &str,
-    observed_at: &str,
+    stamp: RunStamp<'_>,
 ) -> Result<DocSummary, String> {
     let progress = Progress::start(format!("reading {}", doc.rel));
-    let outcome = extract_narrated(
-        provider,
-        model_hint,
-        root,
-        doc,
-        set_id,
-        ingest_run_id,
-        observed_at,
-        &progress,
-    )
-    .await;
+    let outcome = extract_narrated(provider, model_hint, root, doc, stamp, &progress).await;
     progress.finish().await;
     outcome
 }
 
+/// The three values every proposal of one ingest run is stamped with.
+///
+/// Grouped because they always travel together and are never chosen
+/// independently: one run picks all three once and every document inherits
+/// them. Passing them as one argument is also what keeps the two functions
+/// below under clippy's argument limit honestly, rather than by an `#[allow]`
+/// asserting a lint is wrong when it is right (#3698).
+#[derive(Clone, Copy)]
+struct RunStamp<'a> {
+    /// The record-set id derived from the workspace.
+    set_id: &'a str,
+    /// This run's id, shared by every document it touches.
+    ingest_run_id: &'a str,
+    /// The RFC3339 instant the run began.
+    observed_at: &'a str,
+}
+
 /// The body of [`extract_document`], narrating into a line the caller owns.
-#[allow(clippy::too_many_arguments)]
 async fn extract_narrated(
     provider: &dyn Provider,
     model_hint: &str,
     root: &Path,
     doc: &NamedDoc,
-    set_id: &str,
-    ingest_run_id: &str,
-    observed_at: &str,
+    stamp: RunStamp<'_>,
     progress: &Progress,
 ) -> Result<DocSummary, String> {
+    let RunStamp {
+        set_id,
+        ingest_run_id,
+        observed_at,
+    } = stamp;
     let defaults = build_defaults(root, doc, ingest_run_id, model_hint, observed_at);
     let eligibility = eligibility_for(doc.tier);
 
@@ -459,11 +467,13 @@ async fn extract_claims(
         };
         let label = slice_label(&doc.rel, position, merge.claims.len());
         progress.say(label.clone());
-        match call_model(
-            provider, model_hint, root, doc, chunk, position, &label, progress,
-        )
-        .await
-        {
+        let slice = SliceCall {
+            doc,
+            chunk,
+            position,
+            base_label: &label,
+        };
+        match call_model(provider, model_hint, root, slice, progress).await {
             Ok((claims, cost)) => {
                 cost_usd += cost;
                 merge.absorb(claims);
@@ -493,6 +503,18 @@ async fn extract_claims(
         failed_slices,
         duplicates,
     })
+}
+
+/// Everything one slice's model call needs to describe the slice it is asking
+/// about. Grouped for the reason [`RunStamp`] is.
+#[derive(Clone, Copy)]
+struct SliceCall<'a> {
+    doc: &'a NamedDoc,
+    chunk: &'a Chunk,
+    position: SlicePosition<'a>,
+    /// The progress label already showing for this slice, which a retry adorns
+    /// rather than replaces.
+    base_label: &'a str,
 }
 
 /// Where a slice sits in its document, for the prompt and the progress line.
@@ -643,17 +665,19 @@ fn starting_output_budget(chars: usize) -> u32 {
 /// The error carries the cost spent reaching it, because a failed slice is still
 /// a paid call and a run that under-reports its own bill is the "measure
 /// honestly" rule broken in the direction that flatters us.
-#[allow(clippy::too_many_arguments)]
 async fn call_model(
     provider: &dyn Provider,
     model_hint: &str,
     root: &Path,
-    doc: &NamedDoc,
-    chunk: &Chunk,
-    position: SlicePosition<'_>,
-    base_label: &str,
+    slice: SliceCall<'_>,
     progress: &Progress,
 ) -> Result<(Vec<Claim>, f64), (f64, String)> {
+    let SliceCall {
+        doc,
+        chunk,
+        position,
+        base_label,
+    } = slice;
     let rel = &doc.rel;
     let user = format!(
         "Extract atomic context records from `{rel}`. Return ONLY the JSON array.\n\n\

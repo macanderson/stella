@@ -337,10 +337,12 @@ fn a_truncated_reply_is_retried_with_a_larger_budget_instead_of_failing() {
                 &provider,
                 "canned-model",
                 &root,
-                &doc,
-                &chunk,
-                position,
-                "extracting AGENTS.md",
+                SliceCall {
+                    doc: &doc,
+                    chunk: &chunk,
+                    position,
+                    base_label: "extracting AGENTS.md",
+                },
                 &progress,
             )
             .await;
@@ -437,9 +439,11 @@ fn extraction_writes_a_valid_proposal_file_end_to_end() {
             "canned-model",
             &root,
             &doc,
-            "acme.web",
-            "ing_test",
-            "2026-07-27T09:00:00Z",
+            RunStamp {
+                set_id: "acme.web",
+                ingest_run_id: "ing_test",
+                observed_at: "2026-07-27T09:00:00Z",
+            },
         ))
         .expect("extraction succeeds");
 
