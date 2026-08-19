@@ -23,8 +23,9 @@
 #![cfg(unix)]
 
 use stella_plugin::{
-    AfterTurnRequest, EvidenceSet, FlipObservation, ObservedEvidence, PROTOCOL_VERSION,
-    PluginManifest, TamperFinding, TurnOutcome, UnmetBecause, Verdict, VerdictRule,
+    AfterTurnRequest, EvidenceProvenance, EvidenceSet, FlipObservation, ObservedEvidence,
+    PROTOCOL_VERSION, PluginManifest, TamperFinding, TurnOutcome, UnmetBecause, Verdict,
+    VerdictRule,
 };
 use stella_runtime::wrapper::{
     DEFAULT_WRAPPER_TIMEOUT, SubprocessWrapper, TurnWrapper, WrapperError, judge,
@@ -120,7 +121,9 @@ async fn a_flip_the_host_vouches_for_reaches_a_decided_verdict() {
 
     assert_eq!(
         judge(&VerdictRule::from_manifest(&manifest()), &evidence),
-        Verdict::Met,
+        Verdict::Met {
+            evidence: EvidenceProvenance::PluginReported
+        },
         "an achieved flip over artifacts the host vouches for is done"
     );
 }

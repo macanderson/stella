@@ -151,9 +151,9 @@ pub use progressive::{ProgressiveResolver, StageDecision};
 pub use runtime::Runtime;
 pub use wire::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
-    Continuation, Correction, EvidenceSet, FlipObservation, Outcome, PROTOCOL_VERSION,
-    PublishedSignal, RoundState, SignalValue, StopReason, TamperFinding, TestBaseline, TestPlan,
-    TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule,
-    VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
+    Continuation, Correction, EvidenceProvenance, EvidenceSet, FlipObservation, Outcome,
+    PROTOCOL_VERSION, PublishedSignal, RoundState, SignalValue, StopReason, TamperFinding,
+    TestBaseline, TestPlan, TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict,
+    VerdictRule, VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
 };
 pub use wrapper::{CompareOp, Condition, Signal, SignalKind, StageName, Wrapper, WrapperStage};

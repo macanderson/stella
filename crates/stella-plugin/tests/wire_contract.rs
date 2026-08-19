@@ -26,11 +26,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use stella_plugin::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
-    Continuation, Correction, EvidenceSet, FlipObservation, ObservedEvidence, Outcome,
-    PROTOCOL_VERSION, PluginManifest, PublishedSignal, RoundState, Signal, SignalValue, StageName,
-    StopReason, TamperFinding, TestBaseline, TestPlan, TurnOutcome, UndecidedReason, UnmetBecause,
-    UnmetRequirement, Verdict, VerdictRule, VolatileContext, WrapperPoint, WrapperRequest,
-    WrapperResponse,
+    Continuation, Correction, EvidenceProvenance, EvidenceSet, FlipObservation, ObservedEvidence,
+    Outcome, PROTOCOL_VERSION, PluginManifest, PublishedSignal, RoundState, Signal, SignalValue,
+    StageName, StopReason, TamperFinding, TestBaseline, TestPlan, TurnOutcome, UndecidedReason,
+    UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext, WrapperPoint,
+    WrapperRequest, WrapperResponse,
 };
 use stella_protocol::CandidateHandle;
 
@@ -148,7 +148,9 @@ fn every_message_round_trips_byte_for_byte() {
 
 #[test]
 fn every_decision_type_round_trips_byte_for_byte() {
-    round_trip(&Verdict::Met);
+    round_trip(&Verdict::Met {
+        evidence: EvidenceProvenance::PluginReported,
+    });
     round_trip(&Verdict::Unmet {
         unmet: vec![unmet()],
     });
@@ -177,7 +179,9 @@ fn every_decision_type_round_trips_byte_for_byte() {
             },
         },
     });
-    round_trip(&Outcome::Met);
+    round_trip(&Outcome::Met {
+        evidence: EvidenceProvenance::PluginReported,
+    });
     round_trip(&Outcome::Undecided {
         reason: UndecidedReason::NoOracle,
     });

@@ -40,7 +40,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::wire::{EvidenceSet, FlipObservation, TamperFinding};
+use crate::wire::{EvidenceProvenance, EvidenceSet, FlipObservation, TamperFinding};
 
 /// The evidence a wrapper gathered — the plugin-owned half of an
 /// [`EvidenceSet`].
@@ -86,9 +86,16 @@ impl EvidenceSet {
     /// always earned — the difference is that it is now the host's answer about
     /// its own check, rather than a plugin's forced admission about a check it
     /// was never able to perform.
+    ///
+    /// The same argument decides the provenance, and decides it by
+    /// construction rather than by rule: this function's input *is* the body
+    /// of a plugin's `after_turn`, so the flip and the measurements are
+    /// [`EvidenceProvenance::PluginReported`] and there is no argument by
+    /// which a caller could say otherwise (#3513).
     #[must_use]
     pub fn from_observed(observed: ObservedEvidence, tamper: TamperFinding) -> Self {
         Self {
+            provenance: EvidenceProvenance::PluginReported,
             flip: observed.flip,
             tamper,
             measurements: observed.measurements,
@@ -148,9 +155,17 @@ mod tests {
         let nothing = ObservedEvidence::nothing();
         assert_eq!(nothing.flip, FlipObservation::Unobservable);
         assert!(nothing.measurements.is_empty());
-        assert_eq!(
-            EvidenceSet::from_observed(nothing, TamperFinding::NotChecked),
-            EvidenceSet::unobserved()
-        );
+
+        // The two silences agree on everything `judge` reads — both abstain —
+        // and differ on exactly one thing: whose silence it is. A plugin that
+        // reported nothing said so itself; `unobserved` is the host's own
+        // conclusion about a plugin that never answered (#3513).
+        let reported = EvidenceSet::from_observed(nothing, TamperFinding::NotChecked);
+        let host = EvidenceSet::unobserved();
+        assert_eq!(reported.flip, host.flip);
+        assert_eq!(reported.tamper, host.tamper);
+        assert_eq!(reported.measurements, host.measurements);
+        assert_eq!(reported.provenance, EvidenceProvenance::PluginReported);
+        assert_eq!(host.provenance, EvidenceProvenance::HostObserved);
     }
 }
