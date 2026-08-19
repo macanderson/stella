@@ -508,16 +508,17 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
 }
 
 #[test]
-fn materialize_folds_a_reemitted_tool_start_into_one_call() {
+fn materialize_keeps_two_announcements_sharing_a_call_id_apart() {
     use stella_protocol::{ToolCall, ToolOutput};
     let store = Store::in_memory().unwrap();
     let id = store
         .begin_execution("deck", "add a feature", "zai", "glm-5.2")
         .unwrap();
 
-    // The same call_id announced twice: one call, however many times the
-    // stream said so — the result, keyed by call_id alone, must attach to
-    // exactly one row and the call count must not inflate.
+    // The same call_id announced twice by two different events: two calls.
+    // `call_id` is unique only within one model response, so the repair fold
+    // must key on the announcing event and keep them apart — folding them
+    // erased 12.2% of one workspace's calls (#4033).
     store
         .record_event(
             id,
@@ -561,23 +562,32 @@ fn materialize_folds_a_reemitted_tool_start_into_one_call() {
         .unwrap();
 
     let n = store.materialize_tool_calls(id).unwrap();
-    assert_eq!(n, 1, "one call_id is one call");
-    assert_eq!(store.count("tool_calls").unwrap(), 1);
-    let (args, ok): (String, i64) = store
-        .lock()
-        .query_row(
-            "SELECT args_json, ok FROM tool_calls WHERE execution_id = ?1",
-            params![id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
+    assert_eq!(n, 2, "two announcements are two calls (#4033)");
+    assert_eq!(store.count("tool_calls").unwrap(), 2);
+    let calls: Vec<(String, i64, String)> = {
+        let conn = store.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT args_json, ok, state FROM tool_calls \
+                 WHERE execution_id = ?1 ORDER BY seq ASC",
+            )
+            .unwrap();
+        let mapped = stmt
+            .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        mapped.map(|r| r.unwrap()).collect()
+    };
     assert_eq!(
-        args, r#"{"pattern":"final"}"#,
-        "the last announcement's payload wins (newest-record keep-rule)"
+        calls[0].0, r#"{"pattern":"first"}"#,
+        "each announcement keeps its own arguments"
     );
+    assert_eq!(calls[1].0, r#"{"pattern":"final"}"#);
+    // Only one result was delivered, and it settles the older open call; the
+    // younger one is still outstanding, which is what abandonment means.
+    assert_eq!(calls[0].1, 1, "the result attached to the call it answers");
     assert_eq!(
-        ok, 1,
-        "the result attached instead of minting a failed twin"
+        calls[1].2, "abandoned",
+        "an unanswered announcement is not silently merged away"
     );
 }
 
@@ -1107,8 +1117,11 @@ fn skill_usage_records_per_execution_version_rows() {
     //       `'abandoned'` from `'error'` in `tool_calls.state` (#3146). v25
     //       `tool_calls.error_class` (#3145): which KIND of failure, so an
     //       error rate can exclude misuse. v26/v27 split wrapper (#3388) and
-    //       role (#3395) out of `kind`.
-    assert_eq!(SCHEMA_VERSION, 27);
+    //       role (#3395) out of `kind`. v28 identifies a `tool_calls` row by
+    //       the event that announced it, not by a `call_id` that is only
+    //       unique within one response (#4033), and re-folds the histories
+    //       the old key collapsed.
+    assert_eq!(SCHEMA_VERSION, 28);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
