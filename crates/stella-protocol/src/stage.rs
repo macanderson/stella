@@ -362,3 +362,42 @@ mod tests {
         assert_eq!(StageName::new("Execute").as_str(), "Execute");
     }
 }
+
+#[cfg(test)]
+mod event_decode_tests {
+    use crate::AgentEvent;
+
+    /// **The regression this fixes on a stream that exists today.**
+    ///
+    /// `AgentEvent`'s tolerance stops at its own tag: an unknown *tag* becomes
+    /// `AgentEvent::Unknown`, but a known tag whose body does not fit is a hard
+    /// error and the reader loses the whole event. A stage name outside the
+    /// host's twelve used to be exactly that — so a journal or `stream-json`
+    /// feed from any emitter with one extra stage did not render that stage
+    /// badly, it failed to decode the line at all.
+    ///
+    /// This is not scaffolding for a producer that does not exist yet:
+    /// `stella resume` replays journals, the observatory parses stored streams,
+    /// and a `stella-serve` host forwards events it did not author.
+    #[test]
+    fn an_unknown_stage_name_no_longer_kills_the_event() {
+        let line = r#"{"type":"stage","name":"triage-lite","scope":"run"}"#;
+        let decoded: AgentEvent =
+            serde_json::from_str(line).expect("a contributed stage must decode");
+        match &decoded {
+            AgentEvent::Stage { name, scope } => {
+                assert_eq!(name.as_str(), "triage-lite");
+                assert!(name.is_contributed());
+                assert_eq!(*scope, crate::StageScope::Run);
+            }
+            other => panic!("decoded as {other:?}, not a stage"),
+        }
+        // And it decodes as a `stage`, not as the catch-all: the reader knows
+        // what kind of thing happened, which is the half `Unknown` cannot give.
+        assert_eq!(
+            serde_json::to_string(&decoded).unwrap(),
+            line,
+            "a contributed stage must survive the round trip byte-for-byte"
+        );
+    }
+}
