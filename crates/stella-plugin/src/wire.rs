@@ -275,8 +275,10 @@ impl WrapperResponse {
 ///   way *back* — a scope, a withheld adoption path, a witness artifact — is
 ///   resolved against this handle's root by the host and refused if it lands
 ///   anywhere else, after symlinks, on the host's own filesystem
-///   (`CandidateDenial`, and `stella_pipeline::ports::CandidateHandles` for
-///   the implementation). The refusal is the host's; nothing here is a promise
+///   (`CandidateDenial`, and [`crate::candidate_grant`]'s [`fence`] for the
+///   implementation — it was the staged pipeline's
+///   `ports::CandidateHandles` until #3865 deleted that crate). The refusal is
+///   the host's; nothing here is a promise
 ///   the plugin was asked to keep.
 ///
 /// So a plugin that ignores the root and lies about where it went has told the

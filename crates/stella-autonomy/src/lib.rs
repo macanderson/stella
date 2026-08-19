@@ -249,8 +249,7 @@ pub const LENSES: &[Lens] = &[
         tooling: Tooling::Command {
             run: "rg --files-without-match 'proptest' -g '*.rs' \
                   crates/stella-core/src crates/stella-context/src \
-                  crates/stella-fleet/src crates/stella-pipeline/src \
-                  crates/stella-tui/src",
+                  crates/stella-fleet/src crates/stella-tui/src",
             interpret: "each listed file that holds pure decision logic and has \
                         no property test is a finding",
         },

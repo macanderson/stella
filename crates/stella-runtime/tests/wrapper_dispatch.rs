@@ -5,8 +5,9 @@
 //! itself, calling the four points in an order the test file wrote down — so
 //! every property it establishes is a property of that file, and nothing in the
 //! workspace had to hold the same order. That is exactly what #3494 found:
-//! `grep -rn "before_turn\|after_turn" crates/stella-cli/src
-//! crates/stella-pipeline/src` returned one port handle and no dispatch.
+//! `grep -rn "before_turn\|after_turn"` over `stella-cli` and the
+//! then-still-present `stella-pipeline` (deleted in #3865) returned one port
+//! handle and no dispatch.
 //!
 //! These tests drive `stella_runtime::WrapperDispatch` — the production
 //! sequence — with a plugin written in `sh` on one side and a recording

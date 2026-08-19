@@ -36,7 +36,8 @@
 //! its own execute/witness/verify — needs one resolver *per* continuation
 //! from the point they diverge, not one resolver shared by several writers.
 //! Cloning at that boundary and letting each continuation advance its own
-//! copy is the host's job (`stella-pipeline`'s scheduler, #3408); the clone
+//! copy is the host's job (the staged pipeline's scheduler was the first such
+//! host, #3408; `crates/stella-pipeline`, deleted in #3865); the clone
 //! itself is cheap (a slice pointer plus two small `Vec`s).
 //!
 //! Both share every property that makes resolution safe to trust:

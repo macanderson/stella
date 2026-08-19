@@ -122,8 +122,9 @@ macro_rules! measurement_discipline {
 ///
 /// The cheap rung is a *stated* choice, never a silent omission: the last
 /// sentence is what keeps proportionality from degrading into "skip
-/// verification", the same discipline the ladder's abstain rung keeps on the
-/// verdict side (`stella_pipeline::verify`). One shared literal, embedded
+/// verification", the same discipline the ladder's abstain rung kept on the
+/// verdict side (the staged pipeline's `verify`; `crates/stella-pipeline`,
+/// deleted in #3865). One shared literal, embedded
 /// verbatim by both prompts, same as `tool_steering!` and for the same
 /// anti-drift reason (#450).
 macro_rules! verification_proportionality {
@@ -196,8 +197,9 @@ macro_rules! complexity_discipline {
 /// The second sentence is the load-bearing one and is pinned separately below.
 /// A suite that passes is *evidence about the hypothesis*, which is what turns
 /// "am I done" from a judgement the model argues into an observation it reads
-/// — the same discipline `stella_pipeline::verify`'s ladder enforces on the
-/// verdict side, moved to where the cost is actually incurred.
+/// — the same discipline the staged pipeline's `verify` ladder enforced on the
+/// verdict side (`crates/stella-pipeline`, deleted in #3865), moved to where
+/// the cost is actually incurred.
 ///
 /// Deliberately scoped by "when a test or build command is known": an
 /// unconditional rule here would fire a suite run on every trivial turn, which

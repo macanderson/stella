@@ -31,7 +31,7 @@
 //! the dependency graph so either can reach the minting logic without a
 //! layering violation.
 //!
-//! `stella-pipeline`, while it still exists, re-exports every name below
+//! `stella-pipeline`, while it still existed, re-exported every name below
 //! unchanged from `ports`/`ports::handle`/`witness`, so its own call sites —
 //! including `CandidateHandles`'s own `grant`/`resolve_path`, which now call
 //! [`fence`]/[`canonical_root`] here rather than keeping a second copy —
