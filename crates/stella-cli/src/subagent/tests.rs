@@ -63,6 +63,100 @@ fn registry() -> Arc<ToolRegistry> {
     Arc::new(ToolRegistry::new(std::path::PathBuf::from(".")))
 }
 
+/// A provider double that answers with the id it was built under, so a test
+/// can tell WHICH model a child was routed to rather than only that it ran.
+struct NamedProvider(&'static str);
+
+#[async_trait]
+impl Provider for NamedProvider {
+    fn id(&self) -> &str {
+        self.0
+    }
+    async fn complete_ref(
+        &self,
+        _request: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        Err(stella_protocol::ProviderError::Terminal(
+            "no provider in tests".into(),
+        ))
+    }
+}
+
+/// **The seat-routing witness.**
+///
+/// A child's seat name decides which model runs it. Before seats, this
+/// dispatcher held one provider and handed it to every child, so a plugin that
+/// declared a process with several participants got one model for all of them
+/// and nothing in the types said so.
+///
+/// The three cases below are one rule stated three ways, and the second and
+/// third are the ones that keep the rule safe: an assigned seat routes, and
+/// *everything else* — a seat the user assigned no model to, and a child that
+/// named no seat at all — runs on the session's own model. Core never
+/// substitutes a model of its own choosing for a role it does not understand,
+/// because the only honest default for an unrecognized name is the model the
+/// session is already paying for.
+#[test]
+fn a_named_seat_routes_to_its_own_model_and_everything_else_rides_the_session() {
+    let registry = registry();
+    let mut seats = crate::agent::seats::SeatProviders::new();
+    seats.insert("planner", Arc::new(NamedProvider("planner-model")));
+
+    let dispatcher = SessionSubAgents::new(
+        Arc::new(NamedProvider("session-model")),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_seats(seats);
+
+    assert_eq!(
+        dispatcher.provider_for(Some("planner")).id(),
+        "planner-model",
+        "an assigned seat must run on the model assigned to it"
+    );
+    assert_eq!(
+        dispatcher.provider_for(Some("reviewer")).id(),
+        "session-model",
+        "a seat with no assignment rides the session's model, never a guess"
+    );
+    assert_eq!(
+        dispatcher.provider_for(None).id(),
+        "session-model",
+        "a child naming no seat rides the session's model"
+    );
+}
+
+/// The seat name is opaque, and this is the test that says so out loud: a name
+/// core has never heard of routes exactly as well as one it has, because there
+/// is no list of accepted roles to fail against. A future change that
+/// introduces such a list — validating seats, normalizing them, defaulting an
+/// unknown one — fails here, which is the point.
+#[test]
+fn a_seat_name_core_has_never_heard_of_routes_the_same_as_any_other() {
+    let registry = registry();
+    let mut seats = crate::agent::seats::SeatProviders::new();
+    seats.insert(
+        "wholly-invented-second-opinion",
+        Arc::new(NamedProvider("other-model")),
+    );
+
+    let dispatcher = SessionSubAgents::new(
+        Arc::new(NamedProvider("session-model")),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_seats(seats);
+
+    assert_eq!(
+        dispatcher
+            .provider_for(Some("wholly-invented-second-opinion"))
+            .id(),
+        "other-model"
+    );
+}
+
 /// **The decorator-forwarding witness.**
 ///
 /// The deck stacks executors between the engine and the registry
@@ -382,6 +476,7 @@ fn the_delegate_tool_is_always_advertised_and_never_read_only() {
         EngineConfig::default(),
         stella_protocol::BudgetMode::Observed,
         None,
+        crate::agent::seats::SeatProviders::new(),
     );
     assert_eq!(
         registry

@@ -385,6 +385,12 @@ impl Engine<'_> {
             budget_usd: None,
             write_access: false,
             role: stella_protocol::ModelCallRole::Verdict,
+            // The goal loop is core's own and names no seat: its independent
+            // verifier is chosen by the caller, which hands in the provider
+            // directly (`SubAgentHost::new(verifier)`) rather than asking the
+            // dispatcher to look a role name up. When goal mode becomes a
+            // plugin (#3911) this is the line that turns into a declared seat.
+            seat: None,
             turn_instance,
             depth: 1,
             compaction_budget_tokens: None,

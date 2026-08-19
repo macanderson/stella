@@ -409,6 +409,17 @@ impl<D: SubAgentDispatcher> ChildTurnPlane for ChildTurns<D> {
         // wire.
         let spec = SubAgentSpec {
             role: seat,
+            // The plugin's OWN word for this role, passed through untouched.
+            //
+            // `role` above is the receipt label, drawn from a closed enum this
+            // workspace owns; this is the routing key, drawn from the
+            // plugin's manifest and meaningful only to the plugin that wrote
+            // it and the user who assigned a model to it. Sending the name
+            // rather than the enum is what lets a plugin declare a role core
+            // has never heard of — a `reviewer`, a `second-opinion` — and
+            // still have the user's model choice reach it. Nothing below this
+            // line may branch on the contents.
+            seat: Some(args.role.clone()),
             turn_instance: self.turn_instance,
             budget_usd: self.budget_usd,
             ..SubAgentSpec::read_only(

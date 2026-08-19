@@ -237,7 +237,20 @@ impl TurnSteering for OrphanStop {
 /// Runs sub-agents for the `delegate` tool. One per session.
 pub struct SessionSubAgents {
     /// `Arc`, not `Box`: the provider is moved onto each child's thread.
+    ///
+    /// The session's own model, and the answer for every seat `seats` does not
+    /// carry — which is every seat at all until a second BYOK provider is
+    /// configured.
     provider: Arc<dyn Provider>,
+    /// The models this session serves named seats from.
+    ///
+    /// Empty is the ordinary case and means "every child runs on `provider`" —
+    /// exactly what this dispatcher did before seats existed. A hit means the
+    /// user assigned a model to the role name the child's requester declared,
+    /// which is what lets one plugin's process run several participants on
+    /// several models. The names are the plugin's and the assignment is the
+    /// user's; this dispatcher only looks them up. See [`crate::agent::seats`].
+    seats: crate::agent::seats::SeatProviders,
     /// Weak on purpose — the registry owns this dispatcher. See module docs.
     tools: Weak<ToolRegistry>,
     config: EngineConfig,
@@ -259,6 +272,7 @@ impl SessionSubAgents {
     ) -> Self {
         Self {
             provider,
+            seats: crate::agent::seats::SeatProviders::new(),
             tools: Arc::downgrade(registry),
             config,
             pool: Arc::new(Mutex::new(BudgetGuard::new(
@@ -267,6 +281,37 @@ impl SessionSubAgents {
                 Some(DEFAULT_POOL_LIMIT_USD),
             ))),
         }
+    }
+
+    /// Serve the named roles from models of their own.
+    ///
+    /// Additive to [`Self::new`]'s empty map, and deliberately a separate
+    /// builder rather than a `new` parameter: resolving seats needs the
+    /// credential discovery pass ([`crate::config::discover_configured_providers`]),
+    /// which every existing caller of `new` — the test doubles included — has
+    /// no reason to run. A dispatcher with no seats is the single-provider
+    /// session, which is the common case and must stay the cheap one.
+    #[must_use]
+    pub fn with_seats(mut self, seats: crate::agent::seats::SeatProviders) -> Self {
+        self.seats = seats;
+        self
+    }
+
+    /// The provider serving `seat`, or the session's own.
+    ///
+    /// A miss is not an error and must never become one. It covers all three
+    /// ordinary cases and they resolve identically on purpose: the child named
+    /// no seat, the seat is one the user assigned no model to, or the assigned
+    /// model could not be built and was reported at install. In every one of
+    /// them the honest answer is "the model this session is already running",
+    /// never a substitute core picked.
+    ///
+    /// `seat` is compared and never parsed. See [`crate::agent::seats`] for why
+    /// core must stay ignorant of what the string means.
+    fn provider_for(&self, seat: Option<&str>) -> Arc<dyn Provider> {
+        seat.and_then(|seat| self.seats.get(seat))
+            .unwrap_or(&self.provider)
+            .clone()
     }
 
     /// Override the session pool ceiling.
@@ -302,9 +347,13 @@ impl SessionSubAgents {
         config: EngineConfig,
         mode: stella_protocol::BudgetMode,
         pool_limit_usd: Option<f64>,
+        seats: crate::agent::seats::SeatProviders,
     ) -> Arc<dyn SubAgentDispatcher> {
-        let dispatcher: Arc<dyn SubAgentDispatcher> =
-            Arc::new(Self::new(provider, registry, config, mode).with_pool_limit(pool_limit_usd));
+        let dispatcher: Arc<dyn SubAgentDispatcher> = Arc::new(
+            Self::new(provider, registry, config, mode)
+                .with_pool_limit(pool_limit_usd)
+                .with_seats(seats),
+        );
         registry.attach_sub_agent_dispatcher(dispatcher.clone());
         dispatcher
     }
@@ -323,16 +372,49 @@ impl SessionSubAgents {
 /// one that outlives any single turn. Metering is `Observed` on the pool —
 /// the *parent's* guard is what enforces `--spend-limit`, via the spend ledger the
 /// engine drains at each step boundary.
+///
+/// It also resolves this session's **seats** ([`crate::agent::seats`]) — the
+/// models the user assigned to the role names installed plugins declared. A
+/// session with no seat assignments (every session, until someone makes one)
+/// pays nothing for this: no credential discovery, no extra adapter, and the
+/// dispatcher behaves exactly as it did before seats existed.
+///
+/// Seat notices are surfaced here rather than swallowed, because a seat that
+/// could not be built is a settings line that reads like a capability and is
+/// not one — the session still runs, on the session's model, and the operator
+/// is told which seat degraded and why.
 pub fn install_for_session(
     cfg: &crate::config::Config,
     registry: &Arc<ToolRegistry>,
 ) -> Result<Arc<dyn SubAgentDispatcher>, String> {
+    let assignments = cfg
+        .engine_settings
+        .as_ref()
+        .and_then(|engine| engine.seat_models.clone())
+        .unwrap_or_default();
+
+    // The common path, and the one that must stay free: no assignments means
+    // no discovery pass and no adapters. Resolving an empty map would be
+    // harmless but would still pay for `discover_configured_providers`, which
+    // reads the credential chain on every session start.
+    let seats = if assignments.is_empty() {
+        crate::agent::seats::SeatProviders::new()
+    } else {
+        let configured = crate::config::discover_configured_providers();
+        let (seats, notices) = crate::agent::seats::resolve_seat_models(&assignments, &configured);
+        for notice in notices {
+            eprintln!("  seat: {notice}");
+        }
+        seats
+    };
+
     Ok(SessionSubAgents::install(
         Arc::from(crate::agent::build_provider(cfg)?),
         registry,
         crate::agent::engine_config_for(cfg),
         stella_protocol::BudgetMode::Observed,
         session_pool_limit_usd(),
+        seats,
     ))
 }
 
@@ -404,7 +486,12 @@ impl SubAgentDispatcher for SessionSubAgents {
 
         // Everything crossing the thread is owned; see the module docs on
         // why the child cannot simply be awaited here.
-        let provider = self.provider.clone();
+        //
+        // The seat is read from the spec rather than from the session: this is
+        // the one line that turns a requester's named role into the model that
+        // serves it, and it must be taken before the spec moves onto the
+        // child's thread.
+        let provider = self.provider_for(spec.seat.as_deref());
         let config = self.config.clone();
         let pool = self.pool.clone();
         let ledger = tools.sub_agent_spend_ledger();
