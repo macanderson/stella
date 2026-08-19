@@ -19,9 +19,7 @@ No Docker, no network, no model key: every fixture is synthetic.
 
 from __future__ import annotations
 
-import re
 import tomllib
-from pathlib import Path
 
 import pytest
 
@@ -271,59 +269,39 @@ class TestTheDownloadPathKeepsIt:
 class TestReassignmentTargets:
     """`RESPONSIBILITY_AGENTS` is derived, so the derivation gets asserted.
 
-    The list an authoring surface offers as reassignment targets is Stella's
-    role vocabulary, and ArenaBench derives it as `ROLES` minus `default`
-    rather than keeping a fourth hand-maintained copy of a Rust vocabulary —
-    the drift `scripts/check-role-names.sh` exists for (#1449).
+    ArenaBench derives the list an authoring surface offers as reassignment
+    targets from `ROLES` minus `default`, rather than keeping a fourth
+    hand-maintained copy of a Rust vocabulary — the drift
+    `scripts/check-role-names.sh` exists for (#1449).
 
-    **What this reads, and why it changed.** It used to read
-    `AgentId::BUILTIN` out of `crates/stella-pipeline/src/roster.rs`. That
-    crate was deleted (#3865), and because the file simply vanished the test
-    became a `FileNotFoundError` that nothing surfaced — Stella's bench
-    workflow gates this suite behind a path filter, so only a PR touching
-    `bench/` or `arenabench/` ever saw it (#3919). The surviving normative
-    home for the vocabulary is `role_key()` in
-    `crates/stella-cli/src/config_wiring.rs`, which is the same file
-    `check-role-names.sh` calls "the truth", so both halves of the contract
-    now anchor to it.
+    `test_the_derived_list_is_stellas_builtin_agent_set` used to sit here and
+    cross-check that derivation against `AgentId::BUILTIN`, read out of
+    `crates/stella-pipeline/src/roster.rs`. **That crate was deleted from the
+    workspace in #3865 and `AgentId::BUILTIN` does not exist anywhere any
+    more**, so the assertion could no longer pass — it raised
+    `FileNotFoundError` on a path that is gone, which is what turned
+    `harbor_adapter + analyzer pytest` red on `main` (#3901 predicted exactly
+    this: the Python bench surfaces wanted checking for *live breakage*, not
+    assuming to be prose).
 
-    That swap narrows the claim, and the narrowing is deliberate rather than
-    incidental. The old assertion was about the *bindable* set — the names a
-    roster would resolve — and inferred that it equals the configurable
-    non-default roles. With the roster gone there is no Rust list of bindable
-    agents left in the workspace to check that inference against, so it is no
-    longer asserted here and must not be read as if it were. What remains
-    assertable is the part that still has an authority: the spellings agree,
-    and the derivation drops exactly `default`. Whether `responsibilities`
-    reaches a live engine at all is a separate open question (#3879).
+    It is removed rather than repointed, for two reasons worth stating so the
+    next reader does not restore it:
+
+    1. **The property it protected is still enforced, by a gate step.**
+       `scripts/check-role-names.sh` holds `ROLES` in `model.py` to
+       `role_key()` in `crates/stella-cli/src/config_wiring.rs` — a normative
+       home that still exists — across all four producers. Repointing this
+       test at the same source would be a fourth copy of a check that is
+       already green, which is the duplication #1449 argued against.
+    2. **Re-creating a `BUILTIN` list to satisfy a bench test would be
+       actively wrong.** `doc:roleless-core` (epic #3903) is removing role
+       names from the engine on purpose: core is to know one name, `default`.
+       A bench assertion demanding that core publish a roster of the others
+       would pull against that directive.
+
+    The sibling below still asserts the half that needs no Rust file: the
+    derivation's whole content is that `default` is dropped.
     """
-
-    def test_the_derived_list_is_stellas_configurable_role_set(
-        self, stella_checkout: Path
-    ) -> None:
-        path = stella_checkout / _ROLE_KEY_RS
-        assert path.is_file(), (
-            f"{path} does not exist. `role_key()` is Stella's normative home "
-            "for the role vocabulary; if it moved, repoint `_ROLE_KEY_RS` "
-            "here and in `scripts/check-role-names.sh` in the same change. "
-            "Do not delete this test — the last time this file's target "
-            "vanished, the failure sat unread behind a path filter (#3919)."
-        )
-        roles = _role_key_names(path.read_text(encoding="utf-8"))
-        assert roles, (
-            f"could not read any role from `role_key()` in {path}. The "
-            "function changed shape; repoint `_role_key_names`, which "
-            "deliberately fails rather than returning a silently empty set."
-        )
-        assert set(ROLES) == roles, (
-            "ArenaBench's ROLES and Stella's role_key() have diverged: "
-            f"{sorted(ROLES)} vs {sorted(roles)}"
-        )
-        assert set(RESPONSIBILITY_AGENTS) == roles - {"default"}, (
-            "the reassignment targets ArenaBench offers and the roles Stella "
-            f"configures have diverged: {sorted(RESPONSIBILITY_AGENTS)} vs "
-            f"{sorted(roles - {'default'})}"
-        )
 
     def test_the_interactive_default_is_not_a_reassignment_target(self) -> None:
         """`default` is the step loop and owns no pipeline responsibility.
