@@ -84,7 +84,7 @@ Nothing below proposes changing it.
 | The residue gate — a prose follow-up becomes undischargeable | [`doc:agent-native-delivery`](../design/agent-native-delivery.md) §7 | Design only. This is the mechanism that makes "file new tickets" a *guarantee* rather than a habit. |
 | Backlog dedup + decay | [`doc:agent-native-delivery`](../design/agent-native-delivery.md) §10.1 | Design only. |
 | Self-driving as a plugin that actually drives | #3546, [`doc:pipeline-as-plugins`](pipeline-as-plugins.md) §10 D6 | Manifest exists (`plugins/stella-selfdriving/plugin.toml`) and now declares a `[driver]` grant a human reads at install. It still starts nothing (B2), and every capability it declares answers `unsupported` (B1–B6) — but it **can** hold one, which it could not before B0. |
-| The host-call channel: `recall`, `child_turn`, `run_test` | `crates/stella-plugin/src/host_call.rs`, `crates/stella-runtime/src/wrapper/host_call.rs` | **Built** (#3590), and reachable only from inside a turn. |
+| The host-call channel: `recall`, `child_turn`, `run_test`, `candidate_fanout`, `adopt_candidate` | `crates/stella-plugin/src/host_call.rs`, `crates/stella-runtime/src/wrapper/host_call.rs` | **Built** (#3590), and reachable only from inside a turn. |
 | The driver channel: the same apparatus, opened by a driver session | `crates/stella-plugin/src/driver.rs`, `crates/stella-runtime/src/wrapper/driver_call.rs` | **Built** (B0). A driver at grade `none` holds capability through `[driver]`, and an undeclared ask is refused with a code rather than a death. Serves no verb yet. |
 
 One correction to the record, because a design doc is a claim and not a fact:

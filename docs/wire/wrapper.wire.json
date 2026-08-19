@@ -116,6 +116,28 @@
         "call": "run_test",
         "id": 3
       }
+    },
+    {
+      "case": "candidate_fanout",
+      "message": {
+        "args": {
+          "instruction": "make the failing test pass",
+          "role": "candidate",
+          "width": 3
+        },
+        "call": "candidate_fanout",
+        "id": 4
+      }
+    },
+    {
+      "case": "adopt_candidate",
+      "message": {
+        "args": {
+          "candidate": "candidate-2"
+        },
+        "call": "adopt_candidate",
+        "id": 5
+      }
     }
   ],
   "host_results": [
@@ -153,6 +175,45 @@
           "seat": "research"
         },
         "result": 4
+      }
+    },
+    {
+      "case": "candidate_fanout",
+      "message": {
+        "ok": {
+          "candidates": [
+            {
+              "candidate": "candidate-1",
+              "completed": true,
+              "files_changed": 2,
+              "lines_changed": 41,
+              "report": "added the retry and its regression test",
+              "root": "/tmp/stella-candidates/candidate-1"
+            },
+            {
+              "candidate": "candidate-2",
+              "completed": false,
+              "files_changed": 1,
+              "lines_changed": 12,
+              "report": "rewrote the backoff; the test still fails",
+              "root": "/tmp/stella-candidates/candidate-2"
+            }
+          ],
+          "requested": 3
+        },
+        "result": 5
+      }
+    },
+    {
+      "case": "adopt_candidate",
+      "message": {
+        "ok": {
+          "adopted": "candidate-1",
+          "discarded": [
+            "candidate-2"
+          ]
+        },
+        "result": 6
       }
     },
     {
@@ -489,7 +550,9 @@
     "host_call": [
       "recall",
       "child_turn",
-      "run_test"
+      "run_test",
+      "candidate_fanout",
+      "adopt_candidate"
     ],
     "host_call_refusal": [
       "undeclared",

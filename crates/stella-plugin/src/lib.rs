@@ -133,9 +133,10 @@ pub use driver::{
 pub use error::ManifestError;
 pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
 pub use host_call::{
-    ChildTurnArgs, ChildTurnResult, HostCall, HostCallArgs, HostCallFailure, HostCallOk,
-    HostCallOutcome, HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage, RecallArgs,
-    RecallFrame, RecallResult, RunTestArgs,
+    AdoptCandidateArgs, AdoptCandidateResult, CandidateFanoutArgs, CandidateFanoutResult,
+    ChildTurnArgs, ChildTurnResult, FanoutCandidate, HostCall, HostCallArgs, HostCallFailure,
+    HostCallOk, HostCallOutcome, HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage,
+    RecallArgs, RecallFrame, RecallResult, RunTestArgs,
 };
 pub use manifest::{
     FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, OracleProcess, OracleProcessSource,

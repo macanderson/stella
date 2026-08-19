@@ -43,6 +43,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
+use crate::host_call::HostCall;
 use crate::manifest::{OracleProcessSource, Participation, PluginManifest};
 
 /// How bad one honest call of a tool is — re-exported from
@@ -311,6 +312,29 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
             "  - asks the host for these capabilities while answering a point: {}",
             calls.join(", ")
         ));
+    }
+
+    // Two of those capabilities are not like the others, and the list above
+    // renders them in the same breath as `recall`. A fan-out buys N *writing*
+    // worker turns off one ask, and an adoption puts one of their diffs on the
+    // reader's own tree — the two facts a human is consenting to, said in
+    // words rather than left to be inferred from a capability's name (#3844).
+    if grant.calls.contains(&HostCall::CandidateFanout) {
+        lines.push(match grant.max_fanout_width {
+            Some(width) => format!(
+                "  - runs up to {width} isolated attempt(s) at the goal per fan-out, each a full \
+                 model-spending turn that writes in its own workspace"
+            ),
+            None => "  - runs as many isolated attempts at the goal per fan-out as the host \
+                     allows, each a full model-spending turn that writes in its own workspace"
+                .to_string(),
+        });
+    }
+    if grant.calls.contains(&HostCall::AdoptCandidate) {
+        lines.push(
+            "  - applies one of those attempts to your real work tree, and discards the rest"
+                .to_string(),
+        );
     }
 
     if let Some(subloop) = &manifest.subloop {

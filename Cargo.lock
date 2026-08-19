@@ -3191,6 +3191,7 @@ name = "stella-runtime"
 version = "0.9.105"
 dependencies = [
  "async-trait",
+ "futures-util",
  "proptest",
  "serde",
  "serde_json",

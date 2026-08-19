@@ -341,6 +341,59 @@ configuration. Two things a caller must know rather than discover: the
 put a call on the receipt the pipeline did not make — #2584), and `run_test` is
 still `unsupported` from every host in the tree.
 
+### The fourth and fifth: `candidate_fanout` and `adopt_candidate`
+
+`candidate_fanout` asks for **N isolated writable workspaces, each running one
+full worker turn**, and returns per-candidate evidence; `adopt_candidate` lands
+one of them and discards the rest. They are one plane
+(`stella_runtime::wrapper::CandidateFanouts`, over a `CandidateWorkspaces`
+substrate) because the second is fenced against the handle table the first
+mints, and a host that could install the fence without the table would be
+installing nothing.
+
+They exist because `plugins/stella-candidates` (§3 of
+`doc:pipeline-as-plugins`, item 4 of its extraction order) could not be written
+at all: every earlier capability is read-only or single-tracked, so the
+strongest plugin this socket permitted was *bounded retry with correction over
+the shared tree* — each attempt mutating the one real work tree in place, no
+isolation, no rollback of a loser. Real, and not best-of-N (#3844).
+
+Five things a caller must know rather than discover:
+
+- **The seat rule is `child_turn`'s, inverted, and it is not a relaxation.** A
+  child turn may not resolve to the worker's seat, because a plugin must not
+  grade work with the model that did it. A candidate **is** the work, so it
+  must resolve to the worker's seat and nothing else — booking a writing turn
+  against `triage` would put spend on the receipt under a responsibility that
+  wrote nothing. Both compare the **resolved seat, never the spelling**.
+- **The width has its own manifest key and its own ceiling.** `[loop]
+  max_fanout_width`, clamped against `DEFAULT_HOST_MAX_FANOUT_WIDTH` (3), and
+  deliberately *not* `[loop] max_calls`: that key bounds how chatty a plugin may
+  be inside one point, and its unit is a cheap read. This one multiplies model
+  spend by N. A second ceiling, `DEFAULT_HOST_MAX_FANOUTS` (2), bounds fan-outs
+  for the whole run rather than per point, so the product is what a fan-out
+  plugin may cost.
+- **The clamp is reported, not silently applied.** The answer carries both
+  `requested` and the candidates that actually ran, so a plugin can say it
+  scored three of the eight it wanted rather than claiming it wanted three.
+- **The budget is carved, then divided.** The plane's requested carve is split
+  by the *clamped* width before each candidate asks for its share, so each one
+  is a slice of a budget the host agreed to rather than of the plugin's ask.
+- **Adoption takes a handle, never a path,** resolved against the table the
+  host minted — which is what keeps `HOST_TREE_HANDLE` un-adoptable for free,
+  since it names no entry in any table and never has. Adopting empties the
+  table, so a second adoption in one run is refused rather than layering a
+  second diff over the first. A refused *or failed* adoption discards nothing:
+  the losers are the only copies of work that might still be wanted.
+
+**The plane is not installed by any shipped driver yet.** `stella-cli` assembles
+`HostPlanes` with `recall` and `child_turn` and no isolation substrate, so both
+calls are answered `unavailable` — a declared gap the plugin is told about,
+never a silence. Wiring a substrate needs a rooted writing turn, which the
+session's `SubAgentDispatcher` cannot express today; tracked separately (see
+`crates/stella-runtime/src/wrapper/candidate_fanout.rs`'s `CandidateWorkspaces`
+for why that is a port rather than a field on `SubAgentSpec`).
+
 ---
 
 ## 7. What this design deliberately does not do

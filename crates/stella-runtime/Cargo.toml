@@ -37,6 +37,11 @@ thiserror = { workspace = true }
 # accident.
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt"] }
 async-trait = { workspace = true }
+# `join_all` for the candidate fan-out (#3844): N candidate turns run
+# concurrently in N disjoint workspaces, and awaiting them in sequence would
+# make a width-3 fan-out cost three turns of wall clock for no reason. Already
+# a workspace dependency of six crates; nothing else here needs a combinator.
+futures-util = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

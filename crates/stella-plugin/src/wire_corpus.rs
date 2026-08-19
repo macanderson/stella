@@ -74,13 +74,14 @@ use serde_json::{Value, json};
 use stella_protocol::candidate::CandidateHandle;
 
 use crate::{
-    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
-    ChildTurnArgs, ChildTurnResult, DriveNext, DriveRequest, DriveResponse, DriverCall,
-    DriverCallRequest, DriverCallResponse, DriverOk, FlipObservation, HostCall, HostCallArgs,
-    HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest, HostCallResponse,
-    ObservedEvidence, PROTOCOL_VERSION, PublishedSignal, RecallArgs, RecallFrame, RecallResult,
-    RunTestArgs, Signal, SignalKind, SignalValue, StageName, TestBaseline, TestPlan, TurnOutcome,
-    VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
+    AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse,
+    BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs, CandidateFanoutResult,
+    CandidateGrant, ChildTurnArgs, ChildTurnResult, DriveNext, DriveRequest, DriveResponse,
+    DriverCall, DriverCallRequest, DriverCallResponse, DriverOk, FanoutCandidate, FlipObservation,
+    HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest,
+    HostCallResponse, ObservedEvidence, PROTOCOL_VERSION, PublishedSignal, RecallArgs, RecallFrame,
+    RecallResult, RunTestArgs, Signal, SignalKind, SignalValue, StageName, TestBaseline, TestPlan,
+    TurnOutcome, VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
 };
 
 /// The committed artifact's filename.
@@ -197,6 +198,8 @@ fn host_calls() -> Result<Value, serde_json::Error> {
         // names would assert an optionality that does not exist.
         case("child_turn", &child_turn_call())?,
         case("run_test", &run_test_call())?,
+        case("candidate_fanout", &candidate_fanout_call())?,
+        case("adopt_candidate", &adopt_candidate_call())?,
     ]))
 }
 
@@ -219,6 +222,20 @@ fn host_results() -> Result<Value, serde_json::Error> {
         case(
             "child_turn",
             &HostCallResponse::ok(4, HostCallOk::ChildTurn(child_turn_result())),
+        )?,
+        case(
+            "candidate_fanout",
+            &HostCallResponse::ok(5, HostCallOk::CandidateFanout(candidate_fanout_result())),
+        )?,
+        // Both its members are required, which is exactly what keeps it out of
+        // the `recall` variant tried before it: `RecallResult`'s only field
+        // defaults, so an empty table already belongs to that arm. Publishing
+        // the adoption answer beside it makes the same point once more — the
+        // two tables share no key at all, and this file is where a change to
+        // that becomes a diff.
+        case(
+            "adopt_candidate",
+            &HostCallResponse::ok(6, HostCallOk::AdoptCandidate(adopt_candidate_result())),
         )?,
         case(
             "err/full",
@@ -470,7 +487,9 @@ fn host_call_after(call: HostCall) -> Option<HostCall> {
     match call {
         HostCall::Recall => Some(HostCall::ChildTurn),
         HostCall::ChildTurn => Some(HostCall::RunTest),
-        HostCall::RunTest => None,
+        HostCall::RunTest => Some(HostCall::CandidateFanout),
+        HostCall::CandidateFanout => Some(HostCall::AdoptCandidate),
+        HostCall::AdoptCandidate => None,
     }
 }
 
@@ -712,6 +731,59 @@ fn run_test_call() -> HostCallRequest {
         args: HostCallArgs::RunTest(RunTestArgs {
             candidate: CandidateHandle::new("candidate-1"),
         }),
+    }
+}
+
+fn candidate_fanout_call() -> HostCallRequest {
+    HostCallRequest {
+        id: 4,
+        args: HostCallArgs::CandidateFanout(CandidateFanoutArgs {
+            role: "candidate".to_string(),
+            instruction: "make the failing test pass".to_string(),
+            width: 3,
+        }),
+    }
+}
+
+fn adopt_candidate_call() -> HostCallRequest {
+    HostCallRequest {
+        id: 5,
+        args: HostCallArgs::AdoptCandidate(AdoptCandidateArgs {
+            candidate: CandidateHandle::new("candidate-2"),
+        }),
+    }
+}
+
+fn candidate_fanout_result() -> CandidateFanoutResult {
+    CandidateFanoutResult {
+        // Asked for three, ran two: the clamp is a fact the corpus publishes
+        // rather than a case a reader has to imagine.
+        requested: 3,
+        candidates: vec![
+            FanoutCandidate {
+                candidate: CandidateHandle::new("candidate-1"),
+                root: "/tmp/stella-candidates/candidate-1".to_string(),
+                report: "added the retry and its regression test".to_string(),
+                completed: true,
+                files_changed: 2,
+                lines_changed: 41,
+            },
+            FanoutCandidate {
+                candidate: CandidateHandle::new("candidate-2"),
+                root: "/tmp/stella-candidates/candidate-2".to_string(),
+                report: "rewrote the backoff; the test still fails".to_string(),
+                completed: false,
+                files_changed: 1,
+                lines_changed: 12,
+            },
+        ],
+    }
+}
+
+fn adopt_candidate_result() -> AdoptCandidateResult {
+    AdoptCandidateResult {
+        adopted: CandidateHandle::new("candidate-1"),
+        discarded: vec![CandidateHandle::new("candidate-2")],
     }
 }
 
