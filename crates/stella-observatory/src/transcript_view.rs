@@ -40,6 +40,7 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
         name: execution["kind"].as_str().unwrap_or("turn").to_string(),
         prompt: execution["prompt"].as_str().unwrap_or_default().to_string(),
         prose: Vec::new(),
+        notes: vec![],
         steps: Vec::new(),
         answer: None,
         status: outcome_status(execution),

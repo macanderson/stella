@@ -701,6 +701,7 @@ pub(crate) async fn run_goal_turn(
         execution.clone(),
         cfg.provider.id.to_string(),
         false,
+        Some(goal.to_string()),
     );
     // First event of the turn: what recall put in front of the model.
     if let Some(event) = recall_event {

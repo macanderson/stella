@@ -470,10 +470,23 @@ fn the_liveness_fallback_takes_a_lock_that_does_not_exist_yet() {
 #[test]
 fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
     let (dir, registry) = temp_registry("stop-ignores-term");
+    // The shell announces the trap it has actually installed. See the second
+    // precondition below for why its own liveness lock cannot answer that.
+    // The directory has to exist before the shell redirects into it: a failed
+    // redirection exits a non-interactive `sh` outright, which strands the run
+    // before it ever takes the liveness lock the first precondition waits on.
+    std::fs::create_dir_all(&dir).expect("registry dir");
+    let trapped = dir.join("trap-installed");
     let mut run = spawn_sh(
         &registry,
         "stubborn",
-        "trap '' TERM; while :; do sleep 1; done",
+        &format!(
+            // Quoted: `temp_registry` builds the directory name from a
+            // `ThreadId`, whose `{:?}` carries parentheses — shell
+            // metacharacters that make an unquoted redirect a syntax error.
+            "trap '' TERM; : > '{}'; while :; do sleep 1; done",
+            trapped.display()
+        ),
     );
     let sidecar = registry.sidecar_dir(&run.id);
     let id = run.id.clone();
@@ -495,6 +508,27 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
             == Some(true)),
         "precondition: the child must hold its liveness lock before stop can \
          have anything to escalate against"
+    );
+
+    // The second precondition, and the one the lock above cannot supply: the
+    // shell must have installed its `trap` before the group signal arrives.
+    // The lock is taken by the child *before* it execs `/bin/sh`, so holding it
+    // proves the shell was started, never that the shell has parsed and run its
+    // first command. In the window between the two, `TERM` still carries its
+    // default disposition and kills `sh` outright — the group signal takes the
+    // `sleep` with it, `stop` observes a process that shut down "cleanly", and
+    // it returns in ~81ms against an 8s grace.
+    //
+    // That is the same ~81ms deterministic path #1721 diagnosed and fixed for
+    // the *fixture* (a bare `sleep` that never ignored anything); this is the
+    // remaining half of it, in the fixture's replacement. It was re-observed at
+    // 81.99ms — a quarter-millisecond from the 81.41/81.65ms recorded then,
+    // which is what a fixed code path looks like and what a scheduler race
+    // does not. Only added load makes it likelier, never possible.
+    assert!(
+        eventually(Duration::from_secs(10), || trapped.exists()),
+        "precondition: the shell must have installed its TERM trap before stop \
+         signals the group"
     );
 
     let started = Instant::now();

@@ -784,6 +784,7 @@ async fn run_task(
                 execution.clone(),
                 cfg.provider.id.to_string(),
                 false,
+                None,
             )
         }
         None => agent::spawn_renderer(
@@ -792,6 +793,7 @@ async fn run_task(
             execution.clone(),
             cfg.provider.id.to_string(),
             false,
+            None,
         ),
     };
 
