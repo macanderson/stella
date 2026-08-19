@@ -2,10 +2,8 @@
 
 import * as React from "react";
 import { api } from "@/lib/api";
-import { INLINE_DIFF_CAP, selectDiffLines } from "@/lib/diff-view";
-import { highlightChangeBlock, type Span } from "@/lib/word-highlight";
 import type { Cell, Snapshot, TranscriptEntry } from "@/lib/types";
-import { fmtClock, fmtDuration, fmtMoney, fmtTokens } from "@/lib/format";
+import { fmtClock, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
 import {
   TOOL_CLASSES,
@@ -13,191 +11,57 @@ import {
   TOOL_CLASS_TEXT,
   toolClassOf,
 } from "@/lib/tool-class";
+import {
+  erroredSeqs,
+  indexByCallId,
+  rawExchange,
+  type RawExchange,
+} from "@/lib/transcript-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProofPanel } from "@/components/arena/proof-panel";
-
-/** Tools whose raw input IS a file change, so it reads far better as a
- *  git-style diff than as a JSON dump — additions green, removals red, the
- *  path as the hunk header. Every other tool keeps the plain argument view. */
-const FILE_MUTATION_TOOLS = new Set([
-  "write_file",
-  "edit_file",
-  "apply_edits",
-  "delete_file",
-]);
-
-type DiffLine = { sign: "+" | "-"; text: string };
-
-type FileHunk = { path?: string; lines: DiffLine[] };
-
-/** Read a file-mutating tool's raw input into one or more per-file diff hunks,
- *  or `null` when the tool is not a mutation or its input does not parse — the
- *  caller then falls back to the plain JSON. A new file is all-additions; an
- *  edit is its old lines removed then its new lines added; a delete is one
- *  removal marker (the bytes are not in the call). `apply_edits` carries a
- *  `path` on each element of its `edits` array (there is no top-level `path`),
- *  and one call can touch several files — so each edit is grouped under its own
- *  `e.path`, consecutive edits to the same file sharing a hunk, giving every
- *  file its own header instead of one anonymous path-less block. Field names
- *  are the tools' own schemas: write_file `{content,path}`, edit_file
- *  `{old_string,new_string,path}`, apply_edits `{edits:[{path,old_string,
- *  new_string}]}`. */
-function fileDiffFromRaw(
-  name: string | undefined,
-  raw: string,
-): FileHunk[] | null {
-  if (!name || !FILE_MUTATION_TOOLS.has(name)) return null;
-  let input: Record<string, unknown>;
-  try {
-    input = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  const path = typeof input.path === "string" ? input.path : undefined;
-  const asLines = (v: unknown, sign: DiffLine["sign"]): DiffLine[] =>
-    typeof v === "string" && v.length > 0
-      ? v.replace(/\n$/, "").split("\n").map((text) => ({ sign, text }))
-      : [];
-  const hunks: FileHunk[] = [];
-  if (name === "write_file") {
-    const lines = asLines(input.content, "+");
-    if (lines.length > 0) hunks.push({ path, lines });
-  } else if (name === "edit_file") {
-    const lines = [...asLines(input.old_string, "-"), ...asLines(input.new_string, "+")];
-    if (lines.length > 0) hunks.push({ path, lines });
-  } else if (name === "apply_edits") {
-    const edits = Array.isArray(input.edits) ? input.edits : [];
-    for (const e of edits as Record<string, unknown>[]) {
-      const editPath = typeof e.path === "string" ? e.path : undefined;
-      const lines = [...asLines(e.old_string, "-"), ...asLines(e.new_string, "+")];
-      if (lines.length === 0) continue;
-      const last = hunks[hunks.length - 1];
-      if (last && last.path === editPath) last.lines.push(...lines);
-      else hunks.push({ path: editPath, lines });
-    }
-  } else if (name === "delete_file") {
-    hunks.push({ path, lines: [{ sign: "-", text: "(file deleted)" }] });
-  }
-  return hunks.length > 0 ? hunks : null;
-}
-
-/** A tool's file change as a git-style diff: each touched file its own hunk
- *  with its path as the header, additions on a green ground and removals on a
- *  red one, each with its `+`/`-` sign. Line-level tint (not just glyph colour)
- *  so a scroll of edits reads at a glance the way `git diff` does. An
- *  `apply_edits` batch spanning several files renders one hunk per file so a
- *  multi-file change is never flattened into one anonymous block.
- *
- *  Within a change block the *changed tokens* of a paired removal/addition are
- *  washed harder still ({@link withWordSpans}), so an `edit_file` that moved
- *  one number does not read as a whole line rewritten. */
-function FileDiffBlock({
-  hunks,
-}: {
-  hunks: FileHunk[];
-}) {
-  return (
-    <div className="ml-5 mt-1 space-y-1">
-      {hunks.map((hunk, h) => (
-        <div
-          key={h}
-          className="overflow-x-auto rounded border border-line text-[11px]"
-        >
-          {hunk.path && (
-            <div className="border-b border-line bg-panel-2 px-2 py-1 font-mono text-dim">
-              {hunk.path}
-            </div>
-          )}
-          <div className="font-mono leading-[1.4]">
-            {withWordSpans(
-              hunk.lines.map((ln) => ({
-                text: ln.text,
-                tone: ln.sign === "+" ? ("add" as const) : ("remove" as const),
-                no: null,
-              })),
-              false,
-            ).map((ln, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "whitespace-pre-wrap break-words px-2",
-                  ln.tone === "add" ? "bg-ok/10 text-ok" : "bg-bad/10 text-bad",
-                )}
-              >
-                <span className="select-none opacity-60">
-                  {ln.tone === "add" ? "+" : "-"}{" "}
-                </span>
-                <WordSpans
-                  text={ln.text}
-                  spans={ln.spans}
-                  tone={ln.tone === "add" ? "add" : "remove"}
-                  query=""
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
+import { Entry, usageLine } from "@/components/arena/transcript/entry";
+import { RawDrawer } from "@/components/arena/transcript/raw-drawer";
 
 /**
  * A trial's transcript as its own page: `/transcript?match=…&task=…&seat=…`.
  *
- * This replaced the fly-out drawer. A transcript is the artifact people
- * actually study after a match — it deserves a URL you can bookmark, send,
- * and reload, plus the reading tools a drawer never had room for: kind
- * filters and full-text search across every entry.
+ * This replaced a fly-out drawer. A transcript is the artifact people actually
+ * study after a match — it deserves a URL you can bookmark, send and reload,
+ * plus the reading tools a drawer never had room for.
  *
- * The rendering follows the Command Deck's transcript grammar, because a
- * reader who lives in Stella should not have to relearn the page:
+ * This file is the page: which trial, the reading tools, playback, and the
+ * shell. How one entry is drawn is `transcript/entry.tsx`, in the grammar
+ * `crates/stella-transcript` renders for the Command Deck and the Observatory.
  *
- * - **Stages are section rules**, not rows — the label *is* the stage.
- * - **Reasoning is quiet.** Dim, italic, collapsed to a short preview with
- *   its line count in the header; the least load-bearing text on screen
- *   never outshouts the response.
- * - **The label is coloured, the value is read.** A tool's name takes its
- *   CLASS's hue — read/write/run/verify/repo/delegate
- *   (`crates/stella-tui/src/tool_class.rs`, mirrored server-side by
- *   `arenabench.toolclass` and surfaced as `meta.tool_class`) — never the
- *   brand accent; bodies stay plain. A colour earns its place by being rare,
- *   and here it answers the first question a reader asks of any row before a
- *   single name is read: was that a look, a change, a shell, a test, a push,
- *   a hand-off?
- * - **A collapsed result shows the line that matters, not the first one.**
- *   `salient_line` (ported below) anchors the preview at the first line
- *   carrying an error/warning/failure marker rather than line 1 — a build's
- *   first line is `Checking foo v0.1.0`, and the line a reader came for is
- *   twenty lines down. A success shows one line from there; a failure shows
- *   six (`crates/stella-tui/src/render/row.rs::{salient_line,FAIL_PREVIEW}`).
- * - **The rails are the deck's**: `●` opens a call, `⎿` its result, `✗` a
- *   failed one — a distinct glyph *and* column, so a failure is findable by
- *   margin-scan alone (`crates/stella-tui/src/render/row.rs::Rail`).
- * - **A mutation's diff rides its result row.** A successful `write_file`/
- *   `edit_file`/`apply_edits`/`delete_file` result carries the `file_change`
- *   diff its call produced (`meta.diff`, correlated server-side by
- *   `arenabench.transcript`), rendered GitHub-PR style under the row with
- *   the emitter's own `+N −M` in the metric column — at most
- *   `INLINE_DIFF_CAP` lines until disclosed, the fold the deck gives the
- *   same diff (`crates/stella-tui/src/render/entry.rs`, the `ToolResult`
- *   arm).
+ * ## The reading tools, and why each is separate
  *
- * Two deliberate departures. The deck renders a call and its result as one
- * tight block that nothing can split, so the result row need not repeat the
- * tool's name. Here the kind filters can hide every call row, which would
- * leave a column of results naming nothing — so a result row carries its
- * tool's name (and its class colour), subordinate to the call's. And every
- * body on the wire here is character-capped for the live stream's sake
- * (`arenabench.transcript.TOOL_RESULT_BUDGET`) in a way the deck, reading a
- * session in memory, never has to be — the "load full transcript" button
- * fetches the same trial uncapped for the one reader who needs every byte.
+ * - **Search** answers over the whole transcript and never behind the replay
+ *   timer: pacing a search result would hide hits behind a clock.
+ * - **Kind groups** and **tool names** narrow by category and by name.
+ * - **Errors only** is its own control rather than a kind group, because a
+ *   failure is not a kind — it is a *property* of a result — and it drags its
+ *   own call back in by `call_id`. A failed result read alone names the tool
+ *   and the message and says nothing about what was asked, which is the first
+ *   thing a reader wants and the only thing that makes the failure actionable
+ *   (`lib/transcript-view.ts::erroredSeqs`).
  *
- * Playback matches the drawer it replaced: a finished trial replays paced by
- * each entry's own elapsed stamp, a live one streams. Search and filters are
- * reading tools, so an active search shows every match immediately — pacing
- * a search result would just hide hits behind a timer.
+ * ## Playback, and what "load full transcript" means
+ *
+ * A finished trial **replays by default**, paced by each entry's own elapsed
+ * stamp; a live one streams. That is the right default and it stays.
+ *
+ * "Load full transcript" is a different request, and it used to be answered as
+ * if it were the same one. Every tool body on the SSE channel is
+ * character-capped for the live feed's sake
+ * (`arenabench.transcript.TOOL_RESULT_BUDGET`), and the elided bytes were never
+ * sent — so no client-side "show more" can recover them, and this button
+ * refetches the trial from byte zero with the caps off. But the refetch
+ * replaced the entry array, `visible.length` changed, and the pacing effect
+ * reset `revealed` to 0 — so asking for the whole transcript started the replay
+ * over from the beginning, which is the opposite of what the words say and of
+ * why anyone clicks it. Loading the full transcript now reveals all of it at
+ * once (`skipPacing`), and replay is still one click away.
  */
 
 const SPEEDS = [1, 2, 3, 6] as const;
@@ -299,924 +163,6 @@ function useMatchSnapshot(matchId: string) {
   return { snapshot, error };
 }
 
-/** Case-insensitive `<mark>` highlighting, keeping the original casing. */
-function Highlight({ text, query }: { text: string; query: string }) {
-  if (!query) return <>{text}</>;
-  const needle = query.toLowerCase();
-  const parts: React.ReactNode[] = [];
-  let rest = text;
-  let key = 0;
-  for (;;) {
-    const at = rest.toLowerCase().indexOf(needle);
-    if (at === -1) break;
-    if (at > 0) parts.push(rest.slice(0, at));
-    parts.push(
-      <mark key={key++} className="bg-accent text-on-accent">
-        {rest.slice(at, at + query.length)}
-      </mark>,
-    );
-    rest = rest.slice(at + query.length);
-  }
-  parts.push(rest);
-  return <>{parts}</>;
-}
-
-function usageLine(entry: TranscriptEntry): string {
-  const meta = (entry.meta || {}) as Record<string, unknown>;
-  return (
-    `${entry.title ?? "usage"} — ${meta.model || ""}` +
-    ` · in ${fmtTokens(meta.tokens_in)} out ${fmtTokens(meta.tokens_out)}` +
-    ` · cache ${fmtTokens(meta.cache_read)}/${fmtTokens(meta.cache_write)}` +
-    ` · self-rep ${fmtMoney(meta.cost_usd)}`
-  );
-}
-
-const THINKING_PREVIEW_LINES = 5;
-
-/** Collapsed-result line budgets, matching the deck and the export surfaces:
- * six lines either way, anchored on the salient point.
- *
- * A success used to show one line here, on the argument that its output is
- * chatter and its size belongs in the metric column. That is wrong for the
- * calls whose output *is* the answer — a `search`, a `read_file` — and it was
- * also a third answer to a question the deck and the export had already stopped
- * disagreeing about: the shared policy is
- * `stella_transcript::digest::PREVIEW_LINES`, which is 6 (#3644). Six is also
- * what a failure wants — a compiler error with its location and caret line, or
- * the top of a panic backtrace — so the two budgets coincide rather than being
- * separately chosen.
- *
- * These stay hand-mirrored rather than generated. Unlike the diff-view policy
- * and word highlighting, which are *algorithms* two languages can disagree
- * about subtly, this is one integer, and a golden matrix to pin one integer
- * would cost more than it caught. If a third constant shows up here, that
- * judgement should be revisited. */
-const OK_PREVIEW_LINES = 6;
-const FAIL_PREVIEW_LINES = 6;
-
-/** Split on `\n` the way Rust's `str::lines()` does: no trailing empty
- * element for text ending in a newline. Every result body downstream of
- * `salientLine` goes through this rather than a bare `.split("\n")`, so an
- * index computed on one agrees with a slice taken from the other. */
-function splitLines(text: string): string[] {
-  const lines = text.split("\n");
-  if (text.endsWith("\n")) lines.pop();
-  return lines;
-}
-
-/** Markers that make a line of tool output worth anchoring a collapsed
- * preview on, ported verbatim from `crates/stella-tui/src/render/row.rs::SALIENT`. */
-const SALIENT_MARKERS = [
-  "error",
-  "warning",
-  "failed",
-  "failure",
-  "panic",
-  "assert",
-  "fatal",
-  "exception",
-];
-
-/**
- * The line index a collapsed result should start its preview from.
- *
- * A direct port of `row.rs::salient_line`: showing line 1 is the obvious
- * choice and the wrong one — a build's first line is `Checking foo v0.1.0`
- * while the line that matters is twenty lines down — so this finds the first
- * line carrying a failure marker (`error:`, `warning:`, `panic: …`, matched
- * case-insensitively at the start of the trimmed line or as `marker:` within
- * its first 12 characters, so a log line that merely *mentions* an error
- * later on does not hijack the row) and falls back to the first non-blank
- * line when nothing stands out.
- */
-function salientLine(text: string): number {
-  const lines = splitLines(text);
-  let firstNonBlank = 0;
-  let seenNonBlank = false;
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].replace(/^\s+/, "");
-    if (!seenNonBlank && trimmed !== "") {
-      firstNonBlank = i;
-      seenNonBlank = true;
-    }
-    const lower = trimmed.toLowerCase();
-    const hit = SALIENT_MARKERS.some((marker) => {
-      if (lower.startsWith(marker)) return true;
-      const at = lower.indexOf(`${marker}:`);
-      return at !== -1 && at <= 12;
-    });
-    if (hit) return i;
-  }
-  return firstNonBlank;
-}
-
-type DiffTone = "add" | "remove" | "hunk" | "meta" | "context";
-
-type DiffRow = {
-  /** The raw diff line, `+`/`-` marker included. */
-  text: string;
-  tone: DiffTone;
-  /** The PR-style gutter number — added and context lines numbered on the
-   * new side, removed lines on the old side — or `null` for hunk headers,
-   * file metadata, and lines outside any hunk. */
-  no: number | null;
-  /** Word-level spans for `text` *without* its `+`/`-` marker, when this row
-   * was paired with one on the other side of a change block. `undefined` on
-   * every unpaired, context, hunk and meta row — the honest answer, since
-   * there is nothing to compare those against. */
-  spans?: Span[];
-};
-
-/**
- * The stronger wash a changed span gets inside an already-tinted line.
- *
- * Deliberately the *same* `--ok`/`--bad` tokens as the line tint, at a heavier
- * alpha, rather than a new hue: the Instrument palette carries exactly one
- * colour outside the semantic triad and it is identity, never a state. This is
- * also what `crates/stella-cli/src/export/transcript.rs` paints its `.ww`
- * word-tint with, so the exported HTML and this page agree by construction, and
- * it deliberately does not preempt #3630's open categorical-hue question — no
- * cyan, no violet.
- */
-const WORD_TINT: Record<"add" | "remove", string> = {
-  add: "bg-ok/25",
-  remove: "bg-bad/25",
-};
-
-/**
- * One diff line's text as word-level spans, the changed runs washed harder.
- *
- * Falls back to the plain line whenever there are no spans — an unpaired line,
- * a context line, or a pair `highlight` judged too dissimilar to annotate.
- * Search highlighting still runs *inside* each span, which means a query
- * straddling a span boundary is matched per-span rather than whole; that is the
- * same tradeoff the Rust export makes, and the alternative is re-implementing
- * the search matcher over a span list.
- */
-function WordSpans({
-  text,
-  spans,
-  tone,
-  query,
-}: {
-  text: string;
-  spans: Span[] | undefined;
-  tone: "add" | "remove";
-  query: string;
-}) {
-  if (!spans || spans.length === 0 || !spans.some((s) => s.changed)) {
-    return <Highlight text={text} query={query} />;
-  }
-  return (
-    <>
-      {spans.map((span, i) =>
-        span.changed ? (
-          <span key={i} className={WORD_TINT[tone]}>
-            <Highlight text={span.text} query={query} />
-          </span>
-        ) : (
-          <Highlight key={i} text={span.text} query={query} />
-        ),
-      )}
-    </>
-  );
-}
-
-/**
- * Attach word-level spans to every paired removal/addition in a row list.
- *
- * A port of `crates/stella-transcript/src/file_diff.rs::emit_change_block`'s
- * caller: a change block is a maximal run of removals followed by a maximal run
- * of additions, and pairing inside it is positional. The rows are returned as
- * new objects rather than mutated, because `parseDiff`'s output is also indexed
- * by the fold plan.
- *
- * `sign` says whether the row texts carry a leading `+`/`-` that must come off
- * before comparison and go back on for rendering.
- */
-function withWordSpans(rows: DiffRow[], sign: boolean): DiffRow[] {
-  const out = rows.map((row) => ({ ...row }));
-  const body = (row: DiffRow) => (sign ? row.text.slice(1) : row.text);
-  let i = 0;
-  while (i < out.length) {
-    if (out[i].tone !== "remove" && out[i].tone !== "add") {
-      i += 1;
-      continue;
-    }
-    const start = i;
-    while (i < out.length && out[i].tone === "remove") i += 1;
-    const removals = out.slice(start, i);
-    const addStart = i;
-    while (i < out.length && out[i].tone === "add") i += 1;
-    const additions = out.slice(addStart, i);
-    if (removals.length === 0 || additions.length === 0) continue;
-    const { removed, added } = highlightChangeBlock(
-      removals.map(body),
-      additions.map(body),
-    );
-    removals.forEach((row, k) => {
-      row.spans = removed[k];
-    });
-    additions.forEach((row, k) => {
-      row.spans = added[k];
-    });
-  }
-  return out;
-}
-
-/** Diff metadata rather than source content (`crates/stella-tui/src/diff.rs::is_meta`). */
-function isDiffMeta(line: string): boolean {
-  return (
-    line.startsWith("+++ ") ||
-    line.startsWith("--- ") ||
-    line.startsWith("diff ") ||
-    line.startsWith("index ")
-  );
-}
-
-/**
- * One `DiffRow` per diff line, with the gutter tracked from the
- * `@@ -a,b +c,d @@` hunk headers the way a PR view numbers them — a port of
- * `crates/stella-tui/src/diff.rs::body_lines`' numbering walk. Tones do not
- * depend on hunk state (the event path can emit a headerless pseudo-diff of
- * bare `+`/`-` lines); only the numbers do, so malformed input degrades to
- * unnumbered coloured text, never a crash.
- *
- * Intra-line word emphasis is **not** applied here — {@link withWordSpans} is a
- * second pass over the result, because pairing needs the whole row list and
- * this walk sees one line at a time. Deliberately still not ported: the deck's
- * syntax colouring, which leans on its terminal theme machinery.
- */
-function parseDiff(diff: string): DiffRow[] {
-  let oldNo: number | null = null;
-  let newNo: number | null = null;
-  return splitLines(diff).map((text): DiffRow => {
-    if (text.startsWith("@@")) {
-      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-      oldNo = m ? parseInt(m[1], 10) : null;
-      newNo = m ? parseInt(m[2], 10) : null;
-      return { text, tone: "hunk", no: null };
-    }
-    if (isDiffMeta(text)) return { text, tone: "meta", no: null };
-    const head = text.charAt(0);
-    if (head === "+") {
-      const no = newNo;
-      if (newNo !== null) newNo += 1;
-      return { text, tone: "add", no };
-    }
-    if (head === "-") {
-      const no = oldNo;
-      if (oldNo !== null) oldNo += 1;
-      return { text, tone: "remove", no };
-    }
-    if (head === " ") {
-      const no = newNo;
-      if (oldNo !== null) oldNo += 1;
-      if (newNo !== null) newNo += 1;
-      return { text, tone: "context", no };
-    }
-    // An elision marker (`… (25 more lines)`) or anything else the emitter
-    // interleaves: rendered plain and unnumbered.
-    return { text, tone: "context", no: null };
-  });
-}
-
-const DIFF_TONE_TEXT: Record<DiffTone, string> = {
-  add: "text-ok",
-  remove: "text-bad",
-  hunk: "text-dim",
-  meta: "text-dim",
-  context: "text-muted",
-};
-
-/** Frames shown before the fold, matching the deck's `RECALL_PREVIEW`. */
-const RECALL_PREVIEW_FRAMES = 3;
-
-type RecallFrame = {
-  kind?: string;
-  label?: string;
-  uri?: string | null;
-  provider?: string;
-  source?: string;
-  method?: string | null;
-  id?: string | null;
-  digest?: string | null;
-  tokens?: number;
-};
-
-/**
- * One context recall, as a table.
- *
- * The recall stage reached this page for the first time with this component:
- * `TranscriptReader` had no `context_recall` arm, so the event fell through to
- * `return []` and **every arena transcript silently omitted the stage that
- * decides what the model sees**. A benchmark transcript is the artifact used to
- * argue whether recall helped a run, and the evidence was never in it.
- *
- * Laid out the way the Command Deck lays it out
- * (`crates/stella-tui/src/render/entry.rs`), because it is the same data
- * answering the same questions: a header with the totals and the latency, one
- * row per frame carrying its kind, citation, location and token cost, and a
- * disclosure holding the provenance chain and the budget report.
- */
-function RecallEntry({
-  entry,
-  query,
-  open,
-  toggle,
-}: {
-  entry: TranscriptEntry;
-  query: string;
-  open: boolean;
-  toggle: () => void;
-}) {
-  const meta = (entry.meta || {}) as Record<string, unknown>;
-  const frames = (Array.isArray(meta.frames) ? meta.frames : []) as RecallFrame[];
-  const budget = (meta.budget || null) as {
-    requested?: number;
-    consumed?: number;
-    providers?: {
-      provider_id?: string;
-      frames_served?: number;
-      frames_rejected?: number;
-      token_cost?: number;
-    }[];
-  } | null;
-  const shown = open ? frames : frames.slice(0, RECALL_PREVIEW_FRAMES);
-  const hidden = frames.length - shown.length;
-  // The folded frames' cost, so the fold names what it hides. Without it the
-  // preview keeps the host's render order — which is the honest order, the one
-  // the model actually saw — while silently burying the outlier that made the
-  // case for per-frame costs in the first place.
-  const hiddenTokens = frames
-    .slice(shown.length)
-    .reduce((sum, f) => sum + (f.tokens ?? 0), 0);
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={toggle}
-        className="cursor-pointer font-semibold text-accent hover:text-foreground"
-      >
-        ◉ <Highlight text={entry.title ?? "recall"} query={query} />
-      </button>
-      <table className="w-full border-collapse text-[11px]">
-        {/* The columns are named once they are worth naming. Collapsed this is
-            a three-row preview whose cells label themselves; expanded it is the
-            whole recall with a provenance line under each row, and there the
-            heading is what keeps `82 tok` readable as a per-frame cost rather
-            than a running total. Same reasoning, and the same wording, as the
-            deck's ctrl+o heading in
-            `crates/stella-tui/src/render/entry/recall.rs`. */}
-        {open && (
-          <thead>
-            <tr className="border-b border-line-soft text-left align-baseline text-dim">
-              <th className="w-[1%] whitespace-nowrap pr-3 font-normal">kind</th>
-              <th className="pr-3 font-normal">citation</th>
-              <th className="pr-3 font-normal">location</th>
-              <th className="w-[1%] whitespace-nowrap text-right font-normal">
-                cost
-              </th>
-            </tr>
-          </thead>
-        )}
-        <tbody>
-          {shown.map((frame, i) => (
-            <React.Fragment key={`${frame.label}-${i}`}>
-              <tr className="align-baseline">
-                {/* The field the old rendering dropped, and the one that
-                    changes how a row is read: a `memory` and a `symbol` cost
-                    the prompt the same tokens and mean entirely different
-                    things about what retrieval did. */}
-                <td className="w-[1%] whitespace-nowrap pr-3 text-dim">
-                  {frame.kind || "frame"}
-                </td>
-                <td className="max-w-0 truncate pr-3 text-foreground">
-                  <Highlight text={frame.label ?? ""} query={query} />
-                </td>
-                {/* `direction: rtl` elides a path from the *left*: the tail
-                    (`…/command_deck/hunk_gate.rs:32`) identifies the frame and
-                    the head is a repo prefix every row already shares, so a
-                    plain right-truncation removes exactly the useful half. */}
-                <td
-                  dir="rtl"
-                  className="max-w-0 truncate pr-3 text-left text-muted"
-                  title={frame.uri ?? undefined}
-                >
-                  <bdi>
-                    <Highlight text={frame.uri ?? ""} query={query} />
-                  </bdi>
-                </td>
-                <td className="w-[1%] whitespace-nowrap text-right tabular-nums text-dim">
-                  {frame.tokens ?? 0} tok
-                </td>
-              </tr>
-              {open && (
-                <tr>
-                  <td />
-                  <td colSpan={3} className="pb-1 text-[10.5px] text-dim">
-                    {recallProvenance(frame)}
-                  </td>
-                </tr>
-              )}
-            </React.Fragment>
-          ))}
-        </tbody>
-      </table>
-      {hidden > 0 && (
-        <button
-          type="button"
-          onClick={toggle}
-          className="cursor-pointer text-[10.5px] text-dim hover:text-muted"
-        >
-          ⋯ {hidden} more · {hiddenTokens} tok · provenance and budget
-        </button>
-      )}
-      {open && budget && (
-        <div className="pt-1 text-[10.5px] text-dim">
-          <div>
-            budget {budget.consumed ?? 0} of {budget.requested ?? 0} tok
-          </div>
-          {/* A grid, not a `·`-joined line. The legs are two or three rows of
-              the same four fields, and joined into prose the rejected count
-              pushes the cost eleven characters right on the one row that has
-              one — so the two numbers a reader is here to compare never share
-              an edge. `tabular-nums` keeps the digits themselves in a column,
-              which is the browser's half of what the deck's fitted `{n:>w}`
-              does in a terminal. */}
-          <table className="border-collapse pl-3 tabular-nums">
-            <tbody>
-              {(budget.providers ?? []).map((leg) => (
-                <tr key={leg.provider_id} className="align-baseline">
-                  <td className="pl-3 pr-3">{leg.provider_id}</td>
-                  <td className="pr-3 text-right">{leg.frames_served ?? 0} served</td>
-                  {/* The number the frame list cannot carry — a rejected frame
-                      never reaches it — and so the only visible evidence that a
-                      provider misdeclared its cost. A leg that rejected nothing
-                      leaves the cell empty rather than writing a `0` the eye
-                      then has to filter out of the column it is scanning. */}
-                  <td className="pr-3 text-right text-warn">
-                    {(leg.frames_rejected ?? 0) > 0
-                      ? `${leg.frames_rejected} rejected`
-                      : ""}
-                  </td>
-                  <td className="text-right">{leg.token_cost ?? 0} tok</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** `provider ← source · method · id · digest` for an expanded frame row. */
-function recallProvenance(frame: RecallFrame): string {
-  const parts: string[] = [];
-  // Two fields on purpose: an adapter fronting another store
-  // (`workspace-memory` over `stella-context`) is the case one field hides.
-  if (frame.provider && frame.source && frame.provider !== frame.source) {
-    parts.push(`${frame.provider} ← ${frame.source}`);
-  } else if (frame.provider || frame.source) {
-    parts.push(frame.provider || frame.source || "");
-  }
-  if (frame.method) parts.push(frame.method);
-  if (frame.id) parts.push(frame.id);
-  // A missing digest is not nothing: per the context-reuse spec such a frame
-  // is *not verifiable* and a host must re-query rather than reuse it.
-  parts.push(
-    frame.digest ? `${frame.digest.slice(0, 14)}…` : "unverifiable (no digest)",
-  );
-  return parts.join(" · ");
-}
-
-/** One transcript entry, rendered in the deck's grammar. */
-function Entry({
-  entry,
-  query,
-  thinkingOpen,
-  toggleThinking,
-  resultOpen,
-  toggleResult,
-}: {
-  entry: TranscriptEntry;
-  query: string;
-  thinkingOpen: boolean;
-  toggleThinking: () => void;
-  resultOpen: boolean;
-  toggleResult: () => void;
-}) {
-  const body = entry.body || "";
-
-  if (entry.kind === "stage") {
-    // A section rule, not a row: the label is the stage.
-    return (
-      <div className="flex items-center gap-2 py-2" role="separator">
-        <span className="font-semibold text-muted">{entry.title || body}</span>
-        <span className="h-px flex-1 bg-line" />
-      </div>
-    );
-  }
-
-  if (entry.kind === "reasoning") {
-    const lines = body.split("\n");
-    const folded = !thinkingOpen && lines.length > THINKING_PREVIEW_LINES;
-    const shown = thinkingOpen ? lines : lines.slice(0, THINKING_PREVIEW_LINES);
-    return (
-      <div>
-        <button
-          type="button"
-          onClick={toggleThinking}
-          className="cursor-pointer text-[10.5px] text-dim hover:text-muted"
-        >
-          {thinkingOpen ? "⏶" : "⏵"} thinking · {lines.length}{" "}
-          {lines.length === 1 ? "line" : "lines"}
-        </button>
-        <div className="whitespace-pre-wrap break-words italic text-dim">
-          <Highlight text={shown.join("\n")} query={query} />
-        </div>
-        {folded && (
-          <button
-            type="button"
-            onClick={toggleThinking}
-            className="cursor-pointer text-[10.5px] text-dim hover:text-muted"
-          >
-            ⋯ {lines.length - THINKING_PREVIEW_LINES} more lines
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  if (entry.kind === "tool") {
-    // `● name  argument`, the deck's call row. The name is soft-padded to a
-    // common column so arguments line up down a run of calls — soft, not
-    // hard, because a long MCP name (`mcp__github__create_pull_request`)
-    // overruns the column rather than being truncated: the tool's identity
-    // outranks the alignment it would cost.
-    const meta = (entry.meta || {}) as Record<string, unknown>;
-    const raw = typeof meta.raw === "string" ? meta.raw : "";
-    const expandable = Boolean(raw) && raw !== "{}";
-    // The name's colour is the call's CLASS — read/write/run/verify/repo/
-    // delegate — never the arena's flat `--accent`: the class answers "what
-    // kind of thing was that" from the margin before a single name is read.
-    // The `●` glyph itself stays neutral: arenabench carries no brand/identity
-    // hue at all (the arena scores stella as one seat among several, so its
-    // the brand hue does not belong in chrome every seat is judged under), so unlike
-    // the deck's `Rail::Call` — which paints the glyph `ACCENT_DEEP` — the
-    // rail here is undyed and the class colour is spent on the one place a
-    // reader actually scans: the tool's own name.
-    const cls = toolClassOf(meta);
-    return (
-      <div>
-        <div className="flex items-baseline gap-2">
-          <span className="select-none text-dim">●</span>
-          <span
-            className={cn(
-              "min-w-[8.5rem] shrink-0 font-semibold",
-              TOOL_CLASS_TEXT[cls],
-            )}
-          >
-            <Highlight text={entry.title ?? "tool"} query={query} />
-          </span>
-          {body && (
-            <span className="min-w-0 flex-1 truncate text-muted">
-              <Highlight text={body} query={query} />
-            </span>
-          )}
-          {expandable && (
-            <button
-              type="button"
-              onClick={toggleResult}
-              aria-label={resultOpen ? "hide arguments" : "show arguments"}
-              className="shrink-0 cursor-pointer text-[10.5px] text-dim hover:text-muted"
-            >
-              {resultOpen ? "⏶" : "⋯"}
-            </button>
-          )}
-        </div>
-        {expandable && resultOpen &&
-          (() => {
-            // A file-mutating tool renders as a coloured diff; everything else
-            // keeps the raw argument JSON. The diff is null-safe: a call whose
-            // input does not parse falls back to the plain view.
-            const diff = fileDiffFromRaw(entry.title, raw);
-            return diff ? (
-              <FileDiffBlock hunks={diff} />
-            ) : (
-              <pre className="ml-5 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-dim">
-                <Highlight text={raw} query={query} />
-              </pre>
-            );
-          })()}
-      </div>
-    );
-  }
-
-  if (entry.kind === "tool_result") {
-    // `⎿ name · 141ms · 12 lines`, then the body — the deck's result rail,
-    // subordinate to the call above it. A failure takes `✗` and its own
-    // colour so it is findable by margin-scan alone, overriding the class
-    // colour below: an outcome always outranks a category, the same
-    // precedence the deck gives a stage rule over its own hue.
-    //
-    // The name is on the row rather than left implicit in the call above,
-    // which is where this page departs from the deck on purpose: the deck
-    // renders a call and its result as one tight block that cannot be split,
-    // while here the kind filters can hide every call row and leave a column
-    // of results naming nothing. It carries the same class colour as its
-    // call for the same reason — a reader who has filtered down to "results"
-    // alone should not lose which kind of call produced each one.
-    const meta = (entry.meta || {}) as Record<string, unknown>;
-    const isError = Boolean(meta.error);
-    const cls = toolClassOf(meta);
-    const lines = body ? splitLines(body) : [];
-    const total = lines.length;
-    // The mutation's diff, inline under the result — correlated server-side
-    // (`arenabench.transcript`, the `tool_result` arm) and rendered in the
-    // deck's grammar (`crates/stella-tui/src/render/entry.rs`): the metric
-    // column states the emitter's own `+N −M` instead of a line count, the
-    // collapsed row suppresses the output preview (a prose "Applied edit to
-    // …" would restate the call row above it and the diff under it in the
-    // same breath), and the diff shows at most `INLINE_DIFF_CAP` lines until
-    // disclosed. Only a successful mutation carries one, so `isError` never
-    // coincides with a diff.
-    const diffText = typeof meta.diff === "string" ? meta.diff : "";
-    const hasDiff = diffText.length > 0;
-    const diffAll = hasDiff ? withWordSpans(parseDiff(diffText), true) : [];
-    const diffPlan = resultOpen
-      ? { keep: diffAll.map(() => true), hidden: 0, foldBefore: -1 }
-      : selectDiffLines(
-          diffAll.map((row) => row.text),
-          INLINE_DIFF_CAP,
-        );
-    const diffKeep = diffPlan.keep;
-    // A lone hunk header is dropped (`diff.rs::body_lines_inline`): inline
-    // under a call row it restates what the gutter beside it already says,
-    // and a two-line change should not cost three rows. With several hunks
-    // the headers stay — there they are the boundary between two disjoint
-    // regions of the file.
-    const multiHunk = diffAll.filter((row) => row.tone === "hunk").length > 1;
-    const diffHidden = diffPlan.hidden;
-    // The elision is drawn WHERE the lines were, as a row of its own. Stated
-    // only in the fold summary below, a head-and-tail rendering would read as
-    // "the change continues past the bottom" under a row that is already the
-    // change's last line.
-    const diffShown: DiffRow[] = [];
-    diffAll.forEach((row, i) => {
-      if (i === diffPlan.foldBefore && diffHidden > 0) {
-        diffShown.push({
-          text: `⋯ ${diffHidden} ${diffHidden === 1 ? "line" : "lines"} not shown`,
-          tone: "meta",
-          no: null,
-        });
-      }
-      if (diffKeep[i] && (multiHunk || row.tone !== "hunk")) diffShown.push(row);
-    });
-    if (diffPlan.foldBefore === diffAll.length && diffHidden > 0) {
-      diffShown.push({
-        text: `⋯ ${diffHidden} ${diffHidden === 1 ? "line" : "lines"} not shown`,
-        tone: "meta",
-        no: null,
-      });
-    }
-    // The collapsed window anchors on the SALIENT line, not line 1 — see
-    // `salientLine`'s doc comment — and its size is the shared preview budget.
-    //
-    // The anchor is clamped so the window is never starved: a salient line near
-    // the *end* of the output would otherwise leave fewer than `budget` lines
-    // to take, and this surface would show one line where the deck and the
-    // export showed six. Sliding the window back keeps the salient line on
-    // screen as the last thing shown rather than the first. A port of the same
-    // clamp in `crates/stella-tui/src/render/entry.rs`.
-    const budget = isError ? FAIL_PREVIEW_LINES : OK_PREVIEW_LINES;
-    const anchor =
-      total > 0 ? Math.min(salientLine(body ?? ""), Math.max(0, total - budget)) : 0;
-    const collapsedShown = hasDiff ? [] : lines.slice(anchor, anchor + budget);
-    const shown = resultOpen ? lines : collapsedShown;
-    const hidden = resultOpen ? 0 : total - collapsedShown.length;
-    const metrics = [
-      meta.duration_ms != null ? fmtDuration(meta.duration_ms) : null,
-      // A diff states its own size in `+N −M` — the honest unit for an edit;
-      // "12 lines" would describe the tool's chatter, not the change.
-      total > 1 && !hasDiff ? `${total} lines` : null,
-      // ⚡ marks a speculated result: its duration overlapped the model's own
-      // streaming instead of following it, so the number is not latency the
-      // run actually spent waiting.
-      meta.speculated ? "⚡ speculated" : null,
-      // The protocol grew a `ToolOutput` arm this page predates. Say so
-      // rather than presenting the JSON fallback as if it were output.
-      meta.unrecognized ? "unrecognized output shape" : null,
-    ].filter(Boolean);
-    const foldParts = [
-      // Not the diff's own hidden count: the `⋯ n lines not shown` row inside
-      // the diff already carries it, in the place it happened.
-      null,
-      hidden > 0
-        ? hasDiff
-          ? `${hidden} output ${hidden === 1 ? "line" : "lines"}`
-          : `${hidden} more ${hidden === 1 ? "line" : "lines"}`
-        : null,
-    ].filter(Boolean);
-    return (
-      <div>
-        <div className="flex items-baseline gap-2">
-          <span className={cn("select-none", isError ? "text-bad" : "text-dim")}>
-            {isError ? "✗" : "⎿"}
-          </span>
-          <span
-            className={cn("font-medium", isError ? "text-bad" : TOOL_CLASS_TEXT[cls])}
-          >
-            <Highlight text={entry.title ?? "tool"} query={query} />
-          </span>
-          {/* The deck's `+N −M`, first in the metric column, from the counts
-              the emitter measured (`meta.diff_added`/`diff_removed`) — never
-              a recount of the rendered hunk, which is a bounded view of the
-              changed region and reports a smaller number. */}
-          {hasDiff && (
-            <span className="text-[10.5px] tabular-nums">
-              <span className="text-ok">+{Number(meta.diff_added ?? 0)}</span>{" "}
-              <span className="text-bad">−{Number(meta.diff_removed ?? 0)}</span>
-            </span>
-          )}
-          {metrics.length > 0 && (
-            <span className="text-[10.5px] text-dim">· {metrics.join(" · ")}</span>
-          )}
-        </div>
-        {shown.length > 0 && (
-          <pre
-            className={cn(
-              "ml-5 overflow-x-auto whitespace-pre-wrap break-words",
-              isError ? "text-bad/90" : "text-muted",
-            )}
-          >
-            <Highlight text={shown.join("\n")} query={query} />
-          </pre>
-        )}
-        {diffShown.length > 0 && (
-          <div className="ml-5 overflow-x-auto text-[11px]">
-            {diffShown.map((row, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "flex",
-                  row.tone === "add" && "bg-ok/10",
-                  row.tone === "remove" && "bg-bad/10",
-                )}
-              >
-                <span className="w-[34px] flex-none select-none pr-1.5 text-right text-[10px] tabular-nums text-dim/70">
-                  {row.no ?? ""}
-                </span>
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 whitespace-pre-wrap break-words",
-                    DIFF_TONE_TEXT[row.tone],
-                  )}
-                >
-                  {row.tone === "add" || row.tone === "remove" ? (
-                    <>
-                      <span className="select-none opacity-60">{row.text.charAt(0)}</span>
-                      <WordSpans
-                        text={row.text.slice(1)}
-                        spans={row.spans}
-                        tone={row.tone}
-                        query={query}
-                      />
-                    </>
-                  ) : (
-                    <Highlight text={row.text} query={query} />
-                  )}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-        {/* The deck only earns this row for a failure — a successful result
-            already states its size in the metric column above. A mouse-driven
-            page has no ctrl+o, though, so a folded SUCCESS still gets a quiet
-            way to see the rest; it just does not compete for attention the
-            way the failure's does. With a diff, the fold names both of the
-            things it hides: the diff's overflow and the output the collapsed
-            row suppressed entirely. */}
-        {!resultOpen && foldParts.length > 0 && (
-          <button
-            type="button"
-            onClick={toggleResult}
-            className={cn(
-              "ml-5 cursor-pointer text-[10.5px] hover:text-muted",
-              isError ? "text-dim" : "text-dim/70",
-            )}
-          >
-            ⋯ {foldParts.join(" · ")}
-          </button>
-        )}
-        {resultOpen && (total > budget || hasDiff) && (
-          <button
-            type="button"
-            onClick={toggleResult}
-            className="ml-5 cursor-pointer text-[10.5px] text-dim hover:text-muted"
-          >
-            ⏶ collapse
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  if (entry.kind === "usage") {
-    return <div className="text-[10.5px] text-dim">{usageLine(entry)}</div>;
-  }
-
-  if (entry.kind === "context_recall") {
-    return (
-      <RecallEntry
-        entry={entry}
-        query={query}
-        open={resultOpen}
-        toggle={toggleResult}
-      />
-    );
-  }
-
-  if (entry.kind === "proof") {
-    // The proof rail inline, where it happened. Colour tracks what the step
-    // means for the claim rather than the step's name: an oracle that failed
-    // and a witness that could not be authored are both the rail *working*,
-    // so they are marked, not alarmed — but a reader must be able to spot
-    // them while scrolling.
-    const meta = (entry.meta || {}) as Record<string, unknown>;
-    const step = String(meta.step ?? "");
-    const bad = step === "witness_unavailable" || step === "verification_unavailable";
-    const failed = step === "oracle" && meta.passed === false;
-    const good = step === "witness_authored" || (step === "oracle" && meta.passed === true);
-    return (
-      <div>
-        <span
-          className={cn(
-            "text-[11px] font-semibold",
-            good ? "text-ok" : bad || failed ? "text-warn" : "text-accent",
-          )}
-        >
-          ⊢ <Highlight text={entry.title ?? "proof"} query={query} />
-        </span>
-        {body && (
-          <div className="whitespace-pre-wrap break-words text-muted">
-            <Highlight text={body} query={query} />
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (entry.kind === "verdict" || entry.kind === "complete") {
-    // A verdict is not automatically good news. `passed: true` also covers an
-    // `unverifiable` outcome and a `waived` one, so the tone follows the
-    // ladder rung — the field that actually separates a proven pass from an
-    // unexamined claim.
-    const meta = (entry.meta || {}) as Record<string, unknown>;
-    const rung = String(meta.rung ?? "");
-    const proven = rung === "submit_fast" || rung === "revise";
-    const passed = meta.passed === true;
-    return (
-      <div>
-        <span
-          className={cn(
-            "font-semibold",
-            entry.kind === "complete" || proven ? "text-ok" : passed ? "text-warn" : "text-bad",
-          )}
-        >
-          {entry.title ?? entry.kind}
-          {rung && <span className="pl-2 font-normal text-dim">rung: {rung}</span>}
-          {passed && !proven && (
-            <span className="pl-2 font-normal text-warn">nothing deterministic behind it</span>
-          )}
-        </span>
-        {body && (
-          <div className="whitespace-pre-wrap break-words text-muted">
-            <Highlight text={body} query={query} />
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (entry.kind === "error") {
-    return (
-      <div className="text-bad">
-        <Highlight text={(entry.title ? `${entry.title}: ` : "") + body} query={query} />
-      </div>
-    );
-  }
-
-  // The agent's response — plain foreground, full width.
-  return (
-    <div className="whitespace-pre-wrap break-words text-foreground">
-      <Highlight text={body || entry.title || ""} query={query} />
-    </div>
-  );
-}
 
 function readParams(): { match: string; task: string; seat: string } {
   const params = new URLSearchParams(window.location.search);
@@ -1304,9 +250,17 @@ function TranscriptView({
   const [fullEntries, setFullEntries] = React.useState<TranscriptEntry[] | null>(null);
   const [loadingFull, setLoadingFull] = React.useState(false);
   const [fullError, setFullError] = React.useState<string | null>(null);
+  // Loading the whole transcript is a request to *see* the whole transcript.
+  // It used to be answered by replacing the entries and letting the pacing
+  // effect start the replay over from zero — so the button whose words are
+  // "load full transcript" showed the reader the first entry again. Replay
+  // stays the default for a finished trial; this is the one thing that turns
+  // it off, and the replay control turns it back on.
+  const [skipPacing, setSkipPacing] = React.useState(false);
   React.useEffect(() => {
     setFullEntries(null);
     setFullError(null);
+    setSkipPacing(false);
   }, [matchId, seatId, task]);
   const loadFullTranscript = React.useCallback(async () => {
     setLoadingFull(true);
@@ -1317,7 +271,11 @@ function TranscriptView({
           `${encodeURIComponent(seatId)}/${encodeURIComponent(task)}`,
       );
       setFullEntries(payload.entries);
+      setSkipPacing(true);
     } catch (err) {
+      // Deliberately not set on the failure path: a fetch that did not arrive
+      // must leave the reader with the paced transcript they already had,
+      // rather than jumping them to the end of a stale one.
       setFullError(String(err));
     } finally {
       setLoadingFull(false);
@@ -1371,11 +329,21 @@ function TranscriptView({
   // most readers here — the transcript below is the supporting detail.
   const [proofOpen, setProofOpen] = React.useState(true);
 
+  // Errors only. Computed over `entries` rather than inside the filter, because
+  // keeping a failed result means also keeping the *call* that produced it —
+  // a decision about the whole transcript that no per-entry predicate can make.
+  const [errorsOnly, setErrorsOnly] = React.useState(false);
+  const errored = React.useMemo(() => erroredSeqs(entries), [entries]);
+
   const visible = React.useMemo(() => {
     const needle = query.trim().toLowerCase();
     return entries.filter((entry) => {
+      if (errorsOnly && !errored.has(entry.seq)) return false;
       const group = groupOf(entry.kind);
-      if (group !== null && !enabled[group]) return false;
+      // The kind groups do not get to veto an errors-only view: a reader who
+      // asked for failures and has "results" switched off from ten minutes ago
+      // means "show me the failures", not "show me nothing".
+      if (!errorsOnly && group !== null && !enabled[group]) return false;
       // A call and its result are both named by the tool's own name — the
       // one identifier both kinds share — so one filter set hides both
       // halves of a call the reader asked not to see.
@@ -1398,16 +366,17 @@ function TranscriptView({
         (entry.kind === "usage" && usageLine(entry).toLowerCase().includes(needle))
       );
     });
-  }, [entries, enabled, disabledTools, query]);
+  }, [entries, enabled, disabledTools, query, errorsOnly, errored]);
 
   // -- playback (paced replay for a finished trial) -----------------------
   const [playing, setPlaying] = React.useState(true);
   const [speed, setSpeed] = React.useState<number>(1);
   const [revealed, setRevealed] = React.useState(0);
   const historical = ended && !live;
-  // Search is a reading tool: it answers over the whole transcript, never
-  // behind the replay timer.
-  const paced = historical && !searching;
+  // Three things turn pacing off, and each is a reader saying "show me all of
+  // it": a live trial (there is nothing to replay), an active search (pacing a
+  // search result hides hits behind a clock), and an explicit full load.
+  const paced = historical && !searching && !skipPacing;
 
   React.useEffect(() => {
     setRevealed(paced ? 0 : visible.length);
@@ -1441,13 +410,40 @@ function TranscriptView({
   const cell: Cell | null | undefined = row?.cells?.[seatId];
 
   const replay = React.useCallback(() => {
+    // Also clears the full-load skip, so "replay" means replay even for a
+    // reader who jumped to the end first. The loaded entries stay loaded —
+    // they are strictly better data, and refetching them would be a second
+    // request for bytes already in hand.
+    setSkipPacing(false);
     setRevealed(0);
     setPlaying(true);
   }, []);
 
+  // -- the raw exchange drawer ---------------------------------------------
+  // Held by `call_id` rather than by `seq`, so the drawer survives a reload
+  // that renumbers nothing but re-sorts, and so opening it from a call and
+  // from its result is the same act on the same object.
+  const callIndex = React.useMemo(() => indexByCallId(entries), [entries]);
+  // The trial's last response — the answer. Taken from `entries` rather than
+  // from what is on screen, so filtering or pacing cannot promote an earlier
+  // response into the answer's rule and tell the reader the run ended there.
+  const answerSeq = React.useMemo(() => {
+    let last: number | null = null;
+    for (const entry of entries) if (entry.kind === "text") last = entry.seq;
+    return last;
+  }, [entries]);
+  const [inspecting, setInspecting] = React.useState<string | null>(null);
+  React.useEffect(() => setInspecting(null), [seatId, task]);
+  const exchange: RawExchange | null = React.useMemo(() => {
+    if (!inspecting) return null;
+    const pair = callIndex.get(inspecting);
+    const anchor = pair?.call ?? pair?.result;
+    return anchor ? rawExchange(anchor, callIndex) : null;
+  }, [inspecting, callIndex]);
+
   return (
     <div
-      className="mx-auto flex h-dvh max-w-[1100px] flex-col px-4 py-3"
+      className="tx mx-auto flex h-dvh max-w-[1100px] flex-col px-4 py-3"
       style={seatStyle(seat?.color)}
     >
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line pb-2.5">
@@ -1548,6 +544,31 @@ function TranscriptView({
             </button>
           ))}
         </div>
+        {/* Its own control, apart from the kind groups above, because a failure
+            is not a KIND — it is a property of a result — and because this one
+            reaches across rows: keeping a failed result also keeps the call
+            that produced it. Reads as a state the page is in rather than as one
+            more chip in the row, since it overrides the chips beside it. */}
+        <button
+          type="button"
+          onClick={() => setErrorsOnly((value) => !value)}
+          aria-pressed={errorsOnly}
+          className={cn(
+            "cursor-pointer px-2 py-1 font-mono text-[11px]",
+            errorsOnly
+              ? "bg-bad text-on-seat"
+              : errored.size > 0
+                ? "text-bad hover:bg-panel"
+                : "text-dim hover:bg-panel",
+          )}
+          title={
+            errored.size > 0
+              ? "show only failed calls, with the calls that produced them"
+              : "no failures in this trial"
+          }
+        >
+          ✗ errors{errored.size > 0 ? ` (${errored.size})` : ""}
+        </button>
         <div className="ml-auto flex items-center gap-2">
           {/* Every tool call/result body on the streamed channel is
               character-capped for the live feed's sake; this fetches the same
@@ -1683,44 +704,104 @@ function TranscriptView({
         {proofOpen && <ProofPanel proof={cell?.proof} />}
       </div>
 
-      <div
-        ref={feedRef}
-        className="flex-1 overflow-y-auto py-2.5 font-mono text-[11.5px] leading-[1.62]"
-      >
-        {waiting && shown.length === 0 ? (
-          <div className="py-1 text-accent">waiting for the trial to start…</div>
-        ) : shown.length === 0 ? (
-          <div className="py-1 text-dim">
-            {searching ? "nothing matches this search." : "no transcript entries for this trial."}
-          </div>
-        ) : (
-          shown.map((entry) => (
-            <div key={entry.seq} className="flex gap-[9px] py-0.5">
-              <span className="w-[46px] flex-none pt-0.5 text-[10px] text-dim">
-                {fmtClock(entry.t)}
-              </span>
-              <div className="min-w-0 flex-1">
-                <Entry
-                  entry={entry}
-                  query={query.trim()}
-                  thinkingOpen={thinkingOverrides[entry.seq] ?? thinkingDefault}
-                  toggleThinking={() =>
-                    setThinkingOverrides((state) => ({
-                      ...state,
-                      [entry.seq]: !(state[entry.seq] ?? thinkingDefault),
-                    }))
-                  }
-                  resultOpen={openResults[entry.seq] ?? false}
-                  toggleResult={() =>
-                    setOpenResults((state) => ({
-                      ...state,
-                      [entry.seq]: !state[entry.seq],
-                    }))
-                  }
-                />
-              </div>
+      {/* The frame. A transcript is one artifact, and the runbar says whose it
+          is — a reader arriving from a shared link has a seat, a model and a
+          verdict in view before scrolling. Same shape the Command Deck and the
+          Observatory put around the same events. */}
+      <div className="tx-frame mt-2 flex min-h-0 flex-1 flex-col">
+        <div className="tx-runbar">
+          <span className="name">{task || "—"}</span>
+          <span className="meta">
+            {seat?.name ?? seatId}
+            {seat?.engine_label ? ` · ${seat.engine_label}` : ""}
+            {cell ? ` · ${fmtClock(cell.clock_time)}` : ""}
+          </span>
+          <span className="tx-chips">
+            {errorsOnly && <span className="tx-chip err">errors only</span>}
+            {skipPacing && <span className="tx-chip">full · unpaced</span>}
+            {cell?.resolved === true && <span className="tx-chip ok">✓ solved</span>}
+            {cell?.resolved === false && <span className="tx-chip err">✗ failed</span>}
+          </span>
+        </div>
+
+        <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto py-2">
+          {waiting && shown.length === 0 ? (
+            <div className="px-3 py-1 text-accent">waiting for the trial to start…</div>
+          ) : shown.length === 0 ? (
+            <div className="px-3 py-1 text-dim">
+              {errorsOnly
+                ? "no failed calls in this trial."
+                : searching
+                  ? "nothing matches this search."
+                  : "no transcript entries for this trial."}
             </div>
-          ))
+          ) : (
+            shown.map((entry) => {
+              // The icon is offered only where there is genuinely an exchange
+              // behind the row, which is what keeps it rare enough to notice.
+              const callId =
+                typeof entry.meta?.call_id === "string" ? entry.meta.call_id : "";
+              const hasExchange =
+                Boolean(callId) && rawExchange(entry, callIndex) !== null;
+              return (
+                <div key={entry.seq} className="tx-row py-0.5">
+                  <span className="tx-clock">{fmtClock(entry.t)}</span>
+                  {/* The spine. A dot in the class's own hue, so a scroll of
+                      hundreds of rows can be read by margin alone; filled for
+                      a mutation, hollow for everything else, because a write
+                      is the one kind whose position a reader reconstructs a
+                      run from. */}
+                  <span className="tx-node">
+                    {(entry.kind === "tool" || entry.kind === "tool_result") && (
+                      <span
+                        className={cn(
+                          "tx-dot",
+                          entry.meta?.error
+                            ? "text-bad"
+                            : TOOL_CLASS_TEXT[toolClassOf(entry.meta)],
+                          toolClassOf(entry.meta) === "mutate" && "solid",
+                        )}
+                      />
+                    )}
+                  </span>
+                  <div className="min-w-0">
+                    <Entry
+                      entry={entry}
+                      query={query.trim()}
+                      thinkingOpen={thinkingOverrides[entry.seq] ?? thinkingDefault}
+                      toggleThinking={() =>
+                        setThinkingOverrides((state) => ({
+                          ...state,
+                          [entry.seq]: !(state[entry.seq] ?? thinkingDefault),
+                        }))
+                      }
+                      resultOpen={openResults[entry.seq] ?? false}
+                      toggleResult={() =>
+                        setOpenResults((state) => ({
+                          ...state,
+                          [entry.seq]: !state[entry.seq],
+                        }))
+                      }
+                      onInspect={
+                        hasExchange
+                          ? () =>
+                              setInspecting((open) => (open === callId ? null : callId))
+                          : undefined
+                      }
+                      inspecting={Boolean(callId) && inspecting === callId}
+                      isAnswer={entry.seq === answerSeq}
+                    />
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Along the bottom, inside the frame, so the transcript stays visible
+            and scrollable while a payload is being read against it. */}
+        {exchange && (
+          <RawDrawer exchange={exchange} onClose={() => setInspecting(null)} />
         )}
       </div>
     </div>

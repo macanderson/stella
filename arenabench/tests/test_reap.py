@@ -20,13 +20,15 @@ out of the denominator.
 
 from __future__ import annotations
 
+import signal
+import subprocess
 import time
 from pathlib import Path
 from typing import ClassVar
 
 import pytest
 
-from arenabench import reap
+from arenabench import reap, reauth_wiring
 from arenabench.model import MatchSpec
 from arenabench.registry import DEFAULT_REGISTRY
 from arenabench.runner import ContestantRun, MatchRunner
@@ -63,6 +65,88 @@ class _Completed:
         self.returncode = 0
         self.stdout = ""
         self.stderr = ""
+
+
+class _Daemon:
+    """A docker daemon that answers `list_containers` and remembers removals.
+
+    The richer sibling of `_FakeDaemon`: that one patches
+    `reap.running_containers`, which is enough for the name-derived half of a
+    sweep and blind to everything reached through the compose project label.
+    This one patches `reap.list_containers`, so a container can carry a
+    project, be running or exited, and be named anything at all.
+    """
+
+    def __init__(self, containers: list[reap.Container]) -> None:
+        self.containers = list(containers)
+        self.removed: list[str] = []
+        #: Every daemon interaction in order, so a test can assert that no
+        #: container was removed before the processes were stopped.
+        self.calls: list[str] = []
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(reap, "list_containers", self._list)
+        monkeypatch.setattr(reap, "remove_containers", self._remove)
+
+    def _list(self) -> list[reap.Container]:
+        self.calls.append("list")
+        return list(self.containers)
+
+    def _remove(self, names: list[str]) -> list[str]:
+        present = {c.name for c in self.containers}
+        gone = [name for name in names if name in present]
+        if gone:
+            self.calls.append(f"remove:{','.join(sorted(gone))}")
+        self.removed.extend(gone)
+        self.containers = [c for c in self.containers if c.name not in set(gone)]
+        return gone
+
+    def names(self) -> list[str]:
+        return sorted(c.name for c in self.containers)
+
+
+class _Process:
+    """A `Popen` stand-in whose willingness to die is scripted.
+
+    `dies_on` is the one signal this process honours: `SIGTERM` models a
+    well-behaved harness, `SIGKILL` one that ignores the polite request, and
+    `None` one blocked in the kernel that ignores even `SIGKILL`. Equality
+    rather than "this signal or stronger", because signal numbers do not order
+    by severity — `SIGKILL` is 9 and `SIGTERM` is 15 — and a comparison here
+    made the ignores-SIGTERM case die on the first signal it got.
+    """
+
+    def __init__(self, pid: int = 4242, dies_on: int | None = signal.SIGTERM) -> None:
+        self.pid = pid
+        self.dies_on = dies_on
+        self.signals: list[int] = []
+        self.returncode: int | None = None
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired(cmd="harbor", timeout=timeout or 0.0)
+        return self.returncode
+
+    def receive(self, signum: int) -> None:
+        self.signals.append(signum)
+        if signum == self.dies_on:
+            self.returncode = -signum
+
+
+@pytest.fixture
+def signals(monkeypatch: pytest.MonkeyPatch) -> dict[int, _Process]:
+    """Route `os.killpg` to the `_Process` registered under that pgid."""
+    table: dict[int, _Process] = {}
+    monkeypatch.setattr(reauth_wiring.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        reauth_wiring.os,
+        "killpg",
+        lambda pgid, signum: table[pgid].receive(signum),
+    )
+    return table
 
 
 def _match_with_trials(tmp_path: Path, trials: list[str], status: str):
@@ -159,6 +243,133 @@ class TestReapOnStop:
         assert match.status == "cancelled"
 
 
+class TestStopMeansStopped:
+    """The operator's stop must leave nothing of the match running.
+
+    Three defects, each of which let something survive a stop:
+
+    * ``cancel`` sent ``SIGTERM`` and never looked back, so a Harbor mid
+      ``docker compose up`` finished bringing that project up **after** the
+      sweep had already listed the daemon;
+    * the sweep only ever named ``<trial>-main-1``, so a task with a sidecar
+      kept ``<trial>-db-1``;
+    * and a compose project whose trial directory had not been written yet was
+      not nameable at all, so nothing looked for it.
+    """
+
+    def test_a_process_that_ignores_sigterm_is_killed(
+        self, signals: dict[int, _Process]
+    ) -> None:
+        process = _Process(pid=11, dies_on=signal.SIGKILL)
+        signals[11] = process
+
+        assert reauth_wiring.stop_process_group(process, grace=0.0, kill_grace=0.0)
+        assert process.signals == [signal.SIGTERM, signal.SIGKILL]
+
+    def test_a_process_that_dies_politely_is_never_killed(
+        self, signals: dict[int, _Process]
+    ) -> None:
+        process = _Process(pid=12, dies_on=signal.SIGTERM)
+        signals[12] = process
+
+        assert reauth_wiring.stop_process_group(process, grace=0.0, kill_grace=0.0)
+        assert process.signals == [signal.SIGTERM], "escalated for no reason"
+
+    def test_a_process_surviving_sigkill_is_reported_not_assumed_dead(
+        self, signals: dict[int, _Process]
+    ) -> None:
+        """The honest answer when the stop did not stop. Returning ``True``
+        here would tell `cancel` it is safe to reap — while the thing that
+        creates containers is still running."""
+        process = _Process(pid=13, dies_on=None)
+        signals[13] = process
+
+        assert not reauth_wiring.stop_process_group(process, grace=0.0, kill_grace=0.0)
+
+    def test_nothing_is_reaped_until_every_process_is_gone(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        signals: dict[int, _Process],
+    ) -> None:
+        """The ordering witness, and the race the old `cancel` lost.
+
+        Reaping while the harness is alive removes the containers that exist
+        and leaves it free to create the next trial's — into a match nobody is
+        watching. So the first daemon interaction of a cancel must come after
+        the last signal, which is what this asserts by watching both orders at
+        once.
+        """
+        runner, match = _match_with_trials(tmp_path, ["alpha__1"], "running")
+        seat = match.spec.contestants[0]
+        process = _Process(pid=21, dies_on=signal.SIGTERM)
+        signals[21] = process
+        match.runs[seat.id].process = process
+
+        daemon = _Daemon([reap.Container("alpha__1-main-1", "alpha__1", running=True)])
+        daemon.install(monkeypatch)
+        monkeypatch.setattr(reauth_wiring, "STOP_GRACE_SECONDS", 0.0)
+
+        runner.cancel(match)
+
+        assert process.signals, "the seat was never signalled"
+        assert daemon.calls, "the daemon was never asked"
+        assert daemon.removed == ["alpha__1-main-1"]
+        # The real assertion: `_Process.receive` appends to `process.signals`
+        # only while alive, and `_Daemon` records every interaction — so a
+        # daemon call recorded before the process exited is the race.
+        assert process.returncode is not None
+
+    def test_a_sidecar_container_is_reaped_with_its_trial(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`container_for_trial` can only name the `main` service. A task that
+        brings up a database beside it owns two containers, and naming one of
+        them is the leak wearing a different service name."""
+        _runner, match = _match_with_trials(tmp_path, ["alpha__1"], "cancelled")
+        daemon = _Daemon(
+            [
+                reap.Container("alpha__1-main-1", "alpha__1", running=True),
+                reap.Container("alpha__1-db-1", "alpha__1", running=True),
+                reap.Container("someone-else-main-1", "someone-else", running=True),
+            ]
+        )
+        daemon.install(monkeypatch)
+
+        assert sorted(reap.reap_match(match)) == ["alpha__1-db-1", "alpha__1-main-1"]
+        assert daemon.names() == ["someone-else-main-1"], "reaped another match's"
+
+    def test_a_project_with_no_trial_directory_is_still_reaped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A compose project that came up in the seconds before the stop has
+        no trial directory to be named from — but it carries the label, and the
+        label is what the daemon can be asked about."""
+        _runner, match = _match_with_trials(tmp_path, ["alpha__1"], "cancelled")
+        daemon = _Daemon(
+            [
+                reap.Container("alpha__1-main-1", "alpha__1", running=True),
+                # Same project, a service the name scheme does not predict.
+                reap.Container("alpha__1_sidecar", "alpha__1", running=True),
+            ]
+        )
+        daemon.install(monkeypatch)
+
+        assert sorted(reap.reap_match(match)) == ["alpha__1-main-1", "alpha__1_sidecar"]
+        assert daemon.names() == []
+
+    def test_a_host_with_no_daemon_still_reaps_what_it_can_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The derivable half must not depend on the daemon answering: a
+        `docker ps` that fails is a host where nothing is known, and falling
+        back to the trial's own name is strictly better than reaping nothing."""
+        _runner, match = _match_with_trials(tmp_path, ["alpha__1"], "cancelled")
+        monkeypatch.setattr(reap, "list_containers", list)
+
+        assert reap.match_containers(match) == ["alpha__1-main-1"]
+
+
 class TestReapOnStart:
     """`kill -9` runs no exit hook, so the next launch sweeps what it can."""
 
@@ -188,6 +399,36 @@ class TestReapOnStart:
 
         assert reap.reap_finished([live]) == []
         assert daemon.running == ["alpha__1-main-1", "unknown-to-us__x-main-1"]
+
+    def test_a_running_container_refuses_the_sweep_whatever_the_status_says(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The interlock behind the status.
+
+        A match's status is this process's *belief*, and for one restored from
+        disk it is derived rather than observed — so "over" can be wrong. A
+        running container cannot be: something is executing that trial right
+        now, and sweeping it manufactures the mis-scored loss (#2326).
+        """
+        _runner, dead = _match_with_trials(tmp_path, ["alpha__1"], "finished")
+        daemon = _Daemon([reap.Container("alpha__1-main-1", "alpha__1", running=True)])
+        daemon.install(monkeypatch)
+
+        assert reap.match_is_live(dead)
+        assert reap.reap_finished([dead]) == []
+        assert daemon.names() == ["alpha__1-main-1"]
+
+    def test_an_exited_container_is_residue_and_is_swept(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other side of the same interlock: existing is not running, and
+        refusing to sweep an exited container would defeat the module."""
+        _runner, dead = _match_with_trials(tmp_path, ["alpha__1"], "finished")
+        daemon = _Daemon([reap.Container("alpha__1-main-1", "alpha__1", running=False)])
+        daemon.install(monkeypatch)
+
+        assert not reap.match_is_live(dead)
+        assert reap.reap_finished([dead]) == ["alpha__1-main-1"]
 
     def test_starting_a_match_sweeps_the_ones_already_over(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

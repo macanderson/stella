@@ -293,3 +293,45 @@ export function highlightChangeBlock(
   }
   return { removed, added };
 }
+/**
+ * Word-highlight the rows of a rendered diff, keyed by their sign column.
+ *
+ * A renderer holds one flat list of rows rather than the removal/addition runs
+ * {@link highlightChangeBlock} takes, so this walks the list, finds each run of
+ * `-` immediately followed by its run of `+`, and delegates the pairing itself
+ * — the caller never re-derives which removal answers which addition, because
+ * two implementations of that rule is exactly what the golden matrix exists to
+ * prevent.
+ *
+ * `signs[i]` is `"-"`, `"+"`, or anything else for a line that is neither.
+ * Returns a sparse array: index *i* holds that line's spans, or `undefined`
+ * when the line is not part of a change block and renders as plain text.
+ */
+export function pairedSpans(
+  signs: readonly string[],
+  texts: readonly string[],
+): Array<Span[] | undefined> {
+  const out: Array<Span[] | undefined> = new Array(signs.length).fill(undefined);
+  let i = 0;
+  while (i < signs.length) {
+    if (signs[i] !== "-") {
+      i += 1;
+      continue;
+    }
+    const removedFrom = i;
+    while (i < signs.length && signs[i] === "-") i += 1;
+    const addedFrom = i;
+    while (i < signs.length && signs[i] === "+") i += 1;
+    const { removed, added } = highlightChangeBlock(
+      texts.slice(removedFrom, addedFrom),
+      texts.slice(addedFrom, i),
+    );
+    removed.forEach((spans, k) => {
+      out[removedFrom + k] = spans;
+    });
+    added.forEach((spans, k) => {
+      out[addedFrom + k] = spans;
+    });
+  }
+  return out;
+}

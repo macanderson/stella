@@ -76,7 +76,10 @@ def test_the_full_transcript_route_returns_every_entry_uncapped(served):
         "\n".join(
             json.dumps(e)
             for e in [
-                {"type": "tool_start", "call": {"call_id": "c1", "name": "bash", "input": {"cmd": "x"}}},
+                {
+                    "type": "tool_start",
+                    "call": {"call_id": "c1", "name": "bash", "input": {"cmd": "x"}},
+                },
                 {
                     "type": "tool_result",
                     "call_id": "c1",
@@ -97,6 +100,54 @@ def test_the_full_transcript_route_returns_every_entry_uncapped(served):
     assert result["body"] == long_output
     assert "truncated" not in result["body"]
     assert result["meta"]["tool_class"] == "execute"
+
+
+def test_a_streamed_message_is_returned_once_whole_not_once_per_fragment(served):
+    """The witness for the "load full transcript" button's second defect.
+
+    The reader coalesces `text_delta`/`reasoning` fragments into ONE growing
+    entry that it re-emits under the same `seq` after every fragment. The SSE
+    client honours that by keying a map on `seq`, so a re-emission replaces.
+    This route returned the reader's raw output and its caller renders a list —
+    which for a *finished* trial read in one pass means every prefix of every
+    message is in the payload at once.
+
+    Measured on a real archived trial before the fix: 265 entries carrying 72
+    distinct `seq`s, one reasoning block repeated 83 times. The reader who paid
+    extra bytes for the whole transcript got the same paragraph 83 times.
+    """
+    port, events = served
+    events.write_text(
+        "\n".join(
+            json.dumps(e)
+            for e in [
+                {"type": "reasoning", "delta": "I will "},
+                {"type": "reasoning", "delta": "read the file "},
+                {"type": "reasoning", "delta": "first."},
+                {
+                    "type": "tool_start",
+                    "call": {"call_id": "c1", "name": "bash", "input": {"cmd": "x"}},
+                },
+                {"type": "text_delta", "delta": "Done"},
+                {"type": "text_delta", "delta": " — all tests pass."},
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    status, body = _get(port, "/api/matches/m1/transcript-full/seat/demo")
+    assert status == 200
+    entries = json.loads(body)["entries"]
+
+    seqs = [entry["seq"] for entry in entries]
+    assert len(seqs) == len(set(seqs)), f"a seq is repeated: {seqs}"
+
+    by_kind = {entry["kind"]: entry for entry in entries}
+    # The LAST emission, which is the complete one — the accumulator only grows.
+    assert by_kind["reasoning"]["body"] == "I will read the file first."
+    assert by_kind["text"]["body"] == "Done — all tests pass."
+    # Order is the order it happened, not the order a dict rehashed it into.
+    assert [entry["kind"] for entry in entries] == ["reasoning", "tool", "text"]
 
 
 def test_an_unknown_trial_returns_an_empty_transcript_not_an_error(served):

@@ -723,7 +723,33 @@ class ArenaServer:
         # No trial's transcript approaches a million lines; the limit exists
         # so `read` has one to check rather than because this one is expected
         # to bind.
-        return {"entries": reader.read(path, limit=1_000_000)}
+        entries = reader.read(path, limit=1_000_000)
+
+        # Collapse each `seq` to its last emission.
+        #
+        # The reader coalesces streamed `text`/`reasoning` fragments into ONE
+        # growing entry that it re-emits under the same `seq` after every
+        # fragment — a contract the SSE client honours by keying a map on `seq`,
+        # so a re-emission replaces rather than appends. This endpoint returned
+        # the reader's raw output instead, and its caller renders a list.
+        #
+        # For a live stream those are the same thing, because a client sees the
+        # re-emissions arrive one at a time and overwrite. Reading a *finished*
+        # trial in a single pass they are not: every prefix of every message is
+        # in the list at once. One real trial came back as 265 entries carrying
+        # 72 distinct `seq`s — one reasoning block repeated 83 times, each a
+        # slightly longer prefix of the same text — so the page a reader
+        # deliberately paid extra bytes for was the one that showed them the
+        # same paragraph 83 times.
+        #
+        # Last write wins, because the last emission is the complete one: the
+        # accumulator only ever grows, and the consolidated `text` event
+        # replaces the fragment run outright. Insertion order is preserved so
+        # the transcript still reads in the order it happened.
+        collapsed: dict[int, dict[str, Any]] = {}
+        for entry in entries:
+            collapsed[entry["seq"]] = entry
+        return {"entries": list(collapsed.values())}
 
     def video(self, match_id: str, contestant_id: str, task: str) -> Path | None:
         match = self.runner.matches.get(match_id)

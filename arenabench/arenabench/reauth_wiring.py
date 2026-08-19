@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import signal
 import subprocess
 import time
 from collections.abc import Callable, Sequence
@@ -41,7 +42,11 @@ if TYPE_CHECKING:  # pragma: no cover - types only, and importing them is a cycl
     from .runner import Match
 
 __all__ = [
+    "KILL_GRACE_SECONDS",
     "STOP_GRACE_SECONDS",
+    "kill_process_group",
+    "stop_match",
+    "stop_process_group",
     "stop_seat",
     "supervise_match",
     "terminate_process_group",
@@ -58,19 +63,93 @@ log = logging.getLogger("arenabench.reauth")
 #: signalled again on the next tick.
 STOP_GRACE_SECONDS = 5.0
 
+#: How long a ``SIGKILL``ed group is given before the caller gives up on it.
+#:
+#: Short, because ``SIGKILL`` is not deliverable-and-ignorable the way
+#: ``SIGTERM`` is: a group that has not gone in this long is blocked in an
+#: uninterruptible syscall, and waiting longer will not change that. The point
+#: of waiting at all is that the caller's *next* action — reaping containers —
+#: is only correct once nothing is still creating them.
+KILL_GRACE_SECONDS = 3.0
+
+
+def _signal_group(process: subprocess.Popen, signum: int) -> None:
+    """Send ``signum`` to the process's whole group, or to it alone."""
+    try:
+        os.killpg(os.getpgid(process.pid), signum)
+    except (OSError, ProcessLookupError):
+        with contextlib.suppress(OSError):
+            if signum == signal.SIGKILL:
+                process.kill()
+            else:
+                process.terminate()
+
 
 def terminate_process_group(process: subprocess.Popen) -> None:
-    """Signal a seat's whole process group, falling back to the parent alone.
+    """``SIGTERM`` a seat's whole process group, falling back to the parent.
 
     The group, not the process: Harbor spawns Docker and helper children, and
     terminating only the parent leaves containers running and the job directory
     growing afterwards.
+
+    Asking politely and walking away, which is right for the supervisor —
+    :func:`.reauth.decide` re-signals on the next tick, so a Harbor that
+    ignores this is simply asked again. It is *not* right for an operator's
+    stop, where nothing comes back for a second try; that is
+    :func:`stop_process_group`.
     """
-    try:
-        os.killpg(os.getpgid(process.pid), 15)
-    except (OSError, ProcessLookupError):
-        with contextlib.suppress(OSError):
-            process.terminate()
+    _signal_group(process, signal.SIGTERM)
+
+
+def kill_process_group(process: subprocess.Popen) -> None:
+    """``SIGKILL`` a seat's whole process group, falling back to the parent."""
+    _signal_group(process, signal.SIGKILL)
+
+
+def stop_process_group(
+    process: subprocess.Popen,
+    *,
+    grace: float = STOP_GRACE_SECONDS,
+    kill_grace: float = KILL_GRACE_SECONDS,
+) -> bool:
+    """Stop a process group for good: ``SIGTERM``, wait, ``SIGKILL``, wait.
+
+    Returns whether the process is actually gone.
+
+    The escalation is the point. ``SIGTERM`` is a request, and Harbor is a
+    Python process that installs handlers and can be mid-``docker compose up``
+    when one arrives — so an operator's stop that sends ``SIGTERM`` and
+    immediately moves on to reaping containers is racing the very process that
+    creates them: the reap lists the daemon, removes what it finds, and the
+    surviving harness brings the *next* trial's project up a second later, into
+    a match nobody is watching any more. That container then outlives the
+    match, holds memory and CPU, and costs the next match trials that are
+    scored as agent losses — the #2329 shape, reached by a different road.
+
+    Waiting is therefore not politeness, it is ordering: the caller may only
+    reap once nothing is left that could still create a container.
+    """
+    if process.poll() is not None:
+        return True
+    terminate_process_group(process)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=grace)
+    if process.poll() is not None:
+        return True
+    log.warning(
+        "pid %s ignored SIGTERM after %.0fs — escalating to SIGKILL", process.pid, grace
+    )
+    kill_process_group(process)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=kill_grace)
+    if process.poll() is None:
+        log.error(
+            "pid %s survived SIGKILL — it is blocked in the kernel, and any "
+            "container it is still holding cannot be reaped reliably",
+            process.pid,
+        )
+        return False
+    return True
 
 
 def stop_seat(match: Match, contestant_id: str) -> None:
@@ -179,3 +258,67 @@ def tick(match: Match) -> bool:
             logger = log.warning if supervisor.waiting else log.info
             logger("match %s: %s", match.spec.id, status)
     return pending
+
+
+def stop_match(match: Match) -> tuple[list[str], list[str]]:
+    """Stop everything one match owns. Returns ``(reaped, survivors)``.
+
+    The mechanics behind :meth:`~.runner.MatchRunner.cancel`, here for the same
+    reason :func:`stop_seat` is: signalling a process group and reaping the
+    containers it is not the parent of is one nameable concern, and the runner
+    keeps the decision (what the match's status and note become) rather than the
+    plumbing.
+
+    **The order is the whole fix.** Signalling a seat and reaping in the same
+    breath races the harness that creates the containers — Harbor can be
+    mid-``docker compose up`` when the signal lands, so the sweep removes what
+    exists and the surviving process brings the next trial's project up behind
+    it, into a match nobody is watching any more. So every seat is stopped *and
+    waited for* (:func:`stop_process_group`, which escalates to ``SIGKILL``)
+    before a single container is removed.
+
+    Then two sweeps, not one. The first covers the ordinary case; the second
+    exists for the seat that survived ``SIGKILL`` and for the compose project
+    that came up during the first sweep's own ``docker ps``. The second is cheap
+    when the first worked — it lists the daemon, finds nothing of ours, and
+    removes nothing.
+
+    Nothing here raises. A stop that fails partway must still let the caller
+    record the match cancelled, because a match believed to be running is one no
+    later sweep will ever touch (see :func:`.reap.reap_finished`).
+    """
+    survivors: list[str] = []
+    for contestant_id, run in match.runs.items():
+        process = run.process
+        if process is None or process.poll() is not None:
+            continue
+        if not stop_process_group(process):
+            survivors.append(contestant_id)
+            continue
+        # Record the exit the poll loop is no longer around to see, so a
+        # cancelled seat reads as ended rather than as still dispatched.
+        if run.exit_code is None:
+            run.exit_code = process.returncode
+            run.finished_at = time.time()
+
+    # Stop the observers before reaping: both attach to the containers, and a
+    # recorder writing frames out of a container being `docker rm -f`ed produces
+    # a truncated file with no `moov` — which `video_path` then correctly
+    # refuses to serve, so the recording is lost either way and this way costs
+    # no error.
+    for observer in (match.recorder, match.snapshots):
+        if observer is not None:
+            with contextlib.suppress(Exception):
+                observer.stop()
+
+    # The process group does not contain the task containers: Harbor starts them
+    # through the Docker daemon, so killing the group stops the harness and
+    # leaves the containers running, owned by nothing. Ten of them accumulated
+    # over three stopped matches on one host and cost the *next* match five of
+    # six trials to `Docker compose command failed` — scored as agent losses
+    # (#2329).
+    reaped: list[str] = []
+    for _pass in range(2):
+        with contextlib.suppress(Exception):  # best-effort by contract
+            reaped.extend(n for n in reap.reap_match(match) if n not in reaped)
+    return reaped, survivors

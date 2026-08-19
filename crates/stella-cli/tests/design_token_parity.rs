@@ -371,6 +371,56 @@ fn every_web_surface_agrees_with_the_observatory_palette() {
     );
 }
 
+/// The transcript's *neutral ramp steps* match the observatory's too.
+///
+/// The `Surface` row above holds this page to the eight canonical roles —
+/// ground, the two surfaces, the three text steps and the semantic triad. The
+/// ramp steps beside them (`--raised`, `--line`, `--line2`) are not in `ROLES`
+/// because no other surface spells them, so they need their own assertion or
+/// they have none: a transcript that took its ground from the observatory's
+/// palette block and its hairline from somewhere else would look assembled
+/// from two systems.
+///
+/// That is not hypothetical. This file was outside the matrix entirely until
+/// #3630, and drifted exactly the way an unchecked surface does — the v3.0
+/// recolour moved the observatory and every surface the matrix covered to Ion
+/// on Obsidian and left this one on the previous ground, while its own header
+/// comment claimed the values *were* the instrument palette.
+#[test]
+fn the_transcript_ramp_steps_agree_with_the_observatory() {
+    let css = read("crates/stella-transcript/src/html/transcript.css");
+    let tokens = declarations(between(&css, ":root {", "\n}"));
+    let observatory = read("crates/stella-observatory/src/assets/index.html");
+    let instrument = declarations(between(&observatory, "BEGIN palette", "END palette"));
+
+    let mut divergences = Vec::new();
+    for (token, canonical_name) in [
+        ("--raised", "--raised"),
+        ("--line", "--hairline"),
+        ("--line2", "--hairline-strong"),
+    ] {
+        let want = instrument
+            .get(canonical_name)
+            .unwrap_or_else(|| panic!("observatory defines no {canonical_name}"));
+        match tokens.get(token) {
+            None => divergences.push(format!("declares no `{token}`")),
+            Some(got) if got != want => divergences.push(format!(
+                "`{token}` is {got}, the observatory's `{canonical_name}` is {want}"
+            )),
+            Some(_) => {}
+        }
+    }
+
+    assert!(
+        divergences.is_empty(),
+        "crates/stella-transcript/src/html/transcript.css has drifted from the \
+         observatory, which is the single definition:\n  {}\n\nThe Observatory \
+         serves this page, so a reader arrives here from a dashboard painted in \
+         those values.",
+        divergences.join("\n  ")
+    );
+}
+
 /// The MCP OAuth landing page carries the instrument palette too, for the
 /// tokens it uses.
 #[test]
