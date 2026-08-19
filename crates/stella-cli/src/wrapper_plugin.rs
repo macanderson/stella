@@ -850,6 +850,12 @@ impl TurnDriver for RawTurnDriver<'_> {
             Some(self.session),
             self.recall_event.take(),
             self.memory.as_deref_mut(),
+            // No friction ledger for a wrapped round (#3946): this host does
+            // not reflect on it. The plugin drives the turn and observes its
+            // own events through the socket, so a ledger folded here would go
+            // nowhere — unlike `facts` above, which the wrapper protocol
+            // actually reports back.
+            None,
         )
         .await;
 
