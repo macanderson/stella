@@ -131,7 +131,12 @@
 //! has: the deck's lead and pipeline turns publish both a steering tap and a
 //! `WatchGate` (#1219 — `p` on the lead row parks the turn and, through this
 //! dispatcher, every child it dispatched), and deck worker lanes and fleet
-//! workers publish their own `WatchGate`. A driver that publishes nothing is
+//! workers publish their own `WatchGate`, and the wrapped one-shot path
+//! publishes whatever its caller supplied for the span of the wrapper's whole
+//! dispatch rather than for one round, because a plugin spends its children
+//! from the points *between* the rounds (#3803,
+//! `crate::wrapper_plugin::dispatch_under_turn_controls`). A driver that
+//! publishes nothing is
 //! still not a failure state — a child then runs bounded by its step cap and
 //! its carve, exactly as before.
 //!

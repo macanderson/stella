@@ -293,6 +293,13 @@ pub(crate) async fn run_raw_one_shot(
                     recall_event,
                     memory: memory.as_mut(),
                     watch: &candidate.watch,
+                    // Real ones the day a controlled surface drives a wrapped
+                    // turn (#3554). This door is headless — it publishes no
+                    // pause gate and installs no steering tap, the same reason
+                    // its goal rounds pass `steering: None` — so there is
+                    // nothing here to honour, and `none()` is the honest
+                    // answer rather than a placeholder.
+                    controls: stella_core::ports::TurnControls::none(),
                     results: Vec::new(),
                 },
             )
