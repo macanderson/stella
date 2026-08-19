@@ -907,7 +907,7 @@ pub fn contributed_stage_color(name: &str) -> Color {
 /// changed here.
 ///
 /// A contributed stage has no such divergence to make: it never takes the
-/// accent in the first place (see [`CONTRIBUTED_STAGE_PALETTE`]), so there is
+/// accent in the first place (see [`contributed_stage_color`]), so there is
 /// no gold to move off a settled thing, and it reads the same in both places.
 pub fn stage_rule_color(stage: &stella_protocol::StageName) -> Color {
     match stage.kind() {
