@@ -105,7 +105,7 @@ mod task_tap;
 mod theme_cmd;
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
 
-use crate::memory::{SessionMemory, inject_recall_block};
+use crate::memory::{SessionMemory, TurnFriction, inject_recall_block};
 use crate::runtime::TokioSleeper;
 use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
@@ -1514,6 +1514,7 @@ pub async fn run_deck_session(
         let steering: Arc<subsession::SteeringTap> = Arc::default();
         // The lead lane's pause seam — `p` on the lead row (#1219).
         let lead_pause = lead_control::LeadPause::new();
+        let mut friction = TurnFriction::default(); // #3962
         let end = {
             // Both arms return `Result<(), CliFailure>`, so one pinned future
             // drives either path through the same select loop.
@@ -1534,6 +1535,7 @@ pub async fn run_deck_session(
                 &lead_pause,
                 recall_event,
                 memory.as_ref(),
+                &mut friction,
             );
             tokio::pin!(turn);
             loop {
@@ -1998,6 +2000,7 @@ pub async fn run_deck_session(
                             started_unix,
                             &messages,
                             reflect_start,
+                            &friction,
                             &*provider,
                             cfg,
                             &mut budget,
@@ -3717,6 +3720,7 @@ async fn run_lead_turn(
     // because recall runs before this channel exists.
     recall_event: Option<AgentEvent>,
     session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
+    friction: &mut TurnFriction,            // #3962: filled from the lane's own stream
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -3791,7 +3795,9 @@ async fn run_lead_turn(
     // requires gone; otherwise the forwarder's `recv()` stays pending forever
     // and the turn future wedges after the deck painted the turn done (#2290).
     drop(requery);
-    let persistence_complete = close_turn_stream(registry, tx, forwarder).await;
+    let ended = close_turn_stream(registry, tx, forwarder).await;
+    let persistence_complete = ended.persistence_complete;
+    *friction = ended.friction; // this turn's reflection evidence (#3962)
     claims.release_all();
 
     if let Some((store, id)) = &execution {

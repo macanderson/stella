@@ -84,6 +84,7 @@ pub(super) async fn record_and_reflect_turn(
     started_unix: i64,
     messages: &[CompletionMessage],
     reflect_start: usize,
+    friction: &crate::memory::TurnFriction,
     provider: &dyn Provider,
     cfg: &Config,
     budget: &mut BudgetGuard,
@@ -101,15 +102,17 @@ pub(super) async fn record_and_reflect_turn(
         return;
     }
     let Some(memory) = memory else { return };
-    // Transcript-only evidence: the deck's driver events ride a bare
-    // `UnboundedSender` with no `EventSender` seam to wrap (#2483). Every tool
-    // call and its typed result are in `messages`, which is what the digest
-    // selects on.
+    // Transcript AND the lane's own folded ledger (#3962). The transcript
+    // carries every tool call and its typed result, which is what the digest
+    // selects on; only the ledger carries what the turn cost, how long each
+    // tool took, and whether it retried or looped — none of which any
+    // `CompletionMessage` records. It is one ledger because a lead turn is one
+    // turn: the several-turn case is `/goal`, and it passes a slice.
     let mut report = crate::memory::reflect_routed(
         memory,
         cfg,
         provider,
-        crate::memory::TurnEvidence::from_transcript(messages, true),
+        crate::memory::TurnEvidence::with_friction(messages, friction, true),
         true,
         crate::agent::remaining_budget(budget),
     )

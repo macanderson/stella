@@ -45,7 +45,13 @@ pub(super) struct InteractiveTurn<'a> {
     /// was said; only this records what it cost, how long it took, and whether
     /// the turn retried or looped — none of which a `CompletionMessage`
     /// carries.
-    pub(super) friction: &'a TurnFriction,
+    ///
+    /// A slice because the two doors that share this helper do not agree on
+    /// how many turns one reflection covers (#3962): a plain prompt hands one
+    /// ledger for its one turn, and `/goal` hands one per round of its arc.
+    /// Merging the arc's rounds into a single ledger is the one thing neither
+    /// may do — see this module's callers and `TurnFriction::per_goal_round`.
+    pub(super) friction: &'a [TurnFriction],
 }
 
 /// Post-turn reflection for one interactive REPL turn, shared by the plain
@@ -77,7 +83,7 @@ pub(super) async fn reflect_on_interactive_turn<T, E: std::fmt::Display>(
             m,
             cfg,
             provider,
-            TurnEvidence::with_friction(turn.messages, turn.friction, result.is_ok()),
+            TurnEvidence::with_rounds(turn.messages, turn.friction, result.is_ok()),
             false,
             remaining_budget(budget),
         )

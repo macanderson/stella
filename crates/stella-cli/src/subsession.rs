@@ -771,7 +771,9 @@ async fn run_worker(
             _ = stop_wait => RacedTurn::Stopped,
         }
     };
-    let persistence_complete = close_turn_stream(&registry, tx, forwarder).await;
+    let persistence_complete = close_turn_stream(&registry, tx, forwarder)
+        .await
+        .persistence_complete;
     // Release the worker's whole claim set — the stop path included (the
     // dropped turn future cannot release for itself).
     claims.release_all();

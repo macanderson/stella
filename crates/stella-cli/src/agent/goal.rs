@@ -549,6 +549,11 @@ pub async fn run_goal_cmd(
     // Machine-wide presence: a goal run is exactly the long-lived headless
     // session the SESSIONS overlay + replay exist for.
     let mut presence = SessionPresence::announce(cfg, goal);
+    // This arc's friction, one ledger per round, filled by the raw arm below
+    // and read by the reflection further down (#3962). The wrapped arm leaves
+    // it empty for the same reason `run_raw_one_shot`'s does: those turns are
+    // the plugin's to observe through the wrapper socket.
+    let mut rounds: Vec<TurnFriction> = Vec::new();
     let outcome = if let Some(bound) = &bound {
         goal_wrapped::run_goal_wrapped_turn(
             &*provider,
@@ -583,6 +588,7 @@ pub async fn run_goal_cmd(
             Some(presence.id()),
             recall_event,
             memory.as_mut(),
+            Some(&mut rounds),
         )
         .await
     };
@@ -605,12 +611,14 @@ pub async fn run_goal_cmd(
         && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        // Transcript-only evidence, as on the raw one-shot above (#2483).
+        // One ledger per round (#3962): this reflection covers an arc of
+        // several turns, and a single fold over the whole stream would report
+        // round 1's tools as the round that ran last.
         let mut report = crate::memory::reflect_routed(
             m,
             cfg,
             &*provider,
-            crate::memory::TurnEvidence::from_transcript(&messages, outcome.is_ok()),
+            crate::memory::TurnEvidence::with_rounds(&messages, &rounds, outcome.is_ok()),
             false,
             crate::agent::remaining_budget(&budget),
         )
@@ -677,6 +685,12 @@ pub(crate) async fn run_goal_turn(
     // runs — reflection stores the self-review 1:1 with an execution, and an
     // unstamped round files an id-less row.
     session_memory: Option<&mut crate::memory::SessionMemory>,
+    // Where this arc's friction ledgers land, ONE PER ROUND, for a caller that
+    // reflects afterwards (#3962). An out-parameter for the same reason
+    // `run_turn`'s single-ledger slot is one: this function's return type says
+    // whether the goal was met, and reflection's evidence is not that. `None`
+    // for a caller that does not reflect.
+    rounds: Option<&mut Vec<TurnFriction>>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     // This function is the RAW arm — `run_goal_cmd` calls it only for
@@ -753,7 +767,16 @@ pub(crate) async fn run_goal_turn(
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
     drop(tx);
-    let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
+    let rendered = renderer.await.unwrap_or_default();
+    let persistence_complete = rendered.persistence_complete;
+    // The arc's friction, folded from the journal the renderer just finished
+    // draining — split at each round's own `GoalVerdict` so no round is
+    // credited with another's tools (#3962). Folded here for the same reason
+    // `run_turn` folds here: this is the first point at which the whole stream
+    // is both complete and still owned.
+    if let Some(slot) = rounds {
+        *slot = TurnFriction::per_goal_round(&rendered.events);
+    }
 
     let (outcome_label, cost) = match &outcome {
         GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
