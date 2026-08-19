@@ -2,7 +2,7 @@
 # The SHIPPED Linear manifest — `include_str!`-embedded, shadowable by a
 # workspace `.stella/issues/linear.toml` of the same name.
 #
-# This file is the proof obligation of `docs/design/agent-native-delivery.md`
+# This file is the proof obligation of `docs/spec/agent-native-delivery.md`
 # §4.5: if Linear cannot be expressed as a manifest, no customer's tracker can
 # be either, and the extension surface is decorative. Stella ships no issue
 # toolset today, so none of what Linear needs is compiled in anywhere — the

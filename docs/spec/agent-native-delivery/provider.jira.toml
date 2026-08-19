@@ -2,7 +2,7 @@
 # .stella/issues/jira-prod.toml
 #
 # A COMPLETE issue-provider manifest for a Jira Cloud project, rendered in the
-# shape proposed by `docs/design/agent-native-delivery.md` §4. Nothing here is
+# shape proposed by `docs/spec/agent-native-delivery.md` §4. Nothing here is
 # built yet — this file is the target, and it exists so the §4 prose can be
 # read against a concrete artifact rather than a fragment.
 #

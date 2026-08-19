@@ -89,7 +89,9 @@ use stella_plugin::{
 #[must_use]
 pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
     if rule.requirements.is_empty() {
-        return Verdict::Met;
+        return Verdict::Met {
+            evidence: evidence.provenance,
+        };
     }
     let Some(oracle) = &rule.oracle else {
         return Verdict::Undecided {
@@ -176,7 +178,12 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
     }
     match undecided {
         Some(reason) => Verdict::Undecided { reason },
-        None => Verdict::Met,
+        // Provenance is carried out of the evidence, not consulted on the way
+        // in: which arm we reach was decided above, on the flip, the tamper
+        // finding and the measurements alone (#3513).
+        None => Verdict::Met {
+            evidence: evidence.provenance,
+        },
     }
 }
 
@@ -261,9 +268,11 @@ fn tamper_credit(policy: TamperPolicy, finding: &TamperFinding) -> FlipCredit {
 #[must_use]
 pub fn again(verdict: &Verdict, round: &RoundState, grant: &LoopGrant) -> Continuation {
     let unmet = match verdict {
-        Verdict::Met => {
+        Verdict::Met { evidence } => {
             return Continuation::Stop {
-                outcome: Outcome::Met,
+                outcome: Outcome::Met {
+                    evidence: *evidence,
+                },
             };
         }
         Verdict::Undecided { reason } => {

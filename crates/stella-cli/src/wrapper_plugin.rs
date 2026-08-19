@@ -84,10 +84,13 @@
 //! cannot be added to a gate afterwards — the two halves are therefore separate
 //! moments, not one function with an `Option` in it.
 //!
-//! And two scope limits: `--pipeline` reaches `stella run` and `stella goal`
-//! only — `stella fleet` still refuses a named variant (#3695) — and a
-//! plugin's `Unmet` does not fail the process (#3554), and only this driver
-//! of `doc:wrapper-socket` §6's three exists (#3551).
+//! And two scope limits: a plugin's `Unmet` does not fail the process
+//! (#3554), and only this driver of `doc:wrapper-socket` §6's three exists
+//! (#3551). `--pipeline <variant>` itself now reaches every door that takes
+//! it — `stella run` here, `stella goal` per judged round
+//! (`crate::agent::goal::goal_wrapped`), and `stella fleet` per worker
+//! attempt (`crate::fleet_cmd::wrapped`, #3695) — so there is no door left
+//! refusing a named variant for want of a driver.
 //!
 //! # `stella goal`'s driver is a second call site, not a second sequence
 //!
@@ -263,40 +266,6 @@ pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'stat
     )
 }
 
-/// Refuse a named wrapper plugin variant on a door that cannot drive one yet.
-///
-/// `stella run` and `stella goal` each have a real [`TurnDriver`]
-/// implementation now: `run` drives [`WrapperDispatch`] over its one raw
-/// turn, and `goal` drives it once per judged round
-/// (`crate::agent::goal::goal_wrapped::run_goal_wrapped_turn`) while leaving the round
-/// loop's own met/unmet decision — the goal verifier, `Engine::assess` —
-/// untouched (#3695, goal half). `fleet` drives its own **round loop** (a
-/// worker's attempt) with no [`TurnDriver`] over it yet, and wiring one
-/// through is a real driver — not a formatting difference — that nothing in
-/// this crate implements; #3695 stays open for that half. No `--pipeline` at
-/// all resolves to [`PipelineChoice::Raw`], which is fine on every door;
-/// only a *named* plugin variant on `fleet` is out of reach here, and it is
-/// refused with a message naming `stella run`/`stella goal` as the doors
-/// that can run it — never silently downgraded to raw, which would run
-/// something other than what was asked for without saying so.
-pub(crate) fn reject_plugin_variant_for_door(
-    door: &str,
-    choice: PipelineChoice<'_>,
-) -> Result<(), String> {
-    if door != "fleet" {
-        return Ok(());
-    }
-    match choice.plugin() {
-        Some(variant) => Err(format!(
-            "--pipeline {variant} is not supported on `stella {door}` yet — wrapper plugins \
-             run on `stella run --pipeline {variant}` and `stella goal --pipeline {variant}` \
-             today, but not `stella fleet` (#3695 stays open for a fleet worker's driver). Omit \
-             --pipeline for the raw loop."
-        )),
-        None => Ok(()),
-    }
-}
-
 /// Refuse an arbiter-grade wrapper plugin on `stella goal`'s pre-flight rung,
 /// before binding completes and before any paid call (#3832).
 ///
@@ -318,7 +287,7 @@ pub(crate) fn reject_plugin_variant_for_door(
 /// module doc, and `plugins/stella-goal/README.md`, for why that plugin runs
 /// there and not here). So this refuses before the provider is ever built —
 /// the same pre-flight rung [`reject_verification_flags_without_pipeline`]
-/// and [`reject_plugin_variant_for_door`] use — before any paid model call,
+/// uses — before any paid model call,
 /// every time, though not before config load and catalog bootstrap.
 ///
 /// Steering and observer wrappers are unaffected and keep running per round

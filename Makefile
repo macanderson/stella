@@ -72,6 +72,21 @@ build: ## Build the full workspace (debug)
 .PHONY: build-release
 build-release: ## Build the shipping binary (release, optimized)
 	cargo build --release -p stella-cli
+	@./scripts/install-zsh-completions.sh --best-effort
+
+# The completion function is generated from clap's command tree, so it is only
+# as fresh as the binary that rendered it: a renamed subcommand or a new flag
+# rots the `_stella` in your fpath with no error anywhere. The build above is
+# the one moment the completions are known to be current, so it reinstalls
+# them — `--best-effort` there, because a shell nicety must never turn a build
+# red. Run this target directly to see why it declined.
+.PHONY: completions
+completions: ## Reinstall the zsh completion function for stella (DIR=<dir> to override where)
+	@./scripts/install-zsh-completions.sh $(if $(DIR),--dir "$(DIR)")
+
+.PHONY: completions-test
+completions-test: ## Test the zsh completion installer (hermetic; not part of `gate`)
+	./scripts/test-install-zsh-completions.sh
 
 # Deliberately separate from `build-release`: this is the *release* build, with
 # $CARGO_HOME and the rustup sysroot remapped out of the binary so its SHA-256

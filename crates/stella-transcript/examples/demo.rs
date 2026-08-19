@@ -201,6 +201,12 @@ fn fixture() -> Run {
             ),
         ],
         answer: Some("Scaffolded main.tex and built it once.".to_string()),
+        notes: vec![Note {
+            kind: NoteKind::Stage,
+            summary: "execute".to_string(),
+            detail: Vec::new(),
+            before_step: 0,
+        }],
         status: Status::Ok,
         duration_ms: 9_000,
     };
@@ -219,6 +225,23 @@ fn fixture() -> Run {
                 .to_string(),
             before_step: 0,
         }],
+        notes: vec![
+            Note {
+                kind: NoteKind::Context,
+                summary: "recalled 5 frames · 408 tok · 126ms · 5 episode".to_string(),
+                detail: vec![
+                    "symbol  fn find — stella-cli/src/config_wiring.rs · 34 tok".to_string(),
+                    "symbol  fn find — stella-core/src/tasks.rs · 118 tok".to_string(),
+                ],
+                before_step: 0,
+            },
+            Note {
+                kind: NoteKind::Verdict,
+                summary: "witness flip confirmed — overfull_hbox_absent".to_string(),
+                detail: Vec::new(),
+                before_step: 6,
+            },
+        ],
         steps: vec![
             step(read, 4_000, 900),
             step(reproduce, 9_000, 800),

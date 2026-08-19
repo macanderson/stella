@@ -41,8 +41,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use stella_plugin::{
-    CandidateGrant, Outcome, PluginManifest, SignalValues, TamperFinding, TestBaseline, TestPlan,
-    TurnOutcome, UndecidedReason, UnmetBecause,
+    CandidateGrant, EvidenceProvenance, Outcome, PluginManifest, SignalValues, TamperFinding,
+    TestBaseline, TestPlan, TurnOutcome, UndecidedReason, UnmetBecause,
 };
 use stella_protocol::CandidateHandle;
 use stella_runtime::wrapper::{
@@ -169,11 +169,20 @@ async fn run(candidate: Option<CandidateGrant>, tamper: TamperFinding) -> Outcom
 
 /// **The witness.** A grant the plugin can act on, plus a host that vouched for
 /// the artifacts, is a decided `Met`.
+///
+/// Note what the fixture plugin actually does: it string-matches the request
+/// and prints `achieved` without running the test. That is legitimate — the
+/// host does not re-run a plugin's checks (#3511's Option 2) — which is why
+/// the credited outcome names the evidence as `PluginReported` rather than
+/// passing for an observation. `wrapper_claimed_evidence.rs` is the witness
+/// for that label (#3513).
 #[tokio::test]
 async fn a_granted_candidate_and_a_clean_snapshot_decide_the_verdict() {
     assert_eq!(
         run(Some(granted("/tmp/workspace")), TamperFinding::Clean).await,
-        Outcome::Met,
+        Outcome::Met {
+            evidence: EvidenceProvenance::PluginReported
+        },
         "a flip the plugin observed over artifacts the host vouches for is done"
     );
 }

@@ -71,6 +71,10 @@ fn the_exemplar_rows_show_each_posture_in_use() {
     assert!(matches!(posture("text"), ConsumerPosture::Surfaced));
     assert!(matches!(
         posture("proof"),
+        ConsumerPosture::RecordedOnly { .. }
+    ));
+    assert!(matches!(
+        posture("stage"),
         ConsumerPosture::Unclassified { .. }
     ));
 }

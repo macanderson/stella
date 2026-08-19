@@ -172,6 +172,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         execution.clone(),
         cfg.provider.id.to_string(),
         false,
+        Some(record.title.clone()),
     );
 
     // A killed turn always resumes as a bare engine turn now (#3865: the
