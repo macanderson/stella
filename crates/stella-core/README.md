@@ -73,7 +73,7 @@ Depends on exactly one workspace crate — `stella-protocol` (types) — plus
 `serde`, `tokio` (`sync` + `time` only), `async-trait`, `futures-util`, `rand`,
 `sha2` and `serde_json_canonicalizer`. Note what is absent: no `regex`, no
 HTTP client, no SQLite. `stella-cli`, `stella-tools`, `stella-mcp`,
-`stella-fleet` and `stella-serve` depend on it. Library only
+`stella-runtime`, `stella-fleet` and `stella-serve` depend on it. Library only
 — it builds no binary.
 
 ## Boundary — does this change belong here?

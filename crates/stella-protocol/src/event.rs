@@ -802,12 +802,17 @@ pub enum AgentEvent {
     /// # The two producers, and what each one's answer means
     ///
     /// 1. **Candidate adoption** — `Pipeline::deliver_winner` (the built-in
-    ///    staged pipeline's `pipeline/delivery.rs`, deleted in #3865; a
-    ///    wrapper plugin's delivery step is the producer now), one event per
+    ///    staged pipeline's `pipeline/delivery.rs`, deleted in #3865), one
+    ///    event per
     ///    `AdoptedChange`, emitted beside the `CandidateWorkspace::attribute_adopted`
     ///    call that writes the same rows to the host's durable ledger (#2907).
-    ///    This one **is** attribution: adoption measures a candidate against a
-    ///    sealed baseline, so it can tell the agent's edits from anyone else's.
+    ///    This one **was** attribution: adoption measured a candidate against a
+    ///    sealed baseline, so it could tell the agent's edits from anyone
+    ///    else's. **It has no producer in this workspace any more** — that
+    ///    crate was deleted in #3865 — so every event on this stream today is
+    ///    the second kind. Read the distinction below as the contract a
+    ///    re-homed adoption producer would have to meet, not as two live
+    ///    sources (#3881).
     /// 2. **The shared-tree turn boundary** — `stella-cli`'s `turn_files`, over
     ///    `WorkJournal::snapshot_worktree` (#3413). This one is **not**
     ///    attribution. It answers *what changed in the tree during this turn*,

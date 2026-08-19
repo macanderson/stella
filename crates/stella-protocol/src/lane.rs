@@ -105,8 +105,9 @@ pub enum BuiltinLane {
     /// A staged-pipeline stage turn. Named for the built-in staged pipeline's
     /// `execute_stage`/`witness_stage` (`crates/stella-pipeline`, deleted in
     /// #3865); the tag stays on the wire so a recorded lane from a
-    /// pre-removal build still deserializes, and a wrapper plugin's declared
-    /// stages are what produce it now.
+    /// pre-removal build still deserializes. **Nothing in this workspace
+    /// stamps this lane today** — retiring it, or re-homing a producer onto a
+    /// wrapper plugin's declared stages, is #3881.
     PipelineStage,
     /// A turn driven by a remote host over the wire (`stella-serve`'s
     /// `session`).
