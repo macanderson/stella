@@ -59,6 +59,8 @@ use std::path::PathBuf;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
+use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+use stella_tui::Inbound;
 use stella_tui::scenario::{demo_graph, demo_inbound};
 use stella_tui::{
     DeckTab, DeckUi, IssueRow, ResourceSample, ScopeAction, SettingsPane, SkillPrompt, SkillRow,
@@ -586,6 +588,94 @@ fn deck_render_snapshots_pin_the_compact_agents_dashboard() {
 /// The deck's "tools tab": the panel that shows what this session can actually
 /// do, grouped by origin, with an org-locked row that must not render as a
 /// working switch.
+/// A multi-line **successful** tool result in the SESSION transcript.
+///
+/// This golden exists because its absence was itself the finding (#3644). The
+/// fold policy for a successful result was rewritten — from one previewed line
+/// to six, plus JSON colouring — and **every** existing snapshot in this
+/// directory passed through that rewrite unchanged, because not one of them
+/// contained a successful result with more than a single line of output. A
+/// suite that cannot see a change of that size is not covering the surface it
+/// claims to.
+///
+/// Two payloads, so the frame pins both arms of the policy: a plain-text result
+/// long enough to fold, and a JSON result, which takes the syntax-coloured path
+/// and the un-skipped-head path (`salient_line` is bypassed for JSON so an
+/// object still opens on its brace).
+///
+/// A golden blessed without reading it is a changelog, not a test — so if this
+/// one moves, count the body lines under each result before re-blessing.
+#[test]
+fn deck_render_snapshots_pin_a_multiline_successful_tool_result() {
+    let mut model = fixture_model();
+    let ev = |event: AgentEvent| Inbound::Event {
+        agent: "lead".into(),
+        event,
+    };
+    for inbound in [
+        ev(AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: "fold-plain".into(),
+                name: "search".into(),
+                input: serde_json::json!({ "pattern": "fold_output" }),
+            },
+        }),
+        ev(AgentEvent::ToolResult {
+            call_id: "fold-plain".into(),
+            output: ToolOutput::Ok {
+                content: "crates/stella-transcript/src/digest.rs:100\n\
+                          crates/stella-transcript/src/grid.rs:436\n\
+                          crates/stella-transcript/src/html.rs:310\n\
+                          crates/stella-tui/src/render/entry.rs:66\n\
+                          crates/stella-cli/src/export/transcript.rs:644\n\
+                          crates/stella-observatory/src/lib.rs:212\n\
+                          crates/stella-fleet/src/ledger.rs:88\n\
+                          crates/stella-store/src/usage.rs:41"
+                    .into(),
+                data: None,
+            },
+            duration_ms: 61,
+            speculated: false,
+        }),
+        ev(AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: "fold-json".into(),
+                name: "get_state".into(),
+                input: serde_json::json!({ "key": "verify" }),
+            },
+        }),
+        ev(AgentEvent::ToolResult {
+            call_id: "fold-json".into(),
+            output: ToolOutput::Ok {
+                content: "{\n\
+                          \x20 \"flip\": true,\n\
+                          \x20 \"witness\": \"tests/overfull.rs\",\n\
+                          \x20 \"attempts\": 3,\n\
+                          \x20 \"cost_usd\": 0.0412,\n\
+                          \x20 \"stage\": \"verify\",\n\
+                          \x20 \"notes\": null\n\
+                          }"
+                .into(),
+                data: None,
+            },
+            duration_ms: 8,
+            speculated: false,
+        }),
+    ] {
+        model.apply_inbound(&inbound);
+    }
+
+    let mut ui = ui_for(DeckTab::Session);
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "session_tool_result_multiline",
+        "a folded multi-line success and a syntax-coloured JSON result",
+        W,
+        H,
+        &frame,
+    );
+}
+
 #[test]
 fn deck_render_snapshots_pin_the_settings_tools_pane() {
     let model = fixture_model();

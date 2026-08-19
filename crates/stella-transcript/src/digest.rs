@@ -11,8 +11,28 @@
 use crate::model::{Accounting, Call, Output, Status, Step, ToolKind};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// Lines of a result body shown before the fold control.
-pub const HEAD_LINES: usize = 3;
+/// How many lines of a result body a **collapsed fold shows, on every
+/// surface** — the Command Deck, the Observatory, an exported transcript.
+///
+/// This is the whole fold policy expressed as one number, and it is one number
+/// on purpose. The deck and the export used to decide it separately — the deck
+/// previewed six lines of a successful result, the export three — so the same
+/// run answered "how much of this tool's output do I get to see" two different
+/// ways depending on which surface you opened. `stella-transcript`'s charter is
+/// one information model and two renderers; a second fold policy living in
+/// `stella-tui` was that charter being quietly broken at the policy layer
+/// rather than the painter layer (#3644).
+///
+/// Six rather than three because the deck's number was the one arrived at by
+/// looking at real output: three lines is under a stack frame, under a failing
+/// assertion's context, and under the shape of most JSON a tool returns.
+///
+/// The invariant every surface owes this constant is
+/// `head.len() + tail.len() == min(body.len(), PREVIEW_LINES)`, which
+/// [`crate::tests`] asserts directly and
+/// `crates/stella-tui/src/render/tests/tool_output.rs` asserts against the deck's own
+/// renderer.
+pub const PREVIEW_LINES: usize = 6;
 
 /// Lines kept at the *tail* of a long output when the body is folded.
 ///
@@ -20,6 +40,14 @@ pub const HEAD_LINES: usize = 3;
 /// one line the reader opened the transcript for, so a folded long output shows
 /// both ends and elides the middle.
 pub const TAIL_LINES: usize = 2;
+
+/// Lines shown *above* the fold when the fold also keeps a tail.
+///
+/// Derived, never chosen: a head…tail fold and a head-only fold must show the
+/// same total, or "how much do I see" would depend on how long the output
+/// happened to be. So the head is whatever is left of [`PREVIEW_LINES`] once
+/// the tail has taken its share.
+pub const HEAD_LINES: usize = PREVIEW_LINES - TAIL_LINES;
 
 /// Outputs at least this long get the head…tail treatment rather than head-only.
 pub const TAIL_FOLD_THRESHOLD: usize = 12;
@@ -81,7 +109,7 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
 
     let body = lines.to_vec();
     let total = body.len();
-    if total <= HEAD_LINES {
+    if total <= PREVIEW_LINES {
         return OutputFold {
             head: body.clone(),
             body,
@@ -104,9 +132,9 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
     }
 
     OutputFold {
-        head: body[..HEAD_LINES].to_vec(),
+        head: body[..PREVIEW_LINES].to_vec(),
         tail: Vec::new(),
-        hidden: total - HEAD_LINES + output.clipped,
+        hidden: total - PREVIEW_LINES + output.clipped,
         body,
         echo_hidden,
     }

@@ -66,7 +66,11 @@ fn cases() -> Vec<Case> {
             r"\setlength{\parindent}{15pt}",
             r"\setlength{\parindent}{12pt}",
         ),
-        ("one-word-of-many", "the quick brown fox", "the quick lazy fox"),
+        (
+            "one-word-of-many",
+            "the quick brown fox",
+            "the quick lazy fox",
+        ),
         ("two-separate-runs", "a b c d e f g", "a X c d e Y g"),
         ("json-value", r#"  "retries": 3,"#, r#"  "retries": 5,"#),
         // Pure insertion and pure deletion — no paired run at all.
@@ -203,14 +207,8 @@ fn render_matrix() -> String {
     );
     for (label, old, new) in cases() {
         let (old_spans, new_spans) = word::highlight(&old, &new);
-        out.push_str(&format!(
-            "pair={label} old={}\n",
-            render_spans(&old_spans)
-        ));
-        out.push_str(&format!(
-            "pair={label} new={}\n",
-            render_spans(&new_spans)
-        ));
+        out.push_str(&format!("pair={label} old={}\n", render_spans(&old_spans)));
+        out.push_str(&format!("pair={label} new={}\n", render_spans(&new_spans)));
     }
     for (label, removals, additions) in blocks() {
         let paired = removals.len().min(additions.len());

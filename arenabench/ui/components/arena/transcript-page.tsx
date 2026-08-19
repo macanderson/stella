@@ -457,7 +457,7 @@ function WordSpans({
     <>
       {spans.map((span, i) =>
         span.changed ? (
-          <span key={i} className={cn("rounded-[1px]", WORD_TINT[tone])}>
+          <span key={i} className={WORD_TINT[tone]}>
             <Highlight text={span.text} query={query} />
           </span>
         ) : (
