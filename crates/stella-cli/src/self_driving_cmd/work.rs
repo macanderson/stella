@@ -33,6 +33,19 @@
 //! the content rather than fixed, so a body cannot close it early and start
 //! speaking as the operator — `an_issue_body_cannot_escape_its_fence`.
 //!
+//! **The prompt carries no engineering guidance.** It states the task and the
+//! two structural facts a turn cannot infer — that the issue text is data, and
+//! what the commit must end with. It does *not* say how to write code, which
+//! conventions to follow, or which documents to read.
+//!
+//! That is deliberate and it is the point: how this repository wants code
+//! written is the **steering planes'** job — memories, rules, context records,
+//! skills — which `stella run` already loads. Restating any of it here would
+//! make this prompt a fourth steering channel that no one can retire, so
+//! changing how the loop works would mean changing Rust instead of retiring a
+//! record. A turn driven by the loop must get exactly the steering a turn
+//! driven by a person gets, from exactly the same place.
+//!
 //! **The outcome is measured from the tree, never from what the turn said.**
 //! The two disagree exactly when it matters, and a loop that believed the
 //! narration would open empty pull requests. This is
@@ -120,9 +133,7 @@ pub(super) fn prompt_for(issue: &Issue, commit_signature: &str) -> String {
          \n\
          {fence}\n{body}\n{fence}\n\
          \n\
-         Fix the problem it describes. Follow this repository's own \
-         conventions — read AGENTS.md and CLAUDE.md before you change \
-         anything.\n\
+         Fix the problem it describes.\n\
          \n\
          Leave the work committed on the current branch, and end the commit \
          message with exactly these lines:\n\
