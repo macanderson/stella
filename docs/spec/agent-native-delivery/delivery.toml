@@ -2,7 +2,7 @@
 # The `[delivery]` block of a project-scope `stella.toml`, rendered in full.
 #
 # This is the customer-facing surface of
-# `docs/design/agent-native-delivery.md` — the declarative statement of what a
+# `docs/spec/agent-native-delivery.md` — the declarative statement of what a
 # class of work must produce before it may be called done (§6), and the one
 # switch that decides whether stated-but-unfiled follow-up work blocks
 # completion (§7).
