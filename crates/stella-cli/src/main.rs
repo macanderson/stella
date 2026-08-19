@@ -30,7 +30,6 @@ mod attachments;
 mod auth_cmd;
 mod build_info;
 mod cache_insight;
-mod candidate_ws;
 mod claims;
 mod cli;
 mod cloud_drain;

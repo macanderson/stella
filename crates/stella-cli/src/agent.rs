@@ -42,8 +42,6 @@ use crate::{OutputFormat, config::Config};
 use stella_context::EpisodeOutcome;
 
 mod budget;
-mod coverage;
-mod diagnostics;
 mod engine;
 mod goal;
 mod graph;

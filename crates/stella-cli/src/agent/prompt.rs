@@ -750,32 +750,6 @@ pub(crate) fn build_pipeline_system_prompt(
     )
 }
 
-pub(crate) fn render_file_tree(files: &str, max_lines: usize) -> String {
-    let mut paths: Vec<&str> = files.lines().filter(|l| !l.is_empty()).collect();
-    paths.sort_unstable();
-    if paths.is_empty() {
-        return String::new();
-    }
-    let total = paths.len();
-    let mut out: String = paths
-        .iter()
-        .take(max_lines)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(
-            "
-",
-        );
-    if total > max_lines {
-        out.push_str(&format!(
-            "
-... ({} more files)",
-            total - max_lines
-        ));
-    }
-    out
-}
-
 /// The exact prompt claim-mode isolation must yield: the pipeline persona
 /// plus the computed session-environment block and NOTHING else. The
 /// isolation gate excludes stored steering — memories, rules, skills, custom

@@ -1,7 +1,5 @@
 use super::*;
 
-use stella_pipeline::{DiagnosticInvocation, DiagnosticRunner};
-
 #[test]
 fn witness_fingerprint_hashes_complete_bytes_not_size_and_mtime() {
     let dir = tempfile::tempdir().unwrap();
@@ -88,7 +86,7 @@ fn witness_identity_attests_the_observed_location_through_an_aliased_lookup() {
     // A renamed witness can stay reachable at its pinned path when the
     // lookup is aliased — here a symlinked parent directory, the same
     // shape a case-folding filesystem produces. The identity must report
-    // where the bytes actually live, so the pipeline's pinned-path
+    // where the bytes actually live, so the tamper watch's pinned-path
     // equality rejects the move as tampering.
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("moved")).unwrap();
@@ -102,8 +100,8 @@ fn witness_identity_attests_the_observed_location_through_an_aliased_lookup() {
         "the attested path is the canonical location, not the asked-for one"
     );
     assert!(
-        !stella_pipeline::witness_identity_matches(
-            &stella_pipeline::ArtifactIdentity {
+        !stella_plugin::witness_identity_matches(
+            &ArtifactIdentity {
                 path: "tests/witness.rs".into(),
                 ..identity.clone()
             },
@@ -128,108 +126,4 @@ fn witness_identity_requires_established_platform_link_count() {
         identity.is_none(),
         "platforms without a stable handle link count fail closed"
     );
-}
-
-#[tokio::test]
-async fn repo_status_hashes_tracked_working_tree_mutations() {
-    let dir = tempfile::tempdir().unwrap();
-    let git = |args: &[&str]| {
-        let mut command = std::process::Command::new("git");
-        stella_tools::exec::scrub_sensitive_std_env(&mut command);
-        let output = command.args(args).current_dir(dir.path()).output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
-    git(&["init", "-q"]);
-    std::fs::write(dir.path().join("src.rs"), "before\n").unwrap();
-    git(&["add", "src.rs"]);
-    git(&[
-        "-c",
-        "user.name=test",
-        "-c",
-        "user.email=test@example.invalid",
-        "commit",
-        "-q",
-        "-m",
-        "base",
-    ]);
-    std::fs::write(dir.path().join("src.rs"), "after\n").unwrap();
-
-    let files = GitRepoStatus {
-        root: dir.path().to_path_buf(),
-    }
-    .tracked_fingerprints()
-    .await;
-    assert_eq!(
-        files.get("src.rs"),
-        fs_fingerprint(&dir.path().join("src.rs")).as_ref()
-    );
-}
-
-#[tokio::test]
-async fn typed_test_runner_never_interprets_redirection_in_an_argument() {
-    let dir = tempfile::tempdir().unwrap();
-    let target = dir.path().join("must-not-exist");
-    let runner = TypedTestRunner {
-        root: dir.path().to_path_buf(),
-    };
-    let outcome = runner
-        .run_test(&stella_pipeline::TestInvocation {
-            program: "printf".into(),
-            args: vec![format!("owned > {}", target.display())],
-        })
-        .await;
-
-    assert!(outcome.passed());
-    assert!(
-        !target.exists(),
-        "argv content must never become shell syntax"
-    );
-}
-
-#[tokio::test]
-async fn typed_test_runner_binds_candidate_pwd_and_scrubs_git_repo_pointers() {
-    let dir = tempfile::tempdir().unwrap();
-    let invocation = TestInvocation {
-        program: "sh".into(),
-        args: vec!["-c".into(), "printf '%s' \"$PWD\"".into()],
-    };
-    let command = test_process(&invocation, dir.path());
-    let configured_env: std::collections::HashMap<_, _> = command.as_std().get_envs().collect();
-    for var in stella_tools::exec::GIT_REPO_ENV_VARS {
-        assert_eq!(configured_env.get(std::ffi::OsStr::new(var)), Some(&None));
-    }
-    let runner = TypedTestRunner {
-        root: dir.path().to_path_buf(),
-    };
-    let outcome = runner.run_test(&invocation).await;
-
-    assert!(outcome.passed(), "{}", outcome.stderr_tail);
-    let expected = dir.path().canonicalize().unwrap();
-    assert_eq!(
-        std::path::Path::new(&outcome.stdout_tail)
-            .canonicalize()
-            .unwrap(),
-        expected
-    );
-}
-
-#[tokio::test]
-async fn diagnostic_runner_passes_untracked_paths_as_literal_git_argv() {
-    let dir = tempfile::tempdir().unwrap();
-    let odd = "odd;touch owned.txt";
-    std::fs::write(dir.path().join(odd), "one\ntwo\n").unwrap();
-    let runner = GitDiagnosticRunner::new(dir.path().to_path_buf());
-
-    let outcome = runner
-        .run_diagnostic(&DiagnosticInvocation::UntrackedNumstat {
-            path: odd.to_string(),
-        })
-        .await;
-
-    assert!(outcome.stdout_tail.contains(odd), "{}", outcome.stdout_tail);
-    assert!(!dir.path().join("owned.txt").exists());
 }
