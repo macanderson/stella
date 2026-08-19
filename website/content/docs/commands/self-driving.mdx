@@ -20,6 +20,7 @@ stella self-driving seen (--digest TEXT… | --new DIGEST… | --add DIGEST… |
 stella self-driving calibrate (--ok | --resource-fail | --show)
 stella self-driving queue [--limit N] [--format <text|json>]
 stella self-driving file --title TEXT [--body TEXT] [--label L…] [--format <text|json>]
+stella self-driving work --issue KEY [--spend-limit USD] [--format <text|json>]
 stella self-driving run (start | end [--status S] [--reason S] | cancel [reason] | list | stamp-cycle-pid [PID])
 stella self-driving runs
 stella self-driving phase <name>
@@ -103,6 +104,20 @@ Two checks run before the tracker is reached. A finding whose digest is already 
 That second check exists because of a feedback loop. The ranker counts an issue as a defect if it carries `bug` *or* `triage`; GitHub's triage workflow adds `triage` to any issue opened without a type label, and issues opened through the API carry no labels at all. So an unclassified filing comes back next cycle as an untriaged defect the loop is responsible for triaging — the loop manufactures its own queue, and every measure of ground gained on the backlog quietly includes its own exhaust.
 
 The convention is **learned, not assumed**: read from `.stella/issues/convention.json` if the workspace pins one, otherwise discovered from the automation that enforces it. Where nothing can be discovered the loop *proposes* a convention and files nothing under it until a human accepts — it may propose any convention and grants itself none. A refusal names every violation at once and says which source the convention came from, because "what did I get wrong" and "wrong according to what" are both questions you need answered.
+
+### work
+
+`stella self-driving work --issue KEY` runs one issue through stella's turn loop in an isolated worktree, and reports what the tree says.
+
+It **spawns a real `stella run`** rather than embedding a turn. Self-driving is a host — it drives stella from outside — so a unit of work gets exactly what a `stella run` gets on that machine, with whatever plugins are installed over it and nothing else. Be clear about what that is worth: with no verification plugin installed, a completed work unit means *the turn finished*, not *the change is proven*. What makes an autonomous merge safe is the CI gating in `deliver`, not this step.
+
+Two properties are deliberate and tested.
+
+**Issue text is data, never instruction.** An issue is written by whoever can file one, so its body reaches the prompt as quoted material carrying no authority. The fence is derived from the body rather than fixed, so text inside it cannot close the quotation early and continue as though it were you speaking.
+
+**The outcome is measured from the tree, never from what the turn said.** A turn that exits cleanly and narrates success while changing nothing reports `no_change` and releases its worktree. The two disagree exactly when it matters, and a loop that believed the narration would open empty pull requests.
+
+Worktrees live under `.stella/private/self-driving/` on `self-driving/` branches — outside the fleet's namespace, because `stella fleet gc` reclaims by namespace and must not be given authority over checkouts it did not create.
 
 ## Files
 
