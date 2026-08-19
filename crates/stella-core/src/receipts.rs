@@ -346,10 +346,14 @@ pub const RECALL_MARKER: &str = "[auto-recalled context]";
 /// [`BlockKind::Summary`] for the same reason: it is the summary splice's
 /// companion — what the splice destroyed, re-attached — and a receipt reader
 /// reconciling a summarization round wants the pair under one kind rather
-/// than a new wire variant.
+/// than a new wire variant. The already-read digest (#3806) joins it on the
+/// same argument one step further out: it is what the *compaction* passes
+/// destroyed, re-stated, and a reader reconciling a compaction round wants it
+/// beside the summary rather than mistaken for the person naming files.
 fn user_block_kind(content: &str) -> BlockKind {
     if content.starts_with(crate::driver::SUMMARY_MARKER_PREFIX)
         || content.starts_with(crate::restore::RESTORE_MARKER_PREFIX)
+        || content.starts_with(crate::compaction::read_digest::READ_DIGEST_MARKER_PREFIX)
     {
         BlockKind::Summary
     } else if content.starts_with(crate::driver::LOOP_STEER_PREFIX)

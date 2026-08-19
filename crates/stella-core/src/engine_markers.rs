@@ -44,7 +44,8 @@
 /// `LOOP_STEER_PREFIX` (`driver.rs`), `CONTINUATION_MARKER_PREFIX`
 /// (`driver/truncation.rs`), `STOP_HOOK_MARKER_PREFIX`
 /// (`driver/user_hooks.rs`, #2684), `RECALL_MARKER` (`receipts.rs`),
-/// `RESTORE_MARKER_PREFIX` (`restore.rs`, #2685) — so the table is
+/// `RESTORE_MARKER_PREFIX` (`restore.rs`, #2685),
+/// `READ_DIGEST_MARKER_PREFIX` (`compaction/read_digest.rs`, #3806) — so the table is
 /// correct by definition for the markers it lists; tests keep it complete.
 pub const ENGINE_MARKERS: &[&str] = &[
     crate::driver::SUMMARY_MARKER_PREFIX,
@@ -53,6 +54,7 @@ pub const ENGINE_MARKERS: &[&str] = &[
     crate::driver::user_hooks::STOP_HOOK_MARKER_PREFIX,
     crate::receipts::RECALL_MARKER,
     crate::restore::RESTORE_MARKER_PREFIX,
+    crate::compaction::read_digest::READ_DIGEST_MARKER_PREFIX,
 ];
 
 #[cfg(test)]

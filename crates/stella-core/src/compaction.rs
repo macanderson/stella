@@ -46,6 +46,36 @@ use stella_protocol::{CompactionRewrite, CompletionMessage, MessageRole, ToolOut
 use crate::estimator::{estimate_conversation_tokens, estimate_message_tokens};
 use crate::receipts::{tool_result_block_id, tool_result_rewrite};
 
+pub mod read_digest;
+
+/// [`compact_measured`], plus the already-read digest the passes above make
+/// necessary (#3806).
+///
+/// This exists because the two halves need different powers over the
+/// transcript. Compaction rewrites results **in place** and so takes a slice,
+/// which deliberately cannot grow the conversation; the digest is a new tail
+/// message and so needs the `Vec`. Rather than hand the driver both calls —
+/// `driver.rs` is closed to growth (`scripts/file-size-baseline.txt`), and a
+/// second call there is exactly the sort of step a later edit drops — the pair
+/// is sequenced once, here, where the stubbing and the statement that repairs
+/// it can be read together.
+///
+/// The return shape is [`compact_measured`]'s unchanged: the digest never
+/// moves a token count (it is rendered after the measurement, and the driver's
+/// overflow decision must judge the conversation compaction produced), and it
+/// can only change when a pass has stubbed something, which is precisely when
+/// the report is `Some` and the caller already treats the transcript as
+/// rewritten.
+pub fn compact_and_digest(
+    messages: &mut Vec<CompletionMessage>,
+    budget_tokens: u64,
+    retention: Option<RetentionPolicy>,
+) -> (u64, Option<CompactionReport>) {
+    let measured = compact_measured(messages, budget_tokens, retention);
+    read_digest::apply_digest(messages);
+    measured
+}
+
 /// What a compaction pass did, for the `Compaction` event. Carries both the
 /// counts (back-compat) and the **identities** — the `block_id`s each pass
 /// stubbed — so the receipt records *which* blocks left context, not just how
@@ -75,8 +105,18 @@ pub struct CompactionReport {
     pub rewrites: Vec<CompactionRewrite>,
 }
 
-const EVICTION_STUB: &str =
-    "[tool output evicted to fit context — re-run the tool if you need it again]";
+/// What pass 4 writes over an evicted result.
+///
+/// The wording is reconciled with [`read_digest`] (#3806) rather than left as
+/// the flat "re-run the tool if you need it again" it was. That sentence was
+/// the only advice sitting where the answer used to be, and it pointed at the
+/// most expensive available action: re-running a read whose conclusions the
+/// model had already drawn. It still says re-running is *possible*, because
+/// for most tools it is the only recovery — but it now says what the digest
+/// guarantees first, so the two are not giving contradictory advice.
+const EVICTION_STUB: &str = "[tool output evicted to fit context — for a file read, the \
+     [files already read] digest names it; re-run the tool only if you need its exact current \
+     output again]";
 
 /// Aging only touches outputs big enough that head+tail plus the marker is
 /// a real saving; below this it would churn bytes for nothing. Counted in
