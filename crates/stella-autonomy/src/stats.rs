@@ -61,6 +61,11 @@ pub struct SessionStats {
     // -- what the loop added to the backlog ---------------------------------
     /// Issues the loop filed. New work it discovered and wrote down.
     pub issues_created: u32,
+    /// Issues the loop placed on the ladder itself, having found them
+    /// unjudged. Counted separately from `issues_attempted` because triaging
+    /// an issue is not working it — a dashboard that merged the two would
+    /// report a labelling pass as delivery.
+    pub issues_triaged: u32,
     /// Filings refused for not matching the workspace's convention.
     pub filings_refused: u32,
     /// Filings skipped because the finding was already in the seen set.

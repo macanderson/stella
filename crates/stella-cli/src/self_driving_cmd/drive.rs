@@ -137,6 +137,10 @@ pub(super) fn drive(
         ..LoopState::default()
     };
     let mut spent: HashMap<String, Spent> = HashMap::new();
+    // Issues this process already offered to triage. The escalation label is
+    // the durable half; this covers the window before it lands, and stops a
+    // provider that failed to accept the label costing a turn every pass.
+    let mut triaged: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut tally = Tally::default();
 
     resume(durable, &cfg, &mut state);
@@ -164,9 +168,35 @@ pub(super) fn drive(
             LoopStep::Plan => state.planned = true,
 
             LoopStep::Claim { .. } => {
+                // Judged before ranked, every single time.
+                //
+                // An issue nobody has labelled is not low-priority, it is
+                // unplaced — and the queue is re-read from the tracker on
+                // every claim precisely so that a P0 filed a minute ago, or an
+                // issue somebody just re-labelled, is taken next rather than
+                // whenever this run happens to come back round. Assessing
+                // first is what makes that true for an issue that arrived
+                // with no labels at all: otherwise it would sit invisible
+                // while the loop worked an older, lesser, already-labelled
+                // one.
+                //
+                // One per pass. Triage is a model call, and draining a
+                // hundred unlabelled issues before touching any work would
+                // turn a delivery loop into a labelling bot.
+                if let Err(error) =
+                    assess_one(durable, &root, &provider, &cfg, spend_limit, &mut triaged)
+                {
+                    audit::record(
+                        durable,
+                        Audit::Transient,
+                        None,
+                        &format!("could not triage ({error}); ranking what is already placed"),
+                    );
+                }
+
                 // A queue read is a network call. Failing it is a reason to
                 // wait, never a reason to end a run meant to be perpetual.
-                let ranked = match super::backlog::ranked_keys(&provider) {
+                let ranked = match super::backlog::ranked_keys(&provider, &cfg.triage) {
                     Ok(ranked) => ranked,
                     Err(error) => {
                         audit::record(
@@ -506,6 +536,85 @@ fn escalate(
             &format!("could not label it as escalated: {error}"),
         ),
     }
+}
+
+/// Place the oldest issue nobody has judged, if there is one.
+///
+/// Returns `Ok(())` when there was nothing to do as well as when something was
+/// placed — a queue with no questions in it is the normal case, not an
+/// exception.
+///
+/// # Why a refusal escalates rather than retries
+///
+/// A turn that answers outside the declared vocabulary, or declines to answer
+/// at all, has told us it cannot place this issue. Leaving it unplaced would
+/// mean meeting it again on the very next pass, paying for the same turn, and
+/// getting the same refusal — forever, and at the cost of never claiming any
+/// work. So it gets the escalation label, which takes it out of the queue and
+/// puts it in front of a human. `triaged` is the process-local half of the
+/// same guard, covering the window before the label lands.
+fn assess_one(
+    durable: &Durable,
+    root: &std::path::Path,
+    provider: &crate::issue_provider::GhIssueProvider,
+    cfg: &super::config::LoopConfig,
+    spend_limit: Option<f64>,
+    triaged: &mut std::collections::HashSet<String>,
+) -> Result<(), String> {
+    let unassessed = super::backlog::unassessed(provider, &cfg.triage)?;
+    let Some(issue) = unassessed.into_iter().find(|u| !triaged.contains(&u.key)) else {
+        return Ok(());
+    };
+    triaged.insert(issue.key.clone());
+
+    audit::record(
+        durable,
+        Audit::TriageStarted,
+        Some(&issue.key),
+        &format!("nobody has placed this — assessing it: {}", issue.title),
+    );
+
+    // The body, so the turn judges the report rather than the headline. An
+    // unreadable body is not a reason to skip the issue; a title-only
+    // judgement is still better than leaving it unplaced forever.
+    let body = super::backlog::resolve(provider, &issue.key)
+        .map(|resolved| resolved.body)
+        .unwrap_or_default();
+
+    let prompt = super::triage::prompt(&issue, &body, &cfg.triage);
+    let output = super::work::run_turn(root, &prompt, spend_limit)?;
+
+    let Some(assessment) = super::triage::parse(&output, &cfg.triage) else {
+        super::backlog::escalate_blocking(
+            provider,
+            &issue.key,
+            "triage could not place this issue in the configured vocabulary — \
+             it needs a human to label it",
+            &cfg.attribution.issue_comment,
+        )?;
+        audit::record(
+            durable,
+            Audit::Escalated,
+            Some(&issue.key),
+            "could not be placed — labelled for a human",
+        );
+        return Ok(());
+    };
+
+    super::triage::apply(
+        provider,
+        &issue.key,
+        &assessment,
+        &cfg.attribution.issue_comment,
+    )?;
+    durable.update_stats(|s| s.issues_triaged += 1);
+    audit::record(
+        durable,
+        Audit::Triaged,
+        Some(&issue.key),
+        &assessment.reason(),
+    );
+    Ok(())
 }
 
 /// Advance one pull request by exactly one deterministic transition.

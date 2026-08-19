@@ -61,6 +61,10 @@ pub(super) enum Action {
     Deferred,
     /// An issue was marked as attempted and unresolved.
     Escalated,
+    /// A turn was asked to place an issue nobody had judged.
+    TriageStarted,
+    /// An issue was placed, and the labels written.
+    Triaged,
     /// A pull request was opened.
     PrOpened,
     /// A pull request was observed.
@@ -93,6 +97,8 @@ impl Action {
             Self::WorkFailed => "failed",
             Self::Deferred => "deferred",
             Self::Escalated => "escalated",
+            Self::TriageStarted => "triaging",
+            Self::Triaged => "triaged",
             Self::PrOpened => "pr opened",
             Self::PrObserved => "pr observed",
             Self::PrMerged => "pr merged",

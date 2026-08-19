@@ -44,6 +44,7 @@ mod closure;
 mod convention;
 mod deliver;
 mod doctrine;
+pub mod priority;
 mod stats;
 mod step;
 mod surface;
@@ -798,7 +799,12 @@ pub struct IssueLabel {
 }
 
 impl QueueIssue {
-    fn has_label(&self, name: &str) -> bool {
+    /// Whether this issue carries a label by that exact name.
+    ///
+    /// `pub(crate)` rather than private because [`crate::priority`] ranks by
+    /// label and must ask the same question the same way — a second copy of
+    /// "does it have this label" is how two rankers start disagreeing.
+    pub(crate) fn has_label(&self, name: &str) -> bool {
         self.labels.iter().any(|l| l.name == name)
     }
 

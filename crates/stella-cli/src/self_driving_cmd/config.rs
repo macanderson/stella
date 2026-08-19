@@ -47,6 +47,8 @@ pub(super) struct LoopConfig {
     pub attribution: Attribution,
     /// How the active tracker spells the concepts every tracker has.
     pub vocabulary: Vocabulary,
+    /// Which labels mean urgent, which mean "ours", which mean "not ours".
+    pub triage: stella_autonomy::priority::TriagePolicy,
 }
 
 /// Read the loop's configuration for a workspace.
@@ -64,6 +66,7 @@ pub(super) fn load(root: &Path) -> LoopConfig {
     LoopConfig {
         attribution: parsed.self_driving.attribution.clone(),
         vocabulary: vocabulary_for(root, &parsed.issues),
+        triage: parsed.self_driving.triage.policy(),
     }
 }
 

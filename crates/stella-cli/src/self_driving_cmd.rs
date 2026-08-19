@@ -24,6 +24,7 @@ pub(crate) mod probes;
 pub(crate) mod state;
 mod stats;
 mod surface;
+mod triage;
 mod work;
 
 use std::collections::BTreeMap;
@@ -678,13 +679,16 @@ fn gh_plain(args: &[&str]) -> Option<String> {
 }
 
 /// The demand half of the governor, read through the issue port.
-fn demand() -> Demand {
-    backlog::demand_from(&crate::issue_provider::GhIssueProvider)
+fn demand(root: &std::path::Path) -> Demand {
+    backlog::demand_from(
+        &crate::issue_provider::GhIssueProvider,
+        &config::load(root).triage,
+    )
 }
 
 fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
     let supply = probes::supply(&st.repo_root);
-    let demand = demand();
+    let demand = demand(&st.repo_root);
     let cal = st.calibration();
     let plan = stella_autonomy::plan_cycle(supply, demand, &cal, state::floors());
     let aperture = st.aperture();
@@ -942,7 +946,7 @@ fn watch(st: &LoopState) -> Result<(), String> {
     }
 
     if gh_available() {
-        let d = demand();
+        let d = demand(&st.repo_root);
         if d.open_defects > 0 {
             println!("  ! {} open defects in the queue", d.open_defects);
             triggered = true;
@@ -1144,7 +1148,13 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
 
 /// The queue verb: the ranked defect batch this cycle draws from.
 fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
-    backlog::render_queue(st, &crate::issue_provider::GhIssueProvider, limit, format)
+    backlog::render_queue(
+        st,
+        &crate::issue_provider::GhIssueProvider,
+        &config::load(&st.repo_root).triage,
+        limit,
+        format,
+    )
 }
 
 /// `stella self-driving deliver` — the pull-request rhythm.
