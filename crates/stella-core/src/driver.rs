@@ -975,18 +975,18 @@ impl<'a> Engine<'a> {
     /// This is for a host that continues an interrupted turn: it hands back a
     /// state to keep stepping, via [`Self::drive`] (the ordinary case, and
     /// what `stella-pipeline`'s resumed execute stage does) or
-    /// [`Self::run_step`]. Neither shipping surface accepts one from the
-    /// outside today, and that is a declaration rather than an oversight:
-    /// the CLI resumes at *transcript* granularity instead (its turns are
-    /// dispatched through `stella-pipeline`, which owns turn framing and
-    /// builds its own state via `run_turn`; it reopens the conversation at
-    /// the checkpoint's step boundary so completed steps' work is not re-run
-    /// — see `stella-parity`'s `turn.checkpoint_resume` row), and
-    /// `stella-serve` stores one and hands it back on request but accepts
-    /// none in return (same row, API side). So the production callers are
-    /// embedders, and the in-tree exercise is `stella-engine`'s test suite.
-    /// Anything that changes on either surface changes that row in the same
-    /// PR.
+    /// [`Self::run_step`]. No shipping surface calls this *method* today: the
+    /// CLI's raw door (the default since #3381 — `--pipeline classic`/`<variant>`
+    /// is the sole opt-in into `stella-pipeline`) rebuilds the identical state
+    /// via `TurnState::from_checkpoint` directly in its daemon-resume path and
+    /// drives it the same way, rather than going through this wrapper; a
+    /// killed pipeline-wrapped turn resumes instead through
+    /// `stella_pipeline::Pipeline::resume`, which owns turn framing and builds
+    /// its own state via `run_turn` — see `stella-parity`'s
+    /// `turn.checkpoint_resume` row. `stella-serve` stores a checkpoint and
+    /// hands it back on request but accepts none in return (same row, API
+    /// side). So the production callers of *this method* are embedders, and
+    /// the in-tree exercise is `stella-engine`'s test suite.
     #[must_use]
     pub fn resume_turn(&self, checkpoint: crate::step::Checkpoint) -> TurnState {
         TurnState::from_checkpoint(checkpoint, &self.config)

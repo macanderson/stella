@@ -60,7 +60,9 @@ Nothing here dispatches a stage itself: this crate declares the stage names
 and the wire contract a plugin speaks over them (`wire.rs`), but the trait
 that actually calls `before_turn`/`after_turn` — and the `judge`/`again` that
 follow — lives one crate up, in `stella-runtime` (#3380, landed #3479,
-`doc:wrapper-socket` §2). No live turn calls that trait yet; see
+`doc:wrapper-socket` §2). `stella_runtime::WrapperDispatch` now calls all
+four points for a live turn — `stella-cli` drives it on `--pipeline
+<variant>` for both `stella run` and `stella goal` (#3494) — see
 `stella-runtime`'s own README for exactly what "landed" covers there. The
 crate still takes no engine dependency by contract, which is what let the
 load-time contract ship complete before the runtime half existed, and still

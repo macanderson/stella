@@ -16,7 +16,7 @@
 //! so every item here is exercised only by the tests below. Read the ladder as
 //! a ready port waiting on its caller, not as behaviour a user sees today —
 //! and expect the first real caller to shake out the gaps the tests cannot,
-//! starting with the one on [`render`].
+//! starting with the one on [`render`]. Tracked as #3845.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;

@@ -8,7 +8,7 @@
 //! **Nothing in the workspace calls these yet.** `stella-tui` renders both
 //! events, but no producer exists — the media tools return a text
 //! `ToolOutput` instead — so, like [`crate::preview`], this is a port waiting
-//! on its caller rather than behaviour a user sees today.
+//! on its caller rather than behaviour a user sees today. Tracked as #3845.
 
 use stella_protocol::{AgentEvent, MediaArtifactRef, MediaJobState};
 

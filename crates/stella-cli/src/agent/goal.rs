@@ -769,22 +769,22 @@ pub(crate) async fn run_goal_turn(
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
 
-    if let Some((store, id)) = &execution {
-        let (outcome_label, cost) = match &outcome {
-            GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
-            GoalOutcome::Unmet { cost_usd, .. } => ("goal_unmet", *cost_usd),
-        };
-        if !record_execution_end(
-            store,
-            *id,
-            registry,
-            outcome_label,
-            cost,
+    let (outcome_label, cost) = match &outcome {
+        GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
+        GoalOutcome::Unmet { cost_usd, .. } => ("goal_unmet", *cost_usd),
+    };
+    crate::agent::turn_close::close_turn(
+        cfg,
+        store,
+        &execution,
+        registry,
+        session,
+        crate::agent::turn_close::TurnOutcomeRecord {
+            label: outcome_label,
+            cost_usd: cost,
             persistence_complete,
-        ) {
-            warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
-        }
-    }
+        },
+    );
 
     match outcome {
         GoalOutcome::Met {
@@ -1147,22 +1147,22 @@ async fn run_goal_pipeline_turn(
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, total_cost_usd);
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
-    if let Some((store, id)) = &execution {
-        let outcome_label = match &goal_result {
-            Ok(()) => "goal_met",
-            Err(_) => "goal_unmet",
-        };
-        if !record_execution_end(
-            store,
-            *id,
-            registry,
-            outcome_label,
-            total_cost_usd,
+    let outcome_label = match &goal_result {
+        Ok(()) => "goal_met",
+        Err(_) => "goal_unmet",
+    };
+    crate::agent::turn_close::close_turn(
+        cfg,
+        store,
+        &execution,
+        registry,
+        session,
+        crate::agent::turn_close::TurnOutcomeRecord {
+            label: outcome_label,
+            cost_usd: total_cost_usd,
             persistence_complete,
-        ) {
-            warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
-        }
-    }
+        },
+    );
     goal_result
 }
 
