@@ -290,7 +290,7 @@ async fn a_task_delegation_records_an_agent_use_row() {
 
     let out = reg
         .execute(
-            "task",
+            "delegate",
             &serde_json::json!({
                 "description": "find retry policy",
                 "prompt": "Which file defines the retry policy?",
