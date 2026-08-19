@@ -101,6 +101,7 @@ pub(crate) struct ConfigJournal {
 }
 
 /// Where a tier's configuration is written, once it is known to be writable.
+#[derive(Debug)]
 pub(crate) struct ConfigTarget {
     path: PathBuf,
 }
@@ -196,12 +197,58 @@ fn first_missing_prefix(doc: &DocumentMut, segments: &[&str]) -> Option<String> 
 }
 
 /// Set a dotted key to `value`, creating the tables on the way.
-fn set_value(doc: &mut DocumentMut, segments: &[&str], value: toml_edit::Value) {
-    let mut item: &mut Item = doc.as_item_mut();
-    for segment in &segments[..segments.len() - 1] {
-        item = &mut item[*segment];
+///
+/// # Why the tables are built rather than indexed into
+///
+/// `doc["a"]["b"] = value` looks like the same thing and is not: `toml_edit`'s
+/// auto-vivification creates **inline** tables, so writing one key into a fresh
+/// path rendered `self_driving = { attribution = { signature = "…" } }` at the
+/// top of the document, above the user's own banner comment. Valid TOML, and
+/// exactly the unreadability [`crate::settings::toml_io`]'s
+/// `expand_inline_tables` exists to prevent — in a file whose whole reason for
+/// being TOML is that a person reads it. Building the tables explicitly appends
+/// a real `[self_driving.attribution]` at the end instead.
+///
+/// # Errors
+///
+/// When a segment on the way is an existing **non-table** — `self_driving = 1`
+/// with `self_driving.attribution.signature` declared. Refused rather than
+/// overwritten, because that write is not one this module could undo: the
+/// journal records the value at the *leaf*, and there is no leaf here to
+/// record. A destructive change with no recorded prior value is the one thing
+/// the revert contract cannot survive.
+fn set_value(
+    doc: &mut DocumentMut,
+    segments: &[&str],
+    value: toml_edit::Value,
+) -> Result<(), String> {
+    let (leaf, parents) = segments
+        .split_last()
+        .expect("a key has at least one segment");
+    let mut table = doc.as_table_mut();
+    for segment in parents {
+        let entry = table.entry(segment).or_insert_with(|| {
+            let mut created = toml_edit::Table::new();
+            // Implicit until proven otherwise, so an intermediate that holds
+            // only other tables renders no bare header of its own — the
+            // `hide_empty_parents` rule, which also keeps a reader from adding
+            // a key under an empty header where it would silently belong to
+            // the wrong table.
+            created.set_implicit(true);
+            Item::Table(created)
+        });
+        table = entry.as_table_mut().ok_or_else(|| {
+            format!(
+                "`{}` cannot be set: `{segment}` already holds a value rather than a \
+                 table, and overwriting it is a change this install could not undo",
+                segments.join(".")
+            )
+        })?;
     }
-    item[segments[segments.len() - 1]] = Item::Value(value);
+    table.insert(leaf, Item::Value(value));
+    // The table now holds a direct key, so it needs a header to hang it on.
+    table.set_implicit(false);
+    Ok(())
 }
 
 /// Remove a dotted key, leaving its ancestors alone.
@@ -224,13 +271,16 @@ fn remove_key(doc: &mut DocumentMut, segments: &[&str]) {
 /// consent document showed — so what a human accepted is literally what is
 /// parsed and stored.
 fn parse_rendered(entry: &ConfigureEntry) -> Result<toml_edit::Value, String> {
-    entry.rendered_value().parse::<toml_edit::Value>().map_err(|e| {
-        format!(
-            "`{}` declares a value this build cannot write ({}): {e}",
-            entry.key,
-            entry.rendered_value()
-        )
-    })
+    entry
+        .rendered_value()
+        .parse::<toml_edit::Value>()
+        .map_err(|e| {
+            format!(
+                "`{}` declares a value this build cannot write ({}): {e}",
+                entry.key,
+                entry.rendered_value()
+            )
+        })
 }
 
 /// The whole change a `[[configure]]` table would make, computed without
@@ -240,6 +290,7 @@ fn parse_rendered(entry: &ConfigureEntry) -> Result<toml_edit::Value, String> {
 /// Written the other way round — apply, then journal — a failure between the
 /// two leaves a workspace configured with nothing on disk that knows how to
 /// undo it, which is the exact state [`revert`] exists to make impossible.
+#[derive(Debug)]
 pub(crate) struct ConfigPlan {
     /// What undoes it.
     pub(crate) journal: ConfigJournal,
@@ -271,7 +322,7 @@ pub(crate) fn plan(target: &ConfigTarget, manifest: &PluginManifest) -> Result<C
             value: value_text(&doc, &segments),
             created: first_missing_prefix(&doc, &segments),
         });
-        set_value(&mut doc, &segments, value);
+        set_value(&mut doc, &segments, value)?;
     }
 
     Ok(ConfigPlan {
@@ -301,8 +352,7 @@ pub(crate) fn write_journal(plugin_dir: &Path, journal: &ConfigJournal) -> Resul
     let path = plugin_dir.join(REVERT_FILE);
     let text = serde_json::to_string_pretty(journal)
         .map_err(|e| format!("cannot record what to restore on removal: {e}"))?;
-    std::fs::write(&path, text)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+    std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 /// Read a package's journal, or `None` when it has none.
@@ -383,11 +433,12 @@ pub(crate) fn undo(journal: &ConfigJournal, manifest: &PluginManifest) -> Revert
         let segments: Vec<&str> = entry.segments().collect();
         match &record.value {
             // It held something: put that back, whatever it is now.
-            Some(text) => match text.parse::<toml_edit::Value>() {
-                Ok(value) => {
-                    set_value(&mut doc, &segments, value);
-                    done.keys.push(entry.key.clone());
-                }
+            Some(text) => match text
+                .parse::<toml_edit::Value>()
+                .map_err(|error| error.to_string())
+                .and_then(|value| set_value(&mut doc, &segments, value))
+            {
+                Ok(()) => done.keys.push(entry.key.clone()),
                 Err(_) => done.unaccounted.push(entry.key.clone()),
             },
             // It held nothing: remove the key, and the table this install

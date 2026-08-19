@@ -212,8 +212,9 @@ fn install(
         None
     } else {
         Some(
-            configure::ConfigTarget::resolve(workspace_root, scope)
-                .map_err(|reason| format!("`{name}` cannot be installed: {reason}\n\nNothing was copied."))?,
+            configure::ConfigTarget::resolve(workspace_root, scope).map_err(|reason| {
+                format!("`{name}` cannot be installed: {reason}\n\nNothing was copied.")
+            })?,
         )
     };
 
