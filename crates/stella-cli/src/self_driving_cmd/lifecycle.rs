@@ -189,6 +189,9 @@ pub(super) fn close_issue(req: CloseRequest<'_>) -> Result<(), String> {
     // A partial closure comments first and closes second: if the close fails,
     // the link to the remainder is already on the issue, which is the half a
     // human needs. The reverse order would leave a closed issue with no trail.
+    // The close then goes out *bare* — the receipt is already on the issue, so
+    // re-attaching it as the close's `--comment` would post the identical
+    // signed receipt twice.
     if matches!(closure, Closure::Partial { .. }) {
         runtime
             .block_on(backlog::comment(
@@ -198,17 +201,21 @@ pub(super) fn close_issue(req: CloseRequest<'_>) -> Result<(), String> {
                 &cfg.attribution.issue_comment,
             ))
             .map_err(|error| error.to_string())?;
-    }
 
-    runtime
-        .block_on(backlog::close_with_receipt(
-            &provider,
-            &issue_key,
-            &receipt,
-            &cfg.attribution.issue_comment,
-            &resolution,
-        ))
-        .map_err(|error| error.to_string())?;
+        runtime
+            .block_on(backlog::close_bare(&provider, &issue_key, &resolution))
+            .map_err(|error| error.to_string())?;
+    } else {
+        runtime
+            .block_on(backlog::close_with_receipt(
+                &provider,
+                &issue_key,
+                &receipt,
+                &cfg.attribution.issue_comment,
+                &resolution,
+            ))
+            .map_err(|error| error.to_string())?;
+    }
 
     println!("closed #{key} as {resolution}");
     Ok(())

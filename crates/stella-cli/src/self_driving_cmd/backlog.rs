@@ -255,6 +255,21 @@ pub(super) async fn close_with_receipt(
         .await
 }
 
+/// Close an issue whose receipt is already on the trail.
+///
+/// The partial-closure path posts the receipt as a standalone comment *before*
+/// closing (`lifecycle::close_issue` — the remainder link has to survive a
+/// failed close), so attaching the same receipt to the close would leave the
+/// identical signed comment on the issue twice. This closes in the terminal
+/// state without a second comment.
+pub(super) async fn close_bare(
+    provider: &dyn IssueProvider,
+    key: &IssueKey,
+    state: &str,
+) -> Result<(), IssueError> {
+    provider.close(key, "", state).await
+}
+
 /// Bring an issue's labels up to this workspace's convention.
 ///
 /// Stella owns the backlog, so an issue that arrived unclassified is hers to

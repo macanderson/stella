@@ -181,16 +181,18 @@ impl IssueProvider for GhIssueProvider {
         } else {
             "completed"
         };
-        gh_json(&[
-            "issue",
-            "close",
-            key.as_str(),
-            "--comment",
-            receipt,
-            "--reason",
-            reason,
-        ])
-        .map(|_| ())
+        // An empty receipt attaches no comment: the partial-closure path posts
+        // its receipt as a standalone comment first (for durability), so
+        // re-attaching it here would leave the identical signed receipt on the
+        // issue twice.
+        let mut args = vec!["issue", "close", key.as_str()];
+        if !receipt.trim().is_empty() {
+            args.push("--comment");
+            args.push(receipt);
+        }
+        args.push("--reason");
+        args.push(reason);
+        gh_json(&args).map(|_| ())
     }
 
     async fn comment(&self, key: &IssueKey, body: &str) -> Result<(), IssueError> {
