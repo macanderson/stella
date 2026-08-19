@@ -5,6 +5,23 @@
 //! is the defect this test guards: if dead code is reintroduced here behind
 //! an `allow`, this test fails. A green run means the module compiles on its
 //! own merits — every item reachable, no lint overrides hiding drift.
+//!
+//! # Kept, though `make dead-code-allows` now covers the whole tree
+//!
+//! Deliberately **not** folded into that guard (#3949), because it is stricter
+//! rather than narrower, in two ways the general one cannot express:
+//!
+//! * The gate permits a suppression that **says why the lint is wrong here**,
+//!   and counts it against a per-crate ratchet. This file permits none at all,
+//!   at any justification, because the justification is what went wrong here
+//!   the first time: the helper was kept, plausibly argued for, and had zero
+//!   callers the whole while.
+//! * The second assertion is about one *identifier*, not about suppressions.
+//!   No tree-wide guard can know that `derived_message` specifically must not
+//!   come back; that is knowledge about this module, and it belongs beside it.
+//!
+//! The general guard is the floor. This is the one file the floor is not
+//! considered enough for.
 
 use std::path::PathBuf;
 

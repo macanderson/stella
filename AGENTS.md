@@ -81,6 +81,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + typed-errors
+                         #   + dead-code-allows
                          #   + diagnostic-codes
                          #   + bench-suites
                          #   + wire-schema
@@ -763,6 +764,34 @@ this before assuming two of them mean the same thing:
   hand-format. CI runs `cargo fmt --check`.
 - **Clippy at `-D warnings`** across all targets. Do **not** `#[allow]` your way
   past a lint without a comment saying why the lint is wrong *here*.
+
+  For `dead_code` and `unused_imports` this is **enforced**, by
+  `scripts/check-dead-code-allows.py` (`make dead-code-allows`). Clippy cannot
+  check it — silencing clippy is the attribute's whole job — so nothing in the
+  gate could tell one of these from any other line, and the tree reached zero
+  suppressions twice and drifted back both times (#3949). Two halves:
+
+  - **A floor.** Every suppression in production source carries an in-band
+    `reason = "..."` or a comment line directly above it. Absolute, not
+    ratcheted: unexplained at any count is a defect. A module doc (`//!`) does
+    not count — it describes the file, not the item under it.
+  - **A down-only ratchet** (`scripts/dead-code-allows-baseline.txt`), for the
+    one reason a ratchet is ever legitimate here: the rule predates the guard,
+    so the baseline records the debt #3872 left rather than granting new
+    permission. `make dead-code-allows-update` refuses to raise a number or add
+    a crate. A justified suppression still counts — a comment makes one
+    *reviewable*, not *free*, and this tree accumulated twenty of them one
+    reasonable-sounding paragraph at a time.
+
+  **`#[cfg(test)]` is the better answer** whenever the only callers really are
+  tests, and the guard is built to push you there: it does not count it.
+  `#[allow(dead_code)]` asserts *the lint is wrong*; for an item nothing ships
+  a call to, it is not. `#[cfg(test)]` asserts *this exists for the tests*,
+  keeps it out of the binary, and is compiler-enforced — a later production
+  caller becomes a build error instead of silently re-justifying the allow.
+  Deletion is the other answer. Test paths, `#[cfg(test)]` bodies, and the
+  platform-conditional `cfg_attr` form are excluded by construction rather than
+  by allowlist. `make dead-code-allows-test` covers the guard's own directions.
 - **Name things for what they are, not what they were.** If you rename a
   concept, chase it through comments and docs in the same PR — stale comments
   are treated as bugs in review.

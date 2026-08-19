@@ -39,7 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    diagnostic-codes bench-suites
+                    dead-code-allows diagnostic-codes bench-suites
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -316,6 +316,18 @@ typed-errors-update: ## Retighten the invariant-#5 ratchet (run after typing sig
 .PHONY: typed-errors-test
 typed-errors-test: ## Test the invariant-#5 ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-typed-errors.sh
+
+.PHONY: dead-code-allows
+dead-code-allows: ## Assert every #[allow(dead_code)] says why, and that the count only shrinks (#3949)
+	@python3 ./scripts/check-dead-code-allows.py
+
+.PHONY: dead-code-allows-update
+dead-code-allows-update: ## Retighten the dead-code-suppression ratchet (run after removing one)
+	@python3 ./scripts/check-dead-code-allows.py --update
+
+.PHONY: dead-code-allows-test
+dead-code-allows-test: ## Test the dead-code ratchet's direction (hermetic; not part of `gate`)
+	./scripts/test-dead-code-allows.sh
 
 .PHONY: shellcheck-guard-test
 shellcheck-guard-test: ## Test the shellcheck step's presence guard (hermetic; not part of `gate`)

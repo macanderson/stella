@@ -1,0 +1,13 @@
+# Down-only ratchet for `#[allow(dead_code)]` / `#[allow(unused_imports)]` in
+# production source (CLAUDE.md's "an expedient is a defect"; #3949).
+#
+# Each line is `<crate> <count>` -- suppressions of those two lints outside test
+# code. A crate may shrink its count; it may never grow it, and a crate absent
+# from this file must be at zero. Regenerate with `make dead-code-allows-update`,
+# which refuses to raise a number or to add a crate.
+#
+# The counts here are the debt #3872 left behind, not permission to add more.
+# The remedy is almost always `#[cfg(test)]` -- compiler-enforced, and honest
+# about what the item is for -- or deletion. This file is meant to reach empty.
+stella-cli 17
+stella-core 3
