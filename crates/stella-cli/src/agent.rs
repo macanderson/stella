@@ -71,8 +71,9 @@ pub(crate) use init::{InitIo, InitLine, deck_narrator, deck_notice_narrator, ini
 pub(crate) use outcome::settled_cost_since;
 use output::*;
 pub(crate) use persistence::{
-    PersistOutcome, begin_execution, close_event_stream, persist_event, persist_event_detailed,
-    record_execution_end, seed_calibration, spawn_renderer, warn_store_write_failed,
+    PersistOutcome, ReasoningRun, begin_execution, close_event_stream, flush_reasoning_tail,
+    persist_event, persist_owed, record_execution_end, seed_calibration, spawn_renderer,
+    warn_store_write_failed,
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
