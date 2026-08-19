@@ -18,8 +18,9 @@
 //! drawn at machine-readability:
 //!
 //! - **Enumerated tie-breakers live here.** Every field is a closed enum or a
-//!   number, consumed by the pure machines ([`crate::step`],
-//!   [`crate::deliver_next`]). No model reads this type. That is what makes an
+//!   number, consumed by the pure machines ([`step()`](crate::step()),
+//!   [`deliver_next`](crate::deliver_next)). No model reads this type. That is
+//!   what makes an
 //!   operator's declared preference *testable* rather than hopeful — you can
 //!   assert that `ForeignBreakage::FileAndWait` does not adopt, and the
 //!   assertion cannot be talked out of.
