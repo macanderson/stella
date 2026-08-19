@@ -8,17 +8,28 @@
  *      an error tints its digest and pins itself open.
  *
  * The ground, the neutral ramp and the three semantic colours are the web
- * instrument palette, whose single definition is the delimited block in
- * `crates/stella-observatory/src/assets/index.html`. They are not a separate
- * system that happens to look similar: the Observatory renders this page (its
- * `render_transcript` route serves `html::render_page`), so a reader clicking
- * a run in the dashboard lands here. It used to land on a different ground —
- * `#000` against the instrument's `#0A0A0A` — with "passed" a different green
- * in the two views of the same run, which is the drift
- * `crates/stella-cli/tests/design_token_parity.rs` exists to prevent
- * everywhere it can see. It cannot see this file yet: that matrix requires a
- * dark *and* a light scheme per surface and this page has only the one.
- * Adding both is #3630.
+ * instrument palette, whose single definition is the delimited block in the
+ * Observatory's index asset. They are not a separate system that happens to
+ * look similar: the Observatory renders this page (its `render_transcript`
+ * route serves `html::render_page`), so a reader clicking a run in the
+ * dashboard lands here, and "passed" must not be one green in the dashboard
+ * and another in the transcript of the same run.
+ *
+ * That claim is now enforced rather than asserted. The design-token parity
+ * test carries a row for this file, so a value drifting from the Observatory's
+ * fails the gate. Standing it up found the claim had already been false for as
+ * long as it had been written: the ground was `#0a0a0a` against the
+ * instrument's `#070B10`, and all three semantic colours differed. A one-time
+ * hand-sync is not a system — this is what #3630 meant by asking for the row
+ * rather than for another alignment pass.
+ *
+ * The matrix requires a dark **and** a light scheme per surface, and this page
+ * now carries both. A light scheme is the right answer here rather than
+ * declaring the page ink-only: a transcript is the standalone artifact people
+ * mail around and print, and a mailed artifact does not get to assume a dark
+ * screen. Both schemes are declared at `:root`, with the media query only
+ * overriding — never define a colour solely inside a media query. There is no
+ * `data-theme` gate because this page has no toggle to hang one on.
  *
  * **Comments here are page content.** This file is `include_str!`-ed and
  * inlined into every rendered transcript, so anything written in it ships to
@@ -31,37 +42,85 @@
  * comment about its *colours*. So: cite modules and routes by name here, and
  * never by source path.
  *
- * `--cyan` and `--violet` are deliberately NOT instrument values. They encode
- * tool *kind* and speaker, and the instrument system separates categories by
- * lightness (`--c1`..`--c4`) rather than hue on purpose. Which of the two this
- * dense a surface should use is a design question, not a drift, and it is open
- * — see #3630. Until it settles they stay as they are rather than
- * being half-migrated into a palette that would then match nothing.
+ * `--cyan` and `--violet` are deliberately NOT instrument values, and that is
+ * now a settled decision rather than an open note (#3630). They encode tool
+ * *kind* and speaker; the instrument system separates categories by lightness
+ * (`--c1`..`--c4`) rather than hue, because lightness is the one channel that
+ * survives greyscale, colour-vision deficiency and a projector.
+ *
+ * This surface keeps hue anyway, for a reason that does not generalise to the
+ * charts that rule was written for. A chart's categories are read *compared*
+ * with each other, a few at a time, in one glance at one figure — lightness
+ * separates them well there. A transcript's tool kinds are read *found*: a
+ * reader scrolling a hundred steps is looking for "where did it run a
+ * command", and hue is what makes a row findable in peripheral vision when
+ * every row already spans the full neutral ramp for its own text. Spending
+ * lightness on category here would collide with the ramp the body text
+ * already uses, and the fallback the value ramp protects — greyscale — is a
+ * case this page does not have, since it is read on a screen or printed in
+ * colour from a browser.
+ *
+ * Consequences, which are the price of the decision: these two are outside the
+ * parity matrix by design, so the row below covers the ground, the neutral
+ * ramp and the semantic triad only; and the `.you`/`.agent` roletag rules put
+ * near-black text on these two as fills, so a future replacement has to keep a
+ * legible fill pair and not merely a legible glyph.
  */
 
 :root {
-  /* Instrument ground / neutral ramp — observatory `BEGIN palette` block. */
-  --bg: #0a0a0a;
-  --panel: #0f0f0f;
-  --raised: #111111;
-  --line: #1f1f1f;
-  --line2: #2e2e2e;
-  --ink: #ededed;
-  --dim: #a1a1a1;
-  --faint: #6e6e6e;
-  /* Categorical — see the header note; not instrument values. */
+  color-scheme: dark light;
+  /* Instrument ground / neutral ramp — the Observatory's `BEGIN palette`
+     block, value for value. Checked by the design-token parity test. */
+  --bg: #070b10;
+  --panel: #0d1319;
+  --raised: #11171d;
+  --line: #1f262d;
+  --line2: #333b43;
+  --ink: #e9edf2;
+  --dim: #a4abb3;
+  --faint: #737c88;
+  /* Categorical — see the header note; deliberately not instrument values,
+     and deliberately outside the parity matrix. */
   --cyan: #4ed6e0;
   --violet: #a8a3f5;
   /* The three semantic colours: instrument `--ok` / `--bad` / `--warn`. */
-  --green: #4cc38a;
-  --red: #e5715f;
-  --amber: #c9a227;
-  /* Diff washes, derived from the semantic pair above at the same alphas. */
-  --del-line: rgba(229, 113, 95, 0.13);
-  --del-word: rgba(229, 113, 95, 0.38);
-  --add-line: rgba(76, 195, 138, 0.12);
-  --add-word: rgba(76, 195, 138, 0.34);
+  --green: #3fd99b;
+  --red: #f2687a;
+  --amber: #d9a62e;
+  /* Diff washes, derived from the semantic pair above at the same alphas.
+     Derived, not picked: change `--green`/`--red` and these follow, which is
+     why they are spelled as the same channels rather than as new hex. */
+  --del-line: rgba(242, 104, 122, 0.13);
+  --del-word: rgba(242, 104, 122, 0.38);
+  --add-line: rgba(63, 217, 155, 0.12);
+  --add-word: rgba(63, 217, 155, 0.34);
   --mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+
+/* The light scheme: the Observatory's `:root[data-theme="light"]` block, value
+   for value, for the roles this page shares with it. Overrides only — every
+   colour above is already defined, so a scheme that sets nothing still renders.
+   The two categorical hues are unchanged across schemes on purpose: they are
+   identity for a tool kind, and a category that changed colour with the ambient
+   theme would stop being one. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --panel: #f7f9fc;
+    --raised: #ffffff;
+    --line: #e7ebf0;
+    --line2: #cfd6dd;
+    --ink: #070b10;
+    --dim: #4d535a;
+    --faint: #828c97;
+    --green: #0b6b3d;
+    --red: #a82036;
+    --amber: #7a5200;
+    --del-line: rgba(168, 32, 54, 0.1);
+    --del-word: rgba(168, 32, 54, 0.28);
+    --add-line: rgba(11, 107, 61, 0.09);
+    --add-word: rgba(11, 107, 61, 0.24);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -333,3 +392,22 @@ table.diff { border-collapse: collapse; width: 100%; font: 12.5px/1.65 var(--mon
 .diff tr.add td.sign { color: var(--green); }
 .dw { background: var(--del-word); border-radius: 2px; padding: 0 1px; }
 .aw { background: var(--add-word); border-radius: 2px; padding: 0 1px; }
+
+/* JSON syntax colouring for a tool result body.
+ *
+ * The runs come from the shared lexer the Command Deck also colours with
+ * (`syntax::json_runs`), so the page and the live deck break a body into the
+ * same tokens; only the paint differs, because HTML has classes where a
+ * terminal cell has one foreground. Before this, an exported transcript and the
+ * Observatory rendered every JSON result as flat text while the deck coloured
+ * it (#3644).
+ *
+ * The hues match the deck's `theme::SYNTAX_*`: a key takes the warn hue, a
+ * string the ok hue, a scalar the categorical violet. Untagged runs — the
+ * punctuation and indentation that are most of a pretty-printed object — get no
+ * element at all and inherit the body colour.
+ */
+.out .tk { color: var(--amber); }
+.out .ts { color: var(--green); }
+.out .tn { color: var(--violet); }
+.out .tc { color: var(--faint); font-style: italic; }
