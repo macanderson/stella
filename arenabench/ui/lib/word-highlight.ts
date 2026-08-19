@@ -293,7 +293,6 @@ export function highlightChangeBlock(
   }
   return { removed, added };
 }
-
 /**
  * Word-highlight the rows of a rendered diff, keyed by their sign column.
  *

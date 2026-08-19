@@ -29,7 +29,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 ///
 /// The invariant every surface owes this constant is
 /// `head.len() + tail.len() == min(body.len(), PREVIEW_LINES)`, which
-/// [`crate::tests`] asserts directly and
+/// `crates/stella-transcript/src/tests.rs` asserts directly and
 /// `crates/stella-tui/src/render/tests/tool_output.rs` asserts against the deck's own
 /// renderer.
 pub const PREVIEW_LINES: usize = 6;
