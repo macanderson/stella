@@ -84,6 +84,66 @@ pub(crate) fn crlf_promoted(content: &str, old: &str, new: &str) -> Option<(Stri
     Some((promoted_old, promoted_new))
 }
 
+/// Lines of a needle that missed, but whose only difference from the file is
+/// leading whitespace — returned as the file's own bytes for that span.
+///
+/// The most common shape of an "unchanged file, still no match" miss, and the
+/// one the generic message cannot resolve without a ranged re-read: a needle
+/// copied out of a nested context and re-indented by a few spaces, or copied
+/// from a `read_file` render whose line prefix was trimmed off unevenly. The
+/// literal comparison is right to fail — an edit must be byte-exact — but the
+/// tool knows *why* it failed and can say so.
+///
+/// Deliberately narrow, so this can never claim a match the real edit would
+/// not have made:
+///
+/// - Every line must be equal after stripping leading whitespace **only**.
+///   Trailing whitespace still counts, because it is a real difference the
+///   model must reproduce and one that a "check whitespace" message covers.
+/// - The first matching window wins and a second one yields `None`. An
+///   ambiguous span would send the model to re-issue against the wrong copy,
+///   which is worse than the generic message.
+/// - Bounded by [`INDENT_HINT_MAX_LINES`]: this is a hint inside an error, not
+///   a file echo, and a huge needle is not the confusion this diagnoses.
+fn indentation_only_match(content: &str, needle: &str) -> Option<String> {
+    let needle_lines: Vec<&str> = needle.lines().collect();
+    if needle_lines.is_empty() || needle_lines.len() > INDENT_HINT_MAX_LINES {
+        return None;
+    }
+    // A single line with no leading whitespace of its own cannot be an
+    // indentation miss: there is nothing to have got wrong.
+    let trimmed: Vec<&str> = needle_lines
+        .iter()
+        .map(|l| l.trim_start_matches([' ', '\t']))
+        .collect();
+    if trimmed.iter().all(|l| l.is_empty()) {
+        return None;
+    }
+
+    let content_lines: Vec<&str> = content.lines().collect();
+    let mut found: Option<String> = None;
+    for window in content_lines.windows(needle_lines.len()) {
+        let matches = window
+            .iter()
+            .zip(&trimmed)
+            .all(|(actual, want)| actual.trim_start_matches([' ', '\t']) == *want);
+        if !matches {
+            continue;
+        }
+        if found.is_some() {
+            // Ambiguous — say nothing rather than point at the wrong span.
+            return None;
+        }
+        found = Some(window.join("\n"));
+    }
+    found
+}
+
+/// Ceiling on the needle this hint will diagnose. A long needle that misses is
+/// unlikely to be a pure indentation slip, and the hint has to stay small
+/// enough to belong inside an error message.
+const INDENT_HINT_MAX_LINES: usize = 40;
+
 #[derive(Default)]
 pub struct EditFile {
     ledger: Arc<ReadLedger>,
@@ -269,11 +329,23 @@ impl Tool for EditFile {
                         drift_echo(&content)
                     ))
                 }
-                Some(_) => ToolOutput::error(format!(
-                    "old_string not found in `{path}` — the file is unchanged since you last \
-                         saw it, so the copy in your context matches disk; check for exact \
-                         whitespace/newline differences"
-                )),
+                Some(_) => match indentation_only_match(&content, old_string) {
+                    // The needle is right and only its indentation is wrong.
+                    // The generic message below is accurate but costs a ranged
+                    // re-read to act on; naming the cause and echoing the
+                    // file's own bytes for the span removes that round trip.
+                    Some(actual) => ToolOutput::error(format!(
+                        "old_string not found in `{path}` — but the same text IS present with \
+                         different leading whitespace, so the needle was re-indented. The file \
+                         is unchanged since you last saw it. Copy this span byte-exact:\n\n--- \
+                         {path} (actual indentation) ---\n{actual}"
+                    )),
+                    None => ToolOutput::error(format!(
+                        "old_string not found in `{path}` — the file is unchanged since you last \
+                             saw it, so the copy in your context matches disk; check for exact \
+                             whitespace/newline differences"
+                    )),
+                },
                 None => ToolOutput::error(format!(
                     "old_string not found in `{path}` — no read of this file is recorded \
                          this session; read it first and copy old_string byte-exact"
@@ -334,6 +406,30 @@ mod tests {
         crate::ctx::ToolCtx::bare(root.as_ref().to_path_buf())
     }
     use crate::read::ReadFile;
+
+    /// The observed failure this diagnoses: a needle that is byte-correct
+    /// except for a missing list indent. The generic "check for exact
+    /// whitespace" message is true but costs a ranged re-read to act on.
+    #[test]
+    fn an_indentation_only_miss_hands_back_the_files_own_bytes() {
+        let content = "prose\n   - one\n   - two\nmore\n";
+        let hit = indentation_only_match(content, "- one\n- two").expect("the span");
+        assert_eq!(hit, "   - one\n   - two", "the file's indentation, verbatim");
+    }
+
+    /// The hint must never claim a match the real edit would not have made.
+    #[test]
+    fn the_hint_declines_when_it_would_be_a_guess() {
+        // Genuinely absent text is not an indentation problem.
+        assert_eq!(indentation_only_match("a\nb\n", "- nope"), None);
+        // Two candidate spans: pointing at either one could be wrong.
+        assert_eq!(indentation_only_match("  x\nsep\n    x\n", "x"), None);
+        // Trailing whitespace is a real difference the model must reproduce,
+        // and the generic message already covers it.
+        assert_eq!(indentation_only_match("  keep  \n", "keep"), None);
+        // Nothing to have mis-indented.
+        assert_eq!(indentation_only_match("\n\n", "   "), None);
+    }
 
     #[tokio::test]
     async fn replaces_unique_substring() {
