@@ -164,8 +164,8 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::{Value, json};
     use stella_core::ports::{AuthzDecision, AuthzEvalError};
+    use stella_protocol::ToolContract;
     use stella_protocol::tool::{ToolOutput, ToolSchema};
-    use stella_protocol::{RiskLevel, ToolContract};
 
     /// Stands in for a session's base (registry / MCP view) and records
     /// whether any call actually got through the assembled stack.
