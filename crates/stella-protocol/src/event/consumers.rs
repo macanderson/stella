@@ -183,7 +183,7 @@ pub use super::tags::SIGNAL_CONSUMERS;
 /// show up as a diff; raising it means a new variant was filed away unread,
 /// which is the exact move the ledger exists to prevent. #2703 drives it to
 /// zero, after which a new variant cannot reach `Unclassified` at all.
-pub const MAX_UNCLASSIFIED: usize = 36;
+pub const MAX_UNCLASSIFIED: usize = 34;
 
 /// What the audit found wrong with one ledger row.
 ///
