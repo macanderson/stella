@@ -64,6 +64,11 @@ pub(crate) fn spawn_forwarder(
 ) -> tokio::task::JoinHandle<bool> {
     tokio::spawn(async move {
         let mut seq = 0u64;
+        // This lane's open run of streamed reasoning fragments, joined into one
+        // row per thought rather than one per few tokens (#3969). One run per
+        // forwarder, and a forwarder is one lane — every lane has a registry
+        // and a channel of its own, so two lanes' thoughts cannot fuse.
+        let mut reasoning = agent::ReasoningRun::default();
         // Two independent latches, not one. A single shared flag meant an
         // early usage gap — the benign, self-healing condition — silenced any
         // later store-write failure, which is the one that actually points at
@@ -180,68 +185,83 @@ pub(crate) fn spawn_forwarder(
                 guard.seed_from_plan(&proposal.steps);
             }
             let event = if let Some((store, id)) = &execution {
-                // Off the reactor for the same reason the one-shot renderer's
-                // hop exists — see `agent::persistence::spawn_renderer`, which
-                // carries the measured numbers. This lane matters at least as
-                // much: the deck is the default interactive shell on a TTY, so
-                // a five-second `busy_timeout` stall here is a five-second
-                // unresponsive UI.
-                //
-                // The event moves in and back out rather than being cloned; it
-                // is still owed to `cache_insight_for` and the deck below.
-                let store = Arc::clone(store);
-                let id = *id;
-                let provider_id = Arc::clone(&provider_id);
-                let joined = tokio::task::spawn_blocking(move || {
-                    let outcome =
-                        agent::persist_event_detailed(&store, id, seq, &event, &provider_id);
-                    (event, outcome)
-                })
-                .await;
-                let (event, outcome) = match joined {
-                    Ok(pair) => pair,
-                    // The event went with the panicking or shutting-down task,
-                    // so this lane loses one rendered event; what it must not
-                    // lose is the admission that persistence is incomplete.
-                    Err(_) => {
-                        persistence_complete = false;
-                        seq += 1;
-                        continue;
-                    }
-                };
-                if !outcome.is_complete() {
-                    persistence_complete = false;
-                    // One warning per condition per turn, each naming what
-                    // actually occurred: a failed INSERT points at the store,
-                    // while unreported provider usage does not — conflating
-                    // them sent users hunting for a database fault that was
-                    // really a truncated model stream.
+                // Fold a streamed reasoning fragment into the open run rather
+                // than spending a row, a `seq` and a blocking hop on each one
+                // (#3969); anything else closes the run and is written after
+                // it, which is what keeps the table in stream order.
+                let owed = reasoning.admit(&event);
+                if owed.is_empty() {
+                    // Buffered. The event still reaches the deck below — only
+                    // the durable write coalesces, never the painting.
+                    event
+                } else {
+                    // Off the reactor for the same reason the one-shot renderer's
+                    // hop exists — see `agent::persistence::spawn_renderer`, which
+                    // carries the measured numbers. This lane matters at least as
+                    // much: the deck is the default interactive shell on a TTY, so
+                    // a five-second `busy_timeout` stall here is a five-second
+                    // unresponsive UI.
                     //
-                    // The scope word matters as much as the condition. A
-                    // usage gap is scoped to "one model call" because that is
-                    // all it ever was; saying "this session" turned a retried
-                    // network blip into what looked like a session-wide
-                    // accounting failure, and left that as the last word on
-                    // the deck for the rest of the run.
-                    let (warned, scope) = match outcome {
-                        crate::agent::PersistOutcome::StoreWriteFailed => {
-                            (&mut store_warned, "this session")
+                    // The event moves in and back out rather than being cloned; it
+                    // is still owed to `cache_insight_for` and the deck below.
+                    let store = Arc::clone(store);
+                    let id = *id;
+                    let provider_id = Arc::clone(&provider_id);
+                    // See the renderer's twin: a task that dies with its writes in
+                    // an unknown state must over-advance `seq`, never under.
+                    let owed_writes =
+                        u64::from(owed.block.is_some()) + u64::from(owed.writes_arriving);
+                    let joined = tokio::task::spawn_blocking(move || {
+                        let (outcome, next) =
+                            agent::persist_owed(&store, id, seq, owed, &event, &provider_id);
+                        (event, outcome, next)
+                    })
+                    .await;
+                    let (event, outcome, next_seq) = match joined {
+                        Ok(triple) => triple,
+                        // The event went with the panicking or shutting-down task,
+                        // so this lane loses one rendered event; what it must not
+                        // lose is the admission that persistence is incomplete.
+                        Err(_) => {
+                            persistence_complete = false;
+                            seq += owed_writes;
+                            continue;
                         }
-                        _ => (&mut usage_warned, "one model call"),
                     };
-                    if !*warned && let Some(message) = outcome.message(scope) {
-                        *warned = true;
-                        let _ = inbound.send(Inbound::Event {
-                            agent: lane.clone(),
-                            event: AgentEvent::Error {
-                                message,
-                                retryable: true,
-                            },
-                        });
+                    seq = next_seq;
+                    if !outcome.is_complete() {
+                        persistence_complete = false;
+                        // One warning per condition per turn, each naming what
+                        // actually occurred: a failed INSERT points at the store,
+                        // while unreported provider usage does not — conflating
+                        // them sent users hunting for a database fault that was
+                        // really a truncated model stream.
+                        //
+                        // The scope word matters as much as the condition. A
+                        // usage gap is scoped to "one model call" because that is
+                        // all it ever was; saying "this session" turned a retried
+                        // network blip into what looked like a session-wide
+                        // accounting failure, and left that as the last word on
+                        // the deck for the rest of the run.
+                        let (warned, scope) = match outcome {
+                            crate::agent::PersistOutcome::StoreWriteFailed => {
+                                (&mut store_warned, "this session")
+                            }
+                            _ => (&mut usage_warned, "one model call"),
+                        };
+                        if !*warned && let Some(message) = outcome.message(scope) {
+                            *warned = true;
+                            let _ = inbound.send(Inbound::Event {
+                                agent: lane.clone(),
+                                event: AgentEvent::Error {
+                                    message,
+                                    retryable: true,
+                                },
+                            });
+                        }
                     }
+                    event
                 }
-                seq += 1;
-                event
             } else {
                 event
             };
@@ -257,6 +277,11 @@ pub(crate) fn spawn_forwarder(
             if let Some(insight) = cache_insight {
                 let _ = inbound.send(insight);
             }
+        }
+        // The lane's stream is closed, so its open reasoning run is final: a
+        // turn the user interrupted mid-thought keeps what it had streamed.
+        if !agent::flush_reasoning_tail(&mut reasoning, &execution, &provider_id, &mut seq).await {
+            persistence_complete = false;
         }
         bridge.finish();
         persistence_complete

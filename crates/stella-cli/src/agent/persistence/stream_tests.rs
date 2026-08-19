@@ -120,6 +120,198 @@ async fn stream_renderer_persists_reflection_before_the_run_terminator() {
     ));
 }
 
+/// Drive `spawn_renderer` over `events` and return the rows it durably wrote,
+/// oldest first. The store is in-memory, so nothing touches a real workspace.
+///
+/// `format` is a parameter because it decides one thing these tests care
+/// about: only `StreamJson` defers the run terminator
+/// ([`defer_stream_terminal`]), so only there is "the tail flush lands before
+/// `RunComplete`" a question with an answer.
+async fn durable_rows(
+    session: &str,
+    format: OutputFormat,
+    events: Vec<AgentEvent>,
+) -> (Vec<stella_store::SessionEventRecord>, bool) {
+    let store = std::sync::Arc::new(stella_store::Store::in_memory().expect("store"));
+    let execution_id = store
+        .begin_execution("run", "prompt", "anthropic", "claude")
+        .expect("begin");
+    store
+        .set_execution_session(execution_id, session)
+        .expect("session");
+    let (tx, rx) = mpsc::unbounded_channel();
+    let renderer = spawn_renderer(
+        rx,
+        format,
+        Some((store.clone(), execution_id)),
+        "anthropic".into(),
+        false,
+        None,
+    );
+    for event in events {
+        tx.send(event).unwrap();
+    }
+    drop(tx);
+    let outcome = renderer.await.expect("renderer");
+    let journal = store.session_events(session).expect("journal");
+    (journal.events, outcome.persistence_complete)
+}
+
+fn reasoning(delta: &str) -> AgentEvent {
+    AgentEvent::Reasoning {
+        delta: delta.into(),
+    }
+}
+
+fn reasoning_blocks(rows: &[stella_store::SessionEventRecord]) -> Vec<&str> {
+    rows.iter()
+        .filter_map(|row| match &row.event {
+            AgentEvent::Reasoning { delta } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `seq` is monotonic and strictly increasing across everything the drain
+/// wrote — the property `UNIQUE (execution_id, seq)` and `journal::entries`'
+/// `after_seq` poll both stand on. It is deliberately NOT asserted gapless:
+/// a coalesced run spends one `seq` for many fragments, and no reader counts
+/// events by it.
+fn assert_seq_is_strictly_increasing(rows: &[stella_store::SessionEventRecord]) {
+    for pair in rows.windows(2) {
+        assert!(
+            pair[1].seq > pair[0].seq,
+            "seq went backwards or repeated: {} then {}",
+            pair[0].seq,
+            pair[1].seq
+        );
+    }
+}
+
+#[tokio::test]
+async fn streamed_reasoning_fragments_persist_as_one_row_per_run() {
+    // The witness for #3969. Before the write-side fold, each of these
+    // fragments was its own `events` row and its own SQLite transaction — one
+    // ordinary turn in this workspace wrote 39,544 of them for about seven
+    // paragraphs of prose. The store must now hold the thought, not the
+    // stream's chunking of it, byte for byte.
+    let fragments = [
+        "Let",
+        " me look",
+        " at the issue. I",
+        " will start with the store.",
+    ];
+    let (rows, complete) = durable_rows(
+        "reasoning-fold",
+        OutputFormat::Json,
+        fragments.iter().copied().map(reasoning).collect(),
+    )
+    .await;
+
+    assert!(complete, "persistence stayed complete");
+    assert_eq!(
+        reasoning_blocks(&rows),
+        vec![fragments.concat().as_str()],
+        "a run of fragments is one durable block, joined byte for byte"
+    );
+    assert_eq!(rows.len(), 1, "and costs exactly one row");
+    assert_seq_is_strictly_increasing(&rows);
+}
+
+#[tokio::test]
+async fn a_reasoning_run_interrupted_by_a_tool_call_stays_two_blocks_in_order() {
+    // The boundary between two thoughts is a fact about the turn, not a
+    // rendering artifact — and the block that preceded the tool call must
+    // reach the table BEFORE it, or the transcript reads the thought after the
+    // action it led to.
+    let (rows, complete) = durable_rows(
+        "reasoning-boundary",
+        OutputFormat::Json,
+        vec![
+            reasoning("first"),
+            reasoning(" thought"),
+            AgentEvent::Text {
+                text: "an answer".into(),
+            },
+            reasoning("second"),
+            reasoning(" thought"),
+            AgentEvent::TurnComplete {
+                model: "worker".into(),
+                cost_usd: 1.0,
+            },
+        ],
+    )
+    .await;
+
+    assert!(complete);
+    assert_eq!(
+        reasoning_blocks(&rows),
+        vec!["first thought", "second thought"]
+    );
+    let types: Vec<_> = rows
+        .iter()
+        .map(|row| match &row.event {
+            AgentEvent::Reasoning { .. } => "reasoning",
+            AgentEvent::Text { .. } => "text",
+            AgentEvent::TurnComplete { .. } => "turn_complete",
+            other => panic!("unexpected durable event {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        types,
+        vec!["reasoning", "text", "reasoning", "turn_complete"],
+        "each block lands ahead of the event that closed it"
+    );
+    assert_seq_is_strictly_increasing(&rows);
+}
+
+#[tokio::test]
+async fn a_turn_that_ends_mid_thought_keeps_the_reasoning_it_streamed() {
+    // A stream that closes with a run still open — an abort, a `Ctrl-C`, a
+    // budget stop — must not lose the tail. The sidecar can afford to (the
+    // turn re-runs on resume); a telemetry row is the record of what happened
+    // and cannot.
+    let (rows, complete) = durable_rows(
+        "reasoning-tail",
+        OutputFormat::Json,
+        vec![reasoning("half a thou"), reasoning("ght and then")],
+    )
+    .await;
+
+    assert!(complete);
+    assert_eq!(reasoning_blocks(&rows), vec!["half a thought and then"]);
+}
+
+#[tokio::test]
+async fn the_held_run_terminator_still_lands_after_the_reasoning_tail() {
+    // `RunComplete` is deferred until the stream drains, and the tail flush
+    // runs before it — so the terminator stays the final durable line even on
+    // a turn whose last event was a thought.
+    let (rows, complete) = durable_rows(
+        "reasoning-terminator",
+        OutputFormat::StreamJson,
+        vec![
+            AgentEvent::RunComplete {
+                model: "worker".into(),
+                cost_usd: 1.0,
+            },
+            reasoning("a trailing thought"),
+        ],
+    )
+    .await;
+
+    assert!(complete);
+    assert_eq!(reasoning_blocks(&rows), vec!["a trailing thought"]);
+    assert!(
+        matches!(
+            rows.last().map(|row| &row.event),
+            Some(AgentEvent::RunComplete { .. })
+        ),
+        "the terminator is last, after the tail it followed on the wire"
+    );
+    assert_seq_is_strictly_increasing(&rows);
+}
+
 #[test]
 fn receipt_events_persist_into_queryable_block_and_manifest_rows() {
     // The increment-1 promise, end to end: a BlockRegistered + StepManifest
