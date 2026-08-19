@@ -315,14 +315,15 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .note-detail {
   margin-top: 4px;
   padding-left: 14px;
-  border-left: 1px solid #1c1c1c;
+  border-left: 1px solid var(--line);
   color: var(--faint);
 }
 .note-stage .notegut, .note-stage .note-summary, .note-stage .note-fold > summary {
   color: var(--violet);
 }
-/* the hunk-header blue, as a literal for the same reason it is one there */
-.note-context .notegut { color: #6f87a8; }
+/* The hunk header's register: a context note points at a location, which is the
+   same job the `@@` rule does, so it spends the same blue. */
+.note-context .notegut { color: var(--hunk-ink); }
 .note-wait .notegut, .note-verdict .notegut { color: var(--amber); }
 .note-handoff .notegut { color: var(--cyan); }
 
