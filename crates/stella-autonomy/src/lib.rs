@@ -40,6 +40,7 @@
 //! skew as an `unrecognized subcommand` three cycles in.
 
 mod convention;
+mod deliver;
 mod surface;
 
 use std::fmt::Write as _;
@@ -50,6 +51,10 @@ use sha2::{Digest as _, Sha256};
 pub use convention::{
     Acceptance, AxisRequirement, BacklogConvention, Conformance, ConventionSource, LabelAxis,
     Violation, conform,
+};
+pub use deliver::{
+    Action, Attempts, CiConclusion, DeliverPolicy, EscalationReason, Mergeability, Observation,
+    PrState, ReviewState, Transition, deliver_next,
 };
 pub use surface::{
     Emits, HOST_SURFACE, HOST_SURFACE_VERSION, HostVerb, SurfaceDrift, host_verb, surface_drift,
