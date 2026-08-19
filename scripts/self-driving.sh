@@ -193,26 +193,14 @@ run_self-driving() {
   stella self-driving "$@"
 }
 
-# Is the headless scope-review bypass on in any settings scope this run will
-# see? Project wins per field, so project is checked first — but for a boolean
-# gate like this, ON anywhere is what matters to the question being asked.
-scope_bypass_on() {
-  local f
-  for f in "$REPO_ROOT/.stella/settings.json" "$(stella_home)/settings.json"; do
-    [ -f "$f" ] || continue
-    if python3 -c '
-import json, sys
-try:
-    cfg = json.load(open(sys.argv[1])).get("agent_engine_config") or {}
-except Exception:
-    raise SystemExit(1)
-raise SystemExit(0 if str(cfg.get("headless_scope_bypass", "")).lower() == "on" else 1)
-' "$f" 2>/dev/null; then
-      return 0
-    fi
-  done
-  return 1
-}
+# The headless scope-review bypass check that used to live here is gone (#3948).
+# It refused a cycle unless `agent_engine_config.headless_scope_bypass` was
+# "on", which was correct for as long as the staged pipeline's scope-review
+# stage existed to abort at. That stage was deleted with the pipeline, and the
+# key is inert now — so the check had become a preflight that could fail a
+# perfectly runnable machine over a value nothing reads. A gate whose subject no
+# longer exists does not become harmless by staying: it fails closed on a
+# question that has no answer.
 
 # ---------------------------------------------------------------------------
 # preflight — can this machine run a cycle at all?
@@ -263,17 +251,6 @@ cmd_preflight() {
       pass "stella self-driving present — the loop's deterministic verbs resolve"
     else
       fail "this stella predates \`stella self-driving\` — the delegated verbs cannot run; upgrade it"
-    fi
-    # Measured, not theorised: the first live daemon cycle died here. A cycle
-    # of any real size trips scope review, and a headless run has nobody to
-    # ask — so without the bypass EVERY daemon cycle burns its startup cost and
-    # then aborts. Better to refuse the cycle than to discover it in the log.
-    if scope_bypass_on; then
-      pass "headless_scope_bypass: on — a headless cycle can pass scope review"
-    else
-      fail "headless_scope_bypass is OFF — a headless cycle aborts at scope review.
-     Set it where the working tree is disposable:
-       .stella/settings.json -> {\"agent_engine_config\": {\"headless_scope_bypass\": \"on\"}}"
     fi
   else
     warn "stella not on PATH — the fix batch falls back to the driving agent"

@@ -9,6 +9,14 @@ status: living
 **Status:** Living document. Describes the staged pipeline (`--pipeline classic`)
 as of 0.6.x.
 
+> **The machinery below is no longer in this workspace.** `stella-pipeline` was
+> deleted and `--pipeline classic` is refused outright; what this document walks
+> through is the *shape* a verification plugin implements on its own side of the
+> wrapper socket, not code you can still step through here. Read it as the
+> design being ported, not as a map of the tree. Bringing the rest of the
+> present-tense pipeline prose into line is tracked as its own pass (#3901);
+> this note is here so the page cannot be mistaken for current in the meantime.
+
 This is the maintainer's companion to the user-facing
 [Inference Pipeline](/docs/inference-pipeline) page. That
 page explains *what* the pipeline promises; this one walks a single prompt from
@@ -115,10 +123,13 @@ If the plan's blast radius crosses any configured threshold
 estimated cost over $1 by default; all strict `>`), the run pauses for **scope
 review** (`pipeline/scope_stage.rs`). Interactively, you approve, trim to the
 largest under-threshold prefix, abort, or send the plan back to the planner
-with a note (bounded at `MAX_SCOPE_REVISIONS` re-plans). Headless runs must
-opt in to bypass the gate (`headless_bypass_scope_review` — the
-`headless_scope_bypass` engine-config toggle); without it, an over-threshold
-plan ends the run rather than silently auto-approving.
+with a note (bounded at `MAX_SCOPE_REVISIONS` re-plans). Headless, an
+over-threshold plan ended the run rather than silently auto-approving, unless
+the run opted out (`headless_bypass_scope_review`, fed by the
+`headless_scope_bypass` engine-config toggle). That toggle still parses today
+and does nothing: the stage it steered went with the crate, and the key is kept
+only because a published benchmark posture hashes it. Do not read it as a knob
+a reader of this document can still turn.
 
 ## 4. Deciding where the work happens
 

@@ -60,7 +60,8 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use stella_plugin::{
-    Participation, PluginManifest, StageName, WrapperPoint, WrapperRequest, WrapperResponse,
+    HostStage, Participation, PluginManifest, StageName, WrapperPoint, WrapperRequest,
+    WrapperResponse,
 };
 use stella_protocol::completion::MessageRole;
 use stella_runtime::wrapper::{SubprocessWrapper, TurnWrapper};
@@ -258,7 +259,7 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
         assert!(
             response.role.is_none() && response.publish.is_empty(),
             "{name}: research names no role intent and publishes no signal — \
-             `StageName::Research.publishes()` is empty in the host, so there \
+             `StageName::Host(HostStage::Research).publishes()` is empty in the host, so there \
              is none it could honestly publish"
         );
         // Invariant 7, checked on the value rather than trusted. The one exit
@@ -384,7 +385,7 @@ fn the_shipped_manifest_declares_before_turn_and_nothing_stronger() {
     let research = wrapper
         .stages
         .iter()
-        .find(|stage| stage.name == StageName::Research)
+        .find(|stage| stage.name == StageName::Host(HostStage::Research))
         .expect("the stage this plugin exists for");
     assert_eq!(
         research.condition.as_deref(),

@@ -1,5 +1,5 @@
 //! The witness for the `child_turn` half of Track B's second extraction:
-//! `plugins/stella-plan` answers `StageName::Plan` with a contribution built
+//! `plugins/stella-plan` answers `StageName::Host(HostStage::Plan)` with a contribution built
 //! from a real planner-role turn it **asked the host for**, and with an
 //! honest empty one whenever the host would not serve the ask.
 //!

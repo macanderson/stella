@@ -163,15 +163,18 @@ Lint/typecheck are rightly excluded from the flip oracle. But they can still
   lint sample, never a log dump.
 - **Verifier verdict calibration telemetry.** *Done (#871), first slice.*
   Everything needed was already persisted (verdicts with snapshots, PR/CI
-  observations in the same stream), so `replay::calibration` folds it and
-  `stella calibration` reports the verifier's measured false-positive rate
-  beside the deterministic cohort's — unmeasured stays unmeasured, never 0%.
+  observations in the same stream), so `stella_cli::calibration` folds it and
+  `stella calibration` reports the unproven cohort's measured false-positive
+  rate beside the deterministic cohort's — unmeasured stays unmeasured, never
+  0%. (The fold lived in `stella_pipeline::replay` until that crate was
+  deleted, #3865; it was reinstated standalone in the CLI in #3866, with the
+  measurement unchanged.)
 - **An answer key: reverts, and verdicts that arrive late.** *Done (#1293).*
-  Two gaps in the first slice are closed. `replay::ground_truth` reads git's
-  own `This reverts commit <sha>` marker, so a human undoing Stella's work is
-  a ground-truth source — counted apart from red CI, because a revert is a
-  later and better-informed statement. And `calibration_pending` carries a
-  session's unsettled passes out of the fold with the commits and PRs they
+  Two gaps in the first slice are closed. `calibration::ground_truth` reads
+  git's own `This reverts commit <sha>` marker, so a human undoing Stella's
+  work is a ground-truth source — counted apart from red CI, because a revert
+  is a later and better-informed statement. And the fold carries a
+  session's unsettled passes out with the commits and PRs they
   cover, so a terminal verdict recorded in *another* session (or a revert
   landing weeks later) still reconciles them. The asymmetry is deliberate and
   enforced: a revert settles a pass as a false positive, while the ABSENCE of

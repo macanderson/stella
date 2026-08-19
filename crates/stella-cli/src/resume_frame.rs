@@ -451,15 +451,15 @@ mod tests {
             id: "lean-diff-v1".into(),
             stages: vec![
                 stella_plugin::WrapperStage {
-                    name: stella_plugin::StageName::Triage,
+                    name: stella_plugin::StageName::Host(stella_plugin::HostStage::Triage),
                     condition: None,
                 },
                 stella_plugin::WrapperStage {
-                    name: stella_plugin::StageName::Execute,
+                    name: stella_plugin::StageName::Host(stella_plugin::HostStage::Execute),
                     condition: None,
                 },
                 stella_plugin::WrapperStage {
-                    name: stella_plugin::StageName::Verify,
+                    name: stella_plugin::StageName::Host(stella_plugin::HostStage::Verify),
                     condition: Some("diff-lines > 0".into()),
                 },
             ],

@@ -8,11 +8,25 @@ on:
   pull_request:
     paths:
       - "website/**"
+      # The brand kit is an INPUT to this workflow, not just a neighbour:
+      # website/src/lib/brand-parity.test.ts reads docs/brand/ on both sides of
+      # every assertion, so a change confined to the kit is precisely the one
+      # that can break parity — and it used to start neither this workflow nor
+      # ci.yml, which ignores docs/**. Same disjoint-paths reasoning that gave
+      # wire-schema.yml its own trigger on the generated artefacts it checks.
+      - "docs/brand/**"
       - ".github/workflows/docs.yml"
   push:
     branches: [main]
     paths:
       - "website/**"
+      # The brand kit is an INPUT to this workflow, not just a neighbour:
+      # website/src/lib/brand-parity.test.ts reads docs/brand/ on both sides of
+      # every assertion, so a change confined to the kit is precisely the one
+      # that can break parity — and it used to start neither this workflow nor
+      # ci.yml, which ignores docs/**. Same disjoint-paths reasoning that gave
+      # wire-schema.yml its own trigger on the generated artefacts it checks.
+      - "docs/brand/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -61,6 +75,21 @@ jobs:
 
       - name: typecheck
         run: pnpm typecheck
+
+      # `pnpm test` ran in no workflow at all until #3968. The site's 26 node
+      # tests — the brand-parity matrix among them — existed, passed review,
+      # and were then never executed by CI, so the one guard holding this site
+      # to `docs/brand/` could go red and stay red with nothing to say so. It
+      # did: #3673 reverted the investor deck to the gold identity and brought
+      # back two values #3658's own retired list banned, and that break sat on
+      # `main` undetected until someone ran the suite by hand. A test nobody
+      # runs is documentation with a worse failure mode, because it reads as
+      # coverage.
+      #
+      # It runs before `build` deliberately: it is seconds, and a palette that
+      # has drifted should not have to wait on a full Next build to say so.
+      - name: test
+        run: pnpm test
 
       - name: build
         run: pnpm build

@@ -132,7 +132,7 @@ fn prompt_started_flips_a_finished_agent_back_to_running() {
     w.apply_inbound(&reg("lead"));
     if let Some(a) = w.agents.first_mut() {
         a.status = AgentStatus::Done;
-        a.model.hud.stage = Some(StageKind::Complete);
+        a.model.hud.stage = Some(StageKind::Complete.into());
         a.model.hud.complete = true;
     }
     w.apply_inbound(&prompt_started("lead", "next"));
@@ -306,7 +306,7 @@ fn stray_event_auto_registers_its_agent() {
     w.apply_inbound(&ev(
         "ghost",
         AgentEvent::Stage {
-            name: StageKind::Plan,
+            name: StageKind::Plan.into(),
             scope: stella_protocol::StageScope::Run,
         },
     ));
@@ -559,7 +559,7 @@ fn trace_captures_every_agent_and_filters_by_agent() {
     w.apply_inbound(&ev(
         "a",
         AgentEvent::Stage {
-            name: StageKind::Execute,
+            name: StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         },
     ));

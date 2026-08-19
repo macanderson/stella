@@ -848,7 +848,7 @@ fn research_stage_and_role_roundtrip_with_snake_case_tokens() {
 fn stream_json_is_one_line_per_event() {
     let events = [
         AgentEvent::Stage {
-            name: StageKind::Triage,
+            name: StageKind::Triage.into(),
             scope: crate::StageScope::Run,
         },
         AgentEvent::Text { text: "hi".into() },

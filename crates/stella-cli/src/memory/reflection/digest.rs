@@ -64,12 +64,7 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-// `AgentEvent` and `ModelCallRole` are named only by the test-gated fold
-// below (and by doc links, which carry their own full paths), so they are
-// gated with it rather than imported for a build that cannot use them.
-#[cfg(test)]
-use stella_protocol::{AgentEvent, ModelCallRole};
-use stella_protocol::{CompletionMessage, MessageRole, ToolOutput};
+use stella_protocol::{AgentEvent, CompletionMessage, MessageRole, ModelCallRole, ToolOutput};
 
 /// The whole digest's character ceiling.
 ///
@@ -125,10 +120,9 @@ const FRICTION_LIST_CAP: usize = 6;
 /// instead of growing. A turn cannot produce more friction than this and still
 /// have a summarizable shape, and an unbounded fold on a long-running turn is a
 /// leak in a best-effort path.
-#[cfg(test)]
 const FRICTION_ENTRY_CAP: usize = 512;
 
-/// One model call's metering record, as [`AgentEvent::StepUsage`](stella_protocol::AgentEvent::StepUsage) reported it.
+/// One model call's metering record, as [`AgentEvent::StepUsage`] reported it.
 #[derive(Debug, Clone)]
 struct StepCost {
     step: usize,
@@ -138,8 +132,8 @@ struct StepCost {
     tool_calls: usize,
 }
 
-/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`](stella_protocol::AgentEvent::ToolStart),
-/// closed by its [`AgentEvent::ToolResult`](stella_protocol::AgentEvent::ToolResult).
+/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`],
+/// closed by its [`AgentEvent::ToolResult`].
 #[derive(Debug, Clone)]
 struct ToolPass {
     call_id: String,
@@ -156,7 +150,7 @@ struct ToolPass {
 
 /// What a turn's event stream says about where its time and money went.
 ///
-/// Folded live by the surface that owns the turn's [`AgentEvent`](stella_protocol::AgentEvent) stream and
+/// Folded live by the surface that owns the turn's [`AgentEvent`] stream and
 /// handed to reflection as evidence the transcript does not carry: a
 /// `CompletionMessage` records what was said, never what it cost or how long it
 /// took, and a retry or a loop-detector firing leaves no message at all.
@@ -169,17 +163,83 @@ struct ToolPass {
 pub struct TurnFriction {
     steps: Vec<StepCost>,
     tools: Vec<ToolPass>,
-    /// Calls awaiting their result: `call_id` → index into `tools`. Written
-    /// only by the test-gated fold below, so it is gated with it — the
-    /// struct is only ever built through the derived `Default`.
-    #[cfg(test)]
+    /// Calls awaiting their result: `call_id` → index into `tools`.
     open: HashMap<String, usize>,
     retries: Vec<String>,
     loops: Vec<String>,
     dropped: usize,
+    /// Which goal round this ledger covers, when it covers one — set only by
+    /// [`Self::per_goal_round`] (#3962). `None` on every single-turn door,
+    /// where "this turn" is the whole answer and a round number would be a
+    /// number invented to fill a field.
+    round: Option<usize>,
 }
 
 impl TurnFriction {
+    /// The production entry point (#3946): fold a turn's whole journal, in
+    /// stream order, into one ledger.
+    ///
+    /// **This is a fold over events the caller already observed, not a
+    /// read-back of the durable journal** — the distinction this module's
+    /// header insists on. Callers pass the renderer's own collected `Vec`,
+    /// which is only available *after* `close_event_stream` has awaited the
+    /// renderer to completion, so there is no task still draining underneath
+    /// it and nothing to race.
+    ///
+    /// Folding after the turn rather than during it is not an approximation.
+    /// Every duration the fold records comes from the event's own
+    /// `duration_ms` field rather than from a clock read at fold time
+    /// (`ToolResult`, `StepUsage`), and the arms are order-dependent only in
+    /// stream order, which the `Vec` preserves. So this is byte-identical to
+    /// the live tap the staged pipeline used, and it stays a pure function of
+    /// the turn — which is what replay rests on.
+    pub fn from_events(events: &[AgentEvent]) -> Self {
+        let mut friction = Self::default();
+        for event in events {
+            friction.observe(event);
+        }
+        friction
+    }
+
+    /// Fold a **goal arc's** journal into one ledger *per round* (#3962).
+    ///
+    /// A goal run is several turns on one event channel
+    /// (`stella_core::goal::Engine::run_goal`), and [`Self::from_events`] over
+    /// that whole stream is not a smaller answer — it is a wrong one. It
+    /// reports round 1's failed `bash` as something the turn that ran third
+    /// did, which is exactly the misattribution #3552 named on the wrapper's
+    /// `TurnFacts`. Reflection is handed the rounds as a slice
+    /// ([`TurnEvidence::with_rounds`]) and renders them separately, so no
+    /// round can borrow another's friction.
+    ///
+    /// The split key is [`AgentEvent::GoalVerdict`], the round's own
+    /// terminator, which **carries its round number** — so a segment is
+    /// labelled from the stream rather than from its position in it. A
+    /// trailing segment with no verdict is the round that ended the arc
+    /// without being judged (an aborted working turn, the round cap): it takes
+    /// the next round number, because it ran.
+    pub fn per_goal_round(events: &[AgentEvent]) -> Vec<Self> {
+        let mut rounds: Vec<Self> = Vec::new();
+        let mut current = Self::default();
+        let mut judged = 0usize;
+        for event in events {
+            current.observe(event);
+            if let AgentEvent::GoalVerdict { round, .. } = event {
+                judged = *round;
+                current.round = Some(*round);
+                rounds.push(std::mem::take(&mut current));
+            }
+        }
+        // An empty tail is the ordinary shape of a goal that ended ON a
+        // verdict — the run's own terminator folds to nothing — and a round
+        // that ran nothing is not a round worth naming.
+        if !current.is_empty() {
+            current.round = Some(judged.saturating_add(1));
+            rounds.push(current);
+        }
+        rounds
+    }
+
     /// Fold one event into the ledger.
     ///
     /// Total over the variants that carry friction and deliberately silent on
@@ -187,19 +247,11 @@ impl TurnFriction {
     /// `AgentEvent` variant must not change what a turn's friction *is* until
     /// someone decides that it should.
     ///
-    /// **Test-gated (#3872).** Its one production caller, `FrictionTap`
-    /// (`agent/reflect.rs`), wrapped the staged pipeline's own event stream
-    /// and was removed with the crate that drove it (#3865); the raw
-    /// step-loop builds `TurnEvidence` from its transcript directly
-    /// (`TurnEvidence::from_transcript`) and never folds a live event stream,
-    /// because its events ride a bare `UnboundedSender` with nothing to wrap
-    /// (#2483). Giving the raw loop a tap is that issue's feature, not this
-    /// module's cleanup — so until it lands, the fold exists for
-    /// `memory/reflection/tests.rs` and `digest/tests.rs` alone. `cfg(test)`
-    /// says that and keeps it out of the shipped binary; an
-    /// `#[allow(dead_code)]` would instead have claimed the lint was wrong
-    /// when it was right.
-    #[cfg(test)]
+    /// Fed in production by [`Self::from_events`], which every raw-loop door
+    /// runs over the turn's collected journal (#3946). Between #3865 and that
+    /// wiring there was no producer at all, so the friction section of every
+    /// shipped digest rendered empty and `Priority::Friction` selected on
+    /// nothing.
     pub fn observe(&mut self, event: &AgentEvent) {
         match event {
             AgentEvent::ToolStart { call } => {
@@ -286,9 +338,6 @@ impl TurnFriction {
 
     /// The `tools` slot a result belongs in, opening one for a result whose
     /// start was never seen. `None` means the entry cap refused it.
-    ///
-    /// Gated with its only caller, [`Self::observe`].
-    #[cfg(test)]
     fn close(&mut self, call_id: &str) -> Option<usize> {
         if let Some(index) = self.open.remove(call_id) {
             return Some(index);
@@ -306,8 +355,12 @@ impl TurnFriction {
         Some(self.tools.len() - 1)
     }
 
-    /// Gated with its only caller, [`Self::observe`].
-    #[cfg(test)]
+    /// Dead only *transitively*: its two call sites are both inside
+    /// [`Self::observe`], which lost its own production caller with the staged
+    /// pipeline (#3865). It comes back the moment `observe` does, and until
+    /// then `digest/tests.rs` drives it through that same method — so this is
+    /// one suppression cascading from one decision, not a second orphan.
+    #[allow(dead_code)]
     fn push_retry(&mut self, entry: String) {
         if self.retries.len() >= FRICTION_ENTRY_CAP {
             self.dropped += 1;
@@ -323,13 +376,6 @@ impl TurnFriction {
             && self.tools.is_empty()
             && self.retries.is_empty()
             && self.loops.is_empty()
-    }
-
-    /// A shared empty ledger, so [`TurnEvidence::from_transcript`] can hand out
-    /// a reference without every caller owning a `Default`.
-    fn empty() -> &'static Self {
-        static EMPTY: std::sync::OnceLock<TurnFriction> = std::sync::OnceLock::new();
-        EMPTY.get_or_init(TurnFriction::default)
     }
 
     /// Tool names the event stream saw, by call id — the half of the
@@ -384,11 +430,23 @@ impl TurnFriction {
     /// have reconstructed at any window size, and it is short — putting it
     /// behind several thousand characters of transcript would make it the first
     /// thing a narrating model skims past.
-    fn section(&self) -> String {
+    ///
+    /// `total` is how many ledgers this one is being rendered among, which is
+    /// what lets the header name the round (#3962). The round label is written
+    /// only when there is more than one ledger to tell apart: a single-turn
+    /// door renders the byte-identical section it rendered before this
+    /// parameter existed, because "round 1 of 1" is a distinction with nothing
+    /// on the other side of it.
+    fn section(&self, total: usize) -> String {
         if self.is_empty() {
             return String::new();
         }
-        let mut out = String::from("Where this turn spent itself (from its event stream):\n");
+        let mut out = match self.round {
+            Some(round) if total > 1 => {
+                format!("Where round {round} of {total} spent itself (from its event stream):\n")
+            }
+            _ => String::from("Where this turn spent itself (from its event stream):\n"),
+        };
         if !self.steps.is_empty() {
             let calls = self.steps.len();
             let cost: f64 = self.steps.iter().map(|step| step.cost_usd).sum();
@@ -470,19 +528,75 @@ pub struct TurnEvidence<'a> {
     /// messages plus the final answer).
     pub transcript: &'a [CompletionMessage],
     /// What the turn's event stream said about cost, wall clock, retries and
-    /// loop firings.
-    pub friction: &'a TurnFriction,
+    /// loop firings — **one ledger per turn**, not one per reflection.
+    ///
+    /// A slice rather than a single ledger because `/goal` reflects once over
+    /// an arc of several turns (#3962), and the one thing that must not happen
+    /// there is a fold of every round into one ledger: it would report round
+    /// 1's tools as round 3's. Empty for a caller with no event stream, one
+    /// element for every single-turn door, one per round for a goal arc.
+    pub friction: &'a [TurnFriction],
     /// Whether the turn succeeded — which reflection prompt template applies.
     pub succeeded: bool,
 }
 
 impl<'a> TurnEvidence<'a> {
-    /// Evidence from a transcript alone: the shape every caller with no event
-    /// ledger uses, and the shape every test uses.
+    /// Evidence from a transcript alone: a permanently empty ledger, which
+    /// renders no friction section and leaves `Priority::Friction` with only
+    /// the transcript's own errored tool results to select on — no cost, no
+    /// wall clock, no retries, no loop firings, because no
+    /// `CompletionMessage` carries them.
+    ///
+    /// **Test-gated as of #3962, because it finally can be.** Every shipping
+    /// door now owns its turn's event stream and hands over what it folded:
+    /// the single-turn doors through [`Self::with_friction`] (#3946) and
+    /// `/goal` through [`Self::with_rounds`]. What is left is the replay
+    /// harness (`memory/replay.rs`, itself `#[cfg(test)]`), which reflects
+    /// over a recorded transcript that never had an event stream, plus the
+    /// tests that build evidence by hand. `#[cfg(test)]` rather than an
+    /// `#[allow(dead_code)]` states which of those is true and makes a future
+    /// production caller a build error — the point being that a surface that
+    /// reaches for this is a surface that has quietly stopped reporting what
+    /// its turn cost.
+    #[cfg(test)]
     pub fn from_transcript(transcript: &'a [CompletionMessage], succeeded: bool) -> Self {
         Self {
             transcript,
-            friction: TurnFriction::empty(),
+            friction: &[],
+            succeeded,
+        }
+    }
+
+    /// Evidence from a transcript plus the turn's folded event ledger — what
+    /// a surface that owns its `AgentEvent` stream should build (#3946).
+    ///
+    /// Separate from `from_transcript` rather than an `Option`
+    /// parameter on it, so a caller that *has* a ledger and forgets to pass
+    /// it is a visibly different call rather than a `None` nobody reads.
+    pub fn with_friction(
+        transcript: &'a [CompletionMessage],
+        friction: &'a TurnFriction,
+        succeeded: bool,
+    ) -> Self {
+        Self::with_rounds(transcript, std::slice::from_ref(friction), succeeded)
+    }
+
+    /// Evidence from a transcript plus **one ledger per round** — what a
+    /// surface that reflects over several turns at once builds (#3962), and
+    /// today that is `/goal` alone (`TurnFriction::per_goal_round`).
+    ///
+    /// Separate from [`Self::with_friction`] rather than that constructor
+    /// taking a slice, so the single-turn doors keep saying "this turn has one
+    /// ledger" in their own call and cannot pass a several-round slice by
+    /// accident.
+    pub fn with_rounds(
+        transcript: &'a [CompletionMessage],
+        friction: &'a [TurnFriction],
+        succeeded: bool,
+    ) -> Self {
+        Self {
+            transcript,
+            friction,
             succeeded,
         }
     }
@@ -556,8 +670,8 @@ pub(crate) fn build(evidence: TurnEvidence<'_>) -> String {
 
 /// Join the kept renderings in transcript order, replacing each run of dropped
 /// messages with a marker saying how many went missing.
-fn stitch(kept: &[Option<String>], friction: &TurnFriction) -> String {
-    let mut out = friction.section();
+fn stitch(kept: &[Option<String>], friction: &[TurnFriction]) -> String {
+    let mut out = friction_sections(friction);
     let elided = kept.iter().filter(|body| body.is_none()).count();
     if elided > 0 {
         if !out.is_empty() {
@@ -599,6 +713,28 @@ fn stitch(kept: &[Option<String>], friction: &TurnFriction) -> String {
     out
 }
 
+/// Every ledger's friction section, in round order, blank-line separated.
+///
+/// One section per round rather than one merged section is the whole point of
+/// #3962: the merge is what attributed round 1's failed tool to round 3. A
+/// round that spent itself on nothing renders nothing at all and does not
+/// change what the others are numbered — the count in each header is the
+/// number of rounds the arc ran, not the number that had something to say.
+fn friction_sections(rounds: &[TurnFriction]) -> String {
+    let mut out = String::new();
+    for ledger in rounds {
+        let section = ledger.section(rounds.len());
+        if section.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&section);
+    }
+    out
+}
+
 /// `call_id` → tool name, from both sources that know one.
 ///
 /// The transcript knows it whenever the assistant's tool-calling message is in
@@ -607,7 +743,13 @@ fn stitch(kept: &[Option<String>], friction: &TurnFriction) -> String {
 /// messages — so the map is the union, transcript last so a name recorded in
 /// both resolves to the transcript's.
 fn call_names<'a>(evidence: TurnEvidence<'a>) -> HashMap<&'a str, &'a str> {
-    let mut names: HashMap<&str, &str> = evidence.friction.call_names().collect();
+    // Across every round: a `call_id` is unique to the call that carried it,
+    // so the union names calls without telling any round it made one.
+    let mut names: HashMap<&str, &str> = evidence
+        .friction
+        .iter()
+        .flat_map(TurnFriction::call_names)
+        .collect();
     for message in evidence.transcript {
         for call in &message.tool_calls {
             names.insert(call.call_id.as_str(), call.name.as_str());
@@ -624,7 +766,9 @@ fn classify(evidence: TurnEvidence<'_>) -> Vec<Priority> {
         .flat_map(|message| message.tool_results.iter())
         .filter(|result| result.output.is_error())
         .map(|result| result.call_id.as_str())
-        .chain(evidence.friction.flagged())
+        // Each round flags its own costliest calls, so a long arc's later
+        // rounds are not out-competed for the friction tier by round 1.
+        .chain(evidence.friction.iter().flat_map(TurnFriction::flagged))
         .collect();
     let outcome_from = transcript.len().saturating_sub(OUTCOME_TAIL_MESSAGES);
     let goal = transcript
@@ -760,7 +904,6 @@ fn human_ms(ms: u64) -> String {
 /// The wire token for a call role (`plan_repair`, not `PlanRepair`), so a
 /// reflection's account of a turn greps against `stella-events.jsonl` — which
 /// is the record anyone checking the claim will open.
-#[cfg(test)]
 fn role_token(role: ModelCallRole) -> String {
     match serde_json::to_value(role) {
         Ok(serde_json::Value::String(token)) => token,

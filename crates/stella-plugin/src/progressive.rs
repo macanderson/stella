@@ -63,7 +63,7 @@ use crate::wrapper::{Signal, StageName, Wrapper, WrapperStage};
 
 /// What [`ProgressiveResolver::advance`] decided for the stage it just
 /// considered, or that there was no stage left to consider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StageDecision {
     /// The stage's condition held (or it declared none); it runs and its
     /// published signals, if any, become readable to later stages.
@@ -108,8 +108,8 @@ impl<'a> ProgressiveResolver<'a> {
     /// to cross before it gathers the [`SignalValues`] to hand to
     /// [`Self::advance`].
     #[must_use]
-    pub fn peek(&self) -> Option<StageName> {
-        self.remaining.first().map(|stage| stage.name)
+    pub fn peek(&self) -> Option<&StageName> {
+        self.remaining.first().map(|stage| &stage.name)
     }
 
     /// Decide the next declared stage against `values` — the host's answer
@@ -151,20 +151,20 @@ impl<'a> ProgressiveResolver<'a> {
                     && !self.produced.contains(&signal)
                 {
                     return Err(ManifestError::SignalNotProduced {
-                        stage: stage.name,
+                        stage: stage.name.clone(),
                         signal,
                         publisher,
                     });
                 }
-                condition.evaluate(stage.name, values)?
+                condition.evaluate(&stage.name, values)?
             }
         };
 
-        let name = stage.name;
+        let name = stage.name.clone();
         self.remaining = &self.remaining[1..];
         if runs {
-            self.decided.push(name);
             self.produced.extend_from_slice(name.publishes());
+            self.decided.push(name.clone());
             Ok(StageDecision::Ran(name))
         } else {
             Ok(StageDecision::Skipped(name))
@@ -188,7 +188,7 @@ impl<'a> ProgressiveResolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PluginManifest, WrapperStage};
+    use crate::{HostStage, PluginManifest, WrapperStage};
 
     /// Every signal at its emptiest, matching `tests/wrapper_program.rs`'s
     /// `bare()` — spelled out because [`SignalValues`] refuses `Default` on
@@ -243,22 +243,22 @@ mod tests {
 
         // A run whose execute produced 40 lines of diff.
         let mut resolver = ProgressiveResolver::new(&w);
-        assert_eq!(resolver.peek(), Some(StageName::Execute));
+        assert_eq!(resolver.peek(), Some(&StageName::Host(HostStage::Execute)));
         // The value at this boundary is irrelevant to execute's own
         // (unconditional) decision, and diff_lines is not yet known — this
         // is the field the next boundary will answer for real.
         assert_eq!(
             resolver.advance(&bare()).unwrap(),
-            StageDecision::Ran(StageName::Execute)
+            StageDecision::Ran(StageName::Host(HostStage::Execute))
         );
-        assert_eq!(resolver.peek(), Some(StageName::Witness));
+        assert_eq!(resolver.peek(), Some(&StageName::Host(HostStage::Witness)));
         let after_execute = SignalValues {
             diff_lines: 40,
             ..bare()
         };
         assert_eq!(
             resolver.advance(&after_execute).unwrap(),
-            StageDecision::Ran(StageName::Witness)
+            StageDecision::Ran(StageName::Host(HostStage::Witness))
         );
         assert_eq!(resolver.peek(), None);
         assert_eq!(
@@ -267,7 +267,10 @@ mod tests {
         );
         assert_eq!(
             resolver.program().stages(),
-            [StageName::Execute, StageName::Witness]
+            [
+                StageName::Host(HostStage::Execute),
+                StageName::Host(HostStage::Witness)
+            ]
         );
 
         // The same manifest, resolved progressively again, but this time
@@ -275,13 +278,16 @@ mod tests {
         let mut empty_run = ProgressiveResolver::new(&w);
         assert_eq!(
             empty_run.advance(&bare()).unwrap(),
-            StageDecision::Ran(StageName::Execute)
+            StageDecision::Ran(StageName::Host(HostStage::Execute))
         );
         assert_eq!(
             empty_run.advance(&bare()).unwrap(),
-            StageDecision::Skipped(StageName::Witness)
+            StageDecision::Skipped(StageName::Host(HostStage::Witness))
         );
-        assert_eq!(empty_run.program().stages(), [StageName::Execute]);
+        assert_eq!(
+            empty_run.program().stages(),
+            [StageName::Host(HostStage::Execute)]
+        );
     }
 
     /// The evaluator must never read a fact nothing produced, evaluated
@@ -295,11 +301,11 @@ mod tests {
             id: "hand-built".into(),
             stages: vec![
                 WrapperStage {
-                    name: StageName::Triage,
+                    name: StageName::Host(HostStage::Triage),
                     condition: Some("no-test-command".into()),
                 },
                 WrapperStage {
-                    name: StageName::Research,
+                    name: StageName::Host(HostStage::Research),
                     condition: Some("questions > 0".into()),
                 },
             ],
@@ -312,7 +318,7 @@ mod tests {
         };
         assert_eq!(
             resolver.advance(&values).unwrap(),
-            StageDecision::Skipped(StageName::Triage),
+            StageDecision::Skipped(StageName::Host(HostStage::Triage)),
             "test_command is true, so \"no-test-command\" is false and triage does not run"
         );
         let err = resolver
@@ -322,9 +328,9 @@ mod tests {
             matches!(
                 err,
                 ManifestError::SignalNotProduced {
-                    stage: StageName::Research,
+                    stage: StageName::Host(HostStage::Research),
                     signal: Signal::Questions,
-                    publisher: StageName::Triage,
+                    publisher: HostStage::Triage,
                 }
             ),
             "got {err:?}"
@@ -339,7 +345,7 @@ mod tests {
                 ..bare()
             })
             .unwrap(),
-            StageDecision::Ran(StageName::Triage)
+            StageDecision::Ran(StageName::Host(HostStage::Triage))
         );
         assert_eq!(
             ok.advance(&SignalValues {
@@ -347,11 +353,14 @@ mod tests {
                 ..bare()
             })
             .unwrap(),
-            StageDecision::Ran(StageName::Research)
+            StageDecision::Ran(StageName::Host(HostStage::Research))
         );
         assert_eq!(
             ok.program().stages(),
-            [StageName::Triage, StageName::Research]
+            [
+                StageName::Host(HostStage::Triage),
+                StageName::Host(HostStage::Research)
+            ]
         );
     }
 

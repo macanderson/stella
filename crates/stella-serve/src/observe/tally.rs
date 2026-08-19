@@ -137,11 +137,11 @@ mod tests {
     fn the_fold_counts_the_signals_that_distinguish_wedged_from_slow() {
         let mut fold = TallyFold::default();
         fold.observe(&AgentEvent::Stage {
-            name: StageKind::Execute,
+            name: StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         });
         fold.observe(&AgentEvent::Stage {
-            name: StageKind::Verify,
+            name: StageKind::Verify.into(),
             scope: stella_protocol::StageScope::Run,
         });
         fold.observe(&AgentEvent::Retry {
@@ -234,13 +234,13 @@ mod tests {
     fn a_parked_turn_is_distinguishable_from_a_wedged_one() {
         let mut wedged = TallyFold::default();
         wedged.observe(&AgentEvent::Stage {
-            name: StageKind::Execute,
+            name: StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         });
 
         let mut waiting = TallyFold::default();
         waiting.observe(&AgentEvent::Stage {
-            name: StageKind::Execute,
+            name: StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         });
         waiting.observe(&parked("CI for branch main settles", 1800));
@@ -312,7 +312,7 @@ mod tests {
         let mut fold = TallyFold::default();
         fold.tally.stages = u32::MAX;
         fold.observe(&AgentEvent::Stage {
-            name: StageKind::Execute,
+            name: StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         });
         assert_eq!(fold.finish().stages, u32::MAX);

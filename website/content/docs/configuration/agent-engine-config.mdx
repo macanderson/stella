@@ -64,10 +64,6 @@ model, and a [seat](#seats) for anything a plugin runs.
     // "on" = thinking mode chosen for you, overriding "reasoning" below.
     "reasoning_auto": "off",
 
-    // "on" = a headless run may proceed past scope review instead of
-    // aborting at the gate that has nobody to ask.
-    "headless_scope_bypass": "off",
-
     // Seconds of provider silence that end one generation. The partner of
     // params.max_tokens below: raise the output cap without raising this and
     // long steps stop on the timeout instead of the cap.
@@ -230,10 +226,17 @@ Set any of the three autos to `"on"` and stop thinking about it:
     Thinking mode chosen for you, overriding `agents.default.reasoning`.
   </OptionCard>
   <OptionCard name="headless_scope_bypass" defaultValue="off">
-    A headless run may proceed past [scope review](/docs/inference-pipeline)
-    instead of stopping at the gate that has nobody to ask. Off deliberately:
-    turn it on only where the working tree is disposable and the budget cap is
-    the real guard — a benchmark container, CI on a scratch checkout.
+    **Inert — setting this changes nothing.** It used to let a headless run
+    proceed past the staged pipeline's scope-review gate instead of stopping at
+    a gate with nobody to ask. That gate was deleted along with the staged
+    pipeline itself, so nothing reads the value any more, at any setting.
+
+    The key still parses and merges rather than being rejected as unknown, and
+    that is deliberate: it is part of a registered benchmark posture whose
+    digest is published, so removing it would invalidate numbers that have
+    already been reported. Whether to retire it and re-hash those arms is
+    tracked separately. Nothing here is waiting on you — if you set it, delete
+    it.
   </OptionCard>
   <OptionCard name="model_timeout_secs" defaultValue="816">
     Seconds of provider **silence** that end a single generation — it bounds

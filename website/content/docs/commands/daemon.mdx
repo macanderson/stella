@@ -111,7 +111,7 @@ A detached run cannot ask *this* terminal anything, because there is no longer o
 
 A supervised run's stdin is a file and its console is a log, so a scope-review prompt cannot use them — but supervision does not cost you the answer. When a `stella run` plan crosses the scope thresholds, the run **parks**: the proposal is written into the session's sidecar, `stella daemon list` shows the run as `Needs Input`, and whichever terminal is attached asks the question — the terminal that launched it, if it is still open, or any later `stella daemon attach`. The prompt rides the attached terminal's stderr, so `--output-format json` stdout stays parseable, and the same typed answers apply as at the foreground prompt: `y` approves, `n` (or an empty line) aborts, anything else is a revision note the planner re-plans from.
 
-A parked run holds its budget and its workspace until somebody answers; it is visible in `list` the whole time, and `stella daemon stop` (or any `SIGTERM`) unparks it as a clean abort. `headless_scope_bypass = "on"` still skips the gate entirely for a workspace whose tree is disposable, and other supervised verbs (`goal`, `fleet`, `monitor`) keep their deliberate headless posture.
+A parked run holds its budget and its workspace until somebody answers; it is visible in `list` the whole time, and `stella daemon stop` (or any `SIGTERM`) unparks it as a clean abort. There is no bypass setting to reach for: `headless_scope_bypass` used to skip the gate for a workspace whose disposable tree made the budget cap the real guard, and it is inert now — it skips nothing, because there is no built-in gate left to skip.
 
 ## `list`
 

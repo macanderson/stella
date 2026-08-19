@@ -11,6 +11,25 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent;
 use crate::cache_insight::{InsightScope, cache_insight_for};
+use crate::memory::TurnFriction;
+
+/// What a lane's closed turn stream leaves behind for its owner.
+///
+/// Two facts, not one, since #3962. `persistence_complete` was always the
+/// forwarder's answer; `friction` is the fold of the same stream that
+/// reflection reads — and it is folded HERE, in the one seam every deck lane
+/// shares, rather than in `command_deck.rs`, because that file is a god file
+/// closed to growth and because a lane that starts reflecting later should
+/// inherit the ledger rather than re-derive it.
+///
+/// [`Default`] is `persistence_complete: false` — the answer a forwarder that
+/// panicked or was cancelled owes, which is what its `unwrap_or(false)` said
+/// before this struct existed.
+#[derive(Default)]
+pub(crate) struct LaneStreamEnd {
+    pub(crate) persistence_complete: bool,
+    pub(crate) friction: TurnFriction,
+}
 
 /// Warn that execution closeout could not write its audit record (files
 /// touched / memory citations / outcome).
@@ -61,9 +80,24 @@ pub(crate) fn spawn_forwarder(
     inbound: UnboundedSender<Inbound>,
     lane: String,
     plan_board: Option<stella_tools::tasks::TaskBoardHandle>,
-) -> tokio::task::JoinHandle<bool> {
+) -> tokio::task::JoinHandle<LaneStreamEnd> {
     tokio::spawn(async move {
         let mut seq = 0u64;
+        // The lane's friction ledger (#3962), folded as the stream goes past
+        // rather than from a collected `Vec` the way `agent::run_turn` does:
+        // this task forwards each event and keeps none, and a ledger is bounded
+        // where a retained journal is not.
+        let mut friction = TurnFriction::default();
+        // This lane's open run of streamed reasoning fragments, joined into one
+        // row per thought rather than one per few tokens (#3969). One run per
+        // forwarder, and a forwarder is one lane — every lane has a registry
+        // and a channel of its own, so two lanes' thoughts cannot fuse.
+        let mut reasoning = agent::ReasoningRun::default();
+        // The lane's friction ledger (#3962), folded as the stream goes past
+        // rather than from a collected `Vec` the way `agent::run_turn` does:
+        // this task forwards each event and keeps none, and a ledger is bounded
+        // where a retained journal is not.
+        let mut friction = TurnFriction::default();
         // Two independent latches, not one. A single shared flag meant an
         // early usage gap — the benign, self-healing condition — silenced any
         // later store-write failure, which is the one that actually points at
@@ -147,14 +181,14 @@ pub(crate) fn spawn_forwarder(
                 owes_stage_execute = false;
                 held = Some(event);
                 AgentEvent::Stage {
-                    name: stella_protocol::StageKind::Execute,
+                    name: stella_protocol::StageKind::Execute.into(),
                     scope: stella_protocol::StageScope::Run,
                 }
             } else if owes_stage_complete && matches!(event, AgentEvent::TurnComplete { .. }) {
                 owes_stage_complete = false;
                 held = Some(event);
                 AgentEvent::Stage {
-                    name: stella_protocol::StageKind::Complete,
+                    name: stella_protocol::StageKind::Complete.into(),
                     scope: stella_protocol::StageScope::Run,
                 }
             } else {
@@ -168,6 +202,7 @@ pub(crate) fn spawn_forwarder(
                 _ => {}
             }
             bridge.observe(&event);
+            friction.observe(&event);
             // A plan that reached the gate is the plan whose progress the
             // board records, so this is where it becomes one. Seeded on the
             // proposal rather than on approval: the ids must already resolve
@@ -180,68 +215,83 @@ pub(crate) fn spawn_forwarder(
                 guard.seed_from_plan(&proposal.steps);
             }
             let event = if let Some((store, id)) = &execution {
-                // Off the reactor for the same reason the one-shot renderer's
-                // hop exists — see `agent::persistence::spawn_renderer`, which
-                // carries the measured numbers. This lane matters at least as
-                // much: the deck is the default interactive shell on a TTY, so
-                // a five-second `busy_timeout` stall here is a five-second
-                // unresponsive UI.
-                //
-                // The event moves in and back out rather than being cloned; it
-                // is still owed to `cache_insight_for` and the deck below.
-                let store = Arc::clone(store);
-                let id = *id;
-                let provider_id = Arc::clone(&provider_id);
-                let joined = tokio::task::spawn_blocking(move || {
-                    let outcome =
-                        agent::persist_event_detailed(&store, id, seq, &event, &provider_id);
-                    (event, outcome)
-                })
-                .await;
-                let (event, outcome) = match joined {
-                    Ok(pair) => pair,
-                    // The event went with the panicking or shutting-down task,
-                    // so this lane loses one rendered event; what it must not
-                    // lose is the admission that persistence is incomplete.
-                    Err(_) => {
-                        persistence_complete = false;
-                        seq += 1;
-                        continue;
-                    }
-                };
-                if !outcome.is_complete() {
-                    persistence_complete = false;
-                    // One warning per condition per turn, each naming what
-                    // actually occurred: a failed INSERT points at the store,
-                    // while unreported provider usage does not — conflating
-                    // them sent users hunting for a database fault that was
-                    // really a truncated model stream.
+                // Fold a streamed reasoning fragment into the open run rather
+                // than spending a row, a `seq` and a blocking hop on each one
+                // (#3969); anything else closes the run and is written after
+                // it, which is what keeps the table in stream order.
+                let owed = reasoning.admit(&event);
+                if owed.is_empty() {
+                    // Buffered. The event still reaches the deck below — only
+                    // the durable write coalesces, never the painting.
+                    event
+                } else {
+                    // Off the reactor for the same reason the one-shot renderer's
+                    // hop exists — see `agent::persistence::spawn_renderer`, which
+                    // carries the measured numbers. This lane matters at least as
+                    // much: the deck is the default interactive shell on a TTY, so
+                    // a five-second `busy_timeout` stall here is a five-second
+                    // unresponsive UI.
                     //
-                    // The scope word matters as much as the condition. A
-                    // usage gap is scoped to "one model call" because that is
-                    // all it ever was; saying "this session" turned a retried
-                    // network blip into what looked like a session-wide
-                    // accounting failure, and left that as the last word on
-                    // the deck for the rest of the run.
-                    let (warned, scope) = match outcome {
-                        crate::agent::PersistOutcome::StoreWriteFailed => {
-                            (&mut store_warned, "this session")
+                    // The event moves in and back out rather than being cloned; it
+                    // is still owed to `cache_insight_for` and the deck below.
+                    let store = Arc::clone(store);
+                    let id = *id;
+                    let provider_id = Arc::clone(&provider_id);
+                    // See the renderer's twin: a task that dies with its writes in
+                    // an unknown state must over-advance `seq`, never under.
+                    let owed_writes =
+                        u64::from(owed.block.is_some()) + u64::from(owed.writes_arriving);
+                    let joined = tokio::task::spawn_blocking(move || {
+                        let (outcome, next) =
+                            agent::persist_owed(&store, id, seq, owed, &event, &provider_id);
+                        (event, outcome, next)
+                    })
+                    .await;
+                    let (event, outcome, next_seq) = match joined {
+                        Ok(triple) => triple,
+                        // The event went with the panicking or shutting-down task,
+                        // so this lane loses one rendered event; what it must not
+                        // lose is the admission that persistence is incomplete.
+                        Err(_) => {
+                            persistence_complete = false;
+                            seq += owed_writes;
+                            continue;
                         }
-                        _ => (&mut usage_warned, "one model call"),
                     };
-                    if !*warned && let Some(message) = outcome.message(scope) {
-                        *warned = true;
-                        let _ = inbound.send(Inbound::Event {
-                            agent: lane.clone(),
-                            event: AgentEvent::Error {
-                                message,
-                                retryable: true,
-                            },
-                        });
+                    seq = next_seq;
+                    if !outcome.is_complete() {
+                        persistence_complete = false;
+                        // One warning per condition per turn, each naming what
+                        // actually occurred: a failed INSERT points at the store,
+                        // while unreported provider usage does not — conflating
+                        // them sent users hunting for a database fault that was
+                        // really a truncated model stream.
+                        //
+                        // The scope word matters as much as the condition. A
+                        // usage gap is scoped to "one model call" because that is
+                        // all it ever was; saying "this session" turned a retried
+                        // network blip into what looked like a session-wide
+                        // accounting failure, and left that as the last word on
+                        // the deck for the rest of the run.
+                        let (warned, scope) = match outcome {
+                            crate::agent::PersistOutcome::StoreWriteFailed => {
+                                (&mut store_warned, "this session")
+                            }
+                            _ => (&mut usage_warned, "one model call"),
+                        };
+                        if !*warned && let Some(message) = outcome.message(scope) {
+                            *warned = true;
+                            let _ = inbound.send(Inbound::Event {
+                                agent: lane.clone(),
+                                event: AgentEvent::Error {
+                                    message,
+                                    retryable: true,
+                                },
+                            });
+                        }
                     }
+                    event
                 }
-                seq += 1;
-                event
             } else {
                 event
             };
@@ -258,8 +308,16 @@ pub(crate) fn spawn_forwarder(
                 let _ = inbound.send(insight);
             }
         }
+        // The lane's stream is closed, so its open reasoning run is final: a
+        // turn the user interrupted mid-thought keeps what it had streamed.
+        if !agent::flush_reasoning_tail(&mut reasoning, &execution, &provider_id, &mut seq).await {
+            persistence_complete = false;
+        }
         bridge.finish();
-        persistence_complete
+        LaneStreamEnd {
+            persistence_complete,
+            friction,
+        }
     })
 }
 
@@ -289,11 +347,11 @@ pub(crate) fn spawn_forwarder(
 pub(crate) async fn close_turn_stream(
     registry: &stella_tools::ToolRegistry,
     tx: UnboundedSender<AgentEvent>,
-    forwarder: tokio::task::JoinHandle<bool>,
-) -> bool {
+    forwarder: tokio::task::JoinHandle<LaneStreamEnd>,
+) -> LaneStreamEnd {
     registry.detach_event_stream();
     drop(tx);
-    forwarder.await.unwrap_or(false)
+    forwarder.await.unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -337,10 +395,9 @@ mod tests {
         )
         .await;
 
-        let persistence_complete =
-            settled.expect("the registry-held sender must not wedge the turn tail");
+        let ended = settled.expect("the registry-held sender must not wedge the turn tail");
         assert!(
-            persistence_complete,
+            ended.persistence_complete,
             "an event-only stream persists cleanly"
         );
         // The forwarded event reached the deck lane before the stream closed.
@@ -351,7 +408,7 @@ mod tests {
     async fn lane_events(
         registry: &stella_tools::ToolRegistry,
         tx: UnboundedSender<AgentEvent>,
-        forwarder: tokio::task::JoinHandle<bool>,
+        forwarder: tokio::task::JoinHandle<LaneStreamEnd>,
         in_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Inbound>,
     ) -> Vec<AgentEvent> {
         close_turn_stream(registry, tx, forwarder).await;
@@ -364,11 +421,11 @@ mod tests {
         events
     }
 
-    fn stages(events: &[AgentEvent]) -> Vec<stella_protocol::StageKind> {
+    fn stages(events: &[AgentEvent]) -> Vec<stella_protocol::StageName> {
         events
             .iter()
             .filter_map(|event| match event {
-                AgentEvent::Stage { name, .. } => Some(*name),
+                AgentEvent::Stage { name, .. } => Some(name.clone()),
                 _ => None,
             })
             .collect()
@@ -414,8 +471,8 @@ mod tests {
         assert_eq!(
             stages(&events),
             vec![
-                stella_protocol::StageKind::Execute,
-                stella_protocol::StageKind::Complete
+                stella_protocol::StageName::from(stella_protocol::StageKind::Execute),
+                stella_protocol::StageName::from(stella_protocol::StageKind::Complete)
             ],
             "a raw lane frames its turn: {events:?}"
         );
@@ -428,10 +485,8 @@ mod tests {
             .position(|event| {
                 matches!(
                     event,
-                    AgentEvent::Stage {
-                        name: stella_protocol::StageKind::Complete,
-                        ..
-                    }
+                    AgentEvent::Stage { name, .. }
+                        if name.kind() == Some(stella_protocol::StageKind::Complete)
                 )
             })
             .expect("the closing boundary is emitted");
@@ -495,10 +550,8 @@ mod tests {
             .position(|event| {
                 matches!(
                     event,
-                    AgentEvent::Stage {
-                        name: stella_protocol::StageKind::Execute,
-                        ..
-                    }
+                    AgentEvent::Stage { name, .. }
+                        if name.kind() == Some(stella_protocol::StageKind::Execute)
                 )
             })
             .expect("the opening boundary is emitted");

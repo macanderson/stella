@@ -76,7 +76,7 @@
   --on-accent:  #ffffff;
   --ok:         #0B6B3D;
   --bad:        #A82036;
-  --warn:       #7A5200;
+  --warn:       #913200;
 
   /* NO --identity token here, deliberately. stella's other web surfaces —
      the observatory, the telemetry export, the loopback auth pages — carry
@@ -185,7 +185,7 @@
   --on-accent:  #070B10;
   --ok:         #3FD99B;
   --bad:        #F2687A;
-  --warn:       #D9A62E;
+  --warn:       #FF7A45;
 
   --acc-cyan:   #E9EDF2;
   --acc-violet: #A4ABB3;

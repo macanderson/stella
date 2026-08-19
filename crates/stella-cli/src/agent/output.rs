@@ -174,7 +174,7 @@ pub(super) fn open_raw_turn(events: &EventSender, recall_event: Option<AgentEven
         let _ = events.send(event);
     }
     let _ = events.send(AgentEvent::Stage {
-        name: stella_protocol::StageKind::Execute,
+        name: stella_protocol::StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     });
 }
@@ -272,7 +272,14 @@ pub(crate) fn one_shot_reflection_enabled(format: OutputFormat) -> bool {
     supported_format && !reflection_explicitly_disabled()
 }
 
-fn reflection_explicitly_disabled() -> bool {
+/// The reflection opt-out itself, separated from the one-shot format question
+/// above because it is neither about one-shots nor about formats: it is the
+/// workspace-wide "do not spend the extra provider call" switch, and every door
+/// that spends one owes it. The fleet door reads it directly (#3956) — a wave
+/// of attempts is the largest batch of reflection calls Stella can make, so an
+/// automation that opted out would otherwise have opted out of the cheapest
+/// door and kept the dearest.
+pub(crate) fn reflection_explicitly_disabled() -> bool {
     std::env::var(DISABLE_REFLECTION_ENV).is_ok_and(|value| is_truthy_env_value(&value))
 }
 
@@ -374,7 +381,7 @@ mod durable_stream_tests {
 
         sender
             .send(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute,
+                name: stella_protocol::StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Run,
             })
             .unwrap();
@@ -399,7 +406,7 @@ mod durable_stream_tests {
         let (raw_tx, mut paused_renderer) = mpsc::unbounded_channel();
         let sender = ordered_durable_event_sender(raw_tx, path.clone(), Arc::new(FixedClock(7)));
         let stage = AgentEvent::Stage {
-            name: stella_protocol::StageKind::Execute,
+            name: stella_protocol::StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         };
         let usage = AgentEvent::StepUsage {

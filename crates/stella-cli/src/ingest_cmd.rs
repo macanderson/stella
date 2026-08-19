@@ -26,6 +26,7 @@ use colored::Colorize;
 use stella_core::ingest::lineage::AlertState;
 use stella_core::ingest::{self, Candidate, Plan, Tier};
 
+mod chunk;
 mod extract;
 pub(crate) mod lineage;
 pub(crate) mod probe;
@@ -36,17 +37,20 @@ pub(crate) use extract::derive_set_id;
 
 /// Largest slice of any one file read for classification.
 ///
-/// Must stay above `extract`'s prompt cap, or the scan hides documents the
+/// Must stay above `extract`'s document ceiling, or the scan hides documents the
 /// extractor would happily take: a file past this is dropped from the listing
 /// entirely, so at 64 KiB against a 120,000-character prompt cap a large
 /// `AGENTS.md` was ingestable by name and invisible to `stella ingest` with no
 /// arguments. `the_scan_never_hides_a_document_extraction_would_accept` pins the
-/// ordering so raising one cap cannot silently strand the other.
+/// ordering so raising one cap cannot silently strand the other — and it is the
+/// reason this number moved when the ceiling did: extraction now covers 720,000
+/// characters, which is 2.8 MiB of worst-case four-byte codepoints, and 512 KiB
+/// would have stranded every document between the two.
 ///
 /// Classification looks at the head and the bullet structure; a document that
 /// needs more than this to classify is not a document anyone hand-wrote as
 /// steering.
-const MAX_READ_BYTES: u64 = 512 * 1024;
+const MAX_READ_BYTES: u64 = 4 * 1024 * 1024;
 
 /// `stella ingest` — see what steering a workspace already contains.
 #[derive(Debug, Args)]
@@ -301,14 +305,14 @@ fn print_held_back(found: &[Found]) {
 
 /// Say how much of a document extraction will not read.
 ///
-/// Only the head of a long document reaches the model. Nothing used to tell the
-/// person who named the file, so at the old 24,000-character cap a 44,545-character
-/// `AGENTS.md` reported "688 lines", extracted 54% of itself, and read as a
-/// complete success — the god files, the glossary and the testing section could
-/// not have produced a record and no output said why. The cap is five times
-/// larger now, which moves the edge rather than removing it, so the notice still
-/// has to exist. Printed beside the line count so the two numbers a reader would
-/// compare sit together.
+/// Nothing used to tell the person who named the file, so at the old
+/// 24,000-character cap a 44,545-character `AGENTS.md` reported "688 lines",
+/// extracted 54% of itself, and read as a complete success — the god files, the
+/// glossary and the testing section could not have produced a record and no
+/// output said why. A document is divided rather than trimmed now, so this
+/// notice fires only past the whole-document ceiling; it still has to exist,
+/// because a ceiling that exists and stays quiet is the original defect. Printed
+/// beside the line count so the two numbers a reader would compare sit together.
 fn report_truncation(content: &str) {
     if let Some(notice) = truncation_notice(content) {
         println!("    {}", notice.yellow());
@@ -480,33 +484,45 @@ mod tests {
         assert_eq!(truncation_notice("# short\n\nnothing to drop.\n"), None);
     }
 
-    /// The witness for the 5x cap: the document that motivated all of this now
-    /// fits whole. At the old 24,000 it was extracted at 54% and reported
-    /// success, so a real `AGENTS.md` losing nothing is the thing to pin.
+    /// The witness for #2407: the document that motivated all of this is
+    /// extracted whole. At the old 24,000-character cap it was extracted at 54%
+    /// and reported success, so a real `AGENTS.md` losing nothing is the thing
+    /// to pin.
     #[test]
-    fn a_real_agents_md_now_fits_the_cap_whole() {
+    fn a_real_agents_md_is_extracted_whole() {
         // This repository's own AGENTS.md, 44,545 characters.
         assert_eq!(truncation_notice(&"x".repeat(44_545)), None);
     }
 
-    /// Still reported when a document genuinely exceeds the raised cap — a
-    /// bigger limit that lies about its own edge is the original defect again.
+    /// And so is a document many times larger — the size where the previous fix
+    /// (a raised single-call cap) started losing content again.
+    ///
+    /// Fails on the old code, which trimmed anything past 120,000 characters.
+    #[test]
+    fn a_document_far_past_the_old_cap_is_extracted_whole() {
+        assert_eq!(truncation_notice(&"x".repeat(600_000)), None);
+    }
+
+    /// Still reported when a document genuinely exceeds the whole-document
+    /// ceiling — a bigger limit that lies about its own edge is the original
+    /// defect again.
     #[test]
     fn an_oversized_document_says_how_much_is_skipped() {
-        let content = "x".repeat(160_000);
-        let notice = truncation_notice(&content).expect("a document over the cap is truncated");
-        assert!(notice.contains("120000"), "kept count missing: {notice}");
-        assert!(notice.contains("160000"), "total missing: {notice}");
-        assert!(notice.contains("40000"), "skipped count missing: {notice}");
+        let content = "x".repeat(960_000);
+        let notice = truncation_notice(&content).expect("a document over the ceiling truncates");
+        assert!(notice.contains("720000"), "kept count missing: {notice}");
+        assert!(notice.contains("960000"), "total missing: {notice}");
+        assert!(notice.contains("240000"), "skipped count missing: {notice}");
         assert!(notice.contains("25%"), "skipped share missing: {notice}");
     }
 
-    /// One character past the cap is still reported. A notice that appeared
+    /// One character past the ceiling is still reported. A notice that appeared
     /// only once the loss was large would be silent for exactly the documents
     /// whose missing tail is hardest to notice.
     #[test]
-    fn one_character_over_the_cap_is_still_reported() {
-        let notice = truncation_notice(&"x".repeat(120_001)).expect("one over the cap truncates");
+    fn one_character_over_the_ceiling_is_still_reported() {
+        let notice =
+            truncation_notice(&"x".repeat(720_001)).expect("one over the ceiling truncates");
         assert!(notice.contains("1 (0%)"), "{notice}");
     }
 
@@ -514,18 +530,18 @@ mod tests {
     ///
     /// `read_and_classify` returns `None` past `MAX_READ_BYTES`, which removes
     /// the file from the listing entirely rather than showing it as too large.
-    /// So the read cap has to clear the prompt cap at its widest — UTF-8 is up
+    /// So the read cap has to clear the document ceiling at its widest — UTF-8 is up
     /// to four bytes per character, and a cap counted in characters against one
     /// counted in bytes is exactly the mismatch that hides a document.
     #[test]
     fn the_scan_never_hides_a_document_extraction_would_accept() {
-        let widest_possible_bytes = extract::MAX_PROMPT_CHARS as u64 * 4;
+        let widest_possible_bytes = chunk::MAX_DOCUMENT_CHARS as u64 * 4;
         assert!(
             MAX_READ_BYTES >= widest_possible_bytes,
             "the scan reads at most {MAX_READ_BYTES} bytes but extraction accepts up to \
              {} characters ({widest_possible_bytes} bytes of 4-byte codepoints) — a document \
              between the two is ingestable by name and invisible to the scan",
-            extract::MAX_PROMPT_CHARS,
+            chunk::MAX_DOCUMENT_CHARS,
         );
     }
 

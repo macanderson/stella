@@ -43,8 +43,8 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use stella_plugin::{
-    FlipPolicy, HookEvent, HostCall, Participation, PluginManifest, StageName, WrapperPoint,
-    WrapperRequest, WrapperResponse,
+    FlipPolicy, HookEvent, HostCall, HostStage, Participation, PluginManifest, StageName,
+    WrapperPoint, WrapperRequest, WrapperResponse,
 };
 use stella_protocol::completion::MessageRole;
 use stella_runtime::wrapper::{SubprocessWrapper, TurnWrapper};
@@ -351,7 +351,12 @@ fn the_shipped_manifest_declares_both_points_and_the_arbiter_grant_they_need() {
             stage.name
         );
     }
-    assert!(wrapper.stages.iter().any(|s| s.name == StageName::Execute));
+    assert!(
+        wrapper
+            .stages
+            .iter()
+            .any(|s| s.name == StageName::Host(HostStage::Execute))
+    );
 
     assert_eq!(
         manifest.runtime.as_ref().expect("[runtime]").env,

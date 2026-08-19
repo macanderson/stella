@@ -26,8 +26,10 @@ pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> Cali
 /// returns; this string belongs beside the rows it names, not that crate.
 pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = "classic";
 
+mod reasoning_run;
 mod turn_door;
 
+pub(crate) use reasoning_run::{Owed as ReasoningOwed, ReasoningRun};
 pub(crate) use turn_door::TurnDoor;
 
 /// Begin an execution record; a failure degrades to "no persistence for this
@@ -191,6 +193,9 @@ pub(crate) fn spawn_renderer(
             persistence_complete: true,
         };
         let mut seq = 0u64;
+        // The open run of streamed reasoning fragments, joined into one row
+        // per thought rather than one per few tokens (#3969).
+        let mut reasoning = ReasoningRun::default();
         // Split per condition, for the same reason the deck's forwarder splits
         // them: a benign usage gap must not silence a later store fault.
         let mut usage_warned = false;
@@ -235,66 +240,93 @@ pub(crate) fn spawn_renderer(
             let event = if let Some((store, id)) = &execution
                 && !preview
             {
-                // `record_event` is a synchronous `rusqlite` write and this is a
-                // Tokio worker thread. At the default durability the write costs
-                // 37 microseconds (`stella_store::migrations::Durability`), which
-                // inline would be unremarkable — but `busy_timeout` is five
-                // seconds, and that pragma exists precisely because a second
-                // same-workspace session contending for the write lock is an
-                // expected condition rather than an exotic one. Run inline, the
-                // worst case is therefore a five-second stalled reactor rather
-                // than one slow write, and `paranoid` durability turns the
-                // ordinary case into 4 ms an event as well. Both belong on the
-                // blocking pool.
-                //
-                // The event moves in and back out rather than being cloned: it is
-                // still needed for rendering below, and a `ToolResult` payload is
-                // exactly the event least worth copying.
-                //
-                // The feeding channel stays unbounded on purpose. `EventSender`
-                // is synchronous by construction (invariant #2 keeps
-                // `stella-core` I/O-free), so a bounded channel could only
-                // `try_send` — dropping telemetry — or block the engine thread,
-                // which is strictly worse than the stall this hop removes.
-                let store = Arc::clone(store);
-                let id = *id;
-                let provider_id = Arc::clone(&provider_id);
-                let joined = tokio::task::spawn_blocking(move || {
-                    let persisted = persist_event_detailed(&store, id, seq, &event, &provider_id);
-                    (event, persisted)
-                })
-                .await;
-                let (event, persisted) = match joined {
-                    Ok(pair) => pair,
-                    // The blocking pool only fails here if `persist_event_detailed`
-                    // panicked or the runtime is shutting down. The event went with
-                    // the task either way, so the turn loses one rendered line —
-                    // what it must not lose is the admission that persistence is no
-                    // longer complete.
-                    Err(_) => {
-                        outcome.persistence_complete = false;
-                        seq += 1;
-                        continue;
-                    }
-                };
-                if !persisted.is_complete() {
-                    outcome.persistence_complete = false;
-                    // This path used to print "store write failed" for BOTH
-                    // conditions, so a dropped model stream on `stella run`
-                    // accused a database that was fine — the same mislabel the
-                    // deck had. Name what actually happened, once per
-                    // condition.
-                    let (warned, scope) = match persisted {
-                        PersistOutcome::StoreWriteFailed => (&mut store_warned, "this execution"),
-                        _ => (&mut usage_warned, "one model call"),
+                // Fold a streamed reasoning fragment into the open run rather
+                // than spending a row, a `seq` and a blocking hop on each one:
+                // `Reasoning` IS the delta, so one page of thought used to
+                // arrive as tens of thousands of single-transaction INSERTs
+                // (#3969). Everything else closes the run and writes it out
+                // ahead of itself, which is what keeps the table in stream
+                // order. `TextDelta` never reaches here at all — `preview`
+                // drops it above — so a preview interleaved with thinking
+                // cannot tear a run into per-fragment rows.
+                let owed = reasoning.admit(&event);
+                // Buffered, and the event still falls through to rendering
+                // below: only the DURABLE write coalesces, so stream-json
+                // keeps emitting fragments live at the token rate.
+                if owed.is_empty() {
+                    event
+                } else {
+                    // `record_event` is a synchronous `rusqlite` write and this is a
+                    // Tokio worker thread. At the default durability the write costs
+                    // 37 microseconds (`stella_store::migrations::Durability`), which
+                    // inline would be unremarkable — but `busy_timeout` is five
+                    // seconds, and that pragma exists precisely because a second
+                    // same-workspace session contending for the write lock is an
+                    // expected condition rather than an exotic one. Run inline, the
+                    // worst case is therefore a five-second stalled reactor rather
+                    // than one slow write, and `paranoid` durability turns the
+                    // ordinary case into 4 ms an event as well. Both belong on the
+                    // blocking pool.
+                    //
+                    // The event moves in and back out rather than being cloned: it is
+                    // still needed for rendering below, and a `ToolResult` payload is
+                    // exactly the event least worth copying.
+                    //
+                    // The feeding channel stays unbounded on purpose. `EventSender`
+                    // is synchronous by construction (invariant #2 keeps
+                    // `stella-core` I/O-free), so a bounded channel could only
+                    // `try_send` — dropping telemetry — or block the engine thread,
+                    // which is strictly worse than the stall this hop removes.
+                    let store = Arc::clone(store);
+                    let id = *id;
+                    let provider_id = Arc::clone(&provider_id);
+                    // How far `seq` advances if the task dies with its writes in an
+                    // unknown state. Over-advancing leaves a hole, which every
+                    // reader tolerates (`after_seq` asks for `seq > cursor`);
+                    // under-advancing would collide with a row that did land and
+                    // lose the NEXT event to `UNIQUE (execution_id, seq)`.
+                    let owed_writes =
+                        u64::from(owed.block.is_some()) + u64::from(owed.writes_arriving);
+                    let joined = tokio::task::spawn_blocking(move || {
+                        let (persisted, next) =
+                            persist_owed(&store, id, seq, owed, &event, &provider_id);
+                        (event, persisted, next)
+                    })
+                    .await;
+                    let (event, persisted, next_seq) = match joined {
+                        Ok(triple) => triple,
+                        // The blocking pool only fails here if `persist_owed`
+                        // panicked or the runtime is shutting down. The event went with
+                        // the task either way, so the turn loses one rendered line —
+                        // what it must not lose is the admission that persistence is no
+                        // longer complete.
+                        Err(_) => {
+                            outcome.persistence_complete = false;
+                            seq += owed_writes;
+                            continue;
+                        }
                     };
-                    if !*warned && let Some(message) = persisted.message(scope) {
-                        *warned = true;
-                        eprintln!("  {} {message}", "⚠".yellow());
+                    seq = next_seq;
+                    if !persisted.is_complete() {
+                        outcome.persistence_complete = false;
+                        // This path used to print "store write failed" for BOTH
+                        // conditions, so a dropped model stream on `stella run`
+                        // accused a database that was fine — the same mislabel the
+                        // deck had. Name what actually happened, once per
+                        // condition.
+                        let (warned, scope) = match persisted {
+                            PersistOutcome::StoreWriteFailed => {
+                                (&mut store_warned, "this execution")
+                            }
+                            _ => (&mut usage_warned, "one model call"),
+                        };
+                        if !*warned && let Some(message) = persisted.message(scope) {
+                            *warned = true;
+                            eprintln!("  {} {message}", "⚠".yellow());
+                        }
                     }
+                    event
                 }
-                seq += 1;
-                event
             } else {
                 event
             };
@@ -351,6 +383,12 @@ pub(crate) fn spawn_renderer(
         // fold accumulated. A turn that never opened prints nothing.
         if let Some(printer) = transcript.as_mut() {
             printer.flush();
+        }
+        // The open reasoning run is final too, and it lands BEFORE the held
+        // terminator below — so a turn interrupted mid-thought keeps the
+        // reasoning it had already streamed, in the order it streamed it.
+        if !flush_reasoning_tail(&mut reasoning, &execution, &provider_id, &mut seq).await {
+            outcome.persistence_complete = false;
         }
         // `RunComplete` is the protocol terminator, not ordinary narration.
         // Hold it until every later accounting/reflection event has drained,
@@ -566,6 +604,80 @@ pub(crate) fn persist_event(
     legacy_provider_id: &str,
 ) -> bool {
     persist_event_detailed(store, execution_id, seq, event, legacy_provider_id).is_complete()
+}
+
+/// Persist everything one arriving event owes the store, in stream order: the
+/// coalesced reasoning block that must land ahead of it, then the event
+/// itself — skipped when the event was a fragment folded into an open run
+/// (#3969). Returns the worst outcome of the writes it made, and the next free
+/// `seq`.
+///
+/// A buffered run spends **one** `seq`, not one per fragment, which is the
+/// whole saving: `seq` stays monotonic and unique per execution
+/// (`UNIQUE (execution_id, seq)`), and no reader treats it as a count of
+/// fragments — `journal::entries`' `after_seq` poll only ever asks for
+/// `seq > cursor`.
+///
+/// `StoreWriteFailed` wins over a usage gap. It is the condition that points
+/// at a broken database, and both drains split their warning latches precisely
+/// so the benign one cannot silence it.
+pub(crate) fn persist_owed(
+    store: &Store,
+    execution_id: i64,
+    mut seq: u64,
+    owed: ReasoningOwed,
+    event: &AgentEvent,
+    legacy_provider_id: &str,
+) -> (PersistOutcome, u64) {
+    let mut outcome = PersistOutcome::Complete;
+    if let Some(block) = owed.block {
+        if !persist_event(store, execution_id, seq, &block, legacy_provider_id) {
+            outcome = PersistOutcome::StoreWriteFailed;
+        }
+        seq += 1;
+    }
+    if owed.writes_arriving {
+        let arriving = persist_event_detailed(store, execution_id, seq, event, legacy_provider_id);
+        if outcome.is_complete() {
+            outcome = arriving;
+        }
+        seq += 1;
+    }
+    (outcome, seq)
+}
+
+/// Drain a closed stream's open reasoning run to the store — the close-out
+/// both event drains owe [`ReasoningRun`], and what keeps an interrupted turn's
+/// half-streamed thought (#3969).
+///
+/// Called once the channel has closed and *before* any held terminator is
+/// written, so the tail lands in stream order rather than after the event that
+/// ended the turn. Returns false when the write failed, which the caller must
+/// carry into its `persistence_complete` bit like every other write.
+///
+/// The hop is `spawn_blocking` for the reason the in-loop one is: this is a
+/// synchronous `rusqlite` write on a Tokio task, and a contended write can hold
+/// the reactor for the full five-second `busy_timeout`.
+pub(crate) async fn flush_reasoning_tail(
+    run: &mut ReasoningRun,
+    execution: &Option<(Arc<Store>, i64)>,
+    provider_id: &Arc<str>,
+    seq: &mut u64,
+) -> bool {
+    let Some((store, id)) = execution else {
+        return true;
+    };
+    let Some(block) = run.close() else {
+        return true;
+    };
+    let store = Arc::clone(store);
+    let id = *id;
+    let provider_id = Arc::clone(provider_id);
+    let at = *seq;
+    *seq += 1;
+    tokio::task::spawn_blocking(move || persist_event(&store, id, at, &block, &provider_id))
+        .await
+        .unwrap_or(false)
 }
 
 pub(crate) fn persist_event_detailed(
@@ -996,7 +1108,7 @@ mod reactor_tests {
     /// `every_pipeline_construction_declares_its_resume_frame` is one: what can
     /// regress here is *wiring*, not logic. Observing "this ran on the blocking
     /// pool" at runtime needs either a wall-clock race or a seam injected into
-    /// `persist_event_detailed` purely to be observed, and the first is flaky
+    /// `persist_owed` purely to be observed, and the first is flaky
     /// while the second is test-shaped production code. The lexical check has
     /// neither problem and fails the moment a call site moves back inline.
     #[test]
@@ -1012,9 +1124,12 @@ mod reactor_tests {
             let body = &source[start..];
 
             // The first call after the signature is the drain's own; later ones
-            // in the same file belong to tests.
+            // in the same file belong to tests. `persist_owed` is the single
+            // entry point both drains write through (#3969) — it wraps
+            // `persist_event_detailed` and `persist_event`, so naming it here
+            // covers every synchronous SQLite write the loop makes.
             let call = body
-                .find("persist_event_detailed(")
+                .find("persist_owed(")
                 .unwrap_or_else(|| panic!("{relative}: no persistence call after `{signature}`"));
             let hop = body[..call].rfind("spawn_blocking(").unwrap_or_else(|| {
                 panic!(

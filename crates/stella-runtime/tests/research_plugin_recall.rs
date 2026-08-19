@@ -1,5 +1,5 @@
 //! The witness for the `recall` half of Track B's first extraction:
-//! `plugins/stella-research` answers `StageName::Recall` with a contribution
+//! `plugins/stella-research` answers `StageName::Host(HostStage::Recall)` with a contribution
 //! built from frames it **asked the host for**, and with an honest empty one
 //! whenever the host would not serve the ask.
 //!

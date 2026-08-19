@@ -21,13 +21,23 @@
    The rule carries one carve-out, and the carve-out is measured rather than
    tasteful: **the brand hue is permitted on identity, and nowhere else** —
    the wordmark, the favicon mark, and at most one primary action per page. It
-   may never encode a state. Under the bronze kit that was forced: `--identity`
-   #C58A32 against `--warn` #C9A227 was 1.23:1, an unreadable difference. The
-   v3.0 ion recolour separates them by hue (a cyan against an amber) but not
-   by weight — #00D1F9 against #D9A62E is still 1.22:1 — so the carve-out
-   stands on its own reasoning rather than on the collision: three jobs, three
-   channels, no overlap. `--identity` says whose instrument this is,
-   `--accent` says what is selected, `--ok`/`--warn`/`--bad` say what
+   may never encode a state.
+
+   The v4.0 return to gold makes that carve-out load-bearing again, because
+   gold and an amber `--warn` are the pair that collides. It was diagnosed
+   with the wrong instrument for two releases: `--identity` #C58A32 against
+   `--warn` #C9A227 measured 1.23:1 and was called unreadable, and when v3.0
+   moved to a cyan the same measurement read 1.22:1 and was waved through as
+   "separated by hue, not by weight". Both numbers are WCAG contrast, which is
+   a LUMINANCE ratio — it scores any two chromatic marks of equal lightness
+   near 1:1 no matter how different they look, so it never distinguished the
+   cyan case from the gold one and never could.
+
+   The metric that does is OKLCH hue distance, and `--warn` was moved on it:
+   from 10.7° off the identity to 32.0° (see the palette block). So the
+   carve-out now stands on both its own reasoning AND a measured separation:
+   three jobs, three channels, no overlap. `--identity` says whose instrument
+   this is, `--accent` says what is selected, `--ok`/`--warn`/`--bad` say what
    happened.
 
    What that costs: the product no longer matches the marketing site, which
@@ -63,18 +73,34 @@
      here — --stella-brand-500 on obsidian, --stella-brand-800 on paper. The
      light value stays one stop below the dark one for the reason #2591 first
      chose a deeper stop: identity has to clear contrast on --surface, not
-     only on the page ground. brand-800 measures 4.93:1 there and 5.20:1 as
-     the fill pair against white. Which ramp step identity takes is a brand
-     decision, not a follow-on edit. */
-  --identity:#00D1F9; --identity-ink:#070B10;
+     only on the page ground. Gold's brand-800 measures 8.25:1 there and
+     8.70:1 as the fill pair against white. Which ramp step identity takes is
+     a brand decision, not a follow-on edit. */
+  --identity:#C58A32; --identity-ink:#070B10;
   /* The three semantic colours, and the only colour anywhere besides the
      identity. Held in the reference's own register so they read as marks on
      an instrument rather than as UI chrome — but lifted with the rest of the
      v3.0 palette, because an entirely cool page can carry a brighter mark
      without it shouting. --warn keeps a hue rather than collapsing to
      neutral: it is a distinct state, and dropping it to grey would throw the
-     signal away to satisfy the palette. */
-  --ok:#3FD99B; --warn:#D9A62E; --bad:#F2687A;
+     signal away to satisfy the palette.
+
+     --warn is what MOVED when the brand went back to gold, and it had to.
+     The identity carve-out says gold may never encode a state, and the reason
+     is that a reader has to be able to tell the mark from the state at a
+     glance. The old #D9A62E sat 10.7° from the identity in OKLCH hue — the
+     same colour, for that purpose. Note the metric: WCAG contrast is a
+     LUMINANCE ratio and cannot answer this question at all (every candidate
+     scored between 1.0 and 1.6 against the identity, including ones nobody
+     would confuse), which is why the earlier "1.32:1, indistinguishable"
+     reading was the right conclusion from the wrong instrument.
+
+     So --warn takes hue 41.2°, which is not a taste call either: --bad sits
+     at 14.7° and the identity at 73.2°, and 44° is the point that maximises
+     the SMALLER of the two gaps. The shipped value lands 32.0° from the
+     identity and 26.5° from --bad, and clears AA on all three dark grounds
+     (7.63 / 7.22 / 6.98 on ground / surface / raised). */
+  --ok:#3FD99B; --warn:#FF7A45; --bad:#F2687A;
   /* Categorical data marks — a value ramp, not a hue wheel. Series are
      separated by lightness alone, which is the one channel that survives
      greyscale printing, colour-vision deficiency, and a projector. Ordered
@@ -169,14 +195,14 @@
    can land on, so the binding constraint):
 
      --text 18.71:1   --text-2 7.37:1   --text-3 3.24:1
-     --ok    6.25:1   --warn   6.56:1   --bad    6.81:1
-     --identity 4.93:1 (#00778F)
+     --ok    6.25:1   --warn   7.48:1   --bad    6.81:1
+     --identity 8.25:1 (#674415)
 
    and on the dark side against --raised (#11171D):
 
      --text 15.34:1   --text-2 7.78:1   --text-3 4.27:1
-     --ok    9.97:1   --warn   8.11:1   --bad    6.04:1
-     --identity 9.87:1 (#00D1F9)
+     --ok    9.97:1   --warn   6.98:1   --bad    6.04:1
+     --identity 6.06:1 (#C58A32)
 
    Text and --text-2 clear AAA (7:1) on both; the three semantic colours clear
    AA (4.5:1) on both. --text-3 clears AAA on neither and is not meant to,
@@ -184,7 +210,7 @@
    labelling only — a legend key, a units suffix — and never a value a reader
    must act on. The inversion pair (--ink on --accent) is 19.73:1 light,
    16.78:1 dark, and the identity fill pair (--identity-ink on --identity) is
-   5.20:1 light, 10.79:1 dark — both clear AA for the one primary action the
+   8.70:1 light, 6.63:1 dark — both clear AA for the one primary action the
    rule allows.
 
    The --c1..--c4 series ramp is lightness-ordered rather than
@@ -204,9 +230,9 @@
     --void:#E9EDF2; --ground:#FFFFFF; --surface:#F7F9FC; --raised:#FFFFFF;
     --hairline:#E7EBF0; --hairline-strong:#CFD6DD;
     --mark:#070B10; --mark-bright:#000000; --mark-deep:#4D535A;
-    --identity:#00778F; --identity-ink:#FFFFFF;
+    --identity:#674415; --identity-ink:#FFFFFF;
     --text:#070B10; --text-2:#4D535A; --text-3:#828C97;
-    --ok:#0B6B3D; --warn:#7A5200; --bad:#A82036;
+    --ok:#0B6B3D; --warn:#913200; --bad:#A82036;
     --c1:#070B10; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
     --neutral-mark:#C2C9D1;
     --ink:#FFFFFF;                      /* the inversion flips with the page */
@@ -220,9 +246,12 @@
   --void:#E9EDF2; --ground:#FFFFFF; --surface:#F7F9FC; --raised:#FFFFFF;
   --hairline:#E7EBF0; --hairline-strong:#CFD6DD;
   --mark:#070B10; --mark-bright:#000000; --mark-deep:#4D535A;
-  --identity:#00778F; --identity-ink:#FFFFFF;
+  --identity:#674415; --identity-ink:#FFFFFF;
   --text:#070B10; --text-2:#4D535A; --text-3:#828C97;
-  --ok:#0B6B3D; --warn:#7A5200; --bad:#A82036;
+  /* --warn keeps the dark scheme's hue (41.2°) rather than its lightness:
+     28.9° from the light identity, 22.7° from --bad, 7.89:1 on paper and
+     7.48:1 on --surface. */
+  --ok:#0B6B3D; --warn:#913200; --bad:#A82036;
   --c1:#070B10; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
   --neutral-mark:#C2C9D1;
   --ink:#FFFFFF;
@@ -285,18 +314,20 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
    the OS and ignore this page's own explicit toggle. Taken from
    docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
    /assets/wordmark{,-light}.svg (src/lib.rs). They were byte copies until
-   the 2026-08-11 rebrand; the v3.0 ion recolour brings them back into step,
-   so both halves of each cut now carry the current kit values (Obsidian
-   #070B10, Paper #E9EDF2) rather than only the brand hue (#2921).
+   the 2026-08-11 rebrand; the v3.0 ion recolour brought them back into step,
+   so both halves of each cut carry the current kit values (Obsidian #070B10,
+   Paper #E9EDF2) rather than only the brand hue (#2921).
 
-   These are the *color* cuts. The comet star is Ion #00D1F9 on the dark cut
-   and kit `brand-700` #0094B1 on the light one — the v3.0 change to the
-   brand rule, which used to be "shapes and marks stay full brand on both
-   grounds". Bronze held 2.98:1 against #FFFFFF and ion holds 1.83:1, which
-   is a mark nobody can see; WCAG 1.4.11 exempts logotypes from contrast
-   minima, but an invisible logotype is a design defect whether or not a
-   standard forbids it. The deep stop measures 3.58:1 on white. The *text*
-   half of the lockup is baked Obsidian and carries the legibility. */
+   These are the *color* cuts. The comet star is the gold `brand-500` #C58A32
+   on the dark cut and `brand-700` #8B5E1A on the light one. The two-stop rule
+   arrived with v3.0 — the rule before it was "shapes and marks stay full
+   brand on both grounds" — and v4.0's return to gold keeps it rather than
+   reverting it, because the rule was never really about ion: brand-500 holds
+   2.98:1 against #FFFFFF, which is under the 3:1 graphical floor even though
+   it is well clear of ion's 1.83:1. WCAG 1.4.11 exempts logotypes from
+   contrast minima, but a logotype nobody can see is a design defect whether
+   or not a standard forbids it. The deep stop measures 5.65:1 on white. The
+   *text* half of the lockup is baked Obsidian and carries the legibility. */
 /* `.bword-light` alone (one class, specificity 0,1,0) loses to `header
    .bword` above (element+class, 0,1,1), so a bare `display:none` here never
    actually applied — the light cut rendered unconditionally on every theme,
@@ -2508,6 +2539,9 @@ addEventListener("keydown", (e) => {
 });
 
 /* ── projects switcher ───────────────────────────────────────────────── */
+/* `/api/projects` already ships only rows with a live store (plus the current
+   workspace), and reports the rest as `known`/`omitted` counts — this filter
+   is the second line of defence, not the one paying for the payload (#3953). */
 function renderProjects(p) {
   const sel = $("proj");
   const current = (p.projects ?? []).find(x => x.is_current);

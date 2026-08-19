@@ -172,6 +172,13 @@ fn seeded_workspace() -> TempDir {
     // and a raw string keeps their quoting readable. The `text_delta` row is
     // there to be *excluded* — the journal route must drop live-preview
     // fragments in favor of the authoritative `text` event.
+    //
+    // The single tidy `reasoning` row is NOT the shape the store holds — real
+    // reasoning arrives one row per streamed fragment, which is what
+    // `journal::coalesce_reasoning` exists for. That case is seeded by the
+    // test that owns it (`streamed_reasoning_fragments_fold_into_one_block_per_run`)
+    // rather than here, because several tests below address these rows by seq
+    // and inserting fragments would renumber them for no gain.
     conn.execute_batch(
         r#"CREATE TABLE events (
              execution_id INTEGER NOT NULL,
@@ -972,6 +979,140 @@ fn project_param_drills_into_another_registered_workspace() {
     assert_eq!(v["available"], true);
     assert_eq!(v["projects"][0]["name"], "other");
     assert_eq!(v["projects"][0]["has_store"], true);
+}
+
+#[test]
+fn projects_ships_only_selectable_rows_and_counts_the_rest() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_DATA_DIR"]);
+    // The shape of a hub that has run the bench suites: a handful of live
+    // workspaces buried under thousands of temp roots whose directory is gone.
+    // Those rows carry real spend, so they stay in the hub — but the switcher
+    // can never open one, and shipping them cost 868 KB per refresh (#3953).
+    const DEAD: usize = 800;
+    let home = TempDir::new().unwrap();
+    let other = seeded_workspace();
+    let data = TempDir::new().unwrap();
+    let usage = Connection::open(data.path().join("usage.db")).unwrap();
+    usage
+        .execute_batch(
+            "CREATE TABLE projects (
+               project_id TEXT PRIMARY KEY, name TEXT NOT NULL,
+               root_path TEXT NOT NULL, first_seen_at TEXT NOT NULL,
+               last_seen_at TEXT NOT NULL);
+             CREATE TABLE execution_rollup (
+               project_id TEXT NOT NULL, execution_id INTEGER NOT NULL,
+               kind TEXT NOT NULL, prompt_digest TEXT NOT NULL,
+               prompt_preview TEXT NOT NULL DEFAULT '',
+               model TEXT NOT NULL, provider TEXT NOT NULL,
+               outcome TEXT NOT NULL, cost_usd REAL NOT NULL,
+               input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+               duration_ms INTEGER NOT NULL, tool_calls INTEGER NOT NULL,
+               files_written INTEGER NOT NULL, produced_output INTEGER NOT NULL,
+               self_rating INTEGER, started_at TEXT NOT NULL,
+               PRIMARY KEY (project_id, execution_id));
+             CREATE TABLE telemetry (
+               project_id TEXT NOT NULL, source_rowid INTEGER NOT NULL,
+               org_id TEXT, workspace_id TEXT, repo_id TEXT NOT NULL DEFAULT '',
+               execution_id INTEGER NOT NULL, step INTEGER NOT NULL,
+               recorded_at TEXT NOT NULL DEFAULT '',
+               provider TEXT NOT NULL, call_role TEXT NOT NULL, model TEXT NOT NULL,
+               input_tokens INTEGER NOT NULL, estimated_input_tokens INTEGER NOT NULL,
+               output_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+               cache_miss_tokens INTEGER NOT NULL, cache_write_tokens INTEGER NOT NULL,
+               cost_usd REAL NOT NULL, duration_ms INTEGER NOT NULL,
+               retries INTEGER NOT NULL, tool_calls INTEGER NOT NULL,
+               usage_complete INTEGER NOT NULL,
+               PRIMARY KEY (project_id, source_rowid));",
+        )
+        .unwrap();
+    // The live workspace, the serving workspace (registered but with no store
+    // of its own yet — it still labels the switcher's "current" entry), and
+    // the temp-root horde.
+    usage
+        .execute(
+            "INSERT INTO projects VALUES (?1, 'other', ?2, '2026-01-01', '2026-01-02')",
+            rusqlite::params!["feedbeef00000001", other.path().to_string_lossy()],
+        )
+        .unwrap();
+    usage
+        .execute(
+            "INSERT INTO projects VALUES (?1, 'serving', ?2, '2026-01-01', '2026-01-03')",
+            rusqlite::params![
+                crate::global::project_id_for(home.path()),
+                home.path().to_string_lossy()
+            ],
+        )
+        .unwrap();
+    let gone = home.path().join("never-created");
+    for i in 0..DEAD {
+        let id = format!("dead{i:012}");
+        usage
+            .execute(
+                "INSERT INTO projects VALUES (?1, ?2, ?3, '2026-02-01', '2026-02-02')",
+                rusqlite::params![
+                    id,
+                    format!("bench-run-{i}"),
+                    gone.join(format!("run-{i}")).to_string_lossy()
+                ],
+            )
+            .unwrap();
+        // Spend the hub must keep accounting for after the directory is gone.
+        usage
+            .execute(
+                "INSERT INTO telemetry
+                   (project_id,source_rowid,org_id,workspace_id,repo_id,execution_id,step,
+                    recorded_at,provider,call_role,model,input_tokens,estimated_input_tokens,
+                    output_tokens,cache_read_tokens,cache_miss_tokens,cache_write_tokens,
+                    cost_usd,duration_ms,retries,tool_calls,usage_complete)
+                 VALUES (?1,1,NULL,NULL,'',1,0,'2026-02-02 10:00:00','anthropic','worker',
+                         'claude-x',100,100,10,0,100,0,0.02,500,0,0,1)",
+                rusqlite::params![id],
+            )
+            .unwrap();
+    }
+    drop(usage);
+    // SAFETY: the env lock is held for the whole test, and `_restore` undoes
+    // this on drop — including if a `respond` below panics, which would
+    // otherwise leak a path into a TempDir about to be deleted.
+    unsafe { std::env::set_var("STELLA_DATA_DIR", data.path()) };
+
+    let listed = respond(home.path(), "/api/projects");
+    let hub = respond(home.path(), "/api/hub-telemetry");
+    let v: serde_json::Value = serde_json::from_slice(&listed.body).unwrap();
+
+    let shipped = v["projects"].as_array().unwrap();
+    assert_eq!(
+        shipped.len(),
+        2,
+        "only the live store and the serving workspace are selectable"
+    );
+    assert!(
+        shipped
+            .iter()
+            .all(|p| p["has_store"] == true || p["is_current"] == true),
+        "no row the switcher is guaranteed to discard is worth serializing"
+    );
+    assert_eq!(v["known"], DEAD as u64 + 2, "the hub's history is reported");
+    assert_eq!(
+        v["omitted"], DEAD as u64,
+        "and so is what was left out of it"
+    );
+    // The cost this endpoint exists to stop paying: at ~200 bytes a row the
+    // unfiltered payload was ~160 KB for this fixture, and 868 KB on the
+    // machine that filed #3953.
+    assert!(
+        listed.body.len() < 4_096,
+        "the selector payload is bounded by live workspaces, not by hub \
+         history — got {} bytes",
+        listed.body.len()
+    );
+
+    // The other half of the contract: the hub aggregate still accounts for
+    // every dead project, so no spend disappears from the Org tab.
+    let h: serde_json::Value = serde_json::from_slice(&hub.body).unwrap();
+    assert_eq!(h["totals"]["projects"], DEAD as i64);
+    assert!((h["totals"]["cost_usd"].as_f64().unwrap() - DEAD as f64 * 0.02).abs() < 1e-6);
 }
 
 #[test]

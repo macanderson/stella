@@ -560,6 +560,307 @@ async fn the_billed_prompt_size_is_reported_and_bounded() {
     );
 }
 
+/// One turn's journal in the shape `agent::run_turn` hands to
+/// [`super::digest::TurnFriction::from_events`]: a tool that failed, its
+/// pairing start, a retry, and the model call that paid for it all.
+fn journal() -> Vec<stella_protocol::AgentEvent> {
+    use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+    vec![
+        AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: "c1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({ "command": "cargo test" }),
+            },
+        },
+        AgentEvent::ToolResult {
+            call_id: "c1".into(),
+            output: ToolOutput::Error {
+                message: "linker failed: ld returned 1".into(),
+                class: None,
+            },
+            duration_ms: 91_000,
+            speculated: false,
+        },
+        AgentEvent::Retry {
+            attempt: 1,
+            reason: "429 rate limited".into(),
+        },
+        AgentEvent::StepUsage {
+            upstream_provider: None,
+            step: 4,
+            role: stella_protocol::ModelCallRole::Worker,
+            provider: "anthropic".into(),
+            output_text: None,
+            model: "claude".into(),
+            input_tokens: 80_000,
+            output_tokens: 500,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: None,
+            estimated_input_tokens: 0,
+            cost_usd: 0.31,
+            duration_ms: 12_000,
+            retries: 1,
+            tool_calls: 1,
+            complete: true,
+            finish_reason: None,
+        },
+    ]
+}
+
+/// **The #3946 witness.** `the_prompt_names_where_the_turn_spent_itself` below
+/// proves the digest *renders* friction once something hands it a ledger. This
+/// proves something does.
+///
+/// Between #3865 (which deleted `FrictionTap`, the ledger's only producer) and
+/// this change, every production path built its evidence through
+/// [`super::TurnEvidence::from_transcript`], which hardcodes a permanently
+/// empty ledger — so the friction section of every shipped digest rendered as
+/// nothing at all. The second half of this test is that regression, still
+/// executable: same transcript, same turn, no producer, no section.
+#[tokio::test]
+async fn the_folded_journal_reaches_the_prompt_and_an_unfolded_turn_says_nothing() {
+    let events = journal();
+    let friction = super::digest::TurnFriction::from_events(&events);
+    let transcript = vec![CompletionMessage::user("run the tests")];
+
+    let wired = prompt_for_evidence(super::TurnEvidence::with_friction(
+        &transcript,
+        &friction,
+        false,
+    ))
+    .await;
+    assert!(
+        wired.contains("Where this turn spent itself"),
+        "a folded journal must render the friction section.\n\nprompt was:\n{wired}"
+    );
+    assert!(
+        wired.contains("linker failed"),
+        "the failed tool call is the turn's friction, and `run_turn` saw it.\
+         \n\nprompt was:\n{wired}"
+    );
+    assert!(
+        wired.contains("429 rate limited"),
+        "a retry leaves no message behind — only the event stream has it.\
+         \n\nprompt was:\n{wired}"
+    );
+    assert!(
+        wired.contains("$0.3100"),
+        "what the turn cost is nowhere in the transcript.\n\nprompt was:\n{wired}"
+    );
+
+    // Anti-vacuity, and the regression itself: the identical turn built the way
+    // every door built it before #3946 reaches the model with none of the above.
+    let unwired =
+        prompt_for_evidence(super::TurnEvidence::from_transcript(&transcript, false)).await;
+    assert!(
+        !unwired.contains("Where this turn spent itself"),
+        "`from_transcript`'s empty ledger must render no friction section — if \
+         it does, this test proves nothing about the wiring.\n\nprompt was:\n{unwired}"
+    );
+}
+
+/// One tool call's pass through a goal round, as the arc's journal carries it.
+fn round_tool(
+    call_id: &str,
+    name: &str,
+    command: &str,
+    error: Option<&str>,
+) -> Vec<stella_protocol::AgentEvent> {
+    use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+    vec![
+        AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: call_id.into(),
+                name: name.into(),
+                input: serde_json::json!({ "command": command }),
+            },
+        },
+        AgentEvent::ToolResult {
+            call_id: call_id.into(),
+            output: match error {
+                Some(message) => ToolOutput::Error {
+                    message: message.into(),
+                    class: None,
+                },
+                None => ToolOutput::Ok {
+                    content: "ok".into(),
+                    data: None,
+                },
+            },
+            duration_ms: 4_000,
+            speculated: false,
+        },
+    ]
+}
+
+/// A three-round goal arc's journal, in the shape `run_goal_turn` hands to
+/// [`super::digest::TurnFriction::per_goal_round`]: every round calls a tool
+/// the other two never call, and each round is closed by its own `GoalVerdict`
+/// — the split key, carrying the round number.
+fn goal_journal() -> Vec<stella_protocol::AgentEvent> {
+    let verdict = |round: usize, met: bool| stella_protocol::AgentEvent::GoalVerdict {
+        round,
+        met,
+        reasoning: format!("round {round}"),
+        cost_usd: 0.01,
+    };
+    let mut events = round_tool("c1", "bash", "cargo test", Some("round one linker failure"));
+    events.push(verdict(1, false));
+    events.extend(round_tool("c2", "read_file", "src/lib.rs", None));
+    events.push(verdict(2, false));
+    events.extend(round_tool("c3", "edit_file", "src/leak.rs", None));
+    events.push(verdict(3, true));
+    events
+}
+
+/// **The #3962 witness.** A goal run is several turns reflected on ONCE, and
+/// the ledger it reflects with must be one per round.
+///
+/// Before this, `/goal` passed an explicitly-empty ledger, because the only
+/// alternative on offer — one fold over the whole arc — is not a smaller
+/// answer but a wrong one: it reports round 1's failed `bash` as something the
+/// round that ran last did. That is the misattribution #3552 named on the
+/// wrapper's `TurnFacts`, and the second half of this test is that wrong
+/// answer, executable, so the first half cannot be satisfied by producing it.
+#[tokio::test]
+async fn a_goal_arcs_rounds_reflect_separately_and_never_borrow_each_others_friction() {
+    let events = goal_journal();
+    let rounds = super::TurnFriction::per_goal_round(&events);
+    assert_eq!(
+        rounds.len(),
+        3,
+        "each `GoalVerdict` closes a round, so a three-round arc folds to three ledgers"
+    );
+    let transcript = vec![CompletionMessage::user("fix the leak and prove it")];
+
+    // Round 3 alone: the round that did NOT run `cargo test` must not be able
+    // to say it did, whatever else the arc contains.
+    let third_only = prompt_for_evidence(super::TurnEvidence::with_rounds(
+        &transcript,
+        &rounds[2..],
+        true,
+    ))
+    .await;
+    assert!(
+        !third_only.contains("round one linker failure"),
+        "round 3's ledger holds round 1's failure — the rounds were folded \
+         together.\n\nprompt was:\n{third_only}"
+    );
+
+    // The whole arc: each round renders its own section, labelled, in order.
+    let wired =
+        prompt_for_evidence(super::TurnEvidence::with_rounds(&transcript, &rounds, true)).await;
+    let first_at = wired
+        .find("Where round 1 of 3 spent itself")
+        .expect("round 1 must name itself as round 1 of 3");
+    let third_at = wired
+        .find("Where round 3 of 3 spent itself")
+        .expect("round 3 must name itself as round 3 of 3");
+    let failure_at = wired
+        .find("round one linker failure")
+        .expect("round 1's failure is the arc's friction and must survive selection");
+    assert!(
+        first_at < failure_at && failure_at < third_at,
+        "round 1's failure must be rendered inside round 1's section, ahead of \
+         round 3's.\n\nprompt was:\n{wired}"
+    );
+
+    // Anti-vacuity, and the wrong answer this issue exists to forbid: the same
+    // journal folded as ONE ledger puts every round's tools under a single
+    // heading that speaks for "this turn", where nothing tells a reader which
+    // round ran which — the third round inherits the first round's failure.
+    let merged = super::TurnFriction::from_events(&events);
+    let conflated = prompt_for_evidence(super::TurnEvidence::with_friction(
+        &transcript,
+        &merged,
+        true,
+    ))
+    .await;
+    assert!(
+        conflated.contains("Where this turn spent itself")
+            && conflated.contains("round one linker failure")
+            && !conflated.contains("Where round 1 of 3"),
+        "the merged fold must still render — this half is the regression, and a \
+         test that cannot produce it proves nothing.\n\nprompt was:\n{conflated}"
+    );
+}
+
+/// The other half of the #3946 witness: the test above builds its evidence by
+/// hand, so it would still pass with every production call site reverted. This
+/// asserts the wiring itself — that a ledger is folded and that reflection is
+/// handed it, at every door that reflects.
+///
+/// Source-level for the reason `every_recalling_driver_arms_the_control_first`
+/// (`memory/tests/ab_control.rs`) is: observing it otherwise means standing up a
+/// provider, an MCP connect, a store and a renderer task to watch one
+/// assignment. The names asserted on are real items, so a rename breaks the
+/// compile too.
+#[test]
+fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
+    const AGENT: &str = include_str!("../../agent.rs");
+    const GOAL: &str = include_str!("../../agent/goal.rs");
+    const REFLECT: &str = include_str!("../../agent/reflect.rs");
+    const DECK: &str = include_str!("../../command_deck/authoring.rs");
+    const FORWARDER: &str = include_str!("../../command_deck/forwarder.rs");
+
+    assert!(
+        AGENT.contains("TurnFriction::from_events(&collected)"),
+        "run_turn must fold the journal its renderer drained; without a producer \
+         every digest's friction section is empty, which is the #3946 regression"
+    );
+
+    // The one-shot door — the surface a benchmark run drives.
+    let door = GOAL
+        .find("pub(crate) async fn run_raw_one_shot")
+        .expect("the raw one-shot door must still be named this");
+    let next_door = GOAL[door..]
+        .find("pub async fn run_goal_cmd")
+        .map_or(GOAL.len(), |offset| door + offset);
+    assert!(
+        GOAL[door..next_door].contains("TurnEvidence::with_friction("),
+        "run_raw_one_shot must reflect with the ledger it folded, not \
+         from_transcript's empty one"
+    );
+
+    // The interactive door — one ledger for a plain prompt, a slice of them
+    // for `/goal`, so the shared helper takes the slice shape.
+    assert!(
+        REFLECT.contains("TurnEvidence::with_rounds("),
+        "reflect_on_interactive_turn must reflect with the turn's ledger"
+    );
+
+    // The `/goal` doors (#3962), both of which reflect ONCE over an arc of
+    // several turns: the fold is per round, and the reflection takes the slice.
+    assert!(
+        GOAL.contains("TurnFriction::per_goal_round(&rendered.events)"),
+        "run_goal_turn must split its journal at each round's own verdict; one \
+         fold over the whole arc reports round 1's tools as the last round's"
+    );
+    assert!(
+        GOAL.contains("TurnEvidence::with_rounds("),
+        "the headless `stella goal` door must reflect with its per-round ledgers"
+    );
+    assert!(
+        AGENT.contains("friction: &goal_rounds"),
+        "the REPL's `/goal` handler must hand reflection the arc's per-round \
+         ledgers, not the empty one it passed while this was unwired"
+    );
+
+    // The Command Deck, which #3946 did not touch at all.
+    assert!(
+        DECK.contains("TurnEvidence::with_friction("),
+        "the deck's lead turn must reflect with the ledger its lane forwarder \
+         folded, not a transcript-only digest"
+    );
+    assert!(
+        FORWARDER.contains("friction.observe(&event)"),
+        "the lane forwarder is where a deck turn's ledger is folded — it is the \
+         one seam every lane shares"
+    );
+}
+
 /// The event-derived half of the evidence (#2460's definition of done, item 1):
 /// cost, wall clock, retries and loop firings leave no message at all, so no
 /// window over the transcript can reach them.
@@ -597,7 +898,7 @@ async fn the_prompt_names_where_the_turn_spent_itself() {
     let transcript = vec![CompletionMessage::user("fix it")];
     let prompt = prompt_for_evidence(super::TurnEvidence {
         transcript: &transcript,
-        friction: &friction,
+        friction: std::slice::from_ref(&friction),
         succeeded: false,
     })
     .await;

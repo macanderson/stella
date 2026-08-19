@@ -98,7 +98,7 @@ free one). This crate builds no binary —
 | [`src/context_db.rs`](src/context_db.rs) | `/api/context-lifecycle` (#1871): the self-improvement plane read out of `.stella/private/context.db` — the promotion audit trail (`context_records` folded by lineage in append order), current episodes, and selection health. Record bodies deserialize through `stella-core`'s own `context_record` types and the health fold is the CLI's `fold_selection_health`, linked rather than copied. |
 | [`src/context_diff.rs`](src/context_diff.rs) | `/api/execution-context-diff` (#1511): `stella inspect --diff`, served — the unified diff between one call's reconstruction and its resolved baseline (`prev`/`first`/`prompt`, same-role, whole-session). The differ itself is the `stella-diff` leaf crate. |
 | [`src/sessions.rs`](src/sessions.rs) | The sessions plane: the `~/.stella/sessions/` registry (with the read-time pid-liveness downgrade) merged with per-session store rollups (`/api/sessions`, `/api/session`), plus the per-execution behavioural-tendencies fold (`/api/execution-tendencies`) and the per-turn workspace diff replay (`/api/session-turn-diff`, #1870 — served from the `session_turn_diffs` projection the owning session precomputed; the observatory never opens the work journal's bare repo). |
-| [`src/global.rs`](src/global.rs) | The user-tier view over `~/.stella/usage.db`: the project switcher (`/api/projects`, `?project=`) and the hub-telemetry drill (org → workspace → repo → project). |
+| [`src/global.rs`](src/global.rs) | The user-tier view over `~/.stella/usage.db`: the project switcher (`/api/projects`, `?project=`) and the hub-telemetry drill (org → workspace → repo → project). The switcher payload ships only rows whose `.stella/private/store.db` still exists, plus the serving workspace, and reports the rest as `known`/`omitted` counts — a hub that has run the bench suites is mostly dead `/var/folders/…` roots the dropdown discards on arrival, and shipping them was ~80% of every refresh (#3953). The hub drill reads the `telemetry` replica and still accounts for every one of them. |
 | [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain — plus `redact`, the credential scrubber. |
 | [`src/self_driving.rs`](src/self_driving.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/self-driving/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |
 | [`src/codegraph.rs`](src/codegraph.rs) | `codegraph.db` flattened to `{nodes, edges, groups}` for the force-directed canvas, including the Rust module-path resolution the indexer doesn't do. |
@@ -235,8 +235,10 @@ reaches the browser must be audited the same way before it lands.
 ### The palette is a mirror, and one data-mark step is deliberately unused
 
 The `:root` block at the top of `index.html` mirrors the comet brand kit
-(v3.0) — Ion `#00D1F9` on Obsidian `#070B10` over cool graphite neutrals, set
-in JetBrains Mono. [`../../docs/brand/`](../../docs/brand/README.md) is the normative
+(v4.0) — Bronze Gold `#C58A32` on Obsidian `#070B10` over cool graphite
+neutrals, set in JetBrains Mono. v4.0 took the brand hue back from v3.0's Ion
+and kept that release's cool neutral ramp and ground, so only the identity
+moved. [`../../docs/brand/`](../../docs/brand/README.md) is the normative
 source (`css/tokens.css` holds the values); the same tokens live in
 `website/src/app/tokens.css`, and the surfaces move together. The block
 carries the whole core set even where this page uses only part of it. Do not

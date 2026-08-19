@@ -387,11 +387,13 @@ jobs:
 ```
 
 <Callout type="warn">
-  One headless-only gate to know about: a plan whose blast radius crosses the
-  [scope-review thresholds](/docs/inference-pipeline) has nobody to ask in CI,
-  so the run ends rather than auto-approving. If the checkout is disposable and
-  the budget cap is your real guard, opt in explicitly with
-  `agent_engine_config.headless_scope_bypass: "on"` — never as a default.
+  There is no built-in headless-only gate to configure here. The scope review
+  that used to end a CI run rather than auto-approve a large plan was a stage of
+  the staged pipeline and went with it, and
+  `agent_engine_config.headless_scope_bypass` — the key that waved a run past it
+  — is inert, so setting it neither loosens nor tightens anything. A run under a
+  verification plugin can still refuse on the plugin's own rule; read that
+  plugin's manifest for what it refuses and when.
 </Callout>
 
 ## Parsing the output with jq

@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { inflateSync } from "node:zlib";
 
 /**
  * The site's palette and its logo assets are copies of `docs/brand/`. This is
@@ -14,13 +15,28 @@ import { test } from "node:test";
  *
  * `src/app/tokens.css` carried the sentence "every value below is copied from
  * it verbatim — do not tune a hex here, change the kit and mirror it" while
- * sitting a whole brand version behind: the kit moved to Bronze Gold #00D1F9
- * on Ink #070B10 in the 2026-08-11 rebrand and this site stayed on v1.0's
+ * sitting a whole brand version behind: the kit moved to Bronze Gold #C58A32
+ * on Ink #10100F in the 2026-08-11 rebrand and this site stayed on v1.0's
  * Phosphor Gold #FFB000 on Ink #0B0B0C. All thirteen SVGs under
  * `public/brand/` were stale with it, as were seven of the eight PWA icons,
  * `src/app/icon.svg`, the favicon and the OG card's literals — so the site
  * served a **bronze wordmark beside phosphor chrome**, and the paragraph
  * claiming they matched was the only thing anyone had to go on.
+ *
+ * It happened twice more, which is why the matrix below keeps growing rather
+ * than being trusted as finished:
+ *
+ *  - **v3.0 (#3658)** recoloured the product to Ion and **v4.0 (#3970)** took
+ *    the brand hue back to gold on the product surfaces only — leaving this
+ *    whole site, the kit's generated cuts and every binary asset on Ion. For
+ *    a while the tree shipped two identities and a reader crossing from here
+ *    to the Observatory watched the brand change hue (#3968).
+ *  - **`src/app/favicon.ico` was never recoloured at all.** It sat on v2.0's
+ *    bronze-on-warm-ink art (ground #10100F) straight through v3.0, because
+ *    the test below asserted only its PNG *colour type* and never its pixels,
+ *    and the retired-value sweep cannot read a binary. A guard that checks an
+ *    encoding while the art rots is worse than none: it reports green. It now
+ *    compares pixels against the kit.
  *
  * The kit is a shared cell that several surfaces copy, and a comment cannot
  * hold one. The Rust side already learned this: `provider_parity.rs` enforces
@@ -33,10 +49,15 @@ import { test } from "node:test";
  * ## What it does and does not check
  *
  * It checks **values**, not design: the brand-core hexes, the eleven-stop gold
- * ramp, the warm-neutral ramp, and byte-identity of the logo SVGs and PWA
+ * ramp, the cool-neutral ramp, and byte-identity of the logo SVGs and PWA
  * icons. The site's own tokens — the functional status hues, the type scale,
  * the `lp-*` landing layer — are deliberately outside the matrix; the kit does
  * not define them and this test must not freeze them.
+ *
+ * That exclusion is about the kit not *owning* those values, not a licence for
+ * them to collide with the identity: v4.0 had to move `--stella-warning`,
+ * which sat 8.7° from the brand in OKLCH hue once the brand went back to gold.
+ * The reasoning lives beside the token in `src/app/tokens.css`.
  *
  * **This is not #2594 reopened.** That issue proposed holding this site to the
  * *instrument* palette — the Observatory's monochrome system — and was closed
@@ -48,7 +69,7 @@ import { test } from "node:test";
  * about a copy rather than about a design.
  *
  * The comparison is textual and case-insensitive because the kit writes
- * `#00D1F9` and CSS convention here writes `#00d1f9`. That is the one
+ * `#C58A32` and CSS convention here writes `#c58a32`. That is the one
  * difference allowed between the two files.
  */
 
@@ -60,6 +81,107 @@ const SITE = join(HERE, "..");
 
 function read(path: string): string {
   return readFileSync(path, "utf8");
+}
+
+/** The `i`th embedded image of an ICO, as its raw bytes. */
+function icoImage(ico: Buffer, i: number): Buffer {
+  const entry = 6 + i * 16;
+  const size = ico.readUInt32LE(entry + 8);
+  const offset = ico.readUInt32LE(entry + 12);
+  return ico.subarray(offset, offset + size);
+}
+
+/**
+ * A PNG's pixels, normalised to RGBA, so two encodings of the same art compare
+ * equal.
+ *
+ * Deliberately minimal — 8-bit, non-interlaced, colour type 2 or 6, which is
+ * every PNG `docs/brand/` produces (see cometkit.py: "PNG needs only zlib and
+ * four chunk headers, no imaging library"). Anything else throws rather than
+ * being silently accepted, because a guard that quietly skips is the failure
+ * this whole file exists to prevent. No dependency: `node:zlib` is built in,
+ * and adding an image library to run one assertion is not worth it.
+ */
+function rgbaPixels(png: Buffer): {
+  width: number;
+  height: number;
+  pixels: Buffer;
+} {
+  let ihdr: Buffer | undefined;
+  const idat: Buffer[] = [];
+  for (let i = 8; i < png.length; ) {
+    const length = png.readUInt32BE(i);
+    const tag = png.subarray(i + 4, i + 8).toString("latin1");
+    const body = png.subarray(i + 8, i + 8 + length);
+    if (tag === "IHDR") ihdr = body;
+    else if (tag === "IDAT") idat.push(body);
+    i += 12 + length;
+  }
+  assert.ok(ihdr, "PNG has an IHDR chunk");
+
+  const width = ihdr.readUInt32BE(0);
+  const height = ihdr.readUInt32BE(4);
+  const depth = ihdr[8];
+  const colour = ihdr[9];
+  const interlace = ihdr[12];
+  assert.equal(depth, 8, `unsupported PNG bit depth ${depth}`);
+  assert.equal(interlace, 0, "interlaced PNGs are not supported here");
+  assert.ok(colour === 2 || colour === 6, `unsupported colour type ${colour}`);
+
+  const bpp = colour === 6 ? 4 : 3;
+  const stride = width * bpp;
+  const raw = inflateSync(Buffer.concat(idat));
+
+  const rows: Buffer[] = [];
+  let prev = Buffer.alloc(stride);
+  for (let y = 0, pos = 0; y < height; y++) {
+    const filter = raw[pos++];
+    const line = Buffer.from(raw.subarray(pos, pos + stride));
+    pos += stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? line[x - bpp] : 0;
+      const b = prev[x];
+      const c = x >= bpp ? prev[x - bpp] : 0;
+      switch (filter) {
+        case 0:
+          break;
+        case 1:
+          line[x] = (line[x] + a) & 0xff;
+          break;
+        case 2:
+          line[x] = (line[x] + b) & 0xff;
+          break;
+        case 3:
+          line[x] = (line[x] + ((a + b) >> 1)) & 0xff;
+          break;
+        case 4: {
+          const p = a + b - c;
+          const pa = Math.abs(p - a);
+          const pb = Math.abs(p - b);
+          const pc = Math.abs(p - c);
+          line[x] = (line[x] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 0xff;
+          break;
+        }
+        default:
+          throw new Error(`unknown PNG filter ${filter}`);
+      }
+    }
+    rows.push(line);
+    prev = line;
+  }
+
+  if (colour === 6) {
+    return { width, height, pixels: Buffer.concat(rows) };
+  }
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const to = (y * width + x) * 4;
+      rows[y].copy(pixels, to, x * 3, x * 3 + 3);
+      pixels[to + 3] = 0xff;
+    }
+  }
+  return { width, height, pixels };
 }
 
 /**
@@ -113,11 +235,16 @@ test("the site's brand tokens are the kit's, value for value", () => {
 });
 
 test("no retired brand value survives anywhere in the site", () => {
-  // Two rebrands' own regressions, asserted directly. The first block is the
-  // v1.0 phosphor gold that shipped beside bronze assets for the life of the
-  // 2026-08-11 drift; the second is the v2.0 bronze itself, retired by the
-  // v3.0 ion recolour. A value only leaves this list if it comes back, which
-  // it must not.
+  // Every rebrand's own regression, asserted directly.
+  //
+  // A value leaves this list only when a later version makes it **live
+  // again**, which is not hypothetical: v4.0 took the brand hue back to v2.0's
+  // Bronze Gold ramp value-for-value, so #c58a32 and its stops moved from this
+  // list into `tokens.css`. What v4.0 did *not* take back is the warm neutral
+  // page those stops used to sit on — v3.0's cool graphite ramp and Obsidian
+  // ground are kept — so the warm values stay retired and are what this block
+  // still names. `crates/stella-cli/src/export/tests.rs` carries the same
+  // split for the same reason; the two must move together.
   const RETIRED = [
     // v1.0 — phosphor gold on ink
     "#ffb000",
@@ -135,21 +262,35 @@ test("no retired brand value survives anywhere in the site", () => {
     "255 176 0",
     "255,176,0",
     "255, 176, 0",
-    // v2.0 — bronze gold on warm ink, and its warm neutral ramp
-    "#c58a32",
-    "#8b5e1a",
+    // v2.0 — the WARM page the bronze gold used to sit on. The gold itself is
+    // live again under v4.0 and is deliberately absent from this block; what
+    // v3.0 actually retired, and v4.0 did not restore, was the warm ink, the
+    // warm papers and the warm neutral ramp.
     "#10100f",
     "#f2eee5",
     "#f5f0e6",
-    "#a97227",
-    "#d39f50",
-    "#674415",
     "#a19a8e",
     "#6f675b",
     "#ded5c6",
-    "197 138 50",
-    "197,138,50",
-    "197, 138, 50",
+    // v3.0 — the ion ramp, all eleven stops, retired by v4.0's return to gold.
+    // Listed in full rather than by the brand core alone, because the drift
+    // this catches is a half-applied recolour: #3968 left the site on ion
+    // while the kit and the product surfaces had already moved, and a partial
+    // list is how the next one gets through.
+    "#eafaff",
+    "#c7f2ff",
+    "#9de9ff",
+    "#72e1ff",
+    "#46dbff",
+    "#00d1f9",
+    "#00b0d2",
+    "#0094b1",
+    "#00778f",
+    "#005769",
+    "#003440",
+    "0 209 249",
+    "0,209,249",
+    "0, 209, 249",
     "--stella-gold",
   ];
 
@@ -166,7 +307,14 @@ test("no retired brand value survives anywhere in the site", () => {
       // comment recording why this test exists, and this test in the list
       // above. Naming the defect is not committing it.
       if (path.endsWith("app/tokens.css") || path === TEST_FILE) continue;
-      const text = read(path).toLowerCase();
+      // `%23` is `#` percent-encoded, which is how a hex colour is spelled
+      // inside an `<svg …>` data URI — and this site ships two of those as
+      // inline favicons. Normalising rather than listing every encoded twin
+      // keeps one entry per retired value: `vision.html` sat on v1.0's
+      // `%23FFB000` on `%230B0B0C` through three rebrands because a sweep for
+      // `#ffb000` cannot see it, the same blind spot the channel-triple
+      // entries above exist for.
+      const text = read(path).toLowerCase().replaceAll("%23", "#");
       for (const value of RETIRED) {
         if (text.includes(value)) {
           offenders.push(`${path} contains retired v1.0 value ${value}`);
@@ -252,16 +400,25 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
   // absent from the PWA-icon byte-identity test above, and why the exception
   // is asserted here rather than left as a silent difference someone would
   // later "fix" by re-copying — which is exactly how the build broke.
-  const ico = readFileSync(join(SITE, "app", "favicon.ico"));
-  const count = ico.readUInt16LE(4);
+  //
+  // Checking only the encoding is what let this file rot. It sat on v2.0's
+  // bronze-on-warm-ink art (ground #10100F) through the whole v3.0 ion
+  // recolour and into v4.0, green the entire time, because "is it RGBA?" is
+  // not a question about the art. Both halves are asserted now: the encoding
+  // Next requires, AND that the pixels are the kit's.
+  const site = readFileSync(join(SITE, "app", "favicon.ico"));
+  const kit = readFileSync(join(KIT, "pwa", "favicon.ico"));
+  const count = site.readUInt16LE(4);
   assert.ok(count > 0, "favicon.ico declares at least one image");
+  assert.equal(
+    count,
+    kit.readUInt16LE(4),
+    "favicon.ico must carry the same number of sizes as the kit's",
+  );
 
   const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   for (let i = 0; i < count; i++) {
-    const entry = 6 + i * 16;
-    const size = ico.readUInt32LE(entry + 8);
-    const offset = ico.readUInt32LE(entry + 12);
-    const blob = ico.subarray(offset, offset + size);
+    const blob = icoImage(site, i);
     assert.ok(
       blob.subarray(0, 8).equals(PNG_MAGIC),
       `favicon.ico entry ${i} must be PNG-encoded`,
@@ -273,6 +430,20 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
       6,
       `favicon.ico entry ${i} is PNG colour type ${blob[25]}, not 6 (RGBA) — ` +
         `Next's ico decoder rejects it and the production build fails`,
+    );
+
+    const mine = rgbaPixels(blob);
+    const theirs = rgbaPixels(icoImage(kit, i));
+    assert.deepEqual(
+      { width: mine.width, height: mine.height },
+      { width: theirs.width, height: theirs.height },
+      `favicon.ico entry ${i} is a different size from the kit's`,
+    );
+    assert.ok(
+      mine.pixels.equals(theirs.pixels),
+      `favicon.ico entry ${i} (${mine.width}×${mine.height}) does not carry ` +
+        `the kit's art — re-run docs/brand/build_marks.py and re-encode ` +
+        `docs/brand/pwa/favicon.ico to RGBA`,
     );
   }
 });

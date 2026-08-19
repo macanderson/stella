@@ -29,7 +29,7 @@
 
 use std::time::{Duration, Instant};
 
-use stella_plugin::{BeforeTurnRequest, PROTOCOL_VERSION, StageName};
+use stella_plugin::{BeforeTurnRequest, HostStage, PROTOCOL_VERSION, StageName};
 use stella_runtime::wrapper::{SubprocessWrapper, TurnWrapper, WrapperError};
 use stella_tools::exec::MAX_CAPTURE_BYTES;
 
@@ -49,7 +49,7 @@ fn before() -> BeforeTurnRequest {
     BeforeTurnRequest {
         protocol_version: PROTOCOL_VERSION,
         wrapper: "limits-v1".into(),
-        stage: StageName::Triage,
+        stage: StageName::Host(HostStage::Triage),
         round: 0,
         goal: "prove the transport bounds what a plugin can spend".into(),
         candidate: None,

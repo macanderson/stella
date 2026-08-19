@@ -86,7 +86,7 @@
   /* The three semantic colours: instrument `--ok` / `--bad` / `--warn`. */
   --green: #3fd99b;
   --red: #f2687a;
-  --amber: #d9a62e;
+  --amber: #ff7a45;
   /* Diff washes, derived from the semantic pair above at the same alphas.
      Derived, not picked: change `--green`/`--red` and these follow, which is
      why they are spelled as the same channels rather than as new hex. */
@@ -155,7 +155,7 @@
     --faint: #828c97;
     --green: #0b6b3d;
     --red: #a82036;
-    --amber: #7a5200;
+    --amber: #913200;
     --del-line: rgba(168, 32, 54, 0.1);
     --del-word: rgba(168, 32, 54, 0.28);
     --add-line: rgba(11, 107, 61, 0.09);

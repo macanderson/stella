@@ -27,7 +27,7 @@
 
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, MediaJobState, MediaKind, PrStatus,
-    ProviderShare, StageKind, TaskItem, TaskStatus,
+    ProviderShare, StageKind, StageName, TaskItem, TaskStatus,
 };
 
 /// Semantic weight of an annotation line. Each surface owns the mapping to
@@ -764,8 +764,22 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
 
 // ── Enum label tables ────────────────────────────────────────────────────────
 
-pub fn stage_label(stage: StageKind) -> &'static str {
-    match stage {
+/// The word the deck says out loud for a stage.
+///
+/// For one of the host's own boundaries this is the deck's phrasing, which is
+/// not always the wire spelling — `context_recall` reads "context recall",
+/// because the underscore is a wire detail and the deck writes prose.
+///
+/// For a **contributed** stage it is the plugin's own word, verbatim. That is
+/// the honest fallback and the same one the `/models` role table settled on
+/// (`envelope::roles`): the deck has no word for a stage it has never heard of,
+/// and inventing one — "plugin", "custom", "other" — would name the row after a
+/// category instead of after itself.
+pub fn stage_label(stage: &StageName) -> &str {
+    let Some(kind) = stage.kind() else {
+        return stage.as_str();
+    };
+    match kind {
         StageKind::Triage => "triage",
         StageKind::ContextRecall => "context recall",
         StageKind::Research => "research",
@@ -1035,7 +1049,10 @@ mod tests {
 
     #[test]
     fn label_tables_cover_every_variant() {
-        assert_eq!(stage_label(StageKind::ContextRecall), "context recall");
+        assert_eq!(
+            stage_label(&StageKind::ContextRecall.into()),
+            "context recall"
+        );
         assert_eq!(budget_mode_label(BudgetMode::Enforced), "enforced");
         assert_eq!(media_kind_label(MediaKind::Svg), "svg");
         assert_eq!(pr_status_label(PrStatus::Merged), "merged");
@@ -1047,6 +1064,22 @@ mod tests {
         assert_eq!(crud_letter(FileChangeKind::Deleted), "D");
     }
 
+    /// **The witness for a contributed stage's word.** The deck says the
+    /// plugin's own name back, verbatim — not a category like "plugin", and
+    /// not the nearest host stage it happens to resemble.
+    ///
+    /// `triage-lite` is the load-bearing case: it *contains* a host stage's
+    /// name, so anything that resolved by prefix or substring would silently
+    /// relabel it `triage` and claim the turn ran a stage it never ran.
+    #[test]
+    fn a_contributed_stage_is_labelled_with_its_own_word() {
+        for word in ["triage-lite", "vera/witness", "sast", "spec-check"] {
+            let stage = StageName::new(word);
+            assert!(stage.kind().is_none(), "{word} must be contributed");
+            assert_eq!(stage_label(&stage), word);
+        }
+    }
+
     /// The stage after `verify` is `verdict` — never `verifier`, which is the
     /// *model* that produces it. Naming the stage after its model recreates the
     /// `verify → verifier` adjacency #1394's rename existed to remove, and it
@@ -1054,8 +1087,8 @@ mod tests {
     /// `VERDICT` (#1465).
     #[test]
     fn the_verdict_stage_is_never_labelled_after_the_model_that_runs_it() {
-        assert_eq!(stage_label(StageKind::Verify), "verify");
-        assert_eq!(stage_label(StageKind::Verdict), "verdict");
+        assert_eq!(stage_label(&StageKind::Verify.into()), "verify");
+        assert_eq!(stage_label(&StageKind::Verdict.into()), "verdict");
     }
 
     // ── Dispatch coverage ────────────────────────────────────────────────
@@ -1252,7 +1285,7 @@ mod tests {
         use stella_protocol::{ToolCall, ToolOutput};
         let structural: Vec<AgentEvent> = vec![
             AgentEvent::Stage {
-                name: StageKind::Execute,
+                name: StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Run,
             },
             AgentEvent::Text { text: "t".into() },

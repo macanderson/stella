@@ -388,7 +388,7 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 | [`stats`](https://stella.oxagen.sh/docs/commands/stats)                     | Cost, tokens, and $/resolved task for **this** workspace                                                          |
 | [`usage <cmd>`](https://stella.oxagen.sh/docs/commands/usage)               | The same numbers across **every** project, from the hub at `~/.stella/usage.db`                                   |
 | [`scoreboard`](https://stella.oxagen.sh/docs/commands/scoreboard)           | What the work cost, and whether a merged or closed PR implies anyone called it good                               |
-| [`calibration`](https://stella.oxagen.sh/docs/commands/calibration)         | Verifier calibration: how often a pass verdict later failed CI                                                    |
+| [`calibration`](https://stella.oxagen.sh/docs/commands/calibration)         | Pass calibration: how often a pass verdict later failed CI, or was reverted                                       |
 | [`inspect`](https://stella.oxagen.sh/docs/commands/inspect)                 | Replay the exact context a past model call was sent, verified against its digests                                 |
 | [`observe`](https://stella.oxagen.sh/docs/commands/observe)                 | Serve the Observatory dashboard over local telemetry — loopback-only, read-only                                   |
 | [`cloud <cmd>`](https://stella.oxagen.sh/docs/commands/cloud)               | Show or set the org/workspace identity that scopes replicated telemetry                                           |

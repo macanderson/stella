@@ -190,7 +190,7 @@ fn scoped_session(accessible: bool) -> (WorkspaceModel, DeckUi) {
         },
     }));
     model.apply_inbound(&event(AgentEvent::Stage {
-        name: StageKind::Execute,
+        name: StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     }));
     model.apply_inbound(&event(AgentEvent::Text {
@@ -260,7 +260,7 @@ fn the_live_pane_skips_whatever_is_already_in_scrollback() {
     for line in ["already flushed", "still live"] {
         for event in [
             AgentEvent::Stage {
-                name: StageKind::Execute,
+                name: StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Run,
             },
             AgentEvent::Text { text: line.into() },

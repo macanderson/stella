@@ -15,25 +15,26 @@
 
 use proptest::prelude::*;
 use stella_plugin::{
-    ManifestError, PluginManifest, Signal, SignalValues, StageName, StageProgram, Wrapper,
+    HostStage, ManifestError, PluginManifest, Signal, SignalValues, StageName, StageProgram,
+    Wrapper,
 };
 
 /// The canonical stage order, which every generated manifest is a
 /// subsequence of — an out-of-order manifest is `wrapper_stages.rs`'s subject,
 /// not this one.
 const CANONICAL: [StageName; 12] = [
-    StageName::Triage,
-    StageName::Recall,
-    StageName::Research,
-    StageName::Plan,
-    StageName::Scope,
-    StageName::Execute,
-    StageName::Witness,
-    StageName::Verify,
-    StageName::Verdict,
-    StageName::Reflect,
-    StageName::ContextWrite,
-    StageName::Complete,
+    StageName::Host(HostStage::Triage),
+    StageName::Host(HostStage::Recall),
+    StageName::Host(HostStage::Research),
+    StageName::Host(HostStage::Plan),
+    StageName::Host(HostStage::Scope),
+    StageName::Host(HostStage::Execute),
+    StageName::Host(HostStage::Witness),
+    StageName::Host(HostStage::Verify),
+    StageName::Host(HostStage::Verdict),
+    StageName::Host(HostStage::Reflect),
+    StageName::Host(HostStage::ContextWrite),
+    StageName::Host(HostStage::Complete),
 ];
 
 /// The conditions a generated stage may carry. Index 0 is "unconditional";
@@ -177,10 +178,10 @@ fn resolving_a_manifest_produces_a_stage_order() {
     assert_eq!(
         asked.stages(),
         [
-            StageName::Triage,
-            StageName::Research,
-            StageName::Execute,
-            StageName::Verify,
+            StageName::Host(HostStage::Triage),
+            StageName::Host(HostStage::Research),
+            StageName::Host(HostStage::Execute),
+            StageName::Host(HostStage::Verify),
         ]
     );
 
@@ -192,7 +193,13 @@ fn resolving_a_manifest_produces_a_stage_order() {
             ..bare()
         })
         .unwrap();
-    assert_eq!(cheap.stages(), [StageName::Triage, StageName::Execute]);
+    assert_eq!(
+        cheap.stages(),
+        [
+            StageName::Host(HostStage::Triage),
+            StageName::Host(HostStage::Execute)
+        ]
+    );
 }
 
 /// The load rule this reader made necessary: a publisher that might be
@@ -217,9 +224,9 @@ fn a_conditional_publisher_read_by_a_later_stage_is_a_load_error() {
             signal,
             publisher,
         }) => {
-            assert_eq!(stage, StageName::Research);
+            assert_eq!(stage, StageName::Host(HostStage::Research));
             assert_eq!(signal, Signal::Questions);
-            assert_eq!(publisher, StageName::Triage);
+            assert_eq!(publisher, HostStage::Triage);
         }
         other => panic!("expected PublisherMayBeSkipped, got {other:?}"),
     }
@@ -332,7 +339,7 @@ proptest! {
 
         // Declared order is preserved: the program is a subsequence of the
         // manifest's stage list, never a reordering of it.
-        let declared: Vec<StageName> = wrapper.stages.iter().map(|s| s.name).collect();
+        let declared: Vec<StageName> = wrapper.stages.iter().map(|s| s.name.clone()).collect();
         let mut declared = declared.iter();
         for name in program.stages() {
             prop_assert!(

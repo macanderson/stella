@@ -193,11 +193,10 @@ stella --spend-limit 2.00 \
   | jq -e '.status == "completed" and .verdict.deterministic == true'
 ```
 
-Headless runs must opt in to bypassing the
-[scope-review gate](/docs/inference-pipeline#3-scope-review) explicitly with
-`agent_engine_config.headless_scope_bypass: "on"` — without it, a plan over the
-thresholds ends the run rather than silently auto-approving itself. See
-[Scripting](/docs/scripting).
+There is no scope-review gate to opt past here: it shipped as a stage of the
+built-in staged pipeline and was removed with it, and the
+`agent_engine_config.headless_scope_bypass` key that used to wave a headless run
+past it is inert — setting it changes nothing. See [Scripting](/docs/scripting).
 
 ## Next
 

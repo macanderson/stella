@@ -88,7 +88,7 @@ fn transcript_lines(
 fn sample_entries() -> Vec<TranscriptEntry> {
     vec![
         TranscriptEntry::User("hi".into()),
-        TranscriptEntry::Stage(StageKind::Execute),
+        TranscriptEntry::Stage(StageKind::Execute.into()),
         TranscriptEntry::Text("ok".into()),
         TranscriptEntry::Reasoning("hmm".into()),
         TranscriptEntry::ToolStart {

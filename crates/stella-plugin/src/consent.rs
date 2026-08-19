@@ -346,10 +346,22 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
     }
 
     if let Some(wrapper) = &manifest.wrapper {
+        // A contributed stage is named as the plugin's own rather than listed
+        // beside the host's twelve as though Stella had always had it (#3963).
+        // Consent is a claim about what installing this changes, and "it runs
+        // a stage of its own invention" is exactly the part a reader cannot
+        // recover from the name alone once the vocabulary is open.
         let stages: Vec<String> = wrapper
             .stages
             .iter()
-            .map(|stage| stage.name.to_string())
+            .map(|stage| {
+                let name = one_line(stage.name.as_str());
+                if stage.name.is_contributed() {
+                    format!("{name} (this plugin's own stage)")
+                } else {
+                    name
+                }
+            })
             .collect();
         lines.push(format!(
             "  - wraps every turn as variant `{}`, running: {}",
@@ -959,5 +971,26 @@ mod tests {
         assert_eq!(one_line("  a \n\n b\tc  "), "a b c");
         assert_eq!(one_line("\u{1b}[31mred\u{1b}[0m"), "[31mred[0m");
         assert_eq!(one_line("   "), "");
+    }
+
+    /// A stage a plugin invented must not read as one Stella has always had
+    /// (#3963). The vocabulary opened, so the name alone no longer tells a
+    /// reader which of the two it is — and consent is exactly the place that
+    /// distinction has to survive.
+    #[test]
+    fn a_contributed_stage_is_named_as_the_plugins_own() {
+        let text = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"steering\"\n[wrapper]\nid = \"lite-v1\"\n\
+             [[wrapper.stages]]\nname = \"triage-lite\"\n[[wrapper.stages]]\nname = \"execute\"\n",
+        ));
+        assert!(
+            text.contains("triage-lite (this plugin's own stage)"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("execute (this plugin's own stage)"),
+            "a host stage is Stella's, and saying otherwise would be the same \
+             misreading in the other direction: {text}"
+        );
     }
 }

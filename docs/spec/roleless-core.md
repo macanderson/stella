@@ -208,6 +208,24 @@ Two decisions must be settled before writing code, and both are named in §8.
 - **Done when:** a stage's existence, name and order come from a manifest and
   nothing else.
 
+**Landed so far — the vocabulary, both halves.** The consumer half is #3964:
+`AgentEvent::Stage::name` is `stella_protocol::StageName`, so a stage outside
+the host's twelve crosses the wire under its own word and every renderer draws
+it. The producer half is #3963: `stella_plugin::StageName` is open the same
+way, so `[[wrapper.stages]] name = "triage-lite"` loads, resolves and
+dispatches — `stella_runtime`'s dispatcher asks `before_turn` for it by name,
+and dropping the entry from the manifest drops the stage from the turn.
+
+What that pair deliberately does **not** settle is the rest of this slice, and
+the reason is §8.2/§8.3: it opens the vocabulary *within one wrapper's declared
+order*. Composing the stages of **several** enabled plugins — the coarse band,
+the resolved order written into settings, the tie-break on plugin id — is still
+ahead, and so is the `points`/band metadata a stage would carry to attach
+itself to something other than the position its manifest lists it in. A
+contributed stage also publishes no signal: the signal vocabulary stayed closed
+on purpose, because a plugin minting a fact for another plugin's condition to
+read is a decision this slice has not made.
+
 ### Slice 4 — the config collapse (gap D)
 
 **Splits in two, and the split is forced by a guard rather than chosen.**

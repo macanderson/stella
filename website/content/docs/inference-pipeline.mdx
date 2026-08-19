@@ -117,9 +117,11 @@ abort the plan before any file changes:
 </CardGrid>
 
 The comparison is strict `>` on every axis, so a plan sitting exactly at a
-threshold passes without a gate. Headless runs must opt in to bypass this gate
-explicitly — `agent_engine_config.headless_scope_bypass: "on"` — and there is
-no silent auto-approve: without it, a plan over the thresholds ends the run.
+threshold passes without a gate. Headless, the rule to preserve is that there is
+no silent auto-approve: with nobody to ask, a plan over the thresholds ends the
+run. The `agent_engine_config.headless_scope_bypass` key that used to opt a
+headless run out of that is **inert** — the gate it waved runs past went with
+the staged pipeline, so the key changes nothing at any value.
 
 **Answering the card.** Everything you type goes to the card, and `⏎` sends it:
 `a` approves, `t` trims to the largest prefix that would not have tripped

@@ -33,8 +33,8 @@ use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
 use crate::interactive::human_is_present;
 use crate::memory::{
-    ReflectionReport, SessionMemory, TurnEvidence, inject_recall_block, reflect_routed,
-    should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, inject_recall_block,
+    reflect_routed, should_reflect_on, turn_warrants_reflection,
 };
 use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -69,10 +69,12 @@ use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
 pub use init::run_init;
 pub(crate) use init::{InitIo, InitLine, deck_narrator, deck_notice_narrator, init_workspace};
 pub(crate) use outcome::settled_cost_since;
+pub(crate) use output::reflection_explicitly_disabled;
 use output::*;
 pub(crate) use persistence::{
-    PersistOutcome, begin_execution, close_event_stream, persist_event, persist_event_detailed,
-    record_execution_end, seed_calibration, spawn_renderer, warn_store_write_failed,
+    PersistOutcome, ReasoningRun, begin_execution, close_event_stream, flush_reasoning_tail,
+    persist_event, persist_owed, record_execution_end, seed_calibration, spawn_renderer,
+    warn_store_write_failed,
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
@@ -433,6 +435,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             let turn_start = messages.len();
             let started_unix = crate::memory::unix_now_secs();
             presence.update_prompt(goal);
+            // One ledger per round of the arc (#3962), filled by the goal loop
+            // from the journal its renderer drained.
+            let mut goal_rounds: Vec<TurnFriction> = Vec::new();
             let result = run_goal_turn(
                 &*provider,
                 base_tools,
@@ -447,6 +452,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 Some(presence.id()),
                 recall_event,
                 memory.as_mut(),
+                Some(&mut goal_rounds),
             )
             .await;
             presence.needs_input();
@@ -461,12 +467,20 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             if let Err(e) = &result {
                 eprintln!("  {} {}\n", "Error:".red().bold(), e);
             }
+            // `/goal` reflects ONCE over an arc of several turns, so it hands
+            // reflection one ledger per round rather than one for the arc
+            // (#3962). The fold it is not allowed to make is the merged one:
+            // that is the mistake #3552 named on the wrapper's `TurnFacts`,
+            // where the first round's tools are reported as the third round's.
             reflect_on_interactive_turn(
                 &*provider,
                 cfg,
                 &mut memory,
-                &messages,
-                turn_start,
+                reflect::InteractiveTurn {
+                    messages: &messages,
+                    turn_start,
+                    friction: &goal_rounds,
+                },
                 &result,
                 &mut budget,
             )
@@ -509,6 +523,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         let turn_start = messages.len();
         let started_unix = crate::memory::unix_now_secs();
         presence.update_prompt(input);
+        // This turn's friction, filled by `run_turn` from the journal its
+        // renderer drained, and read by the reflection below (#3946).
+        let mut friction = TurnFriction::default();
         let result = run_turn(
             &*provider,
             base_tools,
@@ -526,6 +543,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             Some(presence.id()),
             recall_event,
             memory.as_mut(),
+            Some(&mut friction),
         )
         .await;
         presence.needs_input();
@@ -544,8 +562,11 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             &*provider,
             cfg,
             &mut memory,
-            &messages,
-            turn_start,
+            reflect::InteractiveTurn {
+                messages: &messages,
+                turn_start,
+                friction: std::slice::from_ref(&friction),
+            },
             &result,
             &mut budget,
         )
@@ -1111,6 +1132,13 @@ pub(crate) async fn run_turn(
     // same memory afterwards, and a reflection that cannot name its execution
     // files an id-less row (NULL `self_rating`).
     mut session_memory: Option<&mut SessionMemory>,
+    // Where this turn's friction ledger lands, for a caller that reflects
+    // afterwards (#3946). An out-parameter rather than a second return value
+    // because the wrapped door reaches this function through the wrapper
+    // socket's `TurnDriver`, whose `DrivenTurn` shape is a wire contract —
+    // widening the return type to serve reflection would push a reflection
+    // concern into the socket. `None` for a caller that does not reflect.
+    friction: Option<&mut TurnFriction>,
 ) -> Result<TurnOutcome, CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
@@ -1211,6 +1239,15 @@ pub(crate) async fn run_turn(
     let rendered = close_event_stream(registry, tx, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
+    // The turn's friction, folded from the journal the renderer just finished
+    // draining (#3946). Folded here rather than live because this is the first
+    // point at which the whole stream is both complete and still owned — and
+    // the fold reads durations off the events themselves, so the result is the
+    // same one a live tap would have built. Borrowed before `collected` is
+    // moved into the JSON envelope below.
+    if let Some(slot) = friction {
+        *slot = TurnFriction::from_events(&collected);
+    }
 
     let (outcome_label, cost) = match &outcome {
         TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),

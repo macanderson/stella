@@ -1,6 +1,8 @@
 //! Fleet-command tests — moved verbatim (dedented) out of the parent's
 //! inline `mod tests` when `fleet_cmd.rs` crossed the file-size ratchet.
 
+use std::path::PathBuf;
+
 use stella_fleet::CommitRecord;
 
 use super::*;
@@ -406,11 +408,11 @@ fn a_raw_worker_closes_the_stage_it_opened() {
             seen.as_slice(),
             [
                 AgentEvent::Stage {
-                    name: stella_protocol::StageKind::Complete,
+                    name,
                     scope: stella_protocol::StageScope::Run,
                 },
                 AgentEvent::TurnComplete { .. },
-            ]
+            ] if name.kind() == Some(stella_protocol::StageKind::Complete)
         ),
         "the closing boundary rides ahead of the terminal event it annotates: {seen:?}"
     );
@@ -437,5 +439,367 @@ fn an_unfinished_worker_turn_claims_no_closing_boundary() {
     assert!(
         matches!(seen.as_slice(), [AgentEvent::Error { .. }]),
         "a turn that never completed gets no closing boundary: {seen:?}"
+    );
+}
+
+/// A workspace a fleet worker could be dispatched into: one context record on
+/// the volatile channel, and one workspace skill whose wording the prompt below
+/// shares.
+///
+/// The user-home redirect is not decoration — skills load from
+/// `~/.stella/skills` as well as from the workspace, so without it whoever runs
+/// this suite would have their own real skills join the block and the
+/// assertions would be reading someone's disk instead of this fixture.
+fn steered_workspace() -> (tempfile::TempDir, crate::paths::TestPathsGuard, PathBuf) {
+    let td = tempfile::tempdir().unwrap();
+    let home = td.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let guard = crate::paths::test_user_home(home);
+
+    let root = td.path().join("repo");
+    let rules = root.join(crate::context_records::RULES_DIR);
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(
+        rules.join("ctx.acme.migrations.toml"),
+        r#"
+schema = "context-record/v0.1"
+set_id = "acme"
+
+[defaults]
+sharing_scope = "repository"
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.acme.migration-window"
+kind = "preference"
+statement = "Migrations only run inside the Tuesday window."
+
+[record.steering]
+force = "may"
+"#,
+    )
+    .unwrap();
+
+    let skill_dir = root.join(".stella").join("skills").join("migration-notes");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: migration-notes\ndescription: how to run a database migration safely\n---\n\n\
+         Take a snapshot before the migration.\n",
+    )
+    .unwrap();
+
+    (td, guard, root)
+}
+
+/// A `Config` that reaches the disk above and nothing else — offline: nothing
+/// in this test builds a provider or spends a call.
+fn steered_config(workspace_root: PathBuf) -> Config {
+    let provider = crate::config::PROVIDERS
+        .iter()
+        .find(|p| p.id == "anthropic")
+        .unwrap()
+        .clone();
+    Config {
+        model_id: provider.default_model.to_string(),
+        provider,
+        turn_timeout: None,
+        max_output_tokens: None,
+        plan_mode: false,
+        model_pinned_by_flag: false,
+        durability: Default::default(),
+        output_ceilings: Default::default(),
+        create_worktrees: Default::default(),
+        allowed_write_dirs: Vec::new(),
+        api_key: stella_model::ApiKey::new("dummy-key-unused-offline"),
+        workspace_root,
+        base_url_override: None,
+        hooks: None,
+        engine_settings: None,
+        engine_settings_trusted: false,
+        tool_policy: Default::default(),
+        ignore_gitignore: true,
+        reward_policy: crate::reward::RewardPolicy::default(),
+        // Workspace skills sit behind the project-trust boundary, so a witness
+        // about a worker receiving one has to open the session the way a
+        // trusted project does.
+        authority: crate::settings::AuthorityPolicy {
+            project_prompts_allowed: true,
+            ..Default::default()
+        },
+        credential_source: None,
+        credential_advisories: Vec::new(),
+        aux_credentials: Default::default(),
+        cache_ttl: None,
+    }
+}
+
+/// **Witness (#3947).** A fleet worker's steering carries the volatile block —
+/// the matched context record, the selected skill, and today's date.
+///
+/// Fails on base, where `worker_recall_block` does not exist because the fleet
+/// door never assembled one: a worker got `build_system_prompt`'s byte-stable
+/// prefix and stopped there, while `stella run`, `/goal`, the REPL and the deck
+/// all got this half too.
+///
+/// The date assertion is the one that makes this a defect rather than a
+/// preference. `append_session_environment` keeps today's date out of the
+/// stable prefix *on purpose*, because it rides here (#2901) — so a worker
+/// carried the knowledge-cutoff clause telling it to treat anything that may
+/// have moved since as unverified, with no "now" to measure "since" against.
+#[tokio::test]
+async fn a_fleet_worker_receives_skills_records_and_todays_date() {
+    let (_td, _guard, root) = steered_workspace();
+    let cfg = steered_config(root.clone());
+    let active_rules = crate::rules::load_workspace_rules(&root, &cfg.authority);
+
+    // The control. If the registry rendered nothing on the volatile channel the
+    // record assertion below would be looking for a string this workspace never
+    // produced — a pass for entirely the wrong reason.
+    assert!(
+        active_rules
+            .registry()
+            .render(stella_core::records::Channel::Volatile, None)
+            .text
+            .contains("Tuesday window"),
+        "the planted `may` record must render on the volatile channel before \
+         this test can say anything about who receives it"
+    );
+
+    let (block, _event) = worker_recall_block(
+        &root,
+        &cfg,
+        &active_rules,
+        "run the database migration for the billing service",
+    )
+    .await;
+    let block = block.expect("a worker in a steered workspace gets a volatile block");
+
+    assert!(
+        block.starts_with(crate::memory::RECALL_MARKER),
+        "the block a worker receives is the same marked volatile block every \
+         other door injects:\n{block}"
+    );
+    assert!(
+        block.contains("Migrations only run inside the Tuesday window."),
+        "the workspace's own published context record must reach the \
+         unattended lane:\n{block}"
+    );
+    assert!(
+        block.contains("migration-notes"),
+        "a skill the prompt selects must reach the worker:\n{block}"
+    );
+    assert!(
+        block.contains("Today's date:"),
+        "the knowledge-cutoff clause in the stable prefix has no second \
+         operand without this line (#2901):\n{block}"
+    );
+}
+
+/// Answers one reflection call with a single lesson, at a known price.
+///
+/// The price is the point of the `cost_usd` field: a reflection that is not
+/// settled back into the attempt's guard is a call the `--spend-limit` never
+/// saw, and only a non-zero cost can tell that apart from a settled one.
+struct OneLesson;
+
+#[async_trait::async_trait]
+impl stella_protocol::Provider for OneLesson {
+    fn id(&self) -> &str {
+        "one-lesson"
+    }
+
+    async fn complete_ref(
+        &self,
+        _req: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        Ok(stella_protocol::CompletionResult {
+            upstream_provider: None,
+            text: r#"{"lessons": [
+                {"lesson": "the billing migration must be run with the ledger writer stopped",
+                 "trigger": "a task touches the billing migration",
+                 "saves": "a corrupted ledger",
+                 "kind": "domain", "domains": []}
+            ]}"#
+            .into(),
+            tool_calls: vec![],
+            usage: stella_protocol::CompletionUsage {
+                reported: true,
+                input_tokens: 1,
+                ..stella_protocol::CompletionUsage::default()
+            },
+            model: "one-lesson".into(),
+            cost_usd: 0.02,
+            finish_reason: None,
+        })
+    }
+}
+
+/// A transcript that warrants reflection — a tool call, which is what
+/// `turn_warrants_reflection` gates the whole mining call on.
+fn mined_transcript() -> Vec<CompletionMessage> {
+    let mut worked = CompletionMessage::assistant("running it");
+    worked.tool_calls = vec![stella_protocol::ToolCall {
+        call_id: "c1".into(),
+        name: "bash".into(),
+        input: serde_json::json!({"command": "make migrate"}),
+    }];
+    vec![
+        CompletionMessage::user("run the billing migration"),
+        worked,
+        CompletionMessage::assistant("migration applied"),
+    ]
+}
+
+/// **Witness (#3956).** A lesson mined by a fleet worker is readable from the
+/// primary workspace after the run — and is not written into the disposable
+/// tree the attempt ran in.
+///
+/// Fails on base, where `mine_attempt_lesson` does not exist because a fleet
+/// attempt mined nothing at all: `worker_recall_block` opened a `SessionMemory`,
+/// recalled through it and dropped it before the turn ran, so the fan-out read
+/// the workspace's accumulated lessons and contributed none back.
+///
+/// The two roots are the substance of the test, not scenery. An isolated task
+/// runs in a linked worktree whose `.stella/private/` is gitignored and
+/// therefore absent, so mining into the attempt's own root would write every
+/// lesson a wave produced into databases that are deleted with their worktrees —
+/// a learning loop that runs, costs money, and forgets. Asserting only that a
+/// lesson was recorded would pass in exactly that broken arrangement, which is
+/// why the negative half below is what makes this a witness.
+#[tokio::test]
+async fn a_worker_mines_its_lesson_into_the_invocation_root_not_its_worktree() {
+    let (td, _guard, invocation_root) = steered_workspace();
+    // The attempt's own tree — a sibling of the invocation root, standing in for
+    // the linked worktree an isolated task runs in.
+    let attempt_root = td.path().join("worktree");
+    std::fs::create_dir_all(&attempt_root).expect("attempt tree");
+    let cfg = steered_config(attempt_root.clone());
+
+    let messages = mined_transcript();
+    let friction = crate::memory::TurnFriction::default();
+    let mut budget = agent::build_budget_guard(Some(10.0));
+    budget.begin_turn();
+
+    let report = super::mine_attempt_lesson(
+        &invocation_root,
+        &cfg,
+        &OneLesson,
+        crate::memory::TurnEvidence::with_friction(&messages, &friction, true),
+        None,
+        &mut budget,
+    )
+    .await
+    .expect("the invocation root's memory opens");
+
+    assert_eq!(
+        report.recorded, 1,
+        "the scripted lesson must reach a store: {report:?}"
+    );
+
+    // The DoD's question, asked the way an operator would ask it: open the
+    // primary workspace fresh, as a later session does, and recall.
+    let after_the_run =
+        crate::memory::SessionMemory::open(&invocation_root, false).expect("primary workspace");
+    let recalled = after_the_run
+        .recall_block_reported("a task touches the billing migration")
+        .await
+        .text
+        .unwrap_or_default();
+    assert!(
+        recalled.contains("ledger writer stopped"),
+        "a lesson a worker mined must be readable from the primary workspace \
+         after the run — this is the block a later session would receive:\n{recalled}"
+    );
+
+    // The negative half: nothing was written into the tree that gets deleted.
+    let stranded = attempt_root
+        .join(".stella")
+        .join("private")
+        .join("context.db");
+    assert!(
+        !stranded.exists(),
+        "the attempt's own tree must hold no mined lesson — a worktree's context \
+         store dies with the worktree, so a lesson written there is a call the \
+         operator paid for and can never read back: {}",
+        stranded.display()
+    );
+
+    // And the call is inside the fleet's spend contract rather than beside it.
+    assert!(
+        (budget.session_spent_usd() - 0.02).abs() < f64::EPSILON,
+        "the reflection call must settle into the attempt's guard, which is what \
+         puts it inside the `--spend-limit` the fleet enforces twice: {}",
+        budget.session_spent_usd()
+    );
+}
+
+/// The guard on the cross-store hazard (#3956): an execution id means something
+/// only in the database that minted it.
+///
+/// An isolated attempt's execution is opened in its worktree's `store.db` while
+/// its lesson is written into the invocation root's, and both are
+/// autoincrement keys — so a stamped id would file the turn's self-review
+/// against whatever unrelated execution happens to hold that number. The
+/// non-normalized form is the case worth pinning: it must still be recognised
+/// as the same tree, because a false negative here silently drops the
+/// self-review of every shared-tree attempt.
+#[test]
+fn only_a_shared_tree_attempt_shares_the_invocation_root_s_row_ids() {
+    let td = tempfile::tempdir().unwrap();
+    let invocation = td.path().join("repo");
+    let worktree = td.path().join("worktrees").join("t1");
+    std::fs::create_dir_all(&invocation).unwrap();
+    std::fs::create_dir_all(&worktree).unwrap();
+
+    assert!(
+        same_tree(&invocation, &invocation),
+        "a shared-tree task runs in the invocation root itself"
+    );
+    assert!(
+        same_tree(&invocation.join("."), &invocation),
+        "a non-normalized path to the same tree must not read as a different \
+         store — that would drop the self-review it is safe to write"
+    );
+    assert!(
+        !same_tree(&worktree, &invocation),
+        "an isolated attempt's worktree is a different database; stamping its \
+         execution id into the invocation root's store writes a wrong row"
+    );
+}
+
+/// The other half of the #3956 witness: the first test calls the seam directly,
+/// so it would still pass with the production call site reverted. This asserts
+/// the wiring — that the attempt reflects, and that it does so where the cost
+/// can still reach the ledger.
+///
+/// Source-level for the reason `the_reflecting_doors_fold_a_ledger_and_reflect_with_it`
+/// (`memory/reflection/tests.rs`) is: observing it otherwise means standing up a
+/// provider, a git worktree, a store and a renderer task to watch one call. The
+/// names asserted on are real items, so a rename breaks the compile too.
+#[test]
+fn a_fleet_attempt_reflects_before_its_spend_is_read() {
+    const FLEET: &str = include_str!("../fleet_cmd.rs");
+
+    // `rfind` so we anchor on the call site, not the `async fn` definition —
+    // the definition also matches `mine_attempt_lesson(\n` but sits above both
+    // the call and the spend read, which would make the ordering assert vacuous.
+    let call = FLEET
+        .rfind("mine_attempt_lesson(\n")
+        .expect("run_task must mine the attempt's turn (#3956)");
+    let spend = FLEET
+        .find("let spent = budget.session_spent_usd();")
+        .expect("run_task must still read the attempt's spend");
+    assert!(
+        call < spend,
+        "the reflection has to settle into the guard BEFORE the spend is read — \
+         after it, the call is real money the execution row, the fleet ledger and \
+         the parent's metered total never see"
+    );
+    assert!(
+        FLEET.contains("&invocation_root,"),
+        "the lesson must be mined against the invocation root; against the \
+         attempt's root it dies with the worktree"
     );
 }

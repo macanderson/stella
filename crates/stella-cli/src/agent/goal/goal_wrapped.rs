@@ -216,7 +216,7 @@ pub(crate) async fn run_goal_wrapped_turn(
             let round_offset = stella_core::goal::goal_round_turn_offset(round);
             let round_engine = engine.with_turn_instance(round_offset);
             let _ = tx.send(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute,
+                name: stella_protocol::StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Turn,
             });
 
@@ -292,7 +292,7 @@ pub(crate) async fn run_goal_wrapped_turn(
             }
 
             let _ = tx.send(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Verdict,
+                name: stella_protocol::StageKind::Verdict.into(),
                 scope: stella_protocol::StageScope::Turn,
             });
             let (verdict, verifier_cost) = match round_engine

@@ -39,7 +39,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use stella_core::{SubAgentDispatcher, SubAgentOutcome, SubAgentReport, SubAgentSpec};
-use stella_plugin::{Outcome, PluginManifest, SignalValues, StageName, TamperFinding, TurnOutcome};
+use stella_plugin::{
+    HostStage, Outcome, PluginManifest, SignalValues, StageName, TamperFinding, TurnOutcome,
+};
 use stella_protocol::completion::MessageRole;
 use stella_protocol::event::ModelCallRole;
 use stella_runtime::wrapper::{
@@ -249,7 +251,9 @@ async fn a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round() 
     // restated.
     for (index, prelude) in driver.preludes.iter().enumerate() {
         assert!(
-            prelude.stages().contains(&StageName::Execute),
+            prelude
+                .stages()
+                .contains(&StageName::Host(HostStage::Execute)),
             "round {}: the resolved program runs the stage this plugin frames",
             index + 1
         );

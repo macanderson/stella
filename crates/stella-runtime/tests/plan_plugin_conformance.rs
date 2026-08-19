@@ -43,7 +43,8 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use stella_plugin::{
-    Participation, PluginManifest, StageName, WrapperPoint, WrapperRequest, WrapperResponse,
+    HostStage, Participation, PluginManifest, StageName, WrapperPoint, WrapperRequest,
+    WrapperResponse,
 };
 use stella_protocol::completion::MessageRole;
 use stella_runtime::wrapper::{SubprocessWrapper, TurnWrapper};
@@ -163,7 +164,7 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
         assert!(
             response.role.is_none() && response.publish.is_empty(),
             "{name}: stella-plan names no role intent and publishes no signal — \
-             `StageName::Plan.publishes()` is empty in the host, so there is \
+             `StageName::Host(HostStage::Plan).publishes()` is empty in the host, so there is \
              none it could honestly publish"
         );
         assert!(
@@ -318,7 +319,7 @@ fn the_shipped_manifest_declares_before_turn_and_one_bounded_child_turn() {
     let plan_stage = wrapper
         .stages
         .iter()
-        .find(|stage| stage.name == StageName::Plan)
+        .find(|stage| stage.name == StageName::Host(HostStage::Plan))
         .expect("the stage this plugin exists for");
     assert_eq!(
         plan_stage.condition.as_deref(),

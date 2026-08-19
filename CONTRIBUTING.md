@@ -85,6 +85,7 @@ python3 ./scripts/check-doc-links.py check
 ./scripts/check-stat-portability.sh
 python3 ./scripts/check-module-reachability.py
 python3 ./scripts/check-typed-errors.py
+python3 ./scripts/check-dead-code-allows.py
 ./scripts/check-diagnostic-codes.sh
 ./scripts/check-bench-suites.sh
 ./scripts/check-wire-schema.sh
