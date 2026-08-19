@@ -17,7 +17,7 @@
 //! # The corpus
 //!
 //! `fixtures/name_rung_corpus.jsonl` is this repository's own code-graph
-//! index — every indexed file's path and symbol names, 1,762 files — frozen
+//! index — every indexed file's path and symbol names, 1,761 files — frozen
 //! as a dataset. It is deliberately **not** re-harvested on every run:
 //!
 //! - a probe measures the *ranker*, so its corpus must not move underneath
@@ -33,7 +33,14 @@
 //! corpus carries every indexed path as data and `check-design-refs` reads
 //! any mention of one as a citation. Dropping those six rows moved exactly
 //! one recorded rank, and it moved the right way (63 -> 53); the table
-//! below is re-recorded against the 1,762-row corpus that ships here.
+//! below is re-recorded against the 1,761-row corpus that ships here.
+//!
+//! One further row was removed for a different reason: the first harvest
+//! ran in a working tree that still held the authoring session's own
+//! scratch probe, so the "frozen snapshot of this repository" contained a
+//! file that is in no commit. A corpus that includes an artifact of the
+//! session that produced it is not the thing it claims to be, however
+//! little it moves a number — and here it moved none of them.
 //!
 //! Re-harvest deliberately, never incidentally, with
 //! `HARVEST=1 cargo test -p stella-tools --test search_recall -- --ignored`,
@@ -233,7 +240,7 @@ fn the_probe_corpus_is_the_snapshot_the_numbers_were_measured_against() {
     let corpus = corpus();
     assert_eq!(
         corpus.len(),
-        1762,
+        1761,
         "the frozen corpus changed size — re-record the probe table in the same commit"
     );
     let paths: BTreeSet<&str> = corpus.iter().map(|file| file.path.as_str()).collect();
@@ -308,7 +315,7 @@ fn every_probe_answer_holds_its_recorded_rank() {
 /// **The witness for #3138.** The measured repro query ranks the file that
 /// answers it inside the top five, with no embedder anywhere in sight.
 ///
-/// On the ranker this replaced it ranked 277 of 478 matching files, behind
+/// On the ranker this replaced it ranked 277th, behind
 /// ten bench and arenabench Python modules that matched `provider`, `recovers`
 /// and `path` as incidental substrings of unrelated test-function names.
 #[test]

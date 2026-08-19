@@ -259,9 +259,14 @@ make test-tools          # or: cargo test -p stella-tools
 
 Coverage is inline `#[cfg(test)]` modules next to the code. Registry tests
 construct through `ToolRegistry::new` in a fresh tempdir, so tool counts
-depend on nothing in the host environment. The one integration suite,
-[`tests/approval_witness.rs`](tests/approval_witness.rs), exercises the
-#2676 approval flow through the crate's public surface only. The foundry
+depend on nothing in the host environment. The suites under [`tests/`](tests/)
+exercise the crate through its public surface only —
+[`tests/approval_witness.rs`](tests/approval_witness.rs) is the #2676 approval
+flow, and [`tests/chunk_retrieval_witnesses.rs`](tests/chunk_retrieval_witnesses.rs)
+is the one suite here that needs a credential. It is `#[ignore]`d until
+`VOYAGE_API_KEY` (or `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`) resolves, so a
+plain `cargo test` reports it as `ignored, <reason>` rather than as a pass it
+never earned; run it with `-- --ignored`. The foundry
 carries property tests (every detector proposal must author and round-trip
 through the real manifest parser), as does the approval precedence ladder.
 
