@@ -1145,7 +1145,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         } => {
             let pipeline_choice =
                 wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
-            wrapper_plugin::reject_plugin_variant_for_door("goal", pipeline_choice)?;
             let goal = prompt_source::resolve(
                 goal,
                 std::io::stdin().is_terminal(),
@@ -1192,7 +1191,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         } => {
             let pipeline_choice =
                 wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
-            wrapper_plugin::reject_plugin_variant_for_door("fleet", pipeline_choice)?;
             let posture = supervision(&cli.globals);
             if posture.supervises() {
                 return daemon::supervise_this_invocation(
@@ -1223,6 +1221,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     watch,
                     task_timeout.map(std::time::Duration::from_secs),
                     output_format,
+                    pipeline_choice,
                 ),
             )?;
         }

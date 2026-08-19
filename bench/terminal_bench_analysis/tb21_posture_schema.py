@@ -64,9 +64,6 @@ STUDY_MANIFEST_ENGINE_POSTURE_OPTIONAL_FIELDS = frozenset(
         "pipeline_triage_model",
         "pipeline_research_model",
         "pipeline_plan_model",
-        "pipeline_max_revisions",
-        "pipeline_candidates",
-        "pipeline_verifier_evidence_demand",
         "model_timeout_secs",
     }
 )

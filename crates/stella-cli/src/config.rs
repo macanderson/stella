@@ -523,11 +523,6 @@ pub struct Config {
     /// (`crate::agent::PolicyToolSet`), so it covers built-ins, MCP tools,
     /// and custom tools by name.
     pub tool_policy: stella_tools::policy::ToolPolicy,
-    /// End-of-run recap in text mode (settings `enable_recap`).
-    pub enable_recap: bool,
-    /// Trajectory trace capture after each finished execution (settings
-    /// `trace_capture`, #1042). Default off.
-    pub trace_capture: bool,
     /// The workspace probe skips gitignored paths (settings
     /// `ignore_gitignore`). Default **on**; inert outside a git repository.
     pub ignore_gitignore: bool,
@@ -743,8 +738,6 @@ impl Config {
         // `Settings::load`, so this is a straight read — no second place that
         // could forget to re-apply authority.
         cfg.tool_policy = settings.tool_policy();
-        cfg.enable_recap = settings.recap_enabled();
-        cfg.trace_capture = settings.trace_capture_enabled();
         cfg.ignore_gitignore = settings.ignore_gitignore();
         cfg.reward_policy = settings.reward_policy()?;
         cfg.create_worktrees = settings.create_worktrees();
@@ -903,8 +896,6 @@ impl Config {
                     engine_settings: None,
                     engine_settings_trusted: false,
                     tool_policy: Default::default(),
-                    enable_recap: false,
-                    trace_capture: false,
                     ignore_gitignore: true,
                     reward_policy: crate::reward::RewardPolicy::default(),
                     create_worktrees: Default::default(),
@@ -1121,8 +1112,6 @@ impl Config {
             engine_settings: None,
             engine_settings_trusted: false,
             tool_policy: Default::default(),
-            enable_recap: false,
-            trace_capture: false,
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
             create_worktrees: Default::default(),
@@ -1479,8 +1468,6 @@ impl Config {
             engine_settings: None,
             engine_settings_trusted: false,
             tool_policy: Default::default(),
-            enable_recap: false,
-            trace_capture: false,
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
             authority: crate::settings::AuthorityPolicy::default(),

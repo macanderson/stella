@@ -28,10 +28,10 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use stella_plugin::{
-    AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceSet,
-    FlipObservation, LoopGrant, Outcome, PROTOCOL_VERSION, Participation, PluginManifest,
-    RoundState, SignalValues, StageName, StopReason, TamperFinding, TestBaseline, TestPlan,
-    TurnOutcome, UnmetBecause, Verdict, VerdictRule, VolatileContext, WrapperPoint,
+    AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceProvenance,
+    EvidenceSet, FlipObservation, LoopGrant, Outcome, PROTOCOL_VERSION, Participation,
+    PluginManifest, RoundState, SignalValues, StageName, StopReason, TamperFinding, TestBaseline,
+    TestPlan, TurnOutcome, UnmetBecause, Verdict, VerdictRule, VolatileContext, WrapperPoint,
 };
 use stella_protocol::CandidateHandle;
 use stella_protocol::completion::MessageRole;
@@ -237,11 +237,19 @@ async fn run_turn(
 #[tokio::test]
 async fn a_wrapper_plugin_participates_in_a_turn_and_the_host_decides_its_verdict() {
     let (verdict, continuation, _) = run_turn("make the parser faster").await;
-    assert_eq!(verdict, Verdict::Met, "p50 103 is inside the 105 budget");
+    assert_eq!(
+        verdict,
+        Verdict::Met {
+            evidence: EvidenceProvenance::PluginReported
+        },
+        "p50 103 is inside the 105 budget"
+    );
     assert_eq!(
         continuation,
         Continuation::Stop {
-            outcome: Outcome::Met
+            outcome: Outcome::Met {
+                evidence: EvidenceProvenance::PluginReported
+            }
         }
     );
 
@@ -636,6 +644,7 @@ fn only_an_arbiter_can_hold_a_turn_open() {
     let verdict = judge(
         &VerdictRule::from_manifest(&manifest()),
         &EvidenceSet {
+            provenance: EvidenceProvenance::PluginReported,
             flip: FlipObservation::NotAttempted,
             tamper: TamperFinding::NotChecked,
             measurements: BTreeMap::from([("p50".into(), 118)]),
@@ -701,10 +710,11 @@ async fn a_plugin_acts_on_the_candidate_using_only_what_the_request_carried() {
         .expect("a UTF-8 temp path")
         .to_string();
 
-    // What the host mints. In production this is
-    // `stella_pipeline::ports::CandidateHandles::grant`, which canonicalises
-    // the root and refuses to mint one it cannot resolve; this crate must not
-    // depend on the pipeline (`tests/no_pipeline_edge.rs`), so the grant is
+    // What the host mints. In production this is `stella_plugin`'s
+    // `host_tree_grant` (the staged pipeline's
+    // `ports::CandidateHandles::grant` until #3865 deleted that crate), which
+    // canonicalises the root and refuses to mint one it cannot resolve; this
+    // crate must not take that edge (`tests/no_pipeline_edge.rs`), so the grant is
     // built here in the shape that host produces.
     let mut request = after("make the failing test pass");
     request.candidate = Some(

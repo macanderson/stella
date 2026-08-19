@@ -182,6 +182,7 @@ pub(crate) async fn run_goal_wrapped_turn(
         execution.clone(),
         cfg.provider.id.to_string(),
         false,
+        Some(goal.to_string()),
     );
     if let Some(event) = recall_event {
         let _ = tx.send(event);

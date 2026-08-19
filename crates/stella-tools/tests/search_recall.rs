@@ -29,6 +29,13 @@
 //!   network, no key, and no dependence on what the working tree happens to
 //!   contain today.
 //!
+//! So the corpus is a **snapshot of a past tree, not a description of this
+//! one**, and it is expected to name files the workspace no longer has — it
+//! carries `crates/stella-pipeline/…` rows, for instance, from before #3865
+//! deleted that crate. Those are data, not stale citations: re-harvesting to
+//! remove them would invalidate every recorded number in the table below,
+//! which is the one thing this fixture exists to prevent.
+//!
 //! The harvest excludes the work-in-flight design scratchpad, because a
 //! corpus carries every indexed path as data and `check-design-refs` reads
 //! any mention of one as a citation. Dropping those six rows moved exactly

@@ -158,7 +158,11 @@ impl FoldState {
             // At `Steps`, a step digest is visible but its body is not, and
             // prose folds to its first sentence.
             (Zoom::Steps, NodeId::Step { .. }) => false,
-            (Zoom::Steps, NodeId::Output { .. } | NodeId::Prose { .. }) => false,
+            // A note's summary is its digest row; the detail behind it folds
+            // exactly like an output body.
+            (Zoom::Steps, NodeId::Output { .. } | NodeId::Prose { .. } | NodeId::Note { .. }) => {
+                false
+            }
             // A file diff is the *point* of a mutation call, so when its step is
             // open the diff is open with it; individual hunks fold on their own.
             (Zoom::Steps, NodeId::File { .. }) => true,
@@ -178,7 +182,9 @@ fn pinned_open(run: &Run, node: NodeId) -> bool {
             .get(turn)
             .and_then(|t| t.steps.get(step))
             .is_some_and(|s| s.status().pins_open()),
-        NodeId::Prose { .. } | NodeId::File { .. } | NodeId::Hunk { .. } => false,
+        NodeId::Prose { .. } | NodeId::File { .. } | NodeId::Hunk { .. } | NodeId::Note { .. } => {
+            false
+        }
     }
 }
 

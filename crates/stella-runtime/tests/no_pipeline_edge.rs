@@ -1,11 +1,19 @@
-//! `stella-runtime` does not depend on `stella-pipeline`, and says so
+//! `stella-runtime` does not depend on a staged-pipeline crate, and says so
 //! executably.
 //!
+//! The crate this names, `stella-pipeline`, no longer exists — #3865 deleted
+//! it from the workspace — so the assertion cannot fail today for the reason
+//! it was written. It is kept rather than deleted because the rule it encodes
+//! outlives the crate: this is the list of edges the assembly seam must never
+//! take, and re-homing verification as a plugin is exactly the work most
+//! likely to reintroduce one. A guard that goes quiet when its subject is
+//! removed is how the edge comes back unnoticed.
+//!
 //! The runtime is the assembly bottom half that `stella-serve` and embedded
-//! hosts link to obtain an engine without the CLI. The staged pipeline is a
+//! hosts link to obtain an engine without the CLI. The staged pipeline was a
 //! *policy* layered on top of a loop, not part of the loop's construction —
-//! so an edge from here to there makes the pipeline look like part of the
-//! runtime's contract when it is not. That is the exact coupling
+//! so an edge from here to there made the pipeline look like part of the
+//! runtime's contract when it was not. That is the exact coupling
 //! `doc:turn-lane-assembly` §10.2 counts and `doc:pipeline-as-plugins` §0.4
 //! is trying to keep out of the seam: a wrapper that `stella-cli` can drive
 //! and `stella-serve` cannot is a CLI feature wearing a socket's name.
@@ -15,9 +23,9 @@
 //! downstream of it into `CARGO_SCOPE` whenever the pipeline changes, and
 //! costs every consumer a compile of a tree it never calls (#3280).
 //!
-//! This is the witness for a subtraction, which cannot be witnessed by
-//! calling anything: the assertion is over the manifest, and it fails before
-//! the dependency line is deleted and passes after. Lives in `tests/`
+//! This was the witness for a subtraction, which cannot be witnessed by
+//! calling anything: the assertion is over the manifest, and it failed before
+//! the dependency line was deleted and passed after. Lives in `tests/`
 //! alongside `no_ambient_reads.rs`, and for the same reason — an in-crate
 //! test would have to exempt its own needles from the scan.
 
@@ -27,8 +35,10 @@
 /// stay out of the assembly seam is added here, not re-derived.
 const FORBIDDEN_DEPENDENCIES: &[(&str, &str)] = &[(
     "stella-pipeline",
-    "the staged pipeline is a policy above the loop, not part of assembling \
-     one — see the module doc and #3280",
+    "the staged pipeline was a policy above the loop, not part of assembling \
+     one — see the module doc and #3280. The crate itself is gone (#3865); \
+     the name stays listed so re-homing verification cannot quietly bring \
+     the edge back",
 )];
 
 /// Dependency names declared by this crate's own manifest.

@@ -49,8 +49,8 @@ use crate::ledger::{
 };
 use crate::plan::{Isolation, Plan, PlanError, Task, TaskId};
 
-/// The port a fleet worker implements — the CLI glue later backs this with
-/// `stella_core::Engine` / `stella_pipeline`; tests back it with fakes. It
+/// The port a fleet worker implements — the CLI glue backs this with
+/// `stella_core::Engine`; tests back it with fakes. It
 /// receives the task, the workspace root it must operate in (the isolated
 /// worktree, or the shared repo root for a [`Isolation::SharedTree`] task),
 /// and its [`WorkerControls`], and reports what it did.

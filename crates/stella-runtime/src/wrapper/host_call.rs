@@ -82,7 +82,9 @@ pub const DEFAULT_RECALL_FRAMES: u32 = 8;
 
 /// The host's context plane, as the socket needs it.
 ///
-/// Deliberately shaped like `stella_pipeline::ContextRecallPort::recall` — one
+/// Deliberately shaped like [`stella_protocol::ContextRecallPort::recall`] —
+/// which is where that port lives since #3865 retargeted it out of
+/// `stella-pipeline` ahead of deleting that crate — one
 /// goal in, the frames out, never an error the caller has to special-case
 /// (weak or absent context degrades to "no frames", L-C6) — so a host that
 /// already has a recall port implements this by projecting its frames into the

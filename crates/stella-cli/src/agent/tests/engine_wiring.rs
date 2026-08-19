@@ -196,8 +196,9 @@ fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
         "an adapter for the overridden worker model must be built"
     );
 
-    // The full round trip through the actual router (what `resolve_provider`
-    // in `stella-pipeline` calls) must resolve BOTH roles to the override,
+    // The full round trip through the actual router (what any `resolve_provider`
+    // caller reaches — the staged pipeline's was the original, deleted with
+    // that crate in #3865) must resolve BOTH roles to the override,
     // not just the raw pin table.
     let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
     let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);

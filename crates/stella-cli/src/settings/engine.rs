@@ -195,23 +195,6 @@ pub struct AgentEngineConfig {
     /// compaction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_result_horizon_steps: Option<u64>,
-    /// Seconds a supervised run's parked scope-review approval
-    /// (`SidecarApprovalGate::review`, #1585) waits for an attached
-    /// terminal's decision before unparking itself as
-    /// `ScopeDecision::Abort`. Absent or `0` (the same "0 opts out"
-    /// convention as `model_timeout_secs`) parks forever, the shipped
-    /// default — bounded only by discoverability (`Needs Input` in `stella
-    /// daemon list`) and an explicit `stella daemon stop`.
-    ///
-    /// The default is deliberate: scope review exists to keep a large blast
-    /// radius from landing unattended, so timing it out to `Approve` would
-    /// defeat the gate, and a fail-open default nobody asked for is worse
-    /// than a run that stays parked until a human looks. This is the knob
-    /// for an operator who has decided the opposite trade for their own
-    /// workspace — fail CLOSED after N minutes unattended, sacrificing the
-    /// run rather than leaving it parked indefinitely (#1616).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_wait_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
 }
@@ -414,7 +397,6 @@ impl AgentEngineConfig {
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
         take!(tool_result_horizon_steps);
-        take!(approval_wait_secs);
         if let Some(agents) = &other.agents {
             let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
             for kind in EngineAgentKind::ALL {
@@ -514,11 +496,29 @@ impl AgentEngineConfig {
     }
 
     /// Whether a headless run skips the (now-removed) staged pipeline's
-    /// scope-review gate rather than refusing outright. The gate itself is
-    /// gone with the pipeline (#3865); this accessor and the setting it reads
-    /// survive only because settings-merge tests still exercise the
-    /// scope-chain precedence rule for `agent_engine_config.headless_scope_bypass`
-    /// through it — no production code consults the answer any more.
+    /// scope-review gate rather than refusing outright. The gate is gone
+    /// (#3865, and the deck's interactive half with it in #3861), so no
+    /// production code consults the answer any more.
+    ///
+    /// **It is nevertheless not retired, and the reason is a measurement one
+    /// rather than an oversight (#3870).** The key is inert in the engine but
+    /// load-bearing in the benchmark contract:
+    /// `bench/harbor_adapter/stella_harbor/posture.py` writes
+    /// `headless_scope_bypass: "on"` into the claim-path Terminal-Bench
+    /// posture, whose digest `6c7fc70c` is registered in
+    /// `bench/READINESS.md` §8.4.5 and asserted by
+    /// `test_the_registered_sonnet_digest_is_unchanged`. Moving it to
+    /// `settings::unknown`'s `RETIRED` list would remove it from `ENGINE_ROOT_FIELDS`,
+    /// which `config::trusted_engine_config_shape_is_strict` shares and which
+    /// fails **closed** — so retiring it either refuses every benchmark launch
+    /// or forces the posture to drop the key and re-hash every registered arm.
+    /// Choosing between those is a maintainer's call about published numbers,
+    /// not a cleanup; #3870 carries the analysis.
+    ///
+    /// So the `#[allow]` below is a declared, issue-cited gap — NOT the
+    /// "dies with the pipeline removal" justification that #3872's definition
+    /// of done forbids surviving. Settings-merge tests still exercise the
+    /// scope-chain precedence rule through this accessor meanwhile.
     #[allow(dead_code)]
     pub fn headless_scope_bypass_on(&self) -> bool {
         self.headless_scope_bypass.is_some_and(Toggle::is_on)

@@ -1,10 +1,12 @@
 //! The `[wrapper]` block — a turn-loop wrapper's stage order, declared.
 //!
-//! Slice of #3381: today the conditional stage order the staged pipeline runs
-//! is hardcoded branches inside `crates/stella-pipeline/src/pipeline.rs`, a
-//! file on the god-file list and closed to growth — so the design cannot
-//! absorb another variant even if we wanted one. A wrapper plugin declares the
-//! order instead, and the conditions become a line you can read and change.
+//! Slice of #3381. The conditional stage order the staged pipeline ran was
+//! hardcoded branches inside its own `pipeline.rs` — a file on the god-file
+//! list and closed to growth, so that design could not absorb another variant
+//! even if we had wanted one. A wrapper plugin declares the order instead, and
+//! the conditions become a line you can read and change. The crate those
+//! branches lived in (`crates/stella-pipeline`) was deleted in #3865, which
+//! leaves this block as the only place a stage order is expressed.
 //!
 //! Two rules carried from #3245 slice A, not re-derived here:
 //!
@@ -109,11 +111,12 @@ impl WrapperStage {
 ///
 /// Closed by design, the [`FlipPolicy`] reasoning applied to stages: an
 /// unknown value must be a load error rather than a silently shorter run, and
-/// a future stage adds a variant here. The names and their order mirror
-/// `stage_rank` in `crates/stella-pipeline/src/replay.rs`, which is the
-/// canonical ordering today — and [`StageName::kind`] makes that mirror
+/// a future stage adds a variant here. The names and their order were taken
+/// from `stage_rank` in the staged pipeline's `replay.rs`
+/// (`crates/stella-pipeline`, deleted in #3865), which was the canonical
+/// ordering then — and [`StageName::kind`] makes the correspondence
 /// mechanical rather than a claim, since it is one-to-one onto
-/// [`StageKind`]'s twelve.
+/// [`StageKind`]'s twelve. With that crate gone, this enum *is* the ordering.
 ///
 /// **A name here is not a promise that every host runs it.** The vocabulary
 /// mirrors [`StageKind`] because a wrapper that cannot spell a boundary
@@ -145,10 +148,11 @@ pub enum StageName {
     /// it**, which is the one thing a manifest author has to know before
     /// writing the name down.
     ///
-    /// `stella-pipeline` emits no [`StageKind::Verdict`] at all: its verify
-    /// stage emits the `Verdict` *event* directly from `ladder_decision`, and
-    /// `crates/stella-pipeline/src/pipeline/tests.rs` asserts the stage never
-    /// appears in that stream. The hosts that do emit the boundary are the
+    /// The staged pipeline emitted no [`StageKind::Verdict`] at all: its
+    /// verify stage emitted the `Verdict` *event* directly from
+    /// `ladder_decision`, and its own `pipeline/tests.rs` asserted the stage
+    /// never appeared in that stream (`crates/stella-pipeline`, deleted in
+    /// #3865). The hosts that do emit the boundary are the
     /// goal loops — `crates/stella-cli/src/agent/goal.rs` and
     /// `crates/stella-serve/src/goal.rs` run-scoped,
     /// `crates/stella-core/src/goal.rs` turn-scoped — so a wrapper naming

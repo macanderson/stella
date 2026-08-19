@@ -150,7 +150,9 @@ fn every_message_round_trips_byte_for_byte() {
 
 #[test]
 fn every_decision_type_round_trips_byte_for_byte() {
-    round_trip(&Verdict::Met);
+    round_trip(&Verdict::Met {
+        evidence: EvidenceProvenance::PluginReported,
+    });
     round_trip(&Verdict::Unmet {
         unmet: vec![unmet()],
     });
@@ -179,7 +181,9 @@ fn every_decision_type_round_trips_byte_for_byte() {
             },
         },
     });
-    round_trip(&Outcome::Met);
+    round_trip(&Outcome::Met {
+        evidence: EvidenceProvenance::PluginReported,
+    });
     round_trip(&Outcome::Undecided {
         reason: UndecidedReason::NoOracle,
     });

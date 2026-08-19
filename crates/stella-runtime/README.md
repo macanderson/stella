@@ -77,12 +77,15 @@ mapping as a pure function (`tests/wrapper_verdict.rs`,
 is `WrapperDispatch`, which resolves the declared stage program, calls
 `before_turn` per stage, hands a `TurnPrelude` to the host's `TurnDriver`,
 calls `after_turn`, and settles with `judge` + `again` — looping while the
-verdict asks for another turn. `crates/stella-cli` drives it from **two**
+verdict asks for another turn. `crates/stella-cli` drives it from **three**
 doors, not one, each calling `WrapperDispatch::run` a different number of
 times per invocation: `stella run --pipeline <variant>` was its first driver
 and calls it exactly once per process, over the one raw turn the process
-runs; `stella goal --pipeline <variant>` (#3695, goal half) calls it once
-**per judged round** — the goal loop's own round loop, not
+runs; `stella fleet --pipeline <variant>` (#3695, fleet half) calls it once
+**per worker attempt**, on that worker's own thread and over that attempt's
+own tree, with each internal round claiming its own `turn_instance` under the
+attempt's single execution row; `stella goal --pipeline <variant>` (#3695,
+goal half) calls it once **per judged round** — the goal loop's own round loop, not
 `WrapperDispatch`'s, decides how many rounds run, because the goal verifier
 (`stella_core::Engine::assess`) stays outside `judge`/`again` entirely. That
 per-round shape is why `stella goal` refuses an arbiter-grade wrapper before
@@ -95,15 +98,18 @@ round would be a second arbiter judging the round the goal loop's own
 rather than let `WrapperDispatch`'s hold loop and the goal loop's hold loop
 collide. An arbiter-grade wrapper's designed home is `stella run --pipeline
 <variant>` instead, where `WrapperDispatch` is the only thing holding a turn
-open. Either door, an installed wrapper plugin participates in a live turn and
-its id reaches `executions.pipeline_variant`.
+open — and `stella fleet`, whose attempt has no completion arbiter of its own,
+applies no such refusal. On any of the three doors, an installed wrapper plugin
+participates in a live turn and its id reaches `executions.pipeline_variant`.
 
 What has **not** landed: the other two drivers `doc:wrapper-socket` §6 makes an
 acceptance criterion — `stella-serve` over HTTP and a minimal embedded host
-linking `stella-engine` — neither of which calls `WrapperDispatch` yet (#3551);
-and [`stella-pipeline`](../stella-pipeline), which still takes its own branches
-rather than being ported onto this socket (Track B, `doc:pipeline-as-plugins`
-§7) — it now dispatches from its own `[wrapper]` manifest via
+linking `stella-engine` — neither of which calls `WrapperDispatch` yet (#3551).
+The third item here used to be `crates/stella-pipeline`, which took its own
+branches rather than being ported onto this socket (Track B,
+`doc:pipeline-as-plugins` §7); it was deleted outright in #3865 instead, so
+there is no longer a second in-tree wrapper mechanism to converge. It had
+dispatched from its own `[wrapper]` manifest via
 `Schedule`/`ProgressiveResolver` (#3408), a separate mechanism from this
 crate's `TurnWrapper` socket, not this socket wearing a new caller.
 Candidate-workspace grants on the CLI path landed (#3553,
@@ -232,7 +238,7 @@ it crosses.
 | `tests/wrapper_verdict.rs` | The property tests behind `judge`/`again`'s totality claim. |
 | `tests/wrapper_env_refusal.rs` | `refuses_env_name`'s refusal list, proven against the names #3512 named. |
 | `tests/host_owned_tamper.rs` | #3499's split: `ObservedEvidence` carries no tamper field: `EvidenceSet::from_observed` is where the host's own finding is merged in. |
-| `tests/no_pipeline_edge.rs` | Executable proof that this crate declares no dependency on `stella-pipeline` — a wrapper `stella-cli` can drive and `stella-serve` cannot is a CLI feature wearing a socket's name. |
+| `tests/no_pipeline_edge.rs` | Executable proof that this crate declares no dependency on the staged pipeline — a wrapper `stella-cli` can drive and `stella-serve` cannot is a CLI feature wearing a socket's name. The crate it names was deleted in #3865; the guard is kept because the edge it forbids is the one a re-home would most plausibly reintroduce. |
 | `tests/wrapper_host_call.rs` | The witness for the host-call channel (#3540, `doc:wrapper-socket` §6b): a plugin asks the host for a capability mid-point and is handed real frames. |
 | `tests/driver_socket.rs` | The witness for the driver channel's transport (#3634, #3599 B0): a `/bin/sh` driver is handed a session, is served a capability it declared and refused one it did not, and ends the session with each of the two terminal answers. Two of its twelve ask the **child** rather than the constructor — what environment the process actually received, and whether a driver that keeps writing after deciding wedges the session — because a constructor interrogated about itself only ever agrees. |
 | `tests/wrapper_transport_limits.rs` | Witnesses for #3380's transport audit: the two resources a plugin process can spend that are not its own — the host's memory, and the machine after the turn ended. |

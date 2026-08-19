@@ -237,8 +237,6 @@ mod tests {
             engine_settings: None,
             engine_settings_trusted: false,
             tool_policy: Default::default(),
-            enable_recap: false,
-            trace_capture: false,
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
             authority: crate::settings::AuthorityPolicy::default(),

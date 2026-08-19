@@ -145,6 +145,11 @@ fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index
 fn steps_and_prose(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, ti: usize) {
     let offsets = digest::offsets(&turn.steps);
     for (si, step) in turn.steps.iter().enumerate() {
+        for (ni, note) in turn.notes.iter().enumerate() {
+            if note.before_step == si {
+                note_block(out, run, state, note, ti, ni);
+            }
+        }
         for (pi, prose) in turn.prose.iter().enumerate() {
             if prose.before_step == si {
                 prose_block(out, run, state, prose, ti, pi);
@@ -152,11 +157,60 @@ fn steps_and_prose(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, 
         }
         step_block(out, run, state, step, ti, si, &offsets[si]);
     }
+    for (ni, note) in turn.notes.iter().enumerate() {
+        if note.before_step >= turn.steps.len() {
+            note_block(out, run, state, note, ti, ni);
+        }
+    }
     for (pi, prose) in turn.prose.iter().enumerate() {
         if prose.before_step >= turn.steps.len() {
             prose_block(out, run, state, prose, ti, pi);
         }
     }
+}
+
+/// One non-call row. Mirrors [`note_lines`](crate::grid) on the character grid:
+/// the kind supplies a glyph and a class token, the summary is always visible,
+/// and detail rows fold behind it — with no fold control at all when there is
+/// no detail.
+fn note_block(
+    out: &mut String,
+    run: &Run,
+    state: &FoldState,
+    note: &crate::model::Note,
+    ti: usize,
+    ni: usize,
+) {
+    let node = NodeId::Note { turn: ti, note: ni };
+    let foldable = !note.detail.is_empty();
+    let open = foldable && state.is_open(run, node);
+    let _ = write!(
+        out,
+        "<div class=\"note note-{}\"><div class=\"notegut\">{}</div>",
+        note.kind.token(),
+        escape(note.kind.glyph())
+    );
+    if foldable {
+        let _ = write!(
+            out,
+            "<details class=\"note-fold\" id=\"{}\"{}><summary>\
+             <span class=\"chev\">▶</span> {}</summary><div class=\"note-detail\">",
+            node.key(),
+            open_attr(open),
+            escape(&note.summary)
+        );
+        for row in &note.detail {
+            let _ = write!(out, "<div>{}</div>", escape(row));
+        }
+        out.push_str("</div></details>");
+    } else {
+        let _ = write!(
+            out,
+            "<div class=\"note-summary\">{}</div>",
+            escape(&note.summary)
+        );
+    }
+    out.push_str("</div>");
 }
 
 fn prose_block(
