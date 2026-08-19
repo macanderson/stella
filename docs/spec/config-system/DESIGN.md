@@ -465,20 +465,30 @@ with a message naming the table they belong in.
 ### 6.4 Flattening `agents.agents.<name>`
 
 The JSON nests per-agent config one level below the flat model fields
-(`agent_engine_config.agents.verifier`). Rendered literally that is
-`[agents.agents.verifier]`, which reads badly.
+(`agent_engine_config.agents.default`). Rendered literally that is
+`[agents.agents.default]`, which reads badly.
 
-Flattening to `[agents.verifier]` is safe **only while the agent set is closed**
+Flattening to `[agents.default]` is safe **only while the agent set is closed**
 — a fixed set of struct fields cannot collide with a root field. §4.1 opens
 that set.
 
 **Decision:** flatten, and reserve the root field names as illegal agent
 names, enforced at load with a named error. The list is exactly
 `ENGINE_ROOT_FIELDS` minus `agents` (which disappears in the flattening):
-`default_model`, `pipeline_verifier_model`, `pipeline_worker_model`,
-`pipeline_triage_model`, `pipeline_research_model`, `pipeline_plan_model`,
-`allowed_models`, `auto_mode`, `effort_auto`,
-`reasoning_auto`, `headless_scope_bypass`.
+`default_model`, `seat_models`, `allowed_models`, `model_output_caps`,
+`auto_mode`, `effort_auto`, `reasoning_auto`, `headless_scope_bypass`,
+`model_timeout_secs`, `compaction_budget_tokens`,
+`tool_result_horizon_steps`.
+
+**#3908 update.** That list used to carry the five `pipeline_<role>_model`
+keys, and the agent set used to hold six names. Both collapsed to one: core
+has a single role, `default`. The closed-set argument above is unchanged and
+is now doing *more* work rather than less — it is precisely why plugin seats
+landed in a `[seats]` table of their own instead of joining `[agents]`. A seat
+name is chosen by whatever the operator installed, so folding seats in would
+have opened the set that makes the flattening safe. The retired keys are still
+recognized and reported by name (`settings::unknown`), so a file carrying one
+loads and says so.
 
 `allowed_models` stays reserved even though §6.1 moves it to
 `[models].allowed` — it remains readable at the old location through the

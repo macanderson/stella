@@ -37,7 +37,7 @@ fn the_edit_reader_returns_one_files_engine_block_not_the_merge() {
     let project = write(
         dir.path(),
         "project.json",
-        r#"{"agent_engine_config": {"pipeline_worker_model": "zai/glm-5.2"}}"#,
+        r#"{"agent_engine_config": {"default_model": "zai/glm-5.2"}}"#,
     );
 
     let merged = Settings::load_from(&[user.clone(), project])
@@ -45,7 +45,7 @@ fn the_edit_reader_returns_one_files_engine_block_not_the_merge() {
         .agent_engine_config
         .unwrap();
     assert_eq!(
-        merged.pipeline_worker_model.as_deref(),
+        merged.default_model.as_deref(),
         Some("zai/glm-5.2"),
         "the merge should carry the project's pin"
     );
@@ -53,10 +53,7 @@ fn the_edit_reader_returns_one_files_engine_block_not_the_merge() {
     let scoped = user_engine_config_at(&user).unwrap();
     assert_eq!(
         scoped.default_model.as_deref(),
-        Some("anthropic/claude-fable-5")
-    );
-    assert_eq!(
-        scoped.pipeline_worker_model, None,
+        Some("anthropic/claude-fable-5"),
         "the project's pin must not appear in a user-scope read"
     );
 }
@@ -234,15 +231,13 @@ fn agent_engine_config_parses_the_full_schema() {
         "engine.json",
         r#"{"agent_engine_config": {
             "default_model": "anthropic/claude-fable-5",
-            "pipeline_worker_model": "zai/glm-5.2",
-            "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
-            "pipeline_triage_model": "deepseek/deepseek-chat",
             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
+            "seat_models": {"vera/verifier": "openrouter/anthropic/claude-opus-5"},
             "auto_mode": "on",
             "effort_auto": "off",
             "reasoning_auto": "on",
             "agents": {
-                "verifier": {
+                "default": {
                     "provider": "openrouter",
                     "model": "openai/gpt-5.5",
                     "prompt": "You are a strict verifier.",
@@ -266,29 +261,22 @@ fn agent_engine_config_parses_the_full_schema() {
     );
     let merged = Settings::load_from(&[file]).unwrap();
     let engine = merged.agent_engine_config.expect("engine config");
-    assert_eq!(
-        engine.model_for(EngineAgentKind::Worker),
-        Some("zai/glm-5.2")
-    );
-    // The verifier's per-agent model beats the flat pipeline_verifier_model.
-    assert_eq!(
-        engine.model_for(EngineAgentKind::Verifier),
-        Some("openai/gpt-5.5")
-    );
-    // No triage agent entry → the flat field answers.
-    assert_eq!(
-        engine.model_for(EngineAgentKind::Triage),
-        Some("deepseek/deepseek-chat")
-    );
-    // Default falls to default_model.
-    assert_eq!(
-        engine.model_for(EngineAgentKind::Default),
-        Some("anthropic/claude-fable-5")
-    );
+    // The per-agent model beats the flat `default_model`.
+    assert_eq!(engine.model_for(), Some("openai/gpt-5.5"));
     assert!(engine.auto_mode_on());
     assert!(!engine.effort_auto_on());
     assert!(engine.reasoning_auto_on());
-    let verifier = engine.agent(EngineAgentKind::Verifier).expect("verifier");
+    // The seat plane carries a model for a participant the session does not
+    // own — the replacement for the retired `pipeline_<role>_model` keys.
+    assert_eq!(
+        engine
+            .seat_models
+            .as_ref()
+            .and_then(|s| s.get("vera/verifier"))
+            .map(String::as_str),
+        Some("openrouter/anthropic/claude-opus-5")
+    );
+    let verifier = engine.agent().expect("the default agent");
     assert_eq!(verifier.provider.as_deref(), Some("openrouter"));
     assert_eq!(verifier.effort, Some(ReasoningEffort::High));
     assert_eq!(verifier.reasoning, Some(Toggle::On));
@@ -307,30 +295,25 @@ fn agent_engine_config_overlays_per_field_and_per_agent() {
         r#"{"agent_engine_config": {
             "default_model": "zai/glm-5.2",
             "allowed_models": ["zai/glm-5.2"],
-            "agents": {"worker": {"effort": "medium", "params": {"temperature": 0.0}}}
+            "agents": {"default": {"effort": "medium", "params": {"temperature": 0.0}}}
         }}"#,
     );
     let project = write(
         dir.path(),
         "project.json",
         r#"{"agent_engine_config": {
-            "pipeline_verifier_model": "anthropic/claude-fable-5",
             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
-            "agents": {"worker": {"params": {"top_p": 0.95}}}
+            "agents": {"default": {"params": {"top_p": 0.95}}}
         }}"#,
     );
     let merged = Settings::load_from(&[user, project]).unwrap();
     let engine = merged.agent_engine_config.expect("engine config");
     // Project wins where it speaks; user fields it left unset survive.
     assert_eq!(engine.default_model.as_deref(), Some("zai/glm-5.2"));
-    assert_eq!(
-        engine.pipeline_verifier_model.as_deref(),
-        Some("anthropic/claude-fable-5")
-    );
     // allowed_models replaces wholesale (one vocabulary, not knobs).
     assert_eq!(engine.allowed_models().len(), 2);
-    // Worker params compose per field across scopes.
-    let worker = engine.agent(EngineAgentKind::Worker).expect("worker");
+    // Params compose per field across scopes.
+    let worker = engine.agent().expect("the default agent");
     assert_eq!(worker.effort, Some(ReasoningEffort::Medium));
     let params = worker.params.expect("params");
     assert_eq!(params.temperature, Some(0.0));
@@ -348,7 +331,7 @@ fn agent_engine_config_save_preserves_other_keys_and_roundtrips() {
             "future_key": {"anything": true}}"#,
     );
     let engine = AgentEngineConfig {
-        pipeline_verifier_model: Some("anthropic/claude-fable-5".to_string()),
+        default_model: Some("anthropic/claude-fable-5".to_string()),
         auto_mode: Some(Toggle::Off),
         ..AgentEngineConfig::default()
     };
@@ -365,7 +348,7 @@ fn agent_engine_config_save_preserves_other_keys_and_roundtrips() {
         raw["agent_engine_config"]
             .as_object()
             .unwrap()
-            .get("default_model")
+            .get("allowed_models")
             .is_none(),
         "None fields must not be rendered"
     );
@@ -861,7 +844,7 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
         r#"{
           "tools": {"bash": "off", "scratch": "off"},
           "agent_engine_config": {
-            "agents": {"verifier": {"prompt": "trusted prompt"}}
+            "agents": {"default": {"prompt": "trusted prompt"}}
           }
         }"#,
     );
@@ -871,7 +854,7 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
         r#"{
           "tools": {"bash": "on", "scratch": "on"},
           "agent_engine_config": {
-            "agents": {"verifier": {"prompt": "untrusted prompt"}}
+            "agents": {"default": {"prompt": "untrusted prompt"}}
           }
         }"#,
     );
@@ -898,7 +881,7 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
         merged
             .agent_engine_config
             .as_ref()
-            .and_then(|engine| engine.agent(EngineAgentKind::Verifier))
+            .and_then(|engine| engine.agent())
             .and_then(|verifier| verifier.prompt.as_deref()),
         Some("trusted prompt"),
         "untrusted project replaced a privileged agent prompt"
@@ -1013,7 +996,7 @@ fn managed_tool_denial_survives_explicit_project_trust() {
         merged
             .agent_engine_config
             .as_ref()
-            .and_then(|engine| engine.agent(EngineAgentKind::Verifier))
+            .and_then(|engine| engine.agent())
             .and_then(|verifier| verifier.prompt.as_ref())
             .is_none(),
         "managed denial must remove the trusted project's prompt"

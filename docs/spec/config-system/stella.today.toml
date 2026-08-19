@@ -162,28 +162,27 @@ allowed = [
 
 
 [agents]
-# The default agent's model, and the base for every role with no more
-# specific setting. A model string is either `provider/slug`, or a bare slug
-# sent verbatim to THAT provider when the agent's `provider` field is set.
-default_model         = "anthropic/claude-fable-5"
-pipeline_worker_model = "zai/glm-5.2"
-pipeline_verifier_model  = "openrouter/openai/gpt-5.5"
-pipeline_triage_model = "deepseek/deepseek-chat"
-# Omit either of these and the role rides the worker, not `default_model`.
-pipeline_research_model = "deepseek/deepseek-chat"
-pipeline_plan_model   = "zai/glm-5.2"
+# The session's model — the one model setting core ships. A model string is
+# either `provider/slug`, or a bare slug sent verbatim to THAT provider when
+# the agent's `provider` field is set.
+#
+# There were five more keys here until #3908: `pipeline_worker_model`,
+# `pipeline_verifier_model`, `pipeline_triage_model`, `pipeline_research_model`
+# and `pipeline_plan_model`. They pinned models for the staged pipeline's roles,
+# that pipeline was deleted in #3865, and by then four of the five were read by
+# nothing at all. A file that still carries one loads fine and says so by name
+# on every run — see `[seats]` below for what replaces them.
+default_model = "anthropic/claude-fable-5"
 
 # on/off toggles. A dedicated enum, not a bool: a typo must be a loud parse
 # error, never a silently-false setting.
-auto_mode      = "off"  # on = pick the verifier model automatically from
-                        # allowed_models, preferring a different family than
-                        # the worker and ranking by catalog list price
-effort_auto    = "on"   # on = verifier high, worker/default/plan medium,
-                        # triage/research low — overrides any per-agent
-                        # `effort`. Research sits with triage because a
-                        # read-only lookup is retrieval, not deliberation.
-reasoning_auto = "on"   # on = thinking on for verifier/worker/default/plan,
-                        # off for triage and research — overrides any
+auto_mode      = "off"  # DIMINISHED (#3936): it used to pick the verifier model
+                        # out of `allowed`. The role went with the pipeline, and
+                        # so did the selector. It still marks whether a
+                        # `/profile` holds the dials, and nothing else.
+effort_auto    = "on"   # on = the effort nobody has to think about, overriding
+                        # any per-agent `effort`
+reasoning_auto = "on"   # on = thinking chosen automatically, overriding any
                         # per-agent `reasoning`
 
 # on = a headless run proceeds past scope review instead of stopping at
@@ -193,22 +192,19 @@ reasoning_auto = "on"   # on = thinking on for verifier/worker/default/plan,
 # disposable and the budget cap is the real guard.
 headless_scope_bypass = "off"
 
-# ---- per-agent overrides. Every field optional = "no opinion" ---------------
+# ---- the agent's overrides. Every field optional = "no opinion" -------------
 #
-# The JSON nests these one level deeper (`agent_engine_config.agents.verifier`).
-# Flattened here to `[agents.verifier]` because the agent set is CLOSED — the
-# names are struct fields, not map keys — so a per-agent table can never
-# collide with a root field. If that set ever opens, this must go back to
-# `[agents.agents.<name>]`.
+# The JSON nests this one level deeper (`agent_engine_config.agents.default`).
+# Flattened here to `[agents.default]` because the agent set is CLOSED — the
+# name is a struct field, not a map key — so the per-agent table can never
+# collide with a root field.
 #
-# `[agents.research]` and `[agents.plan]` carry the same fields as any other
-# agent table and inherit `[agents.worker]` field by field, so
-# `agents.worker.prompt` still reaches the planner while `agents.plan.prompt`
-# is unset. The one exception is `agents.research.prompt`, which is NOT
-# honoured: a research child is an engine sub-agent turn, and its built-in
-# read-only system prompt is the contract that makes it read-only.
+# That is exactly why plugin seats live in their own `[seats]` table rather
+# than here: seat names are chosen by whatever the operator installed, so
+# folding them into this section would put user-chosen keys in the same
+# namespace as `auto_mode` and `default_model`.
 
-[agents.verifier]
+[agents.default]
 provider  = "openrouter"      # gateway id; when set, `model` is sent
 model     = "openai/gpt-5.5"  # verbatim as the slug to THIS provider
 effort    = "high"            # low|medium|high|xhigh|max (snake_case)
@@ -218,14 +214,14 @@ reasoning = "on"
 #
 # PRIVILEGED: a project scope's prompt is discarded and restored from the
 # trusted scopes unless managed `authority.project_prompts = "on"`.
-prompt    = "You are a strict code-review verifier. Reject on any unproven claim."
+prompt    = "You are a terse, test-first engineer. Never claim an unproven result."
 
   # "Include checkbox" semantics: a present value goes on the wire where the
   # dialect supports it; absent leaves the provider default untouched.
   # temperature/max_tokens land on CompletionRequest directly; the rest ride
   # CompletionRequest::params. An adapter silently drops what its dialect
   # cannot express — a param must never fail a request.
-  [agents.verifier.params]
+  [agents.default.params]
   temperature        = 0.2
   top_p              = 0.9
   top_k              = 40
@@ -237,14 +233,22 @@ prompt    = "You are a strict code-review verifier. Reject on any unproven claim
   verbosity          = "low"       # low | medium | high
   service_tier       = "priority"  # auto | default | flex | priority
 
-[agents.worker]
-effort = "medium"
 
-[agents.triage]
-reasoning = "off"
+# ---- seats: a model for a participant an installed plugin declared ----------
+#
+# Keys are `<plugin-id>/<role>`, where the role is a name the PLUGIN chose and
+# the prefix is applied by the host — so a plugin can neither claim another
+# plugin's assignment nor inherit one made about a different plugin.
+#
+# Absent, or absent for a given seat, means that seat runs on the session's
+# model. Installing a plugin with five participants therefore costs exactly
+# what a single-model session costs until someone writes a line here.
+#
+# Quoted, always: `vera.verifier` is TOML dotted-key syntax and would parse as
+# a table `vera` containing `verifier`.
 
-[agents.default]
-effort = "medium"
+[seats]
+"vera/verifier" = "openrouter/openai/gpt-5.5"
 
 
 # -----------------------------------------------------------------------------

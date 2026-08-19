@@ -220,34 +220,41 @@ allowed = ["anthropic/claude-fable-5", "zai/glm-5.2", "openrouter/openai/gpt-5.5
 The flattened, closed-set engine config — see
 [Agent engine config](/docs/configuration/agent-engine-config) for the full schema, model
 precedence, auto modes, and generation parameters, all unchanged. Flattening
-`[agents.verifier]` (rather than the JSON nesting's `[agents.agents.verifier]`) is safe only
+`[agents.default]` (rather than the JSON nesting's `[agents.agents.default]`) is safe only
 because the set of agent names is closed and none of them can collide with a root scalar
 like `default_model`.
 
+That closed set is exactly why plugin seats get a section of their own rather
+than joining this one: a seat name comes from whatever you installed, and
+user-chosen keys must not share a namespace with `auto_mode`.
+
 ```toml title="stella.toml"
 [agents]
-default_model         = "zai/glm-5.2"
-pipeline_verifier_model  = "anthropic/claude-fable-5"
-pipeline_triage_model = "deepseek/deepseek-chat"
-pipeline_research_model = "deepseek/deepseek-chat"
-auto_mode             = "off"
-effort_auto           = "on"
+default_model = "zai/glm-5.2"
+auto_mode     = "off"
+effort_auto   = "on"
 
-[agents.verifier]
+[agents.default]
 provider  = "openrouter"
 model     = "openai/gpt-5.5"
 effort    = "high"
 reasoning = "on"
 
-  [agents.verifier.params]
+  [agents.default.params]
   temperature = 0.2
   max_tokens  = 4096
+```
 
-# Research and plan inherit `[agents.worker]` field by field when unset — the
-# worker, not `default_model`, so a `--model` pin cannot split them off.
-[agents.research]
-effort    = "low"
-reasoning = "off"
+### `[seats]`
+
+Which model each **plugin-declared** role runs on. Keys are
+`"<plugin-id>/<role>"` and must be quoted — `vera.verifier` is TOML dotted-key
+syntax and would parse as a table `vera` containing `verifier`. A seat with no
+entry runs on the session's model.
+
+```toml title="stella.toml"
+[seats]
+"vera/verifier" = "anthropic/claude-fable-5"
 ```
 
 ### `[tools]`

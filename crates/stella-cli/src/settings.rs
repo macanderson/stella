@@ -56,6 +56,7 @@ pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 pub use toml_config::ConfigScope;
 pub(crate) use unknown::{
     ENGINE_AGENT_FIELDS, ENGINE_AGENT_NAMES, ENGINE_PARAM_FIELDS, ENGINE_ROOT_FIELDS,
+    RETIRED_ENGINE_AGENT_NAMES, RETIRED_ENGINE_ROOT,
 };
 // `ContextSettings`, `RetrievalSettings`, and `InferredDirectivePromotion`
 // all have readers now (`memory::tuning` — retrieval budgets, the lifecycle

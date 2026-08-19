@@ -283,14 +283,12 @@ commands — the SETTINGS tab is the one place models are configured.
 ```jsonc
 {
   "agent_engine_config": {
-    // Flat per-role models ("provider/slug", or a bare catalog slug).
+    // The session's model ("provider/slug", or a bare catalog slug).
     "default_model": "anthropic/claude-fable-5",
-    "pipeline_worker_model": "zai/glm-5.2",
-    "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
-    "pipeline_triage_model": "deepseek/deepseek-chat",
-    // Research and plan ride the WORKER when unset, not default_model.
-    "pipeline_research_model": "zai/glm-5.2",
-    "pipeline_plan_model": "zai/glm-5.2",
+
+    // A model for a role an installed plugin declared, keyed
+    // "<plugin-id>/<role>". Unset seats run on the session's model.
+    "seat_models": {"vera/verifier": "openrouter/openai/gpt-5.5"},
 
     // The model vocabulary the TUI pickers offer and auto_mode selects from.
     "allowed_models": [
@@ -352,11 +350,9 @@ adapter forwards only the parameters its wire supports (`verbosity` and
 `thinking`, OpenRouter's `reasoning`, Anthropic extended thinking (with an
 effort-tiered budget), OpenAI `reasoning.effort`, and Gemini
 `thinkingLevel`. Custom prompts replace the built-in base instructions;
-workspace memories and rules still append. `agents.research.prompt` is the one
-exception and is not honoured — a research child's built-in system prompt is
-the contract that makes it read-only, not a preference. A verifier/triage model whose
-provider has no resolvable key degrades softly — the role rides the worker
-and a notice says so.
+workspace memories and rules still append. A seat model whose provider has no
+resolvable key degrades softly — that seat rides the session's model and a
+notice says so.
 
 ## Usage
 

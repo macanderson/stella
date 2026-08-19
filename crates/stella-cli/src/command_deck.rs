@@ -581,7 +581,7 @@ pub async fn run_deck_session(
         cfg.provider.display_name,
         cfg.engine_settings
             .as_ref()
-            .and_then(|e| e.agent(crate::settings::EngineAgentKind::Default))
+            .and_then(|e| e.agent())
             .and_then(|a| a.effort),
     ) {
         let _ = deck_tx.send(system_notice(notice));

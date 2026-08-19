@@ -1,11 +1,8 @@
-//! What each engine role will *actually* run — the per-role half of
-//! `stella config`.
+//! What each role will *actually* run — the per-role half of `stella config`.
 //!
 //! `stella config` used to report only the session's provider, model and
-//! credential. That is one of four models a pipeline turn uses, and the other
-//! three are exactly the ones that go wrong quietly: a verifier pinned through a
-//! key that a per-agent `provider` outranks, a triage model whose slug is
-//! spelled for the wrong gateway, an `effort` the auto-mode is silently
+//! credential, and none of the shaping that rides with it: a model whose slug
+//! is spelled for the wrong gateway, an `effort` the auto-mode is silently
 //! replacing. None of it was visible without reading the resolver.
 //!
 //! Worse, it was not *checkable*. Confirming a settings change meant editing
@@ -18,15 +15,36 @@
 //! ([`model_spec_for`], [`tuning_for`], [`AgentEngineConfig::model_for`]'s
 //! precedence) rather than re-deriving the rules, because a config report that
 //! can disagree with the engine is worse than none.
+//!
+//! # One row, and why it is still a table
+//!
+//! It reported six rows until #3908 — `default`, `worker`, `verifier`,
+//! `triage`, `research`, `plan` — of which four resolved settings keys that
+//! had stopped steering anything when the staged pipeline left (#3865). A
+//! report whose whole purpose is "what will actually run" was answering for
+//! four roles that would never run, which is the most expensive place in the
+//! product to be wrong.
+//!
+//! The shape stays a `Vec` rather than collapsing to one struct because the
+//! rows come back in slice 5 (#3909) as **plugin-declared seats**, resolved
+//! the same way and rendered by the same `/models` dialog.
+//! [`RoleWiring::role`] is a `String` for that reason: the deck's
+//! `envelope::roles::role_table` already renders a row for a role it has never
+//! heard of, so a seat needs no new plumbing here — only a row.
 
-use crate::engine_config::{ModelSpec, model_spec_for, own_model_spec_for, tuning_for};
-use crate::settings::{AgentEngineConfig, EngineAgentKind};
+use crate::engine_config::{ModelSpec, model_spec_for, tuning_for};
+use crate::settings::AgentEngineConfig;
 use stella_protocol::ReasoningEffort;
+
+/// The one role core has. Seats a plugin declares join this list in #3909.
+pub const DEFAULT_ROLE: &str = "default";
 
 /// One role's resolved wiring.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoleWiring {
-    pub role: EngineAgentKind,
+    /// The role's name — [`DEFAULT_ROLE`], or (from #3909) a plugin-declared
+    /// seat. A `String` because core does not enumerate the possibilities.
+    pub role: String,
     /// Provider id and the slug as it goes on the wire.
     pub model: ModelSpec,
     /// The setting that decided `model` — the string a user would edit.
@@ -44,28 +62,16 @@ pub struct RoleWiring {
 /// Which setting decided a role's model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelSource {
-    /// `--model` / `STELLA_MODEL`. Pins the worker for this invocation and
-    /// suppresses the worker's settings spec (see `resolve_engine_wiring`).
+    /// `--model` / `STELLA_MODEL`. Pins the session for this invocation and
+    /// suppresses the settings spec (see `resolve_engine_wiring`).
     Flag,
-    /// `agents.<role>.model`, which outranks every flat key.
-    PerAgent(EngineAgentKind),
-    /// `pipeline_<role>_model`.
-    Flat(EngineAgentKind),
+    /// `agents.default.model`, which outranks the flat key.
+    PerAgent,
     /// `default_model`.
     DefaultModel,
     /// Nothing named it: the role rides the session's resolved model, which
     /// is the provider row's own default when settings are silent too.
     SessionDefault,
-    /// Nothing named it, and the role's documented default is the WORKER's
-    /// model rather than `default_model` — research and plan only (#2374).
-    ///
-    /// A distinct variant rather than reusing [`Self::SessionDefault`] because
-    /// the two answer differently the moment `pipeline_worker_model` and
-    /// `default_model` disagree, and this row is the one place a user checks
-    /// which. Reporting `default_model` there would name a model the run is
-    /// not going to buy, which is the failure the whole worker-inheritance
-    /// rule exists to prevent.
-    RidesWorker,
 }
 
 impl ModelSource {
@@ -74,55 +80,18 @@ impl ModelSource {
     pub fn label(self) -> String {
         match self {
             Self::Flag => "--model (this invocation)".to_string(),
-            Self::PerAgent(kind) => format!("agents.{}.model", role_key(kind)),
-            Self::Flat(kind) => format!("pipeline_{}_model", role_key(kind)),
+            Self::PerAgent => format!("agents.{DEFAULT_ROLE}.model"),
             Self::DefaultModel => "default_model".to_string(),
             Self::SessionDefault => "session default".to_string(),
-            Self::RidesWorker => "rides the worker".to_string(),
         }
     }
-
-    /// Whether this role inherits the worker rather than naming its own model.
-    fn inherits_worker(kind: EngineAgentKind) -> bool {
-        matches!(kind, EngineAgentKind::Research | EngineAgentKind::Plan)
-    }
 }
 
-/// The role's name in settings keys and in the report's first column.
-pub fn role_key(kind: EngineAgentKind) -> &'static str {
-    match kind {
-        EngineAgentKind::Default => "default",
-        EngineAgentKind::Worker => "worker",
-        EngineAgentKind::Verifier => "verifier",
-        EngineAgentKind::Triage => "triage",
-        EngineAgentKind::Research => "research",
-        EngineAgentKind::Plan => "plan",
-    }
-}
-
-/// Which setting fed `model_for(kind)`, mirroring its precedence exactly:
-/// `agents.<kind>.model` > `pipeline_<kind>_model` > `default_model`.
-///
-/// `EngineAgentKind::Default` has no flat key of its own — `default_model`
-/// *is* its flat key — which is why the middle arm skips it.
-fn model_source(engine: &AgentEngineConfig, kind: EngineAgentKind) -> ModelSource {
-    if engine
-        .agent(kind)
-        .and_then(|a| a.model.as_deref())
-        .is_some()
-    {
-        return ModelSource::PerAgent(kind);
-    }
-    let flat = match kind {
-        EngineAgentKind::Default => None,
-        EngineAgentKind::Worker => engine.pipeline_worker_model.as_deref(),
-        EngineAgentKind::Verifier => engine.pipeline_verifier_model.as_deref(),
-        EngineAgentKind::Triage => engine.pipeline_triage_model.as_deref(),
-        EngineAgentKind::Research => engine.pipeline_research_model.as_deref(),
-        EngineAgentKind::Plan => engine.pipeline_plan_model.as_deref(),
-    };
-    if flat.is_some() {
-        ModelSource::Flat(kind)
+/// Which setting fed [`AgentEngineConfig::model_for`], mirroring its
+/// precedence exactly: `agents.default.model` > `default_model`.
+fn model_source(engine: &AgentEngineConfig) -> ModelSource {
+    if engine.agent().and_then(|a| a.model.as_deref()).is_some() {
+        ModelSource::PerAgent
     } else if engine.default_model.is_some() {
         ModelSource::DefaultModel
     } else {
@@ -130,105 +99,60 @@ fn model_source(engine: &AgentEngineConfig, kind: EngineAgentKind) -> ModelSourc
     }
 }
 
-/// Resolve every role in [`EngineAgentKind::ALL`].
+/// Resolve the session's role.
 ///
 /// `session` is the model the session actually resolved to (`Config`'s own
-/// provider + model), which is what a role falls back to when no setting names
-/// one — including the case where settings are absent entirely.
+/// provider + model), which is what the role falls back to when no setting
+/// names one — including the case where settings are absent entirely.
 ///
-/// `model_pinned_by_flag` reproduces the one asymmetry in
-/// `resolve_engine_wiring`: an explicit `--model` is a per-invocation pin of
-/// the WORKER, so it suppresses the worker's settings spec while leaving
-/// verifier and triage pins alone. Reporting the settings value there would name
-/// a model that is not going to run.
+/// `model_pinned_by_flag` reproduces `resolve_engine_wiring`'s rule: an
+/// explicit `--model` is a per-invocation pin, so it suppresses the settings
+/// spec. Reporting the settings value there would name a model that is not
+/// going to run.
 pub fn resolve(
     engine: Option<&AgentEngineConfig>,
     session: &ModelSpec,
     model_pinned_by_flag: bool,
     is_provider: &dyn Fn(&str) -> bool,
 ) -> Vec<RoleWiring> {
-    // The worker's own row, resolved first because research and plan inherit
-    // it. `resolve_engine_wiring` does the same in the same order and for the
-    // same reason; this module exists to give the same answer it does, so the
-    // dependency has to be reproduced rather than approximated.
-    let worker = engine.map(|engine| {
-        let spec = (!model_pinned_by_flag)
-            .then(|| model_spec_for(engine, EngineAgentKind::Worker, is_provider))
-            .flatten();
-        (spec, tuning_for(engine, EngineAgentKind::Worker))
-    });
-
-    EngineAgentKind::ALL
-        .iter()
-        .map(|&role| {
-            let Some(engine) = engine else {
-                return RoleWiring {
-                    role,
-                    model: session.clone(),
-                    source: ModelSource::SessionDefault,
-                    effort: None,
-                    reasoning: None,
-                    effort_auto_replaced: None,
-                    reasoning_auto_replaced: None,
-                };
-            };
-            // `--model` owns the worker and the default agent it is resolved
-            // from; the verifier and triage keep their own pins.
-            let flag_owns = model_pinned_by_flag
-                && matches!(role, EngineAgentKind::Worker | EngineAgentKind::Default);
-            // Research and plan take `own_model_spec_for`, exactly as the
-            // request path does: their fallback is the WORKER's row, not
-            // `default_model`, and `model_spec_for`'s fallthrough would report
-            // a model the run is not going to buy.
-            let inherits = ModelSource::inherits_worker(role);
-            let spec = if flag_owns {
-                None
-            } else if inherits {
-                own_model_spec_for(engine, role, is_provider)
-            } else {
-                model_spec_for(engine, role, is_provider)
-            };
-            let (model, source) = match spec {
-                Some(spec) => (spec, model_source(engine, role)),
-                None if flag_owns => (session.clone(), ModelSource::Flag),
-                // Whatever the worker resolved to, named as inherited so the
-                // row does not read like a pin of its own.
-                None if inherits => match worker.as_ref().and_then(|(spec, _)| spec.clone()) {
-                    Some(spec) => (spec, ModelSource::RidesWorker),
-                    None if model_pinned_by_flag => (session.clone(), ModelSource::Flag),
-                    None => (session.clone(), ModelSource::SessionDefault),
-                },
-                None => (session.clone(), ModelSource::SessionDefault),
-            };
-            let mut tuning = tuning_for(engine, role);
-            // The shaping inherits field by field too, and for the same
-            // reason: `resolve_engine_wiring` layers these rows over the
-            // worker's, so a report that showed "provider default" here would
-            // contradict the request the engine actually sends.
-            if inherits && let Some((_, worker_tuning)) = worker.as_ref() {
-                tuning.effort = tuning.effort.or(worker_tuning.effort);
-                tuning.reasoning = tuning.reasoning.or(worker_tuning.reasoning);
-            }
-            // What the user pinned, to compare against what auto resolved.
-            let pinned = engine.agent(role);
-            let effort_auto_replaced = pinned
-                .and_then(|a| a.effort)
-                .filter(|_| engine.effort_auto_on());
-            let reasoning_auto_replaced = pinned
-                .and_then(|a| a.reasoning)
-                .map(|t| t.is_on())
-                .filter(|_| engine.reasoning_auto_on());
-            RoleWiring {
-                role,
-                model,
-                source,
-                effort: tuning.effort,
-                reasoning: tuning.reasoning,
-                effort_auto_replaced,
-                reasoning_auto_replaced,
-            }
-        })
-        .collect()
+    let Some(engine) = engine else {
+        return vec![RoleWiring {
+            role: DEFAULT_ROLE.to_string(),
+            model: session.clone(),
+            source: ModelSource::SessionDefault,
+            effort: None,
+            reasoning: None,
+            effort_auto_replaced: None,
+            reasoning_auto_replaced: None,
+        }];
+    };
+    let spec = (!model_pinned_by_flag)
+        .then(|| model_spec_for(engine, is_provider))
+        .flatten();
+    let (model, source) = match spec {
+        Some(spec) => (spec, model_source(engine)),
+        None if model_pinned_by_flag => (session.clone(), ModelSource::Flag),
+        None => (session.clone(), ModelSource::SessionDefault),
+    };
+    let tuning = tuning_for(engine);
+    // What the user pinned, to compare against what auto resolved.
+    let pinned = engine.agent();
+    let effort_auto_replaced = pinned
+        .and_then(|a| a.effort)
+        .filter(|_| engine.effort_auto_on());
+    let reasoning_auto_replaced = pinned
+        .and_then(|a| a.reasoning)
+        .map(|t| t.is_on())
+        .filter(|_| engine.reasoning_auto_on());
+    vec![RoleWiring {
+        role: DEFAULT_ROLE.to_string(),
+        model,
+        source,
+        effort: tuning.effort,
+        reasoning: tuning.reasoning,
+        effort_auto_replaced,
+        reasoning_auto_replaced,
+    }]
 }
 
 /// How an effort renders, including the auto-mode's theft when it happened.
@@ -287,7 +211,7 @@ pub fn rows(wiring: &[RoleWiring]) -> Vec<[String; 5]> {
         .iter()
         .map(|row| {
             [
-                role_key(row.role).to_string(),
+                row.role.clone(),
                 format!("{}/{}", row.model.provider, row.model.model),
                 effort_cell(row),
                 reasoning_cell(row),
@@ -423,160 +347,90 @@ mod tests {
         matches!(id, "openrouter" | "anthropic" | "zai")
     }
 
-    fn find(wiring: &[RoleWiring], role: EngineAgentKind) -> &RoleWiring {
-        wiring.iter().find(|r| r.role == role).unwrap()
+    fn only(wiring: &[RoleWiring]) -> &RoleWiring {
+        assert_eq!(wiring.len(), 1, "core has one role: {wiring:#?}");
+        &wiring[0]
     }
 
-    /// With no engine settings at all, every role rides the session model and
+    /// With no engine settings at all, the row rides the session model and
     /// says so — the report must never imply a pin that does not exist.
     #[test]
-    fn absent_settings_report_the_session_model_for_every_role() {
+    fn absent_settings_report_the_session_model() {
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let wiring = resolve(None, &session, false, &known);
-        assert_eq!(wiring.len(), EngineAgentKind::ALL.len());
-        for row in &wiring {
-            assert_eq!(row.model, session);
-            assert_eq!(row.source, ModelSource::SessionDefault);
-        }
+        let row = only(&wiring);
+        assert_eq!(row.role, DEFAULT_ROLE);
+        assert_eq!(row.model, session);
+        assert_eq!(row.source, ModelSource::SessionDefault);
+        assert_eq!(row.effort, None);
+        assert_eq!(row.reasoning, None);
     }
 
-    /// **The report must not name a model the run will not buy.**
-    ///
-    /// `model_for` falls research and plan through to `default_model`, but the
-    /// request path resolves them with `own_model_spec_for` and inherits the
-    /// WORKER. The two answers are identical until `pipeline_worker_model`
-    /// disagrees with `default_model` — and then a report built on the wrong
-    /// one prints a model nothing runs, on the single surface a user checks to
-    /// find that out. This module's whole premise is that it cannot disagree
-    /// with the engine (see the module docs), so the disagreement is the bug.
+    /// The posture this feature was written to make checkable: the row names
+    /// the key that decided it, in the spelling a user would edit.
     #[test]
-    fn research_and_plan_report_the_worker_they_inherit_not_default_model() {
+    fn the_row_names_the_setting_that_decided_its_model() {
         let engine = AgentEngineConfig {
-            default_model: Some("openrouter/moonshotai/kimi-k3".into()),
-            pipeline_worker_model: Some("anthropic/claude-fable-5".into()),
-            agents: Some(AgentEngineAgents {
-                worker: Some(AgentEngineAgent {
-                    effort: Some(ReasoningEffort::Xhigh),
-                    ..AgentEngineAgent::default()
-                }),
-                ..AgentEngineAgents::default()
-            }),
+            default_model: Some("openrouter/anthropic/claude-opus-5".into()),
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let wiring = resolve(Some(&engine), &session, false, &known);
-
-        for role in [EngineAgentKind::Research, EngineAgentKind::Plan] {
-            let row = find(&wiring, role);
-            assert_eq!(
-                row.model.model, "claude-fable-5",
-                "{role:?} runs the worker's model, so that is what the report must print"
-            );
-            assert_eq!(row.source, ModelSource::RidesWorker);
-            assert_eq!(row.source.label(), "rides the worker");
-            assert_eq!(
-                row.effort,
-                Some(ReasoningEffort::Xhigh),
-                "{role:?} inherits the worker's shaping too — \"provider default\" would be a \
-                 second way of saying something untrue"
-            );
-        }
-
-        // And a role that names its own model still names it.
-        let pinned = AgentEngineConfig {
-            pipeline_research_model: Some("openrouter/z-ai/glm-5.2".into()),
-            ..engine
-        };
-        let pinned_wiring = resolve(Some(&pinned), &session, false, &known);
-        let row = find(&pinned_wiring, EngineAgentKind::Research);
-        assert_eq!(row.model.model, "z-ai/glm-5.2");
-        assert_eq!(row.source.label(), "pipeline_research_model");
+        let row = only(&wiring);
+        assert_eq!(row.model.model, "anthropic/claude-opus-5");
+        assert_eq!(row.source, ModelSource::DefaultModel);
+        assert_eq!(row.source.label(), "default_model");
     }
 
-    /// The posture this feature was written to make checkable: worker rides
-    /// `default_model`, verifier and triage have their own flat keys, and each
-    /// row names the key that decided it.
-    #[test]
-    fn each_role_names_the_setting_that_decided_its_model() {
-        let engine = AgentEngineConfig {
-            default_model: Some("openrouter/moonshotai/kimi-k3".into()),
-            pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".into()),
-            pipeline_triage_model: Some("openrouter/z-ai/glm-5.2".into()),
-            ..AgentEngineConfig::default()
-        };
-        let session = spec("openrouter", "moonshotai/kimi-k3");
-        let wiring = resolve(Some(&engine), &session, false, &known);
-
-        let worker = find(&wiring, EngineAgentKind::Worker);
-        assert_eq!(worker.model.model, "moonshotai/kimi-k3");
-        assert_eq!(worker.source, ModelSource::DefaultModel);
-
-        let verifier = find(&wiring, EngineAgentKind::Verifier);
-        assert_eq!(verifier.model.model, "anthropic/claude-opus-5");
-        assert_eq!(
-            verifier.source,
-            ModelSource::Flat(EngineAgentKind::Verifier),
-            "the verifier's flat key is what a user would edit"
-        );
-        assert_eq!(verifier.source.label(), "pipeline_verifier_model");
-
-        let triage = find(&wiring, EngineAgentKind::Triage);
-        assert_eq!(triage.model.model, "z-ai/glm-5.2");
-        assert_eq!(triage.source.label(), "pipeline_triage_model");
-    }
-
-    /// `agents.<role>.model` outranks the flat key, and the report has to say
+    /// `agents.default.model` outranks the flat key, and the report has to say
     /// which one won — editing the flat key when the per-agent one is set is
     /// the change that appears to do nothing.
     #[test]
     fn a_per_agent_model_outranks_the_flat_key_in_the_report() {
         let engine = AgentEngineConfig {
             default_model: Some("openrouter/moonshotai/kimi-k3".into()),
-            pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".into()),
             agents: Some(AgentEngineAgents {
-                verifier: Some(AgentEngineAgent {
+                default: Some(AgentEngineAgent {
                     model: Some("openrouter/anthropic/claude-fable-5".into()),
                     ..AgentEngineAgent::default()
                 }),
-                ..AgentEngineAgents::default()
             }),
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let wiring = resolve(Some(&engine), &session, false, &known);
-        let verifier = find(&wiring, EngineAgentKind::Verifier);
-        assert_eq!(verifier.model.model, "anthropic/claude-fable-5");
-        assert_eq!(verifier.source.label(), "agents.verifier.model");
+        let row = only(&wiring);
+        assert_eq!(row.model.model, "anthropic/claude-fable-5");
+        assert_eq!(row.source.label(), "agents.default.model");
     }
 
     /// The bug this exists to catch. `effort_auto: on` silently replaces a
-    /// pinned effort with its own ladder (worker → medium), so a config that
-    /// reads `"effort": "max"` runs at medium. The row must show the resolved
-    /// value AND name what was discarded.
+    /// pinned effort with its own rung, so a config that reads `"effort":
+    /// "max"` runs at medium. The row must show the resolved value AND name
+    /// what was discarded.
     #[test]
     fn effort_auto_replacing_a_pin_is_named_in_the_row() {
         let engine = AgentEngineConfig {
             default_model: Some("openrouter/moonshotai/kimi-k3".into()),
             effort_auto: Some(Toggle::On),
             agents: Some(AgentEngineAgents {
-                worker: Some(AgentEngineAgent {
+                default: Some(AgentEngineAgent {
                     effort: Some(ReasoningEffort::Max),
                     ..AgentEngineAgent::default()
                 }),
-                ..AgentEngineAgents::default()
             }),
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let wiring = resolve(Some(&engine), &session, false, &known);
-        let worker = find(&wiring, EngineAgentKind::Worker);
+        let row = only(&wiring);
         assert_eq!(
-            worker.effort,
+            row.effort,
             Some(ReasoningEffort::Medium),
-            "effort_auto's worker rung is what actually runs"
+            "effort_auto's rung is what actually runs"
         );
-        assert_eq!(worker.effort_auto_replaced, Some(ReasoningEffort::Max));
-        let cell = effort_cell(worker);
+        assert_eq!(row.effort_auto_replaced, Some(ReasoningEffort::Max));
+        let cell = effort_cell(row);
         assert!(
             cell.contains("medium") && cell.contains("effort_auto replaced \"max\""),
             "the row states both what runs and what was thrown away: {cell}"
@@ -591,73 +445,59 @@ mod tests {
             default_model: Some("openrouter/moonshotai/kimi-k3".into()),
             effort_auto: Some(Toggle::On),
             agents: Some(AgentEngineAgents {
-                verifier: Some(AgentEngineAgent {
-                    // effort_auto's verifier rung is High — the same value.
-                    effort: Some(ReasoningEffort::High),
+                default: Some(AgentEngineAgent {
+                    // The same rung `effort_auto` resolves to.
+                    effort: Some(ReasoningEffort::Medium),
                     ..AgentEngineAgent::default()
                 }),
-                ..AgentEngineAgents::default()
             }),
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let wiring = resolve(Some(&engine), &session, false, &known);
-        let cell = effort_cell(find(&wiring, EngineAgentKind::Verifier));
-        assert_eq!(cell, "high", "no noise when nothing was replaced: {cell}");
+        let cell = effort_cell(only(&wiring));
+        assert_eq!(cell, "medium", "no noise when nothing was replaced: {cell}");
     }
 
-    /// `--model` pins the worker for one invocation and suppresses the
-    /// worker's settings spec — but not the verifier's. Reporting the settings
-    /// value for the worker there would name a model that will not run.
+    /// `--model` pins the model for one invocation and suppresses the settings
+    /// spec. Reporting the settings value there would name a model that will
+    /// not run — the exact mismeasurement this report exists to prevent.
     #[test]
-    fn an_explicit_model_flag_owns_the_worker_but_not_the_verifier() {
+    fn an_explicit_model_flag_owns_the_row() {
         let engine = AgentEngineConfig {
-            default_model: Some("openrouter/moonshotai/kimi-k3".into()),
-            pipeline_worker_model: Some("openrouter/z-ai/glm-5.2".into()),
-            pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".into()),
+            default_model: Some("openrouter/z-ai/glm-5.2".into()),
             ..AgentEngineConfig::default()
         };
         let session = spec("anthropic", "claude-sonnet-5");
         let wiring = resolve(Some(&engine), &session, true, &known);
-
-        let worker = find(&wiring, EngineAgentKind::Worker);
-        assert_eq!(worker.model, session, "the flag's model is what runs");
-        assert_eq!(worker.source, ModelSource::Flag);
-
-        let verifier = find(&wiring, EngineAgentKind::Verifier);
-        assert_eq!(
-            verifier.model.model, "anthropic/claude-opus-5",
-            "--model says nothing about the verifier"
-        );
+        let row = only(&wiring);
+        assert_eq!(row.model, session, "the flag's model is what runs");
+        assert_eq!(row.source, ModelSource::Flag);
+        assert_eq!(row.source.label(), "--model (this invocation)");
     }
 
-    /// The rendered block is column-aligned and every row carries its source.
+    /// The rendered block carries the source, and the columns are padded from
+    /// the widest cell rather than a fixed width.
     #[test]
-    fn the_rendered_block_aligns_and_keeps_the_source_on_every_row() {
+    fn the_rendered_block_aligns_and_keeps_the_source_on_the_row() {
         let engine = AgentEngineConfig {
-            default_model: Some("openrouter/moonshotai/kimi-k3".into()),
-            pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".into()),
+            default_model: Some("openrouter/anthropic/claude-opus-5".into()),
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let lines = render(&resolve(Some(&engine), &session, false, &known));
-        assert_eq!(lines.len(), EngineAgentKind::ALL.len());
-        for line in &lines {
-            assert!(
-                line.contains("default_model")
-                    || line.contains("pipeline_verifier_model")
-                    // Research and plan name their inheritance rather than the
-                    // key at the end of it — which is the more useful answer:
-                    // it is the worker's row a user has to edit to move them.
-                    || line.contains("rides the worker"),
-                "every row names its source: {line}"
-            );
-        }
-        // The model column starts at the same offset on every row.
-        let offsets: Vec<_> = lines.iter().map(|l| l.find("openrouter/")).collect();
+        assert_eq!(lines.len(), 1);
         assert!(
-            offsets.iter().all(|o| *o == offsets[0]),
-            "columns align: {lines:#?}"
+            lines[0].contains("default_model"),
+            "the row names its source: {}",
+            lines[0]
         );
+        assert!(
+            lines[0].starts_with(DEFAULT_ROLE),
+            "the row leads with the role name: {}",
+            lines[0]
+        );
+        // No trailing padding survives into the rendered line.
+        assert_eq!(lines[0], lines[0].trim_end());
     }
 }

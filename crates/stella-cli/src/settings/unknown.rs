@@ -31,9 +31,24 @@
 //!
 //! Deliberately separate from the field lists above rather than a variant
 //! inside them. Those lists are also the trusted launcher's strict vocabulary
-//! (`config::trusted_engine_config_shape_is_strict`), which fails **closed** —
-//! a benchmark posture naming a retired knob must be refused at launch, not
-//! warned about and run.
+//! (`config::trusted_engine_config_shape_is_strict`), which fails **closed**.
+//!
+//! That coupling makes retirement a two-way decision rather than one, and the
+//! list has both answers in it:
+//!
+//! - **Dropped from the field list.** The launcher then refuses a posture
+//!   naming the key. Right for a knob that bought something — an arm setting
+//!   `pipeline_max_revisions` is being charged for attempts it will not get, so
+//!   a refusal is the honest answer.
+//! - **Kept in the field list, via [`RETIRED_ENGINE_ROOT`].** The launcher
+//!   recognizes it and the walker reports it. Right for #3908's role keys,
+//!   which name a *model for a role that no longer exists* and had already been
+//!   inert for the whole life of the postures that write them — refusing now
+//!   would break every benchmark launch and re-hash every registered digest
+//!   without un-spending anything.
+//!
+//! Both paths report the key by name. The difference is only whether a launch
+//! survives it.
 
 use std::path::Path;
 
@@ -169,15 +184,105 @@ const RETIRED: &[(&str, &str)] = &[
     ),
 ];
 
+/// The retired role vocabulary (#3908), as `(dotted path, replacement)`.
+///
+/// Every entry is generated into [`RETIRED`]'s shape by [`retirement`], in all
+/// four spellings the same knob has: `agent_engine_config.<key>` and
+/// `agents.<key>` for the flat model keys, and `…agents.<persona>` for the
+/// per-persona blocks, because the JSON and TOML documents name the same block
+/// differently.
+///
+/// The replacement column is the whole point. These keys read like
+/// capabilities — an operator who set `pipeline_verifier_model` believed they
+/// had bought a second model — and the four non-worker ones bought nothing for
+/// the whole time the key existed on a workspace without the staged pipeline.
+/// Deleting them silently would leave every settings file in the wild still
+/// reading that way, so each one names the assignment that does the job now.
+const RETIRED_ROLES: &[(&str, &str, &str)] = &[
+    (
+        "worker",
+        "pipeline_worker_model",
+        "core has one role and `default_model` is its model — set that instead",
+    ),
+    (
+        "verifier",
+        "pipeline_verifier_model",
+        "assign the seat the verification plugin declares: \
+         `[seats] \"<plugin-id>/verifier\" = \"…\"`",
+    ),
+    (
+        "triage",
+        "pipeline_triage_model",
+        "assign the seat the triage plugin declares: `[seats] \"<plugin-id>/triage\" = \"…\"`",
+    ),
+    (
+        "research",
+        "pipeline_research_model",
+        "assign the seat the plugin declaring it names: `[seats] \"<plugin-id>/research\" = \"…\"`",
+    ),
+    (
+        "plan",
+        "pipeline_plan_model",
+        "assign the seat the planning plugin declares: `[seats] \"<plugin-id>/plan\" = \"…\"`",
+    ),
+];
+
+/// The retirement sentence for one of #3908's role keys, or `None`.
+///
+/// Split out of [`retirement`] because these are generated from
+/// [`RETIRED_ROLES`] rather than written out: twenty hand-written rows for
+/// five knobs in four spellings is four chances to describe the same
+/// retirement differently, and the difference would only ever be visible to
+/// the one operator whose file used the spelling nobody proofread.
+fn role_retirement(key: &str) -> Option<String> {
+    let flat = |key: &str| {
+        RETIRED_ROLES
+            .iter()
+            .find(|(_, flat, _)| *flat == key)
+            .map(|(_, _, replacement)| {
+                format!(
+                    "pinned a model for a role the core loop does not have — it was a pin on the \
+                     staged pipeline deleted in #3865 and has read nothing since. {replacement}"
+                )
+            })
+    };
+    let persona = |name: &str| {
+        RETIRED_ROLES
+            .iter()
+            .find(|(persona, _, _)| *persona == name)
+            .map(|(_, _, replacement)| {
+                format!(
+                    "configured a model, prompt, effort and params for a role the core loop does \
+                     not have — the staged pipeline that ran it was deleted in #3865. \
+                     {replacement}"
+                )
+            })
+    };
+
+    for prefix in ["agent_engine_config", "agents"] {
+        if let Some(rest) = key.strip_prefix(prefix).and_then(|r| r.strip_prefix('.')) {
+            if let Some(name) = rest.strip_prefix("agents.") {
+                return persona(name);
+            }
+            // TOML spells the persona blocks as `agents.<persona>` with no
+            // second `agents.` segment, so a bare tail is either a flat key or
+            // a persona name depending on which list claims it.
+            return flat(rest).or_else(|| persona(rest));
+        }
+    }
+    None
+}
+
 /// Why `key` is no longer read, when it is a retired key rather than a typo.
 ///
 /// `key` is one of the dotted paths [`unknown_keys_in`] and
 /// [`unknown_toml_keys_in`] return; anything else — including a genuine
 /// misspelling — is `None`.
-pub(super) fn retirement(key: &str) -> Option<&'static str> {
+pub(super) fn retirement(key: &str) -> Option<String> {
     RETIRED
         .iter()
-        .find_map(|(retired, why)| (*retired == key).then_some(*why))
+        .find_map(|(retired, why)| (*retired == key).then(|| (*why).to_string()))
+        .or_else(|| role_retirement(key))
 }
 
 /// The lines to print for the keys `found` in the file at `path`, in the order
@@ -230,11 +335,7 @@ const HOOK_EVENTS: &[&str] = &["SessionStart", "PreToolUse", "PostToolUse"];
 /// know — so a drifted copy there is a refused benchmark run.
 pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "default_model",
-    "pipeline_verifier_model",
-    "pipeline_worker_model",
-    "pipeline_triage_model",
-    "pipeline_research_model",
-    "pipeline_plan_model",
+    "seat_models",
     "allowed_models",
     "model_output_caps",
     "auto_mode",
@@ -247,10 +348,46 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "agents",
 ];
 
-/// `agent_engine_config.agents` — [`super::AgentEngineAgents`].
-pub(crate) const ENGINE_AGENT_NAMES: &[&str] = &[
-    "default", "worker", "verifier", "triage", "research", "plan",
+/// The `agent_engine_config` keys #3908 retired, still **recognized** by the
+/// trusted-launcher seam.
+///
+/// Deliberately not simply dropped from [`ENGINE_ROOT_FIELDS`], which is the
+/// shape the other two retirements above took. That allowlist is shared with
+/// `config::trusted_engine_config_shape_is_strict`, which fails **closed**, and
+/// `bench/harbor_adapter/stella_harbor/posture.py` and
+/// `arenabench/arenabench/harbor_agent.py` still *write* these keys into hashed
+/// benchmark postures. Dropping them here would refuse every benchmark launch
+/// and force a re-hash of every digest registered in `bench/READINESS.md`
+/// §8.4 — the published-numbers decision #3870 reserves for a maintainer.
+///
+/// The distinction against `pipeline_max_revisions` (removed outright, and the
+/// launcher now refuses it) is real and not a softer standard: those knobs
+/// bought *attempts*, so a posture naming one is an arm being charged for
+/// something it does not receive. These name a *model for a role that no longer
+/// exists*, and they have already been inert for the whole life of the posture
+/// that writes them — nothing has read `pipeline_verifier_model` since #3865.
+/// Refusing them now would not un-spend anything; naming them in every door
+/// they pass through is what actually ends the silence. The fail-closed
+/// tightening lands with slice 6 (#3910), once the Python stops writing them.
+///
+/// Recognized, ignored, reported — never silently accepted, and never
+/// silently dropped.
+pub(crate) const RETIRED_ENGINE_ROOT: &[&str] = &[
+    "pipeline_verifier_model",
+    "pipeline_worker_model",
+    "pipeline_triage_model",
+    "pipeline_research_model",
+    "pipeline_plan_model",
 ];
+
+/// `agent_engine_config.agents` — [`super::AgentEngineAgents`]. One key,
+/// because core has one role.
+pub(crate) const ENGINE_AGENT_NAMES: &[&str] = &["default"];
+
+/// The `agents.<persona>` names #3908 retired, still recognized by the
+/// trusted-launcher seam for [`RETIRED_ENGINE_ROOT`]'s reason.
+pub(crate) const RETIRED_ENGINE_AGENT_NAMES: &[&str] =
+    &["worker", "verifier", "triage", "research", "plan"];
 
 /// `agent_engine_config.agents.<kind>` — [`super::AgentEngineAgent`].
 pub(crate) const ENGINE_AGENT_FIELDS: &[&str] = &[
@@ -308,6 +445,12 @@ const TOML_ROOT_FIELDS: &[&str] = &[
     "providers",
     "models",
     "agents",
+    // `[seats]`, a top-level section rather than a key under `[agents]`
+    // (`toml_config::SeatsSection`). Absent from this list until #3908, which
+    // meant a `stella.toml` using the seat plane slice 0 shipped had its
+    // `[seats]` table reported as an unrecognized key — a warning telling the
+    // operator to check the spelling of a section that was working.
+    "seats",
     "tools",
     "hooks",
     "mcp",
@@ -333,21 +476,11 @@ const TOML_MCP_FIELDS: &[&str] = &["registry_url", "servers"];
 /// `agent_engine_config.agents.<name>` up one level.
 const TOML_AGENTS_FIELDS: &[&str] = &[
     "default_model",
-    "pipeline_verifier_model",
-    "pipeline_worker_model",
-    "pipeline_triage_model",
-    "pipeline_research_model",
-    "pipeline_plan_model",
     "auto_mode",
     "effort_auto",
     "reasoning_auto",
     "headless_scope_bypass",
     "default",
-    "worker",
-    "verifier",
-    "triage",
-    "research",
-    "plan",
 ];
 
 /// The unrecognized keys in the `stella.toml` at `path`.
@@ -563,6 +696,100 @@ mod tests {
         );
     }
 
+    /// **Witness (#3908), settings-file half.** A file carrying every retired
+    /// role key loads, and every one of them is reported BY NAME with the
+    /// assignment that replaces it — never as a typo, and never in silence.
+    ///
+    /// The naming is the whole deliverable. These keys read like capabilities:
+    /// an operator who wrote `pipeline_verifier_model` believed they had bought
+    /// a second model, and for the entire life of the key on a workspace
+    /// without the staged pipeline they had not. Deleting them quietly would
+    /// leave every settings file in the wild still reading that way, so the
+    /// notice has to say what the key did, that it does nothing, and what to
+    /// write instead.
+    #[test]
+    fn every_retired_role_key_is_reported_by_name_with_its_replacement() {
+        let found = scan(
+            r#"{ "agent_engine_config": {
+                   "default_model": "zai/glm-5.2",
+                   "pipeline_worker_model": "a/b",
+                   "pipeline_verifier_model": "c/d",
+                   "pipeline_triage_model": "e/f",
+                   "pipeline_research_model": "g/h",
+                   "pipeline_plan_model": "i/j",
+                   "agents": { "default": {}, "worker": {}, "verifier": {},
+                               "triage": {}, "research": {}, "plan": {} } } }"#,
+        );
+
+        // Every retired key is found — the flat five and the persona five.
+        for key in [
+            "agent_engine_config.pipeline_worker_model",
+            "agent_engine_config.pipeline_verifier_model",
+            "agent_engine_config.pipeline_triage_model",
+            "agent_engine_config.pipeline_research_model",
+            "agent_engine_config.pipeline_plan_model",
+            "agent_engine_config.agents.worker",
+            "agent_engine_config.agents.verifier",
+            "agent_engine_config.agents.triage",
+            "agent_engine_config.agents.research",
+            "agent_engine_config.agents.plan",
+        ] {
+            assert!(
+                found.contains(&key.to_string()),
+                "{key} not found: {found:?}"
+            );
+            assert!(
+                retirement(key).is_some(),
+                "{key} must carry a retirement reason, not read as a typo"
+            );
+        }
+        // ...and the two live keys are not.
+        assert!(!found.contains(&"agent_engine_config.default_model".to_string()));
+        assert!(!found.contains(&"agent_engine_config.agents.default".to_string()));
+
+        // Every line is a retirement, none is a spelling complaint, and each
+        // one names the assignment that replaces it.
+        let lines = notices("settings.json", found);
+        assert_eq!(lines.len(), 10, "one line per retired key: {lines:#?}");
+        for line in &lines {
+            assert!(
+                line.contains("is retired and reads nothing"),
+                "not phrased as a retirement: {line}"
+            );
+            assert!(
+                !line.contains("check the spelling"),
+                "a correctly-spelled retired key must never be called a typo: {line}"
+            );
+        }
+        let joined = lines.join("\n");
+        assert!(
+            joined.contains("`default_model`"),
+            "the worker's replacement is the one model core ships: {joined}"
+        );
+        assert!(
+            joined.contains("[seats]"),
+            "the other four point at the seat plane: {joined}"
+        );
+    }
+
+    /// The same keys spelled the way `stella.toml` spells them. The two
+    /// documents name the same block differently (`agent_engine_config` in
+    /// JSON is `agents` in TOML), so a retirement that only knew one spelling
+    /// would go silent for half the users who have it.
+    #[test]
+    fn the_toml_spelling_of_a_retired_role_key_is_reported_too() {
+        for key in [
+            "agents.pipeline_verifier_model",
+            "agents.verifier",
+            "agents.plan",
+        ] {
+            assert!(
+                retirement(key).is_some(),
+                "{key} must be recognized in its TOML spelling"
+            );
+        }
+    }
+
     #[test]
     fn a_fully_valid_file_is_silent() {
         let found = scan(
@@ -575,7 +802,7 @@ mod tests {
                  "ignore_gitignore": "on",
                  "agent_engine_config": {
                    "default_model": "zai/glm-5.2",
-                   "agents": { "verifier": { "provider": "openrouter",
+                   "agents": { "default": { "provider": "openrouter",
                                           "params": { "temperature": 0.2 } } }
                  }
                }"#,
@@ -612,15 +839,15 @@ mod tests {
     fn nested_engine_typos_carry_their_full_path() {
         let found = scan(
             r#"{ "agent_engine_config": {
-                   "agents": { "verifier": { "modell": "x", "params": { "temperatur": 1 } },
-                               "verifer": { "model": "y" } } } }"#,
+                   "agents": { "default": { "modell": "x", "params": { "temperatur": 1 } },
+                               "defalt": { "model": "y" } } } }"#,
         );
         assert_eq!(
             found,
             vec![
-                "agent_engine_config.agents.verifer".to_string(),
-                "agent_engine_config.agents.verifier.modell".to_string(),
-                "agent_engine_config.agents.verifier.params.temperatur".to_string(),
+                "agent_engine_config.agents.defalt".to_string(),
+                "agent_engine_config.agents.default.modell".to_string(),
+                "agent_engine_config.agents.default.params.temperatur".to_string(),
             ]
         );
     }
