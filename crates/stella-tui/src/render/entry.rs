@@ -70,21 +70,129 @@ fn reads_as_json(text: &str) -> bool {
     stella_transcript::syntax::reads_as_json(text)
 }
 
-/// Emit one body line, syntax-colored when `json`, at the detail column.
-fn push_body_line(line: &str, json: bool, width: usize, out: &mut Vec<Line<'static>>) {
-    if !json {
-        push_detail_line(line, width, out);
-        return;
+/// How a tool-result body is colored.
+///
+/// This used to be a bare `bool` meaning "is this JSON", which answered the
+/// question the deck could answer cheaply rather than the one it wanted: a
+/// body earned coloring only when the body itself opened with `{` or `[`. A
+/// `read_file` result never does — every line carries a right-aligned
+/// line-number gutter, so its first non-blank character is a digit — and the
+/// consequence was larger than "Rust is not highlighted": reading a `.json`
+/// file through `read_file` was not highlighted either, because the gutter
+/// defeated the same test (#4019). The lexers were all present and wired to
+/// diffs, markdown fences and the definition editors; nothing reached them
+/// from here.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BodyPaint {
+    /// No lexer applies — one flat muted tone, as every non-JSON body had.
+    Plain,
+    /// The body *is* a JSON document: every line lexes as JSON.
+    Json,
+    /// The body is a numbered file listing. Each line carrying the gutter has
+    /// it split off as chrome and the remainder lexed as this language;
+    /// anything else in the body — the read footer, a payload-cap notice —
+    /// stays plain, which is what it is.
+    Numbered(syntax::Lang),
+}
+
+impl BodyPaint {
+    /// Whether this body carries syntax color, and so must stay whole in the
+    /// body column.
+    ///
+    /// The collapsed fold otherwise promotes a body's first line onto the
+    /// result row, which renders in one flat style and would strip exactly the
+    /// coloring this exists to show. JSON already claimed that exemption; a
+    /// source listing has the identical claim on it.
+    fn colored(self) -> bool {
+        self != BodyPaint::Plain
     }
-    let spans: Vec<Span<'static>> = syntax::tokenize(line, syntax::Lang::Json)
-        .into_iter()
-        .map(|(text, tok)| match tok {
-            Some(t) => Span::styled(text, syntax::tok_style(t)),
-            // Punctuation and whitespace keep the body's muted base tone, so
-            // the colored tokens are what the eye lands on.
-            None => Span::styled(text, Style::new().fg(theme::MUTED)),
-        })
-        .collect();
+}
+
+/// Decide how to color a result body, from the call's target path and the body
+/// itself.
+///
+/// Order matters. A body that opens as a JSON document is JSON whatever tool
+/// produced it and whatever it was reading — that is a fact about the bytes.
+/// Only then does the path get a say, and only for a body that actually *is* a
+/// numbered listing: the same `read_file` can answer with
+/// `(file has 3 lines, offset 9 is past end)`, and lexing that as Rust because
+/// the path ended in `.rs` would color a sentence.
+///
+/// The first non-blank line decides, mirroring
+/// [`stella_transcript::syntax::body_reads_as_json`] — a numbered listing
+/// carries its gutter from its first line, so nothing later in the body can
+/// change the answer.
+fn body_paint(path: Option<&str>, full: &str) -> BodyPaint {
+    if reads_as_json(full) {
+        return BodyPaint::Json;
+    }
+    let numbered = full
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .is_some_and(|l| split_gutter(l).is_some());
+    match path.and_then(syntax::lang_from_path) {
+        Some(lang) if numbered => BodyPaint::Numbered(lang),
+        _ => BodyPaint::Plain,
+    }
+}
+
+/// Split `read_file`'s line-number gutter off a body line, as
+/// `(gutter_including_its_tab, source)`.
+///
+/// The shape is `stella-tools`' `{line_num:>6}\t{line}`: optional padding
+/// spaces, ASCII digits, one tab. Matched rather than assumed, so the lines of
+/// the same body that carry no gutter — the footer, a cap notice — say so by
+/// returning `None` instead of having six characters of their own text
+/// amputated.
+///
+/// The *first* tab is the separator; a source line may contain more, and those
+/// belong to the source.
+fn split_gutter(line: &str) -> Option<(&str, &str)> {
+    let tab = line.find('\t')?;
+    let digits = line[..tab].trim_start_matches(' ');
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(line.split_at(tab + 1))
+}
+
+/// Emit one body line at the detail column, colored per `paint`.
+fn push_body_line(line: &str, paint: BodyPaint, width: usize, out: &mut Vec<Line<'static>>) {
+    let (gutter, source, lang) = match paint {
+        BodyPaint::Plain => {
+            push_detail_line(line, width, out);
+            return;
+        }
+        BodyPaint::Json => ("", line, syntax::Lang::Json),
+        BodyPaint::Numbered(lang) => match split_gutter(line) {
+            Some((gutter, source)) => (gutter, source, lang),
+            // A line of this body that is not a numbered line — the footer.
+            None => {
+                push_detail_line(line, width, out);
+                return;
+            }
+        },
+    };
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    if !gutter.is_empty() {
+        // The gutter is chrome, not source: it wears the dimmest text tone so
+        // the eye reads down the code and not down the numbers. Lexing it with
+        // the rest would paint every line number as a literal.
+        spans.push(Span::styled(
+            gutter.to_owned(),
+            Style::new().fg(theme::TEXT_TERTIARY),
+        ));
+    }
+    spans.extend(
+        syntax::tokenize(source, lang)
+            .into_iter()
+            .map(|(text, tok)| match tok {
+                Some(t) => Span::styled(text, syntax::tok_style(t)),
+                // Punctuation and whitespace keep the body's muted base tone, so
+                // the colored tokens are what the eye lands on.
+                None => Span::styled(text, Style::new().fg(theme::MUTED)),
+            }),
+    );
     push_detail_spans(spans, width, out);
 }
 
@@ -392,12 +500,13 @@ fn entry_body(
                     .and_then(|v| serde_json::to_string_pretty(&v))
                     .unwrap_or_else(|_| raw.clone());
                 for l in pretty.lines() {
-                    push_body_line(l, true, width, out);
+                    push_body_line(l, BodyPaint::Json, width, out);
                 }
             }
         }
         TranscriptEntry::ToolResult {
             ok,
+            path,
             full,
             duration_ms,
             speculated,
@@ -453,16 +562,16 @@ fn entry_body(
                     width,
                     out,
                 );
-                let json = reads_as_json(full);
+                let paint = body_paint(path.as_deref(), full);
                 for l in full.lines() {
-                    push_body_line(l, json, width, out);
+                    push_body_line(l, paint, width, out);
                 }
             } else {
                 // With a diff below, a prose summary ("Applied edit to
                 // src/agent.rs") would restate the call row above it and the
                 // diff under it in the same breath. The row carries only its
                 // metrics and gets out of the way.
-                let json = reads_as_json(full);
+                let paint = body_paint(path.as_deref(), full);
                 let shown: Vec<&str> = if inline.is_some() {
                     Vec::new()
                 } else {
@@ -473,9 +582,13 @@ fn entry_body(
                     // gets the same window, for the reason on [`OK_PREVIEW`].
                     let budget = if *ok { OK_PREVIEW } else { FAIL_PREVIEW };
                     // `salient_line` skips a tool's preamble to the line worth
-                    // reading. A JSON body has no preamble — its first line is
-                    // the opening delimiter, and starting anywhere else shows
-                    // an object with its shape cut off.
+                    // reading. A *document* has no preamble — a JSON body's
+                    // first line is the opening delimiter, and starting
+                    // anywhere else shows an object with its shape cut off; a
+                    // numbered listing's first line is the line the caller
+                    // asked for by offset, and hunting inside it for the word
+                    // "error" would anchor a source file's preview on its own
+                    // error-handling code.
                     //
                     // Clamped so the window is never starved: anchoring on a
                     // salient line near the *end* of the output would otherwise
@@ -486,7 +599,7 @@ fn entry_body(
                     // the window back to fill keeps the salient line on screen
                     // (it is the last thing shown rather than the first) while
                     // honouring the shared preview budget.
-                    let skip = if json {
+                    let skip = if paint.colored() {
                         0
                     } else {
                         let total = full.lines().count();
@@ -494,12 +607,13 @@ fn entry_body(
                     };
                     full.lines().skip(skip).take(budget).collect()
                 };
-                // A JSON preview stays whole in the body column. Promoting its
-                // first line to the result row would strip that line's coloring
-                // (the row is one flat style) and split an object across two
+                // A colored preview stays whole in the body column. Promoting
+                // its first line to the result row would strip that line's
+                // coloring (the row is one flat style) and split an object —
+                // or a numbered listing's own gutter column — across two
                 // different columns.
                 let head: Vec<Span<'static>> = match shown.first() {
-                    Some(l) if !json => vec![Span::styled(
+                    Some(l) if !paint.colored() => vec![Span::styled(
                         l.trim_end().to_owned(),
                         if *ok {
                             dim
@@ -515,8 +629,8 @@ fn entry_body(
                     width,
                     out,
                 );
-                for l in shown.iter().skip(usize::from(!json)) {
-                    push_body_line(l.trim_end(), json, width, out);
+                for l in shown.iter().skip(usize::from(!paint.colored())) {
+                    push_body_line(l.trim_end(), paint, width, out);
                 }
                 // The "there is more" row, for a success as well as a failure —
                 // it is the only place the hidden count is stated now, and the
