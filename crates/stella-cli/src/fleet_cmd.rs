@@ -25,6 +25,12 @@
 //! reason rather than a token one; an unattended lane is precisely where the
 //! repository's published steering should still apply.
 //!
+//! The lane steers **out** as well as in (#3956): an attempt mines its own turn
+//! like every other door, into the *invocation* root's memory rather than the
+//! disposable tree it ran in — see [`mine_attempt_lesson`] for why those two
+//! roots differ, what an unattended lane is and is not allowed to teach, and
+//! how the extra call stays inside the `--spend-limit` below.
+//!
 //! The
 //! parent `--spend-limit` is enforced twice, per the fleet's contract: each child
 //! runs under its own enforced guard, and the fleet stops launching new
@@ -747,13 +753,112 @@ async fn worker_recall_block(
     memory.arm_recall_control();
     let recalled = memory.recall_block_reported(prompt).await;
     let event = recalled.telemetry_event();
-    // `memory` is dropped here: this wires the steering that reaches a worker,
-    // not the reflection that would come back out of one. A fleet attempt still
-    // mines no lessons from its own turn, unlike `stella run` and the REPL —
-    // tracked as its own change rather than smuggled into this one (#3956),
-    // because where the lesson lands is a real decision in a disposable
-    // worktree, not a wiring detail.
+    // `memory` is dropped here, and deliberately not carried to the reflection
+    // below: this handle is rooted at the attempt's own tree, and a lesson
+    // written through it would land in a database that is deleted with the
+    // worktree. [`mine_attempt_lesson`] opens its own, at the invocation root.
     (recalled.text, event)
+}
+
+/// Mine one fleet attempt's turn into the workspace's memory — the steering
+/// *out* of an unattended lane, where [`worker_recall_block`] is the steering
+/// in (#3956).
+///
+/// Every other door does this: `stella run`, `/goal` and the REPL all keep
+/// their `SessionMemory` alive past the turn and reflect on it. A fleet attempt
+/// did not, which made the fan-out asymmetric in the direction that compounds —
+/// it consumed the skills and records other doors' reflections produced and
+/// contributed none, so every fleet run left the corpus relatively staler. A
+/// wave is also the largest batch of turns a workspace ever runs and the one
+/// nobody is watching, which is where a mined lesson is worth the most.
+///
+/// **Where the lesson lands is the decision, not the wiring.** Recall is rooted
+/// at the attempt's own tree; this is rooted at `invocation_root`, and the two
+/// are genuinely different for an isolated task. Both choices are correct for
+/// their half: recall must see the tree the work happens in, while a lesson
+/// written into a linked worktree's `.stella/private/context.db` — a fresh
+/// empty file, because `.stella/private/` is gitignored and does not travel
+/// with `git worktree add` — would be deleted along with the worktree that
+/// taught it. It is the same split, for the same reason, that
+/// [`agent::open_store`] is called against `cfg.workspace_root` for the
+/// coordination store while the attempt's own telemetry store is rooted in the
+/// task tree.
+///
+/// **What an unattended lane may teach.** Opened through
+/// [`crate::memory::SessionMemory::open`] rather than `open_for_session`, so
+/// `include_workspace_skills` is false: the lesson reaches `context.db` and the
+/// proposal ledger, where recall and `stella proposals list` find it, but a
+/// worker never publishes a `SKILL.md` or a rule FILE into the operator's
+/// workspace. Promotion to something that steers every later turn stays an
+/// attended decision — and the file writes are the half that would have N
+/// concurrent workers racing one no-clobber check. The store itself takes
+/// concurrent writers by construction (WAL, `busy_timeout`), which is the same
+/// property `ab_control`'s durable counter already relies on and names a fleet
+/// among its cases; a wave that did contend past the timeout loses that
+/// lesson and nothing else, on the best-effort contract the whole learning
+/// loop already runs under — never a failed attempt.
+///
+/// **What it costs.** One model call per attempt that warrants one, on the same
+/// terms as every other door: gated by `turn_warrants_reflection` so a tool-free
+/// turn spends nothing, bounded by this child's remaining headroom, and settled
+/// back into its `BudgetGuard` — so the reflection lands inside the
+/// `--spend-limit` the fleet enforces twice (the child's own cap here, and the
+/// metered total the parent stops new waves on), rather than beside it.
+/// `STELLA_DISABLE_REFLECTION` turns it off, the same switch the one-shot door
+/// reads.
+///
+/// The report's own accounting events are dropped rather than emitted: this
+/// runs after the attempt's event channel has closed and its renderer has
+/// drained (the friction fold needs the finished journal), and a second,
+/// unframed event sequence after a stream's terminal frame is exactly what
+/// `surface_reflection` refuses to write on every machine surface. The *cost*
+/// is not dropped — it is in the guard, and from there in the attempt's
+/// execution row and the fleet ledger.
+async fn mine_attempt_lesson(
+    invocation_root: &Path,
+    cfg: &Config,
+    provider: &dyn stella_protocol::Provider,
+    evidence: crate::memory::TurnEvidence<'_>,
+    execution_id: Option<i64>,
+    budget: &mut stella_core::BudgetGuard,
+) -> Option<crate::memory::ReflectionReport> {
+    let mut memory = crate::memory::SessionMemory::open(invocation_root, false)?;
+    if let Some(id) = execution_id {
+        memory.set_execution_id(id);
+    }
+    // `quiet`, for the Command Deck's reason: with `--watch` a live grid owns
+    // the terminal, and a per-worker reflection line would be N-fold noise
+    // painted over it.
+    let mut report = crate::memory::reflect_routed(
+        &mut memory,
+        cfg,
+        provider,
+        evidence,
+        true,
+        agent::remaining_budget(budget),
+    )
+    .await;
+    agent::settle_reflection_budget(&mut report, budget);
+    Some(report)
+}
+
+/// Whether `attempt_root` and `invocation_root` are the same tree, so a row id
+/// minted in one is meaningful in the other.
+///
+/// The question is never cosmetic: execution ids are per-database autoincrement
+/// keys, so stamping an isolated attempt's id (minted in its worktree's
+/// `store.db`) onto a reflection writing into the invocation root's store would
+/// file that turn's self-review against whatever unrelated execution happens to
+/// hold the same number. Canonicalized so a shared task is recognised as one
+/// through a symlinked or non-normalized path, and falling back to plain
+/// equality when a path cannot be resolved — a false negative only drops the
+/// self-review, which is the documented `None` degradation, while a false
+/// positive would write a wrong row.
+fn same_tree(attempt_root: &Path, invocation_root: &Path) -> bool {
+    match (attempt_root.canonicalize(), invocation_root.canonicalize()) {
+        (Ok(attempt), Ok(invocation)) => attempt == invocation,
+        _ => attempt_root == invocation_root,
+    }
 }
 
 /// One worker turn in `root`, on the calling thread's runtime — the
@@ -801,6 +906,11 @@ async fn run_task(
         None => None,
     };
 
+    // Where `stella fleet` was invoked, captured before the per-worker override
+    // below takes `cfg.workspace_root` away. It is where this attempt's mined
+    // lesson lands (`mine_attempt_lesson`) — the one durable tree in a run whose
+    // task trees may not outlive it.
+    let invocation_root = cfg.workspace_root.clone();
     let mut cfg = cfg.clone();
     cfg.workspace_root = root.to_path_buf();
     let provider = agent::build_provider(&cfg)?;
@@ -883,6 +993,10 @@ async fn run_task(
     let (recall_text, recall_event) =
         worker_recall_block(root, &cfg, &active_rules, &task.prompt).await;
     crate::memory::inject_recall_block(&mut messages, recall_text);
+    // Everything the engine appends past here is this attempt's own work; the
+    // reflection gate reads only that slice, so a turn that called no tool
+    // spends no model call on being mined (`turn_warrants_reflection`).
+    let turn_start = messages.len();
     // Each child runs under its own enforced guard at the full cap; the
     // parent fleet guard additionally stops new waves on the metered sum.
     let mut budget = agent::build_budget_guard(budget_limit);
@@ -1052,6 +1166,39 @@ async fn run_task(
     drop(tx);
     let rendered = renderer.await.unwrap_or_default();
     claims.release_all();
+
+    // The steering out of this lane (#3956). Placed here, after the renderer has
+    // drained and before the spend is read: the friction fold needs the finished
+    // journal, and the guard has to have absorbed the reflection call before
+    // `spent` becomes this attempt's cost in the execution row, the fleet ledger
+    // and the parent's metered total.
+    //
+    // A stopped attempt is not mined, on the same rule the other doors apply
+    // (`should_reflect_on`): an operator's soft stop is the one outcome that is
+    // not a learning signal — nothing concluded, and the transcript ends
+    // mid-thought.
+    if !force_incomplete
+        && !agent::reflection_explicitly_disabled()
+        && crate::memory::turn_warrants_reflection(&messages[turn_start..])
+    {
+        // Folded from the journal the renderer just finished draining (#3946) —
+        // what the turn cost, how long it took, and whether it retried or
+        // looped, none of which the transcript records.
+        let friction = crate::memory::TurnFriction::from_events(&rendered.events);
+        mine_attempt_lesson(
+            &invocation_root,
+            &cfg,
+            &*provider,
+            crate::memory::TurnEvidence::with_friction(&messages, &friction, success),
+            // Only when this attempt's execution was minted in the very store
+            // the lesson is being written into — see `same_tree`.
+            same_tree(root, &invocation_root)
+                .then(|| execution.as_ref().map(|(_, id)| *id))
+                .flatten(),
+            &mut budget,
+        )
+        .await;
+    }
 
     let spent = budget.session_spent_usd();
     let _ = finalize_fleet_execution(

@@ -596,3 +596,210 @@ async fn a_fleet_worker_receives_skills_records_and_todays_date() {
          operand without this line (#2901):\n{block}"
     );
 }
+
+/// Answers one reflection call with a single lesson, at a known price.
+///
+/// The price is the point of the `cost_usd` field: a reflection that is not
+/// settled back into the attempt's guard is a call the `--spend-limit` never
+/// saw, and only a non-zero cost can tell that apart from a settled one.
+struct OneLesson;
+
+#[async_trait::async_trait]
+impl stella_protocol::Provider for OneLesson {
+    fn id(&self) -> &str {
+        "one-lesson"
+    }
+
+    async fn complete_ref(
+        &self,
+        _req: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        Ok(stella_protocol::CompletionResult {
+            upstream_provider: None,
+            text: r#"{"lessons": [
+                {"lesson": "the billing migration must be run with the ledger writer stopped",
+                 "trigger": "a task touches the billing migration",
+                 "saves": "a corrupted ledger",
+                 "kind": "domain", "domains": []}
+            ]}"#
+            .into(),
+            tool_calls: vec![],
+            usage: stella_protocol::CompletionUsage {
+                reported: true,
+                input_tokens: 1,
+                ..stella_protocol::CompletionUsage::default()
+            },
+            model: "one-lesson".into(),
+            cost_usd: 0.02,
+            finish_reason: None,
+        })
+    }
+}
+
+/// A transcript that warrants reflection — a tool call, which is what
+/// `turn_warrants_reflection` gates the whole mining call on.
+fn mined_transcript() -> Vec<CompletionMessage> {
+    let mut worked = CompletionMessage::assistant("running it");
+    worked.tool_calls = vec![stella_protocol::ToolCall {
+        call_id: "c1".into(),
+        name: "bash".into(),
+        input: serde_json::json!({"command": "make migrate"}),
+    }];
+    vec![
+        CompletionMessage::user("run the billing migration"),
+        worked,
+        CompletionMessage::assistant("migration applied"),
+    ]
+}
+
+/// **Witness (#3956).** A lesson mined by a fleet worker is readable from the
+/// primary workspace after the run — and is not written into the disposable
+/// tree the attempt ran in.
+///
+/// Fails on base, where `mine_attempt_lesson` does not exist because a fleet
+/// attempt mined nothing at all: `worker_recall_block` opened a `SessionMemory`,
+/// recalled through it and dropped it before the turn ran, so the fan-out read
+/// the workspace's accumulated lessons and contributed none back.
+///
+/// The two roots are the substance of the test, not scenery. An isolated task
+/// runs in a linked worktree whose `.stella/private/` is gitignored and
+/// therefore absent, so mining into the attempt's own root would write every
+/// lesson a wave produced into databases that are deleted with their worktrees —
+/// a learning loop that runs, costs money, and forgets. Asserting only that a
+/// lesson was recorded would pass in exactly that broken arrangement, which is
+/// why the negative half below is what makes this a witness.
+#[tokio::test]
+async fn a_worker_mines_its_lesson_into_the_invocation_root_not_its_worktree() {
+    let (td, _guard, invocation_root) = steered_workspace();
+    // The attempt's own tree — a sibling of the invocation root, standing in for
+    // the linked worktree an isolated task runs in.
+    let attempt_root = td.path().join("worktree");
+    std::fs::create_dir_all(&attempt_root).expect("attempt tree");
+    let cfg = steered_config(attempt_root.clone());
+
+    let messages = mined_transcript();
+    let friction = crate::memory::TurnFriction::default();
+    let mut budget = agent::build_budget_guard(Some(10.0));
+    budget.begin_turn();
+
+    let report = super::mine_attempt_lesson(
+        &invocation_root,
+        &cfg,
+        &OneLesson,
+        crate::memory::TurnEvidence::with_friction(&messages, &friction, true),
+        None,
+        &mut budget,
+    )
+    .await
+    .expect("the invocation root's memory opens");
+
+    assert_eq!(
+        report.recorded, 1,
+        "the scripted lesson must reach a store: {report:?}"
+    );
+
+    // The DoD's question, asked the way an operator would ask it: open the
+    // primary workspace fresh, as a later session does, and recall.
+    let after_the_run =
+        crate::memory::SessionMemory::open(&invocation_root, false).expect("primary workspace");
+    let recalled = after_the_run
+        .recall_block_reported("a task touches the billing migration")
+        .await
+        .text
+        .unwrap_or_default();
+    assert!(
+        recalled.contains("ledger writer stopped"),
+        "a lesson a worker mined must be readable from the primary workspace \
+         after the run — this is the block a later session would receive:\n{recalled}"
+    );
+
+    // The negative half: nothing was written into the tree that gets deleted.
+    let stranded = attempt_root
+        .join(".stella")
+        .join("private")
+        .join("context.db");
+    assert!(
+        !stranded.exists(),
+        "the attempt's own tree must hold no mined lesson — a worktree's context \
+         store dies with the worktree, so a lesson written there is a call the \
+         operator paid for and can never read back: {}",
+        stranded.display()
+    );
+
+    // And the call is inside the fleet's spend contract rather than beside it.
+    assert!(
+        (budget.session_spent_usd() - 0.02).abs() < f64::EPSILON,
+        "the reflection call must settle into the attempt's guard, which is what \
+         puts it inside the `--spend-limit` the fleet enforces twice: {}",
+        budget.session_spent_usd()
+    );
+}
+
+/// The guard on the cross-store hazard (#3956): an execution id means something
+/// only in the database that minted it.
+///
+/// An isolated attempt's execution is opened in its worktree's `store.db` while
+/// its lesson is written into the invocation root's, and both are
+/// autoincrement keys — so a stamped id would file the turn's self-review
+/// against whatever unrelated execution happens to hold that number. The
+/// non-normalized form is the case worth pinning: it must still be recognised
+/// as the same tree, because a false negative here silently drops the
+/// self-review of every shared-tree attempt.
+#[test]
+fn only_a_shared_tree_attempt_shares_the_invocation_root_s_row_ids() {
+    let td = tempfile::tempdir().unwrap();
+    let invocation = td.path().join("repo");
+    let worktree = td.path().join("worktrees").join("t1");
+    std::fs::create_dir_all(&invocation).unwrap();
+    std::fs::create_dir_all(&worktree).unwrap();
+
+    assert!(
+        same_tree(&invocation, &invocation),
+        "a shared-tree task runs in the invocation root itself"
+    );
+    assert!(
+        same_tree(&invocation.join("."), &invocation),
+        "a non-normalized path to the same tree must not read as a different \
+         store — that would drop the self-review it is safe to write"
+    );
+    assert!(
+        !same_tree(&worktree, &invocation),
+        "an isolated attempt's worktree is a different database; stamping its \
+         execution id into the invocation root's store writes a wrong row"
+    );
+}
+
+/// The other half of the #3956 witness: the first test calls the seam directly,
+/// so it would still pass with the production call site reverted. This asserts
+/// the wiring — that the attempt reflects, and that it does so where the cost
+/// can still reach the ledger.
+///
+/// Source-level for the reason `the_reflecting_doors_fold_a_ledger_and_reflect_with_it`
+/// (`memory/reflection/tests.rs`) is: observing it otherwise means standing up a
+/// provider, a git worktree, a store and a renderer task to watch one call. The
+/// names asserted on are real items, so a rename breaks the compile too.
+#[test]
+fn a_fleet_attempt_reflects_before_its_spend_is_read() {
+    const FLEET: &str = include_str!("../fleet_cmd.rs");
+
+    // `rfind` so we anchor on the call site, not the `async fn` definition —
+    // the definition also matches `mine_attempt_lesson(\n` but sits above both
+    // the call and the spend read, which would make the ordering assert vacuous.
+    let call = FLEET
+        .rfind("mine_attempt_lesson(\n")
+        .expect("run_task must mine the attempt's turn (#3956)");
+    let spend = FLEET
+        .find("let spent = budget.session_spent_usd();")
+        .expect("run_task must still read the attempt's spend");
+    assert!(
+        call < spend,
+        "the reflection has to settle into the guard BEFORE the spend is read — \
+         after it, the call is real money the execution row, the fleet ledger and \
+         the parent's metered total never see"
+    );
+    assert!(
+        FLEET.contains("&invocation_root,"),
+        "the lesson must be mined against the invocation root; against the \
+         attempt's root it dies with the worktree"
+    );
+}
