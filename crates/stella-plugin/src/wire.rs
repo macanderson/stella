@@ -275,7 +275,7 @@ impl WrapperResponse {
 ///   way *back* — a scope, a withheld adoption path, a witness artifact — is
 ///   resolved against this handle's root by the host and refused if it lands
 ///   anywhere else, after symlinks, on the host's own filesystem
-///   (`CandidateDenial`, and [`crate::candidate_grant`]'s [`fence`] for the
+///   (`CandidateDenial`, and this crate's `candidate_grant::fence` for the
 ///   implementation — it was the staged pipeline's
 ///   `ports::CandidateHandles` until #3865 deleted that crate). The refusal is
 ///   the host's; nothing here is a promise

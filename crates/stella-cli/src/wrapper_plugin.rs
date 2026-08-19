@@ -184,7 +184,8 @@ impl<'a> PipelineChoice<'a> {
     /// nothing left to veto, and `--pipeline <variant>` always wins.
     ///
     /// Fallible again as of #3865: `--pipeline classic`
-    /// used to resolve to [`Self::Classic`]; it now refuses with
+    /// used to resolve to a `Classic` variant (deleted in #3867); it now
+    /// refuses with
     /// [`classic_removed_message`], naming the removal and the wrapper-plugin
     /// remedy, rather than silently accepting a name that no longer runs
     /// anything. Every other name still resolves to [`Self::Plugin`] whether
