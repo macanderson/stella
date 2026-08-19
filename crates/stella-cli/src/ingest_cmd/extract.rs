@@ -70,14 +70,6 @@ pub(super) struct NamedDoc {
     pub tier: Tier,
 }
 
-/// The most of a document extraction will read, in characters.
-///
-/// Re-exported from [`super::chunk`] rather than owned here: the ceiling belongs
-/// to the slicer that enforces it, and the scan's `MAX_READ_BYTES` has to be
-/// asserted against it — a scan that hides what extraction would accept is the
-/// failure the two constants have to be compared to rule out.
-pub(super) const MAX_DOCUMENT_CHARS: usize = chunk::MAX_DOCUMENT_CHARS;
-
 /// The system prompt: the extractor's whole contract, including the two rules
 /// that keep an untrusted document from becoming an attack — atomicity and
 /// no-executables.
@@ -609,7 +601,7 @@ fn build_defaults(
 }
 
 /// The floor for the output budget: 16k, not the 4k this used to carry. A
-/// document near the old [`MAX_PROMPT_CHARS`] cap can atomize into dozens of
+/// document filling a whole slice can atomize into dozens of
 /// records, each carrying every optional field in the schema — 4k truncated
 /// mid-object on real instruction files well before reaching the closing `]`,
 /// which `parse_claims` then reported as a JSON syntax error rather than what it
@@ -1257,7 +1249,7 @@ fn digest_of(content: &str) -> String {
 /// How many characters of `content` extraction will not read.
 ///
 /// Almost always zero now: a document is divided rather than trimmed, so this is
-/// non-zero only past [`MAX_DOCUMENT_CHARS`]. The caller asks rather than holding
+/// non-zero only past `chunk::MAX_DOCUMENT_CHARS`. The caller asks rather than holding
 /// a second copy of the ceiling.
 pub(super) fn skipped_chars(content: &str) -> usize {
     chunk::dropped_chars(content)

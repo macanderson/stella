@@ -138,7 +138,13 @@ fn fences_close_on_their_own_marker_and_width() {
     let paths: Vec<_> = secs.iter().map(|s| s.path.clone()).collect();
     assert_eq!(
         paths,
-        vec![vec!["Top".to_string()], vec!["Second".to_string()]],
+        vec![
+            vec!["Top".to_string()],
+            // Nested, because `## Second` sits under `# Top` — the point here is
+            // that only two sections exist at all, the fenced `#` lines having
+            // opened none.
+            vec!["Top".to_string(), "Second".to_string()],
+        ],
         "only the two real headings open sections"
     );
 }
@@ -240,16 +246,9 @@ fn the_document_ceiling_truncates_on_a_line_and_reports_the_loss() {
     );
 }
 
-/// The ceiling is the user-visible promise the issue asked for: at least six
-/// times the 120,000-character single-call cap it replaces.
-#[test]
-fn the_ceiling_is_six_times_the_cap_it_replaces() {
-    const REPLACED_CAP: usize = 120_000;
-    assert!(
-        MAX_DOCUMENT_CHARS >= REPLACED_CAP * 6,
-        "{MAX_DOCUMENT_CHARS} is not 6x {REPLACED_CAP}"
-    );
-}
+// The ceiling being at least 6x the cap it replaces is asserted at compile time
+// in the parent module (`const _: () = assert!(…)`), not here: both sides are
+// constants, so a test would only be checking the optimizer's arithmetic.
 
 /// Below the ceiling nothing is dropped, however large — the property that makes
 /// "ingest never silently loses a document" checkable.

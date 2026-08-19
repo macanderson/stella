@@ -70,6 +70,19 @@ pub(super) const TARGET_CHARS: usize = 24_000;
 /// half the old cap was missing.
 pub(super) const MAX_DOCUMENT_CHARS: usize = 720_000;
 
+/// The single-call cap this ceiling replaces, kept only as the thing the
+/// assertion below measures against.
+const REPLACED_SINGLE_CALL_CAP: usize = 120_000;
+
+// The promise, enforced at compile time rather than by a test: whatever else
+// changes here, the whole-document ceiling never falls back toward what one call
+// can carry. A test would assert this on constants the optimizer folds anyway —
+// a build error is both stronger and honest about when it is decided.
+const _: () = assert!(
+    MAX_DOCUMENT_CHARS >= REPLACED_SINGLE_CALL_CAP * 6,
+    "the document ceiling must stay at least 6x the single-call cap it replaced"
+);
+
 /// One slice of a document, and where in the document it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Chunk {

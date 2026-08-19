@@ -148,13 +148,6 @@ impl Progress {
             let _ = task.await;
         }
     }
-
-    /// Whether this line is being redrawn in place, for a caller deciding how
-    /// often it is worth renaming.
-    #[cfg_attr(not(test), expect(dead_code, reason = "read only by the tests today"))]
-    pub(super) fn is_drawing(&self) -> bool {
-        self.drawing
-    }
 }
 
 /// Read the shared label, tolerating a poisoned lock — a progress line is not

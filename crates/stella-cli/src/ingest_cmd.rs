@@ -535,13 +535,13 @@ mod tests {
     /// counted in bytes is exactly the mismatch that hides a document.
     #[test]
     fn the_scan_never_hides_a_document_extraction_would_accept() {
-        let widest_possible_bytes = extract::MAX_DOCUMENT_CHARS as u64 * 4;
+        let widest_possible_bytes = chunk::MAX_DOCUMENT_CHARS as u64 * 4;
         assert!(
             MAX_READ_BYTES >= widest_possible_bytes,
             "the scan reads at most {MAX_READ_BYTES} bytes but extraction accepts up to \
              {} characters ({widest_possible_bytes} bytes of 4-byte codepoints) — a document \
              between the two is ingestable by name and invisible to the scan",
-            extract::MAX_DOCUMENT_CHARS,
+            chunk::MAX_DOCUMENT_CHARS,
         );
     }
 

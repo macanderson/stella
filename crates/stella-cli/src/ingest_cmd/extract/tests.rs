@@ -14,6 +14,7 @@ use stella_protocol::{
     CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason, ProviderError,
 };
 
+use super::chunk::{MAX_DOCUMENT_CHARS, TARGET_CHARS};
 use super::*;
 
 fn temp_root(name: &str) -> PathBuf {
@@ -372,10 +373,7 @@ fn the_output_budget_is_sized_to_the_document() {
         "below the floor stays at the floor"
     );
     // A full slice: the budget tracks the text sent, one token per character.
-    assert_eq!(
-        starting_output_budget(super::chunk::TARGET_CHARS),
-        super::chunk::TARGET_CHARS as u32,
-    );
+    assert_eq!(starting_output_budget(TARGET_CHARS), TARGET_CHARS as u32,);
 }
 
 /// The budget must never exceed the ceiling, whatever it is asked for — a
@@ -389,7 +387,7 @@ fn the_output_budget_never_exceeds_the_ceiling() {
         MAX_OUTPUT_TOKENS
     );
     assert!(
-        super::chunk::TARGET_CHARS as u32 <= MAX_OUTPUT_TOKENS,
+        TARGET_CHARS as u32 <= MAX_OUTPUT_TOKENS,
         "a full slice must be expressible within one reply budget, or the \
          ceiling is unreachable by construction"
     );
@@ -399,7 +397,7 @@ fn the_output_budget_never_exceeds_the_ceiling() {
     // frontier ones.
     const SMALLEST_CATALOG_OUTPUT_CEILING: u32 = 30_000;
     assert!(
-        starting_output_budget(super::chunk::TARGET_CHARS) <= SMALLEST_CATALOG_OUTPUT_CEILING,
+        starting_output_budget(TARGET_CHARS) <= SMALLEST_CATALOG_OUTPUT_CEILING,
         "a slice must fit the smallest catalog model's reply budget"
     );
 }
