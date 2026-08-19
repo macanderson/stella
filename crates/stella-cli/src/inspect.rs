@@ -182,28 +182,156 @@ pub(crate) fn run_inspect(args: &InspectArgs) -> Result<(), String> {
     }
 }
 
-/// `stella calibration` (#871, #1293) folded every recorded session's pass
-/// verdicts against the evidence that later contradicted or confirmed them —
-/// `GroundTruth`, `CalibrationReport`, `calibration_pending`, and
-/// `render_calibration` all lived in `stella_pipeline::replay`, and that
-/// crate is gone (#3865). Unlike this file's other pipeline-era callers,
-/// that module was not a clean retarget: `replay::CalibrationReport` folds
-/// `LadderInputs` (`stella_pipeline::verify`) and
-/// `independence::GraderCohorts`, both pipeline-internal — pulling this
-/// command back would mean reconstructing a verify/independence model from
-/// scratch outside the crate that owned it, not moving a self-contained
-/// type. That is a real design decision, not a mechanical one, so it is
-/// left to a human rather than guessed at under a deletion slice's compile
-/// pressure (CLAUDE.md: "'now' vs. 'right' is the maintainer's call").
-/// Tracked in #3866; the command still parses so a script invoking it fails
-/// loudly with this text instead of "unknown subcommand".
-pub(crate) fn run_calibration(_format: QueryFormat) -> Result<(), String> {
-    Err("stella calibration no longer runs anything — it read \
-         stella_pipeline::replay's ground-truth/calibration model, which was \
-         removed along with the staged pipeline crate (#3865). \
-         Re-implementing it standalone is an open design decision, tracked \
-         in https://github.com/macanderson/stella/issues/3866."
-        .to_string())
+/// `stella calibration` (#871, #1293): fold every recorded session's pass
+/// verdicts against the evidence that later contradicted or confirmed them,
+/// and report the unproven cohort's measured false-positive rate beside the
+/// deterministic one's.
+///
+/// Three passes over what already exists — no new write path, no daemon:
+///
+/// 1. Fold each session, keeping the passes it could not settle itself.
+/// 2. Build the workspace's answer key: every terminal CI verdict from
+///    **every** session (so a verdict recorded after another session ended
+///    still reaches it), plus the reverts in the git history (a human saying
+///    "this was wrong", the source #1293 added).
+/// 3. Settle what the key can reach, and leave the rest unreconciled.
+///
+/// The measurement model itself is [`crate::calibration`] — pure functions
+/// over the events, reinstated there when `stella_pipeline::replay` left the
+/// tree with the staged pipeline (#3865, #3866). This function is its I/O
+/// half and nothing else.
+pub(crate) fn run_calibration(format: QueryFormat) -> Result<(), String> {
+    use crate::calibration::ground_truth::{GroundTruth, reconcile};
+    use crate::calibration::{CalibrationReport, calibration, render_calibration};
+
+    let store = open_readonly_store()?;
+    let sessions = store
+        .event_session_ids()
+        .map_err(|e| format!("cannot enumerate recorded sessions: {e}"))?;
+    let mut total = CalibrationReport::default();
+    let mut pending = Vec::new();
+    // Seeded with the git history's reverts before any stream is read: a
+    // revert is evidence about a commit, not about a session, so it belongs
+    // to the workspace rather than to whichever stream happens to mention it.
+    let mut truth = GroundTruth::default().with_reverts(revert_targets_from_git());
+    for session_id in &sessions {
+        let journal = store
+            .session_events(session_id)
+            .map_err(|e| format!("cannot read session {session_id}: {e}"))?;
+        let events: Vec<stella_protocol::AgentEvent> =
+            journal.events.into_iter().map(|r| r.event).collect();
+        let (report, unsettled) = calibration(&events);
+        total = total.merge(report);
+        pending.extend(unsettled);
+        // Every session contributes its CI observations to the key, including
+        // the ones that arrived too late for their own stream.
+        truth = truth.with_stream(&events);
+    }
+    let settled_late = reconcile(&mut total, &pending, &truth);
+    let unreconciled = pending.len() as u32 - settled_late;
+    if matches!(format, QueryFormat::Json) {
+        return print_json(&Versioned::new(serde_json::json!({
+            "sessions": sessions.len(),
+            // "no verdict was ever recorded" and "no verdict passed" render
+            // identically in every other field, and since #3865 the first is
+            // the ordinary state of a workspace with no verification plugin
+            // installed (#3866).
+            "verdicts_observed": total.verdicts_observed,
+            "unproven_passes": total.unproven_passes,
+            "unproven_reconciled": total.unproven_reconciled,
+            "unproven_false_positives": total.unproven_false_positives,
+            "unproven_false_positive_rate": total.unproven_false_positive_rate(),
+            "deterministic_passes": total.deterministic_passes,
+            "deterministic_reconciled": total.deterministic_reconciled,
+            "deterministic_false_positives": total.deterministic_false_positives,
+            "deterministic_false_positive_rate": total.deterministic_false_positive_rate(),
+            // #1295: the uncorroborated cohort, so a decision about demanding
+            // evidence can be taken from a measured number rather than from
+            // the last run someone remembers.
+            "snapshotted_verdicts": total.snapshotted_verdicts,
+            "uncorroborated_verdicts": total.uncorroborated_verdicts,
+            "uncorroborated_rate": total.uncorroborated_rate(),
+            "unproven_passes_standing_alone": total.unproven_passes_standing_alone,
+            // #1293: the answer key's own reach — how many earlier verdicts
+            // evidence arriving after their session settled, and how many of
+            // the reconciled ones a human revert (not CI) contradicted.
+            "settled_by_late_evidence": settled_late,
+            "unreconciled_passes": unreconciled,
+            "unproven_reverted": total.unproven_reverted,
+            "deterministic_reverted": total.deterministic_reverted,
+            // #1865: the unproven cohort partitioned by who graded it. The
+            // human report has shown this since #1865; the JSON did not, so
+            // anything scripting `--format json` could not ask the question
+            // the section exists to answer.
+            "by_grader": grader_cohorts_json(&total.by_grader),
+        })));
+    }
+    println!(
+        "{} session(s) with recorded events\n{}\n  \
+         late evidence settled {settled_late} verdict(s) their own session never resolved; \
+         {unreconciled} still unreconciled",
+        sessions.len(),
+        render_calibration(&total),
+    );
+    Ok(())
+}
+
+/// The grader partition as JSON (#1865), one object per cohort with the same
+/// three counters and the same unmeasured-is-`null` rate the top-level cohorts
+/// use — so the two read identically whichever surface asks.
+fn grader_cohorts_json(
+    cohorts: &crate::calibration::independence::GraderCohorts,
+) -> serde_json::Value {
+    fn tally(t: &crate::calibration::independence::GraderTally) -> serde_json::Value {
+        serde_json::json!({
+            "passes": t.passes,
+            "reconciled": t.reconciled,
+            "false_positives": t.false_positives,
+            "false_positive_rate": t.false_positive_rate(),
+        })
+    }
+    serde_json::json!({
+        "self_graded": tally(&cohorts.self_graded),
+        "independent": tally(&cohorts.independent),
+        // Never folded into either measured cohort — a verdict that recorded
+        // no grader fact is unknown, not assumed.
+        "unknown": tally(&cohorts.unknown),
+    })
+}
+
+/// The commits this repository's history says were reverted (#1293).
+///
+/// Read-only and best-effort, exactly like every other question `stella
+/// inspect` asks: a workspace that is not a git repository, or a `git` that is
+/// not installed, contributes no revert evidence and the calibration simply has
+/// one fewer source. It never fails the command — a missing answer key is the
+/// state this is trying to improve, not an error.
+///
+/// The window is deliberately bounded. A revert contradicts a judgement made
+/// *before* it, so history older than the recorded sessions cannot settle
+/// anything, and reading the whole log of a long-lived repository would cost
+/// seconds to learn nothing.
+fn revert_targets_from_git() -> std::collections::BTreeSet<String> {
+    use crate::calibration::ground_truth::parse_revert_targets;
+
+    let Ok(root) = std::env::current_dir() else {
+        return Default::default();
+    };
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["log", "--no-merges", "-n", "2000", "--format=%B"])
+        .current_dir(&root);
+    // The same discipline as every other git spawn in this crate: a
+    // hook-exported GIT_* var must not re-target the read at another repo.
+    for var in stella_tools::exec::GIT_REPO_ENV_VARS {
+        cmd.env_remove(var);
+    }
+    let Ok(output) = cmd.output() else {
+        return Default::default();
+    };
+    if !output.status.success() {
+        return Default::default();
+    }
+    parse_revert_targets(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Open the workspace store without creating it. Mirrors `stella stats`: a

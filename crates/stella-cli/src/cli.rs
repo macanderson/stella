@@ -1056,14 +1056,16 @@ pub(crate) enum Command {
         only: inspect::RoleFilter,
     },
 
-    /// Verifier calibration: false-positive rate vs CI ground truth
+    /// Pass calibration: false-positive rate vs CI and reverts
     ///
-    /// Fold every recorded session's pass verdicts against the CI verdicts
-    /// observed after them (#871): how often did a model-verifier PASS — and,
-    /// as the comparison cohort, a deterministic ladder pass — later fail
-    /// CI? Rates are reported as unmeasured until CI ground truth exists.
-    /// Reads .stella/private/store.db only; needs no API key and never
-    /// writes.
+    /// Fold every recorded session's pass verdicts against the evidence
+    /// observed after them (#871, #1293): how often did an unproven PASS —
+    /// and, as the comparison cohort, a deterministic ladder pass — later
+    /// fail CI, or get reverted by a human? Rates are reported as unmeasured
+    /// until ground truth exists, and a workspace that recorded no verdict at
+    /// all says so rather than reporting zeroes. Reads
+    /// .stella/private/store.db and the git log only; needs no API key and
+    /// never writes.
     Calibration {
         /// Output format: text, or json under the versioned query envelope
         #[arg(long, value_enum, default_value = "text")]
