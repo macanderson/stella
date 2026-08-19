@@ -5,7 +5,7 @@
 //! current knowledge instead of scattered across the transcript.
 //!
 //! When a budget pass stubs a `read_file` result, the only statement of what
-//! that call returned leaves context, and [`super::EVICTION_STUB`] tells the
+//! that call returned leaves context, and `super`'s `EVICTION_STUB` tells the
 //! model to *re-run the tool*. Post-compaction that is the only option it has:
 //! the path is still visible in the assistant message's `tool_calls` — those
 //! are never rewritten — but as N separate call blocks scattered through the
@@ -198,10 +198,12 @@ pub fn render_digest(reads: &[DigestedRead]) -> Option<String> {
     // digest keeps the tail rather than the head.
     let kept = &reads[reads.len() - shown..];
     let mut out = String::from(READ_DIGEST_MARKER_PREFIX);
-    out.push_str("] you already read these files earlier in this session. Their output was \
+    out.push_str(
+        "] you already read these files earlier in this session. Their output was \
                   dropped to fit context, but the read happened — do not re-read one to \
                   rediscover what you already concluded from it. Re-read only if you need the \
-                  exact current bytes, or if something may have changed it since.\n");
+                  exact current bytes, or if something may have changed it since.\n",
+    );
     for read in kept {
         out.push_str(&format!("- {} (read at step {})\n", read.path, read.step));
     }

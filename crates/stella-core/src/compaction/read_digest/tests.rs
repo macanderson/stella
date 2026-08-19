@@ -357,7 +357,12 @@ fn an_empty_digest_renders_nothing() {
 /// not a string is skipped rather than panicking (invariant 5).
 #[test]
 fn a_malformed_call_input_is_skipped_not_unwrapped() {
-    for input in [json!({}), json!({ "path": 42 }), json!({ "path": "" }), json!(null)] {
+    for input in [
+        json!({}),
+        json!({ "path": 42 }),
+        json!({ "path": "" }),
+        json!(null),
+    ] {
         let messages = vec![
             CompletionMessage::system("prefix"),
             CompletionMessage {
@@ -393,7 +398,9 @@ fn a_result_aged_by_the_retention_pass_is_digested() {
     compact_and_digest(
         &mut messages,
         u64::MAX,
-        Some(RetentionPolicy { keep_recent_steps: 1 }),
+        Some(RetentionPolicy {
+            keep_recent_steps: 1,
+        }),
     );
     assert!(
         messages
