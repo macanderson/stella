@@ -170,7 +170,11 @@ impl ProgressState {
             return Self::idle();
         }
 
-        let active = hud.stage.map(stage_phase);
+        // From `host_stage`, not `stage`: the bar draws the host's own three
+        // phases, and a contributed stage has none of them (see
+        // `model::Hud::host_stage`). Reading `stage` would make a plugin's
+        // stage phase-less and snap the bar back to "plan".
+        let active = hud.host_stage.map(stage_phase);
 
         if complete {
             return Self {
@@ -568,7 +572,7 @@ mod tests {
         m.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::Stage {
-                name: stage,
+                name: stage.into(),
                 scope: stella_protocol::StageScope::Run,
             },
         });

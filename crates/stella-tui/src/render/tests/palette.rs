@@ -168,7 +168,7 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
     // rule is precisely the transcript's coarsest structure, and at that
     // contrast neither the line nor the label set into it could be read.
     assert_eq!(
-        prefix_fg(&TranscriptEntry::Stage(StageKind::Execute)),
+        prefix_fg(&TranscriptEntry::Stage(StageKind::Execute.into())),
         Some(theme::HAIRLINE_STRONG),
         "a stage opens a section rule on the louder seam",
     );

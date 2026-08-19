@@ -20,7 +20,7 @@
 use crate::ansi::strip_ansi;
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, HunkProposal, MediaJobState, MediaKind,
-    PrStatus, ScopeProposal, StageKind, StageScope, SubAgentPhase, SubAgentStatus, TaskItem,
+    PrStatus, ScopeProposal, StageKind, StageName, StageScope, SubAgentPhase, SubAgentStatus, TaskItem,
     TaskStatus, ToolOutput,
 };
 
@@ -241,8 +241,10 @@ pub enum TranscriptEntry {
     /// this when `PromptStarted` arrives so the user's message is visible
     /// inline in the transcript, matching the Crush-style conversational layout.
     User(String),
-    /// A stage boundary marker (`triage`, `plan`, `execute`, …).
-    Stage(StageKind),
+    /// A stage boundary marker (`triage`, `plan`, `execute`, …) — or a stage a
+    /// plugin contributed, under its own word. Open vocabulary, so the deck
+    /// renders a stage it has never heard of instead of dropping it.
+    Stage(StageName),
     /// Accumulated assistant natural-language output.
     Text(String),
     /// Accumulated model reasoning (rendered dimmed).
@@ -483,7 +485,24 @@ pub struct Hud {
     /// (`AgentEvent::BudgetTick::deadline_remaining_ms`), and this struct is a
     /// fold of the stream, not a reinterpretation of it.
     pub deadline_remaining_ms: Option<u64>,
-    pub stage: Option<StageKind>,
+    /// The stage the turn is in. [`StageName`], not [`StageKind`]: a
+    /// contributed stage is what the statline must be able to name.
+    pub stage: Option<StageName>,
+    /// The most recent stage that was one of **this host's own** boundaries.
+    ///
+    /// Separate from [`Hud::stage`] because the two answer different questions,
+    /// and one field cannot answer both once the vocabulary is open. `stage` is
+    /// "what is happening right now", which is what the statline says out loud.
+    /// This is "how far through its own shape the turn has got", which is what
+    /// the three-segment progress bar draws — and the bar has only the host's
+    /// three phases to draw with.
+    ///
+    /// Keeping it is what stops a contributed stage reading as a regression: a
+    /// plugin stage arriving after `execute` leaves this at `Execute`, so the
+    /// bar holds. Folding the contributed stage into the same field would make
+    /// it phase-less, and a phase-less stage falls back to phase 0 — the bar
+    /// would snap back to "plan" and claim the run had gone backwards.
+    pub host_stage: Option<StageKind>,
     pub model: Option<String>,
     /// [`Hud::spent_usd`] as it stood when the current turn began, so live turn
     /// cost is the difference. Snapshotted in [`SessionModel::push_user_prompt`]
@@ -583,7 +602,13 @@ impl SessionModel {
                 }
                 self.hud.complete = false;
                 self.hud.final_cost_usd = None;
-                self.hud.stage = Some(*name);
+                self.hud.stage = Some(name.clone());
+                // Only a host boundary moves the progress bar — see
+                // `Hud::host_stage` for why a contributed stage must leave it
+                // where it stands rather than resetting it.
+                if let Some(kind) = name.kind() {
+                    self.hud.host_stage = Some(kind);
+                }
                 // Any stage that isn't the scope-review gate itself means the
                 // engine has moved past a pending gate (approved → execute,
                 // or a later plan/verify stage) — retire it. Kept event-driven
@@ -600,7 +625,7 @@ impl SessionModel {
                 // event the human never saw. A turn-scoped stage is never an
                 // approval signal, because nobody was asked.
                 if *scope == StageScope::Run
-                    && *name != StageKind::ScopeReview
+                    && name.kind() != Some(StageKind::ScopeReview)
                     && let Some(approved) = self.pending_scope_review.take()
                 {
                     self.approved_scope = Some(approved);
@@ -609,7 +634,7 @@ impl SessionModel {
                     // and does so from the event, so replay reconstructs it.
                     self.plan.approve();
                 }
-                self.transcript.push(TranscriptEntry::Stage(*name));
+                self.transcript.push(TranscriptEntry::Stage(name.clone()));
             }
             AgentEvent::Text { text } => {
                 // The authoritative step text replaces any streamed preview
@@ -1074,7 +1099,8 @@ impl SessionModel {
             // The RUN ended — the only event that means nothing more is
             // coming, and so the only one that may settle terminal state.
             AgentEvent::RunComplete { model, cost_usd } => {
-                self.hud.stage = Some(StageKind::Complete);
+                self.hud.stage = Some(StageKind::Complete.into());
+                self.hud.host_stage = Some(StageKind::Complete);
                 self.hud.model = Some(model.clone());
                 self.hud.final_cost_usd = Some(*cost_usd);
                 self.hud.complete = true;

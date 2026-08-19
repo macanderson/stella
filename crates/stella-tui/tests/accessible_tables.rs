@@ -93,7 +93,7 @@ fn the_executions_dashboard_reads_as_labelled_records() {
     model.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
         event: AgentEvent::Stage {
-            name: StageKind::Execute,
+            name: StageKind::Execute.into(),
             scope: stella_protocol::StageScope::Run,
         },
     });

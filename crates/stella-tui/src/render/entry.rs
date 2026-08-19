@@ -264,9 +264,9 @@ fn entry_body(
             // stage dot already uses, so the rule and the dot agree about
             // which phase this is.
             push_rule(
-                stage_label(*name),
+                stage_label(name),
                 Style::new()
-                    .fg(theme::stage_rule_color(*name))
+                    .fg(theme::stage_rule_color(name))
                     .add_modifier(Modifier::BOLD),
                 width,
                 out,

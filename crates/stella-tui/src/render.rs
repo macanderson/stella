@@ -88,7 +88,7 @@ pub(crate) fn render_hud(
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled("stage ", label),
         Span::styled(
-            hud.stage.map(stage_label).unwrap_or("—").to_string(),
+            hud.stage.as_ref().map_or("—", |s| stage_label(s)).to_string(),
             Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
         ),
         Span::styled("   model ", label),

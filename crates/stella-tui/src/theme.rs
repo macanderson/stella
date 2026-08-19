@@ -844,9 +844,16 @@ pub fn status_color(status: AgentStatus) -> Color {
 /// (checking is neither activity nor a verdict), and the wind-down stages
 /// dim. `Complete` is the sole outcome here and takes success — paired with
 /// the stage *word* beside the dot, so hue never carries the meaning alone.
-pub fn stage_color(stage: stella_protocol::StageKind) -> Color {
+///
+/// A **contributed** stage — one a plugin named, which this host has no phase
+/// family for — takes [`contributed_stage_color`] instead. See there for why it
+/// is a hash rather than a guess.
+pub fn stage_color(stage: &stella_protocol::StageName) -> Color {
     use stella_protocol::StageKind as S;
-    match stage {
+    let Some(kind) = stage.kind() else {
+        return contributed_stage_color(stage.as_str());
+    };
+    match kind {
         S::Triage | S::ContextRecall | S::Research | S::Plan | S::ScopeReview | S::Witness => RUN,
         S::Execute => ACCENT,
         S::Verify | S::Verdict => TEAL,
@@ -860,6 +867,33 @@ pub fn stage_color(stage: stella_protocol::StageKind) -> Color {
     }
 }
 
+/// The categorical hues a contributed stage is hashed into.
+///
+/// Excludes, deliberately: [`ACCENT`] (brand, and the one hue that means
+/// "active" — a plugin's stage is not the brand and is not a status), [`OK`],
+/// [`WARN`] and [`BAD`] (a contributed stage would read as a verdict it never
+/// reported), and [`AMBER`], which the palette stands down at 1.06:1 against
+/// the gold accent. What remains is five categorical hues that all clear AA on
+/// [`GROUND`] and none of which can be mistaken for an outcome.
+const CONTRIBUTED_STAGE_PALETTE: [Color; 5] = [VIOLET, TEAL, MAGENTA, CITRON, ORCHID];
+
+/// A deterministic colour for a stage this host did not define.
+///
+/// **The point is stability and distinctness, not per-colour meaning** — the
+/// same contract [`agent_color`] states, reached for the same reason. The deck
+/// cannot know whether a plugin's `triage-lite` is a planning stage or a
+/// verification one, so painting it violet because the name resembles `triage`
+/// would be a claim about the turn that nothing established. Hashing says only
+/// what is true: these are different stages, and each is always the same
+/// colour wherever it appears.
+///
+/// A contributed stage can therefore collide with a host stage's hue. That is
+/// acceptable for the reason [`stage_color`]'s own doc gives — the stage *word*
+/// renders beside the dot, so hue never carries the meaning alone.
+pub fn contributed_stage_color(name: &str) -> Color {
+    CONTRIBUTED_STAGE_PALETTE[(fnv1a(name) as usize) % CONTRIBUTED_STAGE_PALETTE.len()]
+}
+
 /// The stage colour a **transcript section rule** renders in — the same phase
 /// families [`stage_color`] uses, with one deliberate divergence.
 ///
@@ -871,10 +905,14 @@ pub fn stage_color(stage: stella_protocol::StageKind) -> Color {
 /// citron instead: the brightest categorical hue there is (11.08:1), 39° clear
 /// of gold, and — like the stage it marks — the one that says the workspace
 /// changed here.
-pub fn stage_rule_color(stage: stella_protocol::StageKind) -> Color {
-    match stage {
-        stella_protocol::StageKind::Execute => CITRON,
-        other => stage_color(other),
+///
+/// A contributed stage has no such divergence to make: it never takes the
+/// accent in the first place (see [`CONTRIBUTED_STAGE_PALETTE`]), so there is
+/// no gold to move off a settled thing, and it reads the same in both places.
+pub fn stage_rule_color(stage: &stella_protocol::StageName) -> Color {
+    match stage.kind() {
+        Some(stella_protocol::StageKind::Execute) => CITRON,
+        _ => stage_color(stage),
     }
 }
 

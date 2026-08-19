@@ -482,7 +482,7 @@ mod tests {
             assert_eq!(search_hits(&t, query), vec![0], "no hit for {query:?}");
         }
         assert!(
-            entry_fields(&TranscriptEntry::Stage(stella_protocol::StageKind::Verify)).is_empty()
+            entry_fields(&TranscriptEntry::Stage(stella_protocol::StageKind::Verify.into())).is_empty()
         );
     }
 

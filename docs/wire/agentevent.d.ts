@@ -970,12 +970,9 @@ export interface ScopeProposal {
   write_globs?: string[];
 }
 
-export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+export type StageName = string;
 
 /**
- * A named point in the turn's data flow. Exactly one stage vocabulary
- * exists in this workspace — never duplicated per-crate (the TS-era
- * `StageKind` duplication this structurally forbids, L-E1).
  * Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
  *
  * Deliberately **not** `#[serde(default)]`. A default would silently claim
@@ -1222,7 +1219,13 @@ export interface VerdictEvidence {
  * compat fallback would mean hand-writing a visitor for every variant.
  */
 export type AgentEvent = {
-  name: StageKind;
+  /**
+   * Which stage. An **open** vocabulary ([`crate::StageName`]): one of
+   * [`StageKind`]'s twelve when this host emitted the boundary, or a
+   * contributed stage's own word. On the wire it is a plain string
+   * either way, so the twelve encode exactly as they always have.
+   */
+  name: StageName;
   scope: StageScope;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.

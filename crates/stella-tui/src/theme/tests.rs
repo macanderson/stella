@@ -924,7 +924,8 @@ fn a_stage_rule_is_hued_by_phase_and_never_by_verdict() {
         S::Reflect,
         S::ContextWrite,
     ] {
-        let color = stage_rule_color(stage);
+        let stage = stella_protocol::StageName::from(stage);
+        let color = stage_rule_color(&stage);
         assert_ne!(color, BAD, "{stage:?} must not read as a failure");
         assert_ne!(color, OK, "{stage:?} must not read as a settled success");
         assert_ne!(
@@ -938,17 +939,17 @@ fn a_stage_rule_is_hued_by_phase_and_never_by_verdict() {
         );
         // The statline's live dot has the same job and answers separately —
         // but only `Execute` may differ, and only in that direction.
-        if !matches!(stage, S::Execute) {
+        if stage.kind() != Some(S::Execute) {
             assert_eq!(
                 color,
-                stage_color(stage),
+                stage_color(&stage),
                 "{stage:?} must read the same in the transcript and the statline"
             );
         }
     }
-    assert_eq!(stage_rule_color(S::Complete), OK);
+    assert_eq!(stage_rule_color(&S::Complete.into()), OK);
     assert_eq!(
-        stage_color(S::Execute),
+        stage_color(&S::Execute.into()),
         ACCENT,
         "the statline's LIVE execute dot keeps the accent — that is the one \
          status gold carries"

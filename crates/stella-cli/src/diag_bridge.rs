@@ -486,11 +486,19 @@ impl DomainBridge {
 
             // ---- Stage / turn shape. ------------------------------------
             AgentEvent::Stage { name, .. } => {
-                self.emit(
-                    Level::Info,
-                    "agent.stage",
-                    self.at_seq().with("stage", stage_name(*name)),
-                );
+                // Two shapes, deliberately kept apart. A host boundary is one
+                // of a closed set and rides as the `&'static str` the
+                // exhaustive match below produces. A *contributed* stage's name
+                // is runtime text, which a diagnostic field may not hold
+                // unreviewed — so it takes the reviewed path, the same one
+                // `operator_id` takes and for the same reason: the word was
+                // chosen by whoever installed the plugin, and is never model
+                // output, file content or a path.
+                let field = match name.kind() {
+                    Some(kind) => self.at_seq().with("stage", stage_name(kind)),
+                    None => self.at_seq().with("stage", contributed_stage(name.as_str())),
+                };
+                self.emit(Level::Info, "agent.stage", field);
             }
             AgentEvent::TurnComplete { model, cost_usd } => {
                 // A turn terminator: any call still awaiting a result will
@@ -745,6 +753,27 @@ impl DomainBridge {
     pub(crate) fn finish(&self) {
         self.emit(Level::Info, "agent.stream.tally", self.tally.fields());
     }
+}
+
+/// The name of a stage a **plugin** contributed (`doc:roleless-core`).
+///
+/// Through the same reviewed hatch (§5.5) as [`operator_id`], for the same
+/// reason: a stage name is declared in the manifest of a plugin the operator
+/// chose to install, so it is configuration, not content. It cannot be model
+/// output — nothing in a turn authors it — and it is never a path.
+///
+/// Dropping it instead was the alternative, and it is the worse one: a log
+/// saying only that "some stage happened" cannot answer which stage a run
+/// spent its time in, which is the whole question `agent.stage` exists for.
+fn contributed_stage(name: &str) -> Redacted<String> {
+    Redacted::reviewed(
+        name.to_owned(),
+        note!(
+            "a stage name declared by an installed plugin's manifest and chosen by whoever wrote \
+             that plugin; never model output, file content, or a path — and without it a wrapped \
+             run's stage log cannot say which stage it was in"
+        ),
+    )
 }
 
 /// A provider or model identifier the **operator** configured.

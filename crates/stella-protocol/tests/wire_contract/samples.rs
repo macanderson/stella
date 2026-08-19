@@ -33,22 +33,18 @@ pub(crate) fn all_stage_scopes() -> Vec<StageScope> {
     vec![StageScope::Turn, StageScope::Run]
 }
 
+/// Sourced from [`StageKind::ALL`] rather than restated here.
+///
+/// It used to be a second hand-written list, which was safe only while the
+/// committed schema also enumerated the twelve — the arm-count check in
+/// `every_nested_vocabulary_is_fully_sampled` caught a list that had fallen
+/// behind. The stage field is an open string now (`doc:roleless-core`), so the
+/// schema no longer enumerates anything and that check cannot cover this
+/// vocabulary. Reading the canonical array closes the hole at the source
+/// instead: `stella_protocol::stage`'s `all_lists_every_kind_exactly_once`
+/// proves the array is total, and this corpus inherits that.
 pub(crate) fn all_stage_kinds() -> Vec<StageKind> {
-    use StageKind::*;
-    vec![
-        Triage,
-        ContextRecall,
-        Research,
-        Plan,
-        ScopeReview,
-        Witness,
-        Execute,
-        Verify,
-        Verdict,
-        Reflect,
-        ContextWrite,
-        Complete,
-    ]
+    StageKind::ALL.to_vec()
 }
 
 pub(crate) fn all_budget_modes() -> Vec<BudgetMode> {
@@ -647,8 +643,19 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
         events.extend(
             all_stage_kinds()
                 .into_iter()
-                .map(move |name| AgentEvent::Stage { name, scope }),
+                .map(move |kind| AgentEvent::Stage {
+                    name: kind.into(),
+                    scope,
+                }),
         );
+        // A contributed stage is pinned beside the host's own, because the
+        // vocabulary is open (`doc:roleless-core`) and an open field's whole
+        // risk is that only the closed half is ever exercised. This sample is
+        // what proves a plugin's own word survives the wire unchanged.
+        events.push(AgentEvent::Stage {
+            name: stella_protocol::StageName::new("triage-lite"),
+            scope,
+        });
     }
     events.extend(
         all_tool_outputs()
