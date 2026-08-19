@@ -229,7 +229,15 @@ pub fn render_digest(reads: &[DigestedRead]) -> Option<String> {
 /// driver owns the `Vec` and calls this immediately after the pass.
 pub fn apply_digest(messages: &mut Vec<CompletionMessage>) -> bool {
     let Some(rendered) = render_digest(&collect_digest(messages)) else {
-        return false;
+        // Nothing left to say — but a digest from an earlier pass may still be
+        // present, naming paths that have since been mutated (every survivor
+        // was invalidated by a `write_file`/`edit_file`/`delete_file`). Leaving
+        // it is the staleness trap this module exists to prevent: a false
+        // "already read" claim is strictly worse than a redundant read. Drop
+        // it, and report whether a byte moved.
+        let before = messages.len();
+        messages.retain(|message| !is_digest(message));
+        return messages.len() != before;
     };
     if let Some(existing) = messages.iter_mut().find(|message| is_digest(message)) {
         if existing.content == rendered {
