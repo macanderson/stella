@@ -969,7 +969,9 @@ class TestOfflineTaskSource:
         runner._launch(match, spec.contestants[0], runner.resolve_harbor(match))
         return seen["command"]
 
-    def test_an_export_is_filtered_by_bare_task_name(self, tmp_path: Path, monkeypatch):
+    def test_an_export_is_filtered_by_bare_task_name(
+        self, tmp_path: Path, monkeypatch, stella_adapter
+    ):
         """Names are namespaced by the registry, not by the task. An export on
         disk is just directories and answers to the bare name — sending the
         qualified form matches nothing and ends the match at once."""
@@ -978,7 +980,7 @@ class TestOfflineTaskSource:
         assert command[command.index("--include-task-name") + 1] == "alpha"
 
     def test_a_registry_ref_is_filtered_by_qualified_task_name(
-        self, tmp_path: Path, monkeypatch
+        self, tmp_path: Path, monkeypatch, stella_adapter
     ):
         command = self._launched_command(tmp_path, monkeypatch, export=False)
         assert "--dataset" in command and "--path" not in command

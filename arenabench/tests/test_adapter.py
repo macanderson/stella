@@ -245,7 +245,9 @@ class TestTheRigMustBeAbleToRunTheSeatItAccepts:
     def _passes(self, _interpreter: str, _roots: list[str]) -> tuple[int, str]:
         return 0, ""
 
-    def test_an_interpreter_that_cannot_import_the_seat_is_a_refusal(self) -> None:
+    def test_an_interpreter_that_cannot_import_the_seat_is_a_refusal(
+        self, stella_adapter: Path
+    ) -> None:
         problem = adapter.stella_seat_problem("/venv/bin/harbor", probe=self._fails)
         assert problem
         assert "No module named 'harbor'" in problem
@@ -254,11 +256,11 @@ class TestTheRigMustBeAbleToRunTheSeatItAccepts:
         assert "bench/harbor_adapter" in problem
         assert "uv sync" in problem
 
-    def test_a_working_interpreter_is_no_refusal(self) -> None:
+    def test_a_working_interpreter_is_no_refusal(self, stella_adapter: Path) -> None:
         assert adapter.stella_seat_problem("/venv/bin/harbor", probe=self._passes) is None
 
     def test_the_interpreter_asked_is_the_one_behind_the_harbor_script(
-        self, tmp_path: Path
+        self, tmp_path: Path, stella_adapter: Path
     ) -> None:
         """A console script's shebang is what the kernel will exec.
 
@@ -285,7 +287,7 @@ class TestTheRigMustBeAbleToRunTheSeatItAccepts:
         assert asked == [str(interpreter)]
 
     def test_a_uv_shell_wrapper_resolves_to_the_python_beside_it(
-        self, tmp_path: Path
+        self, tmp_path: Path, stella_adapter: Path
     ) -> None:
         """``uv`` writes a ``#!/bin/sh`` re-exec stub, not a Python shebang.
 
@@ -428,7 +430,7 @@ class TestTheHealthProbeStaysCheap:
     """
 
     def test_a_second_call_spends_no_subprocess(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, stella_adapter: Path
     ) -> None:
         monkeypatch.setattr(adapter, "_verdicts", {})
         calls: list[str] = []
