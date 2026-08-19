@@ -98,31 +98,70 @@ export PATH
 # A stub `gh` first on PATH keeps the demand half of `plan` and the whole of
 # `queue` off the network — the real `gh` is installed on the dev box, and
 # without the stub those cases would make live API calls and float with the
-# actual issue tracker. It answers `plan`'s two count queries from
-# $GH_FIX_P0 / $GH_FIX_BUGS and serves `queue` its raw payload from
-# $GH_FIX_QUEUE. The `:?` on the queue fixture is a tripwire: a case that
-# reaches it without declaring a fixture is a case that thought it was not
-# touching gh at all.
+# actual issue tracker. It serves one query, `issue list`, from $GH_FIX_QUEUE.
+# The `:?` is a tripwire: a case that reaches it without declaring a fixture is
+# a case that thought it was not touching gh at all.
 #
-# The `--version` arm answers a PROBE, not a query: `demand()` gates every
-# count behind `gh_available()`, which shells out to `gh --version` and reads
-# the exit status. Without this arm the stub fell through to its catch-all and
-# exited 1, so `plan` saw an empty queue and skipped the clamp entirely — the
-# three demand-rung cases below were red for that reason alone, and neither
-# the clamp nor the P0 rescue they name was ever actually exercised.
+# **One query, because the product now makes one read.** This stub used to
+# answer two more — `--label bug` and `--label bug --label P0`, counted out of
+# $GH_FIX_BUGS / $GH_FIX_P0 — because `demand()` shelled out for its two
+# numbers separately from the list `queue` ranked. #3854 (B1) folded all three
+# into a single read behind the issue port: `backlog::demand_from` now derives
+# both counts from the same ranked list, which is what stops the governor and
+# the queue holding two definitions of the word "defect" (that module's own
+# doc makes the argument). Those two arms therefore answered a question
+# nothing asks any more, and the cases that set the variables were driving a
+# retired code path — the reason three of them were red (#3877, #3891).
+# Demand is expressed as a *backlog fixture* below, which is the one input the
+# governor actually reads.
+#
+# The `--version` arm answers a PROBE, not a query: `gh_available()` shells out
+# to `gh --version` and reads the exit status. `demand()` no longer gates on it
+# (that is the degradation `demand_from` inherited and made explicit), but
+# `doctor` still probes, so the arm stays.
 STUB_BIN="$ROOT/bin"
 mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/gh" <<'SH'
 #!/bin/sh
 case "$*" in
-  *"--version"*)              echo "gh version 2.0.0 (stub)" ;;
-  *"--label bug --label P0"*) printf '%s\n' "${GH_FIX_P0:-0}" ;;
-  *"--label bug"*)            printf '%s\n' "${GH_FIX_BUGS:-0}" ;;
-  *"issue list"*)             cat "${GH_FIX_QUEUE:?stub gh: no queue fixture declared}" ;;
+  *"--version"*)  echo "gh version 2.0.0 (stub)" ;;
+  *"issue list"*) cat "${GH_FIX_QUEUE:?stub gh: no queue fixture declared}" ;;
   *) echo "stub gh: unexpected args: $*" >&2; exit 1 ;;
 esac
 SH
 chmod +x "$STUB_BIN/gh"
+
+# A backlog holding $1 defects, of which $2 carry P0, written to $3.
+#
+# `rank_defects` counts an issue as a defect when it is labelled `bug` or
+# `triage`, and `demand_from` counts P0 off the same list — so a fixture is
+# the honest way to say "the queue holds N, M of them urgent". Numbers are
+# what the governor derives, never what it is told.
+make_backlog() { # make_backlog <defects> <p0> <path>
+  local defects="$1" p0="$2" path="$3" i sep=""
+  : > "$path"
+  printf '[' >> "$path"
+  for i in $(seq 1 "$defects"); do
+    if [ "$i" -le "$p0" ]; then
+      printf '%s{"number":%d,"title":"defect %d","createdAt":"2026-08-0%dT00:00:00Z","url":"u","labels":[{"name":"bug"},{"name":"P0"}]}' \
+        "$sep" "$((900 + i))" "$i" "$(( (i % 9) + 1 ))" >> "$path"
+    else
+      printf '%s{"number":%d,"title":"defect %d","createdAt":"2026-08-0%dT00:00:00Z","url":"u","labels":[{"name":"bug"},{"name":"P2"}]}' \
+        "$sep" "$((900 + i))" "$i" "$(( (i % 9) + 1 ))" >> "$path"
+    fi
+    sep=","
+  done
+  printf ']\n' >> "$path"
+}
+
+# The supply rungs assert what the machine alone decides, so their backlog must
+# be genuinely EMPTY rather than merely unreadable. Both yield `Demand::default`
+# and both therefore skip the clamp — which is exactly why the empty fixture is
+# declared rather than left off: without it every supply case below would pass
+# whether the read worked or not, and a green that survives its own stub
+# breaking is the false green this file exists to prevent.
+EMPTY_BACKLOG="$ROOT/backlog-empty.json"
+printf '[]\n' > "$EMPTY_BACKLOG"
 
 # ---------------------------------------------------------------------------
 head_ "digest — the dedup key the termination oracle rests on"
@@ -291,7 +330,8 @@ want_plan() { # want_plan <name> <case_dir> "<tier build par scope bench batch a
       SELF_DRIVING_PROBE_CPU=8 SELF_DRIVING_PROBE_LOAD1=1 \
       SELF_DRIVING_PROBE_MEM_TOTAL_GB=16 SELF_DRIVING_PROBE_MEM_FREE_GB=8 \
       SELF_DRIVING_PROBE_DISK_FREE_GB=50 SELF_DRIVING_PROBE_ON_BATTERY=0 \
-      SELF_DRIVING_PROBE_CONTENTION=0 "$@" "$SD_SH" plan \
+      SELF_DRIVING_PROBE_CONTENTION=0 GH_FIX_QUEUE="$EMPTY_BACKLOG" \
+      "$@" "$SD_SH" plan \
     | awk -F= '
         $1 == "SELF_DRIVING_TIER"        { t = $2 }
         $1 == "SELF_DRIVING_LOCAL_BUILD" { b = $2 }
@@ -332,15 +372,28 @@ want_plan "a saturated box narrows concurrency and sheds the bench arm" \
 
 # Demand rungs: the queue can shrink the batch, and a P0 can rescue a light
 # cycle — but demand never upgrades the tier and never widens the batch.
+#
+# Each case declares the backlog it plans against, because that list is the
+# governor's actual input: `demand_from` ranks it once and folds it into an
+# open-defect count and a P0 count. Saying "3 defects, 2 of them P0" as a
+# fixture rather than as two environment counters is what keeps this ladder
+# honest about the single read #3854 unified — and is why these three were red
+# (#3877, #3891): they were setting counters for `gh` queries the product
+# stopped making.
+BACKLOG_3="$ROOT/backlog-3.json";      make_backlog 3 0 "$BACKLOG_3"
+BACKLOG_3P0="$ROOT/backlog-3p0.json";  make_backlog 3 2 "$BACKLOG_3P0"
+BACKLOG_9="$ROOT/backlog-9.json";      make_backlog 9 0 "$BACKLOG_9"
+
 want_plan "the queue clamps the batch — 3 open defects never earn a batch of 20" \
-  g-q1 "normal 1 2 impacted loop 3 deep" GH_FIX_BUGS=3
+  g-q1 "normal 1 2 impacted loop 3 deep" GH_FIX_QUEUE="$BACKLOG_3"
 want_plan "a P0 on a light tier buys a minimal fast cycle, not a skipped one" \
   g-q2 "light 1 1 impacted off 2 fast" \
-  SELF_DRIVING_PROBE_ON_BATTERY=1 GH_FIX_BUGS=3 GH_FIX_P0=2
+  SELF_DRIVING_PROBE_ON_BATTERY=1 GH_FIX_QUEUE="$BACKLOG_3P0"
 want_plan "a P0 on a healthy box changes nothing — the rescue is light-only" \
-  g-q3 "normal 1 2 impacted loop 3 deep" GH_FIX_BUGS=3 GH_FIX_P0=2
+  g-q3 "normal 1 2 impacted loop 3 deep" GH_FIX_QUEUE="$BACKLOG_3P0"
 want_plan "the light tier caps the batch at 5 whatever the queue holds" \
-  g-q4 "light 1 1 impacted off 5 deep" SELF_DRIVING_PROBE_ON_BATTERY=1 GH_FIX_BUGS=9
+  g-q4 "light 1 1 impacted off 5 deep" \
+  SELF_DRIVING_PROBE_ON_BATTERY=1 GH_FIX_QUEUE="$BACKLOG_9"
 
 # ---------------------------------------------------------------------------
 head_ "queue — ranked P0 > P1 > P2, oldest first inside a rank"
