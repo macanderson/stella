@@ -178,18 +178,25 @@ impl<'a> PipelineChoice<'a> {
     /// match below and can no longer disagree with `--pipeline`. Passing both
     /// flags together used to be a hard conflict (clap's `conflicts_with`,
     /// removed in the same change); now the deprecated flag simply has
-    /// nothing left to veto, and `--pipeline <variant>` always wins. `classic`
-    /// is accepted by name so `--pipeline classic` means what it says rather
-    /// than looking for a plugin nobody installed. Infallible — the one case
-    /// that used to fail no longer can — so callers no longer need `?` here.
-    pub(crate) fn resolve(no_pipeline: bool, pipeline: Option<&'a str>) -> Self {
+    /// nothing left to veto, and `--pipeline <variant>` always wins.
+    ///
+    /// Fallible again as of the removal census
+    /// (`docs/spec/pipeline-as-plugins.md` §7 slice 1): `--pipeline classic`
+    /// used to resolve to [`Self::Classic`]; it now refuses with
+    /// [`classic_removed_message`], naming the removal and the wrapper-plugin
+    /// remedy, rather than silently accepting a name that no longer runs
+    /// anything. Every other name still resolves to [`Self::Plugin`] whether
+    /// or not it names something installed — `bind_installed` is where a typo
+    /// is actually caught, so this refusal is scoped to exactly the one name
+    /// this crate itself used to special-case.
+    pub(crate) fn resolve(no_pipeline: bool, pipeline: Option<&'a str>) -> Result<Self, String> {
         let _ = no_pipeline; // deprecated no-op (#3381) — see `no_pipeline_deprecation_notice`
         match pipeline {
-            None => Self::Raw,
+            None => Ok(Self::Raw),
             Some(variant) if variant == crate::agent::persistence::PIPELINE_VARIANT_CLASSIC => {
-                Self::Classic
+                Err(classic_removed_message())
             }
-            Some(variant) => Self::Plugin(variant),
+            Some(variant) => Ok(Self::Plugin(variant)),
         }
     }
 

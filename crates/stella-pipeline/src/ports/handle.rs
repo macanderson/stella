@@ -81,17 +81,21 @@
 //! already assumes ("the host snapshots artifact identity at authoring time").
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
-use stella_plugin::{CandidateGrant, TestBaseline, TestPlan};
-use stella_protocol::{CandidateDenial, CandidateHandle, CandidateOp, PathDenial};
+use stella_plugin::{CandidateGrant, TestPlan};
+// Not used by this file's own code — `test_plan` (now in `stella-plugin`
+// too) builds a `TestBaseline` internally — but `ports/handle/tests.rs`'s
+// `use super::*;` still needs it in scope to assert against.
+#[cfg(test)]
+use stella_plugin::TestBaseline;
+use stella_protocol::{CandidateDenial, CandidateHandle, CandidateOp};
 
 use super::{
-    AdoptedChange, CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, TestInvocation,
-    WorkspaceError,
+    AdoptedChange, CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, WorkspaceError,
 };
 use crate::witness::parse_test_invocation;
 
@@ -387,210 +391,22 @@ impl<'p> CandidateHandles<'p> {
     }
 }
 
-/// The handle a grant over the host's own tree carries.
-///
-/// Deliberately outside `HANDLE_PREFIX`'s namespace: it names no entry in any
-/// [`CandidateHandles`] table, so every handle-addressed operation against it is
-/// [`CandidateDenial::UnknownHandle`] — which is the true answer. A tree the
-/// host is already running in has nothing to seal, no baseline to adopt
-/// against, and no workspace to remove; answering `Ok` to any of those would be
-/// the host claiming an isolation it does not have.
-pub const HOST_TREE_HANDLE: &str = "host-tree";
-
-/// Mint the [`CandidateGrant`] for a tree the host is **already running in**.
-///
-/// The shared-work-tree case, and the reason it is a function here rather than
-/// a second minting somewhere else: it resolves the root through the same
-/// `canonical_root` [`CandidateHandles::grant`] does, so a plugin's root and
-/// the fence in [`resolve_in_root`] cannot come to disagree about which
-/// directory they mean. It fails closed the same two ways — a root the
-/// filesystem will not resolve, and a root this host cannot spell as UTF-8 —
-/// rather than handing out a path nothing can be judged against.
-///
-/// What it does **not** mint is isolation. [`CandidateHandles`] is a table over
-/// [`CandidateWorkspacePort`], and the host's own tree is not a workspace that
-/// port created; registering it would need a `CandidateWorkspace` whose
-/// `seal`/`adopt`/`graft_witness` are all refusals, which is a second isolation
-/// implementation wearing the first one's trait. So the grant carries a real
-/// root and a real test plan — everything a plugin needs to *read* the tree the
-/// turn ran in and run the test there — and [`HOST_TREE_HANDLE`] addresses
-/// nothing.
-///
-/// # Errors
-///
-/// [`CandidateDenial::RootUnavailable`] for a root that cannot be resolved on
-/// this filesystem or is not valid UTF-8.
-pub fn host_tree_grant(
-    root: &str,
-    test: Option<TestPlan>,
-) -> Result<CandidateGrant, CandidateDenial> {
-    let canonical = canonical_root(root)?
-        .into_os_string()
-        .into_string()
-        .map_err(|_| CandidateDenial::RootUnavailable {
-            reason: "the workspace root is not valid UTF-8".to_string(),
-        })?;
-    Ok(CandidateGrant {
-        handle: CandidateHandle::new(HOST_TREE_HANDLE),
-        root: canonical,
-        test,
-    })
-}
-
-/// Resolve one caller-supplied relative path inside `root`, or refuse it.
-///
-/// The same funnel [`CandidateHandles::resolve_path`] runs, for a caller that
-/// holds a root rather than a handle — a driver checking the identity of a
-/// witness artifact inside the tree it granted, say. Both layers apply: see the
-/// module docs for what the answer promises and what it cannot.
-///
-/// # Errors
-///
-/// [`CandidateDenial::Path`] for a path that is absolute, traverses, is
-/// malformed or lands outside `root` once symlinks are followed;
-/// [`CandidateDenial::RootUnavailable`] for a root that will not canonicalise.
-pub fn resolve_in_root(root: &str, relative: &str) -> Result<PathBuf, CandidateDenial> {
-    fence(root, relative)
-}
-
-/// Build the wire [`TestPlan`] for one already-parsed invocation and what it
-/// reported before the turn ran.
-///
-/// The baseline is read through [`CmdOutcome::assertion_result`] and never off
-/// a raw exit code, which is the whole reason [`TestBaseline`] has a fourth
-/// variant: a run that timed out or could not find its toolchain observed no
-/// assertion, and reporting its non-zero exit as red would satisfy a flip's
-/// precondition on infrastructure noise (#860). `None` is "the host did not run
-/// it", which is a different claim again.
-#[must_use]
-pub fn test_plan(invocation: &TestInvocation, baseline: Option<&CmdOutcome>) -> TestPlan {
-    TestPlan::new(invocation.program.clone(), invocation.args.clone()).with_baseline(match baseline
-        .map(CmdOutcome::assertion_result)
-    {
-        None => TestBaseline::NotRun,
-        Some(Some(true)) => TestBaseline::Passed,
-        Some(Some(false)) => TestBaseline::Failed,
-        Some(None) => TestBaseline::Unobserved,
-    })
-}
-
-/// Both fence layers, in order: refuse what is malformed without touching the
-/// filesystem, then judge containment after the filesystem has had its say.
-fn fence(root: &str, path: &str) -> Result<PathBuf, CandidateDenial> {
-    let relative = fence_lexical(path).map_err(|reason| CandidateDenial::Path {
-        path: path.to_string(),
-        reason,
-    })?;
-    fence_on_disk(root, &relative, path)
-}
-
-/// The pure layer: is this text even capable of naming something inside a
-/// root?
-///
-/// Returns the path rebuilt from its `Normal` components, which is what the
-/// on-disk layer joins — rebuilt rather than reused so a `./` prefix cannot
-/// survive as a component.
-fn fence_lexical(path: &str) -> Result<PathBuf, PathDenial> {
-    if path.is_empty() {
-        return Err(PathDenial::Empty);
-    }
-    // A NUL cannot reach a syscall, and a backslash is a separator on one
-    // host family and an ordinary filename byte on the other. Guessing which
-    // one a plugin meant is how a fence produces different answers on
-    // different machines, so both are refused.
-    if path.contains('\0') || path.contains('\\') {
-        return Err(PathDenial::Malformed);
-    }
-    let raw = Path::new(path);
-    if raw.is_absolute() {
-        return Err(PathDenial::Absolute);
-    }
-    let mut fenced = PathBuf::new();
-    for component in raw.components() {
-        match component {
-            // `C:/x` is not absolute to a Unix host, so the drive prefix has
-            // to be recognised by hand rather than left to `is_absolute`.
-            Component::Normal(name) if fenced.as_os_str().is_empty() && is_drive_letter(name) => {
-                return Err(PathDenial::Absolute);
-            }
-            Component::Normal(name) => fenced.push(name),
-            Component::CurDir => {}
-            Component::ParentDir => return Err(PathDenial::Traversal),
-            Component::RootDir | Component::Prefix(_) => return Err(PathDenial::Absolute),
-        }
-    }
-    if fenced.as_os_str().is_empty() {
-        return Err(PathDenial::Empty);
-    }
-    Ok(fenced)
-}
-
-/// The one place a candidate root is turned into a path, for both directions:
-/// the root [`CandidateHandles::grant`] hands a plugin and the root
-/// [`fence_on_disk`] judges containment against. One resolution, so the two can
-/// never disagree about which directory the fence is around.
-fn canonical_root(root: &str) -> Result<PathBuf, CandidateDenial> {
-    Path::new(root)
-        .canonicalize()
-        .map_err(|reason| CandidateDenial::RootUnavailable {
-            reason: reason.to_string(),
-        })
-}
-
-fn is_drive_letter(name: &std::ffi::OsStr) -> bool {
-    matches!(
-        name.to_str().map(str::as_bytes),
-        Some([letter, b':']) if letter.is_ascii_alphabetic()
-    )
-}
-
-/// The filesystem layer: does this well-formed relative path still land
-/// inside the root once every symlink on the way has been followed?
-///
-/// Walks up from the joined path to the deepest component that exists,
-/// canonicalises *that*, and requires the result to sit under the canonical
-/// root — so a link in the middle of the path is judged, not just a link at
-/// the end. The non-existent tail is re-appended afterwards, which is what
-/// lets a caller resolve a path it is about to create.
-///
-/// Fails closed at every step: an unresolvable root, a broken link, or a walk
-/// that runs off the top all refuse.
-fn fence_on_disk(
-    root: &str,
-    relative: &Path,
-    as_written: &str,
-) -> Result<PathBuf, CandidateDenial> {
-    let escapes = || CandidateDenial::Path {
-        path: as_written.to_string(),
-        reason: PathDenial::EscapesRoot,
-    };
-    let canonical_root = canonical_root(root)?;
-
-    let mut existing = canonical_root.join(relative);
-    let mut tail = Vec::new();
-    // `symlink_metadata` rather than `exists`: a dangling symlink is an entry
-    // that exists, and treating it as absent would append past it instead of
-    // refusing it below.
-    while std::fs::symlink_metadata(&existing).is_err() {
-        let Some(name) = existing.file_name().map(std::ffi::OsStr::to_os_string) else {
-            return Err(escapes());
-        };
-        tail.push(name);
-        if !existing.pop() {
-            return Err(escapes());
-        }
-    }
-
-    let resolved = existing.canonicalize().map_err(|_| escapes())?;
-    if !resolved.starts_with(&canonical_root) {
-        return Err(escapes());
-    }
-    let mut full = resolved;
-    for name in tail.iter().rev() {
-        full.push(name);
-    }
-    Ok(full)
-}
+/// [`HOST_TREE_HANDLE`], [`host_tree_grant`], [`resolve_in_root`],
+/// [`test_plan`], and the path fence itself ([`fence`]/`fence_lexical`/
+/// `fence_on_disk`/`canonical_root`) moved to `stella_plugin::candidate_grant`
+/// (removal census for `stella-pipeline`,
+/// `docs/spec/pipeline-as-plugins.md` §7 slice 1, §1.5.6) — the surviving
+/// wrapper-socket driver mints the shared-work-tree grant through exactly
+/// these functions, for every currently-installed witness-flavoured plugin,
+/// and [`CandidateHandles::grant`]/[`CandidateHandles::resolve_path`] above
+/// now call the same [`fence`]/[`canonical_root`] rather than keeping a
+/// second copy — "one minting implementation and one fence rather than two"
+/// stays true across the crate boundary, not just within this file.
+/// Re-exported so every `crate::ports::HOST_TREE_HANDLE` (etc.) path in this
+/// crate still resolves unchanged.
+pub use stella_plugin::{
+    HOST_TREE_HANDLE, canonical_root, fence, host_tree_grant, resolve_in_root, test_plan,
+};
 
 #[cfg(test)]
 mod tests;

@@ -683,29 +683,13 @@ fn operation_failures_round_trip() {
     }
 }
 
-/// The lexical layer, exhaustively, without a filesystem in the way.
-#[test]
-fn the_lexical_fence_refuses_what_cannot_name_an_inside_path() {
-    assert_eq!(fence_lexical(""), Err(PathDenial::Empty));
-    assert_eq!(fence_lexical("."), Err(PathDenial::Empty));
-    assert_eq!(fence_lexical("./"), Err(PathDenial::Empty));
-    assert_eq!(fence_lexical("/etc/passwd"), Err(PathDenial::Absolute));
-    assert_eq!(fence_lexical("C:/Windows"), Err(PathDenial::Absolute));
-    assert_eq!(fence_lexical("../x"), Err(PathDenial::Traversal));
-    assert_eq!(fence_lexical("a/../../x"), Err(PathDenial::Traversal));
-    assert_eq!(fence_lexical("a/..").unwrap_err(), PathDenial::Traversal);
-    assert_eq!(fence_lexical("a\\b"), Err(PathDenial::Malformed));
-    assert_eq!(fence_lexical("a\0b"), Err(PathDenial::Malformed));
-    assert_eq!(
-        fence_lexical("./tests/../tests/x.py").unwrap_err(),
-        PathDenial::Traversal,
-        "a `..` is refused as written, never normalised away first"
-    );
-    assert_eq!(
-        fence_lexical("./tests/x.py").expect("in-root"),
-        Path::new("tests/x.py")
-    );
-}
+// The lexical layer's own test, exhaustively, without a filesystem in the
+// way (`the_lexical_fence_refuses_what_cannot_name_an_inside_path`), moved
+// with `fence_lexical` itself to `stella_plugin::candidate_grant` (removal
+// census, `docs/spec/pipeline-as-plugins.md` §7 slice 1, §1.5.6) — see that
+// crate's `mod tests` for the full assertion set, since `fence_lexical` is no
+// longer visible from this crate at all (not even re-exported: it is an
+// internal implementation step of `fence`, not part of the public boundary).
 
 /// **Witness (#3553).** A driver that runs its turn in the tree it already has
 /// can mint a grant for it — canonical root, the host's test plan — without

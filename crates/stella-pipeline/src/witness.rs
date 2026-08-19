@@ -81,21 +81,6 @@ use crate::ports::{ArtifactIdentity, RecalledFrame, TestInvocation};
 /// (the model may quote the marker while reasoning before its final answer).
 pub const TEST_COMMAND_MARKER: &str = "TEST_COMMAND:";
 
-/// Why a model- or user-authored test command was not accepted as a typed
-/// test invocation.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum TestInvocationError {
-    /// The command was empty or contained unbalanced quoting.
-    #[error("the test command is empty or has invalid quoting")]
-    InvalidSyntax,
-    /// Shell control syntax is never valid at this boundary.
-    #[error("shell operators, redirection, and expansion are not allowed in test commands")]
-    ShellSyntax,
-    /// Only explicit test-runner forms are accepted.
-    #[error("unsupported test command `{0}`")]
-    Unsupported(String),
-}
-
 /// A witness author crossed the one-new-test-file boundary.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WitnessArtifactError {
@@ -121,185 +106,15 @@ pub enum WitnessArtifactError {
     InvalidIdentity(String),
 }
 
-/// Parse a deliberately small test-command vocabulary into an enumerable
-/// program plus argv. This is quote-aware only to preserve arguments with
-/// spaces; it is not a shell parser and rejects every shell control surface.
-pub fn parse_test_invocation(command: &str) -> Result<TestInvocation, TestInvocationError> {
-    let words = split_test_words(command)?;
-    let (program, args) = words
-        .split_first()
-        .ok_or(TestInvocationError::InvalidSyntax)?;
-    let allowed = match program.as_str() {
-        "cargo" => {
-            matches!(args.first().map(String::as_str), Some("test"))
-                || matches!(
-                    (
-                        args.first().map(String::as_str),
-                        args.get(1).map(String::as_str)
-                    ),
-                    (Some("nextest"), Some("run"))
-                )
-        }
-        "pnpm" => {
-            matches!(args.first().map(String::as_str), Some("test"))
-                || matches!(
-                    (
-                        args.first().map(String::as_str),
-                        args.get(1).map(String::as_str),
-                        args.get(2).map(String::as_str)
-                    ),
-                    (Some("exec"), Some("vitest"), Some("run"))
-                )
-        }
-        "npm" | "yarn" | "bun" => matches!(args.first().map(String::as_str), Some("test")),
-        "vitest" => matches!(args.first().map(String::as_str), Some("run")),
-        "npx" | "bunx" => matches!(
-            (
-                args.first().map(String::as_str),
-                args.get(1).map(String::as_str)
-            ),
-            (Some("vitest"), Some("run"))
-        ),
-        "pytest" => true,
-        "python" | "python3" => matches!(
-            (
-                args.first().map(String::as_str),
-                args.get(1).map(String::as_str)
-            ),
-            (Some("-m"), Some("pytest"))
-        ),
-        "go" | "dotnet" => matches!(args.first().map(String::as_str), Some("test")),
-        // #2064: the runner-less-workspace witness — exactly one positional
-        // `.sh` script, the authored artifact. `split_test_words` has
-        // already rejected pipelines, redirects, substitution, and
-        // backgrounding anywhere in the line, and the script path gets the
-        // same escape checks as every other runner's arguments. `sh -c
-        // '<inline>'` is deliberately NOT accepted, although the issue
-        // sketched it: the inline program rides as one opaque argv word, so
-        // the per-argument confinement checks cannot see a path inside it —
-        // and an invocation that names no artifact could never be
-        // tamper-excluded anyway. A bare `sh` is an interactive shell, not
-        // a test.
-        "sh" => match args {
-            [script] => script.ends_with(".sh") && !script.starts_with('-'),
-            _ => false,
-        },
-        _ => false,
-    };
-    if !allowed {
-        return Err(TestInvocationError::Unsupported(command.to_string()));
-    }
-    validate_local_args(program, args)?;
-    Ok(TestInvocation {
-        program: program.clone(),
-        args: args.to_vec(),
-    })
-}
-
-fn split_test_words(command: &str) -> Result<Vec<String>, TestInvocationError> {
-    if command.contains("$(")
-        || command.contains('`')
-        || command.chars().any(|ch| {
-            matches!(
-                ch,
-                '&' | '|'
-                    | ';'
-                    | '<'
-                    | '>'
-                    | '\n'
-                    | '\r'
-                    | '\u{ff06}'
-                    | '\u{ff5c}'
-                    | '\u{ff1b}'
-                    | '\u{ff1c}'
-                    | '\u{ff1e}'
-            ) || (ch.is_whitespace() && !matches!(ch, ' ' | '\t'))
-                || ch.is_control()
-        })
-    {
-        return Err(TestInvocationError::ShellSyntax);
-    }
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut started = false;
-    let mut single = false;
-    let mut double = false;
-    let mut chars = command.chars();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\'' if !double => {
-                single = !single;
-                started = true;
-            }
-            '"' if !single => {
-                double = !double;
-                started = true;
-            }
-            '\\' if !single => {
-                let Some(escaped) = chars.next() else {
-                    return Err(TestInvocationError::InvalidSyntax);
-                };
-                current.push(escaped);
-                started = true;
-            }
-            '&' | '|' | ';' | '<' | '>' if !single && !double => {
-                return Err(TestInvocationError::ShellSyntax);
-            }
-            c if c.is_whitespace() && !single && !double => {
-                if started {
-                    words.push(std::mem::take(&mut current));
-                    started = false;
-                }
-            }
-            c => {
-                current.push(c);
-                started = true;
-            }
-        }
-    }
-    if single || double {
-        return Err(TestInvocationError::InvalidSyntax);
-    }
-    if started {
-        words.push(current);
-    }
-    Ok(words)
-}
-
-fn validate_local_args(program: &str, args: &[String]) -> Result<(), TestInvocationError> {
-    let forbidden_flags: &[&str] = match program {
-        "cargo" => &["--manifest-path", "--config", "-C", "--target-dir"],
-        "pnpm" | "npm" | "yarn" | "bun" | "vitest" | "npx" | "bunx" => &[
-            "--prefix",
-            "--dir",
-            "--cwd",
-            "-C",
-            "--userconfig",
-            "--globalconfig",
-            "--script-shell",
-        ],
-        "pytest" | "python" | "python3" => &["--rootdir", "--confcutdir", "-c", "--basetemp"],
-        "go" => &["-C", "-exec", "-toolexec", "-overlay", "-modfile"],
-        "dotnet" => &["--test-adapter-path", "--settings"],
-        _ => &[],
-    };
-    for arg in args {
-        let normalized = arg.replace('\\', "/");
-        let windows_absolute = normalized.as_bytes().get(1) == Some(&b':')
-            && normalized.as_bytes().get(2) == Some(&b'/');
-        if std::path::Path::new(arg).is_absolute()
-            || windows_absolute
-            || normalized.split('/').any(|component| component == "..")
-        {
-            return Err(TestInvocationError::ShellSyntax);
-        }
-        let flag = arg.split_once('=').map_or(arg.as_str(), |(flag, _)| flag);
-        if forbidden_flags.contains(&flag) {
-            return Err(TestInvocationError::ShellSyntax);
-        }
-    }
-    Ok(())
-}
+/// [`TestInvocationError`] and [`parse_test_invocation`] moved to
+/// `stella_plugin::candidate_grant` alongside [`TestInvocation`] itself
+/// (removal census for `stella-pipeline`,
+/// `docs/spec/pipeline-as-plugins.md` §7 slice 1, §1.5.6) — the surviving
+/// wrapper-socket driver parses the same untrusted test-command text this
+/// crate does, for every currently-installed witness-flavoured plugin.
+/// Re-exported so every `crate::witness::parse_test_invocation` (etc.) path
+/// in this crate still resolves unchanged.
+pub use stella_plugin::{TestInvocationError, parse_test_invocation};
 
 /// Validate the witness author's complete working-tree delta and return the
 /// content-hash baseline for the one accepted test artifact.
@@ -678,17 +493,13 @@ pub struct Witness {
     pub baseline_output: String,
 }
 
-/// Whether the current no-follow filesystem observation is exactly the
-/// regular, single-link artifact accepted at witness authoring time —
-/// including the location the observation was made at, so a witness that was
-/// renamed to a different path never matches even when an aliased lookup
-/// still resolves the pinned path to its unchanged bytes.
-pub fn witness_identity_matches(
-    expected: &ArtifactIdentity,
-    current: Option<&ArtifactIdentity>,
-) -> bool {
-    expected.is_regular_single_link() && current == Some(expected)
-}
+/// [`witness_identity_matches`] moved to `stella_plugin::candidate_grant`
+/// (removal census for `stella-pipeline`,
+/// `docs/spec/pipeline-as-plugins.md` §7 slice 1, §1.5.6) — the surviving
+/// wrapper-socket driver's tamper watch reuses this exact comparator, not a
+/// second copy, for every currently-installed witness-flavoured plugin.
+/// Re-exported so `crate::witness::witness_identity_matches` still resolves.
+pub use stella_plugin::witness_identity_matches;
 
 /// The closed runner vocabulary [`parse_test_invocation`] accepts, by leading
 /// program — and therefore the natural probe list for runner availability

@@ -16,7 +16,6 @@
 //! [`ApprovalGate`]). None of these belong inside the step-driver.
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use stella_core::Router;
 use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::retry::Sleeper;
@@ -129,165 +128,15 @@ pub trait RepoStatusPort: Send + Sync {
     }
 }
 
-/// Filesystem object kind captured without following symlinks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArtifactKind {
-    Regular,
-    Symlink,
-    Other,
-}
-
-/// Complete witness artifact identity. Accepted identities are regular,
-/// single-link files whose fingerprint commits to bytes, type, mode, and link
-/// count from one no-follow file handle — plus the workspace-relative path the
-/// observation was actually made at, so a renamed artifact can never equal its
-/// accepted baseline.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ArtifactIdentity {
-    /// The workspace-relative location the artifact was actually observed at,
-    /// not the path the caller asked about. The two differ exactly when the
-    /// lookup was aliased — a case-folding filesystem or a symlinked parent
-    /// directory resolving a pinned path to a file that has since been moved —
-    /// which is a rename, and a rename is tampering. Adapters that cannot
-    /// attest a location must leave this empty: an empty path can never match
-    /// an accepted one, so the identity fails closed.
-    pub path: String,
-    pub fingerprint: String,
-    pub kind: ArtifactKind,
-    pub mode: u32,
-    pub link_count: u64,
-}
-
-impl ArtifactIdentity {
-    pub fn is_regular_single_link(&self) -> bool {
-        self.kind == ArtifactKind::Regular && self.link_count == 1
-    }
-}
-
-/// How one local process run ended, as only the runner can know it (#860).
-///
-/// The runner is the sole party that can tell "the process ran and exited
-/// non-zero" from "I killed it at my deadline" or "it never started" — after
-/// the fact all three collapse into a non-zero `exit_code`. The distinction is
-/// load-bearing for verification: a timed-out baseline is not a failing
-/// assertion, and letting it lock the flip oracle onto a command that never
-/// really failed manufactures a fake fail→pass flip when the candidate merely
-/// runs faster.
-/// Serializable alongside [`CmdOutcome`]: a handle-addressed `run_test`
-/// (#3380 A10) answers an out-of-process caller with exactly this, so the
-/// infra-vs-assertion distinction survives the crossing instead of collapsing
-/// back into an exit code on the way out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CmdKind {
-    /// The process ran to completion; `exit_code` is its real exit status.
-    #[default]
-    Completed,
-    /// The runner killed the process at its own deadline. `exit_code` is
-    /// synthetic, and nothing about the command's assertions was observed.
-    TimedOut,
-    /// The machine ran out of memory and the run died for it (#1294) — the
-    /// kernel's OOM killer, or a runtime that noticed its own allocation
-    /// failure first. See [`crate::oom`] for what is observable and what is
-    /// deliberately not read.
-    ///
-    /// Its own variant rather than a shade of [`Self::Infra`] because the two
-    /// call for opposite handling. An unspawnable toolchain will be
-    /// unspawnable on every retry, so re-running it is spend with no
-    /// information; a memory kill is exactly the outcome a human would simply
-    /// *try again* (see `PipelineConfig::test_oom_retries`). Collapsing them
-    /// would make one of the two behaviors wrong, and the evidence a verifier
-    /// reads would say "infra_failure" where the honest word is
-    /// "out_of_memory".
-    OutOfMemory,
-    /// The process never produced a real exit status — it could not be
-    /// spawned (missing program/toolchain) or its wait failed.
-    Infra,
-}
-
-/// The outcome of running one local process through a pipeline runner. Output
-/// is pre-truncated by the runner (middle-out, L-S3) into head+tail tails —
-/// the pipeline never needs the full stream, only exit status and enough
-/// text to summarize evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CmdOutcome {
-    /// Process exit code. `0` conventionally means success; any non-zero is
-    /// a failure. A signal-killed process reports a conventional 128+n here
-    /// (the runner's responsibility, L-L1). Synthetic (typically `-1`) when
-    /// [`Self::kind`] is not [`CmdKind::Completed`].
-    pub exit_code: i32,
-    /// Truncated stdout tail (middle-out elision applied by the runner).
-    pub stdout_tail: String,
-    /// Truncated stderr tail.
-    pub stderr_tail: String,
-    /// Whether the process completed, timed out, or never ran (#860). Only
-    /// the runner can classify this; everyone downstream must go through
-    /// [`Self::assertion_result`] rather than re-deriving pass/fail from the
-    /// exit code.
-    pub kind: CmdKind,
-}
-
-/// One test process invocation after the untrusted command text has crossed
-/// the pipeline's strict parser. `program` and `args` are passed directly to a
-/// process builder; neither field is ever interpreted by a shell.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TestInvocation {
-    /// A known test runner executable (for example `cargo` or `pytest`).
-    pub program: String,
-    /// The exact argument vector supplied to the test runner.
-    pub args: Vec<String>,
-}
-
-impl CmdOutcome {
-    /// Whether the command succeeded (ran to completion with exit code 0).
-    /// The single place the pipeline decides pass/fail for a command — never
-    /// string-sniffing the output. A timed-out or unspawnable run never
-    /// passed, whatever its synthetic exit code says.
-    pub fn passed(&self) -> bool {
-        self.kind == CmdKind::Completed && self.exit_code == 0
-    }
-
-    /// What this run says about the command's *assertions* (#860):
-    /// `Some(true)` = ran and passed, `Some(false)` = ran and genuinely
-    /// failed, `None` = infrastructure noise (timeout, missing toolchain) —
-    /// the assertions were never observed.
-    ///
-    /// This is the only reading the flip oracle may consume. Feeding it a raw
-    /// `!passed()` is exactly the bug this type exists to close: an infra
-    /// failure would satisfy the oracle's `Failing` precondition and a later
-    /// clean run would be credited as a verified fix.
-    pub fn assertion_result(&self) -> Option<bool> {
-        match self.kind {
-            CmdKind::Completed => Some(self.exit_code == 0),
-            CmdKind::TimedOut | CmdKind::OutOfMemory | CmdKind::Infra => None,
-        }
-    }
-
-    /// A short label for evidence text when [`Self::assertion_result`] is
-    /// `None`, so a verifier reads "the run timed out" instead of a bare
-    /// failure it would treat as an assertion.
-    pub fn infra_label(&self) -> Option<&'static str> {
-        match self.kind {
-            CmdKind::Completed => None,
-            CmdKind::TimedOut => Some("timed_out"),
-            CmdKind::OutOfMemory => Some("out_of_memory"),
-            CmdKind::Infra => Some("infra_failure"),
-        }
-    }
-
-    /// Whether this run died for want of memory (#1294) — the one
-    /// unobservable outcome worth *retrying* rather than reporting, because
-    /// re-running is exactly what a human would do by hand.
-    ///
-    /// Kept beside [`Self::infra_label`] rather than open-coded at the call
-    /// sites so "which outcomes are retryable" stays one answer: a future
-    /// variant that is also worth a retry joins it here, not in five
-    /// pipeline stages.
-    #[must_use]
-    pub fn is_out_of_memory(&self) -> bool {
-        self.kind == CmdKind::OutOfMemory
-    }
-}
+/// [`ArtifactKind`], [`ArtifactIdentity`], [`CmdKind`], [`CmdOutcome`], and
+/// [`TestInvocation`] moved to `stella_plugin::candidate_grant` (removal
+/// census for `stella-pipeline`, `docs/spec/pipeline-as-plugins.md` §7 slice
+/// 1, §1.5.6) — the surviving wrapper-socket driver needs the same
+/// process-outcome shapes this crate does, for every currently-installed
+/// witness-flavoured plugin, regardless of whether the staged pipeline
+/// itself ever runs again. Re-exported so every `crate::ports::ArtifactKind`
+/// (etc.) path in this crate still resolves unchanged.
+pub use stella_plugin::{ArtifactIdentity, ArtifactKind, CmdKind, CmdOutcome, TestInvocation};
 
 /// Closed diagnostic vocabulary. Every variant maps to fixed executable argv;
 /// no caller-provided shell string crosses this boundary.
