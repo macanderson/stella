@@ -140,14 +140,6 @@ pub(crate) fn pipeline_status_result(
     }
 }
 
-/// The exit `Result` an **interactive** surface reads. The deck reports an
-/// unverified turn in its transcript and recap; ending the session over it
-/// would be a policy the user never asked for, so the advisory default is the
-/// only requirement an interactive surface applies (#2569).
-pub(crate) fn interactive_status_result(status: &PipelineStatus) -> Result<(), CliFailure> {
-    pipeline_status_result(status, VerificationRequirement::Advisory)
-}
-
 /// The fleet ledger's reading of one finished attempt: `(summary, ok, label)`.
 ///
 /// Here rather than in `fleet_cmd.rs` for the reason this module exists — the

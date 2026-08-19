@@ -68,16 +68,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use stella_core::ports::{Principal, ToolExecutor};
-use stella_core::router::CircuitBreaker;
-use stella_core::{BudgetGuard, CalibrationMap, Engine, Router, TurnOutcome};
+use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
 use stella_model::provider::Provider;
-use stella_pipeline::{
-    ContextRecallPort, McpPrefetchPort, NoContextRecall, PipelineConfig, PipelinePorts,
-    PipelineStatus,
-};
 use stella_protocol::{
-    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, ModelRef, PrStatus, TaskItem,
-    ToolOutput,
+    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, TaskItem, ToolOutput,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -112,7 +106,7 @@ mod theme_cmd;
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
 
 use crate::memory::{SessionMemory, inject_recall_block};
-use crate::runtime::{SystemClock, TokioSleeper};
+use crate::runtime::TokioSleeper;
 use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
