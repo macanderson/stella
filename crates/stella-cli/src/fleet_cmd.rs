@@ -77,7 +77,6 @@ pub async fn run_fleet(
     max_concurrency: usize,
     budget_limit: Option<f64>,
     watch: bool,
-    use_pipeline: bool,
     task_timeout: Option<std::time::Duration>,
     output_format: crate::OutputFormat,
 ) -> Result<(), String> {
@@ -163,7 +162,6 @@ pub async fn run_fleet(
         // Divide the aggregate cap across the concurrency width so one wave's
         // in-flight children can't collectively overshoot `--spend-limit`.
         per_child_budget: budget_limit.map(|b| b / max_concurrency.max(1) as f64),
-        use_pipeline,
         run_id: run_id.clone(),
         dash: worker_dash,
     };
@@ -818,181 +816,62 @@ async fn run_task(
     /// stopped prerequisite never unblocks its dependents.
     const STOPPED: &str = "stopped by fleet control (Fleet::stop_task)";
 
-    // `success`/`summary` are set by whichever path runs, then folded into
-    // the WorkerOutcome after the channel drains.
-    let (summary, success, outcome_label, force_incomplete): (String, bool, &str, bool) =
-        if use_pipeline {
-            use stella_core::router::{CircuitBreaker, Router};
-            use stella_pipeline::{PipelineConfig, PipelinePorts};
-            use stella_protocol::NoContextRecall;
-            let model_ref = stella_protocol::ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-            // Role wiring from `agent_engine_config` — fleet workers honor the
-            // same worker/triage/verifier pins and per-role overrides as `stella run`.
-            let configured = crate::config::discover_configured_providers();
-            let wiring = agent::resolve_engine_wiring(&cfg, &model_ref, &configured);
-            // Suppress stderr notices while the live grid owns the screen —
-            // they would tear the alternate-screen buffer.
-            if dash.is_none() {
-                for notice in &wiring.notices {
-                    eprintln!("  ! {notice}");
-                }
-            }
-            let resolver = agent::RoleProviderResolver::new(
-                &*provider,
-                model_ref.clone(),
-                &wiring.extra_providers,
-            );
-            let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
-            let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
-            // Rooted at the fleet worker's own worktree, so a candidate snapshot
-            // nests off that worktree's checkout, never the primary repo's.
-            // Fleet workers don't connect MCP at all today (`tools: &claims`
-            // wraps the raw registry directly) — nothing to share, hence `None`.
-            let ws_ports = agent::workspace_ports(
-                root.to_path_buf(),
-                &cfg,
-                active_rules.clone(),
-                None,
-                agent::SessionPlane::new(stella_core::EventSender::new(tx.clone())),
-            )?;
-            // #3243 Phase 3 (D5): fleet workers recall like every other
-            // pipeline surface. Memory roots at the PRIMARY workspace — the
-            // durable lessons live in its context store, and the worker's
-            // worktree is a checkout of the same tree so path anchors resolve
-            // either way — while candidate snapshots stay rooted at the
-            // worker's worktree above. No memory degrades to no frames,
-            // exactly the old behavior.
-            let memory = crate::memory::SessionMemory::open_for_session(
-                &cfg.workspace_root,
-                false,
-                &cfg.authority,
-                &active_rules,
-            );
-            let no_recall = NoContextRecall;
-            let recall: &dyn stella_protocol::ContextRecallPort = match memory.as_ref() {
-                Some(m) => m,
-                None => &no_recall,
-            };
+    // `success`/`summary` are set here, then folded into the WorkerOutcome
+    // after the channel drains.
+    let (summary, success, outcome_label, force_incomplete): (String, bool, &str, bool) = {
+        // The pause line gates the step-loop at the engine's step boundary
+        // (never mid-tool), and the stop line races the turn. `Arc` so the
+        // gate can be published to the registry as well as borrowed by the
+        // engine — a paused worker must not keep spending inside a sub-agent
+        // it dispatched, which this worker's dispatcher (installed above)
+        // makes reachable.
+        let gate: Arc<WatchGate> = Arc::new(WatchGate(pause));
+        let _controls = registry
+            .attach_turn_controls(stella_core::ports::TurnControls::none().with_gate(gate.clone()));
+        let raced = {
             let hook_runner = ShellHookRunner;
-            let ports = PipelinePorts {
-                router: &router,
-                providers: &resolver,
-                tools: &permitted,
-                recall,
-                repo: &ws_ports.repo_structure,
-                repo_status: &ws_ports.repo_status,
-                diagnostics: &ws_ports.diagnostic_runner,
-                tests: &ws_ports.test_runner,
-                lint: None,
-                mutation: Some(&ws_ports.mutation_probe),
-                coverage: Some(&ws_ports.coverage_probe),
-                approvals: &agent::HEADLESS_APPROVAL_GATE,
-                sleeper: &TokioSleeper,
-                hooks: cfg
-                    .hooks
-                    .as_ref()
-                    .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
-                candidate_workspaces: Some(&ws_ports.candidate_workspaces),
-                mcp_prefetch: None,
-                // Headless / fleet: no concurrent input channel to steer from.
-                steering: None,
-            };
-            let config = PipelineConfig {
-                engine: agent::pipeline_engine_config_for(&cfg, &wiring.worker_model),
-                role_overrides: wiring.role_overrides.clone(),
-                headless: true,
-                headless_bypass_scope_review: agent::HEADLESS_SCOPE_REVIEW_BYPASS,
-                ..agent::apply_pipeline_tuning(&cfg, PipelineConfig::default())
-            };
-            // The pause gate, honored on the pipeline path too: the pipeline
-            // attaches it to every engine it builds (execute/revise turns,
-            // the witness author) and parks its management calls behind it,
-            // so `Fleet::pause_task` reaches a pipeline-driven worker at the
-            // same safe step boundary the raw path always had. Published to
-            // the registry as well, so a paused worker's sub-agents park too.
-            let gate: Arc<WatchGate> = Arc::new(WatchGate(pause));
-            let _controls = registry.attach_turn_controls(
-                stella_core::ports::TurnControls::none().with_gate(gate.clone()),
-            );
-            let pipeline =
-                crate::resume_frame::pipeline(&cfg.durability, ports, tx.clone(), config)
-                    .with_turn_gate(gate.as_ref())
-                    .with_calibration(&calibration);
-            // The system prompt + task prompt are already in `messages`; the
-            // pipeline appends its own volatile recall+goal message, so pass the
-            // raw task prompt as the goal (the pipeline never re-reads `messages`
-            // for its goal — it takes `task.prompt` directly).
-            // The stop line races the whole staged run — the future drops at
-            // its next await point, the same clean cancel the raw path gets.
-            let raced = tokio::select! {
-                result = pipeline.run(&task.prompt, &mut messages, &mut budget) => {
-                    Raced::Outcome(result)
+            let mut engine = Engine::with_sleeper(
+                &*provider,
+                &permitted,
+                agent::engine_config_for(&cfg),
+                &TokioSleeper,
+            )
+            .with_gate(gate.as_ref());
+            if let Some(hooks) = &cfg.hooks {
+                engine = engine.with_hooks(hooks, &hook_runner);
+            }
+            // A fleet worker owns its lane's stage vocabulary; the engine
+            // emits no `Stage` of its own (#3416). The opener is here; the
+            // closer rides `worker_event_sender` below, ahead of the
+            // engine's `TurnComplete` (#3428).
+            let _ = tx.send(AgentEvent::Stage {
+                name: stella_protocol::StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
+            });
+            // A fleet worker owns its run (#3379) — no pipeline above it, so
+            // the run's terminator is this lane's to emit. It is sent once
+            // below, gated on the worker's own `success` flag, rather than
+            // sealed on drop here: a cancelled or aborted worker must end on
+            // `Error` alone, and only the code after the race knows which of
+            // the three ways this lane ended.
+            let worker = worker_event_sender(&tx);
+            tokio::select! {
+                outcome = engine.run_turn_with_sender(&mut messages, &mut budget, &worker) => {
+                    Raced::Outcome(outcome)
                 }
                 _ = stop_wait => Raced::Stopped,
-            };
-            match raced {
-                Raced::Outcome(Ok(outcome)) => {
-                    let (text, ok, label) = crate::agent::outcome::fleet_attempt(&outcome);
-                    (truncate(&text), ok, label, false)
-                }
-                Raced::Outcome(Err(e)) => (truncate(&e.to_string()), false, "error", true),
-                Raced::Stopped => (STOPPED.to_string(), false, "cancelled", true),
-            }
-        } else {
-            // The pause line gates the raw step-loop at the engine's step
-            // boundary (never mid-tool), and the stop line races the turn.
-            // `Arc` so the gate can be published to the registry as well as
-            // borrowed by the engine — a paused worker must not keep spending
-            // inside a sub-agent it dispatched, which this worker's dispatcher
-            // (installed above) makes reachable.
-            let gate: Arc<WatchGate> = Arc::new(WatchGate(pause));
-            let _controls = registry.attach_turn_controls(
-                stella_core::ports::TurnControls::none().with_gate(gate.clone()),
-            );
-            let raced = {
-                let hook_runner = ShellHookRunner;
-                let mut engine = Engine::with_sleeper(
-                    &*provider,
-                    &permitted,
-                    agent::engine_config_for(&cfg),
-                    &TokioSleeper,
-                )
-                .with_gate(gate.as_ref());
-                if let Some(hooks) = &cfg.hooks {
-                    engine = engine.with_hooks(hooks, &hook_runner);
-                }
-                // A fleet worker owns its lane's stage vocabulary; the engine
-                // emits no `Stage` of its own (#3416). The opener is here; the
-                // closer rides `worker_event_sender` below, ahead of the
-                // engine's `TurnComplete` (#3428).
-                let _ = tx.send(AgentEvent::Stage {
-                    name: stella_protocol::StageKind::Execute,
-                    scope: stella_protocol::StageScope::Run,
-                });
-                // A fleet worker owns its run (#3379) — no pipeline above it,
-                // so the run's terminator is this lane's to emit. It is sent
-                // once below, gated on the worker's own `success` flag, rather
-                // than sealed on drop here: a cancelled or aborted worker must
-                // end on `Error` alone, and only the code after the race knows
-                // which of the three ways this lane ended.
-                let worker = worker_event_sender(&tx);
-                tokio::select! {
-                    outcome = engine.run_turn_with_sender(&mut messages, &mut budget, &worker) => {
-                        Raced::Outcome(outcome)
-                    }
-                    _ = stop_wait => Raced::Stopped,
-                }
-            };
-            match raced {
-                Raced::Outcome(TurnOutcome::Completed { text, .. }) => {
-                    (truncate(&text), true, "completed", false)
-                }
-                Raced::Outcome(TurnOutcome::Aborted { reason, .. }) => {
-                    (truncate(&reason), false, "aborted", false)
-                }
-                Raced::Stopped => (STOPPED.to_string(), false, "cancelled", true),
             }
         };
+        match raced {
+            Raced::Outcome(TurnOutcome::Completed { text, .. }) => {
+                (truncate(&text), true, "completed", false)
+            }
+            Raced::Outcome(TurnOutcome::Aborted { reason, .. }) => {
+                (truncate(&reason), false, "aborted", false)
+            }
+            Raced::Stopped => (STOPPED.to_string(), false, "cancelled", true),
+        }
+    };
     // One task is one run on its own stream, so this is its terminator
     // (#3398). `success` is the worker's own flag, decided just above.
     if success {
