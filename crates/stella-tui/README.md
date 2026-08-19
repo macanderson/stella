@@ -49,7 +49,17 @@ new dependency.
 ## Boundary — does this change belong here?
 
 This crate owns what a terminal shows and what a keypress means, and nothing
-upstream of that. The decision rule: if your change can be written as a pure
+upstream of that.
+
+**One exception is worth stating, because it points the other way:** a policy
+that *every* transcript surface must answer identically — how much of a tool
+result a collapsed fold shows, how a JSON body is lexed for colouring — lives
+in [`stella-transcript`](../stella-transcript/README.md), which this crate
+depends on. Both of those started here, and both meant the Command Deck and an
+exported transcript rendered the same run differently (#3644). The paint is
+still this crate's: `theme::SYNTAX_*` and the `Style` a token class resolves to
+need ratatui and stay here. The *decision* does not. If your change is a number
+or a rule the Observatory would also have to know, it belongs downstairs. The decision rule: if your change can be written as a pure
 fold — a function from the inbound `AgentEvent` / `Inbound` stream (plus
 `DeckUi` interaction state) to a `ratatui` buffer or an outbound
 `WorkspaceInput` — it belongs here. Views, keybindings, cards, overlays,

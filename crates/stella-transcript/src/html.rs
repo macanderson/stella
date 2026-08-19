@@ -17,6 +17,7 @@ use crate::digest::{self, Chip};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::FoldState;
 use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, ToolKind, Turn};
+use crate::syntax;
 use crate::word::Span;
 
 /// The stylesheet. Inlined rather than linked because the Observatory serves
@@ -308,6 +309,11 @@ fn args_toggle(out: &mut String, call: &Call) {
 fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: usize, si: usize) {
     let numbered = matches!(call.tool, ToolKind::ReadFile);
     let fold = digest::fold_output(&call.output, &call.header_object);
+    // Decided once, from the whole body, so the head, the hidden middle and the
+    // tail cannot disagree — and from the *body* rather than per line, because a
+    // JSON object's inner lines do not start with a delimiter. The Command Deck
+    // asks the same question of the same shared predicate (#3644).
+    let json = syntax::body_reads_as_json(&fold.body);
     let node = NodeId::Output { turn: ti, step: si };
     let open = state.is_open(run, node);
 
@@ -319,7 +325,7 @@ fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: 
     }
 
     let _ = write!(out, "<div class=\"out\"><pre>");
-    emit_lines(out, &fold.head, numbered, 1);
+    emit_lines(out, &fold.head, numbered, json, 1);
     out.push_str("</pre></div>");
 
     if fold.has_more() {
@@ -334,7 +340,7 @@ fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: 
         let hidden_start = fold.head.len();
         let hidden_end = fold.body.len() - fold.tail.len();
         let hidden = &fold.body[hidden_start.min(hidden_end)..hidden_end];
-        emit_lines(out, hidden, numbered, hidden_start + 1);
+        emit_lines(out, hidden, numbered, json, hidden_start + 1);
         out.push_str("</pre></div></details>");
     }
 
@@ -344,18 +350,69 @@ fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: 
             out,
             &fold.tail,
             numbered,
+            json,
             call.output.lines.len() - fold.tail.len() + 1,
         );
         out.push_str("</pre></div>");
     }
 }
 
-fn emit_lines(out: &mut String, lines: &[String], numbered: bool, start: usize) {
+/// Emit result-body lines, syntax-coloured when `json`.
+///
+/// The colouring is the one thing this renderer does that the character grid
+/// cannot do identically — HTML has classes where a terminal cell has a single
+/// foreground — so what the two share is the *lexer*, not the mechanism
+/// (`syntax::json_runs`). Both therefore break a line into the same runs and
+/// classify each one the same way; only the paint differs. That is the honest
+/// reading of "one information model, two renderers", and it is what #3644
+/// asked for: the grid and the page had been sharing neither.
+fn emit_lines(out: &mut String, lines: &[String], numbered: bool, json: bool, start: usize) {
     for (offset, line) in lines.iter().enumerate() {
         if numbered {
             let _ = write!(out, "<span class=\"ln\">{:>4}</span>  ", start + offset);
         }
-        let _ = writeln!(out, "{}", escape(line));
+        if json {
+            emit_json_line(out, line);
+            out.push('\n');
+        } else {
+            let _ = writeln!(out, "{}", escape(line));
+        }
+    }
+}
+
+/// One JSON line as classified spans.
+///
+/// Untagged runs are written bare rather than wrapped in a no-op span, so the
+/// common case — punctuation and indentation — costs no markup at all. The
+/// lexer's losslessness is what makes that safe: concatenating the runs
+/// reproduces the line, so nothing is dropped by not wrapping it.
+fn emit_json_line(out: &mut String, line: &str) {
+    for (text, tok) in syntax::json_runs(line) {
+        match tok {
+            Some(t) => {
+                let _ = write!(
+                    out,
+                    "<span class=\"{}\">{}</span>",
+                    tok_class(t),
+                    escape(&text)
+                );
+            }
+            None => out.push_str(&escape(&text)),
+        }
+    }
+}
+
+/// The CSS class for a token class.
+///
+/// Short names because a large tool result multiplies them by every run on
+/// every line; `transcript.css` carries the matching rules beside the palette
+/// they draw from.
+fn tok_class(t: syntax::Tok) -> &'static str {
+    match t {
+        syntax::Tok::Keyword => "tk",
+        syntax::Tok::Str => "ts",
+        syntax::Tok::Number => "tn",
+        syntax::Tok::Comment => "tc",
     }
 }
 

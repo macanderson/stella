@@ -1,6 +1,14 @@
 name: diff-view-parity
 
-# The diff view policy has two implementations, and they must not drift.
+# The transcript's rendering policies have two implementations each, and they
+# must not drift. Two are guarded here; the workflow keeps its original name so
+# a run history stays continuous.
+#
+#   1. the diff *view* policy — how much of a diff is drawn, and which part;
+#   2. word-level *highlighting* — which spans of a modified line pair get the
+#      stronger tint, and which removal is paired with which addition (#3676).
+#
+# Both follow the same shape, described below in terms of the first.
 #
 # `crates/stella-diff/src/view.rs::plan` decides how much of a diff every
 # Stella surface draws and which part. Four surfaces consume it in Rust (the
@@ -34,15 +42,21 @@ on:
   pull_request:
     paths:
       - "crates/stella-diff/**"
+      - "crates/stella-transcript/**"
       - "arenabench/ui/lib/diff-view.ts"
+      - "arenabench/ui/lib/word-highlight.ts"
       - "arenabench/ui/scripts/check-diff-view-parity.mjs"
+      - "arenabench/ui/scripts/check-word-highlight-parity.mjs"
       - ".github/workflows/diff-view-parity.yml"
   push:
     branches: [main]
     paths:
       - "crates/stella-diff/**"
+      - "crates/stella-transcript/**"
       - "arenabench/ui/lib/diff-view.ts"
+      - "arenabench/ui/lib/word-highlight.ts"
       - "arenabench/ui/scripts/check-diff-view-parity.mjs"
+      - "arenabench/ui/scripts/check-word-highlight-parity.mjs"
       - ".github/workflows/diff-view-parity.yml"
   workflow_dispatch:
 
@@ -52,7 +66,7 @@ permissions:
 
 jobs:
   parity:
-    name: the TypeScript port matches the Rust policy
+    name: the TypeScript ports match the Rust policies
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -65,6 +79,10 @@ jobs:
         with:
           node-version: 22
 
-      - name: the port reproduces the committed matrix
+      - name: the diff-view port reproduces the committed matrix
         working-directory: arenabench/ui
         run: node scripts/check-diff-view-parity.mjs
+
+      - name: the word-highlight port reproduces the committed matrix
+        working-directory: arenabench/ui
+        run: node scripts/check-word-highlight-parity.mjs

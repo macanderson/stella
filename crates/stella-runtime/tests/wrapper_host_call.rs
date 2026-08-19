@@ -342,23 +342,28 @@ async fn a_dead_writer_mid_conversation_is_not_reported_as_a_missing_gate() {
     let gate = gate(generous, DEFAULT_HOST_MAX_CALLS);
 
     // Closing stdin immediately after the request is read guarantees the
-    // host's very first answer write lands on an already-closed pipe: no
-    // race against the host's own scheduling is needed for this test to be
-    // reliable. Three asks follow with no read in between — pipelining ahead
-    // rather than a round trip — with a short pause between each so the
-    // writer task, once it fails, has had time to exit and drop its receiver
-    // before the next ask's guard is checked.
+    // host's very first answer write lands on an already-closed pipe. What it
+    // does *not* guarantee is when the writer task notices: the host has to
+    // answer one ask, have that write fail, and have the failed task drop its
+    // receiver before a later ask's guard is checked. A fixed pause between a
+    // fixed number of asks bets on that happening inside the window — a bet
+    // this test lost on a loaded machine, reporting the child's exit instead
+    // of the fault. So the plugin keeps asking, with no read in between
+    // (pipelining ahead rather than a round trip), until the host stops the
+    // conversation. The bound only has to outlast the writer's scheduling,
+    // not match it, and the point timeout below is the backstop.
     let script = r#"
 read -r request
 exec 0<&-
-printf '%s\n' '{"call":"recall","id":1,"args":{"goal":"first"}}'
-sleep 0.2
-printf '%s\n' '{"call":"recall","id":2,"args":{"goal":"second"}}'
-sleep 0.2
-printf '%s\n' '{"call":"recall","id":3,"args":{"goal":"third"}}'
+id=1
+while [ "$id" -le 200 ]; do
+  printf '%s\n' "{\"call\":\"recall\",\"id\":$id,\"args\":{\"goal\":\"ask\"}}"
+  sleep 0.05
+  id=$((id + 1))
+done
 "#;
 
-    let error = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
+    let error = plugin(script, Arc::clone(&gate), Duration::from_secs(30))
         .before_turn(before())
         .await
         .expect_err("a channel that died mid-conversation cannot answer a further ask");

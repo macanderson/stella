@@ -32,8 +32,8 @@
 //!
 //! # What a plugin is handed, and what it is told it cannot have
 //!
-//! The holes this module shipped with are closed, and each closure names the
-//! limit that remains rather than implying there is none:
+//! The three holes this module shipped with are closed, and each closure names
+//! the limit that remains rather than implying there is none:
 //!
 //! 1. **A real candidate grant and a real tamper finding** (#3553). The grant
 //!    names the **shared work tree** — the tree the turn actually runs in — and
@@ -55,20 +55,30 @@
 //!    with no plane still attaches the gate and answers with no frames: an
 //!    empty answer is something a plugin can degrade on, and an absent gate is
 //!    the one thing it cannot be told about.
-//! 4. **A child-turn plane, on this driver** (#3576, this door's slice of it).
-//!    `[loop] calls = ["child_turn"]` reaches
-//!    [`stella_runtime::wrapper::ChildTurns`] over this session's
-//!    own sub-agent dispatcher — the same dispatcher `task_assign` runs
-//!    children on ([`crate::subagent::SessionSubAgents`]),
-//!    shared rather than duplicated so budget carving, read-only tooling and
-//!    report clamping stay one implementation. `resolve` and `bind_installed`
-//!    now take that dispatcher as a parameter rather than opening one
-//!    themselves, which is why `run_raw_one_shot` (`agent/goal.rs`)
-//!    builds the session's provider, registry and dispatcher *before* binding
-//!    the wrapper — see that function's own comment for why reordering it does
-//!    not weaken the "fails as a typo before a paid call" guarantee. The other
-//!    two drivers §6 asks for still assemble nothing (#3551), and `stella-serve`'s
-//!    and an embedded `stella-engine` host's own dispatchers are not this one.
+//! 4. **A child-turn plane** (#3576). A plugin that declares
+//!    `[loop] calls = ["child_turn"]` and a `[roles.<name>]` gets a real model
+//!    call at that role intent — spent by **this session's own**
+//!    `SubAgentDispatcher`, the one `task_assign` runs on, so the plugin never
+//!    holds a provider, an `Engine` or a credential (invariant 3,
+//!    `doc:turn-loop-wrappers` §9.3). The seat it resolves to is the receipt's
+//!    attribution, the child is read-only, the allowance is the host's, and
+//!    what it spent is printed beside what it was refused. Two limits stated
+//!    rather than implied: the `verifier` tier is bound to no seat here, so a
+//!    plugin naming it is answered `Unavailable`
+//!    ([`child_turn_plane`] argues why); and a point runs between the parent's
+//!    turns, where the tool registry's event slot is empty — so the spend
+//!    reaches the session's guard and this run's report, but not the store's
+//!    receipt (#3802). The turn's boundary controls are the third
+//!    (#3803): this door publishes none, so a child inherits none, which is
+//!    a no-op until a surface that *has* controls can drive a wrapped turn.
+//!
+//! The ordering that makes 4 possible is worth naming, because it is the shape
+//! of the split between [`bind_installed`] and [`ResolvedWrapper::serving`]: a
+//! `--pipeline` naming nothing installed must fail as a typo before a paid
+//! call, while a child-turn plane needs a dispatcher, which needs the provider.
+//! [`HostPlanes`] is consumed by value at [`HostCallGate::declare`], so a plane
+//! cannot be added to a gate afterwards — the two halves are therefore separate
+//! moments, not one function with an `Option` in it.
 //!
 //! And two scope limits: `--pipeline` is on `stella run` alone and a plugin's
 //! `Unmet` does not fail the process (#3554), and only this driver of
@@ -81,13 +91,13 @@ use stella_core::budget::BudgetGuard;
 use stella_core::estimator::CalibrationMap;
 use stella_core::ports::ToolExecutor;
 use stella_core::router::Router;
-use stella_core::subagent::{SubAgentDispatcher, SubAgentOutcome, SubAgentSpec};
+use stella_core::subagent::SubAgentDispatcher;
 use stella_model::provider::Provider;
 use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
-    ChildTurns, DEFAULT_HOST_MAX_CALLS, DispatchReport, DrivenTurn, HostCallGate, HostPlanes,
-    RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
+    ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS, DispatchReport, DrivenTurn, HostCallGate,
+    HostPlanes, RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -297,6 +307,11 @@ pub(crate) struct BoundWrapper {
     /// The host-call gate this plugin's conversations run through, kept so
     /// [`HostCallGate::refusals`] reaches a surface after the run.
     gate: Arc<HostCallGate>,
+    /// The child-turn plane this host installed, kept for the same reason as
+    /// the gate beside it: the plane is the only thing that knows what a
+    /// plugin spent, and a driver that installed one and could not report on
+    /// it would be silent about money (#3576).
+    child_turns: Option<Arc<SessionChildTurns>>,
 }
 
 impl BoundWrapper {
@@ -304,30 +319,192 @@ impl BoundWrapper {
     pub(crate) fn variant(&self) -> &str {
         self.dispatch.variant()
     }
+
+    /// Every child turn this host ran on the plugin's behalf, in order.
+    ///
+    /// Empty both when the plugin never asked and when no plane was installed;
+    /// the two are told apart by [`HostCallGate::refusals`], which records the
+    /// `Unavailable` the second case answers with.
+    pub(crate) fn child_spends(&self) -> Vec<ChildTurnSpend> {
+        self.child_turns
+            .as_ref()
+            .map_or_else(Vec::new, |plane| plane.spends())
+    }
 }
 
-/// Read what is installed and bind the wrapper `variant` names.
+/// The child-turn plane a `stella run` session installs: the plugin's declared
+/// role intents over **this session's own** sub-agent dispatcher.
 ///
-/// The impure half — it reads the two plugin tiers, the settings that retract
-/// them, and this workspace's context plane — kept apart from
-/// [`bind_installed`], which is the decision and is therefore the half the tests
-/// drive.
+/// `Arc<dyn SubAgentDispatcher>` rather than the concrete
+/// [`crate::subagent::SessionSubAgents`] because that is what
+/// [`crate::subagent::install_for_session`] hands back, and a session installs
+/// exactly one dispatcher — a second would be a second pool, a second carve
+/// and a second ledger over one session's money.
+pub(crate) type SessionChildTurns = ChildTurns<Arc<dyn SubAgentDispatcher>>;
+
+/// The receipt turn slot a plugin's child turns are recorded under.
+///
+/// Not the parent's. A raw `stella run` turn is built from
+/// [`crate::agent::engine_config_for_kind`], which leaves `turn_instance` at
+/// its default of 0, and context receipts key on
+/// `(execution_id, turn_instance, step, call_seq)` with `step` restarting at 0
+/// every turn — so a child sharing slot 0 could overwrite the parent's step
+/// manifests. One slot along is enough to keep them apart, and it is a
+/// constant rather than a per-round bump because a plugin's points run
+/// *between* the rounds they are about: each round opens its own execution
+/// row, so the key is already unique across rounds without this moving.
+const PLUGIN_CHILD_TURN_SLOT: u32 = 1;
+
+/// This host's child-turn plane for one installed plugin.
+///
+/// Three deliberate decisions live here rather than at the call site, because
+/// each is a claim about the user's money or the receipt it lands on (#3576):
+///
+/// - **No `verifier` seat is bound.** [`ChildTurns`] serves `worker`,
+///   `triage`, `research` and `plan` by default and deliberately not
+///   `verifier`, whose seats are `WitnessAuthor` and `Verdict` — the model
+///   verdict #2584 removed *structurally*. Binding one here would put a call
+///   on the receipt attributed to a role this host did not make, so a plugin
+///   naming a `verifier` tier is told `Unavailable` and this driver does not
+///   pretend otherwise.
+/// - **No per-turn USD carve is requested.** `None` asks for the parent's
+///   whole remaining headroom, which `BudgetGuard::carve` clamps — and the
+///   dispatcher behind it carves from the session's sub-agent pool
+///   ([`crate::subagent::session_pool_limit_usd`]), so "unbounded ask" is
+///   still a bounded spend.
+/// - **The host's own ceiling stands.** `[loop] max_calls` is the plugin's ask
+///   and [`stella_runtime::wrapper::DEFAULT_HOST_MAX_CHILD_TURNS`] the
+///   authority; neither is overridden here.
+pub(crate) fn child_turn_plane(
+    manifest: &stella_plugin::PluginManifest,
+    dispatcher: Arc<dyn SubAgentDispatcher>,
+) -> SessionChildTurns {
+    ChildTurns::declare(manifest, dispatcher).with_turn_instance(PLUGIN_CHILD_TURN_SLOT)
+}
+
+/// What this host will do for a plugin, assembled after the resources exist.
+///
+/// Separate from [`ResolvedWrapper`] because the two are built at different
+/// moments and cannot be merged without losing one of the properties: the
+/// wrapper is resolved *before* the provider is built, so a `--pipeline` that
+/// names nothing installed fails as a typo rather than after a paid run, while
+/// a child-turn plane needs the session's dispatcher, which needs the
+/// provider. [`HostPlanes`] is consumed by value at
+/// [`HostCallGate::declare`], so a plane cannot be added to a gate afterwards
+/// — the host is therefore assembled whole, once, here.
+pub(crate) struct WrapperHost {
+    recall: Box<dyn stella_runtime::wrapper::RecallHost>,
+    child_turns: Option<Arc<SessionChildTurns>>,
+}
+
+impl WrapperHost {
+    /// A host serving `recall` from this workspace's context plane and nothing
+    /// else — what a driver with no dispatcher of its own can offer.
+    pub(crate) fn recalling(recall: Box<dyn stella_runtime::wrapper::RecallHost>) -> Self {
+        Self {
+            recall,
+            child_turns: None,
+        }
+    }
+
+    /// Also serve `child_turn` from this plane.
+    #[must_use]
+    pub(crate) fn with_child_turns(mut self, plane: Arc<SessionChildTurns>) -> Self {
+        self.child_turns = Some(plane);
+        self
+    }
+}
+
+/// Everything a `stella run` session can do for the plugin wrapping it.
+///
+/// The one place both planes are named together, so a driver cannot install
+/// half of them by accident.
+pub(crate) fn session_host(
+    workspace_root: &std::path::Path,
+    manifest: &stella_plugin::PluginManifest,
+    dispatcher: Arc<dyn SubAgentDispatcher>,
+) -> WrapperHost {
+    WrapperHost::recalling(Box::new(crate::wrapper_recall::SessionRecallHost::open(
+        workspace_root,
+    )))
+    .with_child_turns(Arc::new(child_turn_plane(manifest, dispatcher)))
+}
+
+/// An installed wrapper plugin, found and start-able, before this host has
+/// anything to serve it with.
+///
+/// The half of binding that needs no provider, no registry and no dispatcher,
+/// so it can run first — see [`WrapperHost`] for why the split exists.
+pub(crate) struct ResolvedWrapper {
+    manifest: stella_plugin::PluginManifest,
+    wrapper: SubprocessWrapper,
+    variant: String,
+}
+
+impl std::fmt::Debug for ResolvedWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedWrapper")
+            .field("plugin", &self.manifest.name)
+            .field("variant", &self.variant)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ResolvedWrapper {
+    /// The manifest a human consented to at install — read by a caller
+    /// assembling this host's planes for it.
+    pub(crate) fn manifest(&self) -> &stella_plugin::PluginManifest {
+        &self.manifest
+    }
+
+    /// Bind the plugin's process to what this host will do for it.
+    ///
+    /// # Errors
+    ///
+    /// A wrapper whose declared stage order cannot be resolved — which a
+    /// validated manifest cannot hit, since the variant was found by its
+    /// `[wrapper] id`.
+    pub(crate) fn serving(self, host: WrapperHost) -> Result<BoundWrapper, String> {
+        let mut planes = HostPlanes::recalling(crate::wrapper_recall::BoxedRecall(host.recall));
+        if let Some(plane) = &host.child_turns {
+            planes = planes.with_child_turns(Arc::clone(plane));
+        }
+        // The manifest's own `[loop]` grant is the authoritative filter — an
+        // undeclared capability is refused before this host performs anything —
+        // and `DEFAULT_HOST_MAX_CALLS` clamps whatever allowance it asked for.
+        let gate = Arc::new(HostCallGate::declare(
+            self.manifest.loop_grant.clone(),
+            DEFAULT_HOST_MAX_CALLS,
+            Box::new(planes),
+        ));
+        let variant = self.variant;
+        let dispatch = WrapperDispatch::bind(
+            self.manifest,
+            Arc::new(self.wrapper.serving(Arc::clone(&gate))),
+        )
+        .map_err(|error| format!("wrapper \"{variant}\" cannot be driven: {error}"))?;
+        Ok(BoundWrapper {
+            dispatch,
+            gate,
+            child_turns: host.child_turns,
+        })
+    }
+}
+
+/// Read what is installed and resolve the wrapper `variant` names.
+///
+/// The impure half — it reads the two plugin tiers and the settings that
+/// retract them — kept apart from [`bind_installed`], which is the decision and
+/// is therefore the half the tests drive.
 ///
 /// # Errors
 ///
 /// Whatever [`bind_installed`] refuses.
-///
-/// `sub_agents` is this session's own sub-agent dispatcher — the one
-/// `crate::subagent::install_for_session` already installed for the `task`
-/// tool — taken as a parameter rather than built here for the same reason
-/// `recall` is: the decision stays testable without a live provider, and the
-/// caller is the one that knows which dispatcher backs this session.
 pub(crate) fn resolve(
     workspace_root: &std::path::Path,
     variant: &str,
-    sub_agents: Arc<dyn SubAgentDispatcher>,
     warn: &mut dyn FnMut(String),
-) -> Result<BoundWrapper, String> {
+) -> Result<ResolvedWrapper, String> {
     let settings = crate::settings::Settings::load(workspace_root).unwrap_or_default();
     let (roster, notices) = PluginRoster::load(workspace_root, &settings);
     // A plugin that did not load must never vanish silently: "I installed it
@@ -335,33 +512,7 @@ pub(crate) fn resolve(
     for notice in notices {
         warn(notice.trim_start_matches(" ! ").to_string());
     }
-    bind_installed(
-        &roster,
-        variant,
-        Box::new(crate::wrapper_recall::SessionRecallHost::open(
-            workspace_root,
-        )),
-        sub_agents,
-        warn,
-    )
-}
-
-/// A shared handle on the session's sub-agent dispatcher, so [`ChildTurns`]
-/// can hold it by value.
-///
-/// [`ChildTurns::declare`] is generic over its dispatcher rather than taking a
-/// trait object, so a caller holding an `Arc<dyn SubAgentDispatcher>` — the
-/// shape [`crate::subagent::install_for_session`] hands back, shared with the
-/// `task` tool's own dispatcher — needs one line saying the handle itself
-/// dispatches. Mirrors [`crate::wrapper_recall::BoxedRecall`]'s reason
-/// exactly, for the sibling plane.
-struct ArcSubAgents(Arc<dyn SubAgentDispatcher>);
-
-#[async_trait]
-impl SubAgentDispatcher for ArcSubAgents {
-    async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome {
-        self.0.dispatch(spec).await
-    }
+    bind_installed(&roster, variant, warn)
 }
 
 /// Find the installed wrapper plugin that declares `variant`, and bind it to
@@ -378,25 +529,16 @@ impl SubAgentDispatcher for ArcSubAgents {
 /// every driver (#3512), and a plugin author whose manifest asked for one can
 /// only stop asking if they are told.
 ///
-/// `recall` is this host's context plane, taken as a parameter rather than
-/// opened here so the decision stays testable without a workspace on disk. It
-/// is always bound into a [`HostCallGate`], even when the plane behind it is
-/// empty: a plugin that asks and is answered "no frames" degrades honestly,
-/// while a plugin that asks through a transport with *no* gate has its stdin
-/// shut and waits for an answer that never comes (#3561).
-///
-/// `sub_agents` is bound the same way, for `child_turn`: every wrapper gets a
-/// [`ChildTurns`] plane over it, declared from the manifest's own `[roles]`
-/// table, so a declared role intent spends a real bounded child turn and an
-/// undeclared one is refused `Undeclared` before anything runs — the gate does
-/// that refusing, this function only ever wires the plane behind it.
+/// It stops short of the [`HostCallGate`]: this half runs before the provider
+/// exists, so it cannot yet build the child-turn plane that needs a
+/// dispatcher. [`ResolvedWrapper::serving`] is the other half, and every
+/// wrapper reaches it — a plugin that asks through a transport with *no* gate
+/// has its stdin shut and waits for an answer that never comes (#3561).
 pub(crate) fn bind_installed(
     roster: &PluginRoster,
     variant: &str,
-    recall: Box<dyn stella_runtime::wrapper::RecallHost>,
-    sub_agents: Arc<dyn SubAgentDispatcher>,
     warn: &mut dyn FnMut(String),
-) -> Result<BoundWrapper, String> {
+) -> Result<ResolvedWrapper, String> {
     let installed = roster
         .plugins()
         .iter()
@@ -462,27 +604,11 @@ pub(crate) fn bind_installed(
              receives a model credential; declare a [roles] tier instead"
         ));
     }
-    // The manifest's own `[loop]` grant is the authoritative filter — an
-    // undeclared capability is refused before this host performs anything —
-    // and `DEFAULT_HOST_MAX_CALLS` clamps whatever allowance it asked for.
-    // `ChildTurns::declare` reads the same manifest's `[roles]` table and its
-    // own `[loop] max_calls` ask, so a plugin that named no role intents can
-    // ask for nothing here either.
-    let planes =
-        HostPlanes::recalling(crate::wrapper_recall::BoxedRecall(recall)).with_child_turns(
-            ChildTurns::declare(&installed.manifest, ArcSubAgents(sub_agents)),
-        );
-    let gate = Arc::new(HostCallGate::declare(
-        installed.manifest.loop_grant.clone(),
-        DEFAULT_HOST_MAX_CALLS,
-        Box::new(planes),
-    ));
-    let dispatch = WrapperDispatch::bind(
-        installed.manifest.clone(),
-        Arc::new(admitted.wrapper.serving(Arc::clone(&gate))),
-    )
-    .map_err(|error| format!("wrapper \"{variant}\" cannot be driven: {error}"))?;
-    Ok(BoundWrapper { dispatch, gate })
+    Ok(ResolvedWrapper {
+        manifest: installed.manifest.clone(),
+        wrapper: admitted.wrapper,
+        variant: variant.to_string(),
+    })
 }
 
 /// This host's published signal values, as they stand **before** the turn.
@@ -668,10 +794,13 @@ pub(crate) async fn run_wrapped(
         candidate,
     };
     let report = bound.dispatch.run(input, &mut driver).await;
+    // Whatever a plugin's last point spent has no turn left to fold it in, so
+    // this driver folds it (#3576). See `settle_plugin_child_spend`.
+    settle_plugin_child_spend(driver.registry, &mut *driver.budget);
     let last = driver.results.pop();
     match report {
         Ok(report) => {
-            report_to(format, &report, &bound.gate);
+            report_to(format, &report, &bound.gate, &bound.child_spends());
             // A round always runs, so `results` always has an entry; an empty
             // one would mean the dispatcher returned without driving anything,
             // which is a report about the wrapper and not about the work.
@@ -692,16 +821,76 @@ pub(crate) async fn run_wrapped(
 ///
 /// stderr in every format: stdout may be machine-readable JSON, and a wrapper's
 /// commentary is not part of either summary contract.
-fn report_to(format: OutputFormat, report: &DispatchReport, gate: &HostCallGate) {
+fn report_to(
+    format: OutputFormat,
+    report: &DispatchReport,
+    gate: &HostCallGate,
+    spends: &[ChildTurnSpend],
+) {
     for fault in &report.faults {
         eprintln!("  ! wrapper: {fault}");
     }
     for refused in gate.refusals() {
         eprintln!("  ! wrapper: {refused}");
     }
+    for line in spend_lines(spends) {
+        eprintln!("  ! wrapper: {line}");
+    }
     if format == OutputFormat::Text || !report.met() {
         eprintln!("  ◇ {}", report.summary());
     }
+}
+
+/// One line per child turn this host ran for the plugin, naming the seat it
+/// was attributed to and what it cost.
+///
+/// The money half of "a refusal is reported, never silent": a plugin's child
+/// turn is a model call the *user* pays for and never asked for directly, so
+/// the run says so in the same place it says what the plugin was refused.
+/// Pure, so the wording is testable without a run — and empty for the
+/// overwhelmingly common case of a plugin that spent nothing, which keeps a
+/// silent run silent.
+fn spend_lines(spends: &[ChildTurnSpend]) -> Vec<String> {
+    spends
+        .iter()
+        .map(|spend| {
+            format!(
+                "spent a child turn at \"{}\" (seat {:?}, {} step(s), ${:.4}){}",
+                spend.role,
+                spend.seat,
+                spend.steps,
+                spend.cost_usd,
+                if spend.completed {
+                    ""
+                } else {
+                    " — it did not finish"
+                }
+            )
+        })
+        .collect()
+}
+
+/// Fold what a plugin's child turns spent into the session's own guard.
+///
+/// The dispatcher settles every child onto the registry's
+/// [`SubAgentSpendLedger`](stella_core::subagent::SubAgentSpendLedger) the
+/// moment it ends, and an engine turn drains that ledger into the parent's
+/// guard at its next step boundary — which is why a `before_turn` spend needs
+/// nothing from this function: the round's own turn folds it in. The last
+/// point of the last round has no next boundary, so without this the user
+/// would pay for a child turn that never reached the guard bounding
+/// `--spend-limit`, and the reflection call after the run would size its
+/// headroom against money already gone.
+///
+/// Draining is destructive by contract, so this is exactly-once even though it
+/// runs after turns that already drained: what it takes is only what no turn
+/// did.
+fn settle_plugin_child_spend(registry: &dyn ToolExecutor, budget: &mut BudgetGuard) -> f64 {
+    let residual = registry.drain_sub_agent_spend_usd();
+    if residual > 0.0 {
+        budget.record_spend(residual);
+    }
+    residual
 }
 
 #[cfg(test)]

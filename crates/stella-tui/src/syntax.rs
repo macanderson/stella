@@ -39,24 +39,15 @@ pub enum Lang {
     Json,
 }
 
-/// A token class we give a syntax color; `None` runs stay the base color.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Tok {
-    /// Language keywords; also structural markup — markdown headings, TOML
-    /// table headers and keys, frontmatter keys — the "shape" of a document.
-    Keyword,
-    /// String literals; also markdown inline code spans.
-    Str,
-    /// Numeric literals; also markdown list markers and link URLs (violet is
-    /// the theme's link hue).
-    Number,
-    /// Line comments; also markdown fences, rules, and blockquote markers.
-    Comment,
-}
-
-/// The tagged runs for one source line: consecutive text slices, each with
-/// an optional token class. Concatenating the texts reproduces the line.
-pub type Runs = Vec<(String, Option<Tok>)>;
+/// The token classes and run type, defined once in `stella-transcript`.
+///
+/// The JSON lexer moved down to that crate so the Observatory and an exported
+/// transcript could colour a tool result the same way the deck does (#3644);
+/// these two came with it, because they are its vocabulary. Re-exported rather
+/// than mirrored so the lexers below — Rust, TypeScript, Python, Markdown,
+/// TOML, which stay here because only the deck reads them — keep speaking the
+/// same type the shared one does.
+pub use stella_transcript::syntax::{Runs, Tok};
 
 /// The foreground style for a token class (comments also italicize).
 pub fn tok_style(t: Tok) -> Style {
@@ -124,7 +115,7 @@ pub fn tokenize(code: &str, lang: Lang) -> Runs {
     match lang {
         Lang::Markdown => md_line(code).0,
         Lang::Toml => toml_runs(code),
-        Lang::Json => json_runs(code),
+        Lang::Json => stella_transcript::syntax::json_runs(code),
         Lang::Rust | Lang::TsJs | Lang::Python => code_runs(code, lang),
     }
 }
@@ -372,107 +363,6 @@ fn split_ordered_marker(lead: &str) -> Option<(&str, &str)> {
 /// headers and the key of a `key = value` pair as structure, and values via
 /// the generic scan (strings, numbers, booleans). Array/inline-table
 /// continuation lines fall through to the generic scan.
-/// One line of JSON, tokenized left to right.
-///
-/// A key and a string value are the same lexical thing — a quoted string — and
-/// only what follows separates them, so a closed string looks ahead to the next
-/// non-space character and takes [`Tok::Keyword`] when that is a `:`. That is
-/// the same call [`toml_runs`] makes for a bare key, and it keeps the two
-/// object-shaped formats reading alike: the shape in one hue, the data in
-/// another.
-///
-/// `true`/`false`/`null` take [`Tok::Number`] rather than a keyword hue: they
-/// are scalar constants standing where a number could stand, and coloring them
-/// like keys would make an object's shape unreadable at a glance — which is the
-/// whole reason this line is colored at all.
-///
-/// Stateless and lossless like every other lexer here. A line sliced out of a
-/// larger document (the middle-elided body of a capped tool result) simply
-/// classifies what it can see; an unterminated string runs to end of line
-/// rather than panicking or swallowing the rest of the render.
-fn json_runs(code: &str) -> Runs {
-    let chars: Vec<char> = code.chars().collect();
-    let mut runs: Runs = Vec::new();
-    let mut plain = String::new();
-    let mut i = 0;
-
-    // Punctuation and whitespace accumulate untagged until a classified token
-    // interrupts them, so the run list stays as short as the coloring needs.
-    fn flush(plain: &mut String, runs: &mut Runs) {
-        if !plain.is_empty() {
-            runs.push((std::mem::take(plain), None));
-        }
-    }
-
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '"' {
-            let start = i;
-            i += 1;
-            while i < chars.len() {
-                match chars[i] {
-                    // A backslash escapes the next char, including a quote —
-                    // clamp so a trailing lone backslash cannot step past the
-                    // end.
-                    '\\' => i = (i + 2).min(chars.len()),
-                    '"' => {
-                        i += 1;
-                        break;
-                    }
-                    _ => i += 1,
-                }
-            }
-            let key = chars[i..]
-                .iter()
-                .find(|c| !c.is_whitespace())
-                .is_some_and(|c| *c == ':');
-            flush(&mut plain, &mut runs);
-            runs.push((
-                chars[start..i].iter().collect(),
-                Some(if key { Tok::Keyword } else { Tok::Str }),
-            ));
-            continue;
-        }
-        if c.is_ascii_digit() || (c == '-' && chars.get(i + 1).is_some_and(char::is_ascii_digit)) {
-            let start = i;
-            i += 1;
-            while i < chars.len() {
-                let d = chars[i];
-                if d.is_ascii_digit() || d == '.' {
-                    i += 1;
-                } else if matches!(d, 'e' | 'E') {
-                    // Only an exponent may carry a sign, and only right after
-                    // the `e` — otherwise `1-2` would lex as one number.
-                    i += 1;
-                    if chars.get(i).is_some_and(|s| matches!(s, '+' | '-')) {
-                        i += 1;
-                    }
-                } else {
-                    break;
-                }
-            }
-            flush(&mut plain, &mut runs);
-            runs.push((chars[start..i].iter().collect(), Some(Tok::Number)));
-            continue;
-        }
-        if c.is_ascii_alphabetic() {
-            let start = i;
-            while i < chars.len() && chars[i].is_ascii_alphabetic() {
-                i += 1;
-            }
-            let word: String = chars[start..i].iter().collect();
-            let tok = matches!(word.as_str(), "true" | "false" | "null").then_some(Tok::Number);
-            flush(&mut plain, &mut runs);
-            runs.push((word, tok));
-            continue;
-        }
-        plain.push(c);
-        i += 1;
-    }
-    flush(&mut plain, &mut runs);
-    runs
-}
-
 fn toml_runs(code: &str) -> Runs {
     let lead = code.trim_start();
     let indent = &code[..code.len() - lead.len()];

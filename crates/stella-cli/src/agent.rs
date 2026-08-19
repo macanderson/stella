@@ -1694,7 +1694,7 @@ pub(crate) async fn run_turn(
     // boundary and emitted *before* the close below: these are the turn's own
     // events and a consumer folding the stream must see them inside the turn
     // they describe. See `crate::turn_files` for why a measurement, not a hook.
-    crate::turn_files::emit_shared_tree_changes(cfg, &tx);
+    crate::turn_files::emit_shared_tree_changes(cfg, &tx, execution.as_ref());
     // This path owns its run — one raw engine turn, no pipeline above it — so
     // it owes the run's terminator (#3379). The engine ends the turn with
     // `TurnComplete` and deliberately says nothing about the run, and every

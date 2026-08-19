@@ -160,6 +160,28 @@ async fn a_child_that_produced_nothing_is_an_error() {
     assert!(matches!(out, ToolOutput::Error { .. }), "{out:?}");
 }
 
+/// The silent-loss shape: a child that *completed* and reported nothing used
+/// to render as a plain `ok` with empty content, indistinguishable from a
+/// sweep that genuinely found nothing to say. The parent could only recover by
+/// noticing the thinness itself and paying for the whole delegation again.
+#[tokio::test]
+async fn a_completed_child_with_an_empty_report_is_an_error_not_a_silent_ok() {
+    for blank in ["", "   \n\t "] {
+        let (tool, _) = tool_with(SubAgentOutcome::Completed(report(blank, 0.42, false)));
+
+        let out = tool
+            .execute(
+                &call("x", "y"),
+                &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+            )
+            .await;
+        assert!(
+            matches!(out, ToolOutput::Error { .. }),
+            "a completed child that said nothing must not read as success: {out:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_truncated_report_says_so_to_the_model() {
     let (tool, _) = tool_with(SubAgentOutcome::Completed(report(
@@ -444,4 +466,67 @@ async fn dispatching_a_child_emits_declared_progress_on_the_bus() {
     assert_eq!(events[0]["tool"], "task");
     assert_eq!(events[0]["stage"], "dispatched");
     assert_eq!(events[0]["agent_id"], "find-retry-policy");
+}
+
+/// A delegation's cost and answer size cross back as structured `data`, so a
+/// thin or truncated child result can be recognised downstream instead of
+/// reading as an unremarkable success.
+///
+/// Before this, `render` returned `data: None` on both `Ok` arms: the only
+/// thing that crossed back was prose, and a child that spent minutes and
+/// several model calls to return two sentences was indistinguishable from one
+/// that answered cheaply. Nothing in a run export could mark it.
+#[tokio::test]
+async fn a_finding_carries_the_delegations_cost_and_size_as_data() {
+    let (tool, _dispatcher) = tool_with(SubAgentOutcome::Completed(report("thin", 0.42, false)));
+
+    let out = tool
+        .execute(
+            &call("sweep", "sweep the prose"),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+        )
+        .await;
+
+    let ToolOutput::Ok { content, data } = out else {
+        panic!("a completed child is an Ok");
+    };
+    assert_eq!(
+        content, "thin",
+        "the model-visible bytes are the report alone"
+    );
+    let data = data.expect("the structured half is present");
+    assert_eq!(data["status"], "completed");
+    assert_eq!(data["steps"], 4);
+    assert_eq!(data["cost_usd"], 0.42);
+    assert_eq!(
+        data["report_chars"], 4,
+        "the answer's size, so cost-per-byte is computable"
+    );
+    assert_eq!(data["truncated"], false);
+}
+
+/// The same for a salvaged partial, which is where a lost result most often
+/// lands — and the one case where knowing the spend behind an empty-looking
+/// answer matters most.
+#[tokio::test]
+async fn a_partial_finding_is_marked_partial_in_its_data() {
+    let (tool, _dispatcher) = tool_with(SubAgentOutcome::Incomplete {
+        report: report("half an answer", 0.9, true),
+        reason: "it ran out of steps".to_string(),
+    });
+
+    let out = tool
+        .execute(
+            &call("sweep", "sweep the prose"),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+        )
+        .await;
+
+    let ToolOutput::Ok { data, .. } = out else {
+        panic!("a salvaged partial is an Ok");
+    };
+    let data = data.expect("the structured half is present");
+    assert_eq!(data["status"], "partial");
+    assert_eq!(data["truncated"], true);
+    assert_eq!(data["cost_usd"], 0.9);
 }

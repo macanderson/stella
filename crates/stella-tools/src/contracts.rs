@@ -86,6 +86,22 @@ fn declared_output_schema(name: &str) -> Option<serde_json::Value> {
             },
             "required": ["entries"]
         })),
+        // What a delegation cost and how much answer came back. Declared
+        // because the prose alone cannot distinguish a lost or truncated
+        // child result from a cheap one, so nothing downstream could mark an
+        // anomalous delegation; `crate::subagent::render` documents why these
+        // values ride `data` rather than the model-visible content.
+        "task" => Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "status": { "type": "string", "enum": ["completed", "partial"] },
+                "steps": { "type": "integer", "minimum": 0 },
+                "cost_usd": { "type": "number", "minimum": 0 },
+                "report_chars": { "type": "integer", "minimum": 0 },
+                "truncated": { "type": "boolean" }
+            },
+            "required": ["status", "steps", "cost_usd", "report_chars", "truncated"]
+        })),
         _ => None,
     }
 }

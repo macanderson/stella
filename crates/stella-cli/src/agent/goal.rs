@@ -114,27 +114,14 @@ pub(crate) async fn run_raw_one_shot(
 ) -> Result<(), crate::failure::CliFailure> {
     let bare = bare_loop_config(full_cfg);
     let cfg = &bare;
-    let provider = build_provider(cfg)?;
-    // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
-    // registry's ledgers are reachable after the turn — the trait object
-    // hides them. It still coerces to `&dyn ToolExecutor` for the engine.
-    let registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
-
-    // Installed before the wrapper is resolved, not after: a bound wrapper's
-    // `child_turn` plane runs over this exact dispatcher (the one `task_assign`
-    // also runs on), so it has to exist before `wrapper_plugin::resolve` can
-    // hand it over. Still resolved before a single paid call — building a
-    // provider and a registry spends nothing over the wire, it only
-    // constructs local objects — so a `--pipeline` that names nothing
-    // installed still fails as a typo, not after the run it was meant to
-    // shape, exactly as before this reordering. The grant below is minted in
-    // the same breath and for the same reason — a `--test-command` the host's
-    // parser refuses must stop the run here, not after it is paid for.
-    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
-    let bound = match pipeline.plugin() {
+    // Resolved before the provider is built and before a single paid call: a
+    // `--pipeline` that names nothing installed must fail as a typo, not after
+    // the run it was meant to shape. The grant is minted in the same breath and
+    // for the same reason — a `--test-command` the host's parser refuses must
+    // stop the run here, not after it is paid for.
+    let resolved = match pipeline.plugin() {
         Some(variant) => Some(
-            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, sub_agents, &mut |line| {
+            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
                 eprintln!("  ! {line}");
             })
             .map_err(crate::failure::CliFailure::from)?,
@@ -143,11 +130,39 @@ pub(crate) async fn run_raw_one_shot(
     };
     // Pinned *before* the turn runs, which is the whole content of the tamper
     // claim: an identity snapshotted afterwards vouches for nothing.
-    let candidate = match &bound {
+    let candidate = match &resolved {
         Some(_) => Some(
             crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
                 .map_err(crate::failure::CliFailure::from)?,
         ),
+        None => None,
+    };
+    let provider = build_provider(cfg)?;
+    // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
+    // registry's ledgers are reachable after the turn — the trait object
+    // hides them. It still coerces to `&dyn ToolExecutor` for the engine.
+    let registry: std::sync::Arc<ToolRegistry> =
+        std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
+
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
+    // The gate is built *here*, not beside `resolve` above, and the ordering is
+    // the whole reason the two halves are separate: a `--pipeline` naming
+    // nothing installed must fail as a typo before a paid call, while a
+    // plugin's `child_turn` needs this session's dispatcher, which needs the
+    // provider built two lines up (#3576).
+    let bound = match resolved {
+        Some(resolved) => {
+            let host = crate::wrapper_plugin::session_host(
+                &cfg.workspace_root,
+                resolved.manifest(),
+                sub_agents,
+            );
+            Some(
+                resolved
+                    .serving(host)
+                    .map_err(crate::failure::CliFailure::from)?,
+            )
+        }
         None => None,
     };
     // The one derivation of "a human is here to answer" — the #2676 approval
