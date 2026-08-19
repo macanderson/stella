@@ -22,11 +22,13 @@ use stella_mcp::{McpConfig, McpServerConfig, McpToolSet};
 use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
 use stella_pipeline::{
-    AlwaysAbortGate, CmdOutcome, ContextRecallPort, McpPrefetchPort, NoContextRecall,
-    PipelineConfig, PipelinePorts, PipelineStatus, ProviderResolver, RepoStatusPort,
-    RepoStructurePort,
+    AlwaysAbortGate, CmdOutcome, McpPrefetchPort, PipelineConfig, PipelinePorts, PipelineStatus,
+    ProviderResolver, RepoStatusPort, RepoStructurePort,
 };
-use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput, UNKNOWN_MODEL};
+use stella_protocol::{
+    AgentEvent, CompletionMessage, ContextRecallPort, ModelRef, NoContextRecall, Role, ToolOutput,
+    UNKNOWN_MODEL,
+};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool};

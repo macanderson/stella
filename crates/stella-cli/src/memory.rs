@@ -43,9 +43,7 @@ use crate::domains::Domains;
 #[cfg(test)]
 use stella_context::MemoryInput;
 #[cfg(test)]
-use stella_pipeline::{ContextRecallPort, RecalledFrame};
-#[cfg(test)]
-use stella_protocol::{CompletionMessage, MessageRole};
+use stella_protocol::{CompletionMessage, ContextRecallPort, MessageRole, RecalledFrame};
 
 // Which files a memory is about — shared by the reflection write path and by
 // `stella memory validate`, which must agree on what counts as an anchor.
