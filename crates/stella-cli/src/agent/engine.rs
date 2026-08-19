@@ -607,56 +607,6 @@ pub(crate) fn resolve_engine_wiring(
     };
     wiring.worker_model = effective_worker_ref.clone();
 
-    let triage_tuning = tuning_for(&engine, EngineAgentKind::Triage);
-    let verifier_tuning = tuning_for(&engine, EngineAgentKind::Verifier);
-    // The worker row, which the pipeline's PLAN stage consumes (#2416). Plan
-    // is pinned to the worker's model above; this is the other half of "plan
-    // rides the worker" — the request shaping, and above all `prompt`, which
-    // is the one field `pipeline_engine_config_for` structurally cannot carry
-    // (an `EngineConfig` has no system-message seat, so `agents.worker.prompt`
-    // reached worker turns and stopped at the planner).
-    let worker_tuning = tuning_for(&engine, EngineAgentKind::Worker);
-    // Plan and research over the worker, field by field. The inheritance is
-    // what keeps "rides the worker" true — an absent `agents.plan` leaves the
-    // planner shaped exactly as it was, including the `prompt` #2416 routes
-    // there — while a field the operator did set wins for that field alone.
-    // Resolved HERE, not in the pipeline, so `stella config`'s report and the
-    // request path read one precedence rather than two.
-    let over_worker = |own: crate::engine_config::AgentTuning| stella_pipeline::RoleCallOverrides {
-        prompt: own.prompt.or_else(|| worker_tuning.prompt.clone()),
-        effort: own.effort.or(worker_tuning.effort),
-        reasoning: own.reasoning.or(worker_tuning.reasoning),
-        temperature: own.temperature.or(worker_tuning.temperature),
-        max_output_tokens: own.max_output_tokens.or(worker_tuning.max_output_tokens),
-        params: own.params.or(worker_tuning.params),
-    };
-    wiring.role_overrides.plan = over_worker(tuning_for(&engine, EngineAgentKind::Plan));
-    wiring.role_overrides.research = over_worker(tuning_for(&engine, EngineAgentKind::Research));
-    wiring.role_overrides.worker = stella_pipeline::RoleCallOverrides {
-        prompt: worker_tuning.prompt,
-        effort: worker_tuning.effort,
-        reasoning: worker_tuning.reasoning,
-        temperature: worker_tuning.temperature,
-        max_output_tokens: worker_tuning.max_output_tokens,
-        params: worker_tuning.params,
-    };
-    wiring.role_overrides.triage = stella_pipeline::RoleCallOverrides {
-        prompt: triage_tuning.prompt,
-        effort: triage_tuning.effort,
-        reasoning: triage_tuning.reasoning,
-        temperature: triage_tuning.temperature,
-        max_output_tokens: triage_tuning.max_output_tokens,
-        params: triage_tuning.params,
-    };
-    wiring.role_overrides.verifier = stella_pipeline::RoleCallOverrides {
-        prompt: verifier_tuning.prompt,
-        effort: verifier_tuning.effort,
-        reasoning: verifier_tuning.reasoning,
-        temperature: verifier_tuning.temperature,
-        max_output_tokens: verifier_tuning.max_output_tokens,
-        params: verifier_tuning.params,
-    };
-
     // The verifier's cross-family preference must compare against the model the
     // worker ACTUALLY resolves to — comparing against the stale session
     // default here would let auto-mode pick a verifier that turns out to share
@@ -678,44 +628,6 @@ pub(crate) fn resolve_engine_wiring(
     // means "leave the worker pin from above standing".
     let research_spec = own_model_spec_for(&engine, EngineAgentKind::Research, &is_provider);
     let plan_spec = own_model_spec_for(&engine, EngineAgentKind::Plan, &is_provider);
-
-    // Capability clamp, mirroring `tuned_engine_config`: a role whose
-    // model (pinned, provider-default, or riding the worker) is a
-    // catalog-confirmed non-reasoning model must not carry effort or
-    // reasoning onto the wire. Unknown capability passes through. "Riding
-    // the worker" means the ACTUAL (possibly overridden) worker model.
-    {
-        let clamp = |overrides: &mut stella_pipeline::RoleCallOverrides,
-                     spec: Option<&ModelSpec>| {
-            let resolved: Option<(String, String)> = match spec {
-                Some(s) if !s.model.is_empty() => Some((s.provider.clone(), s.model.clone())),
-                // Provider pin without a model → the provider's default.
-                Some(s) => crate::config::PROVIDERS
-                    .iter()
-                    .find(|p| p.id == s.provider && !p.default_model.is_empty())
-                    .map(|p| (s.provider.clone(), p.default_model.to_string())),
-                None => Some((
-                    effective_worker_ref.provider.clone(),
-                    effective_worker_ref.model_id.clone(),
-                )),
-            };
-            if let Some((provider, model)) = resolved
-                && crate::engine_config::model_supports_reasoning(&provider, &model) == Some(false)
-            {
-                overrides.effort = None;
-                overrides.reasoning = None;
-            }
-        };
-        clamp(&mut wiring.role_overrides.triage, triage_spec.as_ref());
-        clamp(&mut wiring.role_overrides.verifier, verifier_spec.as_ref());
-        // `None` resolves to the ACTUAL (possibly overridden) worker model —
-        // which is exactly what plan and research fall back to when they name
-        // no model of their own, so passing their spec here clamps against
-        // whichever of the two actually serves them.
-        clamp(&mut wiring.role_overrides.worker, None);
-        clamp(&mut wiring.role_overrides.plan, plan_spec.as_ref());
-        clamp(&mut wiring.role_overrides.research, research_spec.as_ref());
-    }
 
     let role_specs = [
         (Role::Triage, "triage", triage_spec),
