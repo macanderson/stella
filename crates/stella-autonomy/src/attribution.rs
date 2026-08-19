@@ -95,6 +95,19 @@ impl Attribution {
 /// An empty signature returns the body untouched — including its own trailing
 /// whitespace, because a caller that signs nothing has not asked for its text
 /// to be reformatted.
+///
+/// # Examples
+///
+/// The join is exactly one line break, whatever the body ended with — so two
+/// callers that differ only in trailing whitespace produce the identical
+/// result:
+///
+/// ```
+/// use stella_autonomy::sign;
+///
+/// assert_eq!(sign("body", "Created by stella."), "body\nCreated by stella.");
+/// assert_eq!(sign("body\n\n", "Created by stella."), "body\nCreated by stella.");
+/// ```
 #[must_use]
 pub fn sign(body: &str, signature: &str) -> String {
     if signature.trim().is_empty() {
