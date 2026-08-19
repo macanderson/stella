@@ -17,10 +17,23 @@ strict about the handful of things that are genuinely hard to undo.
 
 ---
 
-## Status, 2026-08-18 — re-verified against the tree, per phase
+## Status, 2026-08-19 — the dependency cut has landed
 
 Read against `doc:pipeline-as-plugins`, which carries the item-level detail;
 this is the phase-level rollup the execution order below promises.
+
+**The built-in path is removed.** `crates/stella-pipeline` — Phase 4's
+"dependency cut, the last slice" — is deleted from the workspace (#3865,
+landed on this branch). `stella run --pipeline classic` is refused outright.
+This did **not** wait for the rest of Phase 4's stated order below
+(`stella-plan` → `vera` → `stella-candidates` → `stella-goal` all remain
+unstarted or blocked) or for the benchmark bar §7 of the plan states — see
+`doc:pipeline-as-plugins` §7's update for why that sequencing call was made
+anyway. Treat the "2026-08-18" rollup immediately below as it was written,
+before that deletion: it is the record of what had landed up to Track B's
+first extraction, not a claim about the state after this branch.
+
+## Status, 2026-08-18 — re-verified against the tree, per phase
 
 - **Phase 0 (Orientation).** N/A — a per-run step, not something that lands.
 - **Phase 1 (independent work).** All four items landed: D1 (self-driving's

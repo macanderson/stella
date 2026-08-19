@@ -364,7 +364,7 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 
 | Command                                                                     | What it does                                                                                                      |
 | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run)                | Send a one-shot prompt, non-interactive — the raw step-loop by default; `--pipeline classic` opts into the staged pipeline                                          |
+| [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run)                | Send a one-shot prompt, non-interactive — the raw step-loop by default; `--pipeline <plugin-id>` opts into an installed verification plugin                          |
 | [`chat`](https://stella.oxagen.sh/docs/commands/chat)                       | Interactive session: the Command Deck TUI (also what a bare `stella` opens)                                       |
 | [`resume [id]`](https://stella.oxagen.sh/docs/commands/resume)              | Reopen a durable past session exactly where it stood; `--list` browses them                                       |
 | [`daemon <cmd>`](https://stella.oxagen.sh/docs/commands/daemon)             | Find, watch, and stop runs that outlived the terminal that started them                                           |
@@ -494,15 +494,22 @@ deliberately **not** global: it is declared by the commands that honor it —
 `stella run` and `stella fleet` — and goes after the subcommand token
 (`stella run "…" --output-format json`); interactive
 `chat` / `goal` / `monitor` modes render human-readable output. `stella run`
-runs the raw step-loop by default; `--pipeline classic` opts into the
-built-in staged pipeline (`--pipeline <plugin-id>` opts into an installed
-wrapper plugin instead), and `--no-pipeline` is a deprecated no-op kept
-parseable so no script breaks. In staged-pipeline mode, `--test-command
-<cmd>` arms deterministic verification with your own test; without it an
-independent witness author writes a failing test whose fail→pass flip proves
-the work ([the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)).
-`--test-command`/`--keep-witness`/`--require-verified` are refused outside
-`--pipeline classic`, naming it as the remedy.
+runs the raw step-loop by default; `--pipeline <plugin-id>` opts into an
+installed verification plugin instead — `--pipeline classic` named the
+built-in staged pipeline that shipped this verification in-tree, but that
+crate is deleted from the workspace (#3865) and the flag is now refused
+outright, naming `stella plugin install` as the remedy; `--no-pipeline`
+remains a deprecated no-op kept parseable so no script breaks. A
+verification plugin's own `[oracle]` decides how the work is proven — a
+worked example historically ran an independent witness author against a
+fail→pass flip; that shape now lives on the plugin's side of the wrapper
+socket ([the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)
+documents it as a historical design plus the plugin path that replaces it).
+`--keep-witness`/`--require-verified` are refused unconditionally now, and
+`--test-command` is refused on the raw loop but still passes through to an
+installed plugin's own `[oracle]` when one is named with `--pipeline
+<plugin-id>` — every refusal names an installed verification plugin as the
+remedy.
 Post-turn reflection remains enabled for one-shot text, JSON, and stream-JSON
 runs. Ephemeral automation can suppress that additional model call explicitly
 with `STELLA_DISABLE_REFLECTION=1`; the truthy values `true`, `yes`, and `on`
@@ -700,7 +707,6 @@ extending it.
 | [`stella-protocol`](crates/stella-protocol/README.md)       | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports                                                                                                                                                |
 | [`stella-context`](crates/stella-context/README.md)         | The context plane: reflection-memory recall + embedding index, episodes, bi-temporal facts                                                                                                                                             |
 | [`stella-graph`](crates/stella-graph/README.md)             | Tree-sitter symbol + import-edge indexer (Rust/Python/JS/TS/TSX/SQL/Go/Java/C/PHP)                                                                                                                                                     |
-| [`stella-pipeline`](crates/stella-pipeline/README.md)       | The orchestration plane above the engine, opt-in via `stella run --pipeline classic` — triage, plan, execute, witness, verify, verdict, in the order its `[wrapper]` manifest declares ([docs](https://stella.oxagen.sh/docs/inference-pipeline))                                 |
 | [`stella-fleet`](crates/stella-fleet/README.md)             | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, a shared tree with cooperative file claims by default, opt-in git-worktree isolation per task                                                              |
 | [`stella-media`](crates/stella-media/README.md)             | Multimodal generation behind one `MediaProvider` port                                                                                                                                                                                 |
 | [`stella-tui`](crates/stella-tui/README.md)                 | The Command Deck — a pure event-fold core + thin crossterm shell                                                                                                                                                                       |

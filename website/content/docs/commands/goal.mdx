@@ -1,6 +1,6 @@
 ---
 title: stella goal
-description: Work in raw step-loop rounds (or, with --pipeline classic, staged-pipeline rounds) until a verifier model confirms the goal is met.
+description: Work in raw step-loop rounds, optionally under an installed wrapper plugin, until a verifier model confirms the goal is met.
 ---
 
 Give stella a goal and let it work in **judged rounds** until a verifier model confirms, from evidence, that the goal has actually been met.
@@ -13,7 +13,7 @@ stella goal <goal> [--no-pipeline] [--pipeline <VARIANT>] [global flags]
 
 ## What it does
 
-`stella goal` works in rounds, each a raw step-loop turn by default — pass `--pipeline classic` to run every round through the [staged pipeline](/docs/inference-pipeline) instead. This door cannot yet drive an installed wrapper plugin the way [`stella run`](/docs/commands/run) can, so a named `--pipeline <variant>` other than `classic` is refused with an error naming `stella run` as the door that supports it. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
+`stella goal` works in rounds, each a raw step-loop turn by default — pass `--pipeline <variant>` to bind an installed wrapper plugin once and dispatch it for the worker turn of every judged round. `classic` used to name a built-in staged pipeline; that crate is deleted from the workspace and `--pipeline classic` is refused outright, naming `stella plugin install` as the remedy. The plugin dispatched here must be a **steering/observer**-grade wrapper: `stella goal`'s own round loop is already this door's completion arbiter, so an arbiter-grade wrapper (one whose own `[oracle]` could hold a round open) is refused before the provider is even built — its designed home is [`stella run --pipeline <variant>`](/docs/commands/run) instead. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration; the verifier itself is never wrapped. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
 
 Crucially, the verifier is routed **cross-family** — it is a different model family than the worker, to avoid same-model bias. If only one provider family is configured, the worker doubles as its own verifier.
 
@@ -33,12 +33,13 @@ For the full explanation of judged rounds, the cross-family verifier, and the de
     effect, including alongside `--pipeline`, which always wins.
   </OptionCard>
   <OptionCard name="--pipeline <VARIANT>">
-    Run each working round through an installed wrapper plugin, by the
-    `[wrapper] id` its manifest declares. `classic` names the built-in staged
-    pipeline (triage, plan, witness, execute, verify); omitted, the raw
-    step-loop runs with nothing over it. A named plugin variant other than
-    `classic` is refused today — see [`stella run`](/docs/commands/run) for
-    that.
+    Bind an installed wrapper plugin once, by the `[wrapper] id` its manifest
+    declares, and dispatch it for the worker turn of every judged round. Only a
+    steering/observer-grade wrapper is accepted here — an arbiter-grade wrapper
+    is refused before the provider is built, since this door's own round loop
+    is already the completion arbiter. `classic` used to name a built-in staged
+    pipeline; that crate is deleted from the workspace and is refused outright.
+    Omitted, the raw step-loop runs with nothing over it.
   </OptionCard>
   <OptionCard name="--model <provider/model_id>">
     Pin the worker model. The verifier is routed to a different family automatically when one
@@ -72,10 +73,10 @@ stella --model anthropic/claude-fable-5 --spend-limit 10.00 \
   goal "Make the CLI exit with a non-zero code on invalid input"
 ```
 
-Run every round through the staged pipeline instead of the raw step loop:
+Run every round's worker turn under an installed steering/observer wrapper plugin:
 
 ```bash
-stella goal --pipeline classic "Silence the deprecation warnings in the build"
+stella goal --pipeline stella-research "Silence the deprecation warnings in the build"
 ```
 
 You can also run a goal-driven turn from the plain line REPL (`stella chat --plain`) with the `/goal <goal>` command.

@@ -1,31 +1,32 @@
 ---
 title: Inference Pipeline
-description: How stella turns a prompt into verified work — the raw step loop, the opt-in staged pipeline wrapper from triage to verdict, deterministic verification, and per-role routing.
+description: The historical design of stella's built-in staged pipeline — triage to verdict, deterministic verification, per-role routing — and the installed-plugin path that replaces it.
 ---
 
-stella's answer to "did the agent actually do the work?" is structural, not
-rhetorical. When you opt into the staged pipeline, it separates *doing* the
-work from *verifying* it. Verification is **deterministic**: the answer comes
-from measurements — a fail→pass flip of one command, a test run, a diff — and
-no model is ever asked to rule on whether the work is done. When the
-measurements do not settle it, the run says so.
-
 <Callout type="warn">
-**This guarantee is a property of the path, not of the binary.** The raw step
-loop is the default on every door (`stella run`, `arena`, `goal`, `fleet`, the
-Command Deck) since #3381/#3694; nothing below applies unless you opt in with
-`--pipeline classic`, the wrapper id naming stella's built-in staged pipeline.
-Everything below is real and host-run there today. The
-[plugin platform](/docs/plugins) that lets this mechanism live outside the
-built-in binary is live too: `stella run --pipeline <variant>` drives an
-installed wrapper plugin (`plugins/stella-research` is the shipped reference
-one), through the same `before_turn`/`after_turn` wrapper socket the staged
-pipeline itself now runs on. Once you dispatch through a plugin instead of
-`classic`, it reports its own evidence instead of stella running the check,
-and this page's guarantee does not automatically carry over to that path —
-see [Plugins](/docs/plugins#the-honest-part-who-verifies-what) for what that
-split means. This page documents the `--pipeline classic` mechanism as it
-exists today.
+**This page documents a historical design.** stella's built-in staged
+pipeline — the crate that implemented everything below, `crates/stella-pipeline` —
+has been deleted from the workspace (#3865, `docs/spec/pipeline-as-plugins.md`
+§7's "last slice", landed on this branch). `stella run --pipeline classic` is
+refused outright, naming `stella plugin install` as the remedy. Nothing on
+this page runs inside stella any more.
+
+**What survives it is the shape, not the binary.** stella's answer to "did
+the agent actually do the work?" was structural, not rhetorical, and stays
+that way: verification is meant to be **deterministic** — the answer comes
+from measurements, not a model asked to rule on whether the work is done —
+but that machinery now lives entirely on the far side of the
+[wrapper socket](/docs/plugins), inside an **installed verification
+plugin**, never in this repository. `stella run --pipeline <plugin-id>`
+hands the turn to that plugin; its evidence is self-reported, and stella
+evaluates it against the plugin's declared rule without re-running or
+re-checking it. Oxagen's Vera is the reference verification plugin — private,
+not shipped in this repository — and `docs/spec/pipeline-as-plugins.md` §8
+ports the mechanics this page describes (the flip oracle, the witness author,
+the verify ladder) into it rather than reinventing them. This page's stage
+walkthrough is kept as the clearest surviving record of that mechanism —
+read it as **what a verification plugin implements**, not as something
+`stella run` still does on its own.
 </Callout>
 
 ## The foundation: the step loop
@@ -47,16 +48,22 @@ gets noisy, repeat. When the conversation approaches the compaction budget,
 stella compacts it and keeps going.
 
 `stella run`, `stella goal`, `stella fleet`, `stella arena`, and interactive
-chat all drive this raw loop directly by default; the Command Deck's
-`/pipeline` toggle is OFF by default for the same reason. `--no-pipeline` is a
-deprecated, inert flag kept only so an old script does not break. Everything
-else in this page is structure built **on top of** the raw loop, entered only
-with `--pipeline classic`.
+chat all drive this raw loop, unconditionally now — the Command Deck's
+`/pipeline` toggle that once wrapped a deck turn in the staged pipeline is
+gone along with the crate it drove, not merely off by default.
+`--no-pipeline` is a deprecated, inert flag kept only so an old script does
+not break. Everything else in this page describes structure that used to be
+built **on top of** the raw loop, entered with the now-refused `--pipeline
+classic` — read it as the design an installed verification plugin
+implements today.
 
-## The staged pipeline (opt in with `--pipeline classic`)
+## The staged pipeline (historical — opted into with the now-refused `--pipeline classic`)
 
-Pass `--pipeline classic` to `stella run` (or turn `/pipeline` ON in the
-Command Deck) and the raw step loop above is wrapped in stages:
+Passing `--pipeline classic` to `stella run` used to wrap the raw step loop
+above in stages; that flag is refused outright now (#3865). The stage
+walkthrough below describes what it did, unchanged from before the deletion,
+because it is the reference for how a verification plugin implementing this
+shape works:
 
 <PipelineFlowDiagram />
 
@@ -191,11 +198,14 @@ nobody reviewed. Pass `--keep-witness` to promote it into your working tree
 when the test is worth keeping.
 
 ```bash
-# No oracle armed — an independent model authors the witness on demand, and
-# it is discarded with the candidate workspace.
-stella run "make Plan::validate reject a self-dependency by name"
+# Historical: no oracle armed — an independent model authored the witness on
+# demand, and it was discarded with the candidate workspace. This ran through
+# `--pipeline classic`, which is refused now; a verification plugin's own
+# `[oracle]` decides its own witness-handling policy today.
+stella run --pipeline classic "make Plan::validate reject a self-dependency by name"
 
-# Same run, but keep the authored test as a file you can review and commit.
+# `--keep-witness` is refused unconditionally now; it is not a flag any
+# installed plugin path restores.
 stella run --keep-witness "make Plan::validate reject a self-dependency by name"
 ```
 
@@ -343,10 +353,10 @@ the run says so when it starts. Candidates sharing the working tree (the
 non-git degradation above) always run one at a time: they would otherwise
 overwrite each other's files.
 
-## End to end: one verified run
+## End to end: one verified run (historical — `--pipeline classic` is refused today)
 
 ```bash
-stella run --test-command "cargo test -p pager" "fix the off-by-one in the pager"
+stella run --pipeline classic --test-command "cargo test -p pager" "fix the off-by-one in the pager"
 ```
 
 - **Triage** (with recall running concurrently) classifies the prompt as a
@@ -386,7 +396,7 @@ or a change the warrant found nothing to prove in. It is `false` when the ladder
 abstained (*unverifiable*) or could not settle the question (*unverified*):
 
 ```bash
-stella run --output-format json --test-command "cargo test -p pager" \
+stella run --pipeline classic --output-format json --test-command "cargo test -p pager" \
   "fix the off-by-one in the pager" \
   | jq '{status, deterministic: .verdict.deterministic, evidence: .verdict.summary, cost_usd}'
 ```
@@ -501,41 +511,42 @@ stella --spend-limit 1.50 run --test-command "cargo test -p stella-core" \
 `STELLA_SPEND_LIMIT` is the same knob without touching the command line. See
 [Telemetry &amp; budget](/docs/telemetry).
 
-## Where each mode picks it up
+## Where each mode picks it up today
 
 <CardGrid size="md">
   <OptionCard name="stella run">
-    The raw step loop by default. Pass `--pipeline classic` for the full
-    staged pipeline, or `--pipeline <variant>` for an installed wrapper
-    plugin.
-  </OptionCard>
-  <OptionCard name="stella run --pipeline classic">
-    The full staged pipeline, with every stage above.
+    The raw step loop by default. `--pipeline classic` is refused outright;
+    pass `--pipeline <variant>` for an installed verification plugin instead.
   </OptionCard>
   <OptionCard name="Command Deck">
-    Raw turns while `/pipeline` is OFF, which is the default; the staged
-    pipeline per turn once you switch it ON.
+    Raw turns, unconditionally — the `/pipeline` toggle that once switched a
+    deck turn onto the staged pipeline is gone along with the crate it drove.
   </OptionCard>
   <OptionCard name="stella goal">
-    Raw rounds plus an independent goal verifier by default;
-    `--pipeline classic` runs every round through the staged pipeline
-    instead. Cannot yet drive an installed wrapper plugin (#3695) — see
-    [goal mode](/docs/agent-modes#outcome-driven-goal-mode).
+    Raw rounds plus an independent goal verifier by default; `--pipeline
+    <variant>` binds a steering/observer-grade installed wrapper plugin once
+    and dispatches it for each round's worker turn (an arbiter-grade wrapper
+    is refused here, #3832) — see
+    [goal mode](/docs/agent-modes#outcome-driven-goal-mode). `--pipeline
+    classic` is refused the same as everywhere else.
   </OptionCard>
   <OptionCard name="stella fleet">
-    Raw workers by default; `--pipeline classic` routes every worker through
-    the staged pipeline, fanned out in one shared tree — worktrees on
-    opt-in. Cannot yet drive an installed wrapper plugin (#3695) — see
+    Raw workers, unconditionally — this door cannot yet drive an installed
+    wrapper plugin over a worker's attempt (#3695 stays open for that), so
+    any named `--pipeline <variant>`, including `classic`, is refused — see
     [fleets](/docs/agent-fleets).
   </OptionCard>
 </CardGrid>
 
-None of the stages above are owned by the step-loop engine itself — they are
-all `stella-pipeline`, a layer built on top of it, exactly as the diagram at
-the top of this page shows. That is what makes them extractable: the
-[plugin platform](/docs/plugins) is the mechanism by which a stage like
-`witness` or `verify` leaves this binary and becomes something you install
-and can replace, without the step loop underneath ever changing.
+None of the stages above were ever owned by the step-loop engine itself —
+they were all `stella-pipeline`, a layer built on top of it, exactly as the
+diagram at the top of this page shows. That crate is deleted from the
+workspace (#3865): the extraction the paragraph below used to describe as
+future work has, for this one built-in path, ended in deletion rather than
+in an installed replacement for every stage. The
+[plugin platform](/docs/plugins) is the mechanism a stage like `witness` or
+`verify` now lives behind instead — something you install, not something
+this binary ships — without the step loop underneath ever having changed.
 
 Pipeline goal rounds mean **two checks at different altitudes**: the pipeline's
 deterministic ladder settles each round's work from measurements, and the outer
