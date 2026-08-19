@@ -30,6 +30,7 @@ mod attachments;
 mod auth_cmd;
 mod build_info;
 mod cache_insight;
+mod calibration;
 mod candidate_workspaces;
 mod claims;
 mod cli;

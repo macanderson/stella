@@ -1,9 +1,9 @@
 ---
 title: stella calibration
-description: The verifier's measured false-positive rate — every recorded pass verdict reconciled against the CI results observed after it.
+description: The measured false-positive rate of a pass verdict — every recorded pass reconciled against the CI results and reverts observed after it.
 ---
 
-Answer "how often does the verifier approve work that CI later rejects?" from what the workspace has already recorded. Every verification verdict is persisted in the local event journal with the ladder snapshot it was decided from, and every PR/CI observation lands in the same stream — so calibration is a *reading*, not a new telemetry pipe. Entirely local; no API key, no network, and it never writes.
+Answer "how often was a pass wrong?" from what the workspace has already recorded. Every verification verdict is persisted in the local event journal with the ladder snapshot it was decided from, every PR/CI observation lands in the same stream, and every revert is already in the git log — so calibration is a *reading*, not a new telemetry pipe. Entirely local; no API key, no network, and it never writes.
 
 ## Synopsis
 
@@ -12,6 +12,17 @@ stella calibration                # human-readable report
 stella calibration --format json  # machine-readable tallies
 ```
 
+<Callout type="warn">
+**Nothing in Stella emits a verdict any more.** The built-in staged pipeline
+was the only in-tree producer of `Verdict` events and was deleted; a plain
+`stella run` is the raw step loop with no verification stage over it. Verdicts
+now come from an **installed verification plugin** (`stella plugin install`,
+then `stella run --pipeline <plugin-id>`), or from sessions recorded before
+that deletion. A workspace with neither has nothing to calibrate — and the
+command says exactly that, rather than printing a page of zeroes that reads
+like a flawless verifier.
+</Callout>
+
 ## What it reports
 
 Two cohorts, deliberately side by side — a false-positive rate means nothing without the cohort it should be compared against:
@@ -19,37 +30,48 @@ Two cohorts, deliberately side by side — a false-positive rate means nothing w
 - **unproven** — `Verdict` events with `passed: true` and `deterministic: false`: a pass the ladder could not settle. Three different outcomes land here — *unverified* (the probes looked and did not settle it), *unverifiable* (no probe could look), and a triage-*waived* pass — and no model judged any of them.
 - **deterministic** — passes the ladder credited itself (fail→pass flip, green tests, budget, and every pre-submit audit).
 
-<Callout type="warn">
-**Sessions recorded before the model verdict call was removed mix two
-populations under the `unproven` heading.** The cohort used to be labelled
-*model verifier*, and that name was exact while a `deterministic: false` pass
-could only have come from a model ruling on inconclusive evidence. Removing that
-call left the same flag being set by the ladder's own non-determinate outcomes,
-so the label named a mechanism that had stopped contributing to it — and the
-JSON keys spelled `verifier_*`, so anything scripting `--format json` read
-"verifier" and got something else. The fields are now `unproven_*`, which is
-what they always selected on. Nothing in an old record distinguishes the two
-populations, so a report spanning the change cannot separate them.
-</Callout>
+For each: how many passes were recorded, how many were **reconciled**, and how many of those turned out to be wrong. The rate is printed only over reconciled passes; with no ground truth yet, it is reported as **unmeasured**, never as zero.
 
-<Callout type="warn">
-**Breaking change to `--format json`.** `verifier_passes`,
-`verifier_reconciled`, `verifier_false_positives`,
-`verifier_false_positive_rate`, `verifier_passes_standing_alone` and
-`verifier_reverted` are renamed to `unproven_*`. The old spellings are **not**
-emitted alongside the new ones: they named a mechanism that contributes nothing
-to the tallies, so keeping them would have kept serving the wrong answer to a
-consumer who never noticed. The human report's `verifier-alone rate` line is
-likewise now `uncorroborated rate`.
-</Callout>
+Three further readings ride along:
 
-For each: how many passes were recorded, how many were **reconciled** — a terminal CI verdict (`Passing`/`Failing`) was observed later in the same session's stream — and how many of those reconciled passes failed CI. The rate is printed only over reconciled passes; with no CI ground truth yet, it is reported as **unmeasured**, never as zero.
+- **the uncorroborated rate** — over the verdicts that carried a ladder snapshot, how often *nothing* mechanical stood behind the result: no achieved fail→pass flip, no touched-test run observed green, no worker-run `verify_done` confirmation. This is the number an evidence-demand policy ("spend one more turn asking the worker to prove it") should be set from: a minority is the condition such a send-back is worth a turn for; a majority reproduces the benchmark measurement that switched the built-in one off.
+- **reverted, counted apart** — how many reconciled passes a human revert settled rather than CI. A cohort whose false positives are mostly reverts is failing differently from one whose false positives are mostly red CI, and a single number would hide it.
+- **grader independence** — the unproven cohort split by whether the worker's own model graded the verdict or a distinct one did. Verdicts that recorded no grader fact are kept apart and excluded from both rates, never assumed into either.
+
+## Ground truth: two sources, one asymmetry
+
+A pass is reconciled by either:
+
+1. a **terminal CI verdict** (`Passing`/`Failing`) for a PR the pass covers — read from **every** recorded session, so a verdict that arrived after one session ended still reaches back to it; or
+2. a **revert** of a commit the pass covers, read out of `git log` from git's own generated `This reverts commit <sha>.` body.
+
+The asymmetry is deliberate and enforced: **a revert settles a pass as a false positive, while the absence of one confirms nothing.** Most correct work is never reverted for the same reason most correct work is never mentioned, so an un-reverted commit leaves its pass unreconciled and out of every denominator. Counting un-reverted commits as confirmations would improve every measured rate by construction — the one direction a calibration instrument must never drift.
+
+A revert also outranks a green CI run for the same pass: it is the later and better-informed statement.
 
 ## Honest limits
 
-- Reconciliation is stream-local and forward-only: a session's terminal CI verdict covers the passes recorded before it, and passes after the last CI observation stay unreconciled.
 - `Pending`/`Running` CI states reconcile nothing — absence of a verdict is not a verdict.
-- Reverts and rollbacks are not yet a ground-truth source; the report says so rather than approximating.
+- A session's events do not record which verdict a given commit implements, so a commit is attributed to every unsettled pass before it. A session that produced two passes and one commit counts a revert twice. This errs toward reporting the verifier as *worse* than it is, which is the safe direction here.
+- The git log is read best-effort and bounded: a workspace that is not a git repository simply contributes one fewer source.
+- Sessions recorded before the model verdict call was removed mix two populations under the `unproven` heading. The cohort used to be labelled *model verifier*, and that name was exact while a `deterministic: false` pass could only have come from a model ruling on inconclusive evidence. Removing that call left the same flag being set by the ladder's own non-determinate outcomes. Nothing in an old record distinguishes the two, so a report spanning the change cannot separate them.
+
+## `--format json`
+
+Under the versioned query envelope. Every rate is `null` when unmeasured, never `0`. Keys: `sessions`, `verdicts_observed`, the `unproven_*` and `deterministic_*` cohorts with their `*_false_positive_rate`, `snapshotted_verdicts` / `uncorroborated_verdicts` / `uncorroborated_rate` / `unproven_passes_standing_alone`, `settled_by_late_evidence` / `unreconciled_passes`, `unproven_reverted` / `deterministic_reverted`, and `by_grader` (`self_graded`, `independent`, `unknown`).
+
+`verdicts_observed` is the field that separates "no verdict was ever recorded" from "no verdict passed" — they are identical in every other tally, and since the pipeline's deletion the first is the ordinary state.
+
+<Callout type="warn">
+**Earlier rename.** `verifier_passes`, `verifier_reconciled`,
+`verifier_false_positives`, `verifier_false_positive_rate`,
+`verifier_passes_standing_alone` and `verifier_reverted` were renamed to
+`unproven_*`, and the human report's `verifier-alone rate` line to
+`uncorroborated rate`. The old spellings are **not** emitted alongside the new
+ones: they named a mechanism that contributes nothing to the tallies, so
+keeping them would have kept serving the wrong answer to a consumer who never
+noticed.
+</Callout>
 
 ## See also
 
