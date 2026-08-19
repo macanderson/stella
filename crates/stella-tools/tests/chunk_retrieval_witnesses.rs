@@ -69,7 +69,8 @@
 //!    living in a large file whose other contents are about something else.
 //!    Asserting the hit's `focus` is what makes this a granularity test: a hit
 //!    reached through the whole-file rung carries `focus: None`, so only a
-//!    chunk hit can satisfy it.
+//!    chunk hit can satisfy it. Its target was repointed once, when the file
+//!    it named left the workspace — see the comment at the assertion.
 //! 3. **The markdown half.** A question with no answer in the code at all.
 //!
 //! # Why witness 3 is the toolchain pin and not #3097's `AgentEvent` example
@@ -403,24 +404,39 @@ async fn chunk_search_answers_the_three_questions_file_vectors_could_not() {
 
     // ---- Witness 2: the answer is exactly one function -------------------
     //
-    // `ladder_decision` (`crates/stella-pipeline/src/verify.rs:806`) is the
-    // one function that turns deterministic evidence into a terminal verdict;
-    // AGENTS.md cites it by name for exactly that. Its file is 1,350 lines and
-    // eleven top-level functions of mostly unrelated work — command
-    // normalisation, witness-hunk stripping, six evidence builders — so a
-    // whole-file vector is diluted across all of it. Asserting `focus` is the
-    // granularity claim: a file-rung hit carries `None` there and cannot
-    // satisfy this no matter how well the file ranks.
-    const LADDER_QUERY: &str = "the ordering of checks that turns a red touched test into a revise and a corroborated \
-         flip receipt into a fast submit";
-    const LADDER_FILE: &str = "crates/stella-pipeline/src/verify.rs";
-    const LADDER_SYMBOL: &str = "ladder_decision";
-    let answer = search(&graph, &root, embedder, LADDER_QUERY).await;
+    // `bridge_policy_plane` (`crates/stella-core/src/bus.rs`) is the one
+    // function in the tree that turns the hook bus's four audit event names
+    // (`policy.evaluated`, `policy.blocked`, `approval.requested`,
+    // `secret.detected`) into `AgentEvent::PolicyDecision` on the event
+    // stream. `grep -rn PolicyDecision crates/ --include='*.rs'` finds
+    // consumers everywhere — the TUI's three matchers, the CLI's
+    // `diag_bridge`, `stella-tools`' `gated`/`registry` doc comments — and
+    // exactly one producer, this function. Its file is 1,891 lines and on the
+    // god-file list, and every other line of it is about something else:
+    // subscription and unsubscription, envelope sealing, blocking-policy
+    // folding, the slow-observer quarantine, bounded forwarding. So a
+    // whole-file vector is diluted across all of that.
+    //
+    // Asserting `focus` is the granularity claim: a file-rung hit carries
+    // `None` there and cannot satisfy this no matter how well the file ranks.
+    //
+    // This probe replaced one pinned to `ladder_decision` in
+    // `crates/stella-pipeline/src/verify.rs`, which had the same shape until
+    // that crate was deleted from the workspace (#3865). The corpus here is
+    // the live tree, so that target became unreachable rather than merely
+    // unverified — a witness that cannot pass proves nothing. Like every other
+    // target in this file, the replacement was verified by reading the tree
+    // (the grep above), not by observing a ranking.
+    const ONE_FN_QUERY: &str = "how a policy or approval decision from the hook bus becomes a \
+         content-free record on the agent's event stream";
+    const ONE_FN_FILE: &str = "crates/stella-core/src/bus.rs";
+    const ONE_FN_SYMBOL: &str = "bridge_policy_plane";
+    let answer = search(&graph, &root, embedder, ONE_FN_QUERY).await;
     match answer.hits.first() {
-        Some(hit) if hit.path == LADDER_FILE && hit.focus.as_deref() == Some(LADDER_SYMBOL) => {}
+        Some(hit) if hit.path == ONE_FN_FILE && hit.focus.as_deref() == Some(ONE_FN_SYMBOL) => {}
         _ => failures.push(format!(
-            "WITNESS 2 (one function): `{LADDER_QUERY}` did not rank `{LADDER_SYMBOL}` in \
-             {LADDER_FILE} first as a SYMBOL — a hit on the file with no focus is the \
+            "WITNESS 2 (one function): `{ONE_FN_QUERY}` did not rank `{ONE_FN_SYMBOL}` in \
+             {ONE_FN_FILE} first as a SYMBOL — a hit on the file with no focus is the \
              whole-file answer this witness exists to rule out.\n{}",
             render(&answer)
         )),

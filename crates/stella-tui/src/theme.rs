@@ -98,18 +98,13 @@ pub const DANGER: Color = palette::DANGER;
 /// Danger (bright — legible removed-line / error text on the dark backdrop).
 pub const DANGER_BRIGHT: Color = palette::DANGER;
 
-/// The oracle's **pre-flip** state — the one place red carries meaning in the
-/// deck (D6). A healthy, *expected* state ("the test fails before the patch —
-/// good"), so it deliberately does not share a value with [`DANGER`]: a failure
-/// hue on the very state a verification run is supposed to produce would teach
-/// readers to ignore the failure hue. Nothing else may take this role.
-///
-/// **No renderer claims it today.** Its only consumer was the witness panel,
-/// removed ahead of the staged pipeline's extraction (#3511); that crate was
-/// then deleted outright (#3865). The token is kept
-/// because [`palette`] mirrors the brand kit at `docs/brand/` and the contrast
-/// tables below are checked against it; retiring it is #3790.
-pub const ORACLE_PRE_FLIP: Color = palette::ORACLE_RED;
+// `ORACLE_PRE_FLIP` deliberately does not exist. #3890 retired it along with
+// its `palette::ORACLE_RED`/`ORACLE_RED_INK` values, and
+// `docs/design/verification-surface.md` § "Decision 3" is the standing
+// argument: the token's only consumer was the witness panel removed in #3791,
+// the brand kit at `docs/brand/` never carried an oracle token, and the
+// contrast-table case for keeping it was circular. A pre-flip red returns when
+// a panel paints one — a token earns its place by being painted.
 
 // ── Categorical hues (deliberately NOT brand) ───────────────────────────────
 //
