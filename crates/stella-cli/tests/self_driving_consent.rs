@@ -140,11 +140,20 @@ fn the_declared_grant_and_the_loop_name_the_same_powers() {
     let root = repo_root();
 
     let powers = [
+        // The power did not change; where it lives did (#3599 B1). It used to
+        // be a `gh` argv built inline in `self_driving_cmd.rs`; it is now the
+        // GitHub adapter behind `IssueProvider`, which is the only place in the
+        // tree that reads issues from GitHub.
+        //
+        // The anchor is the impl rather than the argv on purpose. An argv
+        // string fires spuriously the first time someone adds a `--json` field,
+        // which teaches a reader that this guard cries wolf; the impl
+        // disappears only if the capability really does.
         (
             "reading the GitHub defect queue",
             "`gh` — read the defect queue",
-            "crates/stella-cli/src/self_driving_cmd.rs",
-            r#"vec!["issue", "list", "--state", "open", "--label", "bug"]"#,
+            "crates/stella-cli/src/issue_provider.rs",
+            "impl IssueProvider for GhIssueProvider",
         ),
         (
             "filing findings as GitHub issues",
