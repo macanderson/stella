@@ -258,10 +258,10 @@ pub fn deliver_next(
     }
 
     // 2. A ceiling already reached escalates before anything else is tried.
-    if attempts.fixes > policy.fix_ceiling {
+    if attempts.fixes >= policy.fix_ceiling {
         return escalate(EscalationReason::FixCeilingReached);
     }
-    if attempts.rebases > policy.rebase_ceiling {
+    if attempts.rebases >= policy.rebase_ceiling {
         return escalate(EscalationReason::RebaseCeilingReached);
     }
 
@@ -413,8 +413,11 @@ mod tests {
             ..obs()
         };
         let policy = DeliverPolicy::default();
+        // Exactly the ceiling: the operator bought `fix_ceiling` fixes, so
+        // having spent that many means the budget is gone — this must escalate
+        // rather than buy one more.
         let spent = Attempts {
-            fixes: policy.fix_ceiling + 1,
+            fixes: policy.fix_ceiling,
             rebases: 0,
         };
 
