@@ -80,7 +80,12 @@ pub struct ToolRegistry {
     /// Per-session agent-invocation ledger (see [`crate::agent_use`]) —
     /// drained once per execution by the persistence layer, as an event log,
     /// never aggregated.
-    agent_uses: std::sync::Mutex<crate::agent_use::AgentUseLedger>,
+    ///
+    /// A shared handle rather than an owned mutex because a clone rides every
+    /// [`crate::ctx::ToolCtx`], which is how a tool that mints its own child
+    /// (`task`) reaches the ledger without holding the registry that owns it
+    /// (#3807).
+    agent_uses: crate::agent_use::AgentUseLedgerHandle,
     /// The session's MCP tool-usage ledger. External MCP tools bypass this
     /// registry (they run through `stella-mcp`'s `McpToolSet`), so nothing here
     /// writes to it — the CLI hands a clone ([`ToolRegistry::mcp_usage_ledger`])
@@ -210,7 +215,7 @@ impl ToolRegistry {
         Self {
             tools,
             root,
-            agent_uses: std::sync::Mutex::new(crate::agent_use::AgentUseLedger::default()),
+            agent_uses: crate::agent_use::AgentUseLedgerHandle::default(),
             mcp_usage: Arc::default(),
             task_board,
             spawn_queue,
@@ -510,7 +515,8 @@ impl ToolRegistry {
                 let contract = crate::contracts::contract_for(&tool.schema());
                 let ctx =
                     crate::ctx::ToolCtx::new(self.root.clone(), name, bus.clone(), contract.events)
-                        .with_scope(self.write_scope());
+                        .with_scope(self.write_scope())
+                        .with_agent_ledger(self.agent_uses.clone());
                 tool.execute(input, &ctx).await
             }
             None => ToolOutput::classified_error(

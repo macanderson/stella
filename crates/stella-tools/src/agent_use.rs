@@ -14,7 +14,18 @@
 //! `stella-cli::agents_installed` for the on-disk versioning scheme), so the
 //! telemetry can attribute outcomes to the exact definition text that ran.
 
+use std::sync::{Arc, Mutex};
+
 use serde::{Deserialize, Serialize};
+
+/// A shared handle on the session's ledger.
+///
+/// The registry owns one and hands clones out — to
+/// [`crate::ctx::ToolCtx`] per call, so a tool can attribute its own
+/// delegations (#3807). Shared rather than borrowed because the context
+/// crosses an `async_trait` boundary on every dispatch, exactly like the
+/// hook bus beside it.
+pub type AgentUseLedgerHandle = Arc<Mutex<AgentUseLedger>>;
 
 /// One invocation of an installed agent definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

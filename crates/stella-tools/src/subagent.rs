@@ -314,6 +314,19 @@ impl Tool for SpawnSubAgent {
             "description": description,
         }));
 
+        // The durable half of that announcement (#3807): the progress event is
+        // live telemetry nobody stores, so before this change a session that
+        // delegated eight children exported zero `agent_uses` rows and no
+        // reader could tell afterwards that any child had run. Recorded
+        // *before* the await for the same reason the dispatcher settles spend
+        // from the child's own thread — a hard cancel means the line after it
+        // never executes, and a delegation that vanished is exactly what this
+        // row exists to make visible. Version 1: a `task` child is minted here
+        // rather than loaded from a versioned definition on disk, so there is
+        // no pinned version to carry and the un-versioned agent's 1 is the
+        // ledger's own convention.
+        ctx.record_agent_use(&spec.agent_id, 1, description);
+
         // Already settled by the time this resolves — the dispatcher charges
         // the ledger from the child's own thread, which is the only place
         // that still runs when a hard cancel means this `await` never
