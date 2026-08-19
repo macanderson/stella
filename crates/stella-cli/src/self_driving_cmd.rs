@@ -1170,7 +1170,7 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
         }
 
         DeliverCmd::Observe { pr, format } => {
-            let obs = deliver::observe(&root, pr)?;
+            let obs = deliver::observe(pr)?;
             if *format == QueryFormat::Json {
                 println!(
                     "{}",
@@ -1192,7 +1192,7 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
             no_review,
             format,
         } => {
-            let transition = decide(&root, pr, *fixes, *rebases, *no_review)?;
+            let transition = decide(pr, *fixes, *rebases, *no_review)?;
             if *format == QueryFormat::Json {
                 println!(
                     "{}",
@@ -1213,7 +1213,7 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
             rebases,
             no_review,
         } => {
-            let transition = decide(&root, pr, *fixes, *rebases, *no_review)?;
+            let transition = decide(pr, *fixes, *rebases, *no_review)?;
             if transition.action != stella_autonomy::Action::Merge {
                 // Refused, not silently skipped: a caller that asked to merge
                 // and got nothing must be able to tell "already merged" from
@@ -1232,13 +1232,12 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
 
 /// Observe the forge and run the pure machine over what it said.
 fn decide(
-    root: &std::path::Path,
     pr: &str,
     fixes: u32,
     rebases: u32,
     no_review: bool,
 ) -> Result<stella_autonomy::Transition, String> {
-    let obs = deliver::observe(root, pr)?;
+    let obs = deliver::observe(pr)?;
     let policy = stella_autonomy::DeliverPolicy {
         require_approval: !no_review,
         ..stella_autonomy::DeliverPolicy::default()

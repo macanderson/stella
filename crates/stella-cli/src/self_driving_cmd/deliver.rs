@@ -220,20 +220,51 @@ pub(super) fn commit_trailer(issue_key: &str) -> String {
     format!("Closes #{issue_key}")
 }
 
+/// The forge endpoint carrying a ref's check runs.
+///
+/// Split out so the one thing that can be wrong here — *which commit gets
+/// asked about* — is visible to a test. See [`checks_for_branch`].
+#[must_use]
+fn check_runs_endpoint(branch: &str) -> String {
+    format!("repos/{{owner}}/{{repo}}/commits/{branch}/check-runs")
+}
+
 /// Read a branch's checks from the forge.
-pub(super) fn checks_for_branch(root: &std::path::Path, branch: &str) -> Vec<Check> {
+///
+/// # The branch is named to the forge, never resolved locally first
+///
+/// This used to run `git rev-parse origin/<branch>` and ask about the commit
+/// that came back. A remote-tracking ref is only as fresh as the last fetch,
+/// and this loop does not fetch between polls — so once the process had been
+/// up for a while, `origin/main` still pointed at whatever main was when it
+/// started.
+///
+/// That is not a stale-data annoyance; it is a loss of work, and in the one
+/// direction that costs. [`base_conclusion`] excuses a pull request only when
+/// **every** check failing on it also fails on the base. Reading a
+/// pre-breakage base makes the base look green, so an inherited failure is
+/// scored as the pull request's own and a change that was never wrong gets a
+/// fix attempt or an escalation. It happened on the first pull request this
+/// loop ever opened: #4014 failed on a `cargo fmt` diff in a file its own diff
+/// never touched, and was escalated for it.
+///
+/// Naming the branch to the forge has no local state left to be stale. It is
+/// the same rule [`open_prs_for_prefix`] follows: for a question about the
+/// forge, ask the forge.
+pub(super) fn checks_for_branch(branch: &str) -> Vec<Check> {
     // `gh pr view` is not available for a branch with no pull request, so the
-    // base is read through the commit's check-runs instead. A base with no
-    // checks at all yields an empty list, which `base_conclusion` reads as
-    // "does not excuse anything" — the safe direction.
-    let raw = git(root, &["rev-parse", branch]).unwrap_or_default();
-    if raw.is_empty() {
+    // base is read through the ref's check-runs instead. A base with no checks
+    // at all yields an empty list, which `base_conclusion` reads as "does not
+    // excuse anything" — which blames the pull request, so it is only correct
+    // while it means "the base really has no checks".
+    if branch.is_empty() {
         return Vec::new();
     }
     let out = std::process::Command::new("gh")
         .args([
             "api",
-            &format!("repos/{{owner}}/{{repo}}/commits/{}/check-runs", raw.trim()),
+            &check_runs_endpoint(branch),
+            "--paginate",
             "--jq",
             ".check_runs[] | {name: .name, conclusion: (.conclusion // \"\"), status: .status}",
         ])
@@ -296,7 +327,7 @@ pub(super) fn open(
 
 /// One read of the forge, plus the second read of the base its
 /// [`Observation::base_ci`] needs.
-pub(super) fn observe(root: &std::path::Path, pr: &str) -> Result<Observation, String> {
+pub(super) fn observe(pr: &str) -> Result<Observation, String> {
     let raw = gh(&[
         "pr",
         "view",
@@ -308,12 +339,10 @@ pub(super) fn observe(root: &std::path::Path, pr: &str) -> Result<Observation, S
         format!("`gh pr view` returned a payload this build cannot read: {error}")
     })?;
 
-    let base_branch = if view.base_ref_name.is_empty() {
-        "origin/HEAD".to_owned()
-    } else {
-        format!("origin/{}", view.base_ref_name)
-    };
-    let base_checks = checks_for_branch(root, &base_branch);
+    // The forge's own name for the base, passed through untouched. Prefixing
+    // it with `origin/` would name a remote-tracking ref this process no
+    // longer resolves — see `checks_for_branch`.
+    let base_checks = checks_for_branch(&view.base_ref_name);
 
     Ok(observation_from(&view, &base_checks))
 }
@@ -373,6 +402,39 @@ pub(super) fn merge(pr: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The base is asked about by branch name, so no local ref can go stale.
+    ///
+    /// The endpoint used to carry a commit resolved by `git rev-parse
+    /// origin/<branch>`, which is only as fresh as the last fetch — and this
+    /// loop never fetches. A base that broke while the process was up still
+    /// resolved to the pre-breakage commit, so [`base_conclusion`] saw a green
+    /// base and scored an inherited failure as the pull request's own. #4014
+    /// was escalated for a `cargo fmt` diff in a file it never touched.
+    ///
+    /// Asserting the *absence* of `origin/` is the half that matters: a
+    /// remote-tracking spelling would resolve locally again and re-introduce
+    /// exactly the staleness this replaced.
+    #[test]
+    fn the_base_is_named_to_the_forge_not_a_remote_tracking_ref() {
+        let endpoint = check_runs_endpoint("main");
+        assert_eq!(endpoint, "repos/{owner}/{repo}/commits/main/check-runs");
+        assert!(
+            !endpoint.contains("origin/"),
+            "a remote-tracking ref resolves against the last fetch, not the forge: {endpoint}"
+        );
+    }
+
+    /// A base with no name is not a base with no failures.
+    ///
+    /// Reading an empty list here means "the base excuses nothing", which
+    /// blames the pull request. That is only sound when the base genuinely has
+    /// no checks — so the empty-name path returns early rather than asking the
+    /// forge about a ref spelled `""` and reading its 404 as the same thing.
+    #[test]
+    fn an_unnamed_base_asks_the_forge_nothing() {
+        assert!(checks_for_branch("").is_empty());
+    }
 
     fn check(name: &str, conclusion: &str) -> Check {
         Check {

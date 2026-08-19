@@ -339,22 +339,19 @@ pub(super) fn drive(
             }
 
             LoopStep::Deliver { pr } => {
-                let settled =
-                    match advance(&root, &pr.0, &mut spent, no_review, &mut tally, durable) {
-                        Ok(settled) => settled,
-                        Err(error) => {
-                            audit::record(
-                                durable,
-                                Audit::Transient,
-                                Some(&pr.0),
-                                &format!(
-                                    "could not advance it ({error}); re-asking in {poll_secs}s"
-                                ),
-                            );
-                            sleep(poll_secs);
-                            false
-                        }
-                    };
+                let settled = match advance(&pr.0, &mut spent, no_review, &mut tally, durable) {
+                    Ok(settled) => settled,
+                    Err(error) => {
+                        audit::record(
+                            durable,
+                            Audit::Transient,
+                            Some(&pr.0),
+                            &format!("could not advance it ({error}); re-asking in {poll_secs}s"),
+                        );
+                        sleep(poll_secs);
+                        false
+                    }
+                };
 
                 if settled {
                     for carried in &mut state.carrying {
@@ -513,7 +510,6 @@ fn escalate(
 /// Returns whether it settled — merged, escalated, or handed back — so the
 /// caller can stop carrying it.
 fn advance(
-    root: &std::path::Path,
     pr: &str,
     spent: &mut HashMap<String, Spent>,
     no_review: bool,
@@ -521,7 +517,7 @@ fn advance(
     durable: &Durable,
 ) -> Result<bool, String> {
     let entry = spent.entry(pr.to_owned()).or_default();
-    let obs = super::deliver::observe(root, pr)?;
+    let obs = super::deliver::observe(pr)?;
     let policy = DeliverPolicy {
         require_approval: !no_review,
         ..DeliverPolicy::default()
