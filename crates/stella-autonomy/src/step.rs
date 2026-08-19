@@ -55,6 +55,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::doctrine::{
+    Contention, ContentionVerdict, Doctrine, ForeignBreakage, contention_verdict,
+};
+
 /// A tracker's issue key, as the tracker spells it.
 ///
 /// Opaque: produced by a caller, compared for equality, handed back. See the
@@ -178,6 +182,16 @@ pub enum LoopStep {
     },
     /// Emit proposals from ledger evidence.
     Curate,
+    /// Act on the thing blocking the loop, rather than waiting for someone else
+    /// to.
+    ///
+    /// The loop exhausts the channels it is permitted before it parks: a
+    /// blockage it can make visible, it files; a blockage its doctrine lets it
+    /// adopt, it fixes. Parking is what is left when neither applies.
+    Unblock {
+        /// Which remedy.
+        attempt: UnblockAttempt,
+    },
     /// Nothing to do until the world changes.
     Watch {
         /// What would make it worth waking.
@@ -194,6 +208,34 @@ pub enum LoopStep {
         reason: BlockReason,
         /// The observable that will let it go again, with no operator gesture.
         clears_when: Clearance,
+    },
+}
+
+/// A remedy the loop may apply to its own blockage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "attempt")]
+pub enum UnblockAttempt {
+    /// File the base breakage so it is visible and attributable.
+    ///
+    /// Happens under every policy that files at all, and **before** any attempt
+    /// to fix it, because the ticket is the part that survives a failed fix.
+    FileBaseBreakage,
+    /// Fix breakage this loop did not cause.
+    ///
+    /// Only under [`ForeignBreakage::FileAndAdopt`], only once filed, and only
+    /// when nothing else appears to be on it.
+    AdoptBaseBreakage {
+        /// The issue to work, so the fix is attributable to the filing.
+        issue: IssueRef,
+    },
+    /// Somebody else is already fixing it.
+    ///
+    /// Not a no-op: it is a *recorded* decision not to duplicate work, carrying
+    /// what was seen. A loop that silently declined would be indistinguishable
+    /// from one that never looked.
+    DeferToExistingFix {
+        /// The signals that caused the deferral.
+        evidence: Vec<String>,
     },
 }
 
@@ -246,8 +288,9 @@ pub struct LoopState {
     pub pending_proposals: u32,
 }
 
-/// What the world looks like right now. Facts only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What the world looks like right now. Facts only — every policy question the
+/// machine asks is answered by [`Doctrine`], never by this type.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoopObservation {
     /// Whether any budget axis is exhausted.
     ///
@@ -255,17 +298,36 @@ pub struct LoopObservation {
     /// arithmetic, and this machine only needs to know whether it may spend.
     pub budget_exhausted: bool,
     /// Whether the `[driver]` grant is still valid.
+    ///
+    /// Note the polarity: `false` blocks. [`Default`] therefore yields an
+    /// *invalid* grant, which is the safe direction — a caller that forgets to
+    /// set this gets a parked loop, not an ungoverned one.
     pub grant_valid: bool,
     /// Whether a human has asked it to stop.
     pub stop_requested: bool,
     /// How many issues the ranked queue is offering.
     pub queue_depth: u32,
-    /// Whether policy abandons an escalated PR rather than halting on it.
+    /// Whether the base branch is currently broken.
     ///
-    /// Policy, not arithmetic: an operator who wants the loop to keep going
-    /// past a PR a human must look at can say so, and an operator who wants the
-    /// loop to stop and wait can say that instead.
-    pub abandon_escalated: bool,
+    /// A red base blocks *everyone*, and it is the blockage a loop is most
+    /// likely to meet that it did not cause. §6.5's `foreign_breakage` decides
+    /// what to do about it.
+    pub base_broken: bool,
+    /// Whether the base breakage already has an issue filed against it.
+    ///
+    /// Filing is separate from fixing on purpose: the ticket is what makes the
+    /// breakage visible and attributable **even if the fix never lands**, so it
+    /// happens first and under every policy that files at all.
+    pub base_breakage_filed: bool,
+    /// The issue tracking the base breakage, once filed.
+    pub base_breakage_issue: Option<IssueRef>,
+    /// What else appears to be fixing that breakage already.
+    ///
+    /// Gathered from the forge and from **this machine** — the local worktrees
+    /// are the signal nobody remembers to check, and two self-driving sessions
+    /// against one clone see each other only there.
+    #[serde(default)]
+    pub base_fix_contention: Contention,
 }
 
 /// The loop's next move.
@@ -282,17 +344,20 @@ pub struct LoopObservation {
 ///    budget — checked before any available work, so no amount of work can
 ///    outvote a stop. Each is recomputed rather than latched, so it stops
 ///    applying the moment its cause is gone.
-/// 2. **An escalated PR parks the loop**, unless policy says to abandon it.
+/// 2. **An escalated PR parks the loop**, unless doctrine says to abandon it.
 /// 3. **Plan before acting**, so a cycle is sized to its machine first.
-/// 4. **Finishing outranks starting** — deliver a carried PR before claiming
+/// 4. **Unblock before working.** A broken base makes every PR the loop
+///    produces fail CI, so it is dealt with before more are made — filed first,
+///    then adopted if doctrine permits and nothing else is on it.
+/// 5. **Finishing outranks starting** — deliver a carried PR before claiming
 ///    anything new. See the module docs.
-/// 5. **Work what is already claimed** before claiming more.
-/// 6. **Claim** while the queue offers something and the batch has room.
-/// 7. **Sweep** when the queue is dry and a lens is still open.
-/// 8. **Curate** when proposals have accumulated and nothing else is pressing.
-/// 9. **Watch** otherwise — the ladder is exhausted and the queue is empty.
+/// 6. **Work what is already claimed** before claiming more.
+/// 7. **Claim** while the queue offers something and the batch has room.
+/// 8. **Sweep** when the queue is dry and a lens is still open.
+/// 9. **Curate** when proposals have accumulated and nothing else is pressing.
+/// 10. **Watch** otherwise — the ladder is exhausted and the queue is empty.
 #[must_use]
-pub fn step(state: &LoopState, obs: &LoopObservation) -> LoopStep {
+pub fn step(state: &LoopState, obs: &LoopObservation, doctrine: &Doctrine) -> LoopStep {
     // 1. A stop outranks everything. Recomputed every call and never latched,
     //    so each of these stops being returned the moment its cause is gone.
     if obs.stop_requested {
@@ -305,8 +370,8 @@ pub fn step(state: &LoopState, obs: &LoopObservation) -> LoopStep {
         return blocked(BlockReason::BudgetSpent);
     }
 
-    // 2. An escalated PR parks the loop unless policy abandons it.
-    if !obs.abandon_escalated
+    // 2. An escalated PR parks the loop unless doctrine abandons it.
+    if !doctrine.abandon_escalated
         && let Some(carried) = state
             .carrying
             .iter()
@@ -322,7 +387,15 @@ pub fn step(state: &LoopState, obs: &LoopObservation) -> LoopStep {
         return LoopStep::Plan;
     }
 
-    // 4. Finishing outranks starting.
+    // 4. Exhaust the permitted channels on the loop's own blockage before
+    //    making more work that the same blockage will stall.
+    if obs.base_broken
+        && let Some(attempt) = unblock_base(obs, doctrine)
+    {
+        return LoopStep::Unblock { attempt };
+    }
+
+    // 5. Finishing outranks starting.
     if let Some(carried) = state
         .carrying
         .iter()
@@ -364,6 +437,48 @@ pub fn step(state: &LoopState, obs: &LoopObservation) -> LoopStep {
     }
 }
 
+/// What, if anything, the loop may do about a broken base right now.
+///
+/// `None` means "nothing left to try" — the breakage is filed, doctrine does
+/// not permit adopting it, or someone else has it — and the caller carries on
+/// with ordinary work rather than parking, because a red base stops merges, not
+/// authoring.
+///
+/// The order is the argument:
+///
+/// 1. **File first, always.** The ticket is what makes the breakage visible and
+///    attributable *even if the fix never lands*, so it is never contingent on
+///    the fix being attempted.
+/// 2. **Then check contention**, before adopting. Two workers on one broken
+///    `main` produce a merge conflict on top of the outage.
+/// 3. **Then adopt**, only if doctrine says to.
+fn unblock_base(obs: &LoopObservation, doctrine: &Doctrine) -> Option<UnblockAttempt> {
+    if doctrine.foreign_breakage == ForeignBreakage::Ignore {
+        return None;
+    }
+
+    // 1. Make it visible first.
+    if !obs.base_breakage_filed {
+        return Some(UnblockAttempt::FileBaseBreakage);
+    }
+
+    if doctrine.foreign_breakage != ForeignBreakage::FileAndAdopt {
+        return None;
+    }
+
+    // 2. Do not duplicate a fix already in flight.
+    if let ContentionVerdict::Defer { evidence } =
+        contention_verdict(doctrine.contention, &obs.base_fix_contention)
+    {
+        return Some(UnblockAttempt::DeferToExistingFix { evidence });
+    }
+
+    // 3. Adopt it, attributed to the filing.
+    obs.base_breakage_issue
+        .clone()
+        .map(|issue| UnblockAttempt::AdoptBaseBreakage { issue })
+}
+
 fn blocked(reason: BlockReason) -> LoopStep {
     let clears_when = reason.clearance();
     LoopStep::Blocked {
@@ -378,12 +493,32 @@ mod tests {
 
     fn obs() -> LoopObservation {
         LoopObservation {
-            budget_exhausted: false,
             grant_valid: true,
-            stop_requested: false,
             queue_depth: 5,
-            abandon_escalated: false,
+            ..LoopObservation::default()
         }
+    }
+
+    /// A red base, already filed, with a doctrine that adopts it.
+    fn base_red_filed() -> LoopObservation {
+        LoopObservation {
+            base_broken: true,
+            base_breakage_filed: true,
+            base_breakage_issue: Some(IssueRef("3912".into())),
+            ..obs()
+        }
+    }
+
+    fn adopting() -> Doctrine {
+        Doctrine {
+            foreign_breakage: ForeignBreakage::FileAndAdopt,
+            ..Doctrine::default()
+        }
+    }
+
+    /// Convenience for the many cases that use the conservative default.
+    fn go(state: &LoopState, o: &LoopObservation) -> LoopStep {
+        step(state, o, &Doctrine::default())
     }
 
     fn planned() -> LoopState {
@@ -434,7 +569,7 @@ mod tests {
             ),
         ] {
             assert!(
-                matches!(step(&busy, &o), LoopStep::Blocked { .. }),
+                matches!(go(&busy, &o), LoopStep::Blocked { .. }),
                 "{label} must park a loop with work available in every form"
             );
         }
@@ -497,13 +632,13 @@ mod tests {
 
         for (label, blocked_obs, blocked_state, cleared_state) in cases {
             assert!(
-                matches!(step(&blocked_state, &blocked_obs), LoopStep::Blocked { .. }),
+                matches!(go(&blocked_state, &blocked_obs), LoopStep::Blocked { .. }),
                 "{label}: expected a block first"
             );
 
             // The cause is gone. Nothing told the loop it may resume.
             assert_eq!(
-                step(&cleared_state, &obs()),
+                go(&cleared_state, &obs()),
                 LoopStep::Claim { batch: 3 },
                 "{label}: must resume on its own, with no resume signal"
             );
@@ -519,7 +654,7 @@ mod tests {
             ..obs()
         };
         assert_eq!(
-            step(&planned(), &o),
+            go(&planned(), &o),
             LoopStep::Blocked {
                 reason: BlockReason::GrantRevoked,
                 clears_when: Clearance::GrantRestored,
@@ -540,7 +675,7 @@ mod tests {
         };
 
         assert_eq!(
-            step(&stuck, &obs()),
+            go(&stuck, &obs()),
             LoopStep::Blocked {
                 reason: BlockReason::EscalatedPr {
                     pr: PrRef("412".into())
@@ -586,12 +721,104 @@ mod tests {
             }],
             ..planned()
         };
-        let o = LoopObservation {
+        let abandoning = Doctrine {
             abandon_escalated: true,
+            ..Doctrine::default()
+        };
+
+        assert_eq!(
+            step(&stuck, &obs(), &abandoning),
+            LoopStep::Claim { batch: 3 }
+        );
+    }
+
+    /// The blockage-resolution witness. A base the loop did not break is filed
+    /// first — under every doctrine that files at all — because the ticket is
+    /// what makes the breakage visible and attributable even if no fix lands.
+    #[test]
+    fn a_base_the_loop_did_not_break_is_filed_before_anything_else() {
+        let red = LoopObservation {
+            base_broken: true,
             ..obs()
         };
 
-        assert_eq!(step(&stuck, &o), LoopStep::Claim { batch: 3 });
+        for doctrine in [Doctrine::default(), adopting()] {
+            assert_eq!(
+                step(&planned(), &red, &doctrine),
+                LoopStep::Unblock {
+                    attempt: UnblockAttempt::FileBaseBreakage
+                },
+                "{:?} must make the breakage visible first",
+                doctrine.foreign_breakage
+            );
+        }
+    }
+
+    /// The other half: with the breakage filed, doctrine decides whether the
+    /// loop fixes somebody else's code. Both answers are legitimate, which is
+    /// exactly why it is configuration and not a hardcoded rule.
+    #[test]
+    fn doctrine_decides_whether_foreign_breakage_is_adopted() {
+        // FileAndAdopt: a red base blocks this loop as surely as its author.
+        assert_eq!(
+            step(&planned(), &base_red_filed(), &adopting()),
+            LoopStep::Unblock {
+                attempt: UnblockAttempt::AdoptBaseBreakage {
+                    issue: IssueRef("3912".into())
+                }
+            }
+        );
+
+        // FileAndWait: filed already, so nothing more to try — and the loop
+        // carries on with ordinary work rather than parking, because a red base
+        // stops merges, not authoring.
+        assert_eq!(
+            step(&planned(), &base_red_filed(), &Doctrine::default()),
+            LoopStep::Claim { batch: 3 }
+        );
+    }
+
+    /// The collision witness. A fix already in flight — including one in a
+    /// worktree on this very machine — defers instead of duplicating, and the
+    /// deferral carries what was seen so it is reviewable.
+    #[test]
+    fn an_adopted_fix_defers_to_one_already_in_flight() {
+        let contended = LoopObservation {
+            base_fix_contention: Contention {
+                local_worktrees: vec!["fix-ci-3915".into()],
+                ..Contention::default()
+            },
+            ..base_red_filed()
+        };
+
+        assert_eq!(
+            step(&planned(), &contended, &adopting()),
+            LoopStep::Unblock {
+                attempt: UnblockAttempt::DeferToExistingFix {
+                    evidence: vec!["local worktree: fix-ci-3915".into()]
+                }
+            },
+            "two workers on one broken main produce a conflict on top of an outage"
+        );
+    }
+
+    /// `Ignore` is reachable and does nothing — present for the operator who
+    /// wants a silent loop, and deliberately not the default.
+    #[test]
+    fn ignore_neither_files_nor_fixes() {
+        let red = LoopObservation {
+            base_broken: true,
+            ..obs()
+        };
+        let silent = Doctrine {
+            foreign_breakage: ForeignBreakage::Ignore,
+            ..Doctrine::default()
+        };
+
+        assert_eq!(
+            step(&planned(), &red, &silent),
+            LoopStep::Claim { batch: 3 }
+        );
     }
 
     #[test]
@@ -600,7 +827,7 @@ mod tests {
             claimed: vec![IssueRef("1".into())],
             ..LoopState::default()
         };
-        assert_eq!(step(&fresh, &obs()), LoopStep::Plan);
+        assert_eq!(go(&fresh, &obs()), LoopStep::Plan);
     }
 
     /// A loop that claims whenever the queue is non-empty accumulates PRs it
@@ -616,7 +843,7 @@ mod tests {
         };
 
         assert_eq!(
-            step(&carrying, &obs()),
+            go(&carrying, &obs()),
             LoopStep::Deliver {
                 pr: PrRef("77".into())
             },
@@ -631,7 +858,7 @@ mod tests {
             ..planned()
         };
         assert_eq!(
-            step(&claimed, &obs()),
+            go(&claimed, &obs()),
             LoopStep::Work {
                 issue: IssueRef("3210".into())
             }
@@ -647,7 +874,7 @@ mod tests {
             }],
             ..planned()
         };
-        assert_eq!(step(&settled, &obs()), LoopStep::Claim { batch: 3 });
+        assert_eq!(go(&settled, &obs()), LoopStep::Claim { batch: 3 });
     }
 
     /// §4.1: only the queue supply terminates. A dry queue is where the sweep
@@ -664,7 +891,7 @@ mod tests {
         };
 
         assert_eq!(
-            step(&dry, &o),
+            go(&dry, &o),
             LoopStep::Sweep {
                 lens: "concurrency".into()
             }
@@ -681,10 +908,10 @@ mod tests {
             queue_depth: 0,
             ..obs()
         };
-        assert_eq!(step(&idle, &o), LoopStep::Curate);
+        assert_eq!(go(&idle, &o), LoopStep::Curate);
 
         // ...and not while the queue still offers work.
-        assert_eq!(step(&idle, &obs()), LoopStep::Claim { batch: 3 });
+        assert_eq!(go(&idle, &obs()), LoopStep::Claim { batch: 3 });
     }
 
     /// The exhausted ladder wakes on a moved base, because a lens dry at commit
@@ -696,7 +923,7 @@ mod tests {
             ..obs()
         };
         assert_eq!(
-            step(&planned(), &o),
+            go(&planned(), &o),
             LoopStep::Watch {
                 until: WakeCondition::BaseMoved
             }
@@ -713,7 +940,7 @@ mod tests {
             ..planned()
         };
         assert_eq!(
-            step(&no_room, &obs()),
+            go(&no_room, &obs()),
             LoopStep::Sweep {
                 lens: "rubric".into()
             }

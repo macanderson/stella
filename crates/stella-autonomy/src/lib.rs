@@ -41,6 +41,7 @@
 
 mod convention;
 mod deliver;
+mod doctrine;
 mod step;
 mod surface;
 
@@ -57,9 +58,13 @@ pub use deliver::{
     Action, Attempts, CiConclusion, DeliverPolicy, EscalationReason, Mergeability, Observation,
     PrState, ReviewState, Transition, deliver_next,
 };
+pub use doctrine::{
+    Contention, ContentionPolicy, ContentionVerdict, Doctrine, ForeignBreakage, QueueCriterion,
+    contention_verdict,
+};
 pub use step::{
     BlockReason, CarriedPr, Clearance, IssueRef, LoopObservation, LoopState, LoopStep,
-    PrDisposition, PrRef, WakeCondition, step,
+    PrDisposition, PrRef, UnblockAttempt, WakeCondition, step,
 };
 pub use surface::{
     Emits, HOST_SURFACE, HOST_SURFACE_VERSION, HostVerb, SurfaceDrift, host_verb, surface_drift,
