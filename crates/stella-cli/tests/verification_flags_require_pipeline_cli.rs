@@ -63,7 +63,7 @@ fn keep_witness_alone_is_refused_without_pipeline() {
     assert!(!out.status.success(), "expected a non-zero exit");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("--keep-witness"), "{stderr}");
-    assert!(stderr.contains("--pipeline classic"), "{stderr}");
+    assert!(stderr.contains("stella plugin install"), "{stderr}");
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn require_verified_alone_is_refused_without_pipeline() {
     assert!(!out.status.success(), "expected a non-zero exit");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("--require-verified"), "{stderr}");
-    assert!(stderr.contains("--pipeline classic"), "{stderr}");
+    assert!(stderr.contains("stella plugin install"), "{stderr}");
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn test_command_alone_is_refused_without_pipeline() {
     assert!(!out.status.success(), "expected a non-zero exit");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("--test-command"), "{stderr}");
-    assert!(stderr.contains("--pipeline classic"), "{stderr}");
+    assert!(stderr.contains("stella plugin install"), "{stderr}");
 }
 
 /// The refusal is scoped to the three verification flags, not to
@@ -160,15 +160,20 @@ fn arena_test_command_is_refused_without_pipeline() {
     assert!(!out.status.success(), "expected a non-zero exit");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("--test-command"), "{stderr}");
-    assert!(stderr.contains("--pipeline classic"), "{stderr}");
+    assert!(stderr.contains("stella plugin install"), "{stderr}");
 }
 
-/// The companion half: `--pipeline classic` gives the flag a ladder to arm,
-/// so the same invocation is no longer refused. It fails later for its own
-/// reasons (no `TASK.md`, no reachable provider) — what this proves is that
-/// the refusal is scoped to the resolution that cannot honor the flag.
+/// **Witness (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice
+/// 1).** `--pipeline classic` used to give `--test-command` a ladder to arm,
+/// so this exact invocation used to run past the verification-flags gate
+/// (see the previous commit's `arena_test_command_is_accepted_with_pipeline_classic`,
+/// which this replaces). The built-in staged pipeline is gone now, so
+/// `--pipeline classic` is refused at `PipelineChoice::resolve` itself,
+/// before `arena`'s own verification-flags gate is ever reached — the same
+/// refusal every other door gives it. Fails on the pre-slice-1 tree (which
+/// still runs past this point); passes on this one.
 #[test]
-fn arena_test_command_is_accepted_with_pipeline_classic() {
+fn arena_pipeline_classic_is_refused_outright() {
     let (workspace, data) = fresh_dirs();
     let out = run_stella(
         workspace.path(),
@@ -187,9 +192,11 @@ fn arena_test_command_is_accepted_with_pipeline_classic() {
             "pytest",
         ],
     );
+    assert!(!out.status.success(), "expected a non-zero exit");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        !stderr.contains("staged pipeline's verification machinery"),
-        "--pipeline classic must accept --test-command: {stderr}"
+        stderr.contains("--pipeline classic no longer runs anything"),
+        "{stderr}"
     );
+    assert!(stderr.contains("stella plugin install"), "{stderr}");
 }

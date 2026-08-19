@@ -1925,8 +1925,9 @@ pub async fn run_deck_session(
                         // door raises the scope-review card any more, so a
                         // `ScopeDecision` arriving here has nothing to
                         // answer. `UserInput::ScopeDecision` itself is left
-                        // in place — deleting it is stella-tui-side surface
-                        // work this slice does not do (#left-behind, filed).
+                        // in place — deleting or re-homing it is
+                        // stella-tui-side surface work this slice does not
+                        // do; tracked as #3861.
                         Some(WorkspaceInput::ToAgent {
                             input: UserInput::ScopeDecision(_), ..
                         }) => {}
