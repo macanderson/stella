@@ -108,10 +108,11 @@ impl ToolExecutor for TaskTap<'_> {
         self.inner.parallel_safe_names()
     }
 
-    /// Forwarded: the deck's lead lane wraps the discovery mount (which owns
-    /// the invocation plane) in this tap, so a tap that let the empty default
-    /// stand would silently stop active skill bodies surviving summarization
-    /// (#2685) for every deck session.
+    /// Forwarded: letting the `None` default stand would drop the blocking
+    /// hook chain and the approval flow for every tool dispatched under a
+    /// deck session — the tap sits between the decorators that dispatch names
+    /// of their own and the registry that owns the gate, so a gate it does not
+    /// forward is a gate nothing consults (#2793).
     fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
         self.inner.dispatch_gate()
     }

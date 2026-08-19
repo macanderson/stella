@@ -110,7 +110,6 @@ mod service;
 /// than restart them.
 mod boot;
 
-pub(crate) mod approval;
 pub(crate) mod console;
 
 /// `--detach`: the same supervised launch, without the launcher staying to
@@ -157,8 +156,6 @@ const SIGKILL: i32 = 9;
 pub(crate) struct Supervised {
     /// The registry id — what `stella daemon attach` takes.
     pub(crate) id: String,
-    /// The child's session sidecar, where a parked approval waits (#1585).
-    sidecar: PathBuf,
     /// The child's process group, which is also its pid ([`spawn`]).
     pgid: i32,
     child: std::process::Child,
@@ -545,7 +542,6 @@ fn launch(
     let console = console::Follower::open(&sidecar)?;
     Ok(Supervised {
         id: record.id,
-        sidecar,
         pgid,
         child,
         console,
@@ -670,11 +666,6 @@ impl Supervised {
     /// It is printed rather than assumed because supervision changes two
     /// things a user can otherwise only discover the hard way: the run is no
     /// longer this terminal's to lose, and there is an id to come back to.
-    ///
-    /// There is deliberately no scope-review caveat here any more: a
-    /// supervised plan that expands scope parks and asks through the sidecar
-    /// (#1585) — this terminal while it stays, any `stella daemon attach`
-    /// after it goes — so supervision no longer takes that answer away.
     pub(crate) fn announce(&self) {
         for line in announcement(&self.id) {
             eprintln!("{line}");
@@ -687,18 +678,8 @@ impl Supervised {
     /// stdout and stderr are replayed onto stdout and stderr, never merged:
     /// see [`stella_store::supervised::STDOUT_LOG`].
     pub(crate) async fn follow(&mut self) -> Result<Option<u8>, String> {
-        use std::io::IsTerminal;
-        let interactive = approval::console_is_interactive(
-            std::io::stdin().is_terminal(),
-            std::io::stderr().is_terminal(),
-        );
-        let mut approval_noted = false;
         loop {
             let moved = self.pump()?;
-            // The launching terminal is the first surface a parked scope
-            // review reaches (#1585) — this is the exact capability the
-            // supervisor used to take away.
-            approval::forward_pending_approval(&self.sidecar, interactive, &mut approval_noted);
             match self
                 .child
                 .try_wait()
@@ -1359,15 +1340,9 @@ fn has_resume_point(record: &SessionRecord) -> bool {
 }
 
 fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
-    use std::io::IsTerminal;
     let record = resolve(registry, id)?;
     let sidecar = registry.sidecar_dir(&record.id);
     let mut console = console::Follower::open(&sidecar)?;
-    let interactive = approval::console_is_interactive(
-        std::io::stdin().is_terminal(),
-        std::io::stderr().is_terminal(),
-    );
-    let mut approval_noted = false;
     eprintln!(
         "{} {} — {}",
         "▸ attached".green().bold(),
@@ -1376,9 +1351,6 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
     );
     loop {
         let moved = console.pump(&mut std::io::stdout(), &mut std::io::stderr())?;
-        // Attaching to a parked run is the issue's headline path (#1585):
-        // `daemon list` says Needs Input, attach asks the question.
-        approval::forward_pending_approval(&sidecar, interactive, &mut approval_noted);
         if lock_is_held(&sidecar) != Some(true) {
             // Same ordering as `follow`: drain after observing the end, so the
             // last thing the run wrote is never the thing attach misses.

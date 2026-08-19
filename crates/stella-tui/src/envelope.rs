@@ -195,11 +195,6 @@ pub enum Inbound {
     /// ignored by the model fold. The driver sends one after `/init` adopts
     /// custom commands/skills so the menu reflects them without a restart.
     SlashCommands(Vec<crate::composer::SlashCommand>),
-    /// The driver toggled staged-pipeline routing (`/pipeline`): subsequent
-    /// turns run triage → plan → execute → witness → verify → verdict, not the
-    /// raw engine loop. Folded into [`crate::deck::WorkspaceModel::pipeline`]
-    /// so the `PIPELINE` stat box flips live.
-    Pipeline(bool),
     /// The session's resolved triage / worker / verifier pins, sent once at
     /// startup by the driver — which is the only side that can call
     /// `resolve_provider` — so the statline's MODEL cell and the `/models`

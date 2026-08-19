@@ -6,7 +6,7 @@
 //! output files, byte-identity — lives in `tests/dataset_export_cli.rs`.
 
 use super::*;
-use stella_pipeline::reward::DiscardReason;
+use crate::reward::DiscardReason;
 use stella_protocol::{
     FileChangeKind, FlipOutcome, LadderRung, LadderSnapshot, ModelCallRole, ToolCall, ToolOutput,
     VerdictEvidence,

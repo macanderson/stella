@@ -658,8 +658,8 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     }
 
     // The session vitals that left the statline (D1): cache volumes, the
-    // warmth countdown, engine and pipeline state. Diagnostics, not
-    // glanceables — this overlay is where a reader who wants them looks.
+    // warmth countdown, engine state. Diagnostics, not glanceables — this
+    // overlay is where a reader who wants them looks.
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
         "  SESSION VITALS",
@@ -689,12 +689,6 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
             format!("{} active", model.active_count()),
             Style::default().fg(theme::INK),
         ),
-        Span::styled("  ·  pipeline ", dim),
-        if model.pipeline {
-            Span::styled("on", Style::default().fg(theme::SUCCESS_BRIGHT))
-        } else {
-            Span::styled("off", dim)
-        },
     ]));
 
     lines.push(Line::default());

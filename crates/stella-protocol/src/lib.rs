@@ -64,11 +64,13 @@ pub mod denial;
 pub mod error;
 pub mod event;
 pub mod hook;
+pub mod issue;
 pub mod journal;
 pub mod ladder;
 pub mod lane;
 pub mod proof;
 pub mod provider;
+pub mod recall;
 pub mod receipt;
 pub mod role;
 #[cfg(feature = "schema")]
@@ -119,8 +121,13 @@ pub use journal::{StampedEvent, stamped_line};
 pub use lane::{BuiltinLane, LaneId, TurnLane};
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
+pub use issue::{Issue, IssueClass, IssueError, IssueKey, IssueLabel, IssueProvider, IssueState};
 pub use ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation, ProofTree};
 pub use provider::{Provider, ToolCallObserver};
+// The context-recall port every door's memory injection shares (removal
+// census for `stella-pipeline`, `docs/spec/pipeline-as-plugins.md` §7) — see
+// the module doc for why it lives here rather than in a pipeline-shaped crate.
+pub use recall::{ContextRecallPort, NoContextRecall, Recall, RecalledFrame};
 pub use role::{ModelRef, Role};
 pub use subagent_event::{SubAgentPhase, SubAgentStatus};
 pub use tokens::{

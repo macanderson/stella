@@ -7,7 +7,7 @@
 //! `AgentEvent` stream live via a spawned draining task.
 
 use std::collections::HashMap;
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -21,11 +21,6 @@ use stella_core::{
 use stella_mcp::{McpConfig, McpServerConfig, McpToolSet};
 use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
-use stella_pipeline::{
-    AlwaysAbortGate, CmdOutcome, ContextRecallPort, McpPrefetchPort, NoContextRecall,
-    PipelineConfig, PipelinePorts, PipelineStatus, ProviderResolver, RepoStatusPort,
-    RepoStructurePort,
-};
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput, UNKNOWN_MODEL};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
@@ -38,17 +33,15 @@ use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
 use crate::interactive::human_is_present;
 use crate::memory::{
-    ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, inject_recall_block,
-    reflect_routed, should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, SessionMemory, TurnEvidence, inject_recall_block, reflect_routed,
+    should_reflect_on, turn_warrants_reflection,
 };
 use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
-use crate::{OutputFormat, config::Config, resume_frame};
+use crate::{OutputFormat, config::Config};
 use stella_context::EpisodeOutcome;
 
 mod budget;
-mod coverage;
-mod diagnostics;
 mod engine;
 mod goal;
 mod graph;
@@ -74,11 +67,7 @@ pub(crate) use graph::spawn_session_graph;
 use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
 pub use init::run_init;
 pub(crate) use init::{InitIo, InitLine, deck_narrator, deck_notice_narrator, init_workspace};
-use outcome::{
-    VerificationRequirement, pipeline_episode_outcome, pipeline_failure_reason,
-    pipeline_session_status, pipeline_status_label, pipeline_status_result,
-};
-pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
+pub(crate) use outcome::settled_cost_since;
 use output::*;
 pub(crate) use persistence::{
     PersistOutcome, begin_execution, close_event_stream, persist_event, persist_event_detailed,
@@ -86,8 +75,8 @@ pub(crate) use persistence::{
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
-pub(crate) use reflect::{FrictionTap, surface_reflection};
-use reflect::{reflect_on_interactive_turn, reflection_json};
+use reflect::reflect_on_interactive_turn;
+pub(crate) use reflect::surface_reflection;
 pub(crate) use skill_usage::stamp_and_record_skill_usage;
 pub(crate) use tools::*;
 
@@ -107,11 +96,14 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
 }
 
 /// Run a one-shot prompt. [`PipelineChoice`](crate::wrapper_plugin::PipelineChoice) selects which
-/// wrapper runs over the turn (`Raw` by default, #3381). `test_command`, when given, arms the
-/// pipeline's deterministic verification ladder (the fail→pass flip oracle); without it,
-/// verification falls back to the model verifier on every iteration. `keep_witness` promotes an
-/// authored witness into the working tree instead of letting it die with the candidate workspace.
-#[allow(clippy::too_many_arguments)]
+/// wrapper runs over the turn (`Raw` by default, #3381). `test_command`, when given, arms a
+/// bound wrapper plugin's own oracle.
+///
+/// `--keep-witness`/`--require-verified` used to reach this function too, back when
+/// `PipelineChoice::Classic` was a live arm — the staged pipeline that consumed them is gone
+/// (#3865), and `wrapper_plugin::reject_verification_flags_without_pipeline` now refuses both
+/// flags unconditionally before a caller ever resolves a prompt, so nothing downstream of that
+/// refusal has a use for them any more.
 pub async fn run_one_shot(
     cfg: &Config,
     prompt: &str,
@@ -119,88 +111,36 @@ pub async fn run_one_shot(
     format: OutputFormat,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
     test_command: Option<&str>,
-    keep_witness: bool,
-    require_verified: bool,
 ) -> Result<(), CliFailure> {
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
     preflight_durable_stream(format)?;
     // #3381 made Raw the default, so this now admits the common no-flag `stella run` case too.
     crate::enterprise_telemetry::authorize_one_shot(!pipeline.is_raw())?;
-    if pipeline.is_classic() {
-        run_pipeline_one_shot(
-            cfg,
-            prompt,
-            budget_limit,
-            format,
-            test_command,
-            keep_witness,
-            require_verified,
-        )
-        .await
-    } else {
-        run_raw_one_shot(cfg, prompt, budget_limit, format, pipeline, test_command).await
-    }
-}
-
-/// The `--output-format json` summary of a pipeline run. ONE type feeds both
-/// the success and the error arm so the two shapes cannot diverge again: the
-/// error arm used to omit `task_class`/`verdict`/`revisions`/`candidates_run`
-/// outright rather than emitting them as `null`, which broke strict
-/// deserializers (serde non-`Option` fields, `jq -e`, Pydantic) written
-/// against the success shape. `Option` fields are serialized as `null`, never
-/// skipped — the key set is the contract.
-///
-/// That contract is versioned: [`schema_version`](Self::schema_version) is
-/// declared first and governed by the bump rule on
-/// [`crate::SUMMARY_SCHEMA_VERSION`]. Declaration order is wire order for a
-/// derived `Serialize`, so keeping the version at the top is a convention worth
-/// holding — though consumers read it by key, not position.
-#[derive(serde::Serialize)]
-struct PipelineRunSummary {
-    /// The envelope contract version — always [`crate::SUMMARY_SCHEMA_VERSION`].
-    schema_version: u32,
-    status: &'static str,
-    text: Option<String>,
-    cost_usd: f64,
-    reason: Option<String>,
-    task_class: Option<String>,
-    verdict: Option<serde_json::Value>,
-    revisions: Option<u32>,
-    candidates_run: Option<u32>,
-    /// `provider/model_id` of the model that actually served the run's
-    /// WORKER turns — [`crate::agent::EngineWiring::worker_model`], not the
-    /// session default. The two differ whenever `pipeline_worker_model`/
-    /// `agents.worker.*` routes the worker somewhere other than
-    /// `cfg.model_id`; reporting the session default there named a model
-    /// that never ran a single turn and never billed a cent, which is
-    /// exactly backwards for the cost-attribution this key exists to serve.
-    model: String,
-    events: Vec<AgentEvent>,
-    reflection: serde_json::Value,
+    run_raw_one_shot(cfg, prompt, budget_limit, format, pipeline, test_command).await
 }
 
 /// The `--output-format json` summary of a raw (`--no-pipeline`) step-loop run.
-/// A different key set from [`PipelineRunSummary`] — no verification ladder ran,
-/// and this path is the one that carries `files_touched` — but the same
-/// contract, so it declares the same [`crate::SUMMARY_SCHEMA_VERSION`]; the two
-/// can never drift, both reading the one constant. A struct rather than
-/// `serde_json::json!` so the version leads the object (`json!` builds a sorted
-/// map and would bury it mid-envelope); key order is not contractual either
-/// way — this is for whoever reads the output by eye.
+/// A struct rather than `serde_json::json!` so the version leads the object
+/// (`json!` builds a sorted map and would bury it mid-envelope); key order is
+/// not contractual either way — this is for whoever reads the output by eye.
+///
+/// [`schema_version`](Self::schema_version) is governed by the bump rule on
+/// [`crate::SUMMARY_SCHEMA_VERSION`].
 #[derive(serde::Serialize)]
-struct RawRunSummary {
-    schema_version: u32,
-    status: &'static str,
-    text: Option<String>,
-    cost_usd: Option<f64>,
-    reason: Option<String>,
-    model: String,
-    events: Vec<AgentEvent>,
-    /// The file-touch telemetry envelope. The CLI keeps no per-file
-    /// recorder, so the inner `files_touched` record list is empty; the key
-    /// stays because the envelope's key set is the versioned contract.
-    files_touched: serde_json::Value,
+pub(crate) struct RawRunSummary {
+    pub(crate) schema_version: u32,
+    pub(crate) status: &'static str,
+    pub(crate) text: Option<String>,
+    pub(crate) cost_usd: Option<f64>,
+    pub(crate) reason: Option<String>,
+    pub(crate) model: String,
+    pub(crate) events: Vec<AgentEvent>,
+    /// The file-touch telemetry envelope. Filled from the turn's own measured
+    /// `FileChange` events (`agent::summary::files_touched`) — the key stays
+    /// even on a quiet turn because the envelope's key set is the versioned
+    /// contract.
+    pub(crate) files_touched: serde_json::Value,
 }
 
 impl PipelineRunSummary {

@@ -33,14 +33,13 @@ pub struct PolicyToolSet<'a> {
 }
 
 /// The wrapped executor, held either by borrow (a session's per-turn tool
-/// chain, a stack local) or owned via `Arc` (a best-of-N candidate, whose
-/// chain is built dynamically and outlives every borrow). Mirrors
+/// chain, a stack local) or owned via `Box` (a chain built dynamically that
+/// must be returned as one value). Mirrors
 /// [`stella_tools::custom::CustomToolSet`]'s shape deliberately — the two sit
 /// next to each other in the same stacks.
 enum Inner<'a> {
     Borrowed(&'a dyn ToolExecutor),
     Boxed(Box<dyn ToolExecutor + 'a>),
-    Owned(std::sync::Arc<dyn ToolExecutor>),
 }
 
 impl Inner<'_> {
@@ -48,7 +47,6 @@ impl Inner<'_> {
         match self {
             Inner::Borrowed(inner) => *inner,
             Inner::Boxed(inner) => inner.as_ref(),
-            Inner::Owned(inner) => inner.as_ref(),
         }
     }
 }
@@ -68,19 +66,6 @@ impl<'a> PolicyToolSet<'a> {
     pub fn new_boxed(inner: Box<dyn ToolExecutor + 'a>, policy: ToolPolicy) -> Self {
         Self {
             inner: Inner::Boxed(inner),
-            policy,
-        }
-    }
-}
-
-impl PolicyToolSet<'static> {
-    /// Own the inner executor by `Arc` — for callers that must hold the whole
-    /// chain as one value, e.g. a boxed best-of-N candidate workspace.
-    /// Without this the policy would stop at the candidate boundary and
-    /// best-of-N would be a way around it.
-    pub fn new_owned(inner: std::sync::Arc<dyn ToolExecutor>, policy: ToolPolicy) -> Self {
-        Self {
-            inner: Inner::Owned(inner),
             policy,
         }
     }

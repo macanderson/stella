@@ -42,6 +42,7 @@ use serde_json::{Value, json};
 use stella_protocol::{ToolOutput, ToolSchema};
 use stella_tools::ToolRegistry;
 use stella_tools::catalog::{self, Availability, ToolEntry};
+use stella_tools::registry::Tool;
 
 /// The env var that turns the drift guard into a writer, spelled like
 /// `STELLA_REFRESH_GOLDEN` because it is the same idea.
@@ -143,13 +144,81 @@ fn repo_root() -> PathBuf {
 /// Every schema the native [`ToolRegistry`] advertises. One registry: every
 /// catalog row registers unconditionally, so the constructor's surface IS the
 /// documented surface.
+///
+/// With one pin, [`pin_capability_conditional_schemas`], because one tool
+/// chooses its description from a capability the *generator's own host* has or
+/// has not got.
 fn native_schemas(scratch: &Path) -> BTreeMap<String, ToolSchema> {
     let registry = ToolRegistry::new(scratch.to_path_buf());
-    registry
+    let mut schemas: BTreeMap<String, ToolSchema> = registry
         .schemas()
         .into_iter()
         .map(|schema| (schema.name.clone(), schema))
-        .collect()
+        .collect();
+    pin_capability_conditional_schemas(&mut schemas);
+    schemas
+}
+
+// ── capability-conditional descriptions ─────────────────────────────────────
+//
+// `search` picks its advertised description at construction from whether an
+// embedder resolved (#3139), which is the right thing for the model and the
+// wrong thing for a generated page: derived from the live registry, this
+// reference would say one thing on a machine with `OPENAI_API_KEY` exported
+// and another on CI, and `make gate` would go red on a developer's shell
+// rather than on their diff.
+//
+// So the pages document the BASELINE — the surface a host with no optional
+// capability configured advertises — and name the other variant in a comment
+// generated from the same source, so neither is hidden. Scrubbing the
+// environment instead was rejected: `cargo test --workspace` runs this same
+// drift test with nobody's wrapper script in front of it, so a fix that lives
+// in `scripts/check-tool-docs.sh` protects only one of the two ways it runs.
+
+/// Replace any schema whose description is chosen from an ambient capability
+/// with its baseline, so `generate` is a function of the source tree.
+fn pin_capability_conditional_schemas(schemas: &mut BTreeMap<String, ToolSchema>) {
+    // `SearchConfig::default()`, not `from_env`: depth and budget reach no part
+    // of the schema, but a generator that reads the environment at all is one
+    // whose output a reader has to reason about.
+    let baseline = stella_tools::search::Search::with_semantic_rung(
+        stella_tools::search::SearchConfig::default(),
+        stella_tools::search::SemanticRung::Unavailable,
+    )
+    .schema();
+    // Asserted, not assumed: if `search` ever stops being registered under
+    // that name the pin would silently become a no-op and the page would go
+    // back to reporting whatever the host resolved.
+    assert!(
+        schemas.contains_key(&baseline.name),
+        "`{}` is not in the registry's schemas — the description pin has nothing to pin",
+        baseline.name
+    );
+    schemas.insert(baseline.name.clone(), baseline);
+}
+
+/// The comment a capability-conditional page carries above its `description`,
+/// naming the variant the baseline is not.
+fn description_variant_note(name: &str) -> Option<String> {
+    (name == "search").then(|| {
+        wrap(
+            &format!(
+                "The description below is the BASELINE: what a host with no embedder \
+                 configured advertises. `search` chooses it at construction from whether \
+                 `stella_embed::from_env()` resolved (#3139) — a session that has one \
+                 advertises meaning-matching instead, because that is what its ladder \
+                 runs. Both strings are declared in crates/stella-tools/src/search.rs; \
+                 this page pins the baseline so it stays a function of the source tree \
+                 rather than of the environment the generator ran in.\n\
+                 \n\
+                 With an embedder resolved, the description reads:\n\
+                 \n\
+                 {alternate}",
+                alternate = stella_tools::search::SEMANTIC_DESCRIPTION,
+            ),
+            76,
+        )
+    })
 }
 
 // ── the output envelope, read off the type ──────────────────────────────────
@@ -433,7 +502,7 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
          {risk_note}\n\
          risk_level = {risk:?}\n\
          \n\
-         description = {description}\n\
+         {description_note}description = {description}\n\
          \n\
          # The JSON Schema the model is handed for this tool's arguments, verbatim.\n\
          input_schema = {input_schema}\n\
@@ -455,6 +524,10 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
         speculation = entry.speculation_safe,
         risk_note = RISK_NOTE,
         risk = entry.risk.as_str(),
+        description_note = match description_variant_note(entry.name) {
+            Some(note) => format!("{}\n", comment_block(&note)),
+            None => String::new(),
+        },
         description = literal_block("description", &schema.description),
         input_schema = literal_block("input_schema", &input_schema),
         output_schema = literal_block("output_schema", &output_schema),

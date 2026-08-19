@@ -15,7 +15,7 @@ stella run <prompt> [--no-pipeline] [--pipeline <VARIANT>] [--test-command <CMD>
 
 By default `stella run` sends the prompt through the **raw step loop**: the model proposes tool calls, the tools execute, results feed back, and the loop repeats until the model stops proposing actions. There is no REPL and no prompt for further input; it is the non-interactive counterpart to [`stella chat`](/docs/commands/chat).
 
-Pass `--pipeline classic` to route the turn through the **staged pipeline** instead — triage, plan, execute, verify, verifier — or `--pipeline <variant>` to run it under an installed [wrapper plugin](/docs/inference-pipeline). `--no-pipeline` is a deprecated no-op kept only so an existing script does not break; it has no effect either way.
+Pass `--pipeline <variant>` to run the turn under an installed [wrapper plugin](/docs/inference-pipeline) instead — the plugin contributes context before the turn and reports its own evidence after it. `classic` used to name a built-in staged pipeline that shipped this verification in-tree; that crate is deleted from the workspace, and `--pipeline classic` is refused outright, naming `stella plugin install` as the remedy. `--no-pipeline` is a deprecated no-op kept only so an existing script does not break; it has no effect either way.
 
 Because it is non-interactive, `stella run` is the natural place to combine `--output-format json` or `--output-format stream-json` for headless automation, and `--spend-limit` for a hard spend cap.
 
@@ -42,32 +42,27 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
     turn and gathers evidence after it; the rule it declared at install — evaluated by
     stella, never by the plugin — decides whether another turn runs. The variant id is
     recorded on the execution row, so two variants can be compared side by side.
-    `classic` names the built-in staged pipeline (triage, plan, execute, verify,
-    verifier); omitted, the raw step loop runs with nothing over it.
+    `classic` used to name a built-in staged pipeline (triage, plan, execute, verify,
+    verifier); that crate is deleted from the workspace and `classic` is refused
+    outright — install a verification plugin instead (`stella plugin install`).
+    Omitted, the raw step loop runs with nothing over it.
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
-    The test command the pipeline's verify stage runs deterministically — e.g.
-    `"cargo test -p my-crate"`. Arms the fail→pass flip oracle: a change that flips a
-    failing test to passing is proven done. Omitted, the pipeline's witness stage is the
-    remaining oracle, and a turn that reaches neither is reported unverified — not passed.
-    Refused on the raw loop (pass `--pipeline classic` or `--pipeline <variant>` — a
-    wrapper plugin's own oracle can arm it too).
+    The test command an installed verification plugin's own `[oracle]` runs
+    deterministically — e.g. `"cargo test -p my-crate"`. Refused on the raw loop
+    (no plugin named); passes through to a named `--pipeline <variant>` plugin's own
+    oracle when one is installed.
   </OptionCard>
   <OptionCard name="--keep-witness">
-    Keep the authored witness test as a file in your working tree. By default the witness
-    is scaffolding — it proves this run's goal inside the candidate workspace and is
-    discarded with it, so an already-satisfied test is never left behind in your test
-    tree. Pass this to promote it to a real test you can commit. Pipeline-only: refused
-    on the raw loop and on a named `--pipeline <variant>` alike — pass `--pipeline
-    classic`.
+    Kept for compatibility only. Refused unconditionally now — the built-in staged
+    pipeline that authored a scaffolding witness test and could promote it to your
+    working tree is deleted from the workspace; a verification plugin decides its own
+    witness-handling policy on its own side of the wrapper socket.
   </OptionCard>
   <OptionCard name="--require-verified">
-    Exit non-zero unless the run was actually verified. A run that finished but that
-    nothing proved reports `status: "unverified"` and, by default, still exits `0` —
-    with no `--test-command` that is the ordinary outcome, so failing on it by default
-    would break every existing script. Pass this in a delivery gate that must not ship
-    unproven work: it turns "completed but unproven" into a failure exactly like a
-    refuted verification. Pipeline-only, same refusal as `--keep-witness`.
+    Kept for compatibility only. Refused unconditionally now, same as
+    `--keep-witness` — the built-in staged pipeline it gated is deleted from the
+    workspace.
   </OptionCard>
 </CardGrid>
 
@@ -129,24 +124,18 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 \
   run "Explain what main.rs does"
 ```
 
-`--test-command`, `--keep-witness`, and `--require-verified` all belong to the staged
-pipeline's verify/witness machinery, so pair them with `--pipeline classic` — on the
-raw loop (the default) there is no ladder for them to arm, and `stella run` refuses
-the combination outright rather than silently ignoring the flag.
+`--keep-witness` and `--require-verified` belonged to the built-in staged pipeline's
+verify/witness machinery, which is deleted from the workspace — both are refused
+unconditionally now, on the raw loop and on every `--pipeline <variant>` alike.
+`--test-command` still passes through to a named plugin's own `[oracle]`; it is
+refused only on the raw loop, which has no oracle to arm.
 
-Hand the verify stage a deterministic oracle, so a fixed test can submit without a
-model-verifier call:
+Hand an installed verification plugin's oracle a deterministic test, so a fixed
+test can submit without a model-verifier call:
 
 ```bash
-stella run --pipeline classic --test-command "cargo test -p stella-store" \
+stella run --pipeline my-verifier --test-command "cargo test -p stella-store" \
   "Fix the failing WAL checkpoint test"
-```
-
-Keep the witness the pipeline authored, so you can review and commit it alongside the fix:
-
-```bash
-stella run --pipeline classic --keep-witness \
-  "Add retry-with-backoff to the HTTP client and prove it with a test"
 ```
 
 A small mechanical edit needs nothing extra — the raw loop is already the default:

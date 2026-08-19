@@ -20,15 +20,18 @@
 //!
 //! `stella run --pipeline <variant>` drives the raw step loop **in the shared
 //! work tree** (#3494). So the grant this module mints is over that tree, via
-//! [`stella_pipeline::ports::host_tree_grant`] — the same canonicalisation
-//! [`stella_pipeline::ports::CandidateHandles::grant`] performs, so there is one
-//! minting implementation and one fence rather than two.
+//! [`stella_plugin::host_tree_grant`] — the minting logic moved here (rather
+//! than staying duplicated) before the staged pipeline's own
+//! `CandidateHandles::grant` (formerly `stella-pipeline`'s `ports/handle.rs`)
+//! was deleted along with that crate (#3865), so there was one fence, not
+//! two, for as long as both callers coexisted, and this module is now the
+//! only one.
 //!
 //! Minting a *worktree* instead would be worse than the gap it closes: the turn
 //! would still run in the shared tree, the plugin would read and test an
 //! isolated copy nothing had touched, and its flip observation would be a
 //! confident answer about the wrong directory. The handle the grant carries is
-//! therefore [`stella_pipeline::ports::HOST_TREE_HANDLE`], which addresses no
+//! therefore [`stella_plugin::HOST_TREE_HANDLE`], which addresses no
 //! workspace in any table — a plugin that asks to seal or adopt it is told the
 //! handle is unknown, which is true.
 //!
@@ -46,10 +49,11 @@
 //! the test invocation the user gave it. So the watch covers **the files that
 //! invocation names** — `sh tests/witness_flip.sh`, `pytest
 //! tests/test_regression.py` — resolved through the same fence every other
-//! plugin-supplied path crosses ([`stella_pipeline::ports::resolve_in_root`]),
-//! snapshotted before the turn with the pipeline's own no-follow identity
-//! (`crate::agent::tools::fs_artifact_identity`) and compared with the
-//! pipeline's own comparator (`stella_pipeline::witness::witness_identity_matches`).
+//! plugin-supplied path crosses ([`stella_plugin::resolve_in_root`]),
+//! snapshotted before the turn with the same no-follow identity
+//! (`crate::agent::tools::fs_artifact_identity`) and compared with the same
+//! comparator (`stella_plugin::witness_identity_matches`) the staged
+//! pipeline itself used.
 //!
 //! What it does **not** cover is stated rather than implied: an invocation that
 //! names no path — `cargo test --test flip`, whose artifact is `tests/flip.rs`
@@ -60,10 +64,10 @@
 
 use std::path::{Path, PathBuf};
 
-use stella_pipeline::ArtifactIdentity;
-use stella_pipeline::ports::{host_tree_grant, resolve_in_root, test_plan};
-use stella_pipeline::witness::{parse_test_invocation, witness_identity_matches};
-use stella_plugin::{CandidateGrant, TamperFinding};
+use stella_plugin::{
+    ArtifactIdentity, CandidateGrant, TamperFinding, host_tree_grant, parse_test_invocation,
+    resolve_in_root, test_plan, witness_identity_matches,
+};
 
 /// The grant a wrapper plugin receives, and the artifacts the host will vouch
 /// for.
@@ -250,7 +254,7 @@ mod tests {
         );
         assert_eq!(
             granted.grant.handle.as_str(),
-            stella_pipeline::ports::HOST_TREE_HANDLE,
+            stella_plugin::HOST_TREE_HANDLE,
             "a tree the host already runs in is not a workspace any table minted"
         );
         let plan = granted.grant.test.as_ref().expect("a test plan");

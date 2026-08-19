@@ -138,23 +138,6 @@ replay-learning: ## Replay the synthetic months corpus and print what the learne
 	cargo test -p stella-cli --bin stella \
 	  memory::replay::tests::replay_learning_report -- --exact --nocapture
 
-.PHONY: record-golden
-record-golden: ## Re-record the golden replay trajectories (review the fixture diff!)
-	STELLA_REFRESH_GOLDEN=1 cargo test -p stella-pipeline --lib golden
-	@git --no-pager diff --stat -- crates/stella-pipeline/tests/fixtures/golden || true
-	@echo "Golden trajectories re-recorded. A non-empty diff above is a change to"
-	@echo "the observable event contract — review it as such before committing."
-
-# Prompt caching has no stale-read failure mode — a hit and a miss return the
-# same tokens — so a broken cache is invisible until it shows up on an invoice.
-# What is checkable is that the prompt still has the shape caching needs, and
-# the golden manifests record exactly that (a `cache_zone` per block). This is
-# the fast local loop; `make test` runs it too, as part of the workspace suite.
-.PHONY: cache-correctness
-cache-correctness: ## Assert prompt-cache shape hasn't drifted on the golden fixtures (#267/#269, receipts spec §7)
-	cargo test -p stella-pipeline --test cache_correctness
-	cargo test -p stella-cli --bin stella stats::tests::the_low_hit_rate_bar
-
 .PHONY: record-demo
 record-demo: ## Record a terminal timelapse (LIMIT=mins TARGET=secs CMD="..."; defaults to the multi-hour marathon)
 	./scripts/record-demo.sh --limit $(LIMIT) --target $(TARGET) $(if $(CMD),-- bash -c '$(CMD)',)

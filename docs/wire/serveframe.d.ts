@@ -2128,10 +2128,6 @@ export type ServerFrame = {
   reason?: string | null;
   type: "turn_held";
 } | {
-  proposal: ScopeProposal;
-  request_id: string;
-  type: "scope_review_request";
-} | {
   type: "turn_released";
 } | {
   outcome: TurnOutcomeWire;
@@ -2147,7 +2143,6 @@ export type KnownTypeTag =
   | "tool_request"
   | "provider_request"
   | "turn_held"
-  | "scope_review_request"
   | "turn_released"
   | "turn_complete";
 
@@ -2436,6 +2431,10 @@ export type ProviderErrorWire = {
   message: string;
   retry_after_ms?: number | null;
 } | {
+  kind: "overloaded";
+  message: string;
+  retry_after_ms?: number | null;
+} | {
   kind: "auth";
   message: string;
 } | {
@@ -2545,43 +2544,6 @@ export interface ProviderDeltaIn {
    * carries no information and is refused at the route.
    */
   deltas: ProviderDelta[];
-  request_id: string;
-}}
-
-// ── inbound: answering a scope review ───────────────────────────────────────
-//
-// The engine parks a turn on a `scope_review_request` frame when a plan needs
-// a human decision before it executes. The host answers by POSTing this body
-// to `POST /v1/turns/{id}/approve`, keyed by the frame's request_id.
-//
-// `decision` is an internally-tagged union: approve executes the plan as
-// proposed, trim executes only the listed step indices, and the note-carrying
-// arm re-plans with the reviewer's words folded in — an empty note reads as
-// abort, the same collapse the stdio gate makes for a bare "no".
-
-/**
- * Wire mirror of [`stella_pipeline::ports::ScopeDecision`]. That type lives in
- * `stella-pipeline` and is not itself `Serialize`/`Deserialize` — this crate
- * owns the wire mapping, exactly as [`TurnOutcomeWire`] owns `TurnOutcome`'s.
- */
-export type ScopeDecisionWire = {
-  decision: "approve";
-} | {
-  decision: "trim";
-  keep_steps: number[];
-} | {
-  decision: "revise";
-  note: string;
-} | {
-  decision: "abort";
-};
-
-/**
- * Host → engine: the human's decision on a [`ServerFrame::ScopeReviewRequest`].
- */
-export interface ScopeReviewResultIn {
-{
-  decision: ScopeDecisionWire;
   request_id: string;
 }}
 

@@ -284,38 +284,6 @@ pub fn cost_summary(cost_usd: f64, model: &str, elapsed: Duration) {
     );
 }
 
-/// The end-of-run recap (settings `enable_recap`): a deterministic synthesis
-/// of the outcome, printed after the cost panel in text mode. No model call —
-/// it reads the run's own facts: did it complete, and was it verified.
-pub fn recap_panel(
-    status: &stella_pipeline::PipelineStatus,
-    verdict: Option<&stella_pipeline::Verdict>,
-) {
-    use stella_pipeline::PipelineStatus;
-    let headline = match status {
-        PipelineStatus::Completed => match verdict {
-            Some(v) if v.passed && v.deterministic => {
-                "✓ completed — verified (deterministic)".to_string()
-            }
-            Some(v) if v.passed => "✓ completed — verified".to_string(),
-            _ => "✓ completed".to_string(),
-        },
-        // #2569: the recap's own question is "did it complete, was it
-        // verified" — so the one status that answers "yes, and no" gets its
-        // own line rather than borrowing the tick.
-        PipelineStatus::Unverified { verdict } => {
-            format!("? completed — UNVERIFIED: {}", verdict.summary)
-        }
-        PipelineStatus::VerificationFailed { verdict } => {
-            format!("✗ verification failed — {}", verdict.summary)
-        }
-        PipelineStatus::Aborted { reason, .. } => format!("⚠ aborted — {reason}"),
-    };
-
-    println!("\n  {} Recap", "◆".dimmed());
-    println!("    {headline}");
-}
-
 /// Print the welcome banner: the STELLA block-letter logomark swept with the
 /// stellar gradient, then the session info line. (The previous banner was a
 /// hand-pasted figlet that had drifted into garbage — it did not actually

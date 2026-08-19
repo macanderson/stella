@@ -158,31 +158,14 @@ pub(crate) fn policy_stack<'a>(
     )
 }
 
-/// [`policy_stack`] owning its base by `Arc` — for a best-of-N candidate
-/// workspace, whose chain is built dynamically and outlives every borrow.
-/// Without this the gate would stop at the candidate boundary, and best-of-N
-/// would be a way around authorization.
-pub(crate) fn policy_stack_owned(
-    base: Arc<dyn ToolExecutor>,
-    policy: ToolPolicy,
-    principal: Principal,
-    bus: Option<HookBus>,
-) -> GatedToolSet<'static> {
-    let permitted = PolicyToolSet::new_owned(base, policy);
-    with_journal(
-        GatedToolSet::new_owned(Arc::new(permitted), session_gate(), principal),
-        bus,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
     use serde_json::{Value, json};
     use stella_core::ports::{AuthzDecision, AuthzEvalError};
+    use stella_protocol::ToolContract;
     use stella_protocol::tool::{ToolOutput, ToolSchema};
-    use stella_protocol::{RiskLevel, ToolContract};
 
     /// Stands in for a session's base (registry / MCP view) and records
     /// whether any call actually got through the assembled stack.
@@ -284,37 +267,6 @@ mod tests {
             "the base must never see a denied call: {:?}",
             leaf.reached()
         );
-    }
-
-    /// The same seam holds for the owned (candidate-workspace) assembly —
-    /// best-of-N must not be a way around authorization.
-    #[tokio::test]
-    async fn the_owned_candidate_stack_is_gated_too() {
-        let stack = policy_stack_owned(
-            Arc::new(Leaf::new()),
-            ToolPolicy::allow_all(),
-            Principal::Role("worker".into()),
-            None,
-        );
-        assert!(matches!(
-            stack.execute("get_state", &json!({})).await,
-            ToolOutput::Ok { .. }
-        ));
-
-        // A ceiling below `High` refuses a name the snapshot never saw —
-        // fail-closed reaches the candidate chain unchanged.
-        let ceiling = GatedToolSet::new_owned(
-            Arc::new(PolicyToolSet::new_owned(
-                Arc::new(Leaf::new()),
-                ToolPolicy::allow_all(),
-            )),
-            Arc::new(stella_core::ports::RiskCeiling::new(RiskLevel::Medium)),
-            Principal::Role("worker".into()),
-        );
-        assert!(matches!(
-            ceiling.execute("mcp__vendor__deploy", &json!({})).await,
-            ToolOutput::Error { .. }
-        ));
     }
 
     /// A scripted MCP transport: one tool, one canned `tools/call` answer,

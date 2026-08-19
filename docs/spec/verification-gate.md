@@ -52,7 +52,7 @@ now does"; the gate's entire value is that intent has to be written down.
 and structurally diffs them against committed fixtures. This is a **drift
 baseline**: it catches a stage that stopped being emitted, an event that
 moved, a protocol field that vanished — the wire-contract regressions no
-single-flow assertion notices. Refresh with `make record-golden` and review
+single-flow assertion notices. (`make record-golden` was removed with `crates/stella-pipeline`, #3865.) Historically these were refreshed and reviewed
 the fixture diff as a contract change. It is not independent evidence; both
 sides are the same code.
 

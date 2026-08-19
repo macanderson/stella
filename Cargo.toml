@@ -16,7 +16,6 @@ members = [
   "crates/stella-tools",
   "crates/stella-context",
   "crates/stella-graph",
-  "crates/stella-pipeline",
   "crates/stella-mcp",
   "crates/stella-media",
   "crates/stella-engine",

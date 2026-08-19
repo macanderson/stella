@@ -73,8 +73,6 @@ fn process_free_authority_allows_only_the_registry_only_raw_one_shot_surface() {
         ExecutionSurface::Fleet,
         ExecutionSurface::Deck,
         ExecutionSurface::Interactive,
-        ExecutionSurface::WorkspacePorts,
-        ExecutionSurface::CandidateWorkspace,
     ] {
         let error = authorize_execution_surface_with(surface, true).unwrap_err();
         assert!(error.contains("enterprise telemetry process-free authority"));
@@ -93,8 +91,6 @@ fn production_process_free_surface_matrix_enumerates_every_constructor() {
             ExecutionSurface::Fleet,
             ExecutionSurface::Deck,
             ExecutionSurface::Interactive,
-            ExecutionSurface::WorkspacePorts,
-            ExecutionSurface::CandidateWorkspace,
         ]
     );
     for surface in ExecutionSurface::ALL {

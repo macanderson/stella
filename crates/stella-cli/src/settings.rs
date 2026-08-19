@@ -29,9 +29,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::reward::{OutcomeWeights, RewardPolicy, RewardShaping};
 use serde::{Deserialize, Serialize};
 use stella_core::hooks::Hooks;
-use stella_pipeline::reward::{OutcomeWeights, RewardPolicy, RewardShaping};
 use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 
 use crate::config::Dialect;
@@ -305,25 +305,17 @@ pub struct Settings {
 /// a typo here would otherwise silently pick a side on where somebody's work
 /// happens.
 ///
-/// The policy is consumed at triage (`Pipeline::isolate_in_worktree`), which is
-/// the first moment it is both answerable and worth asking.
+/// The policy used to be consumed at triage (`Pipeline::isolate_in_worktree`)
+/// by the staged pipeline's candidate-workspace isolation — removed along
+/// with that crate (#3865). The setting itself is left in place (still
+/// parses, still validates) since retiring a settings.toml key is a schema
+/// decision of its own; see the filed issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CreateWorktrees {
     Always,
     #[default]
     Ask,
     Never,
-}
-
-impl CreateWorktrees {
-    /// The pipeline's spelling of the same decision.
-    pub fn policy(self) -> stella_pipeline::ports::WorktreePolicy {
-        match self {
-            Self::Always => stella_pipeline::ports::WorktreePolicy::Always,
-            Self::Ask => stella_pipeline::ports::WorktreePolicy::Ask,
-            Self::Never => stella_pipeline::ports::WorktreePolicy::Never,
-        }
-    }
 }
 
 impl<'de> Deserialize<'de> for CreateWorktrees {
@@ -567,7 +559,7 @@ impl ToolsSettings {
 /// the key is retired rather than kept as a no-op: an accepted key that steers
 /// nothing is the settings failure mode this surface exists to avoid, and a
 /// retired one is at least reported by name by the unrecognized-key pass
-/// (#2616). See [`stella_pipeline::reward`] for the full argument.
+/// (#2616). See [`crate::reward`] for the full argument.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct RewardSettings {
     /// Magnitude of a deterministic pass or fail. Default `1.0`, and the unit

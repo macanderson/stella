@@ -680,6 +680,13 @@ fn classify(error: &ProviderError) -> (&'static str, FailureCause) {
         // A 5xx or a network fault: the provider is unwell, which is evidence
         // for neither answer.
         ProviderError::Transport { .. } => ("ProviderError::Transport", FailureCause::Undetermined),
+        // A 529 brownout: the provider is unwell in the specific way that
+        // waiting fixes. Still evidence for neither answer about the wire
+        // shape this suite exists to watch, so it shares Transport's verdict
+        // — the class is split for the *retry* decision (#2742), not this one.
+        ProviderError::Overloaded { .. } => {
+            ("ProviderError::Overloaded", FailureCause::Undetermined)
+        }
         // A 4xx the dialect does not model (400/402/404/422 …). A rejected
         // field and an out-of-credits 402 both arrive as this, so the class
         // alone cannot separate them — the printed status and body can.

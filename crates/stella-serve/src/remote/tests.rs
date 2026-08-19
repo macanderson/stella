@@ -11,16 +11,9 @@ use std::time::Duration;
 
 use stella_core::bus::{HookBus, HookEvent, names as hook_names};
 use stella_core::ports::ToolExecutor;
-use stella_pipeline::ports::{
-    ApprovalGate, CmdKind, DiagnosticInvocation, DiagnosticRunner, ScopeDecision, TestInvocation,
-    TestRunner,
-};
-use stella_protocol::{ScopeProposal, ToolOutput};
+use stella_protocol::ToolOutput;
 
-use super::{
-    CmdOutcomeWire, PIPELINE_DIAGNOSTIC_TOOL, PIPELINE_TEST_TOOL, RemoteApprovalGate,
-    RemoteToolExecutor, RemoteVerificationRunner,
-};
+use super::RemoteToolExecutor;
 use crate::frame::ServerFrame;
 use crate::observe::event::TurnRef;
 use crate::pending::Pending;
@@ -310,140 +303,6 @@ async fn two_tool_ports_sharing_a_turn_do_not_collide_on_request_ids() {
     assert!(
         matches!(child_call.await.unwrap(), ToolOutput::Ok { content , .. } if content == "for-the-sub-agent"),
         "the sub-agent must receive the answer addressed to the sub-agent"
-    );
-}
-
-/// A scope review the host approves round-trips into
-/// [`ScopeDecision::Approve`] — the pipeline's `ApprovalGate::review`,
-/// remoted (#1288).
-#[tokio::test]
-async fn a_host_answered_scope_review_reaches_the_pipeline_as_the_hosts_decision() {
-    let (sink, mut rx, pending) = live_channel();
-    let gate = RemoteApprovalGate::new(sink, pending.clone(), Duration::from_secs(5));
-    let proposal = ScopeProposal {
-        summary: "do the thing".to_string(),
-        steps: vec!["step one".to_string()],
-        estimated_files: 1,
-        estimated_cost_usd: None,
-        ..Default::default()
-    };
-
-    let review = tokio::spawn(async move { gate.review(&proposal).await });
-
-    let ServerFrame::ScopeReviewRequest { request_id, .. } = rx.recv().await.unwrap() else {
-        panic!("expected a scope review request frame");
-    };
-    assert!(
-        pending
-            .resolve_scope_review(&request_id, ScopeDecision::Approve)
-            .is_ok()
-    );
-    assert_eq!(review.await.unwrap(), ScopeDecision::Approve);
-}
-
-/// A scope review the host never answers fails closed
-/// ([`ScopeDecision::Abort`]) rather than defaulting to running the plan
-/// unattended — the same fail-closed contract
-/// [`stella_pipeline::ports::StdioApprovalGate`] gives a read error.
-#[tokio::test]
-async fn an_unanswered_scope_review_fails_closed() {
-    let (sink, _rx, pending) = live_channel();
-    let gate = RemoteApprovalGate::new(sink, pending, Duration::from_millis(20));
-    let proposal = ScopeProposal {
-        summary: "do the thing".to_string(),
-        steps: vec!["step one".to_string()],
-        estimated_files: 1,
-        estimated_cost_usd: None,
-        ..Default::default()
-    };
-    assert_eq!(gate.review(&proposal).await, ScopeDecision::Abort);
-}
-
-/// A well-formed [`CmdOutcomeWire`] the host answers with round-trips into
-/// the matching [`CmdOutcome`], for both the test-runner and the
-/// diagnostic-runner traits [`RemoteVerificationRunner`] answers (#1288).
-#[tokio::test]
-async fn a_hosts_cmd_outcome_reaches_the_ladder_as_the_matching_typed_result() {
-    let (sink, mut rx, pending) = live_channel();
-    let runner = RemoteVerificationRunner::new(sink, pending.clone(), Duration::from_secs(5));
-
-    let call = tokio::spawn(async move {
-        runner
-            .run_test(&TestInvocation {
-                program: "cargo".to_string(),
-                args: vec!["test".to_string()],
-            })
-            .await
-    });
-
-    let ServerFrame::ToolRequest {
-        request_id,
-        name,
-        input,
-    } = rx.recv().await.unwrap()
-    else {
-        panic!("expected a tool request frame");
-    };
-    assert_eq!(name, PIPELINE_TEST_TOOL);
-    assert_eq!(input["program"], "cargo");
-
-    let content = serde_json::to_string(&CmdOutcomeWire::Completed {
-        exit_code: 1,
-        stdout_tail: "FAILED".to_string(),
-        stderr_tail: String::new(),
-    })
-    .unwrap();
-    assert!(
-        pending
-            .resolve_tool(
-                &request_id,
-                ToolOutput::Ok {
-                    content,
-                    data: None
-                }
-            )
-            .is_ok()
-    );
-
-    let outcome = call.await.unwrap();
-    assert_eq!(outcome.kind, CmdKind::Completed);
-    assert_eq!(outcome.exit_code, 1);
-    assert_eq!(outcome.stdout_tail, "FAILED");
-    assert_eq!(outcome.assertion_result(), Some(false));
-}
-
-/// A host that has not implemented the reserved verification tool names
-/// answers as it would any unknown tool — an error — and the ladder must
-/// read that as "no toolchain" ([`CmdKind::Infra`]), never as a failing
-/// assertion: an infra outcome and a genuine test failure must not be
-/// confused, per [`CmdOutcome::assertion_result`]'s own contract.
-#[tokio::test]
-async fn a_host_that_does_not_implement_verification_degrades_to_infra_not_a_failure() {
-    let (sink, mut rx, pending) = live_channel();
-    let runner = RemoteVerificationRunner::new(sink, pending.clone(), Duration::from_secs(5));
-
-    let call =
-        tokio::spawn(async move { runner.run_diagnostic(&DiagnosticInvocation::GitDiff).await });
-
-    let ServerFrame::ToolRequest {
-        request_id, name, ..
-    } = rx.recv().await.unwrap()
-    else {
-        panic!("expected a tool request frame");
-    };
-    assert_eq!(name, PIPELINE_DIAGNOSTIC_TOOL);
-    assert!(
-        pending
-            .resolve_tool(&request_id, ToolOutput::error("unknown tool".to_string()),)
-            .is_ok()
-    );
-
-    let outcome = call.await.unwrap();
-    assert_eq!(outcome.kind, CmdKind::Infra);
-    assert_eq!(
-        outcome.assertion_result(),
-        None,
-        "an unimplemented verification call observed no assertion either way"
     );
 }
 

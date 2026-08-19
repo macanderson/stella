@@ -359,12 +359,6 @@ pub struct WorkspaceModel {
     /// field (sampled by [`crate::resource::ResourceMonitor`], not folded from
     /// events). Drives the status-bar gauge (and, later, dispatch backpressure).
     pub global_cpu_pct: f32,
-    /// Whether the session drives turns through the staged pipeline (triage →
-    /// plan → execute → witness → verify → verdict), not the raw engine loop.
-    /// Surfaced as the `PIPELINE` stat box. Seeded from
-    /// `DeckOptions::pipeline` and toggled live by [`Inbound::Pipeline`]
-    /// (the driver's `/pipeline` command).
-    pub pipeline: bool,
     /// The latest PR observation across all agents (`AgentEvent::Pr` from the
     /// fleet PR/CI monitor) — the statline's PR cell. Latest event wins;
     /// `None` until a PR has been seen this session.
@@ -698,9 +692,6 @@ impl WorkspaceModel {
                     entry.active_task = None;
                 }
             }
-            // The driver flipped staged-pipeline routing (`/pipeline`) — the
-            // PIPELINE stat box tracks it live.
-            Inbound::Pipeline(on) => self.pipeline = *on,
             // The driver's resolved role pins, sent once at startup. Never
             // overwrites a pin that has already served: this says what the
             // session intends to use, and a role that has run has already

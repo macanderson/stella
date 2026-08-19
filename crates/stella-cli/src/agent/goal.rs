@@ -1,12 +1,12 @@
 //! Goal-driven turns: judged rounds until a verifier confirms the goal is met.
 //!
 //! `run_goal_cmd` drives the raw `Engine::run_goal` step-loop (the default
-//! since #3381), the staged pipeline (`--pipeline classic`), or an installed
-//! wrapper plugin per round (`--pipeline <variant>`, [`goal_wrapped`],
-//! #3695 goal half). The goal verifier is independent of the worker model
-//! and answers "does the whole effort meet the goal?" — distinct from the
-//! pipeline's per-change verification verifier — and stays the same
-//! `Engine::assess` primitive on all three arms.
+//! since #3381) or an installed wrapper plugin per round (`--pipeline
+//! <variant>`, [`goal_wrapped`], #3695 goal half) — the staged pipeline
+//! (`--pipeline classic`) is gone (#3865). The goal verifier is
+//! independent of the worker model and answers "does the whole effort meet
+//! the goal?" — distinct from a wrapper plugin's own oracle — and stays the
+//! same `Engine::assess` primitive on both arms.
 
 use super::*;
 
@@ -400,9 +400,10 @@ pub(crate) async fn run_raw_one_shot(
 /// `run_one_shot`.
 ///
 /// `pipeline` selects the driver for each working round (#3381): `Classic`
-/// (`--pipeline classic`) runs the staged pipeline (triage → recall → plan →
-/// execute → witness → verify → verdict); `Raw` — the default since #3381,
-/// with or without `--no-pipeline` — falls back to the raw `Engine::run_goal`
+/// (`--pipeline classic`) is refused at [`crate::wrapper_plugin::PipelineChoice::resolve`]
+/// now — the built-in staged pipeline is gone (#3865) — so `run_goal_cmd` never
+/// sees that variant in practice; `Raw` — the default since #3381, with or
+/// without `--no-pipeline` — falls back to the raw `Engine::run_goal`
 /// step-loop; `Plugin(variant)` dispatches each round's worker turn through
 /// the named installed wrapper ([`goal_wrapped::run_goal_wrapped_turn`],
 /// #3695 goal half) while the goal verifier stays exactly what `Raw` uses —
@@ -425,8 +426,11 @@ pub async fn run_goal_cmd(
     // `Plugin` reads as `Raw` for every branch below except the final
     // dispatch: the wrapped arm builds the same system prompt, the same
     // recall block and the same tool stack `Raw` does, and differs only in
-    // which function drives the round loop.
-    let use_pipeline = pipeline.is_classic();
+    // which function drives the round loop. The staged pipeline itself is
+    // gone (#3865):
+    // `pipeline.is_classic()` can never be true any more
+    // (`PipelineChoice::resolve` refuses `--pipeline classic` outright), so
+    // this door runs the `Raw`/`Plugin` arms unconditionally now.
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
@@ -506,19 +510,9 @@ pub async fn run_goal_cmd(
     plain::section_header("Stella — goal mode");
     println!("  {}\n", goal.dimmed());
 
-    // Persona matches the driver: pipeline rounds get the pipeline worker
-    // persona (methodology ladder + `agents.worker.prompt` override) instead
-    // of the generic REPL prompt only `stella run` used to carry.
     let mut messages = vec![CompletionMessage::system(
         with_session_hook_context(
-            if use_pipeline {
-                // Assembled before this run resolves its engine wiring, so the
-                // worker may still be re-routed: no model line rather than a
-                // possibly-false one (#2721 threads the wiring here).
-                build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules, None)
-            } else {
-                build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
-            },
+            build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
             cfg,
         )
         .await,
@@ -533,45 +527,16 @@ pub async fn run_goal_cmd(
         // share its arm, and re-arming per round would count one prompt as N
         // turns of the schedule.
         m.arm_recall_control();
-        if use_pipeline {
-            // Pipeline rounds recall frames through their own port (wired to
-            // this same store in `run_goal_pipeline_turn`) and emit their own
-            // `ContextRecall`; the CLI block carries only the sections the
-            // port has no channel for. Injecting the full block here would
-            // recall twice and bill the frames twice — the duplication the
-            // one-shot path had.
-            inject_recall_block(&mut messages, m.pipeline_recall_block(goal).await);
-        } else {
-            let recalled = m.recall_block_reported(goal).await;
-            recall_event = recalled.telemetry_event();
-            inject_recall_block(&mut messages, recalled.text);
-        }
+        let recalled = m.recall_block_reported(goal).await;
+        recall_event = recalled.telemetry_event();
+        inject_recall_block(&mut messages, recalled.text);
     }
 
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: a goal run is exactly the long-lived headless
     // session the SESSIONS overlay + replay exist for.
     let mut presence = SessionPresence::announce(cfg, goal);
-    let outcome = if use_pipeline {
-        run_goal_pipeline_turn(
-            &*provider,
-            base_tools,
-            &custom_tools,
-            &registry,
-            &mut messages,
-            &mut budget,
-            &calibration,
-            cfg,
-            &store,
-            goal,
-            Some(presence.id()),
-            active_rules.clone(),
-            mcp.clone(),
-            recall_event,
-            memory.as_mut(),
-        )
-        .await
-    } else if let Some(bound) = &bound {
+    let outcome = if let Some(bound) = &bound {
         goal_wrapped::run_goal_wrapped_turn(
             &*provider,
             base_tools,

@@ -445,8 +445,8 @@ pub async fn dispatch(
                 note = merge_notes(
                     note,
                     Some(format!(
-                        "{matched} files matched by name; showing the {} with the most matched \
-                         terms — narrow the query to see the rest",
+                        "{matched} files matched by name; showing the {} that ranked \
+                         highest — narrow the query to see the rest",
                         hits.len()
                     )),
                 );

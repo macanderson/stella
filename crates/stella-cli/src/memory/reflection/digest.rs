@@ -34,7 +34,7 @@
 //!    consulted at all.
 //! 2. **Friction** — every message carrying an errored tool result, every
 //!    assistant message that *requested* one, and every message naming a tool
-//!    the event stream flagged as costly or failed ([`TurnFriction`]). This is
+//!    the event stream flagged as costly or failed ([`TurnFriction`](crate::memory::reflection::digest::TurnFriction)). This is
 //!    the middle the tail window dropped.
 //! 3. **Filler** — everything else, in transcript order, while the budget
 //!    lasts.
@@ -49,7 +49,7 @@
 //! filesystem, no store. `reflect_on_turn` reads no clock and assigns no
 //! instant (#2320), and the mining log it feeds is reproducible only while that
 //! holds — a digest that varied with the time of day would break replay
-//! (`memory/replay.rs`) without anything failing. [`TurnFriction`] is a fold
+//! (`memory/replay.rs`) without anything failing. [`TurnFriction`](crate::memory::reflection::digest::TurnFriction) is a fold
 //! over events the caller already observed, never a read-back of the journal:
 //! the journal is written by the renderer task, which is still draining while
 //! reflection runs, so reading it here would race and the digest would stop
@@ -177,6 +177,15 @@ impl TurnFriction {
     /// every other. The wildcard arm is a decision, not laziness: a new
     /// `AgentEvent` variant must not change what a turn's friction *is* until
     /// someone decides that it should.
+    ///
+    /// No production caller since #3865 — its one production caller,
+    /// `FrictionTap` (`agent/reflect.rs`), wrapped the staged pipeline's own
+    /// event stream and was removed with the crate that drove it (the raw
+    /// step-loop builds `TurnEvidence` from its transcript directly,
+    /// `TurnEvidence::from_transcript`, and never folds a live event stream).
+    /// Kept for `memory/reflection/tests.rs`'s and `digest/tests.rs`'s direct
+    /// coverage of the fold/render pipeline this method feeds.
+    #[allow(dead_code)]
     pub fn observe(&mut self, event: &AgentEvent) {
         match event {
             AgentEvent::ToolStart { call } => {
@@ -263,6 +272,7 @@ impl TurnFriction {
 
     /// The `tools` slot a result belongs in, opening one for a result whose
     /// start was never seen. `None` means the entry cap refused it.
+    #[allow(dead_code)]
     fn close(&mut self, call_id: &str) -> Option<usize> {
         if let Some(index) = self.open.remove(call_id) {
             return Some(index);
@@ -280,6 +290,7 @@ impl TurnFriction {
         Some(self.tools.len() - 1)
     }
 
+    #[allow(dead_code)]
     fn push_retry(&mut self, entry: String) {
         if self.retries.len() >= FRICTION_ENTRY_CAP {
             self.dropped += 1;
@@ -298,10 +309,13 @@ impl TurnFriction {
     }
 
     /// Whether the turn dispatched any tool call at all — the "did real
-    /// work" signal the one-shot pipeline's episode/reflection gates read.
-    /// The worker's tool-calling turns are deliberately kept out of the
-    /// planner transcript (L-E6), so the event stream is the one witness
-    /// that work happened.
+    /// work" signal the staged pipeline's episode/reflection gates used to
+    /// read. The pipeline's worker turns deliberately kept tool calls out of
+    /// the planner transcript (L-E6), so this event-stream witness was the
+    /// only way to see them; gone with the pipeline (#3865) — the raw
+    /// step-loop's own transcript already carries every tool call, so
+    /// `turn_warrants_reflection(&messages)` alone is sufficient for it.
+    #[allow(dead_code)]
     pub(crate) fn saw_tool_activity(&self) -> bool {
         !self.tools.is_empty()
     }

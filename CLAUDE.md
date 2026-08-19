@@ -31,10 +31,15 @@
     without proof — and it holds a plugin's self-reported evidence to no less
     a standard: state which check ran and what it found, the same discipline
     this rule asks of a PR description. (See AGENTS.md's opening and
-    `doc:pipeline-as-plugins` on why "the check ran" now means two different
-    things depending on the path — host-run in the built-in pipeline,
-    self-reported by an installed plugin. Neither relaxes this rule: it is
-    about how *this repository* reviews *its own* changes.)
+    `doc:pipeline-as-plugins` on why "the check ran" used to mean two
+    different things depending on the path, and no longer does: the
+    built-in staged pipeline that once ran the check itself is deleted from
+    this workspace (#3865), so host-run verification no longer exists here
+    at all. The only path left is an installed verification plugin's
+    self-reported evidence (Oxagen's Vera is the private reference one),
+    which Stella evaluates against the plugin's declared rule and never
+    re-runs or re-checks. Neither relaxes this rule: it is about how *this
+    repository* reviews *its own* changes.)
   - **Measure honestly, especially when it costs us.** A benchmark number that
     flatters Stella because of a measurement artifact is worse than a loss:
     it spends the exact reputation the project exists to build. Compare like

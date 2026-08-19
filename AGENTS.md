@@ -9,15 +9,22 @@ Stella is a fast, BYOK ("bring your own key"), model-agnostic terminal coding
 agent, written in Rust. Proving a task **done** with a **witness test** — one
 that fails on the old code and passes on the new — is what "verified done,
 not claimed done" means here, and that guarantee is **a property of the path
-that produced the evidence, not of the binary**: opted into with `stella run
---pipeline classic`, the built-in staged pipeline runs the check itself and
-watches the fail→pass flip, but verification supplied by an installed
-wrapper plugin (`stella run --pipeline <plugin-id>`) is the plugin's own
-self-reported evidence, which Stella evaluates against a declared rule and
-does not re-run or re-check (#3511; `doc:pipeline-as-plugins` is the
-extraction plan moving the former into the latter). Neither path runs by
-default — a plain `stella run` is the raw step-loop with no verification
-stage over it. It is the open-source reference implementation of
+that produced the evidence, not of the binary**. The built-in staged
+pipeline that used to run the check itself and watch the fail→pass flip has
+been deleted from this workspace (#3865; `docs/spec/pipeline-as-plugins.md`
+§7 names it "the last slice" of the extraction plan, and it has now landed) —
+`stella run --pipeline classic` is refused outright, naming `stella plugin
+install` as the remedy. Host-run verification no longer exists in this
+workspace at all: the only verification path left is an **installed
+verification plugin** — `stella run --pipeline <plugin-id>` hands the turn to
+that plugin, whose evidence is self-reported. Stella evaluates that evidence
+against the plugin's declared rule and never re-runs or re-checks it itself
+(#3511; `doc:pipeline-as-plugins` is the extraction plan, and Oxagen's Vera is
+the reference verification plugin, private and not shipped in this
+repository).
+Neither path runs by default — a plain `stella run` is the raw step-loop
+with no verification stage over it. It is the open-source reference
+implementation of
 Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---
@@ -100,9 +107,9 @@ leaving `main` red for everyone (#1883).
 
 CI enforces the same steps split across three workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`
-and `doc-links`, and adds a `Cargo.lock` sync check, the prompt-cache golden
-fixtures, `stella context validate`, a release smoke build (thin LTO), and the
-deleted-test guard (`scripts/check-deleted-tests.sh`);
+and `doc-links`, and adds a `Cargo.lock` sync check, `stella context
+validate`, a release smoke build (thin LTO), and the deleted-test guard
+(`scripts/check-deleted-tests.sh`);
 `docs-guards.yml` runs those two plus a second run of `command-docs`, because
 all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
@@ -441,63 +448,55 @@ refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
-**What follows is the staged pipeline's own witness/verify machinery, which is
-a different thing from the contract above.** It is **opt-in**, not the
-default: since #3381 a plain `stella run` resolves to the raw step-loop, and
-this machinery runs only when a turn is explicitly wrapped with `stella run
---pipeline classic` (`crates/stella-cli/src/wrapper_plugin.rs` —
-`PipelineChoice::Classic`). It ships in-tree today and genuinely runs the
-check itself when invoked — this is the host-run half of the guarantee (see
-AGENTS.md's opening) — and `--test-command`/`--keep-witness`/
-`--require-verified` are refused on any other resolution (the raw loop, or an
-installed wrapper plugin), naming `--pipeline classic` as the remedy, rather
-than silently doing nothing. Per the product decision recorded in
-`doc:pipeline-as-plugins` (#3511) the mechanism is being extracted into an
-installable verification plugin (Oxagen's Vera is the reference one); once it
-lands, a plugin reports its own evidence instead of Stella running the check,
-and this section's guarantee does not automatically transfer to that path.
-Until then, this section documents the mechanism as it exists: when no
-`--test-command` is configured, its **witness stage** has an independent model
-(the verifier's resolution, never the worker) author the failing witness test,
-tracks its fail→pass flip in the flip oracle, and refuses to credit the flip if
-the worker modified the witness files (tamper exclusion). Authoring is
-**demand-driven and runs after execution** — once the warrant has read the
-executed diff and found something worth proving — so the stage order is
-triage → recall → research → plan → scope → **execute → witness** → verify → verdict
-(`stage_rank` in `crates/stella-pipeline/src/replay.rs` is the canonical
-ordering; the revise back-edges land on execute, so re-execution never
-re-authors). That order is not hard-coded: it is resolved at load time from
-the shipped `[wrapper]` manifest (`crates/stella-pipeline/variants/classic.toml`,
-via `src/schedule.rs` and `src/pipeline/schedule_wiring.rs`) — a witness
-condition written to read a post-triage (post-execute) signal is refused at
-load rather than silently accepted, so a manifest cannot describe an ordering
-the schedule cannot honor. The witness
-is **scaffolding for that one run**: it lives in the candidate workspace and is
-discarded with it, so an already-satisfied test is never left behind in the
-project's test tree. `stella run --keep-witness` promotes it instead.
+**What follows described the staged pipeline's own witness/verify machinery,
+a different thing from the contract above — the built-in path this section
+described has been deleted from this workspace (#3865, the last slice of
+`docs/spec/pipeline-as-plugins.md` §7's extraction plan; see this branch's
+history for the deletion itself). It is kept here, rewritten to the
+post-removal state, because the *shape* it names — a demand-driven witness
+stage, a flip oracle, a terminal verify ladder — is exactly what
+`doc:pipeline-as-plugins` §8 ports into Vera, Oxagen's private reference
+verification plugin, rather than reinventing.** Host-run verification is no
+longer something Stella ships in-tree: `stella run --pipeline classic` is
+refused outright (`crates/stella-cli/src/wrapper_plugin.rs`'s
+`PipelineChoice::resolve`), and `--test-command`/`--keep-witness`/
+`--require-verified` are refused unconditionally on every remaining
+resolution, naming `stella plugin install` — an installed verification
+plugin — as the remedy rather than a flag this repository ships. When such a
+plugin is installed, `stella run --pipeline <plugin-id>` hands it the turn;
+the plugin's own `[oracle]` runs the check and reports its evidence, which
+Stella evaluates against the plugin's declared verdict rule and does not
+re-run or re-check (see AGENTS.md's opening). What used to be host-run
+mechanics — an independent model (never the worker) authoring the failing
+witness test, tracking its fail→pass flip in a flip oracle, refusing to
+credit the flip if the worker modified the witness files (tamper exclusion),
+authored on demand once the warrant found something worth proving, ordered
+by a `[wrapper]` manifest rather than hardcoded — is now the shape a
+verification plugin implements on its own side of the wrapper socket, not
+code this repository runs. `stella-cli`'s surviving glue for that surface
+(the candidate-grant/tamper-watch minting logic a witness-flavoured plugin's
+flip crediting depends on) lives in `crates/stella-plugin/src/candidate_grant.rs`
+now, not in a deleted `stella-pipeline`.
 
-**Verification itself buys no model call.** The witness *author* above is the
-one verifier-tier call the pipeline still spends, and it survives because it
-creates the oracle rather than substituting for one — its test either goes
-fail→pass or does not, and that is decided by running it. Everything downstream
-is deterministic: `ladder_decision`
-(`crates/stella-pipeline/src/verify.rs`) is terminal at **every** one of its
-outcomes, and **no arm escalates to a model** — which is the load-bearing half
-and is *not* implied by terminality, since a terminal arm could spend a verifier
-call and then stop. That guarantee is stated once, in the `LadderDecision`
-enum's own doc comment, quantified over the variants beside it; this file
-deliberately does not restate the list or its count, because a number copied
-into a second file drifts. It did: this paragraph said "all five" and omitted
-`WitnessUnsatisfiable` for as long as that variant existed, and so did five
-other copies including the enum doc it now cites (#3473) — the shared-cell
-failure this file warns about, in this file. The verify stage
-emits the `Verdict` event from that answer directly — the
-pipeline never emits `StageKind::Verdict` itself, which is why the rank above is
-an ordering, not a stage the run passes through. The model verdict and the
-distress-guidance call are gone (#2584), structurally rather than by default —
-`Roster::apply` rejects both keys as `NotAssignable`, so no configuration
-restores them. See `website/content/docs/inference-pipeline.mdx` for the full
-stage flow and the `/pipeline` deck toggle.
+**Verification itself buys no model call, and that constraint transfers to
+the plugin path unchanged.** The witness *author* is the one verifier-tier
+call a verification plugin spends, and it survives because it creates the
+oracle rather than substituting for one — its test either goes fail→pass or
+does not, and that is decided by running it. Everything downstream of a
+plugin's evidence is meant to stay deterministic on the plugin's own side:
+`ladder_decision`'s terminality — no arm escalates to a model — was the
+built-in pipeline's own invariant (`LadderDecision`'s doc comment, historical
+now that the enum shipped in the deleted crate) and is exactly what
+`doc:pipeline-as-plugins` §8 asks Vera to preserve as it ports the logic
+rather than copies it. This file deliberately does not restate a variant
+count for a type it no longer hosts, because a number copied into a second
+file drifts — that happened once already while `LadderDecision` still lived
+here (#3473) and is the reason to name the risk rather than repeat the
+number. The model verdict and the distress-guidance call are gone (#2584),
+structurally rather than by default — `Roster::apply` rejects both keys as
+`NotAssignable`, so no configuration restores them; this holds independent
+of the deletion above. See `website/content/docs/inference-pipeline.mdx` for
+the historical stage flow and the plugin path that replaces it.
 
 **A witness that no longer exists cannot fail.** Three times a PR has landed
 that silently deleted a test another PR added to the same file hours earlier —
@@ -553,7 +552,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-six crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-five crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -582,7 +581,6 @@ the files you must plan around (see below).
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
-| Triage → … → verifier orchestration plane | [`stella-pipeline`](crates/stella-pipeline/README.md) | |
 | MCP client (external tool servers) | [`stella-mcp`](crates/stella-mcp/README.md) | |
 | Multimodal generation | [`stella-media`](crates/stella-media/README.md) | |
 | Multi-agent fan-out, worktree isolation | [`stella-fleet`](crates/stella-fleet/README.md) | |
@@ -649,10 +647,9 @@ a plan needs and the part that rarely changes:
 
 | Crate | God files |
 |---|---|
-| `stella-cli` | `src/command_deck.rs`, `src/agent.rs` |
+| `stella-cli` | `src/command_deck.rs` |
 | `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
 | `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs` |
-| `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
@@ -672,10 +669,12 @@ alone, because a number in two places is how the last limit died.
 **Status — what ships.** The live runtime path is
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /
 `stella-context` (recall only) / `stella-mcp`, and the CLI also drives
-`stella-pipeline` (opt-in on every door via `stella run --pipeline classic`;
-the raw step-loop is the default), `stella-fleet` (`stella fleet`),
-and `stella-tui` (the Command Deck, the default interactive shell on a TTY).
-The fuller
+`stella-fleet` (`stella fleet`) and `stella-tui` (the Command Deck, the
+default interactive shell on a TTY). Verification is opt-in on every door via
+`stella run --pipeline <variant>`, naming an installed wrapper plugin — the
+built-in staged pipeline this flag used to be able to name (`classic`) has
+been deleted from the workspace (#3865) and is refused outright; the raw
+step-loop is the default with or without the flag. The fuller
 `stella-graph` retrieval + context plane (`stella init` builds the code-graph
 index; recall fans out through the CGP host) is also wired. `stella-serve` is
 the exception: it builds its own binary and nothing in `stella-cli` links it,
@@ -840,16 +839,19 @@ be closed by exactly one PR; if a fix spans several, close on the last and
 
 - **Property tests** for pure engine logic (`proptest`): loop detection,
   retry history, skill selection, and the task board (`stella-core`), plus
-  retrieval fusion (`stella-context`), fleet planning (`stella-fleet`),
-  witness verification (`stella-pipeline`), and render/scroll (`stella-tui`).
-  These run on every `cargo test`. Compaction, eviction, and budget
-  arithmetic are covered by unit tests, not properties — a property test for
-  them is a welcome contribution.
+  retrieval fusion (`stella-context`), fleet planning (`stella-fleet`), and
+  render/scroll (`stella-tui`). These run on every `cargo test`. Compaction,
+  eviction, and budget arithmetic are covered by unit tests, not properties —
+  a property test for them is a welcome contribution. Witness-verification
+  property tests (`flip_requires_a_prior_failing_observation` and its
+  siblings) lived here through `stella-pipeline`; that crate is deleted
+  (#3865), and the property carries over to whatever verification plugin
+  ports it (`doc:pipeline-as-plugins` §8) rather than living in this
+  workspace.
 - **Witness tests** for features — see above.
 - **Wiremock-based adapter tests** for provider SSE parsing and HTTP error
   classification (`stella-model`, `stella-mcp`, `stella-media`).
 - **Integration tests** with fixture MCP servers (`crates/stella-mcp/tests/`).
-- **Replay fixtures** for pipeline stages (`crates/stella-pipeline/tests/`).
 - **Golden frames** for the command deck
   (`crates/stella-tui/tests/deck_render_snapshots.rs`). Each tab and overlay renders
   into a fixed-size `TestBackend` and the whole character grid is compared

@@ -1,36 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! What a killed turn was running *inside*, so a resume cannot silently give
-//! it back as something smaller (#1615).
+//! What a killed classic-pipeline turn was running *inside*, so a resume
+//! never presents an unverified answer as a finished one (#1615).
 //!
-//! `stella run` drives the staged pipeline — triage, plan, execute, witness,
-//! verify — and the engine checkpoint that `stella daemon resume`
-//! restores describes only the innermost of those: one worker turn. Resuming
-//! from it alone therefore hands the operator a run that answers but was never
-//! verified, which is the one thing this repository refuses to call done. The
-//! checkpoint cannot carry the difference itself: the engine must not learn
-//! pipeline shapes (architecture invariant 1).
+//! `stella run --pipeline classic` used to drive a staged pipeline — triage,
+//! plan, execute, witness, verify — and declared a **frame** beside the
+//! ordinary engine checkpoint, in the same work-journal commit
+//! ([`stella_store::work_journal::PIPELINE_BLOB`]), naming the staging the
+//! killed turn belonged to. The staged pipeline itself has been removed from
+//! this build (#3865: `crates/stella-pipeline` is gone workspace-wide), so
+//! there is no more restoration path — but an operator's disk may still hold
+//! a frame an *older* build wrote, and `stella daemon resume` must keep
+//! reading it rather than crash on it.
 //!
-//! So the pipeline declares a **frame** beside the checkpoint —
-//! [`stella_store::work_journal::PIPELINE_BLOB`], the same commit, one store,
-//! not two — naming the staging the turn belonged to. The resume path reads it
-//! and reports, in [`ResumeFrame::advisory`], exactly which stages it is not
-//! restoring.
+//! # Detect, never reconstruct
 //!
-//! # Report first, restoration where the record permits
-//!
-//! The report half shipped first (#1615): a resumed run **says** it came
-//! back smaller instead of presenting an unverified answer as a finished
-//! one. The restoration half (#1671) rides the same frame: the pipeline
-//! pushes its mid-run progress — class, goal, plan cursor, test baseline —
-//! through [`stella_pipeline::ResumeFrameSink`] into
-//! [`PipelineFrame::progress`], and a resume whose frame carries enough
-//! re-enters the pipeline via [`stella_pipeline::Pipeline::resume`] instead
-//! of degrading. The advisory shrinks to what genuinely remains
-//! unrestorable ([`restored_advisory`]); a frame that predates the progress
-//! record, or a run that executed in a candidate worktree (it died with the
-//! process), keeps the full report and the bare-turn path.
+//! [`PipelineFrame`] therefore keeps only the plain-scalar fields
+//! (`test_command`, `witness_writer`, `candidates`, `isolation_possible`,
+//! `max_revisions`) that this module's own advisory needs, and reads
+//! `responsibilities`/`progress` — the two fields that used to decode into
+//! `stella_pipeline` types — as opaque JSON. A historical frame still
+//! deserializes byte-for-byte (nothing about its on-disk shape changed), but
+//! nothing in this build re-hydrates those two fields into a roster or a
+//! resumable pipeline state, because the code that could act on them is gone.
+//! [`ResumeFrame::advisory`] reports the graceful refusal: the resume always
+//! takes the bare-turn path now, and says so.
 //!
 //! # Fail loud, not open
 //!
@@ -39,10 +34,7 @@
 //! and opposite in consequence: guessing "bare turn" on an unreadable frame is
 //! precisely the silent degradation this module exists to end.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
-use stella_protocol::ModelCallRole;
 
 /// The frame format's version, bumped when a field's *meaning* changes.
 ///
@@ -52,166 +44,62 @@ use stella_protocol::ModelCallRole;
 /// `stella_core::step::Checkpoint` takes.
 pub const FRAME_VERSION: u32 = 1;
 
-/// The staged pipeline a checkpointed turn was running inside.
+/// The staged pipeline a checkpointed turn was running inside, as far as this
+/// build can still say.
 ///
-/// The configuration half is *decisions*, not content: which stages the run
-/// had configured. [`Self::progress`] is the deliberate exception (#1671) —
-/// restoration needs the goal, the plan and the test baseline, which exist
-/// nowhere the resume can re-derive them (the plan's unreached steps are not
-/// in the transcript; the baseline observed a tree that no longer exists).
-/// The frame lives beside the transcript in `.stella/private/`, so the
-/// exception widens no exposure.
+/// **Detection-only, since #3865.** `responsibilities` and `progress` used to
+/// decode into `stella_pipeline::AssignmentOverride`/`FrameProgress` — real
+/// types owned by the crate that has been deleted. They are read here as
+/// opaque JSON instead: a historical frame's bytes still parse (nothing about
+/// the on-disk shape changed, so `#[serde(default)]` never has to fire on
+/// these two), but nothing reconstructs a roster or a resumable pipeline
+/// state from them any more, because the code that could act on either is
+/// gone. The five plain-scalar fields are unaffected — they were always just
+/// data, never `stella_pipeline` types — and are what
+/// [`ResumeFrame::advisory`] still reports from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PipelineFrame {
     /// See [`FRAME_VERSION`].
     pub version: u32,
     /// The deterministic verify ladder's command, when `--test-command` armed
-    /// it. `None` means the run configured none, so the only command the
-    /// ladder could ever have observed was the one the witness stage authored
-    /// (`Pipeline::effective_test_command`).
+    /// it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_command: Option<String>,
     /// Whether the witness stage would have had an independent model author a
     /// failing test up front — the flip oracle's whole input.
-    ///
-    /// **Derived, never authoritative** (#2458): written from the
-    /// `witness_author` row of [`Self::responsibilities`], and read back only
-    /// by [`PipelineFrame::roster`] when that field is absent, which is how a
-    /// frame written before the roster rode along is upgraded. Kept rather
-    /// than dropped so a build predating `responsibilities` still prints the
-    /// witness line in its advisory instead of silently losing it.
     #[serde(default)]
     pub witness_writer: bool,
-    /// The run's responsibility roster (#2381), as the override block that
-    /// reproduces it from `Roster::default` — the exact shape
-    /// [`stella_pipeline::Roster::apply`] reads, so the resume path and the
-    /// settings path decode a roster through one function rather than two.
-    ///
-    /// The **whole** roster and not just the witness enablement, because every
-    /// ablation has to survive a resume: before this, a run whose triage was
-    /// ablated and whose witness author was reassigned came back as neither,
-    /// and the resumed leg's transcript described a pipeline that had never
-    /// run.
-    ///
-    /// Additive, so no [`FRAME_VERSION`] bump — an older frame reads it as an
-    /// empty map and is upgraded from [`Self::witness_writer`] alone, which is
-    /// the only ablation such a frame could express. A default roster
-    /// serializes to nothing at all, so the overwhelmingly common frame does
-    /// not grow.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub responsibilities: BTreeMap<String, stella_pipeline::AssignmentOverride>,
+    /// The run's responsibility-roster override block, exactly as it arrived
+    /// on disk. Opaque JSON since #3865 (see the struct doc) — kept so a
+    /// historical frame still round-trips its bytes, not because anything
+    /// here decodes it.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub responsibilities: serde_json::Map<String, serde_json::Value>,
     /// Candidates the run was fanning out over (1 for the ordinary path).
     #[serde(default)]
     pub candidates: u32,
     /// Whether the run's worktree policy allowed isolating execution in a
     /// candidate workspace.
-    ///
-    /// *Possible*, not *actual*: the decision is taken at triage, after the
-    /// task class is known, and the frame is written before the first stage.
-    /// Reporting the maybe is the honest reading and still the actionable one
-    /// — if a candidate was created it died with the process, and the resumed
-    /// turn writes into the workspace instead.
     #[serde(default)]
     pub isolation_possible: bool,
     /// Revision rounds the deterministic verify ladder could still have
-    /// demanded (`stella_pipeline::verify::ladder_decision`'s `Revise` rung).
+    /// demanded.
     #[serde(default)]
     pub max_revisions: u32,
     /// The facts the pipeline learned while running — task class, plan,
-    /// execute cursor, test baseline — pushed by the pipeline through
-    /// [`stella_pipeline::ResumeFrameSink`] as each settles (#1671). `None`
-    /// on a frame from before the progress record existed, or on a run
-    /// killed before triage; either way the resume declines to restore and
-    /// keeps the honest bare-turn path.
+    /// execute cursor, test baseline — exactly as they arrived on disk.
+    /// Opaque JSON since #3865 (see the struct doc): its presence still means
+    /// "this frame recorded enough to have restored the pipeline in an
+    /// earlier build" (reported by [`ResumeFrame::advisory`]), but nothing
+    /// decodes the record any more.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub progress: Option<stella_pipeline::FrameProgress>,
+    pub progress: Option<serde_json::Value>,
     /// The `[wrapper]` variant the run was launched with (#3408), `None` for
-    /// the built-in `classic` order. `stella_plugin::Wrapper` derives
-    /// `Serialize`/`Deserialize` (invariant 4), so it round-trips here
-    /// byte-for-byte the same way [`Self::responsibilities`] does.
-    ///
-    /// Additive, so no [`FRAME_VERSION`] bump — an older frame reads it as
-    /// `None` and resumes under `classic`, which is what it would have run
-    /// under anyway before a variant was ever configurable.
+    /// the built-in `classic` order. `stella_plugin::Wrapper` is a genuinely
+    /// independent type (never part of `stella-pipeline`), so it keeps
+    /// decoding structurally rather than as opaque JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<stella_plugin::Wrapper>,
-}
-
-impl PipelineFrame {
-    /// The frame for a run configured by `config`.
-    pub fn of(config: &stella_pipeline::PipelineConfig) -> Self {
-        Self {
-            version: FRAME_VERSION,
-            test_command: config.test_command.clone(),
-            // Both from the roster, which since #2458 is the only place the
-            // answer lives — the bool is a projection of the map beside it and
-            // cannot disagree with it.
-            witness_writer: config.roster.enabled(ModelCallRole::WitnessAuthor),
-            responsibilities: config.roster.overrides(),
-            candidates: config.candidates.unwrap_or(1),
-            isolation_possible: !matches!(
-                config.create_worktrees,
-                stella_pipeline::ports::WorktreePolicy::Never
-            ),
-            max_revisions: config.max_revisions,
-            progress: None,
-            variant: config.variant.clone(),
-        }
-    }
-
-    /// The roster the recorded run was launched with (#2458).
-    ///
-    /// Decoded through [`stella_pipeline::Roster::apply`] — the same function
-    /// the settings path calls — so a stored roster and a configured one
-    /// cannot drift into meaning different things, and a roster is total by
-    /// construction here for the same reason it is there: it is built by
-    /// applying a diff to [`stella_pipeline::Roster::default`], never by
-    /// trusting a persisted table to still have a row for every
-    /// responsibility this build knows about.
-    ///
-    /// Rejections from `apply` are dropped rather than reported. The frame was
-    /// written from a roster that had already cleared `Pipeline::run`'s
-    /// pre-spend refusal, so a rejection here means the frame was hand-edited
-    /// — and the resumed leg re-validates before spending anyway
-    /// (`Pipeline::resume`), which is where that belongs.
-    #[must_use]
-    pub fn roster(&self) -> stella_pipeline::Roster {
-        let mut roster = stella_pipeline::Roster::default();
-        if self.responsibilities.is_empty() {
-            // Either a default-roster run — nothing to restore — or a frame
-            // written before `responsibilities` existed, whose bool is the one
-            // ablation it was able to express. `true` is the default, so only
-            // `false` is worth acting on, and the two cases need no telling
-            // apart: a modern default-roster frame derives `true`.
-            if !self.witness_writer {
-                roster.set_enabled(ModelCallRole::WitnessAuthor, false);
-            }
-            return roster;
-        }
-        let _ = roster.apply(self.responsibilities.clone());
-        roster
-    }
-}
-
-/// The write side of [`PipelineFrame::progress`]: carries the pipeline's
-/// progress facts into the frame that rides every checkpoint commit.
-///
-/// Holds the frame's configuration half and re-serializes the whole frame on
-/// every push — the frame slot in [`crate::durability`] is one JSON value,
-/// and two writers patching halves of it is how the halves drift.
-struct ProgressSink {
-    durability: crate::durability::SessionDurability,
-    base: PipelineFrame,
-}
-
-impl stella_pipeline::ResumeFrameSink for ProgressSink {
-    fn record(&self, progress: &stella_pipeline::FrameProgress) {
-        let mut frame = self.base.clone();
-        frame.progress = Some(progress.clone());
-        if let Ok(json) = serde_json::to_string(&frame) {
-            self.durability.set_pipeline_frame(json);
-        }
-    }
 }
 
 /// What the run being resumed was, as far as the durable record can say.
@@ -263,10 +151,12 @@ impl ResumeFrame {
     /// already assumed was false; naming the verify stage, the flip credit and
     /// the candidate workspace individually is what makes it actionable.
     ///
-    /// Every line naming a *model call* is emitted by
-    /// [`unrestored_guarantee`] and reached only through a row of the run's
-    /// roster, so the set is derived rather than written out — see that
-    /// function for why (#2608).
+    /// **The graceful refusal (#3865).** A [`Self::Pipeline`] frame used to
+    /// branch here — restore into the staged pipeline when its `progress`
+    /// field carried enough, fall back to the bare turn otherwise. The staged
+    /// pipeline is gone from this build, so every `Self::Pipeline` frame now
+    /// takes the bare-turn path unconditionally; this only reports what that
+    /// costs, never attempts to restore anything.
     pub fn advisory(&self) -> Option<Vec<String>> {
         let frame = match self {
             Self::BareTurn => return None,
@@ -280,8 +170,9 @@ impl ResumeFrame {
             Self::Pipeline(frame) => frame,
         };
         let mut lines = vec![
-            "this was a staged pipeline run — the resume continues its interrupted TURN, \
-             not the pipeline around it"
+            "this was a staged pipeline run — the staged pipeline has been removed from this \
+             build, so the resume continues only its interrupted TURN, never the pipeline \
+             around it"
                 .to_string(),
         ];
         lines.push(match &frame.test_command {
@@ -293,20 +184,18 @@ impl ResumeFrame {
                      for it"
                 .to_string(),
         });
-        // The model calls, derived. Through the roster, not the bool beside it,
-        // so this file reads the legacy field in exactly one place (#2458) —
-        // `PipelineFrame::roster`, which is also the only place that knows an
-        // old frame carries nothing else. `assignments()` is in
-        // `ModelCallRole::ALL` order, so the advisory's order is fixed.
-        lines.extend(
-            frame
-                .roster()
-                .assignments()
-                .iter()
-                .filter(|row| row.enabled)
-                .filter_map(|row| unrestored_guarantee(row.responsibility))
-                .map(str::to_string),
-        );
+        // `witness_writer` is the one ablation flag every historical frame can
+        // still answer without decoding `responsibilities` (now opaque JSON,
+        // see the struct doc) — and in practice it was also the only row
+        // `assignments()` ever surfaced here: the model verdict call was
+        // already gone (#2584) before this pipeline was, so no live frame
+        // ever carried an enabled `Verdict` row to report.
+        if frame.witness_writer {
+            lines.push(
+                "  the witness test's fail→pass flip is NOT credited — nothing proves this done"
+                    .to_string(),
+            );
+        }
         if frame.max_revisions > 0 {
             lines.push(format!(
                 "  up to {} revision round(s) the verify ladder could have demanded will NOT happen",
@@ -324,6 +213,13 @@ impl ResumeFrame {
                 "  execution MAY have been isolated in a candidate worktree, which died with \
                  the process — the resumed turn writes into the workspace, guarded only by \
                  the restored staleness map"
+                    .to_string(),
+            );
+        }
+        if frame.progress.is_some() {
+            lines.push(
+                "  this frame recorded enough progress to have restored the pipeline in an \
+                 earlier build — that restoration path no longer exists, so it is not attempted"
                     .to_string(),
             );
         }
@@ -355,153 +251,6 @@ impl ResumeFrame {
     }
 }
 
-/// The guarantee a bare-turn resume gives up by not re-running
-/// `responsibility`, or `None` when losing it costs the operator nothing they
-/// can act on.
-///
-/// **This is the join the advisory used to lack** (#2608). Every line of
-/// [`ResumeFrame::advisory`] that names a model call comes from here, and is
-/// reached only through a row of the run's [`stella_pipeline::Roster`] — so a
-/// responsibility the pipeline stops issuing loses its row in
-/// [`stella_pipeline::default_agent`] and its sentence disappears with it, in
-/// the same commit and with nothing to remember. Written as literals instead,
-/// the set of guarantees lived in two places: the pipeline that issues the
-/// stages and a string in this crate, joined by nothing. That is how this
-/// advisory came to describe a model verifier rendering a verdict on a `main`
-/// whose pipeline had stopped issuing either — with no compiler and no test
-/// able to see it, because each half was internally consistent.
-///
-/// The [`ModelCallRole::Verdict`] arm is the shape's own witness: a sentence
-/// **is** declared for it, and no advisory prints it, because
-/// `default_agent` answers `None` and no roster carries the row. Deleting the
-/// arm would make that indistinguishable from having forgotten it — the same
-/// reason invariant 8's parity matrix keeps a row per provider per axis rather
-/// than only the rows that are interesting today. If judgement ever returns to
-/// the pipeline, the sentence describing its loss returns with it.
-///
-/// Exhaustive over [`ModelCallRole`] for the other direction: a responsibility
-/// added to the pipeline fails to compile here with `E0004` until someone
-/// states what its absence costs — the same maintenance contract
-/// [`stella_pipeline::default_agent`] imposes one layer down.
-fn unrestored_guarantee(responsibility: ModelCallRole) -> Option<&'static str> {
-    match responsibility {
-        ModelCallRole::WitnessAuthor => {
-            Some("  the witness test's fail→pass flip is NOT credited — nothing proves this done")
-        }
-        ModelCallRole::Verdict => Some("  no verdict is recorded for the work this turn produced"),
-        // The stages the checkpoint already sits downstream of. Triage
-        // classified, research answered and the plan was authored before the
-        // turn that died, and the resumed turn continues the worker's own loop
-        // rather than replacing it — so not re-running any of these is what a
-        // resume is *for*, not something it loses.
-        ModelCallRole::Triage
-        | ModelCallRole::Research
-        | ModelCallRole::Plan
-        | ModelCallRole::Worker => None,
-        // Not on any roster (`default_agent` answers `None`), so unreachable
-        // through `assignments()`. Named rather than swept up by a wildcard so
-        // that a responsibility added to the pipeline cannot slip past this
-        // match by resembling one of them.
-        ModelCallRole::PlanRepair
-        | ModelCallRole::WitnessRepair
-        | ModelCallRole::DistressGuidance
-        | ModelCallRole::Unknown
-        | ModelCallRole::AgentAuthor
-        | ModelCallRole::SkillAuthor
-        | ModelCallRole::DomainInference
-        | ModelCallRole::Reflection
-        | ModelCallRole::Summarization => None,
-    }
-}
-
-/// What a resume can restore from `frame`, or `None` for the bare-turn path
-/// (#1671): a validated [`stella_pipeline::PipelineResume`] plus the frame's
-/// configuration half, which re-arms the pipeline with the run's *original*
-/// decisions rather than whatever flags this process happened to start with.
-///
-/// Pure — the one decision `run_resume` takes is testable without a session
-/// behind it. Validation itself lives in `PipelineResume::from_progress`, so
-/// "restore approximately" is not a state either layer can reach.
-pub fn restoration(
-    frame: &ResumeFrame,
-    checkpoint: &stella_core::step::Checkpoint,
-) -> Option<(stella_pipeline::PipelineResume, PipelineFrame)> {
-    let ResumeFrame::Pipeline(pipeline_frame) = frame else {
-        return None;
-    };
-    let progress = pipeline_frame.progress.clone()?;
-    let spec = stella_pipeline::PipelineResume::from_progress(checkpoint.clone(), progress)?;
-    Some((spec, (**pipeline_frame).clone()))
-}
-
-/// The lines to print when a resume IS re-entering the pipeline (#1671) —
-/// the short successor to [`ResumeFrame::advisory`] for the restored path:
-/// most of that list now comes back, and what remains unrestorable is named
-/// so the operator is never told more was restored than was.
-pub fn restored_advisory() -> Vec<String> {
-    vec![
-        "this was a staged pipeline run — resuming INTO it: the interrupted turn \
-         continues, then the witness and verify stages run on the completed work"
-            .to_string(),
-        "  the pre-crash lint baseline is gone, so the lint-regression veto (#861) \
-         sits out this run"
-            .to_string(),
-        "  an authored witness cannot be re-created after a crash — verification \
-         proceeds on the unauthored ladder"
-            .to_string(),
-    ]
-}
-
-/// Declare that the turns from here on belong to a staged pipeline run, so
-/// every checkpoint they write carries the frame describing it.
-///
-/// Best-effort and silent by the same contract as the rest of durability: a
-/// run whose frame cannot be serialized is exactly as resumable as it was
-/// before this existed, and refusing to start it would trade a working run for
-/// none. Serialization of a struct of scalars cannot fail in practice — the
-/// arm exists so this function has no `unwrap` on it.
-pub fn declare(
-    durability: &crate::durability::SessionDurability,
-    config: &stella_pipeline::PipelineConfig,
-) {
-    if let Ok(json) = serde_json::to_string(&PipelineFrame::of(config)) {
-        durability.set_pipeline_frame(json);
-    }
-}
-
-/// Build a [`stella_pipeline::Pipeline`] that has already declared its frame.
-///
-/// **The one construction path**, so a surface cannot come to hold a pipeline
-/// whose checkpoints do not say what they are. The frame was previously
-/// declared beside `Pipeline::new` at one of four call sites, and the three
-/// that forgot left checkpoints that resume as plain engine turns with no
-/// notice that their stages are gone (#1672).
-///
-/// Pairing the two here rather than asking each surface to remember is the
-/// difference between a convention and a mechanism.
-///
-/// Callers still chain what is theirs. The deck and fleet workers add
-/// `with_turn_gate` — #1214's seam, where the pipeline attaches the gate to
-/// every engine it builds and parks its management calls behind it — because
-/// the gate is per-surface while the frame is not.
-pub fn pipeline<'a>(
-    durability: &crate::durability::SessionDurability,
-    ports: stella_pipeline::PipelinePorts<'a>,
-    events: impl Into<stella_core::EventSender>,
-    config: stella_pipeline::PipelineConfig,
-) -> stella_pipeline::Pipeline<'a> {
-    declare(durability, &config);
-    // The progress sink rides the same construction path as the frame, and
-    // for the same reason (#1672): a pipeline whose checkpoints carry no
-    // progress cannot be resumed into, and per-surface wiring is how three
-    // of four surfaces forgot the frame itself.
-    let sink = ProgressSink {
-        durability: durability.clone(),
-        base: PipelineFrame::of(&config),
-    };
-    stella_pipeline::Pipeline::new(ports, events, config).with_frame_sink(std::sync::Arc::new(sink))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,7 +260,7 @@ mod tests {
             version: FRAME_VERSION,
             test_command: Some("cargo test -p stella-core".into()),
             witness_writer: true,
-            responsibilities: BTreeMap::new(),
+            responsibilities: serde_json::Map::new(),
             candidates: 1,
             isolation_possible: true,
             max_revisions: 2,
@@ -532,20 +281,14 @@ mod tests {
         );
     }
 
-    /// **The #1615 witness (report half).** A turn killed inside a staged
-    /// pipeline resumes knowing it is coming back smaller: the advisory names
-    /// the verify command that will not re-run, the witness flip that will not
-    /// be credited, and the candidate worktree that died — and the audit row
-    /// is labelled `resumed_complete_unverified` rather than borrowing the
-    /// ordinary success label.
-    ///
-    /// On `main` there is no frame at all: `SessionDurability` has no
-    /// `pipeline_frame`, the work journal has no `PIPELINE_BLOB`, and
-    /// `run_resume` labels every completed resume `resumed_complete`. The
-    /// fail-half is therefore type-level — the API this asserts on does not
-    /// exist — which is why the sibling assertion below pins the *unchanged*
-    /// bare-turn behaviour in the same test: the delta, not just the addition,
-    /// is what is being witnessed.
+    /// **The #1615 witness, still true post-#3865.** A turn killed inside a
+    /// staged pipeline resumes knowing it is coming back smaller: the
+    /// advisory names the verify command that will not re-run, the witness
+    /// flip that will not be credited, and the candidate worktree that died
+    /// — and the audit row is labelled `resumed_complete_unverified` rather
+    /// than borrowing the ordinary success label. A plain engine turn is
+    /// untouched by any of this — the delta, not just the addition, is what
+    /// is being witnessed.
     #[test]
     fn a_resumed_pipeline_run_reports_every_stage_it_cannot_restore() {
         let frame = ResumeFrame::Pipeline(Box::new(pipeline_frame()));
@@ -562,24 +305,11 @@ mod tests {
         assert!(text.contains("no evidence is recorded"), "{text}");
         assert!(text.contains("revision round"), "{text}");
         assert!(text.contains("candidate worktree"), "{text}");
+        assert!(
+            text.contains("fail→pass flip is NOT credited"),
+            "witness_writer: true must still say so: {text}"
+        );
 
-        // The model-call half is asserted as the *derived* set, not as fixed
-        // strings (#2608): every responsibility this run's roster enables
-        // contributes its sentence, and every one it does not is absent. A
-        // literal here would re-create the drift the derivation removed.
-        let roster = pipeline_frame().roster();
-        for &responsibility in ModelCallRole::ALL {
-            let Some(sentence) = unrestored_guarantee(responsibility) else {
-                continue;
-            };
-            assert_eq!(
-                text.contains(sentence),
-                roster.enabled(responsibility),
-                "the advisory must name {responsibility:?} exactly when the roster runs it: {text}"
-            );
-        }
-
-        // The delta: a plain engine turn is untouched by any of this.
         let bare = ResumeFrame::BareTurn;
         assert!(!bare.degrades());
         assert_eq!(bare.advisory(), None);
@@ -587,72 +317,21 @@ mod tests {
         assert!(!bare.completed_banner(7).contains("UNVERIFIED"));
     }
 
-    /// **The #2608 witness.** The advisory names only responsibilities the
-    /// pipeline can actually issue, and it learns that from the roster rather
-    /// than from the sentences it was written with.
-    ///
-    /// On `main` this fails on the first assertion: the advisory prints
-    /// "and no verdict is recorded" unconditionally, while
-    /// `Roster::is_assignable(Verdict)` has been `false` since verification
-    /// went model-free — the two had drifted apart and nothing joined them.
-    ///
-    /// Both directions are checked, because a set that is derived has to be
-    /// derived *both* ways: a responsibility the pipeline cannot issue must
-    /// not be named even though [`unrestored_guarantee`] still declares its
-    /// sentence, and one it can issue must lose its sentence the moment the
-    /// run ablates it.
+    /// A run with no witness author is not told its (nonexistent) flip went
+    /// uncredited — the one ablation `witness_writer` can still express
+    /// without decoding the now-opaque `responsibilities` block.
     #[test]
-    fn the_advisory_names_no_responsibility_the_pipeline_cannot_issue() {
-        for test_command in [Some("cargo test".to_string()), None] {
-            let frame = ResumeFrame::Pipeline(Box::new(PipelineFrame {
-                test_command,
-                ..pipeline_frame()
-            }));
-            let text = frame
-                .advisory()
-                .expect("a pipeline frame advises")
-                .join("\n");
-            for &responsibility in ModelCallRole::ALL {
-                if stella_pipeline::Roster::is_assignable(responsibility) {
-                    continue;
-                }
-                let token = serde_json::to_value(responsibility)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_string))
-                    .expect("a fieldless role serializes to its wire token");
-                assert!(
-                    !text.contains(&token),
-                    "the advisory names `{token}`, which the staged pipeline does not issue — \
-                     an operator is being told a check was skipped that no longer exists: {text}"
-                );
-            }
-        }
-
-        // The sentence for the responsibility above IS declared; the roster is
-        // what keeps it off the page. Deleting the arm would make a removed
-        // guarantee indistinguishable from a forgotten one.
-        assert!(
-            unrestored_guarantee(ModelCallRole::Verdict).is_some(),
-            "the verdict's loss stays declared, so its return is one roster row away"
-        );
-
-        // The other direction: an ablation the run was launched with drops the
-        // sentence for what it ablated, and nothing else.
-        let witness_sentence =
-            unrestored_guarantee(ModelCallRole::WitnessAuthor).expect("the witness author advises");
-        let ablated = ResumeFrame::Pipeline(Box::new(PipelineFrame {
-            responsibilities: stella_pipeline::Roster::default()
-                .with_enabled(ModelCallRole::WitnessAuthor, false)
-                .overrides(),
+    fn an_ablated_witness_author_drops_its_own_sentence_and_nothing_else() {
+        let frame = ResumeFrame::Pipeline(Box::new(PipelineFrame {
             witness_writer: false,
             ..pipeline_frame()
         }));
-        let text = ablated
+        let text = frame
             .advisory()
             .expect("a pipeline frame advises")
             .join("\n");
         assert!(
-            !text.contains(witness_sentence),
+            !text.contains("fail→pass flip is NOT credited"),
             "a run that authored no witness must not be told its flip went uncredited: {text}"
         );
         assert!(
@@ -692,179 +371,82 @@ mod tests {
         assert_eq!(
             frame.progress, None,
             "no FRAME_VERSION bump for the progress addition (#1671): an old \
-             frame reads as progress-unknown, which declines restoration"
+             frame reads as progress-unknown"
         );
     }
 
-    /// The checkpoint a restoration test rides — content is irrelevant to the
-    /// decision under test.
-    fn checkpoint() -> stella_core::step::Checkpoint {
-        stella_core::step::Checkpoint {
-            version: stella_core::step::CHECKPOINT_VERSION,
-            step: 1,
-            messages: vec![],
-            budget: stella_core::step::BudgetSnapshot {
-                mode: stella_protocol::BudgetMode::Off,
-                turn_limit_usd: None,
-                session_limit_usd: None,
-                turn_spent_usd: 0.0,
-                session_spent_usd: 0.0,
+    /// **The graceful refusal (#3865), and this slice's own witness.** A
+    /// frame a pre-#3865 build wrote — carrying real `responsibilities` and
+    /// `progress` JSON, the exact shape that used to restore the pipeline via
+    /// `stella_pipeline::Pipeline::resume` — still deserializes cleanly in
+    /// this build (it does not panic, and does not misclassify as a bare
+    /// turn), and its advisory says plainly that the restoration path this
+    /// frame once qualified for no longer exists.
+    ///
+    /// On a build that still had `crates/stella-pipeline`, `responsibilities`
+    /// decoded into `stella_pipeline::AssignmentOverride` and `progress` into
+    /// `stella_pipeline::FrameProgress` — both types are gone now, so this
+    /// data can only ever be read back as opaque JSON, never reconstructed.
+    #[test]
+    fn a_stored_classic_frame_with_restorable_progress_deserializes_into_the_graceful_refusal() {
+        // A `responsibilities`/`progress` shape a real pre-#3865 build could
+        // have written — this build does not need to know their internal
+        // structure to accept them as opaque JSON.
+        let json = serde_json::json!({
+            "version": 1,
+            "test_command": "cargo test -p widget",
+            "witness_writer": true,
+            "responsibilities": {
+                "witness_author": { "enabled": false }
             },
-            total_cost_usd: 0.0,
-            calibration_model: None,
-            loop_steered: false,
-            loop_steered_pattern: Vec::new(),
-            loop_steered_inputs: None,
-            transcript_rewrites: 0,
-            loop_steers_spent: 0,
-        }
-    }
-
-    /// **The #1671 witness (decision half).** A frame carrying restorable
-    /// progress restores — with the run's original configuration riding along
-    /// — and every other frame keeps the bare-turn path. On `main` neither
-    /// `PipelineFrame::progress` nor `restoration` exists: a mid-pipeline
-    /// kill can only ever resume as a plain engine turn.
-    #[test]
-    fn a_frame_with_progress_restores_and_the_rest_stay_bare() {
-        let mut frame = pipeline_frame();
-        frame.progress = Some(stella_pipeline::FrameProgress {
-            task_class: Some(stella_pipeline::triage::TaskClass::SingleTask),
-            goal: Some("fix the parser".into()),
-            executing: true,
-            ..stella_pipeline::FrameProgress::default()
-        });
-        // Round-trip first: the progress record crosses through the stored
-        // JSON blob, not through memory (invariant 4).
-        let json = serde_json::to_string(&frame).unwrap();
-        let parsed = ResumeFrame::parse(&json);
-
-        let (spec, config) =
-            restoration(&parsed, &checkpoint()).expect("restorable progress restores");
-        assert_eq!(spec.goal, "fix the parser");
-        assert_eq!(
-            config.test_command.as_deref(),
-            Some("cargo test -p stella-core"),
-            "the run's ORIGINAL decisions ride along for the pipeline's re-arm"
-        );
-
-        // Everything else declines: no progress, a bare turn, an unreadable
-        // frame — the honest report path is the fallback, never a guess.
-        let plain = ResumeFrame::Pipeline(Box::new(pipeline_frame()));
-        assert!(restoration(&plain, &checkpoint()).is_none());
-        assert!(restoration(&ResumeFrame::BareTurn, &checkpoint()).is_none());
-        assert!(restoration(&ResumeFrame::Unreadable("x".into()), &checkpoint()).is_none());
-    }
-
-    /// **Witness (#1672).** Every surface that builds a `Pipeline` declares
-    /// its frame first.
-    ///
-    /// The frame was declared at exactly one of four call sites, so a
-    /// checkpoint left by the deck, the goal loop or a fleet worker read as a
-    /// plain engine turn and any resume from it degraded in silence — the
-    /// failure #1615 closed for `stella run` alone.
-    ///
-    /// This greps the source rather than driving a turn, deliberately. What
-    /// went wrong was **wiring**, not logic: every unit here already passed
-    /// while three surfaces never called it. A behavioural test would need one
-    /// scripted run per surface and would still only cover the surfaces
-    /// somebody remembered to write a test for, which is the same gap one
-    /// level up. The repo uses source-grep guards for exactly this shape (the
-    /// `stella fullauto` wrapper guards from #1619).
-    #[test]
-    fn every_pipeline_construction_declares_its_resume_frame() {
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut sites = Vec::new();
-        let mut undeclared = Vec::new();
-
-        let mut stack = vec![src];
-        while let Some(dir) = stack.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
-                    continue;
-                }
-                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-                    continue;
-                }
-                // This guard's own source carries the needle in a string
-                // literal, so it would report itself forever.
-                if path.file_name().and_then(|n| n.to_str()) == Some("resume_frame.rs") {
-                    continue;
-                }
-                let Ok(text) = std::fs::read_to_string(&path) else {
-                    continue;
-                };
-                let lines: Vec<&str> = text.lines().collect();
-                for (i, line) in lines.iter().enumerate() {
-                    if !line.contains("Pipeline::new(") {
-                        continue;
-                    }
-                    sites.push(format!("{}:{}", path.display(), i + 1));
-                    undeclared.push(format!("{}:{}", path.display(), i + 1));
-                }
+            "candidates": 1,
+            "isolation_possible": false,
+            "max_revisions": 2,
+            "progress": {
+                "task_class": "single_task",
+                "goal": "fix the parser",
+                "executing": true
             }
-        }
+        })
+        .to_string();
 
-        let _ = sites;
+        let frame = ResumeFrame::parse(&json);
+        let ResumeFrame::Pipeline(pipeline_frame) = &frame else {
+            panic!("a well-formed classic frame must classify as Pipeline, not {frame:?}");
+        };
         assert!(
-            undeclared.is_empty(),
-            "these sites call `Pipeline::new` directly and so declare no resume frame — \
-             a checkpoint they leave resumes as a plain engine turn with no notice that \
-             its stages are gone. Build through `resume_frame::pipeline` instead: \
-             {undeclared:?}"
+            pipeline_frame.progress.is_some(),
+            "the progress block survives as opaque JSON rather than being dropped"
+        );
+        assert!(
+            !pipeline_frame.responsibilities.is_empty(),
+            "the responsibilities block survives as opaque JSON rather than being dropped"
+        );
+
+        // No restoration function exists any more to call on this frame —
+        // that is the refusal. What remains is that the resume reports it
+        // honestly rather than silently degrading or panicking.
+        assert!(frame.degrades());
+        let text = frame
+            .advisory()
+            .expect("a pipeline frame advises")
+            .join("\n");
+        assert!(
+            text.contains("no longer exists"),
+            "the advisory must name the removed restoration path explicitly: {text}"
+        );
+        assert!(
+            text.contains("recorded enough progress"),
+            "the advisory must say this specific frame once qualified for it: {text}"
         );
     }
 
-    /// **The #2458 witness.** Every ablation the run was launched under
-    /// survives a kill and a resume — not just witness authoring.
-    ///
-    /// Before this, the frame carried a lone `witness_writer` bool, so a
-    /// resumed leg reconstructed one half of one decision and defaulted
-    /// everything else: a run with triage ablated came back running triage,
-    /// and its transcript described a pipeline that had never been asked for.
-    /// Fails on the parent commit for the plainest reason — `PipelineFrame`
-    /// has no field to put a roster in.
+    /// **#3408 P2.** A run launched under a non-default `[wrapper]` variant
+    /// still comes back naming that variant — `PipelineFrame::variant` is a
+    /// genuinely independent field (never a `stella_pipeline` type, per its
+    /// own doc comment), so it round-trips structurally like any other.
     #[test]
-    fn a_resumed_run_gets_back_every_ablation_it_was_launched_with() {
-        let mut roster = stella_pipeline::Roster::default();
-        roster.set_enabled(ModelCallRole::Triage, false);
-        roster.set_enabled(ModelCallRole::WitnessAuthor, false);
-        roster.set_agent(
-            ModelCallRole::Verdict,
-            stella_pipeline::AgentId::new("triage"),
-        );
-        let config = stella_pipeline::PipelineConfig {
-            roster: roster.clone(),
-            ..stella_pipeline::PipelineConfig::default()
-        };
-
-        let json = serde_json::to_string(&PipelineFrame::of(&config)).expect("the frame writes");
-        let ResumeFrame::Pipeline(frame) = ResumeFrame::parse(&json) else {
-            panic!("the frame this build wrote must read back: {json}");
-        };
-
-        assert_eq!(
-            frame.roster(),
-            roster,
-            "the resumed leg must run the pipeline the killed one was running"
-        );
-        assert!(
-            !frame.witness_writer,
-            "the legacy projection agrees with the row it is derived from"
-        );
-    }
-
-    /// **#3408 P2 witness.** A run launched under a non-default `[wrapper]`
-    /// variant comes back resuming under that SAME variant, not the built-in
-    /// `classic` fallback `PipelineFrame::of` used to silently substitute
-    /// (`PipelineConfig::variant` was not captured at all before this).
-    #[test]
-    fn a_resumed_run_gets_back_the_variant_it_was_launched_with() {
+    fn a_frames_variant_round_trips_structurally() {
         let variant = stella_plugin::Wrapper {
             id: "lean-diff-v1".into(),
             stages: vec![
@@ -882,80 +464,30 @@ mod tests {
                 },
             ],
         };
-        let config = stella_pipeline::PipelineConfig {
+        let frame = PipelineFrame {
             variant: Some(variant.clone()),
-            ..stella_pipeline::PipelineConfig::default()
+            ..pipeline_frame()
         };
 
-        let json = serde_json::to_string(&PipelineFrame::of(&config)).expect("the frame writes");
-        let ResumeFrame::Pipeline(frame) = ResumeFrame::parse(&json) else {
-            panic!("the frame this build wrote must read back: {json}");
+        let json = serde_json::to_string(&frame).expect("the frame writes");
+        let ResumeFrame::Pipeline(parsed) = ResumeFrame::parse(&json) else {
+            panic!("the frame this test wrote must read back: {json}");
         };
-
-        assert_eq!(
-            frame.variant,
-            Some(variant),
-            "the resumed leg must run the SAME manifest the killed one was running, not \
-             silently fall back to classic"
-        );
+        assert_eq!(parsed.variant, Some(variant));
     }
 
     /// The overwhelmingly common case — no configured variant — adds nothing
-    /// to the frame, matching `a_default_roster_run_writes_no_responsibilities_at_all`'s
-    /// posture for the roster.
+    /// to the frame.
     #[test]
-    fn a_classic_run_writes_no_variant_at_all() {
-        let frame = PipelineFrame::of(&stella_pipeline::PipelineConfig::default());
-        assert!(frame.variant.is_none());
+    fn a_frame_with_no_variant_writes_no_variant_key() {
+        let frame = PipelineFrame {
+            variant: None,
+            ..pipeline_frame()
+        };
         let json = serde_json::to_string(&frame).expect("the frame writes");
         assert!(
             !json.contains("variant"),
-            "the built-in `classic` fallback is skipped rather than written out: {json}"
+            "the absent variant is skipped rather than written as `null`: {json}"
         );
-    }
-
-    /// A default-roster run — the overwhelming majority — adds nothing to the
-    /// frame, so the persistence change costs the common path no bytes.
-    #[test]
-    fn a_default_roster_run_writes_no_responsibilities_at_all() {
-        let frame = PipelineFrame::of(&stella_pipeline::PipelineConfig::default());
-        assert!(frame.responsibilities.is_empty());
-        let json = serde_json::to_string(&frame).expect("the frame writes");
-        assert!(
-            !json.contains("responsibilities"),
-            "an empty block is skipped rather than written as `{{}}`: {json}"
-        );
-        assert_eq!(frame.roster(), stella_pipeline::Roster::default());
-    }
-
-    /// A frame written before the roster rode along still resumes, and its one
-    /// expressible ablation is honoured rather than dropped.
-    ///
-    /// `responsibilities` is additive, so [`FRAME_VERSION`] does not move —
-    /// the same posture the `progress` addition took (#1671). The bool is the
-    /// only thing such a frame can say about the roster, and
-    /// [`PipelineFrame::roster`] is the single place that knows it.
-    #[test]
-    fn an_older_frame_is_upgraded_from_its_witness_bool() {
-        let ResumeFrame::Pipeline(off) =
-            ResumeFrame::parse(r#"{"version":1,"witness_writer":false}"#)
-        else {
-            panic!("a version-1 frame must parse");
-        };
-        assert!(
-            !off.roster().enabled(ModelCallRole::WitnessAuthor),
-            "the one ablation an old frame could express must survive"
-        );
-        assert!(
-            off.roster().enabled(ModelCallRole::Triage),
-            "and nothing it could not express may be invented"
-        );
-
-        let ResumeFrame::Pipeline(on) =
-            ResumeFrame::parse(r#"{"version":1,"witness_writer":true}"#)
-        else {
-            panic!("a version-1 frame must parse");
-        };
-        assert_eq!(on.roster(), stella_pipeline::Roster::default());
     }
 }

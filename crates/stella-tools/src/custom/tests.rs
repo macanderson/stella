@@ -157,7 +157,24 @@ fn retired_builtin_names_are_rejected() {
     {
         let src = format!("name = \"{retired}\"\ndescription = \"d\"\ncommand = [\"./x.sh\"]");
         let err = parse_manifest(&src, Path::new("t.toml")).unwrap_err();
-        assert!(err.contains("retired"), "retired `{retired}` -> {err}");
+        assert!(err.contains("is reserved"), "reserved `{retired}` -> {err}");
+
+        // The REASON has to match the name, not just be present. A name that
+        // is also a live group switch key gets a different sentence, because
+        // telling an operator that `{"task": "off"}` addresses "nothing" is
+        // false -- it withholds every tool in that group (#3192).
+        if crate::catalog::groups().contains(retired) {
+            assert!(
+                err.contains("switch key for the") && err.contains("group"),
+                "group key `{retired}` should be refused as a group key -> {err}"
+            );
+            assert!(
+                !err.contains("instead of nothing"),
+                "group key `{retired}` must not claim it addresses nothing -> {err}"
+            );
+        } else {
+            assert!(err.contains("retired"), "retired `{retired}` -> {err}");
+        }
     }
 }
 

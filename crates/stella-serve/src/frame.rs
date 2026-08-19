@@ -18,10 +18,8 @@
 
 use serde::{Deserialize, Serialize};
 use stella_core::TurnOutcome;
-use stella_pipeline::ports::ScopeDecision;
 use stella_protocol::{
-    AgentEvent, CompletionRequest, CompletionResult, ModelCallRole, ProviderError, ScopeProposal,
-    ToolOutput,
+    AgentEvent, CompletionRequest, CompletionResult, ModelCallRole, ProviderError, ToolOutput,
 };
 
 /// One frame emitted by the engine toward the host over the outbound stream.
@@ -87,22 +85,6 @@ pub enum ServerFrame {
     /// `null` when it wrote none: the client that reconnects need not be the
     /// process that paused.
     TurnHeld { reason: Option<String> },
-    /// A pipeline-driven turn (`pipeline` on `POST /v1/turns`, #1288) reached
-    /// its scope-review gate and is parked on the host's decision, keyed by
-    /// `request_id` exactly like [`ServerFrame::ToolRequest`] /
-    /// [`ServerFrame::ProviderRequest`]. The host answers with
-    /// [`ScopeReviewResultIn`] on `POST /v1/turns/{id}/approve`.
-    ///
-    /// This is the pipeline's `ApprovalGate::review` (L-E5), remoted rather
-    /// than answered in-process — the API's counterpart to the CLI's
-    /// interactive scope-review card. Nothing else about a served turn
-    /// changes: the same `AgentEvent::ScopeReview` the pipeline already
-    /// emits still carries the human-readable proposal on the ordinary event
-    /// stream, so this frame is only the request half of the round trip.
-    ScopeReviewRequest {
-        request_id: String,
-        proposal: ScopeProposal,
-    },
     /// The hold announced by [`ServerFrame::TurnHeld`] is over and the turn is
     /// proceeding (#932). Emitted once, paired with the `TurnHeld` before it.
     ///
@@ -155,47 +137,6 @@ impl From<TurnOutcome> for TurnOutcomeWire {
 pub struct ToolResultIn {
     pub request_id: String,
     pub output: ToolOutput,
-}
-
-/// Host → engine: the human's decision on a [`ServerFrame::ScopeReviewRequest`].
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScopeReviewResultIn {
-    pub request_id: String,
-    pub decision: ScopeDecisionWire,
-}
-
-/// Wire mirror of [`stella_pipeline::ports::ScopeDecision`]. That type lives in
-/// `stella-pipeline` and is not itself `Serialize`/`Deserialize` — this crate
-/// owns the wire mapping, exactly as [`TurnOutcomeWire`] owns `TurnOutcome`'s.
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "decision", rename_all = "snake_case")]
-pub enum ScopeDecisionWire {
-    /// Execute the plan as proposed.
-    Approve,
-    /// Execute only the steps at these indices into the proposed step list.
-    Trim {
-        keep_steps: Vec<usize>,
-    },
-    /// Re-plan with the reviewer's own words folded into the next attempt. An
-    /// empty `note` reads as [`ScopeDecision::Abort`] — the same collapse
-    /// [`stella_pipeline::ports::StdioApprovalGate`] makes for a bare "no".
-    Revise {
-        note: String,
-    },
-    Abort,
-}
-
-impl From<ScopeDecisionWire> for ScopeDecision {
-    fn from(wire: ScopeDecisionWire) -> Self {
-        match wire {
-            ScopeDecisionWire::Approve => ScopeDecision::Approve,
-            ScopeDecisionWire::Trim { keep_steps } => ScopeDecision::Trim { keep_steps },
-            ScopeDecisionWire::Revise { note } => ScopeDecision::Revise { note },
-            ScopeDecisionWire::Abort => ScopeDecision::Abort,
-        }
-    }
 }
 
 /// Host → engine: the result of a [`ServerFrame::ProviderRequest`] — either a
@@ -280,6 +221,16 @@ pub enum ProviderErrorWire {
         #[serde(default)]
         retry_after_ms: Option<u64>,
     },
+    /// The host's provider is shedding load (HTTP 529). Carried distinctly
+    /// rather than folded into `Transport` because the engine branches on it:
+    /// a sustained overload that outlives the inline ladder converts into a
+    /// supervised parked wait, which `Transport` declines (#2742). A remote
+    /// provider's brownout must recover exactly as a local one's does.
+    Overloaded {
+        message: String,
+        #[serde(default)]
+        retry_after_ms: Option<u64>,
+    },
     Auth {
         message: String,
     },
@@ -329,6 +280,13 @@ impl From<ProviderErrorWire> for ProviderError {
                 message,
                 retry_after_ms,
             },
+            ProviderErrorWire::Overloaded {
+                message,
+                retry_after_ms,
+            } => ProviderError::Overloaded {
+                message,
+                retry_after_ms,
+            },
             ProviderErrorWire::Auth { message } => ProviderError::Auth(message),
             ProviderErrorWire::UnknownModel { slug } => ProviderError::UnknownModel { slug },
             ProviderErrorWire::Malformed { message } => ProviderError::Malformed(message),
@@ -359,6 +317,13 @@ impl From<&ProviderError> for ProviderErrorWire {
                 message,
                 retry_after_ms,
             } => ProviderErrorWire::RateLimited {
+                message: message.clone(),
+                retry_after_ms: *retry_after_ms,
+            },
+            ProviderError::Overloaded {
+                message,
+                retry_after_ms,
+            } => ProviderErrorWire::Overloaded {
                 message: message.clone(),
                 retry_after_ms: *retry_after_ms,
             },
@@ -586,12 +551,27 @@ mod tests {
                 message: "429, no hint".into(),
                 retry_after_ms: None,
             },
+            ProviderError::Overloaded {
+                message: "529".into(),
+                retry_after_ms: Some(90_000),
+            },
+            ProviderError::Overloaded {
+                message: "529, no hint".into(),
+                retry_after_ms: None,
+            },
             ProviderError::Auth("bad key".into()),
             ProviderError::UnknownModel {
                 slug: "glm-5.2".into(),
             },
             ProviderError::Malformed("truncated".into()),
             ProviderError::Cancelled,
+            ProviderError::ContextOverflow {
+                message: "prompt is too long".into(),
+            },
+            ProviderError::OutputBudgetExceeded {
+                message: "can only afford 47365".into(),
+                affordable_output_tokens: Some(47_365),
+            },
             ProviderError::Terminal("refused".into()),
         ];
         for original in cases {
@@ -610,7 +590,40 @@ mod tests {
                 original.is_retryable(),
                 "retry classification changed across the wire: {json}"
             );
+            assert_eq!(
+                back.is_park_eligible(),
+                original.is_park_eligible(),
+                "park eligibility changed across the wire: {json}"
+            );
+            assert_eq!(
+                back.retry_after_hint_ms(),
+                original.retry_after_hint_ms(),
+                "the server's stated backoff changed across the wire: {json}"
+            );
         }
+    }
+
+    /// The overload class is the one the engine converts into a supervised
+    /// parked wait (#2742), so a host that omits the optional hint must still
+    /// parse — and must still arrive park-eligible on the engine side.
+    #[test]
+    fn an_overload_without_a_backoff_hint_still_parses_and_stays_park_eligible() {
+        let wire: ProviderErrorWire = serde_json::from_value(
+            serde_json::json!({ "kind": "overloaded", "message": "HTTP 529" }),
+        )
+        .expect("the hint is optional");
+        let ProviderErrorWire::Overloaded { retry_after_ms, .. } = wire else {
+            panic!("wrong variant");
+        };
+        assert_eq!(retry_after_ms, None);
+
+        let back: ProviderError = ProviderErrorWire::Overloaded {
+            message: "HTTP 529".into(),
+            retry_after_ms: None,
+        }
+        .into();
+        assert!(back.is_retryable());
+        assert!(back.is_park_eligible());
     }
 
     /// `retry_after_ms` is the one optional field on the error wire, and it
@@ -641,57 +654,5 @@ mod tests {
                 cost_usd: 0.0,
             }
         );
-    }
-
-    /// The scope-review request/result pair (#1288), in the exact shape a
-    /// client parses/posts — same discipline as
-    /// `the_outbound_frame_tags_and_field_names_are_the_wire_contract`.
-    #[test]
-    fn the_scope_review_frame_and_its_result_keep_their_wire_shape() {
-        let request = serde_json::to_value(ServerFrame::ScopeReviewRequest {
-            request_id: "scope-0".to_string(),
-            proposal: ScopeProposal {
-                summary: "add a widget".to_string(),
-                steps: vec!["write the widget".to_string()],
-                estimated_files: 1,
-                estimated_cost_usd: Some(0.02),
-                ..Default::default()
-            },
-        })
-        .unwrap();
-        assert_eq!(request["type"], "scope_review_request");
-        assert_eq!(request["request_id"], "scope-0");
-        assert_eq!(request["proposal"]["summary"], "add a widget");
-
-        let approve: ScopeReviewResultIn = serde_json::from_value(serde_json::json!({
-            "request_id": "scope-0",
-            "decision": { "decision": "approve" },
-        }))
-        .expect("an approve body parses");
-        assert!(matches!(approve.decision, ScopeDecisionWire::Approve));
-
-        let trim: ScopeReviewResultIn = serde_json::from_value(serde_json::json!({
-            "request_id": "scope-0",
-            "decision": { "decision": "trim", "keep_steps": [0, 2] },
-        }))
-        .expect("a trim body parses");
-        assert!(matches!(
-            trim.decision,
-            ScopeDecisionWire::Trim { ref keep_steps } if keep_steps == &[0, 2]
-        ));
-
-        let revise: ScopeDecision = ScopeDecisionWire::Revise {
-            note: "smaller, please".to_string(),
-        }
-        .into();
-        assert_eq!(
-            revise,
-            ScopeDecision::Revise {
-                note: "smaller, please".to_string()
-            }
-        );
-
-        let abort: ScopeDecision = ScopeDecisionWire::Abort.into();
-        assert_eq!(abort, ScopeDecision::Abort);
     }
 }

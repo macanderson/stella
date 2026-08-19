@@ -76,14 +76,13 @@ struct TurnRequest {
     /// `delegate` tool, so the model never learns children exist.
     #[serde(default)]
     sub_agents: Option<SubAgentsSpec>,
-    /// Drive this turn through the verification pipeline (#1288) — plan,
-    /// scope review, execute, witness, verify, verifier — instead of a bare
-    /// engine step loop. Mutually exclusive with `goal` and `sub_agents`:
-    /// the pipeline already loops internally and drives its own verifier, so a
-    /// request naming more than one of the three is refused with a 400
-    /// rather than silently picking one.
+    /// The verification pipeline (`pipeline` on `POST /v1/turns`, #1288) has
+    /// been removed from this build. The field is still accepted on the wire
+    /// — as an opaque value, never interpreted — so a host that sends it gets
+    /// a named 400 explaining the removal instead of a generic "unknown
+    /// field" parse error.
     #[serde(default)]
-    pipeline: Option<PipelineSpec>,
+    pipeline: Option<serde_json::Value>,
 }
 
 /// One tool as a host may declare it (#3286): the full [`ToolContract`], or
@@ -116,63 +115,6 @@ pub(crate) fn wire_contracts(tools: Vec<WireTool>) -> Vec<ToolContract> {
 /// still a host, so the label stays honest when the field is omitted.
 pub(crate) fn host_principal(id: Option<String>) -> Principal {
     Principal::Host(id.unwrap_or_else(|| "host".to_string()))
-}
-
-/// `pipeline` on `POST /v1/turns` (#1288). See [`crate::PipelineRun`] for
-/// what each field means to the pipeline itself; this is only the wire
-/// shape and its defaults.
-#[derive(Debug, Deserialize)]
-struct PipelineSpec {
-    /// The task, exactly as `stella run "<goal>"` takes it on the CLI.
-    goal: String,
-    /// Skip the scope-review gate and approve every plan without asking the
-    /// host — an explicit opt into unattended execution. `false` (the
-    /// default) asks over `POST /v1/turns/{id}/approve` for any plan that
-    /// crosses the operator's scope thresholds.
-    #[serde(default)]
-    auto_approve: bool,
-    /// The test command the flip oracle tracks. Omitted hands the flip
-    /// oracle to the witness author when `witness_writer` is on.
-    #[serde(default)]
-    test_command: Option<String>,
-    /// Witness authoring (L-E11). Defaults to on, matching the pipeline's
-    /// own default.
-    #[serde(default = "default_true")]
-    witness_writer: bool,
-    /// Maximum revision turns per candidate when verification fails.
-    /// Omitted keeps the pipeline's own default.
-    #[serde(default)]
-    max_revisions: Option<u32>,
-    /// Best-of-N candidate count. Omitted or `1` is single-shot.
-    #[serde(default)]
-    candidates: Option<u32>,
-    /// The provider id the triage call announces. Omitted runs it on the
-    /// turn's own provider id.
-    #[serde(default)]
-    triage_provider_id: Option<String>,
-    /// The provider id the verifier call announces — the pipeline's own
-    /// counterpart to `goal.verifier_provider_id`.
-    #[serde(default)]
-    verifier_provider_id: Option<String>,
-}
-
-/// Lower a caller's `pipeline` block into [`crate::PipelineRun`]. `None`
-/// when the goal text is blank — the same "nothing stated, nothing invented"
-/// rule [`goal_run`] applies.
-fn pipeline_run(spec: PipelineSpec) -> Option<crate::PipelineRun> {
-    if spec.goal.trim().is_empty() {
-        return None;
-    }
-    Some(crate::PipelineRun {
-        goal: spec.goal,
-        auto_approve: spec.auto_approve,
-        test_command: spec.test_command,
-        witness_writer: spec.witness_writer,
-        max_revisions: spec.max_revisions,
-        candidates: spec.candidates,
-        triage_provider_id: spec.triage_provider_id,
-        verifier_provider_id: spec.verifier_provider_id,
-    })
 }
 
 /// `goal` on `POST /v1/turns` — a judged multi-round run (#1297).
@@ -441,13 +383,14 @@ pub(crate) async fn handle_create(
                 .await;
         }
     };
-    if turn.pipeline.is_some() && (turn.goal.is_some() || turn.sub_agents.is_some()) {
+    if turn.pipeline.is_some() {
         return res
             .json(
                 "400 Bad Request",
                 &error_body(
-                    "`pipeline` cannot be combined with `goal` or `sub_agents` — the pipeline \
-                     drives its own internal verifier and does not support delegation yet",
+                    "`pipeline` no longer runs anything — the verification pipeline has been \
+                     removed from this build; run a plain turn, or drive verification through \
+                     an installed wrapper plugin on the CLI side instead",
                 ),
             )
             .await;
@@ -506,7 +449,6 @@ pub(crate) async fn handle_create(
     let sub_agents = turn
         .sub_agents
         .and_then(|spec| state.sub_agent_policy().clamp(spec.into()));
-    let pipeline = turn.pipeline.and_then(pipeline_run);
     let extensions = state.extensions();
     // Keyed on the declared provider so two providers serving the same model
     // name never blend their drift. `None` when the registry's bounds refuse
@@ -533,7 +475,6 @@ pub(crate) async fn handle_create(
             on_settled: None,
             checkpoint: checkpoint_state.checkpoint_for(turn_id),
             goal,
-            pipeline,
             sub_agents,
             extensions,
             calibration,
@@ -858,44 +799,6 @@ pub(crate) async fn handle_tool_result(
     match entry
         .pending
         .resolve_tool(&result.request_id, result.output)
-    {
-        Ok(()) => res.json("200 OK", br#"{"status":"ok"}"#).await,
-        Err(err) => {
-            res.json("409 Conflict", &error_body(&err.to_string()))
-                .await
-        }
-    }
-}
-
-/// `POST /v1/turns/{id}/approve` — resolve a pipeline-driven turn's
-/// scope-review gate (#1288). Same shape as [`handle_tool_result`]: a 404
-/// for an unknown turn, a 409 for an unknown/mismatched/already-answered
-/// `request_id` (including one raised by a turn that was never running the
-/// pipeline mode, which has nothing registered under any `scope-*` id and so
-/// answers exactly the same honest 409 a stray tool-result would).
-pub(crate) async fn handle_approve(
-    res: &mut Responder<'_>,
-    state: &Arc<ServerState>,
-    id: &str,
-    body: &[u8],
-) -> std::io::Result<()> {
-    let Some(entry) = state.lookup(id) else {
-        return res.json("404 Not Found", &error_body("unknown turn")).await;
-    };
-    let result: crate::frame::ScopeReviewResultIn = match serde_json::from_slice(body) {
-        Ok(result) => result,
-        Err(err) => {
-            return res
-                .json(
-                    "400 Bad Request",
-                    &error_body(&format!("invalid scope review result: {err}")),
-                )
-                .await;
-        }
-    };
-    match entry
-        .pending
-        .resolve_scope_review(&result.request_id, result.decision.into())
     {
         Ok(()) => res.json("200 OK", br#"{"status":"ok"}"#).await,
         Err(err) => {

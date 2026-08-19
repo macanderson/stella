@@ -135,14 +135,14 @@ track_latest = ["anthropic/claude-opus"]
 # Today the agent set is CLOSED: struct fields — default, worker, verifier,
 # triage, research, plan. A misspelled agent key in JSON is silently ignored.
 #
-# Opening it is what makes the `task` tool configurable. That tool exists and
+# Opening it is what makes the `delegate` tool configurable. That tool exists and
 # is merged (#922 -> #976/#983), but it dispatches to ONE hard-coded read-only
 # persona with no `agent_type` parameter. Meanwhile `.stella/agents/*.md`
 # holds named markdown personas that are listed by `/agents` and otherwise
 # advisory — they cannot set a model, an effort, or a tool scope.
 #
 # Opening the set joins those two halves: a named agent here is selectable by
-# `task`, and gets a real engine posture.
+# `delegate`, and gets a real engine posture.
 #
 # The built-in names keep their meaning and stay reserved.
 
@@ -198,7 +198,7 @@ read_file = "on"
 grep      = "on"
 glob      = "on"
 
-# ── NEW: a custom named agent, selectable by the `task` tool ──
+# ── NEW: a custom named agent, selectable by the `delegate` tool ──
 [agents.security-reviewer]
 description = "Adversarial security review of a diff — OWASP, injection, secrets"
 model       = "anthropic/claude-opus-5"

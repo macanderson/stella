@@ -202,7 +202,6 @@ rule of thumb is one sentence each:
 | Persistence: executions, events, telemetry (SQLite) | `stella-store` |
 | Retrieval: graph, embeddings, episodic memory | `stella-context` |
 | Tree-sitter code indexing | `stella-graph` |
-| The triage → … → verifier orchestration plane | `stella-pipeline` |
 | MCP client (external tool servers) | `stella-mcp` |
 | Multimodal generation | `stella-media` |
 | Multi-agent fan-out, worktree isolation | `stella-fleet` |
@@ -214,10 +213,12 @@ rule of thumb is one sentence each:
 | Turn text into a vector, or compare two vectors | `stella-embed` |
 | The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) |
 
-`stella-pipeline` is opt-in — `stella run --pipeline classic` drives it, while
-a plain `stella run` runs the raw step-loop — `stella-fleet` powers
-`stella fleet`, and `stella-tui` is the
-Command Deck (the default interactive shell on a TTY). The context/graph
+Verification is opt-in on every door via `stella run --pipeline <variant>`,
+naming an installed wrapper plugin — the built-in staged pipeline this flag
+used to be able to name (`classic`) has been deleted from the workspace
+(#3865) and is refused outright; the raw step-loop is the default with or
+without the flag. `stella-fleet` powers `stella fleet`, and `stella-tui` is
+the Command Deck (the default interactive shell on a TTY). The context/graph
 plane is wired too — `stella init` builds the code-graph index and recall fans
 out through the CGP host. For what each crate is, see the crate table in the
 [README](README.md#workspace-layout); for what actually reaches a `stella`

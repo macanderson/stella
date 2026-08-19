@@ -16,14 +16,15 @@ pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> Cali
     stella_runtime::seed_calibration(store.as_ref(), cfg.provider.id, &cfg.model_id)
 }
 
-/// The wrapper variant the staged pipeline records (#3388/#3381).
-///
-/// Re-exported from `stella-pipeline` rather than spelled again: the id is the
-/// join key of every per-variant comparison, and two copies of a join key is
-/// how the last one died (AGENTS.md § God files). The manifest under
-/// `crates/stella-pipeline/variants/classic.toml` declares the same id, and
-/// that crate's `variant_program` tests hold the two together.
-pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = stella_pipeline::variant::CLASSIC_VARIANT_ID;
+/// The id `executions.pipeline_variant` records for a run of the built-in
+/// staged pipeline (#3388/#3381). Was re-exported from
+/// `stella_pipeline::variant::CLASSIC_VARIANT_ID`; that crate is gone now
+/// (#3865) and no live path writes a new row with this variant. The literal
+/// survives as a pure historical join key so every already-written
+/// `executions.pipeline_variant = 'classic'` row (a plain `TEXT` column, no
+/// FK) stays queryable — do not resurrect the re-export if `stella-pipeline`
+/// returns; this string belongs beside the rows it names, not that crate.
+pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = "classic";
 
 mod turn_door;
 
@@ -63,27 +64,6 @@ pub(crate) fn begin_execution(
         }
         Err(_) => None,
     }
-}
-
-/// Begin the execution row for a `stella run` turn that the staged pipeline
-/// wraps.
-///
-/// The door is **`run`** — this is `stella run`, whatever wrapped it. That
-/// the pipeline wrapped it is the `variant`, a separate fact in a separate
-/// column (#3388). It used to be recorded as a door called `"pipeline"`,
-/// which made the door depend on the wrapper and split one door in two for
-/// anything grouping by it.
-///
-/// It lives here rather than at its one call site because `agent.rs` is a
-/// grandfathered god file closed to growth.
-pub(crate) fn begin_pipeline_execution(
-    store: &Option<Arc<Store>>,
-    prompt: &str,
-    cfg: &Config,
-    session: &str,
-) -> Option<(Arc<Store>, i64)> {
-    let door = TurnDoor::new("run").wrapped_by(PIPELINE_VARIANT_CLASSIC);
-    begin_execution(store, door.kind, prompt, cfg, Some(session), door.variant)
 }
 
 /// Emit the run's ending — the single terminator of one run's event stream
@@ -890,14 +870,13 @@ mod pipeline_variant_tests {
         }
     }
 
-    /// The id the CLI records and the id the pipeline calls itself are one
-    /// string, not two that happen to agree.
+    /// `PIPELINE_VARIANT_CLASSIC` is now a pure historical literal (the crate
+    /// it used to cross-check against, `stella_pipeline::variant`, is gone —
+    /// see the constant's own doc comment). This only pins the literal's
+    /// spelling so an edit to it is a deliberate, reviewed change to a join
+    /// key already-written rows depend on.
     #[test]
-    fn the_classic_id_is_the_pipelines_own() {
-        assert_eq!(
-            PIPELINE_VARIANT_CLASSIC,
-            stella_pipeline::variant::CLASSIC_VARIANT_ID
-        );
+    fn the_classic_id_literal_is_unchanged() {
         assert_eq!(PIPELINE_VARIANT_CLASSIC, "classic");
     }
 }

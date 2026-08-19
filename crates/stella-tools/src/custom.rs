@@ -447,11 +447,31 @@ pub fn parse_manifest(text: &str, source: &Path) -> Result<CustomTool, String> {
         ));
     }
     if crate::catalog::is_retired(&raw.name) {
+        // A retired name that is ALSO a live group key needs a different
+        // sentence. `task` is the case: the delegation tool moved to
+        // `delegate` (#3192), but `task` still addresses the whole
+        // coordination group, so `{"task": "off"}` withholds seven tools
+        // rather than "nothing". Saying otherwise would tell an operator
+        // their working config is inert.
+        let reason = if crate::catalog::groups().contains(&raw.name.as_str()) {
+            format!(
+                "it is the switch key for the `{name}` group, so an operator's \
+                 `\"tools\": {{\"{name}\": \"off\"}}` already withholds every tool in \
+                 that group — a manifest answering to it would silently join them",
+                name = raw.name
+            )
+        } else {
+            format!(
+                "Stella dispatched a built-in called `{name}` and retired it, so the \
+                 model still carries that tool's priors and an operator's \
+                 `\"tools\": {{\"{name}\": \"off\"}}` would address this manifest \
+                 instead of nothing",
+                name = raw.name
+            )
+        };
         return Err(format!(
-            "tool name `{name}` is reserved: Stella dispatched a built-in called `{name}` \
-             and retired it, so the model still carries that tool's priors and an operator's \
-             `\"tools\": {{\"{name}\": \"off\"}}` would address this manifest instead of \
-             nothing — pick a name Stella has never used (#3237)",
+            "tool name `{name}` is reserved: {reason} — pick a name Stella has never \
+             used (#3237)",
             name = raw.name
         ));
     }

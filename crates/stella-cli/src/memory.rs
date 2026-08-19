@@ -43,9 +43,7 @@ use crate::domains::Domains;
 #[cfg(test)]
 use stella_context::MemoryInput;
 #[cfg(test)]
-use stella_pipeline::{ContextRecallPort, RecalledFrame};
-#[cfg(test)]
-use stella_protocol::{CompletionMessage, MessageRole};
+use stella_protocol::{CompletionMessage, ContextRecallPort, MessageRole, RecalledFrame};
 
 // Which files a memory is about — shared by the reflection write path and by
 // `stella memory validate`, which must agree on what counts as an anchor.
@@ -284,8 +282,7 @@ fn deterministic_task_id(clock: &dyn Clock) -> String {
 mod reflection;
 pub(crate) use reflection::{ReflectionPosture, reflect_routed};
 pub use reflection::{
-    ReflectionReport, TurnEvidence, TurnFriction, reflect_on_turn, should_reflect_on,
-    turn_warrants_reflection,
+    ReflectionReport, TurnEvidence, reflect_on_turn, should_reflect_on, turn_warrants_reflection,
 };
 
 /// Session-scoped memory state: the context store, the CGP host that

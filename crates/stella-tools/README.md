@@ -153,6 +153,18 @@ input, and every later stage must see the replacement); dispatch-time input
 validation against the advertised schema; execution; observer events. New
 cross-cutting behaviour belongs here, not sprinkled into tools.
 
+Since #2793 the hook-chain-and-approval half of that list is reachable as a
+**port** rather than only from inside this function: `ToolRegistry` implements
+`stella_core::ports::DispatchGate`, and `execute` runs through the same entry
+rather than a second copy that happens to agree. That exists because a
+decorator which dispatches a name of its own — `McpToolSet`, `CustomToolSet` —
+never reaches `execute` at all, so before #2793 a blocking handler returning
+`Deny` stopped a built-in and did not stop an MCP tool with the same effect.
+A decorator therefore has two obligations: call `admit_dispatch` before running
+a name it owns, and **forward `dispatch_gate()` for the names it merely passes
+through** — a decorator that lets the `None` default stand silently disarms the
+gate for everything beneath it.
+
 **The catalog is the single declaration point.**
 [`src/catalog.rs`](src/catalog.rs) declares every dispatchable name once,
 with its `read_only` and `speculation_safe` flags and its policy group.
@@ -247,9 +259,14 @@ make test-tools          # or: cargo test -p stella-tools
 
 Coverage is inline `#[cfg(test)]` modules next to the code. Registry tests
 construct through `ToolRegistry::new` in a fresh tempdir, so tool counts
-depend on nothing in the host environment. The one integration suite,
-[`tests/approval_witness.rs`](tests/approval_witness.rs), exercises the
-#2676 approval flow through the crate's public surface only. The foundry
+depend on nothing in the host environment. The suites under [`tests/`](tests/)
+exercise the crate through its public surface only —
+[`tests/approval_witness.rs`](tests/approval_witness.rs) is the #2676 approval
+flow, and [`tests/chunk_retrieval_witnesses.rs`](tests/chunk_retrieval_witnesses.rs)
+is the one suite here that needs a credential. It is `#[ignore]`d until
+`VOYAGE_API_KEY` (or `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`) resolves, so a
+plain `cargo test` reports it as `ignored, <reason>` rather than as a pass it
+never earned; run it with `-- --ignored`. The foundry
 carries property tests (every detector proposal must author and round-trip
 through the real manifest parser), as does the approval precedence ladder.
 

@@ -89,7 +89,6 @@ pub fn journal_record(inbound: &Inbound) -> Option<JournalRecord> {
         Inbound::SessionReset { agent } => Some(JournalRecord::SessionReset {
             agent: agent.clone(),
         }),
-        Inbound::Pipeline(on) => Some(JournalRecord::Pipeline { on: *on }),
         // Deregister is visual lifecycle only — a row removal during THIS
         // process's dashboard handover (session switch), never part of any
         // session's history. Journaling it would erase the departing
@@ -163,7 +162,15 @@ pub fn replay_inbound(record: JournalRecord, started_ms: u64) -> Option<Inbound>
             Some(Inbound::PromptStarted { agent, text })
         }
         JournalRecord::SessionReset { agent } => Some(Inbound::SessionReset { agent }),
-        JournalRecord::Pipeline { on } => Some(Inbound::Pipeline(on)),
+        // A pre-removal-census journal (`docs/spec/pipeline-as-plugins.md`
+        // §7 slice 1) may still hold one of these — `stella_tui::Inbound` no
+        // longer has a `Pipeline` variant to replay it into, so it is
+        // skipped exactly like an unparsable journal line, never a panic.
+        // `ResumeState::pipeline` (read from the raw record, not through
+        // this fold — see `last_pipeline` below) still carries whatever the
+        // session's last recorded value was, for `initial_pipeline_persona`
+        // to read.
+        JournalRecord::Pipeline { .. } => None,
     }
 }
 
@@ -755,8 +762,6 @@ mod tests {
             })
             .is_some()
         );
-        assert!(journal_record(&Inbound::Pipeline(true)).is_some());
-
         // Out-of-band view state must never journal…
         assert!(journal_record(&Inbound::Sessions(vec![])).is_none());
         assert!(journal_record(&Inbound::Notifications(vec![])).is_none());
@@ -1032,7 +1037,6 @@ mod tests {
                 agent: "lead".into(),
                 status: AgentStatus::WaitingInput,
             },
-            Inbound::Pipeline(false),
         ];
         for inbound in stream {
             let record = journal_record(&inbound).expect("fold-relevant");
@@ -1275,7 +1279,6 @@ mod tests {
                 agent: "lead".into(),
                 status: AgentStatus::WaitingInput,
             },
-            Inbound::Pipeline(false),
         ];
 
         // Live fold.
@@ -1313,7 +1316,6 @@ mod tests {
         assert_eq!(a.tokens_out, b.tokens_out);
         assert_eq!(a.cost_usd, b.cost_usd);
         assert_eq!(a.meta.model, b.meta.model);
-        assert_eq!(live.pipeline, replayed.pipeline);
         // NOT asserted: trace-row count. The trace is a per-event activity
         // ring, and the journal coalesces adjacent streaming deltas by
         // design — two `Text` deltas replay as one event. Everything the

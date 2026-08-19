@@ -194,15 +194,6 @@ fn adapter_family(path: &str) -> Option<AdapterFamily> {
     })
 }
 
-/// Whether a path is a storage-definition *candidate* an adapter
-/// understands. The single membership test shared by the indexer and the
-/// pre-write gate (spec §4a). TS/JS/Python files are candidates whose
-/// extraction is marker-gated inside their adapter — a file with no schema
-/// markers costs one substring scan and yields an empty extract.
-pub fn is_storage_file(path: &str) -> bool {
-    adapter_family(path).is_some()
-}
-
 /// Whether a path should be indexed for storage even though no
 /// [`Language`] grammar claims it (`.prisma` — its own DSL, parsed by the
 /// `prisma` adapter). Used by the walker and watcher membership tests.

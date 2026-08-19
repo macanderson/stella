@@ -28,6 +28,17 @@ opt-in. `doc:pipeline-as-plugins` is the completion plan and the current
 source of truth for exactly what has landed; this document is the vision it
 completes and the place §9's architecture-review corrections live.
 
+**Status, 2026-08-19: the built-in path this document describes is removed.**
+`crates/stella-pipeline` — the staged pipeline itself — has been deleted from
+the workspace (#3865, `doc:pipeline-as-plugins` §7's "last slice", landed on
+this branch). `stella run --pipeline classic` is refused outright; a
+verification-carrying wrapper is now only ever an installed plugin, never a
+crate this repository ships. This document's file:line citations into
+`crates/stella-pipeline/` below are read out of the tree as it stood *before*
+that deletion — kept because they are the clearest surviving record of the
+mechanism §8 of `doc:pipeline-as-plugins` asks Vera (Oxagen's private
+reference verification plugin) to port, not because the paths still resolve.
+
 Everything this document says about today's code was read out of the tree at
 `main` `730f2286c` unless marked otherwise by a dated update note; a few
 claims below have been corrected against the tree at a later commit and are
@@ -581,6 +592,17 @@ up from 169/41 when this paragraph was written), because the schedule-manifest
 wiring (`doc:pipeline-as-plugins` §7, #3408/#3672) and the wrapper-plugin
 driver (#3494) both added call sites into `stella-pipeline` rather than
 removing any.
+
+**Update, 2026-08-19: the dependency cut landed (#3865), and with it the
+"both paths still coexist" reversibility this section relied on is gone.**
+The reference count did not shrink gradually — it went from growing (above)
+to zero in the removal itself: `crates/stella-pipeline` is deleted, `stella
+run --pipeline classic` is refused, and there is no flag that restores the
+built-in path. The authority-vocabulary precondition this paragraph named
+(#2716) was not what unblocked the cut in the end; see this branch's own
+removal notes and #3865 for what the deletion actually depended on. Reversal
+now means restoring the crate from git history and reintroducing it to the
+workspace, not flipping a flag.
 
 **One claim this document should not make.** "The diff deletes more
 loop-orchestration code than it adds" is a plausible outcome and not a property

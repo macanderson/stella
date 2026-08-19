@@ -565,7 +565,7 @@ async fn the_billed_prompt_size_is_reported_and_bounded() {
 /// window over the transcript can reach them.
 #[tokio::test]
 async fn the_prompt_names_where_the_turn_spent_itself() {
-    let mut friction = super::TurnFriction::default();
+    let mut friction = super::digest::TurnFriction::default();
     friction.observe(&stella_protocol::AgentEvent::StepUsage {
         upstream_provider: None,
         step: 9,
