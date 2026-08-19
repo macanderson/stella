@@ -220,6 +220,70 @@ pub(super) fn commit_trailer(issue_key: &str) -> String {
     format!("Closes #{issue_key}")
 }
 
+/// Ask the forge to run this pull request's failed checks again.
+///
+/// The one remedy the loop has for a red it did not cause and cannot see:
+/// a check that ran against a base which has since been repaired keeps its
+/// failing verdict forever, and no amount of re-reading the forge changes it.
+/// `base_conclusion` compares what is failing *now*, so once the base goes
+/// green the pull request is left holding a failure that reproduces nowhere.
+///
+/// Re-running is cheap and the answer is unambiguous either way, which is why
+/// this is attempted before the fix path rather than instead of it. The caller
+/// bounds it to once per pull request.
+pub(super) fn rerun_failed(pr: &str) -> Result<(), String> {
+    // `gh pr checks --json` names the run each check belongs to only through
+    // its URL, so the run id is recovered from there. A pull request whose
+    // checks all pass yields nothing to re-run, which is not an error.
+    let raw = gh(&["pr", "checks", pr, "--json", "state,link"])?;
+
+    #[derive(serde::Deserialize)]
+    struct Row {
+        #[serde(default)]
+        state: String,
+        #[serde(default)]
+        link: String,
+    }
+
+    let rows: Vec<Row> = serde_json::from_str(&raw).map_err(|error| {
+        format!("`gh pr checks` returned a payload this build cannot read: {error}")
+    })?;
+
+    let mut runs: Vec<String> = rows
+        .iter()
+        .filter(|row| row.state.eq_ignore_ascii_case("FAILURE"))
+        .filter_map(|row| run_id_from_link(&row.link))
+        .collect();
+    runs.sort();
+    runs.dedup();
+
+    if runs.is_empty() {
+        return Err("no failed check named a workflow run to re-run".to_owned());
+    }
+
+    for run in &runs {
+        gh(&["run", "rerun", run, "--failed"])?;
+    }
+    Ok(())
+}
+
+/// The workflow-run id inside a check's link, if it has one.
+///
+/// A check link looks like `…/actions/runs/<run>/job/<job>`. Anything else —
+/// a third-party check pointing at its own dashboard, an empty link — yields
+/// `None` rather than a guess, because re-running the wrong id is worse than
+/// re-running nothing.
+#[must_use]
+fn run_id_from_link(link: &str) -> Option<String> {
+    let after = link.split("/actions/runs/").nth(1)?;
+    let id = after.split('/').next()?;
+    if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+        Some(id.to_owned())
+    } else {
+        None
+    }
+}
+
 /// The forge endpoint carrying a ref's check runs.
 ///
 /// Split out so the one thing that can be wrong here — *which commit gets
@@ -422,6 +486,31 @@ mod tests {
         assert!(
             !endpoint.contains("origin/"),
             "a remote-tracking ref resolves against the last fetch, not the forge: {endpoint}"
+        );
+    }
+
+    /// A check link yields a run id, or nothing — never a guess.
+    ///
+    /// The re-run is the loop's one remedy for a red the base already
+    /// explains, and it is aimed by parsing a URL. Re-running the wrong id is
+    /// worse than re-running nothing, so every shape that is not a GitHub
+    /// Actions run must decline: this repository's checks include third-party
+    /// ones (Vercel) whose links point somewhere else entirely, and one of
+    /// them is failing on every pull request right now.
+    #[test]
+    fn only_an_actions_run_link_names_a_run_to_rerun() {
+        assert_eq!(
+            run_id_from_link(
+                "https://github.com/macanderson/stella/actions/runs/32311670564/job/96255819957"
+            )
+            .as_deref(),
+            Some("32311670564")
+        );
+        assert_eq!(run_id_from_link("https://vercel.com/github"), None);
+        assert_eq!(run_id_from_link(""), None);
+        assert_eq!(
+            run_id_from_link("https://github.com/o/r/actions/runs/not-a-number/job/1"),
+            None
         );
     }
 

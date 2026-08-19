@@ -76,6 +76,9 @@ use super::state::LoopState as Durable;
 struct Spent {
     fixes: u32,
     rebases: u32,
+    /// Whether the stale-red re-run has already been spent on this pull
+    /// request. Exactly one is allowed — see [`advance`].
+    rerun: bool,
 }
 
 /// What one run of the loop did, for the closing line.
@@ -580,6 +583,41 @@ fn advance(
             Ok(false)
         }
         Action::PushFix => {
+            // A red that the base already explains is not this pull request's
+            // to fix, and `base_conclusion` cannot see it: it compares what is
+            // failing *now*, and a check that ran against a base which has
+            // since been repaired keeps its old verdict forever. The pull
+            // request looks guilty of a failure that no longer exists
+            // anywhere.
+            //
+            // Asking the forge to run it again is the cheapest way to find
+            // out, and costs nothing but CI minutes when the answer is "still
+            // red" — at which point the fix path below runs on the next poll
+            // with the re-run already spent. One per pull request: a loop that
+            // re-ran on every red would never reach the fix, and would spin on
+            // a genuine failure for as long as the operator left it up.
+            if !entry.rerun {
+                entry.rerun = true;
+                match super::deliver::rerun_failed(pr) {
+                    Ok(()) => {
+                        audit::record(
+                            durable,
+                            Audit::PrObserved,
+                            Some(pr),
+                            "red against a base that has since gone green — asked the forge to \
+                             run the failed checks again before treating it as ours",
+                        );
+                        return Ok(false);
+                    }
+                    Err(error) => audit::record(
+                        durable,
+                        Audit::Transient,
+                        Some(pr),
+                        &format!("could not ask for a re-run ({error}); treating the red as ours"),
+                    ),
+                }
+            }
+
             // Counted even though this slice does not author the fix: the
             // ceiling is what stops a loop pushing the same broken change
             // forever, and a counter that only moved on success would never
