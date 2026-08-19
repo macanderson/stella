@@ -15,11 +15,13 @@ use stella_model::provider::Provider;
 use stella_protocol::{AgentEvent, CompletionMessage, CompletionRequest, ReasoningEffort};
 use stella_store::reflection::SelfReviewRow;
 
-pub use digest::TurnEvidence;
-// `TurnFriction` is deliberately not re-exported here: its only production
-// consumer, `FrictionTap`, was removed with the staged pipeline it wrapped
-// (#3865). `digest::tests` and this module's own `tests` still reach it
-// through `digest::TurnFriction` / `super::digest::TurnFriction` directly.
+// `TurnFriction` is re-exported again as of #3946. It was withheld while its
+// only production consumer, `FrictionTap`, lay deleted with the staged
+// pipeline it wrapped (#3865) — a period in which every shipped digest's
+// friction section rendered empty. The raw loop's doors now fold their own
+// journal into it (`TurnFriction::from_events`), so the type is once more part
+// of this module's public shape rather than an internal of `digest`.
+pub use digest::{TurnEvidence, TurnFriction};
 
 use super::ReflectionLesson;
 
