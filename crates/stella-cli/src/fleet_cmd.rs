@@ -466,9 +466,9 @@ fn render_watch_line(watch: &BranchWatch) {
     );
 }
 
-/// The engine-backed [`FleetWorker`]: one turn per task (the staged pipeline
-/// by default, or the raw step-loop with `--no-pipeline`), in the task's own
-/// workspace, with the standard (headless) tool registry.
+/// The engine-backed [`FleetWorker`]: one turn per task (the raw step-loop by
+/// default since #3381, or the staged pipeline with `--pipeline classic`), in
+/// the task's own workspace, with the standard (headless) tool registry.
 struct EngineWorker {
     cfg: Config,
     /// Per-child spend cap. Derived as `--spend-limit / max_concurrency` (not
@@ -663,10 +663,11 @@ fn worker_event_sender(tx: &mpsc::UnboundedSender<AgentEvent>) -> stella_core::E
     stella_core::EventSender::new(tx.clone()).pairing_stage_complete()
 }
 
-/// One worker turn in `root`, on the calling thread's runtime. When
-/// `use_pipeline` is true (the default), the turn runs through the staged
-/// pipeline (triage → recall → plan → execute → witness → verify → verdict);
-/// otherwise it falls back to the raw `Engine::run_turn` step-loop.
+/// One worker turn in `root`, on the calling thread's runtime. `use_pipeline`
+/// is `false` by default since #3381 — the turn runs the raw `Engine::run_turn`
+/// step-loop; `true` (`--pipeline classic`) routes it through the staged
+/// pipeline instead (triage → recall → plan → execute → witness → verify →
+/// verdict).
 #[allow(clippy::too_many_arguments)] // one caller (EngineWorker::run); composition wiring
 async fn run_task(
     cfg: &Config,
@@ -738,7 +739,20 @@ async fn run_task(
     let store = agent::open_store(root);
     // Owned above the pipeline so it outlives every engine it builds (#1595).
     let calibration = agent::seed_calibration(&store, &cfg);
-    let execution = agent::begin_execution(&store, "fleet", &task.prompt, &cfg, None, None);
+    // The variant is a fact about which driver ran THIS attempt, not a
+    // placeholder: `use_pipeline` is exactly `pipeline.is_classic()` at the
+    // door (main.rs's `Fleet` arm), so when the staged pipeline drives this
+    // worker the row must name it rather than leave `pipeline_variant` NULL
+    // (#3381, #3388, #3684) — NULL used to mean "raw OR classic" here, which
+    // made a per-variant comparison over fleet attempts silently wrong.
+    let execution = agent::begin_execution(
+        &store,
+        "fleet",
+        &task.prompt,
+        &cfg,
+        None,
+        use_pipeline.then_some(agent::persistence::PIPELINE_VARIANT_CLASSIC),
+    );
     // From here on this attempt's spend is durable in the store even if this
     // thread never lives to report it — publish the handle that makes it
     // readable from the dispatch side (#1216).

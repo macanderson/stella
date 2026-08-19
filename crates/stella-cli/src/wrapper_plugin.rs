@@ -55,6 +55,30 @@
 //!    with no plane still attaches the gate and answers with no frames: an
 //!    empty answer is something a plugin can degrade on, and an absent gate is
 //!    the one thing it cannot be told about.
+//! 4. **A child-turn plane** (#3576). A plugin that declares
+//!    `[loop] calls = ["child_turn"]` and a `[roles.<name>]` gets a real model
+//!    call at that role intent — spent by **this session's own**
+//!    `SubAgentDispatcher`, the one `task_assign` runs on, so the plugin never
+//!    holds a provider, an `Engine` or a credential (invariant 3,
+//!    `doc:turn-loop-wrappers` §9.3). The seat it resolves to is the receipt's
+//!    attribution, the child is read-only, the allowance is the host's, and
+//!    what it spent is printed beside what it was refused. Two limits stated
+//!    rather than implied: the `verifier` tier is bound to no seat here, so a
+//!    plugin naming it is answered `Unavailable`
+//!    ([`child_turn_plane`] argues why); and a point runs between the parent's
+//!    turns, where the tool registry's event slot is empty — so the spend
+//!    reaches the session's guard and this run's report, but not the store's
+//!    receipt (#3802). The turn's boundary controls are the third
+//!    (#3803): this door publishes none, so a child inherits none, which is
+//!    a no-op until a surface that *has* controls can drive a wrapped turn.
+//!
+//! The ordering that makes 4 possible is worth naming, because it is the shape
+//! of the split between [`bind_installed`] and [`ResolvedWrapper::serving`]: a
+//! `--pipeline` naming nothing installed must fail as a typo before a paid
+//! call, while a child-turn plane needs a dispatcher, which needs the provider.
+//! [`HostPlanes`] is consumed by value at [`HostCallGate::declare`], so a plane
+//! cannot be added to a gate afterwards — the two halves are therefore separate
+//! moments, not one function with an `Option` in it.
 //!
 //! And two scope limits: `--pipeline` is on `stella run` alone and a plugin's
 //! `Unmet` does not fail the process (#3554), and only this driver of
@@ -67,12 +91,13 @@ use stella_core::budget::BudgetGuard;
 use stella_core::estimator::CalibrationMap;
 use stella_core::ports::ToolExecutor;
 use stella_core::router::Router;
+use stella_core::subagent::SubAgentDispatcher;
 use stella_model::provider::Provider;
 use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
-    DEFAULT_HOST_MAX_CALLS, DispatchReport, DrivenTurn, HostCallGate, HostPlanes, RoundInput,
-    SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
+    ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS, DispatchReport, DrivenTurn, HostCallGate,
+    HostPlanes, RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -86,16 +111,21 @@ use crate::{OutputFormat, config::Config};
 
 /// Which wrapper runs over a one-shot turn.
 ///
-/// `doc:pipeline-as-plugins` §7 plans `--pipeline <variant>` to *replace*
-/// `--no-pipeline`; this is the additive half of that inversion, so both flags
-/// exist and the third arm is the new capability. Making it an enum rather than
-/// a `bool` plus an `Option<&str>` is what keeps "the staged pipeline and a
-/// plugin both ran" unrepresentable.
+/// `doc:pipeline-as-plugins` §7 planned `--pipeline <variant>` to *replace*
+/// `--no-pipeline`; `docs/spec/turn-loop-wrappers.md` §5 "Flip the default"
+/// (#3381) is that replacement landing — the raw loop is now the default on
+/// every door this enum reaches, `--pipeline <variant>` is the sole opt-in,
+/// and `--no-pipeline` is a deprecated no-op kept parseable so no script
+/// breaks the day this ships (see [`resolve`](Self::resolve) and
+/// [`no_pipeline_deprecation_notice`]). Making this a three-way enum rather
+/// than a `bool` plus an `Option<&str>` is what keeps "the staged pipeline
+/// and a plugin both ran" unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PipelineChoice<'a> {
-    /// The built-in staged pipeline — today's default, recorded as `classic`.
+    /// The built-in staged pipeline, recorded as `classic`. Opt-in only,
+    /// since #3381 — `--pipeline classic` selects it by name.
     Classic,
-    /// The raw step-loop with nothing over it (`--no-pipeline`).
+    /// The raw step-loop with nothing over it — the default since #3381.
     Raw,
     /// The raw step-loop wrapped by an installed plugin whose `[wrapper] id` is
     /// this variant (`--pipeline <variant>`).
@@ -105,27 +135,23 @@ pub(crate) enum PipelineChoice<'a> {
 impl<'a> PipelineChoice<'a> {
     /// Read the two flags into one choice.
     ///
-    /// # Errors
-    ///
-    /// A message naming the conflict when both are given: `--no-pipeline`
-    /// asks for nothing over the turn and `--pipeline` names something, and
-    /// silently preferring one would make a user's explicit instruction a
-    /// no-op. `classic` is accepted by name so `--pipeline classic` means what
-    /// it says rather than looking for a plugin nobody installed.
-    pub(crate) fn resolve(no_pipeline: bool, pipeline: Option<&'a str>) -> Result<Self, String> {
-        match (no_pipeline, pipeline) {
-            (true, Some(variant)) => Err(format!(
-                "--no-pipeline runs nothing over the turn, but --pipeline {variant} names a \
-                 wrapper to run — pass one or the other"
-            )),
-            (true, None) => Ok(Self::Raw),
-            (false, None) => Ok(Self::Classic),
-            (false, Some(variant))
-                if variant == crate::agent::persistence::PIPELINE_VARIANT_CLASSIC =>
-            {
-                Ok(Self::Classic)
+    /// `no_pipeline` (`--no-pipeline`) is a deprecated no-op as of #3381: the
+    /// raw loop is the default with or without it, so it plays no part in the
+    /// match below and can no longer disagree with `--pipeline`. Passing both
+    /// flags together used to be a hard conflict (clap's `conflicts_with`,
+    /// removed in the same change); now the deprecated flag simply has
+    /// nothing left to veto, and `--pipeline <variant>` always wins. `classic`
+    /// is accepted by name so `--pipeline classic` means what it says rather
+    /// than looking for a plugin nobody installed. Infallible — the one case
+    /// that used to fail no longer can — so callers no longer need `?` here.
+    pub(crate) fn resolve(no_pipeline: bool, pipeline: Option<&'a str>) -> Self {
+        let _ = no_pipeline; // deprecated no-op (#3381) — see `no_pipeline_deprecation_notice`
+        match pipeline {
+            None => Self::Raw,
+            Some(variant) if variant == crate::agent::persistence::PIPELINE_VARIANT_CLASSIC => {
+                Self::Classic
             }
-            (false, Some(variant)) => Ok(Self::Plugin(variant)),
+            Some(variant) => Self::Plugin(variant),
         }
     }
 
@@ -156,6 +182,116 @@ impl<'a> PipelineChoice<'a> {
     }
 }
 
+/// The one-line deprecation notice owed when `--no-pipeline` was passed
+/// (#3381), or `None` when it was not.
+///
+/// A pure function returning data rather than printing directly, matching
+/// [`crate::engine_config::effort_notices`]'s shape: [`PipelineChoice::resolve`]
+/// stays a plain decision a unit test can call without capturing stderr, and
+/// each door prints the line at most once **to the user's terminal** —
+/// `arena.rs`, which never supervises, at the one place it reads `no_pipeline`
+/// off its parsed args; `main.rs`'s `Run`/`Goal`/`Fleet` arms print it only
+/// after their `Posture`'s early-return, so it fires in whichever single
+/// process actually runs the turn, not in the parent that re-execs an
+/// `Attached`/`Detached` launch's argv verbatim into a supervised child (that
+/// child reaches this same call independently, and its `Foreground` posture
+/// is what prints it — once, on its own stderr, which `Supervised::follow`
+/// then relays back live under `Attached`). Printing it before that
+/// early-return used to mean the parent printed it on its own account and the
+/// re-exec'd child printed it again on the same relayed stream, doubling the
+/// most common invocation's notice.
+pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'static str> {
+    no_pipeline.then_some(
+        "--no-pipeline is deprecated and does nothing: the raw step-loop is the default now. \
+         Pass --pipeline <variant> to run a wrapper (\"classic\" names the built-in staged \
+         pipeline).",
+    )
+}
+
+/// Refuse a named wrapper plugin variant on a door that cannot drive one yet.
+///
+/// `stella run` is the only door with a real [`TurnDriver`] implementation
+/// ([`WrapperDispatch`] over one raw turn): `goal` and `fleet` each drive
+/// their own **round loop** (a judged goal round, a fleet worker's attempt),
+/// and wiring a wrapper plugin through either is a real driver — not a
+/// formatting difference — that nothing in this crate implements (#3695).
+/// `--pipeline classic` and no `--pipeline` at all both resolve to
+/// [`PipelineChoice::Classic`]/[`PipelineChoice::Raw`], which is fine on
+/// every door; only a *named* plugin variant is out of reach here, and it is
+/// refused with a message naming `stella run` as the door that can run it —
+/// never silently downgraded to raw or to classic, which would run something
+/// other than what was asked for without saying so.
+pub(crate) fn reject_plugin_variant_for_door(
+    door: &str,
+    choice: PipelineChoice<'_>,
+) -> Result<(), String> {
+    match choice.plugin() {
+        Some(variant) => Err(format!(
+            "--pipeline {variant} is not supported on `stella {door}` yet — wrapper plugins \
+             run only on `stella run --pipeline {variant}` today (#3695). Pass `--pipeline \
+             classic` for the staged pipeline, or omit --pipeline for the raw loop."
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Refuse a pipeline-only verification flag against a [`PipelineChoice`] that
+/// cannot honor it (#3696).
+///
+/// `--keep-witness`, `--require-verified`, and `--test-command` all belong to
+/// the staged pipeline's verification machinery — the witness-authoring stage
+/// and its fail→pass flip oracle. Before #3381 they always reached
+/// [`PipelineChoice::Classic`], because that was the default; after, `stella
+/// run` with no `--pipeline` resolves to [`PipelineChoice::Raw`], whose
+/// `run_raw_one_shot` does not accept `keep_witness`/`require_verified` as
+/// parameters at all and only threads `test_command` to an installed wrapper's
+/// own oracle. Silently dropping the flag the caller asked for is exactly the
+/// expedient CLAUDE.md forbids, so this refuses before dispatch instead of
+/// letting the run start and the flag do nothing — and it never silently
+/// implies `classic`, which would run something other than what was asked
+/// for without saying so.
+///
+/// `test_command` is meaningful on [`PipelineChoice::Plugin`] too — it arms a
+/// bound wrapper's own `[oracle]` flip check (#3553) — so only that variant
+/// passes it through; `keep_witness`/`require_verified` remain pipeline-only
+/// today and are refused on `Plugin` exactly as on `Raw`, both naming
+/// `--pipeline classic` as the remedy.
+pub(crate) fn reject_verification_flags_without_pipeline(
+    choice: PipelineChoice<'_>,
+    test_command: Option<&str>,
+    keep_witness: bool,
+    require_verified: bool,
+) -> Result<(), String> {
+    if choice.is_classic() {
+        return Ok(());
+    }
+    let mut offending: Vec<&str> = Vec::new();
+    if choice.is_raw() && test_command.is_some() {
+        offending.push("--test-command");
+    }
+    if keep_witness {
+        offending.push("--keep-witness");
+    }
+    if require_verified {
+        offending.push("--require-verified");
+    }
+    if offending.is_empty() {
+        return Ok(());
+    }
+    let where_run = match choice {
+        PipelineChoice::Raw => "the raw loop (no --pipeline)".to_string(),
+        PipelineChoice::Plugin(variant) => format!("`--pipeline {variant}`"),
+        PipelineChoice::Classic => unreachable!("classic returned Ok above"),
+    };
+    Err(format!(
+        "{} belong{} to the staged pipeline's verification machinery and {} nothing on {where_run}: \
+         pass --pipeline classic to run the staged pipeline.",
+        offending.join(", "),
+        if offending.len() == 1 { "s" } else { "" },
+        if offending.len() == 1 { "does" } else { "do" },
+    ))
+}
+
 /// One installed wrapper, bound to its process and to what this host will do
 /// for it.
 ///
@@ -171,6 +307,11 @@ pub(crate) struct BoundWrapper {
     /// The host-call gate this plugin's conversations run through, kept so
     /// [`HostCallGate::refusals`] reaches a surface after the run.
     gate: Arc<HostCallGate>,
+    /// The child-turn plane this host installed, kept for the same reason as
+    /// the gate beside it: the plane is the only thing that knows what a
+    /// plugin spent, and a driver that installed one and could not report on
+    /// it would be silent about money (#3576).
+    child_turns: Option<Arc<SessionChildTurns>>,
 }
 
 impl BoundWrapper {
@@ -178,14 +319,183 @@ impl BoundWrapper {
     pub(crate) fn variant(&self) -> &str {
         self.dispatch.variant()
     }
+
+    /// Every child turn this host ran on the plugin's behalf, in order.
+    ///
+    /// Empty both when the plugin never asked and when no plane was installed;
+    /// the two are told apart by [`HostCallGate::refusals`], which records the
+    /// `Unavailable` the second case answers with.
+    pub(crate) fn child_spends(&self) -> Vec<ChildTurnSpend> {
+        self.child_turns
+            .as_ref()
+            .map_or_else(Vec::new, |plane| plane.spends())
+    }
 }
 
-/// Read what is installed and bind the wrapper `variant` names.
+/// The child-turn plane a `stella run` session installs: the plugin's declared
+/// role intents over **this session's own** sub-agent dispatcher.
 ///
-/// The impure half — it reads the two plugin tiers, the settings that retract
-/// them, and this workspace's context plane — kept apart from
-/// [`bind_installed`], which is the decision and is therefore the half the tests
-/// drive.
+/// `Arc<dyn SubAgentDispatcher>` rather than the concrete
+/// [`crate::subagent::SessionSubAgents`] because that is what
+/// [`crate::subagent::install_for_session`] hands back, and a session installs
+/// exactly one dispatcher — a second would be a second pool, a second carve
+/// and a second ledger over one session's money.
+pub(crate) type SessionChildTurns = ChildTurns<Arc<dyn SubAgentDispatcher>>;
+
+/// The receipt turn slot a plugin's child turns are recorded under.
+///
+/// Not the parent's. A raw `stella run` turn is built from
+/// [`crate::agent::engine_config_for_kind`], which leaves `turn_instance` at
+/// its default of 0, and context receipts key on
+/// `(execution_id, turn_instance, step, call_seq)` with `step` restarting at 0
+/// every turn — so a child sharing slot 0 could overwrite the parent's step
+/// manifests. One slot along is enough to keep them apart, and it is a
+/// constant rather than a per-round bump because a plugin's points run
+/// *between* the rounds they are about: each round opens its own execution
+/// row, so the key is already unique across rounds without this moving.
+const PLUGIN_CHILD_TURN_SLOT: u32 = 1;
+
+/// This host's child-turn plane for one installed plugin.
+///
+/// Three deliberate decisions live here rather than at the call site, because
+/// each is a claim about the user's money or the receipt it lands on (#3576):
+///
+/// - **No `verifier` seat is bound.** [`ChildTurns`] serves `worker`,
+///   `triage`, `research` and `plan` by default and deliberately not
+///   `verifier`, whose seats are `WitnessAuthor` and `Verdict` — the model
+///   verdict #2584 removed *structurally*. Binding one here would put a call
+///   on the receipt attributed to a role this host did not make, so a plugin
+///   naming a `verifier` tier is told `Unavailable` and this driver does not
+///   pretend otherwise.
+/// - **No per-turn USD carve is requested.** `None` asks for the parent's
+///   whole remaining headroom, which `BudgetGuard::carve` clamps — and the
+///   dispatcher behind it carves from the session's sub-agent pool
+///   ([`crate::subagent::session_pool_limit_usd`]), so "unbounded ask" is
+///   still a bounded spend.
+/// - **The host's own ceiling stands.** `[loop] max_calls` is the plugin's ask
+///   and [`stella_runtime::wrapper::DEFAULT_HOST_MAX_CHILD_TURNS`] the
+///   authority; neither is overridden here.
+pub(crate) fn child_turn_plane(
+    manifest: &stella_plugin::PluginManifest,
+    dispatcher: Arc<dyn SubAgentDispatcher>,
+) -> SessionChildTurns {
+    ChildTurns::declare(manifest, dispatcher).with_turn_instance(PLUGIN_CHILD_TURN_SLOT)
+}
+
+/// What this host will do for a plugin, assembled after the resources exist.
+///
+/// Separate from [`ResolvedWrapper`] because the two are built at different
+/// moments and cannot be merged without losing one of the properties: the
+/// wrapper is resolved *before* the provider is built, so a `--pipeline` that
+/// names nothing installed fails as a typo rather than after a paid run, while
+/// a child-turn plane needs the session's dispatcher, which needs the
+/// provider. [`HostPlanes`] is consumed by value at
+/// [`HostCallGate::declare`], so a plane cannot be added to a gate afterwards
+/// — the host is therefore assembled whole, once, here.
+pub(crate) struct WrapperHost {
+    recall: Box<dyn stella_runtime::wrapper::RecallHost>,
+    child_turns: Option<Arc<SessionChildTurns>>,
+}
+
+impl WrapperHost {
+    /// A host serving `recall` from this workspace's context plane and nothing
+    /// else — what a driver with no dispatcher of its own can offer.
+    pub(crate) fn recalling(recall: Box<dyn stella_runtime::wrapper::RecallHost>) -> Self {
+        Self {
+            recall,
+            child_turns: None,
+        }
+    }
+
+    /// Also serve `child_turn` from this plane.
+    #[must_use]
+    pub(crate) fn with_child_turns(mut self, plane: Arc<SessionChildTurns>) -> Self {
+        self.child_turns = Some(plane);
+        self
+    }
+}
+
+/// Everything a `stella run` session can do for the plugin wrapping it.
+///
+/// The one place both planes are named together, so a driver cannot install
+/// half of them by accident.
+pub(crate) fn session_host(
+    workspace_root: &std::path::Path,
+    manifest: &stella_plugin::PluginManifest,
+    dispatcher: Arc<dyn SubAgentDispatcher>,
+) -> WrapperHost {
+    WrapperHost::recalling(Box::new(crate::wrapper_recall::SessionRecallHost::open(
+        workspace_root,
+    )))
+    .with_child_turns(Arc::new(child_turn_plane(manifest, dispatcher)))
+}
+
+/// An installed wrapper plugin, found and start-able, before this host has
+/// anything to serve it with.
+///
+/// The half of binding that needs no provider, no registry and no dispatcher,
+/// so it can run first — see [`WrapperHost`] for why the split exists.
+pub(crate) struct ResolvedWrapper {
+    manifest: stella_plugin::PluginManifest,
+    wrapper: SubprocessWrapper,
+    variant: String,
+}
+
+impl std::fmt::Debug for ResolvedWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedWrapper")
+            .field("plugin", &self.manifest.name)
+            .field("variant", &self.variant)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ResolvedWrapper {
+    /// The manifest a human consented to at install — read by a caller
+    /// assembling this host's planes for it.
+    pub(crate) fn manifest(&self) -> &stella_plugin::PluginManifest {
+        &self.manifest
+    }
+
+    /// Bind the plugin's process to what this host will do for it.
+    ///
+    /// # Errors
+    ///
+    /// A wrapper whose declared stage order cannot be resolved — which a
+    /// validated manifest cannot hit, since the variant was found by its
+    /// `[wrapper] id`.
+    pub(crate) fn serving(self, host: WrapperHost) -> Result<BoundWrapper, String> {
+        let mut planes = HostPlanes::recalling(crate::wrapper_recall::BoxedRecall(host.recall));
+        if let Some(plane) = &host.child_turns {
+            planes = planes.with_child_turns(Arc::clone(plane));
+        }
+        // The manifest's own `[loop]` grant is the authoritative filter — an
+        // undeclared capability is refused before this host performs anything —
+        // and `DEFAULT_HOST_MAX_CALLS` clamps whatever allowance it asked for.
+        let gate = Arc::new(HostCallGate::declare(
+            self.manifest.loop_grant.clone(),
+            DEFAULT_HOST_MAX_CALLS,
+            Box::new(planes),
+        ));
+        let variant = self.variant;
+        let dispatch = WrapperDispatch::bind(
+            self.manifest,
+            Arc::new(self.wrapper.serving(Arc::clone(&gate))),
+        )
+        .map_err(|error| format!("wrapper \"{variant}\" cannot be driven: {error}"))?;
+        Ok(BoundWrapper {
+            dispatch,
+            gate,
+            child_turns: host.child_turns,
+        })
+    }
+}
+
+/// Read what is installed and resolve the wrapper `variant` names.
+///
+/// The impure half — it reads the two plugin tiers and the settings that
+/// retract them — kept apart from [`bind_installed`], which is the decision and
+/// is therefore the half the tests drive.
 ///
 /// # Errors
 ///
@@ -194,7 +504,7 @@ pub(crate) fn resolve(
     workspace_root: &std::path::Path,
     variant: &str,
     warn: &mut dyn FnMut(String),
-) -> Result<BoundWrapper, String> {
+) -> Result<ResolvedWrapper, String> {
     let settings = crate::settings::Settings::load(workspace_root).unwrap_or_default();
     let (roster, notices) = PluginRoster::load(workspace_root, &settings);
     // A plugin that did not load must never vanish silently: "I installed it
@@ -202,14 +512,7 @@ pub(crate) fn resolve(
     for notice in notices {
         warn(notice.trim_start_matches(" ! ").to_string());
     }
-    bind_installed(
-        &roster,
-        variant,
-        Box::new(crate::wrapper_recall::SessionRecallHost::open(
-            workspace_root,
-        )),
-        warn,
-    )
+    bind_installed(&roster, variant, warn)
 }
 
 /// Find the installed wrapper plugin that declares `variant`, and bind it to
@@ -226,18 +529,16 @@ pub(crate) fn resolve(
 /// every driver (#3512), and a plugin author whose manifest asked for one can
 /// only stop asking if they are told.
 ///
-/// `recall` is this host's context plane, taken as a parameter rather than
-/// opened here so the decision stays testable without a workspace on disk. It
-/// is always bound into a [`HostCallGate`], even when the plane behind it is
-/// empty: a plugin that asks and is answered "no frames" degrades honestly,
-/// while a plugin that asks through a transport with *no* gate has its stdin
-/// shut and waits for an answer that never comes (#3561).
+/// It stops short of the [`HostCallGate`]: this half runs before the provider
+/// exists, so it cannot yet build the child-turn plane that needs a
+/// dispatcher. [`ResolvedWrapper::serving`] is the other half, and every
+/// wrapper reaches it — a plugin that asks through a transport with *no* gate
+/// has its stdin shut and waits for an answer that never comes (#3561).
 pub(crate) fn bind_installed(
     roster: &PluginRoster,
     variant: &str,
-    recall: Box<dyn stella_runtime::wrapper::RecallHost>,
     warn: &mut dyn FnMut(String),
-) -> Result<BoundWrapper, String> {
+) -> Result<ResolvedWrapper, String> {
     let installed = roster
         .plugins()
         .iter()
@@ -303,22 +604,11 @@ pub(crate) fn bind_installed(
              receives a model credential; declare a [roles] tier instead"
         ));
     }
-    // The manifest's own `[loop]` grant is the authoritative filter — an
-    // undeclared capability is refused before this host performs anything —
-    // and `DEFAULT_HOST_MAX_CALLS` clamps whatever allowance it asked for.
-    let gate = Arc::new(HostCallGate::declare(
-        installed.manifest.loop_grant.clone(),
-        DEFAULT_HOST_MAX_CALLS,
-        Box::new(HostPlanes::recalling(crate::wrapper_recall::BoxedRecall(
-            recall,
-        ))),
-    ));
-    let dispatch = WrapperDispatch::bind(
-        installed.manifest.clone(),
-        Arc::new(admitted.wrapper.serving(Arc::clone(&gate))),
-    )
-    .map_err(|error| format!("wrapper \"{variant}\" cannot be driven: {error}"))?;
-    Ok(BoundWrapper { dispatch, gate })
+    Ok(ResolvedWrapper {
+        manifest: installed.manifest.clone(),
+        wrapper: admitted.wrapper,
+        variant: variant.to_string(),
+    })
 }
 
 /// This host's published signal values, as they stand **before** the turn.
@@ -504,10 +794,13 @@ pub(crate) async fn run_wrapped(
         candidate,
     };
     let report = bound.dispatch.run(input, &mut driver).await;
+    // Whatever a plugin's last point spent has no turn left to fold it in, so
+    // this driver folds it (#3576). See `settle_plugin_child_spend`.
+    settle_plugin_child_spend(driver.registry, &mut *driver.budget);
     let last = driver.results.pop();
     match report {
         Ok(report) => {
-            report_to(format, &report, &bound.gate);
+            report_to(format, &report, &bound.gate, &bound.child_spends());
             // A round always runs, so `results` always has an entry; an empty
             // one would mean the dispatcher returned without driving anything,
             // which is a report about the wrapper and not about the work.
@@ -528,288 +821,77 @@ pub(crate) async fn run_wrapped(
 ///
 /// stderr in every format: stdout may be machine-readable JSON, and a wrapper's
 /// commentary is not part of either summary contract.
-fn report_to(format: OutputFormat, report: &DispatchReport, gate: &HostCallGate) {
+fn report_to(
+    format: OutputFormat,
+    report: &DispatchReport,
+    gate: &HostCallGate,
+    spends: &[ChildTurnSpend],
+) {
     for fault in &report.faults {
         eprintln!("  ! wrapper: {fault}");
     }
     for refused in gate.refusals() {
         eprintln!("  ! wrapper: {refused}");
     }
+    for line in spend_lines(spends) {
+        eprintln!("  ! wrapper: {line}");
+    }
     if format == OutputFormat::Text || !report.met() {
         eprintln!("  ◇ {}", report.summary());
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-    use std::path::PathBuf;
-
-    use super::*;
-    use crate::plugin_cmd::roster::{InstalledPlugin, PluginScope};
-    use stella_plugin::PluginManifest;
-
-    const WRAPPER_MANIFEST: &str = r#"
-name = "budget-keeper"
-[loop]
-participation = "steering"
-points = ["before_turn", "after_turn"]
-[runtime]
-argv = ["/bin/sh", "${plugin_dir}/main.sh"]
-timeout_secs = 30
-env = ["PATH", "ANTHROPIC_API_KEY"]
-[wrapper]
-id = "budget-v1"
-[[wrapper.stages]]
-name = "execute"
-"#;
-
-    fn installed(text: &str, dir: &str) -> InstalledPlugin {
-        InstalledPlugin {
-            manifest: PluginManifest::from_toml_str(text).expect("fixture must load"),
-            dir: PathBuf::from(dir),
-            scope: PluginScope::User,
-        }
-    }
-
-    fn roster(plugins: Vec<InstalledPlugin>) -> PluginRoster {
-        PluginRoster::compose(plugins, Vec::new(), &BTreeMap::new())
-    }
-
-    /// A context plane that answers every ask with one frame, so a test can
-    /// tell "the gate reached the plane" from "the gate refused".
-    struct OneFrame;
-
-    #[async_trait]
-    impl stella_runtime::wrapper::RecallHost for OneFrame {
-        async fn recall(&self, goal: &str) -> Vec<stella_plugin::RecallFrame> {
-            vec![stella_plugin::RecallFrame {
-                label: "the last run".to_string(),
-                kind: "memory".to_string(),
-                source: "context.db".to_string(),
-                uri: None,
-                content: format!("about {goal}"),
-            }]
-        }
-    }
-
-    fn no_recall() -> Box<dyn stella_runtime::wrapper::RecallHost> {
-        Box::new(crate::wrapper_recall::SessionRecallHost::none())
-    }
-
-    fn bound(
-        roster: &PluginRoster,
-        variant: &str,
-        warn: &mut dyn FnMut(String),
-    ) -> Result<BoundWrapper, String> {
-        bind_installed(roster, variant, no_recall(), warn)
-    }
-
-    /// The two flags cannot both decide the turn, and `classic` by name is the
-    /// built-in rather than a plugin lookup that would always fail.
-    #[test]
-    fn the_pipeline_flags_resolve_into_exactly_one_choice() {
-        assert_eq!(
-            PipelineChoice::resolve(false, None),
-            Ok(PipelineChoice::Classic),
-            "no flag is exactly today's behaviour"
-        );
-        assert_eq!(PipelineChoice::resolve(true, None), Ok(PipelineChoice::Raw));
-        assert_eq!(
-            PipelineChoice::resolve(false, Some("classic")),
-            Ok(PipelineChoice::Classic),
-            "the built-in is selectable by the id it records"
-        );
-        assert_eq!(
-            PipelineChoice::resolve(false, Some("budget-v1")),
-            Ok(PipelineChoice::Plugin("budget-v1"))
-        );
-        let conflict = PipelineChoice::resolve(true, Some("budget-v1"))
-            .expect_err("both flags name different things");
-        assert!(conflict.contains("--no-pipeline"), "{conflict}");
-        assert!(conflict.contains("budget-v1"), "{conflict}");
-    }
-
-    /// A wrapper plugin is a child process the host starts, so the enterprise
-    /// process-free authority must refuse it exactly as it refuses the staged
-    /// pipeline — and `--pipeline <variant>` must not read as "raw" merely
-    /// because it is not `classic`.
-    #[test]
-    fn a_wrapper_plugin_is_not_the_process_free_surface() {
-        assert!(PipelineChoice::Raw.is_raw());
-        assert!(!PipelineChoice::Classic.is_raw());
-        assert!(
-            !PipelineChoice::Plugin("budget-v1").is_raw(),
-            "a plugin spawns a process, so it is not the surface that spawns none"
-        );
-        assert!(
-            crate::enterprise_telemetry::authorize_execution_surface_with(
-                crate::enterprise_telemetry::ExecutionSurface::PipelineOneShot,
-                true,
+/// One line per child turn this host ran for the plugin, naming the seat it
+/// was attributed to and what it cost.
+///
+/// The money half of "a refusal is reported, never silent": a plugin's child
+/// turn is a model call the *user* pays for and never asked for directly, so
+/// the run says so in the same place it says what the plugin was refused.
+/// Pure, so the wording is testable without a run — and empty for the
+/// overwhelmingly common case of a plugin that spent nothing, which keeps a
+/// silent run silent.
+fn spend_lines(spends: &[ChildTurnSpend]) -> Vec<String> {
+    spends
+        .iter()
+        .map(|spend| {
+            format!(
+                "spent a child turn at \"{}\" (seat {:?}, {} step(s), ${:.4}){}",
+                spend.role,
+                spend.seat,
+                spend.steps,
+                spend.cost_usd,
+                if spend.completed {
+                    ""
+                } else {
+                    " — it did not finish"
+                }
             )
-            .is_err(),
-            "and that surface is the one process-free authority refuses"
-        );
-    }
-
-    /// **Witness (selection).** A plugin installed on disk is found by the
-    /// variant id `--pipeline` names, its `${plugin_dir}` is interpolated, and
-    /// the credential its manifest asked for is refused *out loud*.
-    #[test]
-    fn an_installed_wrapper_is_bound_by_its_variant_id() {
-        // The manifest asks for a credential, so the parent must be carrying
-        // one — otherwise an empty `refused` list would prove nothing about the
-        // refusal and everything about the fixture.
-        let _guard = crate::test_env::lock();
-        let _restore = crate::test_env::EnvRestore::capture(&["ANTHROPIC_API_KEY"]);
-        // SAFETY: the env lock above is held for the whole mutate-read-restore
-        // window, which is what makes this single-threaded with respect to
-        // every other env-mutating test in this binary.
-        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "sk-not-a-real-key") };
-
-        let roster = roster(vec![installed(
-            WRAPPER_MANIFEST,
-            "/home/dev/.stella/plugins/budget-keeper",
-        )]);
-        let mut warnings = Vec::new();
-        let wrapper = bound(&roster, "budget-v1", &mut |line| warnings.push(line))
-            .expect("the installed plugin declares this variant");
-        assert_eq!(wrapper.variant(), "budget-v1");
-        assert_eq!(wrapper.dispatch.manifest().name, "budget-keeper");
-        assert_eq!(
-            warnings.len(),
-            1,
-            "the refused credential is reported, never silently dropped: {warnings:?}"
-        );
-        assert!(warnings[0].contains("ANTHROPIC_API_KEY"), "{warnings:?}");
-    }
-
-    /// An unknown variant names what *is* installed rather than failing blank.
-    #[test]
-    fn an_unknown_variant_names_the_installed_ones() {
-        let roster = roster(vec![installed(WRAPPER_MANIFEST, "/plugins/budget-keeper")]);
-        let error =
-            bound(&roster, "vera-v2", &mut |_| {}).expect_err("nothing installed declares it");
-        assert!(error.contains("vera-v2"), "{error}");
-        assert!(error.contains("budget-v1"), "{error}");
-
-        let nothing = PluginRoster::default();
-        let empty = bound(&nothing, "vera-v2", &mut |_| {}).expect_err("none at all");
-        assert!(empty.contains("stella plugin list"), "{empty}");
-    }
-
-    /// A manifest that declares `[loop] calls = ["recall"]`.
-    const RECALLING_MANIFEST: &str = r#"
-name = "researcher"
-[loop]
-participation = "steering"
-points = ["before_turn"]
-calls = ["recall"]
-[runtime]
-argv = ["/bin/sh", "${plugin_dir}/main.sh"]
-timeout_secs = 30
-[wrapper]
-id = "research-v1"
-[[wrapper.stages]]
-name = "recall"
-"#;
-
-    /// **Witness (#3561).** Binding an installed wrapper attaches a host-call
-    /// gate, and a declared `recall` reaches this host's real context plane.
-    ///
-    /// Before this, `stella-cli` built its transport with
-    /// `SubprocessWrapper::declare` and bound it straight into the dispatch —
-    /// no `.serving(..)`, no `HostCallGate` anywhere in the crate — so the
-    /// plugin's `{"call":"recall",…}` had nowhere to go and `converse` answered
-    /// `UnannouncedCall`. There was no gate to open, so this test could not be
-    /// written.
-    #[tokio::test]
-    async fn a_declared_recall_reaches_this_hosts_context_plane() {
-        use stella_plugin::{HostCallArgs, HostCallOk, HostCallOutcome, RecallArgs};
-        use stella_runtime::wrapper::HostCallChannel;
-
-        let roster = roster(vec![installed(RECALLING_MANIFEST, "/plugins/researcher")]);
-        let wrapper = bind_installed(&roster, "research-v1", Box::new(OneFrame), &mut |_| {})
-            .expect("the installed plugin declares this variant");
-
-        let channel = wrapper.gate.open();
-        let outcome = channel
-            .call(HostCallArgs::Recall(RecallArgs {
-                goal: "the parser".to_string(),
-                limit: None,
-            }))
-            .await;
-        match outcome {
-            HostCallOutcome::Ok(HostCallOk::Recall(result)) => {
-                assert_eq!(result.frames.len(), 1);
-                assert_eq!(result.frames[0].content, "about the parser");
-            }
-            other => panic!("a declared recall must reach the plane, got {other:?}"),
-        }
-        assert!(
-            wrapper.gate.refusals().is_empty(),
-            "nothing was refused, so nothing is reported"
-        );
-    }
-
-    /// The gate is attached even when this workspace has no context plane, and
-    /// an undeclared capability is still refused — *and reported*, which is the
-    /// half a user can see. An absent gate is the one answer a plugin cannot be
-    /// given: its call would hang until the point timeout.
-    #[tokio::test]
-    async fn a_host_with_no_plane_still_gates_and_reports_what_it_refused() {
-        use stella_plugin::{ChildTurnArgs, HostCallArgs, HostCallOutcome, HostCallRefusal};
-        use stella_runtime::wrapper::HostCallChannel;
-
-        let roster = roster(vec![installed(RECALLING_MANIFEST, "/plugins/researcher")]);
-        let wrapper = bound(&roster, "research-v1", &mut |_| {}).expect("it binds");
-
-        let channel = wrapper.gate.open();
-        let undeclared = channel
-            .call(HostCallArgs::ChildTurn(ChildTurnArgs {
-                role: "verifier".to_string(),
-                instruction: "check it".to_string(),
-            }))
-            .await;
-        assert!(
-            matches!(
-                undeclared,
-                HostCallOutcome::Err(ref failure) if failure.refusal == HostCallRefusal::Undeclared
-            ),
-            "the manifest declares only recall, got {undeclared:?}"
-        );
-        assert_eq!(
-            wrapper.gate.refusals().len(),
-            1,
-            "a refusal only the plugin learns about is half of \"never silent\""
-        );
-    }
-
-    /// A wrapper declaration with no process to ask is refused by name, not
-    /// driven with an invented default.
-    #[test]
-    fn a_wrapper_without_a_runtime_block_is_refused() {
-        let no_process = WRAPPER_MANIFEST
-            .replace("argv = [\"/bin/sh\", \"${plugin_dir}/main.sh\"]\n", "")
-            .replace("timeout_secs = 30\n", "")
-            .replace("env = [\"PATH\", \"ANTHROPIC_API_KEY\"]\n", "")
-            .replace("[runtime]\n", "");
-        let roster = roster(vec![installed(&no_process, "/plugins/budget-keeper")]);
-        let error = bound(&roster, "budget-v1", &mut |_| {}).expect_err("no [runtime] block");
-        assert!(error.contains("no [runtime] block"), "{error}");
-    }
-
-    /// The pre-turn snapshot answers every signal, and answers the post-turn
-    /// ones with what is true before anything has run.
-    #[test]
-    fn the_pre_turn_snapshot_states_only_what_is_true_yet() {
-        let signals = pre_turn_signals(true, false);
-        assert!(signals.test_command);
-        assert!(!signals.budget_metered);
-        assert_eq!(signals.candidates, 1);
-        assert_eq!(signals.mutating_actions, 0);
-        assert_eq!(signals.diff_lines, 0);
-        assert!(!signals.flip_achieved);
-        assert!(!signals.tests_red && !signals.tests_green);
-    }
+        })
+        .collect()
 }
+
+/// Fold what a plugin's child turns spent into the session's own guard.
+///
+/// The dispatcher settles every child onto the registry's
+/// [`SubAgentSpendLedger`](stella_core::subagent::SubAgentSpendLedger) the
+/// moment it ends, and an engine turn drains that ledger into the parent's
+/// guard at its next step boundary — which is why a `before_turn` spend needs
+/// nothing from this function: the round's own turn folds it in. The last
+/// point of the last round has no next boundary, so without this the user
+/// would pay for a child turn that never reached the guard bounding
+/// `--spend-limit`, and the reflection call after the run would size its
+/// headroom against money already gone.
+///
+/// Draining is destructive by contract, so this is exactly-once even though it
+/// runs after turns that already drained: what it takes is only what no turn
+/// did.
+fn settle_plugin_child_spend(registry: &dyn ToolExecutor, budget: &mut BudgetGuard) -> f64 {
+    let residual = registry.drain_sub_agent_spend_usd();
+    if residual > 0.0 {
+        budget.record_spend(residual);
+    }
+    residual
+}
+
+#[cfg(test)]
+mod tests;

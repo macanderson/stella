@@ -76,7 +76,7 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use stella_core::ports::TurnControls;
-use stella_core::subagent::{SubAgentDispatcher, SubAgentOutcome, SubAgentSpec};
+use stella_core::subagent::{SubAgentDispatcher, SubAgentOutcome, SubAgentReport, SubAgentSpec};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
@@ -330,8 +330,32 @@ impl Tool for SpawnSubAgent {
 /// the salvaged text is real evidence the parent paid for, and burying it in
 /// an error message invites the model to discard it and redo the work.
 /// A child that never ran IS an error, because there is nothing to use.
+///
+/// # Why the metrics ride `data` and never the content
+///
+/// A delegation that spent minutes and several model calls to return two
+/// sentences is indistinguishable, in the prose alone, from one that answered
+/// cheaply — so a lost or truncated child result reads downstream as an
+/// unremarkable success, and nothing in a run export can mark it as anomalous.
+/// The facts that separate the two (how many steps it took, what it cost, how
+/// much report came back) are already on [`SubAgentReport`]; what was missing
+/// was a channel to carry them.
+///
+/// That channel is [`ToolOutput::Ok`]'s `data`, which is specified to leave the
+/// content bytes the model reads untouched. That property is load-bearing here
+/// rather than incidental: these values move on every call, and the loop
+/// detector compares tool-output bytes, so putting a step count or a cost in
+/// `content` would make two identical delegations look different to it. It is
+/// the same reason the dispatch heartbeat above is a progress event and not a
+/// line of output.
 fn render(outcome: &SubAgentOutcome) -> ToolOutput {
     match outcome {
+        SubAgentOutcome::Completed(report) if report.summary.trim().is_empty() => {
+            ToolOutput::error(
+                "the sub-agent finished without reporting anything — its answer was empty. \
+                 Do the work directly, or re-ask with a narrower, self-contained question.",
+            )
+        }
         SubAgentOutcome::Completed(report) => ToolOutput::Ok {
             content: if report.truncated {
                 format!(
@@ -342,7 +366,7 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
             } else {
                 report.summary.clone()
             },
-            data: None,
+            data: Some(metrics("completed", report)),
         },
         SubAgentOutcome::Incomplete { report, reason } if !report.summary.is_empty() => {
             ToolOutput::Ok {
@@ -351,7 +375,7 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
                      the above as incomplete evidence, not a final answer.]",
                     report.summary
                 ),
-                data: None,
+                data: Some(metrics("partial", report)),
             }
         }
         SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::error(format!(
@@ -363,6 +387,27 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
                  own tools"
         )),
     }
+}
+
+/// The structured half of a delegation's result: what the child cost and how
+/// much came back, keyed to the schema `task` declares in
+/// `crate::contracts::declared_output_schema`.
+///
+/// `report_chars` is the answer's size in UTF-8 bytes rather than a verdict on
+/// it. There is deliberately no "this looks too thin" threshold: a two-sentence
+/// answer to a narrow question is correct, and a rule that called it a failure
+/// would be wrong more often than the loss it caught. Reporting the size beside
+/// the steps and the spend is what lets a reader — or a surface that ranks
+/// delegations by cost-per-byte — reach that judgement with the evidence in
+/// hand, which is the half that did not exist.
+fn metrics(status: &str, report: &SubAgentReport) -> Value {
+    json!({
+        "status": status,
+        "steps": report.steps,
+        "cost_usd": report.cost_usd,
+        "report_chars": report.summary.len(),
+        "truncated": report.truncated,
+    })
 }
 
 /// A short, stable, filesystem-safe id from the model's description, for

@@ -46,7 +46,7 @@ In particular, `text_delta` lines stream the answer token by token as a best-eff
 preview — the `text` event that follows carries the full step text and is authoritative
 (replace any accumulated deltas with it; a retried model call re-streams its deltas).
 The fragment rides in `text_delta`'s `delta` field and the full body in `text`'s `text`
-field; streams recorded by older stellas spell the two fields crossed, so a reader that
+field. Older stellas recorded streams with the two fields crossed, so a reader that
 also processes archives should accept either spelling on either event.
 
 ```bash
@@ -62,14 +62,14 @@ done
 `json` embeds those same event objects under an `events` key in its single summary
 object — exactly what `stream-json` would have emitted line by line. Every summary object
 declares `schema_version` (see [The envelope contract](#the-envelope-contract) below). The
-summary's other keys depend on the execution path: a default run goes through the staged
-pipeline and summarizes as `status`, `text`, `cost_usd`, `reason`, `task_class`, `verdict`,
-`revisions`, `candidates_run`, `model`, `events`, and `reflection`; a `--no-pipeline` (raw step-loop)
-run summarizes as `status`, `text`, `cost_usd`, `reason`, `model`, and `events`, plus a
+summary's other keys depend on the execution path: a default run drives the raw step loop
+and summarizes as `status`, `text`, `cost_usd`, `reason`, `model`, and `events`, plus a
 top-level `files_touched` key holding the
-[file-touch telemetry](/docs/telemetry) payload — which the pipeline
-summary does **not** carry. That payload is the serialized telemetry object, so the array
-of records sits one level in, at `.files_touched.files_touched`.
+[file-touch telemetry](/docs/telemetry) payload; `--pipeline classic` runs the staged
+pipeline instead and summarizes as `status`, `text`, `cost_usd`, `reason`, `task_class`,
+`verdict`, `revisions`, `candidates_run`, `model`, `events`, and `reflection` — which does
+**not** carry `files_touched`. The `files_touched` payload is the serialized telemetry
+object, so the array of records sits one level in, at `.files_touched.files_touched`.
 
 The `model` value is `provider/model_id` for the model that **actually ran** —
 on the pipeline path that is the model serving the worker turns, which is what
@@ -78,9 +78,9 @@ on the pipeline path that is the model serving the worker turns, which is what
 the worker somewhere other than the session default is reflected here. Read
 this key, not your own `--model` argument, when attributing spend.
 
-The `status` value is the first thing most scripts branch on. A pipeline run
-reports one of four; a `--no-pipeline` run reports three, since no verification
-ladder ran:
+The `status` value is the first thing most scripts branch on. A raw run
+reports one of three, since no verification ladder ran; a `--pipeline classic`
+run reports one of four:
 
 <CardGrid size="sm">
   <OptionCard name="completed">
@@ -102,12 +102,12 @@ ladder ran:
   </OptionCard>
 </CardGrid>
 
-**Failures keep the same key set.** A pipeline run that errors emits every key above, with
-`text` and the pipeline-only keys (`task_class`, `verdict`, `revisions`, `candidates_run`)
-as explicit `null` rather than missing — so a strict deserializer written against the
+**Failures keep the same key set.** A `--pipeline classic` run that errors emits every key
+above, with `text` and the pipeline-only keys (`task_class`, `verdict`, `revisions`,
+`candidates_run`) as explicit `null` rather than missing — so a strict deserializer written against the
 success shape still parses. A failure *before* the agent is constructed — no API key
-configured, an unknown provider or model, a malformed `settings.json` — cannot report a
-model or an event log, so it emits the minimal envelope on stdout alongside the `stella: …`
+configured, an unknown provider or model, a malformed `settings.json` — has no
+model or event log to report, so it emits the minimal envelope on stdout alongside the `stella: …`
 line on stderr:
 
 ```json
@@ -119,7 +119,7 @@ line.
 
 ## The envelope contract
 
-Every summary object above — the pipeline summary, the `--no-pipeline` summary, and the
+Every summary object above — the raw-loop summary, the `--pipeline classic` summary, and the
 pre-flight error envelope — carries a `schema_version` integer. It is **1** today. The
 three shapes always declare the same value: it versions the envelope contract, not the
 execution path, so you never have to special-case which run you got.
@@ -319,7 +319,7 @@ stella --spend-limit 10 fleet --plan cleanup.toml --max-concurrency 4
 
 ```bash
 stella --spend-limit 3 run --output-format json \
-  --test-command "cargo test -p stella-store" \
+  --pipeline classic --test-command "cargo test -p stella-store" \
   "make the store migration idempotent on an already-v2 file" > result.json
 case $? in
   0)   echo "verified" ;;
@@ -401,16 +401,17 @@ pipelines worth keeping:
 
 ```bash
 # Gate a script on deterministic evidence only — refuse a verifier-only pass.
-stella run --output-format json --test-command "make test" "$TASK" \
+stella run --output-format json --pipeline classic --test-command "make test" "$TASK" \
   | jq -e '.status == "completed" and .verdict.deterministic == true' >/dev/null \
   || { echo "no deterministic proof — not merging" >&2; exit 1; }
 ```
 
 ```bash
-# Every file the raw step loop touched, with its line delta. Note the nesting:
-# the summary's `files_touched` key holds the telemetry payload object, whose
-# own `files_touched` key holds the array.
-stella run --output-format json --no-pipeline "tidy up the error types in stella-store" \
+# Every file the raw step loop touched, with its line delta — the raw loop is
+# the default, so no flag is needed. Note the nesting: the summary's
+# `files_touched` key holds the telemetry payload object, whose own
+# `files_touched` key holds the array.
+stella run --output-format json "tidy up the error types in stella-store" \
   | jq -r '.files_touched.files_touched[] | "\(.path)\t+\(.lines_added)/-\(.lines_removed)"'
 ```
 

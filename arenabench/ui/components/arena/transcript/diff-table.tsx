@@ -3,7 +3,7 @@
 import * as React from "react";
 
 import type { DiffRow } from "@/lib/transcript-diff";
-import { pairedSpans, type Span } from "@/lib/word-diff";
+import { pairedSpans, type Span } from "@/lib/word-highlight";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,9 +18,9 @@ import { cn } from "@/lib/utils";
  * the `−`/`+` sigil did not.
  *
  * Which tokens get the second tint is not decided here. It is
- * `crates/stella-transcript/src/word.rs`, ported to `lib/word-diff.ts` and held
+ * `crates/stella-transcript/src/word.rs`, ported to `lib/word-highlight.ts` and held
  * to the Rust by a golden matrix both languages render
- * (`scripts/check-word-diff-parity.mjs`), so the arena tints the same tokens
+ * (`scripts/check-word-highlight-parity.mjs`), so the arena tints the same tokens
  * the Command Deck and the Observatory do — which matters exactly when someone
  * is reading two of those surfaces side by side to check a claim.
  */

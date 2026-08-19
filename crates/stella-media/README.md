@@ -151,8 +151,10 @@ and deterministic: parse with `roxmltree` under default options, which reject
 DTDs and so block XXE and billion-laughs before a renderer ever sees them;
 re-serialize through a deny-list (drop `<script>`, `<style>`,
 `<foreignObject>`, `<metadata>`; drop every `on*` attribute; keep only
-same-document `#fragment` hrefs; drop any value containing `//` or
-`javascript:`); then optimize lightly (comments/PIs dropped, whitespace
+same-document `#fragment` hrefs; drop any value that starts with a URL
+scheme, starts with `//`, or contains `javascript:`; drop the `style`
+attribute outright; drop elements and attributes in any other namespace);
+then optimize lightly (comments/PIs dropped, whitespace
 collapsed, a `viewBox` backfilled from `width`/`height`). Depth is bounded
 twice against `MAX_NESTING_DEPTH` (256) — textually before parsing, because
 roxmltree's tokenizer recurses per level and would overflow the stack *inside*
@@ -205,12 +207,6 @@ planted symlink), and the manifest row for a path is *replaced*, not appended.
   model-writable workspace, so a crafted id is a path fragment inside the
   vendor base URL on a request that carries the user's API key. The host is
   pinned by `base_url` and cannot be changed this way; the path can.
-- **Two SVG holes are recorded, not fixed.** Rule 6 keys on `//` and
-  `javascript:`, so a `data:` URI in a non-`href` attribute survives, and a
-  `style="…"` *attribute* has no rule of its own (only the `<style>` element
-  does). Neither is reachable through the preview ladder, which never renders
-  SVG — both matter once an artifact is inlined into HTML.
-
 ## Testing
 
 ```bash
@@ -264,7 +260,7 @@ To add a provider:
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions" (why
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies" (why
   every vendor is an adapter behind `MediaProvider`) and "Testing approach",
   whose wiremock-adapter-test line names this crate.
 - [`../stella-tools/src/media.rs`](../stella-tools/src/media.rs) — the tools

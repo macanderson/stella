@@ -364,9 +364,10 @@ async fn the_shell_audit_permits_ordinary_build_and_test_commands() {
         // SOURCE outside the tree is a read, and reads are unrestricted; and
         // `2>` is a redirect the scanner must not mistake for a plain word.
         //
-        // Writing INTO `/tmp` is deliberately absent — it is outside the
-        // workspace and is refused, with the session's own scratch directory
-        // (`STELLA_SCRATCH`, a scope root) as the place that work belongs.
+        // Writing INTO the system temp directory is covered separately, by
+        // `the_system_temp_directory_is_writable`: it is a grant a real
+        // session gets from `ToolRegistry::write_scope`, and `ToolCtx::bare`
+        // deliberately carries no grants at all.
         "command -v jq >/dev/null 2>&1 && echo yes",
         "make 2>/dev/null",
         "cargo test 2>&1 >/dev/null",
@@ -458,6 +459,96 @@ async fn the_shell_audit_refuses_writing_into_a_sibling_worktree() {
             .join(".stella/worktrees/sibling-task/secret.rs")
             .exists()
     );
+}
+
+/// The witness for the system temp grant: a real session may write there, by
+/// both spellings, through both the file tools and the shell.
+///
+/// Driven through [`stella_tools::ToolRegistry::write_scope`] rather than
+/// `ToolCtx::bare`, because that is where the grant lives and `bare` carries no
+/// grants by design — using `bare` here would prove nothing about a session.
+///
+/// Fails on the old code: `/tmp/…` was `OutsideScope`, and this is the exact
+/// refusal a run hit when the model reached for `cargo clippy … | tee
+/// /tmp/clippy_out.txt`. See `stella_tools::temp_roots` for why the earlier
+/// decision to refuse it was reversed.
+#[tokio::test]
+async fn the_system_temp_directory_is_writable() {
+    let session = tempfile::tempdir().expect("session");
+    let registry = stella_tools::ToolRegistry::new(session.path().to_path_buf());
+    let ctx = ToolCtx::bare(session.path().to_path_buf()).with_scope(registry.write_scope());
+
+    // A unique leaf per run: `/tmp` is shared with every other process on the
+    // machine, which is exactly why `STELLA_SCRATCH` remains the recommended
+    // place and why a test may not assume an empty directory.
+    let leaf = format!("stella-temp-witness-{}.txt", std::process::id());
+
+    for dir in stella_tools::temp_roots::system_temp_roots() {
+        let target = dir.join(&leaf);
+        let _ = std::fs::remove_file(&target);
+
+        let out = WriteFile::default()
+            .execute(
+                &serde_json::json!({
+                    "path": target.to_string_lossy(),
+                    "content": "scratch\n"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(
+            !out.is_error(),
+            "a session must be able to write to `{}`: {out:?}",
+            target.display()
+        );
+        assert!(target.exists());
+
+        // And the shell agrees with the file tools about the same path — the
+        // two describing one boundary differently is the failure this suite
+        // exists to prevent.
+        let out = stella_tools::bash::Bash::new(None)
+            .execute(
+                &serde_json::json!({
+                    "command": format!("echo shell > {}", target.display())
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(
+            !out.is_error(),
+            "the shell audit must permit the same write: {out:?}"
+        );
+
+        let _ = std::fs::remove_file(&target);
+    }
+}
+
+/// The grant is one directory wide, not a hole in the confinement: everything
+/// else outside the session stays refused, temp directory or no.
+#[tokio::test]
+async fn the_temp_grant_does_not_widen_anything_else() {
+    let session = tempfile::tempdir().expect("session");
+    let registry = stella_tools::ToolRegistry::new(session.path().to_path_buf());
+    let ctx = ToolCtx::bare(session.path().to_path_buf()).with_scope(registry.write_scope());
+
+    // A path that is emphatically not under any temp root and not in the
+    // session tree.
+    let refused = std::path::Path::new("/usr/local/stella-must-not-write-here.txt");
+    let out = WriteFile::default()
+        .execute(
+            &serde_json::json!({
+                "path": refused.to_string_lossy(),
+                "content": "nope\n"
+            }),
+            &ctx,
+        )
+        .await;
+    let message = message(&out);
+    assert!(
+        message.contains("outside this session's writable directories"),
+        "{message}"
+    );
+    assert!(!refused.exists());
 }
 
 /// The edit tool consults the same boundary as the write tool — one session,

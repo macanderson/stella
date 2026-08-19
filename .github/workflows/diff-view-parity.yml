@@ -1,6 +1,14 @@
 name: diff-view-parity
 
-# Two diff policies have two implementations each, and neither pair may drift.
+# The transcript's rendering policies have two implementations each, and they
+# must not drift. Two are guarded here; the workflow keeps its original name so
+# a run history stays continuous.
+#
+#   1. the diff *view* policy — how much of a diff is drawn, and which part;
+#   2. word-level *highlighting* — which spans of a modified line pair get the
+#      stronger tint, and which removal is paired with which addition (#3676).
+#
+# Both follow the same shape, described below in terms of the first.
 #
 # **How much of a diff is drawn** — `crates/stella-diff/src/view.rs::plan`.
 # Four surfaces consume it in Rust (the Command Deck, the plain `stella run`
@@ -10,7 +18,7 @@ name: diff-view-parity
 # **What inside a changed line is tinted** —
 # `crates/stella-transcript/src/word.rs::highlight`. The deck's character grid
 # and the jet-black web transcript consume it in Rust; the arena transcript
-# reimplements it in `arenabench/ui/lib/word-diff.ts`.
+# reimplements it in `arenabench/ui/lib/word-highlight.ts`.
 #
 # Both ports exist for the same reason: the arena UI is a Next.js client with
 # no way to call into the workspace. And both matter for the same reason: an
@@ -42,9 +50,9 @@ on:
       - "crates/stella-diff/**"
       - "crates/stella-transcript/**"
       - "arenabench/ui/lib/diff-view.ts"
-      - "arenabench/ui/lib/word-diff.ts"
+      - "arenabench/ui/lib/word-highlight.ts"
       - "arenabench/ui/scripts/check-diff-view-parity.mjs"
-      - "arenabench/ui/scripts/check-word-diff-parity.mjs"
+      - "arenabench/ui/scripts/check-word-highlight-parity.mjs"
       - ".github/workflows/diff-view-parity.yml"
   push:
     branches: [main]
@@ -52,9 +60,9 @@ on:
       - "crates/stella-diff/**"
       - "crates/stella-transcript/**"
       - "arenabench/ui/lib/diff-view.ts"
-      - "arenabench/ui/lib/word-diff.ts"
+      - "arenabench/ui/lib/word-highlight.ts"
       - "arenabench/ui/scripts/check-diff-view-parity.mjs"
-      - "arenabench/ui/scripts/check-word-diff-parity.mjs"
+      - "arenabench/ui/scripts/check-word-highlight-parity.mjs"
       - ".github/workflows/diff-view-parity.yml"
   workflow_dispatch:
 
@@ -77,14 +85,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: the view-plan port reproduces its committed matrix
+      - name: the diff-view port reproduces the committed matrix
         working-directory: arenabench/ui
         run: node scripts/check-diff-view-parity.mjs
 
-      # Deliberately not `if: success()`-gated behind the step above: when both
-      # ports have drifted, one run should name both, not send the reader back
-      # for a second.
-      - name: the word-highlight port reproduces its committed matrix
+      # Deliberately not gated behind the step above: when both ports have
+      # drifted, one run should name both, not send the reader back for a
+      # second.
+      - name: the word-highlight port reproduces the committed matrix
         if: '!cancelled()'
         working-directory: arenabench/ui
-        run: node scripts/check-word-diff-parity.mjs
+        run: node scripts/check-word-highlight-parity.mjs

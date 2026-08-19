@@ -117,11 +117,94 @@ pub async fn warm_file_vectors_with_progress(
     outcome
 }
 
-async fn warm_opened(
+/// What one session-start refresh decided to do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshOutcome {
+    /// The pass ran.
+    Refreshed(WarmOutcome),
+    /// This workspace has no vectors under the active fingerprint, so it has
+    /// never opted into semantic indexing (or has just changed embedder).
+    /// Embedding a whole tree unasked spends the user's API budget on a
+    /// capability they may not want — that is `stella init`'s decision to
+    /// take, not a session start's.
+    NotOptedIn,
+    /// Another pass holds the embed lease (#3650). It is doing this work.
+    Busy,
+}
+
+/// Top up embeddings at session start, bounded, for a workspace that already
+/// uses semantic search (#3649).
+///
+/// This is the push half of git-aware reconciliation. `vectors::pending`
+/// orders by change recency, so after a merge the files that commit touched
+/// are already at the front of the queue — but nothing advanced the queue
+/// except `stella init` and the lazy pass inside a search. A session that
+/// merged and then only ran `bash` and `read_file` never embedded them at
+/// all. One bounded pass at session start is what makes the ordering pay off.
+///
+/// Three guards, each load-bearing:
+///
+/// - **Opt-in.** A workspace with zero vectors under this fingerprint has
+///   never run the eager pass, and starting one unasked spends real money.
+/// - **Single-flight.** The embed lease, so this cannot race the lazy
+///   per-query pass or a second `stella` process.
+/// - **Bounded.** [`stella_graph::MAX_FILES_PER_PASS`] rather than the eager
+///   cap: a session
+///   start is not the moment to embed two thousand files, and the recency
+///   ordering means one batch covers what actually changed.
+pub async fn refresh_recent_vectors(
+    root: &Path,
+    embedder: &dyn Embedder,
+    limit: usize,
+) -> RefreshOutcome {
+    let graph = match stella_store::workspace_private_sqlite_path(root, "codegraph.db")
+        .map_err(|error| format!("cannot prepare the code graph store: {error}"))
+        .and_then(|db_path| {
+            stella_graph::CodeGraph::open(root, &db_path)
+                .map_err(|error| format!("could not open the code graph: {error}"))
+        }) {
+        Ok(graph) => graph,
+        Err(reason) => {
+            return RefreshOutcome::Refreshed(WarmOutcome::Failed {
+                embedded: 0,
+                reason,
+            });
+        }
+    };
+
+    let fingerprint = embedder.fingerprint().id();
+    // Zero is the honest opt-in signal: it cannot distinguish "never wanted
+    // this" from "just switched embedder", and it does not need to — both
+    // mean a whole-tree embed the user has not asked this session to pay for.
+    if graph.embedded_file_count(&fingerprint).unwrap_or(0) == 0 {
+        graph.shutdown();
+        return RefreshOutcome::NotOptedIn;
+    }
+
+    let Some(lease) = graph.acquire_lease(stella_graph::lease::Purpose::Embed) else {
+        graph.shutdown();
+        return RefreshOutcome::Busy;
+    };
+    let outcome = warm_opened(&graph, embedder, limit, &mut |_| {}).await;
+    // Released on the failure path too: a pass that died holds no claim on
+    // the next one, and leaving the lease behind would stall embedding for
+    // the whole TTL over an error the caller already has in hand.
+    graph.release_lease(&lease);
+    graph.shutdown();
+    RefreshOutcome::Refreshed(outcome)
+}
+
+/// `progress` is generic rather than `&mut dyn FnMut(usize)` so each caller's
+/// `Send`-ness is inferred instead of erased. The eager `stella init` pass
+/// narrates through a callback that borrows a non-`Send` emitter; the session
+/// refresh runs inside a `tokio::spawn`ed task and needs the whole future to
+/// be `Send`. A trait object forces one answer on both, and it is the wrong
+/// one for whichever caller did not pick it.
+async fn warm_opened<P: FnMut(usize) + ?Sized>(
     graph: &stella_graph::CodeGraph,
     embedder: &dyn Embedder,
     limit: usize,
-    progress: &mut dyn FnMut(usize),
+    progress: &mut P,
 ) -> WarmOutcome {
     let fingerprint = embedder.fingerprint().id();
     let mut embedded = 0usize;

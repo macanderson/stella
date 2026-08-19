@@ -6,10 +6,11 @@ status: living
 
 # The journey of a prompt — full pipeline mode, in plain language
 
-**Status:** Living document. Describes the staged pipeline as of 0.6.x.
+**Status:** Living document. Describes the staged pipeline (`--pipeline classic`)
+as of 0.6.x.
 
 This is the maintainer's companion to the user-facing
-[Inference Pipeline](../website/content/docs/inference-pipeline.mdx) page. That
+[Inference Pipeline](/docs/inference-pipeline) page. That
 page explains *what* the pipeline promises; this one walks a single prompt from
 the moment it enters `stella run` to the moment the run reports done, naming
 the module that owns each step so you can find the code in one hop. Everything
@@ -36,16 +37,22 @@ a test that merely restates the patch.
 
 ## 0. What "full pipeline mode" is
 
-Stella has two ways to run a prompt:
+Stella has two ways to run a prompt, and since #3381/#3694 the raw loop is the
+default on every door (`run`, `arena`, `goal`, `fleet`, the Command Deck):
 
-- **The raw step loop** (`stella run --no-pipeline`, and interactive chat):
+- **The raw step loop** (the default; `--no-pipeline` is a deprecated hidden
+  no-op that names it explicitly, as does interactive chat):
   `stella-core::Engine::run_turn` — the model proposes tool calls, tools run,
   results feed back, repeat until the model stops or a budget/backstop fires.
   No stages, no verification.
-- **The staged pipeline** (`stella run`, the default; per-turn in the Command
-  Deck while `/pipeline` is ON): the step loop wrapped in the stages below,
-  with deterministic verification and terminal-event ownership moved up into
-  `Pipeline::run`.
+- **The staged pipeline** (`stella run --pipeline classic`, opt-in; per-turn
+  in the Command Deck while `/pipeline` is ON): the step loop wrapped in the
+  stages below, with deterministic verification and terminal-event ownership
+  moved up into `Pipeline::run`. `--pipeline classic` is one instance of the
+  general `--pipeline <variant>` opt-in — the wrapper socket
+  (`stella-runtime::wrapper`) drives an installed wrapper plugin the same way
+  for any other variant id, with `plugins/stella-research` shipped as the
+  reference plugin.
 
 "Full pipeline mode" is the second one. The engine still does all the actual
 work — reading files, editing, running commands — but the pipeline decides

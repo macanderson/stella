@@ -125,6 +125,16 @@ pub struct PipelineFrame {
     /// keeps the honest bare-turn path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<stella_pipeline::FrameProgress>,
+    /// The `[wrapper]` variant the run was launched with (#3408), `None` for
+    /// the built-in `classic` order. `stella_plugin::Wrapper` derives
+    /// `Serialize`/`Deserialize` (invariant 4), so it round-trips here
+    /// byte-for-byte the same way [`Self::responsibilities`] does.
+    ///
+    /// Additive, so no [`FRAME_VERSION`] bump — an older frame reads it as
+    /// `None` and resumes under `classic`, which is what it would have run
+    /// under anyway before a variant was ever configurable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<stella_plugin::Wrapper>,
 }
 
 impl PipelineFrame {
@@ -145,6 +155,7 @@ impl PipelineFrame {
             ),
             max_revisions: config.max_revisions,
             progress: None,
+            variant: config.variant.clone(),
         }
     }
 
@@ -505,6 +516,7 @@ mod tests {
             isolation_possible: true,
             max_revisions: 2,
             progress: None,
+            variant: None,
         }
     }
 
@@ -844,6 +856,61 @@ mod tests {
         assert!(
             !frame.witness_writer,
             "the legacy projection agrees with the row it is derived from"
+        );
+    }
+
+    /// **#3408 P2 witness.** A run launched under a non-default `[wrapper]`
+    /// variant comes back resuming under that SAME variant, not the built-in
+    /// `classic` fallback `PipelineFrame::of` used to silently substitute
+    /// (`PipelineConfig::variant` was not captured at all before this).
+    #[test]
+    fn a_resumed_run_gets_back_the_variant_it_was_launched_with() {
+        let variant = stella_plugin::Wrapper {
+            id: "lean-diff-v1".into(),
+            stages: vec![
+                stella_plugin::WrapperStage {
+                    name: stella_plugin::StageName::Triage,
+                    condition: None,
+                },
+                stella_plugin::WrapperStage {
+                    name: stella_plugin::StageName::Execute,
+                    condition: None,
+                },
+                stella_plugin::WrapperStage {
+                    name: stella_plugin::StageName::Verify,
+                    condition: Some("diff-lines > 0".into()),
+                },
+            ],
+        };
+        let config = stella_pipeline::PipelineConfig {
+            variant: Some(variant.clone()),
+            ..stella_pipeline::PipelineConfig::default()
+        };
+
+        let json = serde_json::to_string(&PipelineFrame::of(&config)).expect("the frame writes");
+        let ResumeFrame::Pipeline(frame) = ResumeFrame::parse(&json) else {
+            panic!("the frame this build wrote must read back: {json}");
+        };
+
+        assert_eq!(
+            frame.variant,
+            Some(variant),
+            "the resumed leg must run the SAME manifest the killed one was running, not \
+             silently fall back to classic"
+        );
+    }
+
+    /// The overwhelmingly common case — no configured variant — adds nothing
+    /// to the frame, matching `a_default_roster_run_writes_no_responsibilities_at_all`'s
+    /// posture for the roster.
+    #[test]
+    fn a_classic_run_writes_no_variant_at_all() {
+        let frame = PipelineFrame::of(&stella_pipeline::PipelineConfig::default());
+        assert!(frame.variant.is_none());
+        let json = serde_json::to_string(&frame).expect("the frame writes");
+        assert!(
+            !json.contains("variant"),
+            "the built-in `classic` fallback is skipped rather than written out: {json}"
         );
     }
 

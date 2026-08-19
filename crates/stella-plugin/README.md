@@ -126,19 +126,21 @@ unless that plugin is installed — which is exactly why the manifest's rules ar
 load errors rather than warnings: an opt-in verifier that silently declined to
 participate would be worse than none.
 
-**Declared, then callable — still not driven.** The manifest is declared here.
+**Declared, then callable, and now driven.** The manifest is declared here.
 The socket a caller would drive it through — the `TurnWrapper` trait, `judge`,
 `again`, and both an in-process and a subprocess transport — landed in
 `stella-runtime` (#3380, shipped #3479, `doc:wrapper-socket`), proven
-end-to-end against a real subprocess plugin in that crate's own tests. What has
-**not** landed is a host sequence that calls all four points for a live turn,
-or anything driving one: `stella-pipeline`'s `variant.rs` resolves the shipped
-`[wrapper]` block into a `StageProgram` (#3408) but `pipeline.rs` does not
-consult it to run a turn, and `stella-cli`'s loader (`stella plugin
-install|list|remove`) resolves and shows consent for a manifest without
-driving a turn through it either. That gap is tracked, not incidental — the
-crate takes no engine dependency, which is what let the load-time contract
-ship complete before the runtime half existed.
+end-to-end against a real subprocess plugin in that crate's own tests. The
+host sequence that calls all four points for a live turn is
+`stella_runtime::WrapperDispatch`, and `stella-cli` drives it: `--pipeline
+<variant>` on `stella run` resolves an installed manifest and runs a live
+turn through `crate::wrapper_plugin` (#3494), and separately
+`stella-pipeline`'s own staged pipeline now dispatches from the shipped
+`[wrapper]` block via `Pipeline::begin_turn_schedule` (#3408) rather than a
+hardcoded stage order. The remaining gap: `stella-cli`'s manifest loader
+(`stella plugin install|list|remove`) resolves and shows consent for a
+manifest without itself driving a turn through it — that command surface is
+about installation, not execution, so nothing there needs to.
 
 The one function a host must never bypass is
 `LoopGrant::permits_hook(event)` — the authoritative filter behind the
@@ -202,6 +204,13 @@ before it crosses.
 - `src/program.rs` — the reader: `SignalValues` (the host's answer for every
   published signal, total by construction), `Condition::evaluate`,
   `Wrapper::resolve`, and the resolved `StageProgram`.
+- `src/progressive.rs` (#3491) — `ProgressiveResolver`, the stage-at-a-time
+  sibling of `Wrapper::resolve`: a host calls `advance` once per declared
+  stage, in order, handing in only the `SignalValues` known at that boundary,
+  so a condition on an execute/witness/verify signal is answered from a real
+  per-boundary value rather than a pre-run snapshot. `Clone`, so a caller
+  fanning one turn into several candidates gives each its own copy from a
+  shared prefix. `stella-pipeline`'s `Schedule` is a thin wrapper over this.
 - `src/evidence.rs` — the `[oracle]` block's evidence half: `OracleCheck`,
   the `MeasurementRule` grammar and its parser, the load-time rules that keep
   a check readable and every requirement decidable, and `Oracle::unmet`.
@@ -225,6 +234,17 @@ before it crosses.
   corpus `bin/export_wrapper_wire.rs` prints, published under `docs/wire/` and
   gate-checked by `scripts/check-wire-schema.sh`; compiled into no default
   build.
+- `src/host_call.rs` — the channel that lets a plugin ask the host for
+  something (recall, a bounded child turn, a test re-run) and read the answer
+  before it replies. The host performs the call and applies
+  `LoopGrant::permits_call`, so the plugin never reaches anything itself.
+- `src/package.rs` — the `[[tools]]`, `[[skills]]` and `[[records]]` a package
+  ships, plus `PluginManifest::reconcile`, which compares what the manifest
+  declares against what the host actually found on disk and refuses any
+  disagreement in either direction.
+- `src/driver.rs` — the `[driver]` block and the drive-session wire shapes
+  (`DriverGrant`, `DriverCall`, `DriveRequest`/`DriveResponse`): a plugin that
+  starts turns rather than taking part in one.
 - `src/error.rs` — `ManifestError`, typed per rule (invariant 5).
 - `tests/manifest_grades.rs` + `tests/fixtures/*.toml` — slice A's
   acceptance: one fixture per grade, round-tripped through both TOML and
@@ -262,10 +282,12 @@ Three, and the count is the point — this crate's own README said "None
 shipping yet, deliberately" for as long as that was true, and it is not any
 more:
 
-- **`stella-runtime`** consumes the wire contract and the verdict rule. It
-  defines the `TurnWrapper` trait and the two host functions `judge` and
-  `again` over the types in `wire.rs`, and the subprocess transport that
-  speaks them to an out-of-process plugin (`doc:wrapper-socket`).
+- **`stella-runtime`** consumes the wire contract, the verdict rule, and the
+  driver channel. It defines the `TurnWrapper` trait and the two host
+  functions `judge` and `again` over the types in `wire.rs`, the subprocess
+  transport that speaks them to an out-of-process plugin
+  (`doc:wrapper-socket`), and `src/wrapper/driver_call.rs`, which consumes
+  `DriverGrant`/`DriverCall` from `driver.rs`.
 - **`stella-cli`** consumes the manifest and the consent surface. `stella
   plugin install|list|remove` resolves `.stella/plugins/` and
   `~/.stella/plugins/`, renders `consent_text` before anything executes, and
@@ -273,10 +295,13 @@ more:
   `project_code_execution_trusted()` — a cloned repository's plugins do not
   load until the workspace is trusted (#3509).
 - **`stella-pipeline`** consumes the `[wrapper]` half: `src/variant.rs`
-  embeds `variants/classic.toml`, fills in `SignalValues` from one turn's
-  facts, and resolves the built-in stage order through `Wrapper::resolve`
-  (#3408). It consults the answer; it is not yet *driven* by it, because
-  binding a stage to the loop is still open.
+  embeds `variants/classic.toml` and resolves it through `Wrapper::resolve`,
+  and `src/schedule.rs`'s `Schedule` walks `ProgressiveResolver` stage by
+  stage as each stage's real facts become known. **It is now driven by the
+  answer, not merely checked against it** (#3408, #3672): `Pipeline::run`
+  calls `Schedule::decide` at each stage boundary and ANDs it with the small
+  set of grammar-inexpressible host-internal facts, so `classic.toml` decides
+  every stage question the closed condition grammar can express.
 
 What is still unconsumed is narrower than it was: the subloop runner, and the
 Stop-gate binding of a plugin's declared hold allowance. Both arrive with the

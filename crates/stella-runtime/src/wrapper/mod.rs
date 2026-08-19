@@ -81,7 +81,9 @@
 mod child_turn;
 mod dispatch;
 mod driver_call;
+mod driver_subprocess;
 mod error;
+mod framing;
 mod host_call;
 mod in_process;
 mod subprocess;
@@ -103,7 +105,8 @@ pub use driver_call::{
     DEFAULT_DRIVER_MAX_CALLS, DriverCallGate, DriverCapabilities, DriverSession,
     NoDriverCapabilities, RefusedDriverCall,
 };
-pub use error::WrapperError;
+pub use driver_subprocess::{AdmittedDriver, SubprocessDriver};
+pub use error::{DriverError, WrapperError};
 pub use host_call::{
     DEFAULT_HOST_MAX_CALLS, DEFAULT_RECALL_FRAMES, HostCallChannel, HostCallGate, HostCapabilities,
     HostPlanes, NoHostCalls, PointChannel, RecallHost, RefusedCall,

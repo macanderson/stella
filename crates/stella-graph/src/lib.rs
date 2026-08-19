@@ -60,6 +60,7 @@ mod generated;
 mod graph;
 mod import;
 mod lang;
+pub mod lease;
 pub mod manifest;
 mod markdown;
 mod parse;

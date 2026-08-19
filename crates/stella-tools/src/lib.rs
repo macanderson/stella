@@ -67,6 +67,7 @@ pub mod subagent;
 /// than maintaining a second, drifting credential deny-list.
 pub mod subprocess_env;
 pub mod tasks;
+pub mod temp_roots;
 pub mod validate;
 pub mod write;
 

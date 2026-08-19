@@ -82,6 +82,7 @@ const SCHEMA_TABLES: &[&str] = &[
     "code_graph_vectors",
     "code_graph_chunk_vectors",
     "code_graph_index_state",
+    "code_graph_leases",
 ];
 
 /// DDL for the code graph's tables. `IF NOT EXISTS` throughout so opening an
@@ -247,6 +248,17 @@ CREATE TABLE IF NOT EXISTS code_graph_index_state (
     id            INTEGER PRIMARY KEY CHECK (id = 1),
     head_sha      TEXT NOT NULL,
     reconciled_at INTEGER NOT NULL
+);
+-- Single-flight leases over the expensive passes (see `crate::lease`, #3650).
+-- One row per purpose, so an index walk and an embedding pass never contend.
+--
+-- `expires_at` is not a nicety: nothing reaps after a process killed mid-walk,
+-- so a lease with no deadline would wedge indexing until someone deleted the
+-- database. A stale row is stolen by the next caller.
+CREATE TABLE IF NOT EXISTS code_graph_leases (
+    purpose    TEXT PRIMARY KEY,
+    holder     TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
 );
 "#;
 

@@ -18,24 +18,24 @@
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 24 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
+┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
 │                                                                                                                      ││Refactor the automations store into a…│
-│  Planning the automations cluster: list, editor, triggers, workflows.                                                ││○ 1. extract types                    │
+│── PLAN ──────────────────────────────────────────────────────────────────────────────────────────────────────────────││○ 1. extract types                    │
 │                                                                                                                      ││○ 2. move hooks                       │
-│☰  plan  4/7  ·  Wire the triggers API                                                                                ││○ 3. update 9 imports                 │
+│  Planning the automations cluster: list, editor, triggers, workflows.                                                ││○ 3. update 9 imports                 │
 │                                                                                                                      ││                                      │
-│── WITNESS ───────────────────────────────────────────────────────────────────────────────────────────────────────────││                                      │
+│☰  plan  4/7  ·  Wire the triggers API                                                                                ││                                      │
 │                                                                                                                      ││                                      │
 │── EXECUTE ───────────────────────────────────────────────────────────────────────────────────────────────────────────││                                      │
 │                                                                                                                      ││                                      │
 │● mcp__fs__read_file apps/app/automations/page.tsx                                                                    ││                                      │
 │  ⎿ 312 lines                                                                                                     42ms││                                      │
-│                                                                                                                      │└────────────────────── /plan reads it ┘
-│☰  plan  5/7  ·  Workflows canvas                                                                                     │┌ PROOF ✓ proved ──────────────────────┐
-│                                                                                                                      ││a test fails without this change and  │
-│⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files                        ││passes with it                        │
-│                                                                                                                      ││apps/app/automations/triggers.test.ts │
-└─────────────────────────────────────────── ↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · /plan ┘└──────────────────────────────────────┘
+│                                                                                                                      ││                                      │
+│☰  plan  5/7  ·  Workflows canvas                                                                                     ││                                      │
+│                                                                                                                      ││                                      │
+│⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files                        ││                                      │
+│                                                                                                                      ││                                      │
+└─────────────────────────────────────────── ↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · /plan ┘└────────────────────── /plan reads it ┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify

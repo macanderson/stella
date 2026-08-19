@@ -106,12 +106,11 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
     }
 }
 
-/// Run a one-shot prompt. [`PipelineChoice`](crate::wrapper_plugin::PipelineChoice)
-/// selects which wrapper runs over the turn. `test_command`, when given, arms
-/// the pipeline's deterministic verification ladder (the fail→pass flip
-/// oracle); without it, verification falls back to the model verifier on every
-/// iteration. `keep_witness` promotes an authored witness into the working tree
-/// instead of letting it die with the candidate workspace.
+/// Run a one-shot prompt. [`PipelineChoice`](crate::wrapper_plugin::PipelineChoice) selects which
+/// wrapper runs over the turn (`Raw` by default, #3381). `test_command`, when given, arms the
+/// pipeline's deterministic verification ladder (the fail→pass flip oracle); without it,
+/// verification falls back to the model verifier on every iteration. `keep_witness` promotes an
+/// authored witness into the working tree instead of letting it die with the candidate workspace.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_one_shot(
     cfg: &Config,
@@ -126,6 +125,7 @@ pub async fn run_one_shot(
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
     preflight_durable_stream(format)?;
+    // #3381 made Raw the default, so this now admits the common no-flag `stella run` case too.
     crate::enterprise_telemetry::authorize_one_shot(!pipeline.is_raw())?;
     if pipeline.is_classic() {
         run_pipeline_one_shot(
@@ -1694,7 +1694,7 @@ pub(crate) async fn run_turn(
     // boundary and emitted *before* the close below: these are the turn's own
     // events and a consumer folding the stream must see them inside the turn
     // they describe. See `crate::turn_files` for why a measurement, not a hook.
-    crate::turn_files::emit_shared_tree_changes(cfg, &tx);
+    crate::turn_files::emit_shared_tree_changes(cfg, &tx, execution.as_ref());
     // This path owns its run — one raw engine turn, no pipeline above it — so
     // it owes the run's terminator (#3379). The engine ends the turn with
     // `TurnComplete` and deliberately says nothing about the run, and every

@@ -12,6 +12,14 @@ use crate::grid;
 use crate::html;
 use crate::model::*;
 use crate::word;
+use unicode_width::UnicodeWidthStr;
+
+fn plain_span(text: &str) -> word::Span {
+    word::Span {
+        text: text.to_string(),
+        changed: false,
+    }
+}
 
 fn output(lines: &[&str]) -> Output {
     Output {
@@ -209,6 +217,39 @@ fn acceptance_toggling_a_fold_shifts_zero_columns() {
     assert_eq!(differing, vec![('▸', '▾')]);
 }
 
+/// An expanded turn's own content stands in for the fold affordance, so its
+/// header carries no marker; a collapsed turn's header is the only thing on
+/// screen and does carry one.
+#[test]
+fn a_turns_own_header_shows_a_fold_marker_only_when_collapsed() {
+    let run = run_with(vec![step(bash("ls", &["a"], Status::Ok), 0)]);
+    let turn = NodeId::Turn(0);
+
+    let mut open = FoldState::new();
+    open.open(turn);
+    let open_header = grid::to_plain(&grid::render(&run, &open, 100))
+        .lines()
+        .next()
+        .expect("turn frame top")
+        .to_string();
+    assert!(
+        !open_header.contains('▸') && !open_header.contains('▾'),
+        "an expanded turn header carried a fold marker: {open_header:?}"
+    );
+
+    let mut closed = FoldState::new();
+    closed.close(turn);
+    let closed_header = grid::to_plain(&grid::render(&run, &closed, 100))
+        .lines()
+        .next()
+        .expect("turn frame top")
+        .to_string();
+    assert!(
+        closed_header.contains('▸'),
+        "a collapsed turn header lost its fold marker: {closed_header:?}"
+    );
+}
+
 /// A failed step remains expanded after the run completes — the status pins it,
 /// so neither a zoom preset nor an explicit collapse closes it.
 #[test]
@@ -329,11 +370,45 @@ fn collapsing_a_parent_preserves_child_fold_state() {
 
 #[test]
 fn the_output_fold_control_has_something_behind_it() {
-    let out = output(&["1", "2", "3", "4", "5", "6"]);
+    // Nine lines: past `PREVIEW_LINES` but short of `TAIL_FOLD_THRESHOLD`, so
+    // this is the head-only fold. It used to be six, which was past the old
+    // three-line head — the same shape, restated against the shared preview
+    // budget the deck also uses now (#3644).
+    let out = output(&["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
     let fold = digest::fold_output(&out, "cmd");
-    assert_eq!(fold.head.len(), digest::HEAD_LINES);
+    assert_eq!(fold.head.len(), digest::PREVIEW_LINES);
+    assert!(fold.tail.is_empty(), "a short fold keeps no tail");
     assert_eq!(fold.hidden, 3);
     assert_eq!(fold.more_label(), "▸ 3 more lines");
+}
+
+/// The invariant `PREVIEW_LINES` exists to state: **however** an output folds,
+/// a reader sees the same number of lines of it.
+///
+/// Before this, the head-only fold and the head…tail fold showed different
+/// totals (three against five), and the Command Deck showed a third number
+/// again (six) from its own constant — so "how much of this tool's output do I
+/// get" depended on both which surface you opened and how long the output
+/// happened to be. `crates/stella-tui/src/render/tests/tool_output.rs` is the other half
+/// of this: the same assertion made against the deck's renderer.
+#[test]
+fn every_fold_shows_the_same_number_of_lines_whatever_its_shape() {
+    for total in 0..40usize {
+        let lines: Vec<String> = (0..total).map(|i| format!("line {i}")).collect();
+        let out = Output { lines, clipped: 0 };
+        let fold = digest::fold_output(&out, "cmd");
+        let shown = fold.head.len() + fold.tail.len();
+        assert_eq!(
+            shown,
+            total.min(digest::PREVIEW_LINES),
+            "a {total}-line output shows {shown} lines, not the shared preview budget"
+        );
+        assert_eq!(
+            fold.hidden,
+            total - shown,
+            "a {total}-line output must account for every line it does not show"
+        );
+    }
 }
 
 #[test]
@@ -554,6 +629,57 @@ fn speculation_renders_as_a_badge_not_prose() {
     assert!(chips.iter().any(|c| c.text == "⚡ spec"));
 }
 
+/// A step is one call; the token rollup is a turn's job. Per-step chips carry
+/// only the step's own cost, never a token count or a cache indicator.
+#[test]
+fn a_step_digest_shows_cost_but_never_a_token_count() {
+    let chips = digest::step_chips(&step(bash("a", &[], Status::Ok), 0));
+    assert!(
+        chips.iter().any(|c| c.text == "$0.0008"),
+        "expected the step's own cost chip, got {chips:?}"
+    );
+    assert!(
+        chips.iter().all(|c| !c.text.contains('→')),
+        "a step chip carried a token rollup: {chips:?}"
+    );
+    assert!(
+        chips.iter().all(|c| c.text != "cache"),
+        "a step chip carried a cache indicator: {chips:?}"
+    );
+}
+
+#[test]
+fn a_turn_digest_carries_one_arrow_joined_token_chip_and_no_cache_chip() {
+    let run = run_with(vec![
+        step(bash("a", &[], Status::Ok), 0),
+        step(bash("b", &[], Status::Ok), 1),
+    ]);
+    let dig = digest::turn_digest(&run.turns[0], 64, digest::ChipStyle::Tight);
+    assert!(
+        dig.chips.iter().any(|c| c.text == "14.0k→68"),
+        "expected a tight arrow-joined token chip, got {:?}",
+        dig.chips
+    );
+    assert!(
+        dig.chips.iter().all(|c| c.text != "cache"),
+        "a turn chip carried a cache indicator: {:?}",
+        dig.chips
+    );
+}
+
+/// The web surface spends a whole chip pill on the same rollup the grid packs
+/// tight — same numbers, roomier punctuation.
+#[test]
+fn the_roomy_chip_style_spaces_the_arrow_and_labels_the_unit() {
+    let run = run_with(vec![step(bash("a", &[], Status::Ok), 0)]);
+    let dig = digest::turn_digest(&run.turns[0], 64, digest::ChipStyle::Roomy);
+    assert!(
+        dig.chips.iter().any(|c| c.text == "7.0k → 34 tok"),
+        "expected a roomy, unit-labelled token chip, got {:?}",
+        dig.chips
+    );
+}
+
 #[test]
 fn a_digest_is_a_summary_not_truncated_content() {
     let call = bash(
@@ -688,4 +814,160 @@ fn the_model_round_trips_through_serde_byte_for_byte() {
     let back: Run = serde_json::from_str(&json).unwrap();
     assert_eq!(run, back);
     assert_eq!(json, serde_json::to_string(&back).unwrap());
+}
+
+/// A minified line is one line, and nothing upstream bounds how many tokens it
+/// holds: the token LCS over a 60,000-character pair is 3.6 billion `u32`
+/// cells, about 14 GB. Over [`word::LCS_CELL_CAP`] the pair degrades to the
+/// plain spans a too-dissimilar pair returns, instantly. Witness for #3739.
+#[test]
+fn a_very_long_line_pair_degrades_instead_of_allocating_the_table() {
+    let old = "{\"k\":1},".repeat(7_500);
+    let new = format!("{old}{{\"k\":2}}");
+    assert!(word::tokenize(&old).len() > 50_000, "input is not dense");
+
+    let started = std::time::Instant::now();
+    let (old_spans, new_spans) = word::highlight(&old, &new);
+    let elapsed = started.elapsed();
+
+    assert_eq!(old_spans, vec![plain_span(&old)]);
+    assert_eq!(new_spans, vec![plain_span(&new)]);
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "the guarded path took {elapsed:?} — the quadratic table was built"
+    );
+}
+
+/// The same hazard through the character-level re-diff: one 60,000-character
+/// *token* is a single changed run, so the token LCS is 1x1 and passes, and it
+/// is [`word::refine_short_runs`]'s per-character table that would allocate.
+#[test]
+fn a_very_long_single_token_change_never_reaches_the_character_table() {
+    let old = "x".repeat(60_000);
+    let new = format!("{old}y");
+    assert_eq!(word::tokenize(&old).len(), 1, "input is not one token");
+
+    let started = std::time::Instant::now();
+    let (old_spans, new_spans) = word::highlight(&old, &new);
+    let elapsed = started.elapsed();
+
+    assert_eq!(old_spans, vec![plain_span(&old)]);
+    assert_eq!(new_spans, vec![plain_span(&new)]);
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "the guarded path took {elapsed:?} — the character table was built"
+    );
+}
+
+/// A pair just under the cap still gets word granularity: the guard bounds the
+/// pathological line without quietly disabling the feature on a long one.
+#[test]
+fn a_long_line_under_the_cap_still_gets_word_highlights() {
+    let prefix = "a,".repeat(200);
+    let (_, new) = word::highlight(&format!("{prefix}old"), &format!("{prefix}new"));
+    let hot: String = new
+        .iter()
+        .filter(|s| s.changed)
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(hot, "new", "a 400-token line lost its word highlight");
+}
+
+/// A CJK ideograph is one `char` and two terminal columns. Measuring a row in
+/// characters therefore under-counts exactly the text a fixed column cannot
+/// absorb: the fill computed from the undercount is too wide, the row runs past
+/// the grid, and every gutter to the right of it walks. Witness for #3740.
+#[test]
+fn double_width_text_keeps_every_row_inside_the_grid() {
+    const WIDTH: usize = 100;
+    let mut run = run_with(vec![step(
+        edit("src/日本語/データ処理.rs", "a\n", "b\n"),
+        1_000,
+    )]);
+    // Spaced so the wrapper has somewhere to break: an unbroken run of any
+    // script overflows a fixed grid, which is a wrapping limit rather than a
+    // measurement one.
+    run.turns[0].prompt = "日本語 の 警告 を 直して ください ".repeat(6);
+    run.turns[0].answer = Some("警告 は ✅ 全部 消えました ".repeat(6));
+    run.turns[0].prose = vec![Prose {
+        text: "Reading the file first.".to_string(),
+        before_step: 0,
+    }];
+
+    let lines = grid::render(&run, &FoldState::new(), WIDTH);
+
+    let mut saw_wide = false;
+    let mut overruns = Vec::new();
+    for line in &lines {
+        let text: String = line.iter().map(|c| c.text.as_str()).collect();
+        // The oracle is `unicode-width` over the row's own text, never
+        // `grid::line_width`: measuring the renderer with the measure under
+        // test is how this bug stayed invisible: every row it over-fills also
+        // reports itself as fitting.
+        let width = UnicodeWidthStr::width(text.as_str());
+        saw_wide |= width > text.chars().count();
+        assert_eq!(
+            grid::line_width(line),
+            width,
+            "the grid disagrees with the terminal about {text:?}"
+        );
+        // Every offending row, not just the first: the failure this guards
+        // against walks a whole column, and one row out of context reads as a
+        // one-off.
+        if width > WIDTH {
+            overruns.push(format!("{width} cells: {text:?}"));
+        }
+    }
+    assert!(saw_wide, "no double-width text survived to the grid");
+    assert!(
+        overruns.is_empty(),
+        "{} of {} rows overran a {WIDTH}-cell grid:\n{}",
+        overruns.len(),
+        lines.len(),
+        overruns.join("\n")
+    );
+}
+
+/// The turn frame's two rails are one box: a top that reserves fewer cells for
+/// its `─╮` cap than it emits is two cells longer than the bottom it meets.
+#[test]
+fn the_turn_frame_rails_are_the_same_width() {
+    const WIDTH: usize = 100;
+    let run = run_with(vec![step(edit("src/lib.rs", "a\n", "b\n"), 1_000)]);
+    let lines = grid::render(&run, &FoldState::new(), WIDTH);
+    let rail = |corner: char| {
+        lines
+            .iter()
+            .find(|l| l.first().is_some_and(|c| c.text.starts_with(corner)))
+            .map(grid::line_width)
+    };
+    assert_eq!(rail('╭'), Some(WIDTH), "the frame's top rail");
+    assert_eq!(rail('╰'), Some(WIDTH), "the frame's bottom rail");
+}
+
+/// The step digest's chips are flush right, and a double-width object must not
+/// move them: the row occupies the grid's width either way.
+#[test]
+fn a_double_width_object_leaves_the_chip_column_flush_right() {
+    const WIDTH: usize = 100;
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Steps);
+    let widths: Vec<usize> = ["src/lib.rs", "src/日本語/データ処理.rs"]
+        .iter()
+        .map(|path| {
+            let run = run_with(vec![step(edit(path, "a\n", "b\n"), 1_000)]);
+            let lines = grid::render(&run, &state, WIDTH);
+            let row = lines
+                .iter()
+                .find(|l| l.iter().any(|c| c.text.contains("edit_file")))
+                .expect("no step digest row");
+            let text: String = row.iter().map(|c| c.text.as_str()).collect();
+            UnicodeWidthStr::width(text.as_str())
+        })
+        .collect();
+    assert_eq!(
+        widths,
+        vec![WIDTH, WIDTH],
+        "the double-width path moved the right edge of its row"
+    );
 }

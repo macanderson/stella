@@ -17,6 +17,24 @@ name: main-canary
 # reaches people installing from source. It was found by the next contributor's
 # PR going red, which is the expensive way.
 #
+# ── What it costs, and why that is the right trade ───────────────────────────
+#
+# This was ~35s while it only read files. Since #3660 it also runs
+# `cargo check --workspace --all-targets --locked`, which is a couple of
+# minutes warm and longer on a cold cache — the toolchain and Swatinem cache
+# below were already here for lockfile-sync's `cargo metadata`, so the cost is
+# compute, not new machinery.
+#
+# That is worth paying because it runs per *merge*, not per commit, and because
+# the alternative is what actually happened on 2026-08-18: `main` did not
+# compile for 23 minutes, and this workflow ran on the broken commit and
+# reported ok for everything it knew how to ask (#3659, #3660).
+#
+# What it must NOT become is a second `ci.yml`. The canary earns its keep by
+# asking *composition* questions cheaply and reporting by filing an issue. Move
+# the whole gate in here and it becomes a slow duplicate that gets muted, which
+# is the #1464 failure this file exists to avoid.
+#
 # ── Why this is a separate workflow ──────────────────────────────────────────
 #
 # ci.yml runs on `pull_request` and ignores `docs/**`; this must run on the

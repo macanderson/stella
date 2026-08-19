@@ -193,6 +193,16 @@ pub struct StageProgram {
 }
 
 impl StageProgram {
+    /// Assemble a program directly from its resolved parts.
+    ///
+    /// `pub(crate)` because this bypasses [`Wrapper::resolve`]'s own walk:
+    /// [`crate::progressive::ProgressiveResolver`] is today's one caller,
+    /// building the same shape one boundary at a time (#3491) rather than
+    /// from a single [`SignalValues`] snapshot.
+    pub(crate) fn from_parts(variant: String, stages: Vec<StageName>) -> Self {
+        Self { variant, stages }
+    }
+
     /// The variant id this program resolved from — what the store's
     /// `pipeline_variant` column records (#3388), and the join key of every
     /// per-variant comparison.

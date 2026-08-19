@@ -341,6 +341,9 @@ fn circle_positions(n: usize) -> Vec<(f64, f64)> {
 }
 
 #[cfg(test)]
+// The lint is wrong here: these fixtures build with `Type::default()` and
+// then set the few fields the test cares about, which reads better than a
+// full struct literal that lists every field.
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use ratatui::Terminal;

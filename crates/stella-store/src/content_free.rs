@@ -250,7 +250,7 @@ impl EncodedSample {
     /// Build a sample from a JSON encoding, flattening nested object keys.
     pub fn from_json(value: &Value) -> Result<Self> {
         let bytes = serde_json::to_vec(value)
-            .map_err(|err| StoreError(format!("cannot serialize encoder sample: {err}")))?;
+            .map_err(|err| StoreError::serde("cannot serialize encoder sample", err))?;
         let mut keys = BTreeSet::new();
         collect_keys(value, &mut keys);
         Ok(Self { bytes, keys })
@@ -554,7 +554,7 @@ impl ContentFreeEncoder for NativeDrainGuard {
     fn encode_poisoned_sample(&self) -> Result<EncodedSample> {
         let batch = DrainBatch::from_events(&[poisoned_cloud_event()]);
         let value = serde_json::to_value(&batch)
-            .map_err(|err| StoreError(format!("cannot encode drain batch: {err}")))?;
+            .map_err(|err| StoreError::serde("cannot encode drain batch", err))?;
         EncodedSample::from_json(&value)
     }
 }
@@ -700,7 +700,7 @@ impl ContentFreeEncoder for EnterpriseOperationalGuard {
         )?;
         let event = StellaOperationalEventV1::from_finalized_rollup(&context, &rollup)?;
         let value = serde_json::to_value(&event)
-            .map_err(|err| StoreError(format!("cannot encode operational event: {err}")))?;
+            .map_err(|err| StoreError::serde("cannot encode operational event", err))?;
         EncodedSample::from_json(&value)
     }
 }

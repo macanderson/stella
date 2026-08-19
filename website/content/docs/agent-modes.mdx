@@ -1,6 +1,6 @@
 ---
 title: Agent Modes
-description: The ways to drive stella — Command Deck chat, one-shot pipeline runs, judged goal mode, CI monitoring, and parallel fleets — and how to pick between them.
+description: The ways to drive stella — Command Deck chat, one-shot raw or staged-pipeline runs, judged goal mode, CI monitoring, and parallel fleets — and how to pick between them.
 ---
 
 stella has one engine and several ways to drive it. Pick the mode by how much
@@ -23,29 +23,31 @@ engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
     href="/docs/commands/run"
     meta={[
       { label: "Command", value: "stella run \"…\"" },
-      { label: "Verified by", value: "the staged pipeline", mono: false },
-    ]}
-  >
-    Scripts, CI, a single well-defined task.
-  </SpecCard>
-  <SpecCard
-    title="Raw step loop"
-    meta={[
-      { label: "Command", value: "stella run --no-pipeline \"…\"" },
       { label: "Verified by", value: "nothing — the model stops when it decides it is done", mono: false },
     ]}
   >
-    Quick questions and cheap tasks, where a full pipeline costs more than the answer is worth.
+    Scripts, CI, a single well-defined task, quick questions and cheap edits.
+  </SpecCard>
+  <SpecCard
+    title="Staged pipeline run"
+    meta={[
+      { label: "Command", value: "stella run --pipeline classic \"…\"" },
+      { label: "Verified by", value: "the staged pipeline", mono: false },
+    ]}
+  >
+    Opt-in ceremony where the result must be *provably* right — full triage,
+    witness, and the deterministic verify ladder.
   </SpecCard>
   <SpecCard
     title="Goal mode"
     href="/docs/agent-modes#outcome-driven-goal-mode"
     meta={[
       { label: "Command", value: "stella goal \"…\"" },
-      { label: "Verified by", value: "an independent verifier, over staged-pipeline rounds", mono: false },
+      { label: "Verified by", value: "an independent verifier, over raw step-loop rounds", mono: false },
     ]}
   >
-    An outcome, not a task list. `--no-pipeline` makes each round a raw loop.
+    An outcome, not a task list. `--pipeline classic` makes each round a
+    staged pipeline run instead.
   </SpecCard>
   <SpecCard
     title="CI monitor"
@@ -81,8 +83,8 @@ servers. Type to send a prompt; slash commands open tabs and overlays.
 Click a tab below to see what's actually in it. This isn't an embedded
 terminal or a recording — each pane is trimmed straight from the deck's own
 golden render tests (`crates/stella-tui/tests/snapshots/deck/`), the fixtures
-that gate every pull request touching the TUI, so what you're clicking
-through is the deck's real output, not a redrawn approximation of it.
+that gate every TUI pull request. What you click through is the deck's real
+output, not a redrawn approximation.
 
 <CommandDeckExplorer />
 
@@ -101,7 +103,7 @@ The full slash-command set — including `/inspect` and `/context` — is on
     The SETTINGS tab — home of all config, including the
     [engine-config panel](/docs/configuration/agent-engine-config).
   </OptionCard>
-  <OptionCard name="/pipeline">Toggle staged-pipeline turns. On by default.</OptionCard>
+  <OptionCard name="/pipeline">Toggle staged-pipeline turns. Off by default.</OptionCard>
   <OptionCard name="/sessions · /inbox">Every session on this machine; notifications.</OptionCard>
   <OptionCard name="/export">
     Export **this session's** telemetry to a ZIP plus an
@@ -118,21 +120,22 @@ immediately, inline in the session transcript, skipping the queue. A single **Es
 **double-Esc** cancels *and holds* dispatch so what you type next runs first.
 Prefer a plain line-based REPL? `stella --plain` (or `STELLA_PLAIN=1`).
 
-Deck turns run the [staged pipeline](/docs/inference-pipeline) by default;
-`/pipeline` flips to the raw step loop.
+Deck turns run the raw step loop by default; `/pipeline` flips to the
+[staged pipeline](/docs/inference-pipeline).
 
 ## One-shot: `stella run`
 
 The non-interactive workhorse: one prompt in, verified work out, exit code
-back. Defaults to the staged pipeline; `--test-command` arms the
-deterministic fail→pass flip oracle; `--no-pipeline` selects the raw loop.
-Combine with `--output-format json|stream-json` and `--spend-limit` for headless
+back. Defaults to the raw step loop; pass `--pipeline classic` for the
+staged pipeline, where `--test-command` arms the deterministic fail→pass
+flip oracle (refused on the raw default). Combine with
+`--output-format json|stream-json` and `--spend-limit` for headless
 automation — see [`stella run`](/docs/commands/run) and
 [Scripting](/docs/scripting).
 
 ```bash
 stella run "add a --json flag to the export command and update the tests" \
-  --test-command "cargo test -p exporter"
+  --pipeline classic --test-command "cargo test -p exporter"
 ```
 
 ## Outcome-driven: goal mode
@@ -140,8 +143,9 @@ stella run "add a --json flag to the export command and update the tests" \
 `stella goal` doesn't take a task — it takes an **objective**, and works in
 judged rounds until an independent verifier (routed to a different model family
 than the worker whenever possible) confirms the objective is met *from
-evidence*. Each round is a full [staged pipeline](/docs/inference-pipeline)
-run by default (`--no-pipeline` for raw step-loop rounds). Backstops — a
+evidence*. Each round is a raw step-loop turn by default; pass
+`--pipeline classic` to run every round through the full
+[staged pipeline](/docs/inference-pipeline) instead. Backstops — a
 round cap, `--spend-limit`, worker aborts — end the run honestly as "not met"
 rather than optimistically.
 
@@ -165,8 +169,8 @@ named reason.
    progress toward the objective.
 2. **The verifier assesses from evidence.** The verifier is not a passive transcript
    reader — it runs as its own bounded engine turn with read-only access to the
-   same tools the worker used, actively inspecting the evidence the round
-   produced and rejecting claimed-but-unproven success.
+   worker's tools, inspecting the round's evidence and rejecting
+   claimed-but-unproven success.
 3. **Repeat or finish.** If the verifier is not satisfied, another round begins —
    until the verifier confirms or a backstop (round cap, budget, abort) ends the run.
 
@@ -231,15 +235,16 @@ objective.
 
 When the work is many tasks rather than one, [`stella fleet`](/docs/agent-fleets)
 fans a dependency-ordered task DAG out to parallel workers in one shared
-tree — cooperative file claims mean two agents never fight over the same
-file — with `isolation = "isolated"` opting a task into its own git worktree
+tree, where cooperative file claims keep two agents from fighting over the
+same file. `isolation = "isolated"` opts a task into its own git worktree
 on its own branch.
 
 ## Choosing
 
 - **You know the change and want to watch** → the Command Deck.
-- **You know the change and don't need to watch** → `stella run` (add
-  `--test-command` for the strongest verification).
+- **You know the change and don't need to watch** → `stella run` (the raw
+  default is fastest; add `--pipeline classic --test-command` for the
+  strongest verification).
 - **You know the outcome but not the steps** → `stella goal`.
 - **CI is red and you want it green** → `stella monitor`.
 - **You have a backlog** → `stella fleet --plan`.

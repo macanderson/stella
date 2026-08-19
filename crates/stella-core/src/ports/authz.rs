@@ -12,7 +12,7 @@
 //! through the same executor, and without a name they arrive
 //! indistinguishable. Any RBAC system worth the name needs that distinction,
 //! and it must be able to supply its own rules rather than convince us to
-//! hardcode them — invariant #1, ports not concretions.
+//! hardcode them — invariant #1, ports not direct dependencies.
 //!
 //! So: the engine defines [`Principal`] (who), consumes
 //! [`stella_protocol::ToolContract`] (what, and how dangerous), and delegates

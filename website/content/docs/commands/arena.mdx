@@ -13,7 +13,7 @@ This command exists for **benchmarking stella, not for using it**. If you want t
 
 ```bash
 stella arena --task-dir <DIR> --journal <FILE> --state-dir <DIR> [--resume]
-             [--no-pipeline] [--test-command <CMD>]
+             [--no-pipeline] [--pipeline <VARIANT>] [--test-command <CMD>]
 ```
 
 ## What it does
@@ -57,14 +57,37 @@ arena-bench invokes an agent with `--task-dir`/`--journal`/`--state-dir`/`[--res
     declares what was recovered, and continues the same session.
   </OptionCard>
   <OptionCard name="--no-pipeline">
-    Use the raw step-loop instead of the staged pipeline. The
-    [pipeline](/docs/inference-pipeline) is the default here exactly as it is for `stella run`.
+    Deprecated, does nothing. Every episode already runs the raw step-loop
+    (see below) — this flag named that fallback before #3381 flipped the
+    default and is kept parseable only so no runner script breaks.
+  </OptionCard>
+  <OptionCard name="--pipeline <VARIANT>">
+    Run every episode under a wrapper, by the `[wrapper] id` its manifest
+    declares (`stella plugin list`). `classic` names the built-in staged
+    pipeline; omitted, the raw step-loop runs with nothing over it — the
+    default since #3381. The same flag [`stella run`](/docs/commands/run)
+    takes, so a panel can measure either driver.
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
-    Test command for the pipeline's deterministic verify ladder, e.g.
-    `--test-command "cargo test -p my-crate"`.
+    Test command for the staged pipeline's deterministic verify ladder, e.g.
+    `--test-command "cargo test -p my-crate"`. It belongs to that ladder, so
+    pair it with `--pipeline classic` — passed against the raw default it is
+    **refused before the episode starts**, with an error naming
+    `--pipeline classic`, rather than silently arming no oracle.
   </OptionCard>
 </CardGrid>
+
+<Callout type="warn">
+**An arena episode measures the raw step-loop unless you say otherwise**,
+since [#3381](https://github.com/macanderson/stella/issues/3381) flipped
+`PipelineChoice::resolve`'s no-flag default from the staged pipeline to raw.
+Pass `--pipeline classic` to measure the staged pipeline, or
+`--pipeline <variant>` for an installed wrapper plugin; `--no-pipeline` was
+always a synonym for the same no-flag default and stayed one across the flip.
+A panel run against this binary before and after #3381 **without** that flag
+is comparing the staged pipeline to the raw loop, not two builds of the same
+thing; name that comparison rather than reporting it as a plain regression.
+</Callout>
 
 ## Why the journal is written before the event is admitted
 
@@ -120,6 +143,6 @@ runner preserves between episodes (and wipes for the `amnesic` arm). A fixture t
 
 ## See also
 
-- [Inference pipeline](/docs/inference-pipeline) — the staged path `--no-pipeline` opts out of.
+- [Inference pipeline](/docs/inference-pipeline) — the staged path an episode runs only when `--pipeline classic` asks for it, since #3381 flipped the no-flag default to the raw loop.
 - [`stella run`](/docs/commands/run) — the ordinary one-shot path this adapter drives underneath.
 - [arena-bench](https://github.com/macanderson/arena-bench) — the harness that invokes this command.

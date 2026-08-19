@@ -147,11 +147,12 @@ pub trait HostCapabilities: Send + Sync {
 /// [`HostCall::RunTest`] answers [`HostCallRefusal::Unsupported`] from every
 /// host, because nothing in this tree performs it at all (#3580).
 ///
-/// `stella-cli` assembles one with a context plane on the `stella run` path
-/// (`src/wrapper_plugin.rs::bind_installed`, #3561). It installs **no**
-/// child-turn plane, so a plugin asking for one there is answered
-/// `Unavailable` — a declared gap the plugin is told about, tracked as #3576 —
-/// and the other two drivers §6 asks for assemble nothing yet (#3551).
+/// `stella-cli` assembles one on the `stella run` path
+/// (`src/wrapper_plugin.rs::ResolvedWrapper::serving`) with both planes: a
+/// context plane (#3561) and a child-turn plane over the session's own
+/// sub-agent dispatcher (#3576). A driver that installs neither still answers
+/// `Unavailable` rather than falling silent, which is what the other two
+/// drivers §6 asks for do today, having no assembly at all yet (#3551).
 pub struct HostPlanes {
     recall: Option<Box<dyn RecallHost>>,
     max_frames: u32,

@@ -320,8 +320,9 @@ fn analyze_reconciles_the_requested_task_set() {
 #[test]
 fn a_corrupt_reward_file_names_itself() {
     let dir = tempfile::tempdir().expect("trial dir");
+    let found = crate::artifacts::read_trial(dir.path());
     assert_eq!(
-        read_reward(dir.path()),
+        (found.reward, found.reward_problem),
         (None, None),
         "missing file is quiet"
     );
@@ -329,13 +330,16 @@ fn a_corrupt_reward_file_names_itself() {
     let verifier = dir.path().join("verifier");
     std::fs::create_dir_all(&verifier).expect("mkdir");
     std::fs::write(verifier.join("reward.txt"), "not-a-number").expect("write");
-    let (reward, problem) = read_reward(dir.path());
-    assert_eq!(reward, None);
-    let problem = problem.expect("a corrupt reward must explain itself");
+    let found = crate::artifacts::read_trial(dir.path());
+    assert_eq!(found.reward, None);
+    let problem = found
+        .reward_problem
+        .expect("a corrupt reward must explain itself");
     assert!(problem.contains("unreadable reward.txt"), "{problem}");
 
     std::fs::write(verifier.join("reward.txt"), "1.0\n").expect("write");
-    assert_eq!(read_reward(dir.path()), (Some(1.0), None));
+    let found = crate::artifacts::read_trial(dir.path());
+    assert_eq!((found.reward, found.reward_problem), (Some(1.0), None));
 }
 
 /// #873: the pass floor is a SECOND gate, independent of loop health. A run

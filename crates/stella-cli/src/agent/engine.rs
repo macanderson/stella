@@ -259,6 +259,17 @@ pub(crate) fn subsession_engine_config_for(cfg: &Config) -> EngineConfig {
 /// `"chat"` turn is conversational and keeps the ungated shape. Keyed on the
 /// same `kind` string `begin_execution` records, so the gate and the
 /// telemetry cannot disagree about which mode a turn ran in.
+///
+/// The only caller is `stella run`'s raw one-shot path (`agent.rs`), so
+/// #3381's default flip (every door raw by default) widened this gate's
+/// *population* — a plain `stella run` with no flags now reaches it, not only
+/// an explicit `--no-pipeline` — without changing the gate's own logic.
+/// `goal`'s and `fleet`'s raw rounds build their `EngineConfig` from
+/// [`engine_config_for`] directly (`agent/goal.rs`, `fleet_cmd.rs`) and never
+/// call this function at all, on either side of the flip — the `"goal"`/
+/// `"fleet"` `kind` strings `begin_execution` records for those doors would
+/// fail the `== "run"` match here even if they did, so extending the gate to
+/// them is a distinct, undone change, not a consequence of this one.
 pub(crate) fn engine_config_for_kind(cfg: &Config, kind: &str) -> EngineConfig {
     let mut engine = engine_config_for(cfg);
     engine.completion_gate = kind == "run";

@@ -263,7 +263,7 @@
 .tx-diff tr.add td.sign { color: var(--tx-ok); }
 /* The second, stronger tint: the changed tokens inside an already-tinted row.
    `crates/stella-transcript/src/word.rs` decides which ones, and
-   `lib/word-diff.ts` is the port it is checked against. */
+   `lib/word-highlight.ts` is the port it is checked against. */
 .tx-dw { background: var(--tx-del-word); padding: 0 1px; }
 .tx-aw { background: var(--tx-add-word); padding: 0 1px; }
 

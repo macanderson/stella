@@ -3,7 +3,7 @@
  * exchange behind the inspector drawer.
  *
  * Pure functions over the wire shapes, in their own module for the same reason
- * `diff-view.ts` and `word-diff.ts` are: so `scripts/check-transcript-view.mjs`
+ * `diff-view.ts` and `word-highlight.ts` are: so `scripts/check-transcript-view.mjs`
  * can drive them from a bare checkout with no Next.js, no DOM and no
  * `npm install`. A page this dense earns tests, and the parts worth testing are
  * the decisions — which rows survive a filter, where a JSON fold ends — not the

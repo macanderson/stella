@@ -15,7 +15,7 @@ file and line.
 - [**Stella: A Defensible Technology Position**](./stella-defensible-position.md)
   — the capstone analysis. Identifies seven architectural invariants that make
   Stella's design expensive to replicate and shows why their *combination* —
-  not any single property — constitutes the moat. Covers ports-not-concretions,
+  not any single property — constitutes the moat. Covers ports-not-direct-dependencies,
   no-I/O-in-the-engine, the witness-test contract, BYOK + no-phone-home,
   prompt-cache-native memory, budget enforcement at safe boundaries, and the
   Context Graph Protocol.

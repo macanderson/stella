@@ -2,24 +2,69 @@
 # Generated — re-bless with:
 #   BLESS=1 cargo test -p stella-transcript --test word_highlight_matrix
 # The TypeScript port must reproduce this byte for byte:
-#   node arenabench/ui/scripts/check-word-diff-parity.mjs
-# Spans: |unchanged| and [changed]. `\n` `\|` `\[` `\]` are escaped.
-case=0 old=|same line| new=|same line|
-case=1 old=|\\setlength{\\parindent}{|[15pt]|}| new=|\\setlength{\\parindent}{|[12pt]|}|
-case=2 old=|{a}{|[b]|}| new=|{a}{|[c]|}|
-case=3 old=|x = |[1] new=|x = |[2]
-case=4 old=|--fast| new=|--fast|[2]
-case=5 old=|prefix_|[alph]|a| new=|prefix_|[bet]|a|
-case=6 old=|let x = 1;| new=|let x = 1;|[ // note]
-case=7 old=|let x = 1;|[ // note] new=|let x = 1;|
-case=8 old=|    indented| new=|    |[    ]|indented|
-case=9 old=|completely different| new=|nothing alike here|
-case=10 old=|keep this part the same but change the |[tail] new=|keep this part the same but change the |[end]
-case=11 old=|a |[1]| b |[2]| c| new=|a |[9]| b |[8]| c|
-case=12 old=|| new=|added|
-case=13 old=|removed| new=||
-case=14 old=|café ün|[ï]|code| new=|café ün|[i]|code|
-case=15 old=|status: |[✅]| done| new=|status: |[❌]| done|
-case=16 old=|a |[🎉]| b| new=|a |[🎈]| b|
-case=17 old=|{"model": "claude-opus-5", "effort": "|[high]|"}| new=|{"model": "claude-opus-5", "effort": "|[medium]|"}|
-case=18 old=|pub fn resolve(&self, id: &|[str]|) -> Option<Pin> {| new=|pub fn resolve(&self, id: &|[TaskId]|) -> Option<Pin> {|
+#   node arenabench/ui/scripts/check-word-highlight-parity.mjs
+# Inputs are not echoed; `cases()`/`blocks()` are mirrored in the port.
+pair=identical old=plain("let x = 1;")
+pair=identical new=plain("let x = 1;")
+pair=both-empty old=plain("")
+pair=both-empty new=plain("")
+pair=latex-parindent old=plain("\\setlength{\\parindent}{"),changed("15pt"),plain("}")
+pair=latex-parindent new=plain("\\setlength{\\parindent}{"),changed("12pt"),plain("}")
+pair=one-word-of-many old=plain("the quick "),changed("brown"),plain(" fox")
+pair=one-word-of-many new=plain("the quick "),changed("lazy"),plain(" fox")
+pair=two-separate-runs old=plain("a "),changed("b"),plain(" c d e "),changed("f"),plain(" g")
+pair=two-separate-runs new=plain("a "),changed("X"),plain(" c d e "),changed("Y"),plain(" g")
+pair=json-value old=plain("  \"retries\": "),changed("3"),plain(",")
+pair=json-value new=plain("  \"retries\": "),changed("5"),plain(",")
+pair=insertion-only old=plain("fn main() {}")
+pair=insertion-only new=changed("pub "),plain("fn main() {}")
+pair=deletion-only old=changed("pub "),plain("fn main() {}")
+pair=deletion-only new=plain("fn main() {}")
+pair=short-run-length-rule old=plain("value = 1")
+pair=short-run-length-rule new=plain("value = 1"),changed("2")
+pair=shares-affix-suffix old=plain("--fast")
+pair=shares-affix-suffix new=plain("--fast"),changed("2")
+pair=shares-affix-prefix old=plain("prefix_"),changed("old")
+pair=shares-affix-prefix new=plain("prefix_"),changed("new")
+pair=affix-too-short old=plain("ab")
+pair=affix-too-short new=plain("cd")
+pair=reindent old=plain("    body();")
+pair=reindent new=plain("    "),changed("    "),plain("body();")
+pair=brace-run old=plain("{\"a\":{\"b\":"),changed("1"),plain("}}")
+pair=brace-run new=plain("{\"a\":{\"b\":"),changed("2"),plain("}}")
+pair=wholly-different old=plain("alpha beta gamma")
+pair=wholly-different new=plain("one two three four")
+pair=empty-against-text old=plain("")
+pair=empty-against-text new=plain("something new")
+pair=text-against-empty old=plain("something old")
+pair=text-against-empty new=plain("")
+pair=cjk old=plain("設定 = 1"),changed("5")
+pair=cjk new=plain("設定 = 1"),changed("2")
+pair=emoji-run old=plain("status: "),changed("🟢"),plain(" ok")
+pair=emoji-run new=plain("status: "),changed("🔴"),plain(" ok")
+pair=combining old=plain("café = "),changed("1")
+pair=combining new=plain("café = "),changed("2")
+pair=token-cap-exceeded old=plain("tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15 tok16 tok17 tok18 tok19 tok20 tok21 tok22 tok23 tok24 tok25 tok26 tok27 tok28 tok29 tok30 tok31 tok32 tok33 tok34 tok35 tok36 tok37 tok38 tok39 tok40 tok41 tok42 tok43 tok44 tok45 tok46 tok47 tok48 tok49 tok50 tok51 tok52 tok53 tok54 tok55 tok56 tok57 tok58 tok59 tok60 tok61 tok62 tok63 tok64 tok65 tok66 tok67 tok68 tok69 tok70 tok71 tok72 tok73 tok74 tok75 tok76 tok77 tok78 tok79 tok80 tok81 tok82 tok83 tok84 tok85 tok86 tok87 tok88 tok89 tok90 tok91 tok92 tok93 tok94 tok95 tok96 tok97 tok98 tok99 tok100 tok101 tok102 tok103 tok104 tok105 tok106 tok107 tok108 tok109 tok110 tok111 tok112 tok113 tok114 tok115 tok116 tok117 tok118 tok119 tok120 tok121 tok122 tok123 tok124 tok125 tok126 tok127 tok128 tok129 tok130 tok131 tok132 tok133 tok134 tok135 tok136 tok137 tok138 tok139 tok140 tok141 tok142 tok143 tok144 tok145 tok146 tok147 tok148 tok149 tok150 tok151 tok152 tok153 tok154 tok155 tok156 tok157 tok158 tok159 tok160 tok161 tok162 tok163 tok164 tok165 tok166 tok167 tok168 tok169 tok170 tok171 tok172 tok173 tok174 tok175 tok176 tok177 tok178 tok179 tok180 tok181 tok182 tok183 tok184 tok185 tok186 tok187 tok188 tok189 tok190 tok191 tok192 tok193 tok194 tok195 tok196 tok197 tok198 tok199 tok200 tok201 tok202 tok203 tok204 tok205 tok206 tok207 tok208 tok209 tok210 tok211 tok212 tok213 tok214 tok215 tok216 tok217 tok218 tok219 tok220 tok221 tok222 tok223 tok224 tok225 tok226 tok227 tok228 tok229 tok230 tok231 tok232 tok233 tok234 tok235 tok236 tok237 tok238 tok239 tok240 tok241 tok242 tok243 tok244 tok245 tok246 tok247 tok248 tok249 tok250 tok251 tok252 tok253 tok254 tok255 tok256 tok257 tok258 tok259 tok260 tok261 tok262 tok263 tok264 tok265 tok266 tok267 tok268 tok269 tok270 tok271 tok272 tok273 tok274 tok275 tok276 tok277 tok278 tok279 tok280 tok281 tok282 tok283 tok284 tok285 tok286 tok287 tok288 tok289 tok290 tok291 tok292 tok293 tok294 tok295 tok296 tok297 tok298 tok299 tok300 tok301 tok302 tok303 tok304 tok305 tok306 tok307 tok308 tok309 tok310 tok311 tok312 tok313 tok314 tok315 tok316 tok317 tok318 tok319 tok320 tok321 tok322 tok323 tok324 tok325 tok326 tok327 tok328 tok329 tok330 tok331 tok332 tok333 tok334 tok335 tok336 tok337 tok338 tok339 tok340 tok341 tok342 tok343 tok344 tok345 tok346 tok347 tok348 tok349 tok350 tok351 tok352 tok353 tok354 tok355 tok356 tok357 tok358 tok359 tok360 tok361 tok362 tok363 tok364 tok365 tok366 tok367 tok368 tok369 tok370 tok371 tok372 tok373 tok374 tok375 tok376 tok377 tok378 tok379 tok380 tok381 tok382 tok383 tok384 tok385 tok386 tok387 tok388 tok389 tok390 tok391 tok392 tok393 tok394 tok395 tok396 tok397 tok398 tok399 tok400 tok401 tok402 tok403 tok404 tok405 tok406 tok407 tok408 tok409 tok410 tok411 tok412 tok413 tok414 tok415 tok416 tok417 tok418 tok419 tok420 tok421 tok422 tok423 tok424 tok425 tok426 tok427 tok428 tok429 tok430 tok431 tok432 tok433 tok434 tok435 tok436 tok437 tok438 tok439 tok440 tok441 tok442 tok443 tok444 tok445 tok446 tok447 tok448 tok449 tok450 tok451 tok452 tok453 tok454 tok455 tok456 tok457 tok458 tok459 tok460 tok461 tok462 tok463 tok464 tok465 tok466 tok467 tok468 tok469 tok470 tok471 tok472 tok473 tok474 tok475 tok476 tok477 tok478 tok479 tok480 tok481 tok482 tok483 tok484 tok485 tok486 tok487 tok488 tok489 tok490 tok491 tok492 tok493 tok494 tok495 tok496 tok497 tok498 tok499 tok500 tok501 tok502 tok503 tok504 tok505 tok506 tok507 tok508 tok509 tok510 tok511 tok512 tok513 tok514 tok515 tok516 tok517 tok518 tok519 tok520 tok521 tok522 tok523 tok524 tok525 tok526 tok527 tok528 tok529 tok530 tok531 tok532 tok533 tok534 tok535 tok536 tok537 tok538 tok539 tok540 tok541 tok542 tok543 tok544 tok545 tok546 tok547 tok548 tok549 tok550 tok551 tok552 tok553 tok554 tok555 tok556 tok557 tok558 tok559 tok560 tok561 tok562 tok563 tok564 tok565 tok566 tok567 tok568 tok569 tok570 tok571 tok572 tok573 tok574 tok575 tok576 tok577 tok578 tok579 tok580 tok581 tok582 tok583 tok584 tok585 tok586 tok587 tok588 tok589 tok590 tok591 tok592 tok593 tok594 tok595 tok596 tok597 tok598 tok599")
+pair=token-cap-exceeded new=plain("tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15 tok16 tok17 tok18 tok19 tok20 tok21 tok22 tok23 tok24 tok25 tok26 tok27 tok28 tok29 tok30 tok31 tok32 tok33 tok34 tok35 tok36 tok37 tok38 tok39 tok40 tok41 tok42 tok43 tok44 tok45 tok46 tok47 tok48 tok49 tok50 tok51 tok52 tok53 tok54 tok55 tok56 tok57 tok58 tok59 tok60 tok61 tok62 tok63 tok64 tok65 tok66 tok67 tok68 tok69 tok70 tok71 tok72 tok73 tok74 tok75 tok76 tok77 tok78 tok79 tok80 tok81 tok82 tok83 tok84 tok85 tok86 tok87 tok88 tok89 tok90 tok91 tok92 tok93 tok94 tok95 tok96 tok97 tok98 tok99 tok100 tok101 tok102 tok103 tok104 tok105 tok106 tok107 tok108 tok109 tok110 tok111 tok112 tok113 tok114 tok115 tok116 tok117 tok118 tok119 tok120 tok121 tok122 tok123 tok124 tok125 tok126 tok127 tok128 tok129 tok130 tok131 tok132 tok133 tok134 tok135 tok136 tok137 tok138 tok139 tok140 tok141 tok142 tok143 tok144 tok145 tok146 tok147 tok148 tok149 tok150 tok151 tok152 tok153 tok154 tok155 tok156 tok157 tok158 tok159 tok160 tok161 tok162 tok163 tok164 tok165 tok166 tok167 tok168 tok169 tok170 tok171 tok172 tok173 tok174 tok175 tok176 tok177 tok178 tok179 tok180 tok181 tok182 tok183 tok184 tok185 tok186 tok187 tok188 tok189 tok190 tok191 tok192 tok193 tok194 tok195 tok196 tok197 tok198 tok199 tok200 tok201 tok202 tok203 tok204 tok205 tok206 tok207 tok208 tok209 tok210 tok211 tok212 tok213 tok214 tok215 tok216 tok217 tok218 tok219 tok220 tok221 tok222 tok223 tok224 tok225 tok226 tok227 tok228 tok229 tok230 tok231 tok232 tok233 tok234 tok235 tok236 tok237 tok238 tok239 tok240 tok241 tok242 tok243 tok244 tok245 tok246 tok247 tok248 tok249 tok250 tok251 tok252 tok253 tok254 tok255 tok256 tok257 tok258 tok259 tok260 tok261 tok262 tok263 tok264 tok265 tok266 tok267 tok268 tok269 tok270 tok271 tok272 tok273 tok274 tok275 tok276 tok277 tok278 tok279 tok280 tok281 tok282 tok283 tok284 tok285 tok286 tok287 tok288 tok289 tok290 tok291 tok292 tok293 tok294 tok295 tok296 tok297 tok298 tok299 tok300 tok301 tok302 tok303 tok304 tok305 tok306 tok307 tok308 tok309 tok310 tok311 tok312 tok313 tok314 tok315 tok316 tok317 tok318 tok319 tok320 tok321 tok322 tok323 tok324 tok325 tok326 tok327 tok328 tok329 tok330 tok331 tok332 tok333 tok334 tok335 tok336 tok337 tok338 tok339 tok340 tok341 tok342 tok343 tok344 tok345 tok346 tok347 tok348 tok349 tok350 tok351 tok352 tok353 tok354 tok355 tok356 tok357 tok358 tok359 tok360 tok361 tok362 tok363 tok364 tok365 tok366 tok367 tok368 tok369 tok370 tok371 tok372 tok373 tok374 tok375 tok376 tok377 tok378 tok379 tok380 tok381 tok382 tok383 tok384 tok385 tok386 tok387 tok388 tok389 tok390 tok391 tok392 tok393 tok394 tok395 tok396 tok397 tok398 tok399 tok400 tok401 tok402 tok403 tok404 tok405 tok406 tok407 tok408 tok409 tok410 tok411 tok412 tok413 tok414 tok415 tok416 tok417 tok418 tok419 tok420 tok421 tok422 tok423 tok424 tok425 tok426 tok427 tok428 tok429 tok430 tok431 tok432 tok433 tok434 tok435 tok436 tok437 tok438 tok439 tok440 tok441 tok442 tok443 tok444 tok445 tok446 tok447 tok448 tok449 tok450 tok451 tok452 tok453 tok454 tok455 tok456 tok457 tok458 tok459 tok460 tok461 tok462 tok463 tok464 tok465 tok466 tok467 tok468 tok469 tok470 tok471 tok472 tok473 tok474 tok475 tok476 tok477 tok478 tok479 tok480 tok481 tok482 tok483 tok484 tok485 tok486 tok487 tok488 tok489 tok490 tok491 tok492 tok493 tok494 tok495 tok496 tok497 tok498 tok499 tok500 tok501 tok502 tok503 tok504 tok505 tok506 tok507 tok508 tok509 tok510 tok511 tok512 tok513 tok514 tok515 tok516 tok517 tok518 tok519 tok520 tok521 tok522 tok523 tok524 tok525 tok526 tok527 tok528 tok529 tok530 tok531 tok532 tok533 tok534 tok535 tok536 tok537 tok538 tok539 tok540 tok541 tok542 tok543 tok544 tok545 tok546 tok547 tok548 tok549 tok550 tok551 tok552 tok553 tok554 tok555 tok556 tok557 tok558 tok559 tok560 tok561 tok562 tok563 tok564 tok565 tok566 tok567 tok568 tok569 tok570 tok571 tok572 tok573 tok574 tok575 tok576 tok577 tok578 tok579 tok580 tok581 tok582 tok583 tok584 tok585 tok586 tok587 tok588 tok589 tok590 tok591 tok592 tok593 tok594 tok595 tok596 tok597 tok598 tok599 tail")
+pair=token-cap-just-under old=plain("tok"),changed("0"),plain(" tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15 tok16 tok17 tok18 tok19 tok20 tok21 tok22 tok23 tok24 tok25 tok26 tok27 tok28 tok29 tok30 tok31 tok32 tok33 tok34 tok35 tok36 tok37 tok38 tok39 tok40 tok41 tok42 tok43 tok44 tok45 tok46 tok47 tok48 tok49 tok50 tok51 tok52 tok53 tok54 tok55 tok56 tok57 tok58 tok59 tok60 tok61 tok62 tok63 tok64 tok65 tok66 tok67 tok68 tok69 tok70 tok71 tok72 tok73 tok74 tok75 tok76 tok77 tok78 tok79 tok80 tok81 tok82 tok83 tok84 tok85 tok86 tok87 tok88 tok89 tok90 tok91 tok92 tok93 tok94 tok95 tok96 tok97 tok98 tok99 tok100 tok101 tok102 tok103 tok104 tok105 tok106 tok107 tok108 tok109 tok110 tok111 tok112 tok113 tok114 tok115 tok116 tok117 tok118 tok119 tok120 tok121 tok122 tok123 tok124 tok125 tok126 tok127 tok128 tok129 tok130 tok131 tok132 tok133 tok134 tok135 tok136 tok137 tok138 tok139 tok140 tok141 tok142 tok143 tok144 tok145 tok146 tok147 tok148 tok149 tok150 tok151 tok152 tok153 tok154 tok155 tok156 tok157 tok158 tok159 tok160 tok161 tok162 tok163 tok164 tok165 tok166 tok167 tok168 tok169")
+pair=token-cap-just-under new=plain("tok"),changed("Z"),plain(" tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15 tok16 tok17 tok18 tok19 tok20 tok21 tok22 tok23 tok24 tok25 tok26 tok27 tok28 tok29 tok30 tok31 tok32 tok33 tok34 tok35 tok36 tok37 tok38 tok39 tok40 tok41 tok42 tok43 tok44 tok45 tok46 tok47 tok48 tok49 tok50 tok51 tok52 tok53 tok54 tok55 tok56 tok57 tok58 tok59 tok60 tok61 tok62 tok63 tok64 tok65 tok66 tok67 tok68 tok69 tok70 tok71 tok72 tok73 tok74 tok75 tok76 tok77 tok78 tok79 tok80 tok81 tok82 tok83 tok84 tok85 tok86 tok87 tok88 tok89 tok90 tok91 tok92 tok93 tok94 tok95 tok96 tok97 tok98 tok99 tok100 tok101 tok102 tok103 tok104 tok105 tok106 tok107 tok108 tok109 tok110 tok111 tok112 tok113 tok114 tok115 tok116 tok117 tok118 tok119 tok120 tok121 tok122 tok123 tok124 tok125 tok126 tok127 tok128 tok129 tok130 tok131 tok132 tok133 tok134 tok135 tok136 tok137 tok138 tok139 tok140 tok141 tok142 tok143 tok144 tok145 tok146 tok147 tok148 tok149 tok150 tok151 tok152 tok153 tok154 tok155 tok156 tok157 tok158 tok159 tok160 tok161 tok162 tok163 tok164 tok165 tok166 tok167 tok168 tok169")
+pair=refine-cap-exceeded old=plain("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxA")
+pair=refine-cap-exceeded new=plain("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxB")
+block=balanced-1 removed[0]=plain("let a = "),changed("1"),plain(";")
+block=balanced-1 added[0]=plain("let a = "),changed("2"),plain(";")
+block=balanced-3 removed[0]=plain("a = "),changed("1"),plain(";")
+block=balanced-3 removed[1]=plain("b = 2;")
+block=balanced-3 removed[2]=plain("c = "),changed("3"),plain(";")
+block=balanced-3 added[0]=plain("a = "),changed("9"),plain(";")
+block=balanced-3 added[1]=plain("b = 2;")
+block=balanced-3 added[2]=plain("c = "),changed("8"),plain(";")
+block=more-removals removed[0]=plain("a = "),changed("1"),plain(";")
+block=more-removals removed[1]=plain("b = 2;")
+block=more-removals removed[2]=plain("c = 3;")
+block=more-removals added[0]=plain("a = "),changed("9"),plain(";")
+block=more-additions removed[0]=plain("a = "),changed("1"),plain(";")
+block=more-additions added[0]=plain("a = "),changed("9"),plain(";")
+block=more-additions added[1]=plain("b = 2;")
+block=more-additions added[2]=plain("c = 3;")
+block=removals-only removed[0]=plain("gone();")
+block=additions-only added[0]=plain("added();")

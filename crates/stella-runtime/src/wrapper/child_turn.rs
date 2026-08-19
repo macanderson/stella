@@ -104,13 +104,12 @@ pub const DEFAULT_HOST_MAX_CHILD_TURNS: u32 = 4;
 /// `doc:turn-loop-wrappers` §9.2 prefers a declared role to a `judge`: a
 /// verifier-tier call hidden inside a plugin is a call nobody can audit.
 ///
-/// **Consumer, stated honestly** (invariant 10's discipline, pointed at a host
-/// report rather than an event): today the only reader is a test, and the
-/// intended one is the driver that installs the plane — beside
-/// [`RefusedCall`](super::RefusedCall), which is exactly where a user looks to
-/// learn what a plugin did on their money. No shipping driver installs a plane
-/// yet, so no shipping driver reads this; that is #3576, declared here rather
-/// than implied. The receipt carries the same seat independently under
+/// **Consumer** (invariant 10's discipline, pointed at a host report rather
+/// than an event): `stella-cli`'s wrapper driver reads it after a run and
+/// prints one line per child turn beside
+/// [`RefusedCall`](super::RefusedCall) — `wrapper_plugin::spend_lines`, which
+/// is exactly where a user looks to learn what a plugin did on their money
+/// (#3576). The receipt carries the same seat independently under
 /// [`Self::seat`], because that is the `ModelCallRole` the child's model calls
 /// were attributed with — so the audit trail does not depend on this struct
 /// being read.

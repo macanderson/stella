@@ -10,22 +10,37 @@
 # ## What this declares, exactly
 #
 # The stage ORDER, and the ceremony conditions the closed grammar can express.
-# It is deliberately not more than that. Three of today's gates are conjunctions
-# of facts the manifest cannot yet name, and the honest thing is to say so here
-# rather than let a reader believe the file is the whole decision:
+# `Pipeline::begin_turn_schedule` (`src/pipeline/schedule_wiring.rs`) walks
+# this declared order through `crate::schedule::Schedule` — a
+# `stella_plugin::ProgressiveResolver` underneath — so the manifest genuinely
+# drives dispatch today, not just the id (#3408). It is deliberately not more
+# than the order plus what the grammar can express, though: three of today's
+# gates are conjunctions of facts no single condition can name, and that stays
+# true even with progressive (post-execute-signal) resolution now built and
+# wired, because none of the three is a gap progressive resolution closes —
+# the honest thing is to say so here rather than let a reader believe the
+# file is the whole decision:
 #
 #   * the conversational fast path is an early RETURN, not a skipped stage — a
 #     chat turn leaves the pipeline after triage, which a stage list has no way
 #     to say;
 #   * `witness` additionally requires the witness-author role to be enabled,
 #     triage's `wants_witness()`, and an independent author to be resolvable
-#     (`Pipeline::can_author_independent_witness`);
-#   * `verify` additionally honours the zero-diff guard for a simple lookup.
+#     (`Pipeline::can_author_independent_witness`) — the first is host
+#     roster config with no signal at all, and even though `wants-witness`
+#     is itself a published `Signal`, the grammar allows exactly one
+#     condition per stage (`Condition` in `stella-plugin`), so it cannot be
+#     ANDed onto `no-test-command` without a new signal that already IS
+#     that conjunction;
+#   * `verify` additionally honours the zero-diff guard for a simple lookup —
+#     gated on `TaskClass`, which the grammar has no way to compare at all.
 #
 # The grammar has no conjunction on purpose (`doc:turn-loop-wrappers` §9.4: a
 # Turing-complete condition in a manifest is a second program with no gate on
-# it), so closing that gap means publishing more host signals — a reviewable
-# addition, one at a time — never a richer `if`. Tracked in #3408.
+# it), so closing any of these three means publishing one new host signal that
+# already folds its conjuncts together — a reviewable addition, one at a time
+# — never a richer `if`. None of the three has been published yet; each
+# host-internal conjunct's decision site names this file and cites #3408.
 name = "classic"
 description = "Stella's built-in staged pipeline: the stage order it has shipped since the staged pipeline landed."
 

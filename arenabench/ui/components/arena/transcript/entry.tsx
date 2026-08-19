@@ -55,6 +55,7 @@ import type { TranscriptEntry } from "@/lib/types";
 import { fmtDuration, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { TOOL_CLASS_TEXT, toolClassOf } from "@/lib/tool-class";
+import { pairedSpans, type Span } from "@/lib/word-highlight";
 import { DiffTable } from "@/components/arena/transcript/diff-table";
 
 /** Tools whose raw input IS a file change, so it reads far better as a
@@ -122,12 +123,32 @@ function fileDiffFromRaw(
   return hunks.length > 0 ? hunks : null;
 }
 
+/**
+ * The stronger wash a changed span gets inside an already-tinted line.
+ *
+ * Deliberately the *same* `--ok`/`--bad` tokens as the line tint, at a heavier
+ * alpha, rather than a new hue: the Instrument palette carries exactly one
+ * colour outside the semantic triad and it is identity, never a state. This is
+ * also what `crates/stella-cli/src/export/transcript.rs` paints its `.ww`
+ * word-tint with, so the exported HTML and this block agree by construction.
+ */
+const WORD_TINT: Record<"+" | "-", string> = {
+  "+": "bg-ok/25",
+  "-": "bg-bad/25",
+};
+
 /** A tool's file change as a git-style diff: each touched file its own hunk
  *  with its path as the header, additions on a green ground and removals on a
  *  red one, each with its `+`/`-` sign. Line-level tint (not just glyph colour)
  *  so a scroll of edits reads at a glance the way `git diff` does. An
  *  `apply_edits` batch spanning several files renders one hunk per file so a
- *  multi-file change is never flattened into one anonymous block. */
+ *  multi-file change is never flattened into one anonymous block.
+ *
+ *  Within a change block the *changed tokens* of a paired removal/addition are
+ *  washed harder still, by the same `pairedSpans` the transcript's own diff
+ *  table uses, so an `edit_file` that moved one number does not read as a whole
+ *  line rewritten — and reads the way the Command Deck and the Observatory
+ *  render the identical edit. */
 function FileDiffBlock({
   hunks,
 }: {
@@ -136,32 +157,80 @@ function FileDiffBlock({
   return (
     <div className="ml-5 mt-1 space-y-1">
       {hunks.map((hunk, h) => (
-        <div
-          key={h}
-          className="overflow-x-auto rounded border border-line text-[11px]"
-        >
-          {hunk.path && (
-            <div className="border-b border-line bg-panel-2 px-2 py-1 font-mono text-dim">
-              {hunk.path}
-            </div>
-          )}
-          <div className="font-mono leading-[1.4]">
-            {hunk.lines.map((ln, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "whitespace-pre-wrap break-words px-2",
-                  ln.sign === "+" ? "bg-ok/10 text-ok" : "bg-bad/10 text-bad",
-                )}
-              >
-                <span className="select-none opacity-60">{ln.sign} </span>
-                {ln.text}
-              </div>
-            ))}
-          </div>
-        </div>
+        <FileHunkBlock key={h} hunk={hunk} />
       ))}
     </div>
+  );
+}
+
+function FileHunkBlock({ hunk }: { hunk: FileHunk }) {
+  // Pairing is positional over the run of removals and the run of additions
+  // that follows it — the rule lives in `lib/word-highlight.ts` and is pinned
+  // to the Rust by the golden matrix, so this never re-derives it.
+  const spans = React.useMemo(
+    () =>
+      pairedSpans(
+        hunk.lines.map((ln) => ln.sign),
+        hunk.lines.map((ln) => ln.text),
+      ),
+    [hunk],
+  );
+  return (
+    <div className="overflow-x-auto rounded border border-line text-[11px]">
+      {hunk.path && (
+        <div className="border-b border-line bg-panel-2 px-2 py-1 font-mono text-dim">
+          {hunk.path}
+        </div>
+      )}
+      <div className="font-mono leading-[1.4]">
+        {hunk.lines.map((ln, i) => (
+          <div
+            key={i}
+            className={cn(
+              "whitespace-pre-wrap break-words px-2",
+              ln.sign === "+" ? "bg-ok/10 text-ok" : "bg-bad/10 text-bad",
+            )}
+          >
+            <span className="select-none opacity-60">{ln.sign} </span>
+            <WordSpans text={ln.text} spans={spans[i]} sign={ln.sign} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One diff line's text as word-level spans, the changed runs washed harder.
+ *
+ * Falls back to the plain line whenever there is nothing to say — an unpaired
+ * line, or a pair `highlight` judged too dissimilar to annotate. That fallback
+ * is the honest rendering: tinting every token of a wholly-rewritten line says
+ * only what the line tint already said.
+ */
+function WordSpans({
+  text,
+  spans,
+  sign,
+}: {
+  text: string;
+  spans: Span[] | undefined;
+  sign: string;
+}) {
+  if (!spans || !spans.some((s) => s.changed)) return <>{text}</>;
+  const tint = WORD_TINT[sign === "+" ? "+" : "-"];
+  return (
+    <>
+      {spans.map((span, i) =>
+        span.changed ? (
+          <span key={i} className={tint}>
+            {span.text}
+          </span>
+        ) : (
+          <React.Fragment key={i}>{span.text}</React.Fragment>
+        ),
+      )}
+    </>
   );
 }
 
@@ -199,11 +268,25 @@ export function usageLine(entry: TranscriptEntry): string {
 
 const THINKING_PREVIEW_LINES = 5;
 
-/** Collapsed-result line budgets, matching the deck's `row.rs` exactly: a
- * successful call shows one line from the salient point, a failed one shows
- * six — enough for a compiler error with its location and caret line, or the
- * top of a panic backtrace. */
-const OK_PREVIEW_LINES = 1;
+/** Collapsed-result line budgets, matching the deck and the export surfaces:
+ * six lines either way, anchored on the salient point.
+ *
+ * A success used to show one line here, on the argument that its output is
+ * chatter and its size belongs in the metric column. That is wrong for the
+ * calls whose output *is* the answer — a `search`, a `read_file` — and it was
+ * also a third answer to a question the deck and the export had already stopped
+ * disagreeing about: the shared policy is
+ * `stella_transcript::digest::PREVIEW_LINES`, which is 6 (#3644). Six is also
+ * what a failure wants — a compiler error with its location and caret line, or
+ * the top of a panic backtrace — so the two budgets coincide rather than being
+ * separately chosen.
+ *
+ * These stay hand-mirrored rather than generated. Unlike the diff-view policy
+ * and word highlighting, which are *algorithms* two languages can disagree
+ * about subtly, this is one integer, and a golden matrix to pin one integer
+ * would cost more than it caught. If a third constant shows up here, that
+ * judgement should be revisited. */
+const OK_PREVIEW_LINES = 6;
 const FAIL_PREVIEW_LINES = 6;
 
 /** Markers that make a line of tool output worth anchoring a collapsed
@@ -680,10 +763,17 @@ export function Entry({
       diffShown.push(elision());
     }
     // The collapsed window anchors on the SALIENT line, not line 1 — see
-    // `salientLine`'s doc comment — and its size is the deck's own budget: a
-    // success shows a single line, a failure shows six.
+    // `salientLine`'s doc comment — and its size is the shared preview budget.
+    //
+    // The anchor is clamped so the window is never starved: a salient line near
+    // the *end* of the output would otherwise leave fewer than `budget` lines
+    // to take, and this surface would show one line where the deck and the
+    // export showed six. Sliding the window back keeps the salient line on
+    // screen as the last thing shown rather than the first. A port of the same
+    // clamp in `crates/stella-tui/src/render/entry.rs`.
     const budget = isError ? FAIL_PREVIEW_LINES : OK_PREVIEW_LINES;
-    const anchor = total > 0 ? salientLine(body ?? "") : 0;
+    const anchor =
+      total > 0 ? Math.min(salientLine(body ?? ""), Math.max(0, total - budget)) : 0;
     const collapsedShown = hasDiff ? [] : lines.slice(anchor, anchor + budget);
     const shown = resultOpen ? lines : collapsedShown;
     const hidden = resultOpen ? 0 : total - collapsedShown.length;

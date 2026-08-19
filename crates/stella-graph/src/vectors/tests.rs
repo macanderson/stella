@@ -374,6 +374,87 @@ fn pruning_a_file_takes_its_vector_with_it() {
     );
 }
 
+/// Witness for #3652: vectors under a retired fingerprint are findable and
+/// countable instead of silently unreachable.
+#[test]
+fn vectors_from_a_retired_embedder_are_reported_not_hidden() {
+    let (ws, mut conn) = indexed_workspace(&[("a.rs", "fn alpha() {}\n")]);
+    let root = ws.path().canonicalize().expect("canonicalize");
+    let sha = pending(&conn, &root, FP, 10).expect("pending").files[0]
+        .content_sha256
+        .clone();
+    let rows = vec![FileVector {
+        path: "a.rs".into(),
+        content_sha256: sha,
+        vector: vec![1.0, 0.0, 0.0, 0.0],
+    }];
+    store_vectors(&mut conn, FP, &rows).expect("store");
+
+    // Switching embedder makes those rows invisible to every read — which is
+    // the correct behaviour, and exactly why they need a way to be seen.
+    assert_eq!(count(&conn, OTHER_FP).expect("count"), 0);
+    assert_eq!(
+        retired_fingerprints(&conn, OTHER_FP).expect("retired"),
+        vec![(FP.to_string(), 1)]
+    );
+    // ...and nothing is "retired" from the perspective of the model that
+    // wrote them.
+    assert!(retired_fingerprints(&conn, FP).expect("retired").is_empty());
+}
+
+#[test]
+fn pruning_a_retired_fingerprint_reclaims_it_and_spares_the_active_one() {
+    let (ws, mut conn) = indexed_workspace(&[("a.rs", "fn alpha() {}\n")]);
+    let root = ws.path().canonicalize().expect("canonicalize");
+    let sha = pending(&conn, &root, FP, 10).expect("pending").files[0]
+        .content_sha256
+        .clone();
+    // The same file embedded under both fingerprints — the state a workspace
+    // is in the moment after it switches model and re-embeds.
+    let rows = vec![FileVector {
+        path: "a.rs".into(),
+        content_sha256: sha,
+        vector: vec![1.0, 0.0, 0.0, 0.0],
+    }];
+    store_vectors(&mut conn, FP, &rows).expect("store old");
+    store_vectors(&mut conn, OTHER_FP, &rows).expect("store new");
+
+    assert_eq!(
+        prune_fingerprint(&mut conn, FP, OTHER_FP).expect("prune"),
+        1
+    );
+    assert_eq!(count(&conn, FP).expect("count"), 0);
+    assert_eq!(
+        count(&conn, OTHER_FP).expect("count"),
+        1,
+        "the active fingerprint's vectors must survive the sweep"
+    );
+}
+
+/// Sweeping the fingerprint currently in use is never what "reclaim retired
+/// space" means, and doing it would bill the user a full re-embed.
+#[test]
+fn pruning_refuses_to_touch_the_active_fingerprint() {
+    let (ws, mut conn) = indexed_workspace(&[("a.rs", "fn alpha() {}\n")]);
+    let root = ws.path().canonicalize().expect("canonicalize");
+    let sha = pending(&conn, &root, FP, 10).expect("pending").files[0]
+        .content_sha256
+        .clone();
+    store_vectors(
+        &mut conn,
+        FP,
+        &[FileVector {
+            path: "a.rs".into(),
+            content_sha256: sha,
+            vector: vec![1.0, 0.0, 0.0, 0.0],
+        }],
+    )
+    .expect("store");
+
+    assert_eq!(prune_fingerprint(&mut conn, FP, FP).expect("prune"), 0);
+    assert_eq!(count(&conn, FP).expect("count"), 1);
+}
+
 /// Witness for the change-recency ordering.
 ///
 /// Under the previous `ORDER BY f.path`, a capped pass always returned the

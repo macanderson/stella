@@ -300,10 +300,10 @@ The verifier is GPT-5.5 rather than another Claude because cross-family judging 
 `service_tier: "priority"` is only worth setting here — OpenAI's is the one dialect that
 puts it on the wire. Autos are off so the per-agent values stand.
 
-The `research` row is what stops `xhigh` from being paid many times over. Research inherits
-the **worker** when it sets nothing, and it is a fan-out — one read-only child per question
-triage asked — so an `xhigh` worker silently buys an `xhigh` deliberation pass for every
-child, on calls whose job is to grep a tree and report the paths. Turning it down here does
+The `research` row stops `xhigh` from being paid for many times over. Research inherits
+the **worker** when it sets nothing, and it is a fan-out — one read-only child per
+triage question — so an `xhigh` worker silently buys an `xhigh` deliberation pass for
+every child, on calls whose job is to grep a tree and report the paths. Turning it down here does
 not touch the model: unset, `pipeline_research_model` still rides whatever the worker runs.
 
 <Callout type="info">
@@ -394,9 +394,9 @@ stella config    # every resolved value, computed from local files alone
 stella doctor    # checks the local session store's integrity; reads local state only
 ```
 
-Community/default telemetry stays in `.stella/private/store.db`, the
-[Observatory](/docs/telemetry/dashboard) binds `127.0.0.1`, memories and the code graph
-are files in your workspace, and `stella init` works offline with a heuristic fallback.
+Community/default telemetry stays in `.stella/private/store.db`; the
+[Observatory](/docs/telemetry/dashboard) binds `127.0.0.1`; memories and the code graph
+are files in your workspace; and `stella init` works offline with a heuristic fallback.
 To keep it that way, leave both telemetry-egress paths unconfigured — stella has
 [exactly two](/docs/telemetry): leave
 [Oxagen Enterprise telemetry](/docs/telemetry#oxagen-enterprise-managed-export)

@@ -441,9 +441,9 @@ fn model_spans(model: &WorkspaceModel, dim: Style, val: Style) -> Vec<Span<'stat
 
 /// The pipeline role as the deck says it out loud: triage / worker / verify.
 ///
-/// `Verifier` reads "verify" because that is the stage word the stepper and
-/// the witness panel already use for the same step; "verifier" is the role
-/// name, and two words for one thing is one too many on a glanceable row.
+/// `Verifier` reads "verify" because that is the stage word the stepper
+/// already uses for the same step; "verifier" is the role name, and two words
+/// for one thing is one too many on a glanceable row.
 fn role_word(role: PipelineRole) -> &'static str {
     match role {
         PipelineRole::Triage => "triage",
@@ -833,6 +833,9 @@ fn fmt_k(n: u64) -> String {
 }
 
 #[cfg(test)]
+// The lint is wrong here: these fixtures build with `Type::default()` and
+// then set the few fields the test cares about, which reads better than a
+// full struct literal that lists every field.
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
@@ -1133,9 +1136,7 @@ mod tests {
     }
 
     /// The plan card's collapse names where the plan stands. This used to be
-    /// three assertions across three cards; `/plan` is one card now, and the
-    /// verification phase it also carried lives permanently in the rail's
-    /// PROOF panel rather than in a collapsed statline cell.
+    /// three assertions across three cards; `/plan` is one card now.
     #[test]
     fn the_plan_collapse_names_where_the_plan_stands() {
         use crate::deck_ui::cards::Card;

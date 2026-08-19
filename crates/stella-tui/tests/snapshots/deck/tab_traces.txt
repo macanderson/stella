@@ -6,21 +6,20 @@
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────✦ stella ┐
 │ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ traces · all · 33 events · following · f: filter ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+┌ traces · all · 27 events · following · f: filter ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│00:00  lead  [stage] triage                                                                                                                                   │
+│00:00  lead  [ctx] 2 frames, 210 tok                                                                                                                          │
+│00:00  lead  [stage] plan                                                                                                                                     │
+│00:00  lead  [text] Planning the automations cluster: list, editor, triggers, workflows.                                                                      │
+│00:00  lead  [·] tasks 4/7                                                                                                                                    │
 │00:00  lead  [spend] glm-5.2 $0.0210                                                                                                                          │
 │00:00  lead  [spend] $0.0210                                                                                                                                  │
-│00:00  lead  [stage] witness                                                                                                                                  │
-│00:00  lead  [verdict] assurance: witness on, verifier waived                                                                                                 │
-│00:00  lead  [verdict] witness authored: apps/app/automations/triggers.test.ts                                                                                │
-│00:00  lead  [verdict] oracle: fail on base                                                                                                                   │
 │00:00  lead  [stage] execute                                                                                                                                  │
 │00:00  lead  [tool] mcp__fs__read_file()                                                                                                                      │
 │00:00  lead  [tool] ok in 42ms                                                                                                                                │
 │00:00  lead  [file] modified apps/app/automations/page.tsx +4/-1                                                                                              │
 │00:00  lead  [spend] glm-5.2 $0.0180                                                                                                                          │
 │00:00  lead  [spend] $0.0390                                                                                                                                  │
-│00:00  lead  [verdict] oracle: pass on new                                                                                                                    │
-│00:00  lead  [verdict] oracle: pass on new                                                                                                                    │
 │00:00  lead  [·] tasks 5/7                                                                                                                                    │
 │00:00  sub:auth  [stage] wire the automations triggers API                                                                                                    │
 │00:00  sub:auth  [stage] execute                                                                                                                              │
@@ -35,6 +34,7 @@
 │00:00  sub:ci  [vcs] pr open                                                                                                                                  │
 │00:00  sub:ci  [spend] glm-5.2-air $0.0040                                                                                                                    │
 │00:00  lead  [stage] Refactor the automations store into a shared workspace package                                                                           │
+│                                                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package

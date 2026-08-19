@@ -81,12 +81,10 @@ pub(crate) fn corrupt_store_error(error: rusqlite::Error, db_path: Option<&Path>
         || ".stella/private/store.db".to_string(),
         |path| path.display().to_string(),
     );
-    StoreError(format!(
-        "store.db cannot be read as a SQLite database ({error}), so it is corrupt or \
-         was overwritten. Run `stella doctor` to confirm, then `stella doctor --repair` \
-         to salvage what is readable and move {path} aside (it is renamed, never \
-         deleted) — it holds local telemetry and session replay, never your source."
-    ))
+    StoreError::Corrupt {
+        path,
+        source: error,
+    }
 }
 
 /// How many problem rows a report keeps. `PRAGMA integrity_check` stops at 100
@@ -279,9 +277,8 @@ pub fn check_file(db_path: &Path) -> Result<IntegrityReport> {
             // Both doors failed: lead with the session-shaped attempt (the one
             // that matters) and keep the first failure, since whichever wording
             // the user recognizes is the useful one.
-            Err(first) => StoreError(format!(
-                "{} (an immutable read-only probe first failed with: {})",
-                error.0, first.0
+            Err(first) => StoreError::Other(format!(
+                "{error} (an immutable read-only probe first failed with: {first})"
             )),
             Ok(_) => error,
         }),
@@ -356,7 +353,9 @@ impl PragmaRun {
     /// the same distinction on the session path, through the same predicate.)
     fn refuse_if_not_corruption(&self) -> Result<()> {
         match &self.stopped_by {
-            Some(error) if !is_sqlite_corruption(error) => Err(StoreError(error.to_string())),
+            Some(error) if !is_sqlite_corruption(error) => {
+                Err(StoreError::Other(error.to_string()))
+            }
             _ => Ok(()),
         }
     }
@@ -464,9 +463,9 @@ pub struct StoreQuarantine {
 /// corrupt" and "may I move it" are different questions.
 pub fn quarantine_corrupt_store(db_path: &Path) -> Result<StoreQuarantine> {
     let metadata = std::fs::symlink_metadata(db_path)
-        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", db_path.display())))?;
+        .map_err(|e| StoreError::io(format!("cannot inspect {}", db_path.display()), e))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(StoreError(format!(
+        return Err(StoreError::Other(format!(
             "{} is not a regular file — refusing to quarantine an ambiguous path",
             db_path.display()
         )));
@@ -507,7 +506,7 @@ pub fn quarantine_corrupt_store(db_path: &Path) -> Result<StoreQuarantine> {
 fn salvage(source: &Path, original: &Path, stamp: &str) -> (Option<PathBuf>, Option<String>) {
     let target = match unique_sibling(original, &format!("salvaged-{stamp}")) {
         Ok(target) => target,
-        Err(error) => return (None, Some(error.0)),
+        Err(error) => return (None, Some(error.to_string())),
     };
     // `VACUUM INTO` takes an expression, so the path binds as a parameter — no
     // quoting of a path that may contain apostrophes.
@@ -522,7 +521,7 @@ fn salvage(source: &Path, original: &Path, stamp: &str) -> (Option<PathBuf>, Opt
     };
     let attempt = open_private_sqlite_read_only(source).and_then(|conn| {
         conn.execute("VACUUM INTO ?1", [target_str])
-            .map_err(|e| StoreError(format!("VACUUM INTO failed: {e}")))
+            .map_err(|e| StoreError::Other(format!("VACUUM INTO failed: {e}")))
     });
     match attempt {
         Ok(_) => {
@@ -532,7 +531,7 @@ fn salvage(source: &Path, original: &Path, stamp: &str) -> (Option<PathBuf>, Opt
             // copy and report it.
             if let Err(error) = restrict_to_owner(&target) {
                 let _ = std::fs::remove_file(&target);
-                return (None, Some(error.0));
+                return (None, Some(error.to_string()));
             }
             (Some(target), None)
         }
@@ -540,7 +539,7 @@ fn salvage(source: &Path, original: &Path, stamp: &str) -> (Option<PathBuf>, Opt
             // A failed VACUUM can leave a partial file behind; it is this
             // function's own output path, never anything the user had.
             let _ = std::fs::remove_file(&target);
-            (None, Some(error.0))
+            (None, Some(error.to_string()))
         }
     }
 }
@@ -549,7 +548,7 @@ fn salvage(source: &Path, original: &Path, stamp: &str) -> (Option<PathBuf>, Opt
 fn restrict_to_owner(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|e| StoreError(format!("cannot restrict {}: {e}", path.display())))
+        .map_err(|e| StoreError::io(format!("cannot restrict {}", path.display()), e))
 }
 
 #[cfg(not(unix))]
@@ -559,11 +558,10 @@ fn restrict_to_owner(_path: &Path) -> Result<()> {
 
 fn rename(from: &Path, to: &Path) -> Result<()> {
     std::fs::rename(from, to).map_err(|e| {
-        StoreError(format!(
-            "cannot move {} to {}: {e}",
-            from.display(),
-            to.display()
-        ))
+        StoreError::io(
+            format!("cannot move {} to {}", from.display(), to.display()),
+            e,
+        )
     })
 }
 
@@ -571,7 +569,7 @@ fn rename(from: &Path, to: &Path) -> Result<()> {
 fn sibling_with_suffix(db_path: &Path, suffix: &str) -> Result<PathBuf> {
     let name = db_path
         .file_name()
-        .ok_or_else(|| StoreError(format!("{} has no filename", db_path.display())))?;
+        .ok_or_else(|| StoreError::Other(format!("{} has no filename", db_path.display())))?;
     let mut with_suffix = name.to_os_string();
     with_suffix.push(suffix);
     Ok(db_path.with_file_name(with_suffix))
@@ -584,7 +582,7 @@ fn sibling_with_suffix(db_path: &Path, suffix: &str) -> Result<PathBuf> {
 fn unique_sibling(path: &Path, tag: &str) -> Result<PathBuf> {
     let name = path
         .file_name()
-        .ok_or_else(|| StoreError(format!("{} has no filename", path.display())))?;
+        .ok_or_else(|| StoreError::Other(format!("{} has no filename", path.display())))?;
     for attempt in 1..=64u32 {
         let mut candidate = name.to_os_string();
         candidate.push(".");
@@ -597,7 +595,7 @@ fn unique_sibling(path: &Path, tag: &str) -> Result<PathBuf> {
             return Ok(candidate);
         }
     }
-    Err(StoreError(format!(
+    Err(StoreError::Other(format!(
         "cannot find a free `{tag}` name beside {} after 64 tries",
         path.display()
     )))

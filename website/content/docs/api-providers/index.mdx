@@ -345,7 +345,7 @@ have an Anthropic session, with no part of this routed through the gateway.
   The default used to be `openrouter/auto`, the gateway's own meta-router. A router that
   picks a different backing model per request is the one thing a coding agent cannot
   absorb: prompt-cache prefixes stop hitting between turns, tool-call dialect drifts
-  mid-session, and no two turns are comparable when something goes wrong. `openrouter/auto`
+  mid-session, and no two turns are comparable when something breaks. `openrouter/auto`
   still works if you pin it — it is simply no longer the default.
 </Callout>
 

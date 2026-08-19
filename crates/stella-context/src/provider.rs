@@ -71,9 +71,9 @@ pub trait ContextProvider: Send + Sync {
 ///
 /// The sort is not cosmetic: several node kinds map onto the same `FrameKind`,
 /// so the list is deduplicated through a `HashSet` whose drain order varies
-/// run to run. Advertised capabilities end up in `context status` output and in
-/// a host's routing table, and an order that reshuffles every process makes
-/// them impossible to diff.
+/// run to run. Advertised capabilities steer a host's routing table — it only
+/// asks a provider for what that provider says it can answer — and a list that
+/// reshuffles every process makes two runs impossible to diff.
 ///
 /// The list is a constant of the build, so it is computed once and cached:
 /// `capabilities()` runs per provider on every `query_all`/`verify_all`, and
@@ -283,7 +283,7 @@ impl ProviderRegistry {
     /// offered to every verify-capable provider and the **first definite**
     /// answer wins. `Unknown` is not definite: a provider that cannot judge an
     /// identity must not shadow one that can. An identity no provider can
-    /// verifier stays `Unknown`, which the host treats as "do not reuse" (V2).
+    /// verify stays `Unknown`, which the host treats as "do not reuse" (V2).
     pub async fn verify_all(
         &self,
         request: &VerifyRequest,
@@ -294,7 +294,7 @@ impl ProviderRegistry {
                 continue;
             }
             // Only ask about identities still unresolved, so a provider never
-            // re-verifiers a frame another already vouched for.
+            // re-verifies a frame another already vouched for.
             let pending: Vec<_> = request
                 .frames
                 .iter()

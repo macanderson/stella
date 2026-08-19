@@ -9,7 +9,7 @@
 # review like any other change.
 1529 arenabench/arenabench/runner.py
 1864 bench/harbor_adapter/stella_harbor/__init__.py
-4381 bench/harbor_adapter/stella_harbor/secure_launcher.py
+4383 bench/harbor_adapter/stella_harbor/secure_launcher.py
 2356 bench/harbor_adapter/tests/test_adapter.py
 3368 bench/harbor_adapter/tests/test_secure_launcher.py
 8298 bench/terminal_bench_analysis/tb21_analysis.py
@@ -21,7 +21,7 @@
 1891 crates/stella-core/src/bus.rs
 1687 crates/stella-core/src/driver.rs
 2931 crates/stella-core/src/driver/tests.rs
-1779 crates/stella-model/src/anthropic/tests.rs
+1781 crates/stella-model/src/anthropic/tests.rs
 2077 crates/stella-model/src/openai.rs
 1861 crates/stella-model/src/zai/tests.rs
 2758 crates/stella-pipeline/src/pipeline.rs
