@@ -238,6 +238,15 @@ impl LoopState {
     fn stats_path(&self) -> PathBuf {
         self.dir.join("stats.json")
     }
+
+    /// The append-only record of everything the loop did.
+    ///
+    /// Public because the audit writer opens it directly in append mode: the
+    /// whole point is that entries are added and never rewritten, so it does
+    /// not go through the atomic read-modify-write the other state files use.
+    pub fn audit_path(&self) -> PathBuf {
+        self.dir.join("audit.jsonl")
+    }
     fn runs_path(&self) -> PathBuf {
         self.dir.join("runs.jsonl")
     }

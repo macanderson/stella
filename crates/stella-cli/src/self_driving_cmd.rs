@@ -13,6 +13,7 @@
 //! harness (`make self-driving-test`) drives those delegations end-to-end, so the
 //! two surfaces cannot drift.
 
+mod audit;
 mod backlog;
 mod config;
 mod convention;

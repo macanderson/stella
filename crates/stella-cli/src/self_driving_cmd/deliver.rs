@@ -318,6 +318,40 @@ pub(super) fn observe(root: &std::path::Path, pr: &str) -> Result<Observation, S
     Ok(observation_from(&view, &base_checks))
 }
 
+/// Every open pull request on a branch with this workspace's prefix.
+///
+/// How a restarted loop finds what it was carrying. It **asks the forge**
+/// rather than reading a list it wrote down, because the forge is the source
+/// of truth about a pull request and a remembered list can only be wrong —
+/// stale after a human merges one by hand, or after a run died between opening
+/// a pull request and recording it.
+pub(super) fn open_prs_for_prefix(prefix: &str) -> Result<Vec<String>, String> {
+    #[derive(serde::Deserialize)]
+    struct Row {
+        number: u64,
+        #[serde(rename = "headRefName", default)]
+        head_ref_name: String,
+    }
+
+    let raw = gh(&[
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--json",
+        "number,headRefName",
+    ])?;
+    let rows: Vec<Row> = serde_json::from_str(&raw).map_err(|error| {
+        format!("`gh pr list` returned a payload this build cannot read: {error}")
+    })?;
+
+    Ok(rows
+        .into_iter()
+        .filter(|row| row.head_ref_name.starts_with(prefix))
+        .map(|row| row.number.to_string())
+        .collect())
+}
+
 /// Take a pull request out of draft.
 ///
 /// Called only when the machine returned `MarkReady`, which it does once CI is
