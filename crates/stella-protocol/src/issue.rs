@@ -47,6 +47,13 @@
 //!
 //! [`stella_autonomy`]: https://docs.rs/stella-autonomy
 
+mod vocabulary;
+
+pub use vocabulary::{
+    CANONICAL_RESOLUTIONS, FieldNames, RESOLUTION_COMPLETED, RESOLUTION_DUPLICATE,
+    RESOLUTION_NOT_PLANNED, Vocabulary,
+};
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 

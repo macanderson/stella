@@ -5,8 +5,22 @@
 //! not look broken — it looks productive, right up until someone notices the
 //! backlog is smaller than the work remaining.
 //!
-//! So the closure kinds are a closed vocabulary, and each carries what a reader
-//! would need a month later.
+//! So every closure is a **closed vocabulary plus a citation**, and neither
+//! half is optional.
+//!
+//! # Evidence is cited, never asserted
+//!
+//! [`Citation`] is typed rather than a free string, and the kinds are not
+//! interchangeable. A fix is established by the **pull request** that carried
+//! it, or — in an all-hands P0 where a change lands directly — by the
+//! **commit**. A decision *not* to do something is established by an
+//! **authority**: a document, or a context record. Those are different claims
+//! and they are evidenced in different currencies.
+//!
+//! [`check`] enforces the pairing, so "closed as won't fix, reason: stale" with
+//! nothing behind it is not expressible. A refusal with no authority is an
+//! opinion wearing a decision's clothes, and the next person to hit the same
+//! problem has no way to find out who decided or why.
 //!
 //! # The rule that makes "nothing left behind" structural
 //!
@@ -17,53 +31,136 @@
 //! tracked issues before the original may close, so the queue never shrinks by
 //! more than the work actually finished.
 //!
-//! `a_partial_closure_with_no_filed_remainder_is_refused` is the witness, and
-//! it is the whole reason this type is not a bare string reason.
+//! # Three kinds, because a tracker has three
 //!
-//! # Why `NotPlanned` is a separate kind rather than a flag
+//! *Completed*, *not planned*, *duplicate* — GitHub's own close reasons, and
+//! the distinctions the loop acts on. A regression sweep re-checks what was
+//! **completed**; re-running a witness for something declined as stale, or
+//! folded into another issue, would measure nothing.
 //!
-//! A tracker distinguishes *completed* from *not planned*, and the distinction
-//! is load-bearing for anything that reads history later: a regression sweep
-//! re-checks what was **fixed**, and re-running a witness for an issue that was
-//! declined as stale would be measuring nothing. Collapsing the two into one
-//! "closed" would make the loop's own past claims unreadable.
+//! [`resolution_of`] returns Stella's **canonical** name, which the active
+//! provider's vocabulary spells in that tracker's words
+//! (`stella_protocol::issue::Vocabulary`). Returning the spelling here would
+//! bake one tracker's words into the pure machine.
 
 use serde::{Deserialize, Serialize};
+
+/// What establishes a claim about an issue.
+///
+/// Typed rather than a string because the kinds are not interchangeable, and
+/// [`check`] refuses a mismatch — see the module docs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "cite")]
+pub enum Citation {
+    /// The pull request that carried the change. The ordinary path.
+    PullRequest {
+        /// Its number or key, as the forge spells it.
+        key: String,
+    },
+    /// The commit that carried it.
+    ///
+    /// For the all-hands case where a fix lands directly on the branch rather
+    /// than through a pull request — a P0 where waiting for review is the
+    /// larger risk. Recorded distinctly so an audit can see how often that
+    /// path was taken.
+    Commit {
+        /// The sha.
+        sha: String,
+    },
+    /// A document, by its stable id — `doc:backlog-self-driving`.
+    ///
+    /// Cited by id rather than path, because a path citation breaks the moment
+    /// the file moves and this one has to survive being read years later.
+    Document {
+        /// The document id.
+        doc_id: String,
+    },
+    /// A context record, by lineage id.
+    ///
+    /// The steering plane a workspace changes by retiring records and adding
+    /// new ones, so a decision cited this way stays traceable to the authority
+    /// that made it — and stops being in force when that authority is retired.
+    ContextRecord {
+        /// The record's lineage id.
+        lineage_id: String,
+    },
+}
+
+impl Citation {
+    /// Whether this citation is empty of the thing it is supposed to name.
+    fn is_blank(&self) -> bool {
+        match self {
+            Self::PullRequest { key } => key.trim().is_empty(),
+            Self::Commit { sha } => sha.trim().is_empty(),
+            Self::Document { doc_id } => doc_id.trim().is_empty(),
+            Self::ContextRecord { lineage_id } => lineage_id.trim().is_empty(),
+        }
+    }
+
+    /// Whether this evidences that work *happened*.
+    fn is_change(&self) -> bool {
+        matches!(self, Self::PullRequest { .. } | Self::Commit { .. })
+    }
+
+    /// Whether this evidences a *decision*.
+    fn is_authority(&self) -> bool {
+        matches!(self, Self::Document { .. } | Self::ContextRecord { .. })
+    }
+
+    /// How the citation reads in a comment.
+    #[must_use]
+    pub fn render(&self) -> String {
+        match self {
+            Self::PullRequest { key } => {
+                format!("#{}", key.trim().trim_start_matches('#'))
+            }
+            Self::Commit { sha } => format!("commit {}", sha.trim()),
+            Self::Document { doc_id } => doc_id.trim().to_owned(),
+            Self::ContextRecord { lineage_id } => {
+                format!("context record `{}`", lineage_id.trim())
+            }
+        }
+    }
+}
 
 /// How an issue is being closed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "closure")]
 pub enum Closure {
-    /// It was fixed.
-    ///
-    /// `evidence` names what establishes that — a pull request, a test, a
-    /// commit. Required rather than optional: a closure with no evidence
-    /// cannot be re-checked later, and the count of unsweepable closures is
-    /// the direct, unflattering measure of how often *done* was a claim rather
-    /// than a proof.
+    /// It was done.
     Fixed {
-        /// What establishes the fix.
-        evidence: String,
+        /// The pull request or commit that carried it.
+        by: Citation,
     },
 
-    /// It is no longer worth doing — stale, superseded, or declined.
+    /// It will not be done — won't fix, can't reproduce, stale.
     ///
-    /// Closed as *not planned* on the tracker, which is a different state from
-    /// completed and must stay so; see the module docs.
+    /// Carries **both** a reason a person can read and the authority that
+    /// settles it. The reason alone is an opinion; the authority is what lets
+    /// the next person who hits the same problem find out who decided, and
+    /// what would have to change for the decision to be revisited.
     NotPlanned {
-        /// Why it is no longer worth doing.
+        /// Why, in a sentence.
         reason: String,
+        /// The document or context record that settles it.
+        per: Citation,
     },
 
-    /// Part of it was fixed, and the rest is now tracked separately.
-    ///
-    /// The remainder is a list of issue keys that **already exist**. This kind
-    /// cannot be constructed honestly before the remainder is filed, and
-    /// [`check`] enforces that rather than trusting it.
+    /// Another issue already covers it.
+    Duplicate {
+        /// The issue this duplicates. Required — a duplicate closure that does
+        /// not say what it duplicates sends the reader looking for an original
+        /// they cannot find, which is worse than leaving it open.
+        of: String,
+    },
+
+    /// Part of it was done, and the rest is now tracked separately.
     Partial {
         /// What was actually finished.
         done: String,
-        /// The issues now carrying what was not.
+        /// The pull request or commit that carried that part.
+        by: Citation,
+        /// The issues now carrying what was not. Must already exist.
         remaining: Vec<String>,
     },
 }
@@ -73,17 +170,21 @@ pub enum Closure {
 #[serde(rename_all = "snake_case", tag = "refusal")]
 pub enum ClosureRefusal {
     /// A partial closure named no remaining issues.
-    ///
-    /// The one that matters: closing "mostly fixed" with nothing tracking the
-    /// rest is how work vanishes from a backlog without being done.
     PartialWithNoRemainder,
-    /// A closure kind that requires prose supplied none.
-    ///
-    /// An empty reason is not a reason, and a closed issue whose comment says
-    /// nothing is worse than an open one — it looks handled.
+    /// A required field was empty.
     MissingRationale {
-        /// Which field was empty.
+        /// Which one.
         field: &'static str,
+    },
+    /// The citation was of the wrong kind for the claim.
+    ///
+    /// A fix evidenced by a document, or a refusal evidenced by a commit. Both
+    /// are category errors: one claims a change happened and cites something
+    /// that is not a change, the other claims a decision and cites something
+    /// that is not a decision.
+    WrongCitationKind {
+        /// What the claim needed.
+        wanted: &'static str,
     },
 }
 
@@ -94,60 +195,106 @@ pub enum ClosureRefusal {
 ///
 /// # Errors
 ///
-/// [`ClosureRefusal`] names what is missing, in terms the caller can fix.
+/// [`ClosureRefusal`] names what is missing, in terms the caller can act on.
 pub fn check(closure: &Closure) -> Result<(), ClosureRefusal> {
     match closure {
-        Closure::Fixed { evidence } if evidence.trim().is_empty() => {
-            Err(ClosureRefusal::MissingRationale { field: "evidence" })
+        Closure::Fixed { by } => cite_change(by),
+
+        Closure::NotPlanned { reason, per } => {
+            if reason.trim().is_empty() {
+                return Err(ClosureRefusal::MissingRationale { field: "reason" });
+            }
+            if per.is_blank() {
+                return Err(ClosureRefusal::MissingRationale { field: "per" });
+            }
+            if !per.is_authority() {
+                return Err(ClosureRefusal::WrongCitationKind {
+                    wanted: "a document or a context record",
+                });
+            }
+            Ok(())
         }
-        Closure::NotPlanned { reason } if reason.trim().is_empty() => {
-            Err(ClosureRefusal::MissingRationale { field: "reason" })
+
+        Closure::Duplicate { of } if of.trim().is_empty() => {
+            Err(ClosureRefusal::MissingRationale { field: "of" })
         }
-        Closure::Partial { remaining, .. } if remaining.iter().all(|key| key.trim().is_empty()) => {
-            Err(ClosureRefusal::PartialWithNoRemainder)
+        Closure::Duplicate { .. } => Ok(()),
+
+        Closure::Partial {
+            done,
+            by,
+            remaining,
+        } => {
+            if done.trim().is_empty() {
+                return Err(ClosureRefusal::MissingRationale { field: "done" });
+            }
+            cite_change(by)?;
+            if remaining.iter().all(|key| key.trim().is_empty()) {
+                return Err(ClosureRefusal::PartialWithNoRemainder);
+            }
+            Ok(())
         }
-        Closure::Partial { done, .. } if done.trim().is_empty() => {
-            Err(ClosureRefusal::MissingRationale { field: "done" })
-        }
-        _ => Ok(()),
     }
 }
 
-/// Whether the tracker should record this as *completed* or *not planned*.
+fn cite_change(by: &Citation) -> Result<(), ClosureRefusal> {
+    if by.is_blank() {
+        return Err(ClosureRefusal::MissingRationale { field: "by" });
+    }
+    if !by.is_change() {
+        return Err(ClosureRefusal::WrongCitationKind {
+            wanted: "a pull request or a commit",
+        });
+    }
+    Ok(())
+}
+
+/// Stella's canonical resolution for this closure.
 ///
-/// A partial closure is **completed**: the work that was in scope is finished,
-/// and the rest is tracked elsewhere. Recording it as *not planned* would tell
-/// a later reader the issue was declined, which is the opposite of what
-/// happened.
+/// A canonical name, not a tracker's spelling — see the module docs.
 #[must_use]
-pub fn tracker_state(closure: &Closure) -> &'static str {
+pub fn resolution_of(closure: &Closure) -> &'static str {
     match closure {
         Closure::Fixed { .. } | Closure::Partial { .. } => "completed",
         Closure::NotPlanned { .. } => "not_planned",
+        Closure::Duplicate { .. } => "duplicate",
     }
 }
 
 /// The comment left on the issue as it closes.
 ///
-/// Every kind leaves one. A closure with no comment forces the next reader to
-/// reconstruct the decision from a diff, which they will not do.
+/// Every kind leaves one, and every kind names its citation. A closure the
+/// next reader has to reconstruct from a diff is one they will not
+/// reconstruct.
 #[must_use]
 pub fn receipt(closure: &Closure) -> String {
     match closure {
-        Closure::Fixed { evidence } => format!("Closing as fixed.\n\nEvidence: {evidence}"),
-        Closure::NotPlanned { reason } => {
-            format!("Closing as not planned.\n\nReason: {reason}")
+        Closure::Fixed { by } => {
+            format!("Closing as completed.\n\nFixed by {}.", by.render())
         }
-        Closure::Partial { done, remaining } => {
+        Closure::NotPlanned { reason, per } => format!(
+            "Closing as not planned.\n\nReason: {reason}\n\nThis follows {}.",
+            per.render()
+        ),
+        Closure::Duplicate { of } => format!(
+            "Closing as a duplicate of #{}.\n\nEverything reported here is tracked there.",
+            of.trim().trim_start_matches('#')
+        ),
+        Closure::Partial {
+            done,
+            by,
+            remaining,
+        } => {
             let list = remaining
                 .iter()
                 .filter(|k| !k.trim().is_empty())
-                .map(|k| format!("- #{}", k.trim_start_matches('#')))
+                .map(|k| format!("- #{}", k.trim().trim_start_matches('#')))
                 .collect::<Vec<_>>()
                 .join("\n");
             format!(
-                "Closing as fixed in part.\n\nDone: {done}\n\nWhat is left is tracked \
-                 separately, so nothing here is dropped:\n{list}"
+                "Closing as completed in part.\n\nDone: {done}\n\nCarried by {}.\n\nWhat is \
+                 left is tracked separately, so nothing here is dropped:\n{list}",
+                by.render()
             )
         }
     }
@@ -157,34 +304,32 @@ pub fn receipt(closure: &Closure) -> String {
 mod tests {
     use super::*;
 
+    fn pr(key: &str) -> Citation {
+        Citation::PullRequest { key: key.into() }
+    }
+
     /// **The witness.** "Mostly fixed" is the honest description of most real
     /// work and the easiest thing to round up to done. It is refused outright
     /// unless the remainder already exists as its own issues.
     #[test]
     fn a_partial_closure_with_no_filed_remainder_is_refused() {
-        let sloppy = Closure::Partial {
-            done: "fixed the parser".into(),
-            remaining: Vec::new(),
-        };
-        assert_eq!(check(&sloppy), Err(ClosureRefusal::PartialWithNoRemainder));
-
-        // Whitespace is not a remainder either.
-        let sloppier = Closure::Partial {
-            done: "fixed the parser".into(),
-            remaining: vec!["  ".into(), "".into()],
-        };
-        assert_eq!(
-            check(&sloppier),
-            Err(ClosureRefusal::PartialWithNoRemainder)
-        );
+        for remaining in [Vec::new(), vec!["  ".to_owned(), String::new()]] {
+            let sloppy = Closure::Partial {
+                done: "fixed the parser".into(),
+                by: pr("3985"),
+                remaining,
+            };
+            assert_eq!(check(&sloppy), Err(ClosureRefusal::PartialWithNoRemainder));
+        }
     }
 
     /// The other half — with the remainder filed, it proceeds, and the comment
-    /// names every issue carrying what was left.
+    /// links every issue carrying what was left.
     #[test]
     fn a_partial_closure_that_filed_its_remainder_proceeds_and_links_it() {
         let honest = Closure::Partial {
             done: "fixed the parser".into(),
+            by: pr("3985"),
             remaining: vec!["4001".into(), "#4002".into()],
         };
         assert_eq!(check(&honest), Ok(()));
@@ -193,77 +338,152 @@ mod tests {
         assert!(comment.contains("- #4001"), "{comment}");
         assert!(comment.contains("- #4002"), "{comment}");
         assert!(comment.contains("nothing here is dropped"), "{comment}");
+        assert!(comment.contains("#3985"), "must cite what carried it");
     }
 
-    /// A partial closure records *completed*, not *not planned*: the scoped
-    /// work finished, and saying otherwise would tell a later reader it was
-    /// declined.
+    /// **The evidence witness.** A fix cites the pull request that carried it,
+    /// or the commit — and nothing else will do. A document is a category
+    /// error: it is not a change.
     #[test]
-    fn a_partial_closure_is_recorded_as_completed() {
-        let honest = Closure::Partial {
-            done: "some".into(),
-            remaining: vec!["1".into()],
-        };
-        assert_eq!(tracker_state(&honest), "completed");
-    }
-
-    /// Fixed and not-planned are different tracker states, and stay different:
-    /// a regression sweep re-checks what was fixed, and re-running a witness
-    /// for something declined as stale would measure nothing.
-    #[test]
-    fn fixed_and_not_planned_are_distinct_tracker_states() {
-        let fixed = Closure::Fixed {
-            evidence: "pr #3985".into(),
-        };
-        let declined = Closure::NotPlanned {
-            reason: "superseded by the config collapse".into(),
-        };
-        assert_eq!(tracker_state(&fixed), "completed");
-        assert_eq!(tracker_state(&declined), "not_planned");
-    }
-
-    /// A closure with no rationale is refused: a closed issue whose comment
-    /// says nothing is worse than an open one, because it looks handled.
-    #[test]
-    fn every_kind_requires_its_rationale() {
+    fn a_fix_must_cite_a_change_not_an_authority() {
+        assert_eq!(check(&Closure::Fixed { by: pr("3985") }), Ok(()));
         assert_eq!(
             check(&Closure::Fixed {
-                evidence: "   ".into()
+                by: Citation::Commit {
+                    sha: "f8935f2".into()
+                }
             }),
-            Err(ClosureRefusal::MissingRationale { field: "evidence" })
+            Ok(()),
+            "the all-hands path lands directly and cites the commit"
         );
         assert_eq!(
-            check(&Closure::NotPlanned {
-                reason: String::new()
+            check(&Closure::Fixed {
+                by: Citation::Document {
+                    doc_id: "doc:backlog-self-driving".into()
+                }
             }),
-            Err(ClosureRefusal::MissingRationale { field: "reason" })
-        );
-        assert_eq!(
-            check(&Closure::Partial {
-                done: " ".into(),
-                remaining: vec!["1".into()]
-            }),
-            Err(ClosureRefusal::MissingRationale { field: "done" })
+            Err(ClosureRefusal::WrongCitationKind {
+                wanted: "a pull request or a commit"
+            })
         );
     }
 
-    /// Every kind leaves a comment — a closure the next reader has to
-    /// reconstruct from a diff is one they will not reconstruct.
+    /// **The authority witness.** A refusal is not an opinion: it names why and
+    /// cites what settles it, so the next person to hit the same problem can
+    /// find who decided and what would reopen it.
     #[test]
-    fn every_kind_leaves_a_receipt() {
-        for closure in [
-            Closure::Fixed {
-                evidence: "pr #1".into(),
+    fn a_refusal_must_name_its_reason_and_cite_its_authority() {
+        let settled = Closure::NotPlanned {
+            reason: "superseded by the config collapse".into(),
+            per: Citation::ContextRecord {
+                lineage_id: "ctx.macanderson.stella.reference-grade-bar".into(),
             },
+        };
+        assert_eq!(check(&settled), Ok(()));
+        assert!(receipt(&settled).contains("context record"), "cites it");
+
+        // A reason with no authority behind it is refused.
+        assert_eq!(
+            check(&Closure::NotPlanned {
+                reason: "stale".into(),
+                per: Citation::Document {
+                    doc_id: "   ".into()
+                },
+            }),
+            Err(ClosureRefusal::MissingRationale { field: "per" })
+        );
+
+        // And a change is the wrong currency for a decision.
+        assert_eq!(
+            check(&Closure::NotPlanned {
+                reason: "stale".into(),
+                per: pr("3985"),
+            }),
+            Err(ClosureRefusal::WrongCitationKind {
+                wanted: "a document or a context record"
+            })
+        );
+    }
+
+    /// A duplicate closure cites what it duplicates, and the `#` is not
+    /// doubled however the caller wrote the key.
+    #[test]
+    fn a_duplicate_closure_cites_the_issue_it_duplicates() {
+        let dup = Closure::Duplicate { of: "#3599".into() };
+        assert_eq!(check(&dup), Ok(()));
+
+        let comment = receipt(&dup);
+        assert!(comment.contains("#3599"), "{comment}");
+        assert!(
+            !comment.contains("##"),
+            "the `#` must not double: {comment}"
+        );
+
+        // However the caller spelled the key, the comment reads the same.
+        assert_eq!(receipt(&Closure::Duplicate { of: "3599".into() }), comment);
+    }
+
+    /// An uncited duplicate is refused.
+    #[test]
+    fn a_duplicate_closure_with_no_citation_is_refused() {
+        assert_eq!(
+            check(&Closure::Duplicate { of: "  ".into() }),
+            Err(ClosureRefusal::MissingRationale { field: "of" })
+        );
+    }
+
+    /// The three kinds map to GitHub's three close reasons.
+    #[test]
+    fn the_three_kinds_map_to_the_three_github_close_reasons() {
+        assert_eq!(resolution_of(&Closure::Fixed { by: pr("1") }), "completed");
+        assert_eq!(
+            resolution_of(&Closure::NotPlanned {
+                reason: "x".into(),
+                per: Citation::Document {
+                    doc_id: "doc:x".into()
+                },
+            }),
+            "not_planned"
+        );
+        assert_eq!(
+            resolution_of(&Closure::Duplicate { of: "1".into() }),
+            "duplicate"
+        );
+        // A partial closure is completed: the scoped work finished, and saying
+        // otherwise would tell a later reader it was declined.
+        assert_eq!(
+            resolution_of(&Closure::Partial {
+                done: "some".into(),
+                by: pr("1"),
+                remaining: vec!["2".into()],
+            }),
+            "completed"
+        );
+    }
+
+    /// Every kind leaves a comment naming its citation.
+    #[test]
+    fn every_kind_leaves_a_receipt_that_cites_something() {
+        for closure in [
+            Closure::Fixed { by: pr("3985") },
             Closure::NotPlanned {
                 reason: "stale".into(),
+                per: Citation::Document {
+                    doc_id: "doc:backlog-self-driving".into(),
+                },
             },
+            Closure::Duplicate { of: "9".into() },
             Closure::Partial {
                 done: "half".into(),
+                by: Citation::Commit {
+                    sha: "f8935f2".into(),
+                },
                 remaining: vec!["2".into()],
             },
         ] {
-            assert!(!receipt(&closure).trim().is_empty(), "{closure:?}");
+            let r = receipt(&closure);
+            assert!(!r.trim().is_empty(), "{closure:?}");
+            assert!(r.len() > 20, "a receipt must say something: {r:?}");
         }
     }
 
@@ -271,6 +491,7 @@ mod tests {
     fn a_closure_round_trips_through_json() {
         let c = Closure::Partial {
             done: "half".into(),
+            by: pr("3985"),
             remaining: vec!["2".into()],
         };
         let json = serde_json::to_string(&c).expect("serialize");

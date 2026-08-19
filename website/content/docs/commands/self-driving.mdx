@@ -22,7 +22,7 @@ stella self-driving queue [--limit N] [--format <text|json>]
 stella self-driving file --title TEXT [--body TEXT] [--label L…] [--format <text|json>]
 stella self-driving work --issue KEY [--spend-limit USD] [--format <text|json>]
 stella self-driving triage --issue KEY [--dry-run] [--format <text|json>]
-stella self-driving close --issue KEY (--fixed EVIDENCE | --not-planned REASON | --partial DONE --remaining KEY…)
+stella self-driving close --issue KEY (--completed | --not-planned REASON | --duplicate-of KEY | --partial DONE --remaining KEY…) [--pr KEY | --commit SHA] [--per CITATION]
 stella self-driving deliver open --issue KEY --branch B --title T
 stella self-driving deliver observe --pr N [--format <text|json>]
 stella self-driving deliver next --pr N [--fixes N] [--rebases N] [--no-review] [--format <text|json>]
@@ -135,13 +135,27 @@ The same rule drives both directions. `conform` decides whether a new filing may
 
 ### close
 
-`stella self-driving close --issue KEY` ends an issue with a receipt, in one of three kinds.
+`stella self-driving close --issue KEY` ends an issue with a receipt. There are four kinds, mapping onto the three close reasons a tracker offers.
 
-`--fixed EVIDENCE` closes as completed, naming what establishes the fix. `--not-planned REASON` closes as not planned — a different tracker state, and it stays different, because a regression sweep re-checks what was *fixed* and re-running a witness for something declined as stale would measure nothing.
+**Every kind cites something, and the citations are not interchangeable.**
 
-`--partial DONE --remaining KEY…` is the one that matters. "Mostly fixed" is the honest description of most real work and the easiest thing to round up to done, so it is **refused outright** unless the remainder already exists as its own tracked issues. The comment links them, and the backlog never shrinks by more than the work actually finished.
+`--completed` closes as done and must cite the change that carried it: `--pr KEY`, or `--commit SHA` for the all-hands case where a fix lands directly on the branch rather than through a pull request. Citing a document here is refused — a document is not a change.
 
-Every kind leaves a comment. A closure the next reader has to reconstruct from a diff is one they will not reconstruct, and an empty rationale is refused for the same reason: a closed issue whose comment says nothing is worse than an open one, because it looks handled.
+`--not-planned REASON` closes as not planned, and must cite the authority that settles it with `--per`: a document id (`doc:backlog-self-driving`) or a context-record lineage id. A reason with no authority behind it is an opinion wearing a decision's clothes, and the next person to hit the same problem has no way to find out who decided or what would reopen it. Citing a pull request here is refused for the mirror reason — a change is not a decision.
+
+`--duplicate-of KEY` closes as a duplicate and names what it duplicates, because a duplicate closure that does not say so sends the reader looking for an original they cannot find.
+
+`--partial DONE --remaining KEY…` is the one that matters most. "Mostly done" is the honest description of most real work and the easiest thing to round up, so it is **refused outright** unless the remainder already exists as its own tracked issues. The comment links them, and the backlog never shrinks by more than the work actually finished.
+
+Everything is refused *before* the tracker is reached, so a closure missing its citation cannot half-happen.
+
+### Which tracker, and how it talks
+
+`stella.toml`'s `[issues]` section says **which** tracker is active and where its manifest lives. That manifest — `.stella/issues/<provider>.toml` by default — says how that tracker **talks**: what marks an issue open or closed, how each resolution is spelled, what the fields are called.
+
+The split is deliberate. `stella.toml` is where a person looks for anything configurable about stella, so *which tracker* belongs there; a vendor's spellings do not, and a workspace spanning two trackers needs somewhere to put the second one's words.
+
+stella branches on exactly three resolutions — `completed`, `not_planned`, `duplicate`, which are GitHub's own close reasons. A tracker offering twenty maps those three and the rest pass through verbatim. Nothing needs configuring to work against GitHub: absent config, absent section and absent manifest all yield working defaults.
 
 ### deliver
 

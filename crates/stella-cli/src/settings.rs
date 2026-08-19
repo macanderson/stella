@@ -48,7 +48,7 @@ mod merge;
 pub(crate) mod migrate;
 mod private;
 mod steering;
-mod toml_config;
+pub(crate) mod toml_config;
 pub(crate) mod toml_io;
 mod unknown;
 mod withheld;

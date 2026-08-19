@@ -53,7 +53,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 pub use attribution::{Attribution, DEFAULT_BRANCH_PREFIX, sign};
-pub use closure::{Closure, ClosureRefusal, check as check_closure, receipt, tracker_state};
+pub use closure::{
+    Citation, Closure, ClosureRefusal, check as check_closure, receipt, resolution_of,
+};
 pub use convention::{
     Acceptance, AxisChoice, AxisRequirement, BacklogConvention, ChoiceReason, Conformance,
     ConventionSource, LabelAxis, Repair, Violation, conform, repair,
