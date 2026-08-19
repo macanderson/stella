@@ -251,7 +251,6 @@ impl ResumeFrame {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
