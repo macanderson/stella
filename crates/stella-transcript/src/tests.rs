@@ -213,10 +213,7 @@ fn acceptance_tool_is_named_exactly_once_per_call() {
     );
 
     let plain = grid::to_plain(&grid::render(&run, &state, 120));
-    let header_rows = plain
-        .lines()
-        .filter(|line| line.contains("ls -la"))
-        .count();
+    let header_rows = plain.lines().filter(|line| line.contains("ls -la")).count();
     assert_eq!(header_rows, 1, "tool header rendered twice:\n{plain}");
 }
 
