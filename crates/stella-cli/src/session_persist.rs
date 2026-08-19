@@ -163,7 +163,15 @@ pub fn replay_inbound(record: JournalRecord, started_ms: u64) -> Option<Inbound>
             Some(Inbound::PromptStarted { agent, text })
         }
         JournalRecord::SessionReset { agent } => Some(Inbound::SessionReset { agent }),
-        JournalRecord::Pipeline { on } => Some(Inbound::Pipeline(on)),
+        // A pre-removal-census journal (`docs/spec/pipeline-as-plugins.md`
+        // §7 slice 1) may still hold one of these — `stella_tui::Inbound` no
+        // longer has a `Pipeline` variant to replay it into, so it is
+        // skipped exactly like an unparsable journal line, never a panic.
+        // `ResumeState::pipeline` (read from the raw record, not through
+        // this fold — see `last_pipeline` below) still carries whatever the
+        // session's last recorded value was, for `initial_pipeline_persona`
+        // to read.
+        JournalRecord::Pipeline { .. } => None,
     }
 }
 
