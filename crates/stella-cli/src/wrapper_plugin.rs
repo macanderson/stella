@@ -227,6 +227,20 @@ impl<'a> PipelineChoice<'a> {
     }
 }
 
+/// The refusal `--pipeline classic` owes since the built-in staged pipeline
+/// was removed (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice
+/// 1). Named as its own function, mirroring
+/// [`reject_verification_flags_without_pipeline`]'s shape, so
+/// [`PipelineChoice::resolve`]'s witness test and every door's own error
+/// path read the identical sentence rather than five hand-written copies
+/// drifting apart.
+pub(crate) fn classic_removed_message() -> String {
+    "--pipeline classic no longer runs anything: the built-in staged pipeline has been removed. \
+     Install a verification wrapper plugin instead (see `stella plugin install`) and pass \
+     `--pipeline <variant>` naming it, or omit --pipeline entirely for the raw loop."
+        .to_string()
+}
+
 /// The one-line deprecation notice owed when `--no-pipeline` was passed
 /// (#3381), or `None` when it was not.
 ///
@@ -385,7 +399,8 @@ pub(crate) fn reject_verification_flags_without_pipeline(
     };
     Err(format!(
         "{} belong{} to the staged pipeline's verification machinery and {} nothing on {where_run}: \
-         pass --pipeline classic to run the staged pipeline.",
+         install a verification wrapper plugin instead (see `stella plugin install`) and pass \
+         --pipeline <variant> naming it — `--pipeline classic` no longer runs anything.",
         offending.join(", "),
         if offending.len() == 1 { "s" } else { "" },
         if offending.len() == 1 { "does" } else { "do" },
