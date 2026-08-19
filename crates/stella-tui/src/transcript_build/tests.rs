@@ -325,3 +325,56 @@ fn each_turn_starts_its_own_clock() {
     );
     assert_eq!(run.turns[1].steps[0].offset_ms, 0);
 }
+
+#[test]
+fn the_run_terminator_does_not_open_a_turn_of_its_own() {
+    // The ordinary end of every `stella run`: the engine closes its turn, then
+    // whoever owns the run emits `RunComplete` exactly once *after* it
+    // (`AgentEvent::RunComplete`'s contract). The terminator arriving against a
+    // closed turn is therefore the normal path, not an edge case — and a fold
+    // that lazily opens a turn for it manufactures a second, promptless turn
+    // that the plain surface then prints as an empty trailing frame.
+    let mut b = RunBuilder::new("run", "z-ai/glm-5.2");
+    b.start_turn("ship it");
+    b.push(&AgentEvent::Text {
+        text: "Done.".to_string(),
+    });
+    b.push(&AgentEvent::TurnComplete {
+        model: "z-ai/glm-5.2".to_string(),
+        cost_usd: 0.01,
+    });
+    b.push(&AgentEvent::RunComplete {
+        model: "z-ai/glm-5.2".to_string(),
+        cost_usd: 0.01,
+    });
+    b.finish_turn(Status::Ok);
+
+    let run = b.snapshot();
+    assert_eq!(
+        run.turns.len(),
+        1,
+        "the run terminator must not materialise a turn; got {:#?}",
+        run.turns.iter().map(|t| &t.prompt).collect::<Vec<_>>()
+    );
+    assert_eq!(run.turns[0].prompt, "ship it");
+}
+
+#[test]
+fn a_turn_terminator_against_a_closed_turn_is_inert() {
+    // Same shape one level down, and the reason the fix covers both
+    // terminators rather than just the one the reviewer found: a duplicate or
+    // replayed `TurnComplete` would otherwise open a turn and immediately
+    // close it, leaving the same empty frame behind.
+    let mut b = RunBuilder::new("run", "z-ai/glm-5.2");
+    b.start_turn("ship it");
+    b.push(&AgentEvent::TurnComplete {
+        model: "z-ai/glm-5.2".to_string(),
+        cost_usd: 0.01,
+    });
+    b.push(&AgentEvent::TurnComplete {
+        model: "z-ai/glm-5.2".to_string(),
+        cost_usd: 0.01,
+    });
+
+    assert_eq!(b.snapshot().turns.len(), 1);
+}

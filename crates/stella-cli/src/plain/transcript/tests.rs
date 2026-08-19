@@ -99,6 +99,33 @@ fn a_frame_is_never_printed_twice() {
     assert_eq!(p.printed_turns, 1, "an idle flush re-printed a turn");
 }
 
+/// The user-visible half of the fold's terminator bug: `spawn_renderer` flushes
+/// once more after the event channel closes, so an event arriving *after* the
+/// turn was flushed used to open a promptless turn that the final flush then
+/// printed as an empty trailing frame. `RunComplete` always arrives there, so
+/// every `stella run` ended with one.
+#[test]
+fn the_run_terminator_prints_no_trailing_frame() {
+    let mut p = TranscriptPrinter::new("run", "m");
+    p.interactive = false;
+    p.start_turn("ship it");
+    p.observe(&AgentEvent::TurnComplete {
+        model: "m".to_string(),
+        cost_usd: 0.01,
+    });
+    assert_eq!(p.printed_turns, 1, "the real turn should have printed");
+    p.observe(&AgentEvent::RunComplete {
+        model: "m".to_string(),
+        cost_usd: 0.01,
+    });
+    // What `spawn_renderer` does once `rx` closes.
+    p.flush();
+    assert_eq!(
+        p.printed_turns, 1,
+        "the run terminator printed a second, promptless frame"
+    );
+}
+
 /// Nothing is printed before the frame when no human is watching, so a log
 /// file holds the transcript rather than the transcript plus a progress trace
 /// that repeats it.

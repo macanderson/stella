@@ -93,10 +93,22 @@ impl RunBuilder {
 
     /// Fold one event in.
     pub fn push(&mut self, event: &AgentEvent) {
-        // Every arm below needs a turn to write into. A stream that starts
+        // A terminator closes work that already exists; it never creates any.
+        // `RunComplete` is emitted exactly once and *after* the last
+        // `TurnComplete` (see its contract), so a terminator arriving against
+        // an already-closed turn is the ordinary end of every run rather than
+        // an edge case. Lazily opening a turn for one manufactures a second,
+        // promptless turn, which the plain surface then prints as an empty
+        // trailing frame. `note` and `finish_turn` are both already inert
+        // without an open turn, so the arms below need no other guard.
+        let terminator = matches!(
+            event,
+            AgentEvent::TurnComplete { .. } | AgentEvent::RunComplete { .. }
+        );
+        // Every other arm needs a turn to write into. A stream that starts
         // mid-turn (an attach, a replay from an offset) still has to render,
         // so open an anonymous one rather than dropping the event.
-        if self.turn.is_none() {
+        if self.turn.is_none() && !terminator {
             self.start_turn(String::new());
         }
 
