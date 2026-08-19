@@ -109,7 +109,7 @@ assert_file() { # <name> <path> <want-substring>
     *)
       fail=$((fail + 1))
       echo "FAIL $name — ${path} does not contain '${want}':"
-      cat "$path" | indent
+      indent < "$path"
       ;;
   esac
 }

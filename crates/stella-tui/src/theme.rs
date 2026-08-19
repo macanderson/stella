@@ -99,12 +99,12 @@ pub const DANGER: Color = palette::DANGER;
 pub const DANGER_BRIGHT: Color = palette::DANGER;
 
 // `ORACLE_PRE_FLIP` deliberately does not exist. #3890 retired it along with
-// its `palette::ORACLE_RED`/`ORACLE_RED_INK` values, and
-// `docs/design/verification-surface.md` § "Decision 3" is the standing
-// argument: the token's only consumer was the witness panel removed in #3791,
-// the brand kit at `docs/brand/` never carried an oracle token, and the
-// contrast-table case for keeping it was circular. A pre-flip red returns when
-// a panel paints one — a token earns its place by being painted.
+// its `palette::ORACLE_RED`/`ORACLE_RED_INK` values, on the argument that the
+// token's only consumer was the witness panel removed in #3791, that the brand
+// kit at `docs/brand/` never carried an oracle token to mirror, and that the
+// contrast-table case for keeping it was circular — the tables existed to
+// check a token nothing rendered. A pre-flip red returns when a panel paints
+// one: a token earns its place by being painted, not by waiting.
 
 // ── Categorical hues (deliberately NOT brand) ───────────────────────────────
 //
