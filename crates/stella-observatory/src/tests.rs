@@ -172,6 +172,13 @@ fn seeded_workspace() -> TempDir {
     // and a raw string keeps their quoting readable. The `text_delta` row is
     // there to be *excluded* — the journal route must drop live-preview
     // fragments in favor of the authoritative `text` event.
+    //
+    // The single tidy `reasoning` row is NOT the shape the store holds — real
+    // reasoning arrives one row per streamed fragment, which is what
+    // `journal::coalesce_reasoning` exists for. That case is seeded by the
+    // test that owns it (`streamed_reasoning_fragments_fold_into_one_block_per_run`)
+    // rather than here, because several tests below address these rows by seq
+    // and inserting fragments would renumber them for no gain.
     conn.execute_batch(
         r#"CREATE TABLE events (
              execution_id INTEGER NOT NULL,

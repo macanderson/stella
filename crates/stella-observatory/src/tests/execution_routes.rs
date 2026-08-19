@@ -96,6 +96,88 @@ fn execution_journal_replays_transcript_without_deltas() {
     assert_eq!(v, serde_json::json!([]));
 }
 
+/// A streamed run of `reasoning` fragments is one block of thought, and the
+/// journal route must serve it as one entry.
+///
+/// The defect this pins: `AgentEvent::Reasoning` carries a *delta*, so the
+/// store holds one row per fragment and the transcript drew a separate titled,
+/// boxed fold around each — `Let`, `me look`, `at the issue. I` — on a real
+/// execution 39,778 entries long. Three properties make the merge safe rather
+/// than merely tidier, and each is asserted here because each has its own way
+/// of going wrong:
+///
+/// - the fragments concatenate **in order and without a joiner**, since the
+///   provider already split mid-word;
+/// - the merged entry carries the run's **last** `seq`, because the page sends
+///   that back as `after_seq` and a first-seq cursor would re-fetch the run on
+///   every poll, forever;
+/// - a tool call **between** two runs keeps them apart, because that boundary
+///   is a fact about the turn rather than a rendering artifact.
+#[test]
+fn streamed_reasoning_fragments_fold_into_one_block_per_run() {
+    let ws = seeded_workspace();
+    // Execution 2 carries no seeded events, so this run is the whole journal.
+    // Two runs of fragments with a tool call between them — the shape a real
+    // turn writes, mid-word splits included.
+    let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+    conn.execute_batch(
+        r#"INSERT INTO events (execution_id, seq, event_type, payload) VALUES
+             (2, 0, 'reasoning', '{"type":"reasoning","delta":"Let"}'),
+             (2, 1, 'reasoning', '{"type":"reasoning","delta":" me look"}'),
+             (2, 2, 'reasoning', '{"type":"reasoning","delta":" at the issue."}'),
+             (2, 3, 'tool_start', '{"type":"tool_start","call":{"call_id":"c9","name":"read_file","input":{"path":"a.rs"}}}'),
+             (2, 4, 'tool_result', '{"type":"tool_result","call_id":"c9","output":{"ok":{"content":"fn a() {}"}},"duration_ms":3,"speculated":false}'),
+             (2, 5, 'reasoning', '{"type":"reasoning","delta":"Now"}'),
+             (2, 6, 'reasoning', '{"type":"reasoning","delta":" verify it."}');"#,
+    )
+    .unwrap();
+    drop(conn);
+
+    let response = respond(ws.path(), "/api/execution-journal?id=2");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let entries = v.as_array().unwrap();
+
+    let types: Vec<&str> = entries
+        .iter()
+        .map(|e| e["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        types,
+        ["reasoning", "tool_start", "tool_result", "reasoning"],
+        "seven rows must serve as four entries, not seven:\n{v:#}"
+    );
+
+    let reasoning: Vec<&serde_json::Value> = entries
+        .iter()
+        .filter(|e| e["type"] == "reasoning")
+        .collect();
+    assert_eq!(
+        reasoning[0]["body"], "Let me look at the issue.",
+        "fragments join in order, verbatim, with no inserted joiner"
+    );
+    assert_eq!(
+        reasoning[1]["body"], "Now verify it.",
+        "a tool call between two runs must not fuse them"
+    );
+    assert_eq!(
+        reasoning[0]["seq"], 2,
+        "the cursor must be the run's LAST seq or the poll re-fetches it"
+    );
+    assert_eq!(reasoning[1]["seq"], 6);
+
+    // And the incremental poll the page actually makes: asking after the
+    // first run's cursor returns the rest exactly once.
+    let response = respond(ws.path(), "/api/execution-journal?id=2&after_seq=2");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let types: Vec<&str> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["tool_start", "tool_result", "reasoning"]);
+}
+
 /// `/transcript` renders the journal through `stella-transcript` — the same
 /// code the TUI draws from — rather than through the page's own JavaScript.
 ///

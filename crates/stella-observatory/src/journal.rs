@@ -59,6 +59,11 @@ pub(crate) const JOURNAL_BODY_CLIP: usize = 4_000;
 /// authoritative full answer and the deltas are a live-preview artifact. Most
 /// stores hold none (the journal drops them at write time), but the filter is
 /// contract, not assumption.
+///
+/// `reasoning` gets no such help at write time, because it has no
+/// authoritative sibling: `AgentEvent::Reasoning` **is** the delta, so the
+/// store holds one row per streamed fragment. [`coalesce_reasoning`] rejoins
+/// them here, before shaping.
 pub(crate) fn entries(
     conn: &Connection,
     id: i64,
@@ -97,10 +102,84 @@ pub(crate) fn entries(
     }
     let names = tool_names(conn, id)?;
     Ok(Value::Array(
-        rows.into_iter()
+        coalesce_reasoning(rows)
+            .into_iter()
             .map(|row| journal_entry(row, full, &names))
             .collect(),
     ))
+}
+
+/// Rejoin a run of consecutive `reasoning` rows into the one block of thought
+/// it was streamed from.
+///
+/// `AgentEvent::Reasoning { delta }` is a *fragment* — the provider's stream
+/// emits one per few tokens and `stella-cli`'s persistence hop writes every
+/// one of them (`agent::persistence`, which drops only `TextDelta`, the
+/// preview whose full text arrives later as `Text`). Reasoning has no such
+/// later full event, so nothing upstream can drop the fragments and the store
+/// legitimately holds them all. The consequence lands here: a turn that
+/// thought for a page produced tens of thousands of `reasoning` rows, and the
+/// transcript drew a titled, boxed fold around each one — `Let`, then
+/// `me look`, then `at the issue. I` — which is unreadable as prose and, at
+/// 39,778 rows on one execution, expensive to ship and to paint.
+///
+/// Only *adjacent* rows merge, so a reasoning block interrupted by a tool call
+/// stays two blocks: the boundary between thoughts is a fact about the turn,
+/// not a rendering artifact. The merged row keeps the **first** fragment's
+/// timestamp — when the thinking began, which is what orders it against the
+/// steps around it — and the **last** fragment's `seq`, which is what the
+/// page's incremental poll sends back as `after_seq`; taking the first there
+/// would re-fetch the whole run forever.
+///
+/// Merging before [`journal_entry`] rather than after is deliberate: the body
+/// clip must measure the block a reader sees, not a fragment. Applied
+/// per-fragment it never fired at all, so `truncated` was uniformly false on
+/// exactly the transcripts most in need of the flag.
+///
+/// The live case still splits: fragments that arrive after a poll's cursor
+/// cannot join a block already sent, so a running turn grows one fold per
+/// poll rather than one per token. That is bounded by the poll interval
+/// instead of by the model's token rate, and a finished execution — every
+/// re-open of it, and every render of the standalone page — coalesces whole.
+fn coalesce_reasoning(rows: Vec<Value>) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let is_reasoning = row["type"].as_str() == Some("reasoning");
+        // A payload that no longer parses is left alone rather than merged:
+        // `journal_entry` renders it as a bodyless header, and folding an
+        // unreadable row into a readable one would silently discard the fact
+        // that it was there.
+        let delta = is_reasoning.then(|| reasoning_delta(&row)).flatten();
+        let Some(delta) = delta else {
+            out.push(row);
+            continue;
+        };
+        let open_run = out
+            .last_mut()
+            .filter(|prev| prev["type"].as_str() == Some("reasoning"))
+            .and_then(|prev| reasoning_delta(prev).map(|joined| (prev, joined)));
+        match open_run {
+            Some((prev, joined)) => {
+                prev["seq"] = row["seq"].clone();
+                let merged = json!({ "type": "reasoning", "delta": joined + &delta });
+                prev["payload"] = json!(merged.to_string());
+            }
+            None => out.push(row),
+        }
+    }
+    out
+}
+
+/// The reasoning text carried by one raw `events` row, or `None` if its
+/// payload does not parse. Reads `delta` (the field `AgentEvent::Reasoning`
+/// serializes) and falls back to `text` for the same bilingual reason
+/// [`journal_entry`] does.
+fn reasoning_delta(row: &Value) -> Option<String> {
+    let payload: Value = serde_json::from_str(row["payload"].as_str()?).ok()?;
+    let text = payload["delta"]
+        .as_str()
+        .or_else(|| payload["text"].as_str())?;
+    Some(text.to_owned())
 }
 
 /// `call_id` -> tool name for every call this execution opened.
