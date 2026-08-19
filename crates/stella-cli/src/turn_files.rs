@@ -132,8 +132,10 @@ fn file_touch_row(change: &JournalChange) -> FileTouchRow {
 /// The `ops` alphabet is CRUD letters, fixed by the reader rather than by
 /// preference — `Store::execution_rollup` and `finalize_execution_reflection`
 /// both match `ops LIKE '%C%' OR '%U%' OR '%D%'`, so a row spelled any other
-/// way is a row those queries cannot see. Same alphabet as
-/// [`crate::candidate_ws::adoption_ledger`], deliberately.
+/// way is a row those queries cannot see. Same alphabet as the adoption
+/// ledger's `ops_letter` (`candidate_ws/adoption_ledger.rs`), deliberately —
+/// named in prose rather than linked because that module is private, and an
+/// intra-doc link to it does not resolve.
 fn ops_letter(kind: JournalChangeKind) -> &'static str {
     match kind {
         JournalChangeKind::Created => "C",

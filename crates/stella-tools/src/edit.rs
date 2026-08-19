@@ -414,7 +414,10 @@ mod tests {
     fn an_indentation_only_miss_hands_back_the_files_own_bytes() {
         let content = "prose\n   - one\n   - two\nmore\n";
         let hit = indentation_only_match(content, "- one\n- two").expect("the span");
-        assert_eq!(hit, "   - one\n   - two", "the file's indentation, verbatim");
+        assert_eq!(
+            hit, "   - one\n   - two",
+            "the file's indentation, verbatim"
+        );
     }
 
     /// The hint must never claim a match the real edit would not have made.
