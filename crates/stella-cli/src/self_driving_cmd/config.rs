@@ -183,7 +183,7 @@ branch_prefix = "oxagen/"
         assert_eq!(cfg.attribution.commit, "Created by oxagen.");
         assert_eq!(cfg.attribution.branch_prefix(), "oxagen/");
         // Unmentioned surfaces keep identifying the loop rather than blanking.
-        assert_eq!(cfg.attribution.issue, "Filed by stella.");
+        assert_eq!(cfg.attribution.issue, stella_autonomy::SIGNATURE);
     }
 
     /// **The portability witness.** `stella.toml` says *which* tracker; the

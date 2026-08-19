@@ -21,6 +21,7 @@ mod drive;
 mod lifecycle;
 pub(crate) mod probes;
 pub(crate) mod state;
+mod stats;
 mod surface;
 mod work;
 
@@ -231,6 +232,16 @@ pub(crate) enum SelfDrivingCmd {
         /// Seconds between polls while waiting on CI.
         #[arg(long, default_value_t = 45)]
         poll_secs: u64,
+    },
+
+    /// What this session has done so far — the counters a dashboard reads.
+    ///
+    /// Written after every step rather than at the end, because a perpetual
+    /// loop that only reported on exit would never report at all.
+    Stats {
+        /// Output format.
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
     },
 
     /// Bring an issue up to this workspace's standard.
@@ -574,7 +585,8 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), 
             max_issues,
             no_review,
             poll_secs,
-        } => drive::drive(*max_issues, *no_review, spend_limit, *poll_secs),
+        } => drive::drive(&st, *max_issues, *no_review, spend_limit, *poll_secs),
+        SelfDrivingCmd::Stats { format } => stats::session_stats(&st, *format),
         SelfDrivingCmd::Triage {
             issue,
             dry_run,
@@ -1334,6 +1346,7 @@ fn file_finding(
 
     if let backlog::Filed::New(key) = &outcome {
         st.add_seen(&stella_autonomy::finding_digest(title))?;
+        st.update_stats(|s| s.issues_created += 1);
         if format == QueryFormat::Json {
             println!(r#"{{"filed":"{key}"}}"#);
         } else {

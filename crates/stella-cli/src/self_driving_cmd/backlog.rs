@@ -58,6 +58,29 @@ fn ranked(
             .map(crate::issue_provider::to_queue_issue)
             .collect(),
     );
+
+    // An issue the loop already tried and could not resolve is not in the
+    // queue. Without this `escalate` is half a feature: the label goes on, the
+    // next run claims the issue anyway, and the loop spends the same money
+    // rediscovering the same wall every cycle — which is the one thing about
+    // the backlog that has not changed.
+    //
+    // Filtered HERE, in the one read, rather than in each caller: the renderer
+    // and the driver must not be able to disagree about what the queue holds,
+    // which is exactly the two-definitions defect B1 removed from `demand`. A
+    // human wanting to see them asks the tracker.
+    //
+    // The work is still wanted — the label says a human should look, not that
+    // the issue is finished. Removing it puts the issue back in play.
+    let defects: Vec<_> = defects
+        .into_iter()
+        .filter(|issue| {
+            !issue
+                .labels
+                .iter()
+                .any(|l| l.name == stella_autonomy::ESCALATION_LABEL)
+        })
+        .collect();
     Ok((defects, total))
 }
 
@@ -297,42 +320,6 @@ pub(super) async fn comment(
     provider
         .comment(key, &stella_autonomy::sign(body, signature))
         .await
-}
-
-/// Resolve one issue by key, through the port.
-///
-/// Reads the open queue and finds the key rather than asking the tracker for
-/// one issue, and that is a deliberate limit rather than an oversight: the port
-/// has no single-issue read, and adding one to serve a caller that only ever
-/// works **open** issues would widen a trait for a case that does not exist
-/// yet. The loop works what it drew from the ranked queue, and a claim lives in
-/// the fleet ledger rather than in the tracker's assignee field — so an issue
-/// being worked is still `Open` and still in this read.
-///
-/// A key that is not in the open queue is a typed refusal naming the two
-/// reasons a caller can act on: it is closed, or it does not exist.
-pub(super) fn resolve(
-    provider: &dyn IssueProvider,
-    key: &str,
-) -> Result<stella_protocol::issue::Issue, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
-    let issues = runtime
-        .block_on(provider.list_open(QUEUE_READ_LIMIT))
-        .map_err(|error| error.to_string())?;
-
-    issues
-        .into_iter()
-        .find(|issue| issue.key.as_str() == key)
-        .ok_or_else(|| {
-            format!(
-                "#{key} is not in the open queue — it is closed, or it does not exist \
-                 (read {QUEUE_READ_LIMIT} open issues from `{}`)",
-                provider.id()
-            )
-        })
 }
 
 /// Explain a filing that did not happen.

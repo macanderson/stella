@@ -22,6 +22,7 @@ stella self-driving queue [--limit N] [--format <text|json>]
 stella self-driving file --title TEXT [--body TEXT] [--label L…] [--format <text|json>]
 stella self-driving work --issue KEY [--spend-limit USD] [--format <text|json>]
 stella self-driving drive [--max-issues N] [--no-review] [--poll-secs N]
+stella self-driving stats [--format <text|json>]
 stella self-driving triage --issue KEY [--dry-run] [--format <text|json>]
 stella self-driving close --issue KEY (--completed | --not-planned REASON | --duplicate-of KEY | --partial DONE --remaining KEY…) [--pr KEY | --commit SHA] [--per CITATION]
 stella self-driving deliver open --issue KEY --branch B --title T
@@ -135,6 +136,20 @@ Worktrees live under `.stella/private/self-driving/` on `self-driving/` branches
 `--max-issues` bounds one invocation so it terminates. The real loop never does, which is why the bound is a flag rather than a constant, and why reaching it is reported as *reached the bound* rather than as *finished*.
 
 Steps the machine returns that this build cannot perform — sweeping an audit lens, curating a proposal — are **reported and then stop the loop**, never silently skipped. A driver that did nothing for a step it was handed would look healthy forever.
+
+### stats
+
+`stella self-driving stats` is what a session has done so far — issues claimed, attempted, changed, failed, escalated and deferred; issues created, refused and deduplicated; issues closed by each resolution; pull requests opened, merged and escalated; fixes, rebases, and time spent waiting on a broken base; reflections, memories and proposals; turns run and turns stopped by their ceiling.
+
+It is written after **every step**, not at the end. A perpetual loop that only reported on exit would never report at all, and the point is a record readable while the loop is still running. Writes are atomic, so a dashboard sampling mid-write reads the previous complete document rather than a truncated one.
+
+**The ratios are printed beside the counts, deliberately.** A raw count answers *how busy was it*, which is the question that flatters. Three derived numbers answer *was it worth it*, and each can report badly:
+
+- **inflation** — issues created per issue closed. Above 1.00 sustained means the loop is **losing ground**: filing faster than it finishes. That is the failure mode the design names as the one none of its mitigations is proven to prevent, so it belongs on the dashboard rather than in a report somebody reads later.
+- **attempt yield** — the share of attempts that changed something.
+- **merge rate** — the share of opened pull requests that landed.
+
+A ratio with no denominator prints `--` rather than `0.00`: a ratio against zero is undefined, not small, and a number would tell a reader something the session has not established. The three closure kinds are checked against the total, and a mismatch is reported — a dashboard showing a total beside kinds that sum to something else is worse than one showing neither, because a reader believes whichever they saw first.
 
 ### triage
 

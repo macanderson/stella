@@ -61,6 +61,7 @@ struct Tally {
 /// constant and why reaching it is reported as *reached the bound*, never as
 /// *finished*.
 pub(super) fn drive(
+    durable: &super::state::LoopState,
     max_issues: u32,
     no_review: bool,
     spend_limit: Option<f64>,
@@ -118,6 +119,7 @@ pub(super) fn drive(
                     return report(&tally);
                 };
                 eprintln!("claimed #{key}");
+                durable.update_stats(|s| s.issues_claimed += 1);
                 state.claimed.push(IssueRef(key));
             }
 
@@ -163,6 +165,10 @@ pub(super) fn drive(
                         )?;
                         eprintln!("  opened pr #{pr}");
                         tally.opened += 1;
+                        durable.update_stats(|s| {
+                            s.issues_changed += 1;
+                            s.prs_opened += 1;
+                        });
                         state.carrying.push(CarriedPr {
                             pr: PrRef(pr),
                             disposition: PrDisposition::Moving,
@@ -170,9 +176,21 @@ pub(super) fn drive(
                     }
                     super::work::WorkOutcome::NoChange { why } => {
                         eprintln!("  changed nothing ({why}) — moving on");
+                        durable.update_stats(|s| s.issues_no_change += 1);
                     }
                     super::work::WorkOutcome::Failed { reason } => {
                         eprintln!("  not worked: {reason}");
+                        durable.update_stats(|s| {
+                            s.issues_failed += 1;
+                            // A turn stopped by its ceiling is counted
+                            // separately: it is a budget fact, not a sign the
+                            // issue is unworkable, and conflating them would
+                            // make a too-small allowance look like a hard
+                            // backlog.
+                            if reason.contains("budget exceeded") {
+                                s.turns_over_budget += 1;
+                            }
+                        });
                         // Recorded on the issue, not just in this log. A run
                         // that only printed it would repeat the attempt — and
                         // the cost — on the next cycle, having learnt nothing
@@ -183,10 +201,13 @@ pub(super) fn drive(
                             &reason,
                             &cfg.attribution.issue_comment,
                         )) {
-                            Ok(()) => eprintln!(
-                                "  labelled `{}` — later runs will skip it",
-                                stella_autonomy::ESCALATION_LABEL
-                            ),
+                            Ok(()) => {
+                                durable.update_stats(|s| s.issues_escalated += 1);
+                                eprintln!(
+                                    "  labelled `{}` — later runs will skip it",
+                                    stella_autonomy::ESCALATION_LABEL
+                                );
+                            }
                             Err(error) => eprintln!("  could not label it: {error}"),
                         }
                     }
@@ -194,7 +215,7 @@ pub(super) fn drive(
             }
 
             LoopStep::Deliver { pr } => {
-                let settled = advance(&root, &pr.0, &mut spent, no_review, &mut tally)?;
+                let settled = advance(&root, &pr.0, &mut spent, no_review, &mut tally, durable)?;
                 if settled {
                     for carried in &mut state.carrying {
                         if carried.pr == pr {
@@ -266,6 +287,7 @@ fn advance(
     spent: &mut HashMap<String, Spent>,
     no_review: bool,
     tally: &mut Tally,
+    durable: &super::state::LoopState,
 ) -> Result<bool, String> {
     let entry = spent.entry(pr.to_owned()).or_default();
     let obs = super::deliver::observe(root, pr)?;
@@ -289,15 +311,24 @@ fn advance(
         obs.ci, obs.base_ci, obs.mergeable, transition.action
     );
 
+    // Counted whether or not it changes the action: waiting on somebody
+    // else's broken base is time this loop spent, and a high count is a fact
+    // about the repository rather than about the loop.
+    if obs.base_ci == stella_autonomy::CiConclusion::Red {
+        durable.update_stats(|s| s.base_broken_waits += 1);
+    }
+
     match transition.action {
         Action::Merge => {
             super::deliver::merge(pr)?;
             tally.merged += 1;
+            durable.update_stats(|s| s.prs_merged += 1);
             eprintln!("  merged #{pr}");
             Ok(true)
         }
         Action::Escalate { reason } => {
             tally.escalated += 1;
+            durable.update_stats(|s| s.prs_escalated += 1);
             eprintln!("  escalated to a human: {reason:?}");
             Ok(true)
         }
@@ -312,6 +343,7 @@ fn advance(
             // forever, and a counter that only moved on success would never
             // reach it.
             entry.fixes += 1;
+            durable.update_stats(|s| s.fixes_pushed += 1);
             eprintln!(
                 "  needs a fix, which this build does not author — that is `work` on the \
                  existing branch, and it is the next slice. Leaving it for a human."
@@ -320,6 +352,7 @@ fn advance(
         }
         Action::Rebase => {
             entry.rebases += 1;
+            durable.update_stats(|s| s.rebases += 1);
             eprintln!("  needs a rebase, which this build does not perform. Leaving it.");
             Ok(true)
         }

@@ -468,13 +468,13 @@ mod tests {
     /// different text and either alone is a silent single point of failure.
     #[test]
     fn closing_an_issue_takes_both_the_body_and_the_trailer() {
-        let body = pr_body("3939", "summary", "Created by stella.");
+        let body = pr_body("3939", "summary", stella_autonomy::SIGNATURE);
         assert!(body.contains("Closes #3939"));
         assert_eq!(commit_trailer("3939"), "Closes #3939");
-        // And the signature sits exactly one line break after the last
-        // character, not two.
+        // And the footer is a horizontal rule below the closing keyword, so
+        // the `Closes` line is never swallowed into the signature.
         assert!(
-            body.ends_with("Closes #3939\nCreated by stella."),
+            body.ends_with("Closes #3939\n\n---\ncreated by stella*"),
             "{body:?}"
         );
     }

@@ -235,6 +235,9 @@ impl LoopState {
     fn run_path(&self) -> PathBuf {
         self.dir.join("run.json")
     }
+    fn stats_path(&self) -> PathBuf {
+        self.dir.join("stats.json")
+    }
     fn runs_path(&self) -> PathBuf {
         self.dir.join("runs.jsonl")
     }
@@ -309,6 +312,36 @@ impl LoopState {
     }
 
     // -- the run lifecycle ---------------------------------------------------
+
+    // -- session statistics -------------------------------------------------
+
+    /// What this session has done so far.
+    ///
+    /// Absent or unreadable yields the zero value rather than an error: a
+    /// dashboard asking about a loop that has not started should see zeros,
+    /// not a failure. Every field defaults, so an older file read by a newer
+    /// build gains the new counters at zero rather than failing to parse.
+    pub fn stats(&self) -> stella_autonomy::SessionStats {
+        read_json(&self.stats_path())
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
+    }
+
+    /// Read, mutate, and write the session's counters.
+    ///
+    /// Written after **every** step rather than at the end, because the point
+    /// is a record readable while the loop is still running — a perpetual loop
+    /// that only reported on exit would never report at all.
+    ///
+    /// Atomic, so a dashboard sampling mid-write reads the previous complete
+    /// document rather than a truncated one.
+    pub fn update_stats(&self, mutate: impl FnOnce(&mut stella_autonomy::SessionStats)) {
+        let mut stats = self.stats();
+        mutate(&mut stats);
+        if let Ok(value) = serde_json::to_value(stats) {
+            let _ = write_json_atomic(&self.stats_path(), &value);
+        }
+    }
 
     pub fn run_doc(&self) -> Option<Value> {
         read_json(&self.run_path())
