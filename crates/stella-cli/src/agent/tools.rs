@@ -49,17 +49,6 @@ pub(crate) fn custom_tool_report_for_scopes(
     }
 }
 
-/// The pipeline's file fingerprint: SHA-256 over the complete bytes. Content
-/// hashes are required at the witness authority boundary: size+mtime can be
-/// restored after a same-length edit and would incorrectly credit a tampered
-/// witness. One definition is shared with candidate snapshots.
-pub(crate) fn fs_fingerprint(path: &std::path::Path) -> Option<String> {
-    Some(
-        OpenedWitnessArtifact::open(path)?
-            .identity_for_path(path)?
-            .fingerprint,
-    )
-}
 
 /// Identity for the workspace-relative `rel` under `root`, attesting the
 /// location the artifact was actually observed at: `path` carries the opened

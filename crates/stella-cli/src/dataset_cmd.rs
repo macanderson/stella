@@ -10,11 +10,13 @@
 //!
 //! ## A fold over the store, not a second capture path
 //!
-//! `trace.rs` (#1042) already assembles a redacted trajectory record — but
-//! `trace_capture` defaults off and is wired at exactly one call site, so
-//! `.stella/private/traces.jsonl` is absent in essentially every real
-//! workspace and carries nothing historical. This module therefore folds
-//! `store.db` directly: the `executions` header for provenance and the
+//! A separate `trace.rs` (#1042) once assembled a redacted trajectory record
+//! from a live pipeline run, but its one call site was the staged pipeline's
+//! one-shot driver — gone from this build (#3846) along with the crate that
+//! drove it — so `.stella/private/traces.jsonl` was already absent in
+//! essentially every real workspace before that removal and carries nothing
+//! historical either way. This module therefore folds `store.db` directly:
+//! the `executions` header for provenance and the
 //! per-execution `events` journal for everything else. That journal is the
 //! only place tool OUTPUTS survive (`tool_calls` records `bytes_out` and
 //! deliberately never the content), so it is the only possible source.

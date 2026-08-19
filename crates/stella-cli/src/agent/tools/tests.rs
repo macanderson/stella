@@ -1,28 +1,5 @@
 use super::*;
 
-#[test]
-fn witness_fingerprint_hashes_complete_bytes_not_size_and_mtime() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("witness.rs");
-    std::fs::write(&path, b"aaaa").unwrap();
-    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
-    let before = fs_fingerprint(&path).unwrap();
-
-    std::fs::write(&path, b"bbbb").unwrap();
-    std::fs::File::options()
-        .write(true)
-        .open(&path)
-        .unwrap()
-        .set_times(std::fs::FileTimes::new().set_modified(modified))
-        .unwrap();
-    let after = fs_fingerprint(&path).unwrap();
-
-    assert_ne!(
-        before, after,
-        "same-length, same-mtime edits must be detected"
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn witness_identity_rejects_symlinks_hardlinks_and_hashes_mode() {

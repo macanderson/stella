@@ -630,32 +630,14 @@ impl AgentEngineConfig {
         self.reasoning_auto.is_some_and(Toggle::is_on)
     }
 
+    /// Whether a headless run skips the (now-removed) staged pipeline's
+    /// scope-review gate rather than refusing outright. The gate itself is
+    /// gone with the pipeline (#3846); this accessor and the setting it reads
+    /// survive only because settings-merge tests still exercise the
+    /// scope-chain precedence rule for `agent_engine_config.headless_scope_bypass`
+    /// through it — no production code consults the answer any more.
     pub fn headless_scope_bypass_on(&self) -> bool {
         self.headless_scope_bypass.is_some_and(Toggle::is_on)
-    }
-
-    /// Whether an unmeasurable diff-coverage overlap withholds a
-    /// deterministic fast-submit (#1291). Absent is off.
-    pub fn pipeline_require_diff_coverage_on(&self) -> bool {
-        self.pipeline_require_diff_coverage
-            .is_some_and(Toggle::is_on)
-    }
-
-    /// The parked-approval deadline, if the operator set one (#1616).
-    ///
-    /// `0` is spelled and means "no deadline", the same convention
-    /// `model_timeout_secs` uses: in a field whose absence already means
-    /// "the default", zero is the only way for one project to opt out of a
-    /// deadline a user-scope file set. Absent and `0` therefore agree, and
-    /// both park forever.
-    ///
-    /// The single copy of this reading, deliberately: #1616 merged twice,
-    /// and one of the two mappings that resulted was consulted by nothing.
-    /// Witness: `daemon::approval::tests::the_setting_maps_absent_and_zero_to_park_forever`.
-    pub fn approval_wait(&self) -> Option<std::time::Duration> {
-        self.approval_wait_secs
-            .filter(|secs| *secs > 0)
-            .map(std::time::Duration::from_secs)
     }
 
     /// Persist THIS config as the `agent_engine_config` key of the

@@ -643,136 +643,6 @@ async fn untrusted_project_custom_tools_are_absent_from_the_runtime_surface() {
 }
 
 #[test]
-fn non_tty_text_output_is_headless_without_losing_text_rendering() {
-    let cfg = cfg_for("zai");
-    let format = OutputFormat::Text;
-    let worker_model = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let non_tty = pipeline_config_for_approval_capability(
-        &cfg,
-        PipelineApprovalCapability::Unavailable,
-        None,
-        &worker_model,
-    );
-    assert!(
-        non_tty.headless,
-        "text redirected through a non-TTY host cannot prompt for approval"
-    );
-    assert!(
-        !non_tty.headless_bypass_scope_review,
-        "output serialization must never grant execution authority"
-    );
-    assert_eq!(format, OutputFormat::Text, "rendering remains text");
-
-    let interactive = pipeline_config_for_approval_capability(
-        &cfg,
-        PipelineApprovalCapability::Stdio,
-        None,
-        &worker_model,
-    );
-    assert!(
-        !interactive.headless,
-        "an explicit interactive approval host retains scope review"
-    );
-    assert!(!interactive.headless_bypass_scope_review);
-}
-
-/// Issue: a squash-merge (#284 x #297/#276) silently dropped
-/// `run_pipeline_one_shot`'s `approval_capability` computation, collapsing
-/// its production call site to a bare `is_text` check with no test to catch
-/// it — the helper above was already covered in isolation, but nothing
-/// exercised the actual condition the call site computes. These three tests
-/// pin `approval_capability_for` (the extracted, directly-testable seam)
-/// against every input combination that matters.
-#[test]
-fn approval_capability_for_requires_both_terminal_handles_not_just_text_format() {
-    // The exact regression: a redirected/piped text-format run (is_text,
-    // stdout still a TTY, but stdin is NOT) must stay Unavailable — a bare
-    // `is_text` check would wrongly select Stdio here and try to read an
-    // approval decision from a pipe no one is at the other end of.
-    assert_eq!(
-        approval_capability_for(false, true, false, true),
-        PipelineApprovalCapability::Unavailable,
-        "text format alone must not select Stdio when stdin isn't a real terminal"
-    );
-    assert_eq!(
-        approval_capability_for(false, true, true, false),
-        PipelineApprovalCapability::Unavailable,
-        "text format alone must not select Stdio when stdout isn't a real terminal"
-    );
-    assert_eq!(
-        approval_capability_for(false, true, false, false),
-        PipelineApprovalCapability::Unavailable
-    );
-}
-
-#[test]
-fn approval_capability_for_json_is_always_unavailable() {
-    // Output serialization must never grant execution authority, regardless
-    // of the terminal state — JSON output has nowhere to render a prompt.
-    assert_eq!(
-        approval_capability_for(false, false, true, true),
-        PipelineApprovalCapability::Unavailable
-    );
-    assert_eq!(
-        approval_capability_for(false, false, false, false),
-        PipelineApprovalCapability::Unavailable
-    );
-}
-
-#[test]
-fn approval_capability_for_full_tty_text_is_stdio() {
-    // Only the genuine interactive case — text format, real stdin, real
-    // stdout — selects Stdio.
-    assert_eq!(
-        approval_capability_for(false, true, true, true),
-        PipelineApprovalCapability::Stdio
-    );
-}
-
-/// The composition gap the incident actually exploited: `approval_capability_for`
-/// and `pipeline_config_for_approval_capability` were each covered above in
-/// isolation, but nothing pinned them wired together the way
-/// `run_pipeline_one_shot` actually wires them (agent.rs, around the
-/// `pipeline_config` construction) — feeding one straight into the other. A
-/// regression that breaks *that* composition (e.g. hardcoding
-/// `PipelineApprovalCapability::Stdio` at the call site instead of using the
-/// computed value) would pass every test above while still shipping the
-/// scope-review bypass this incident (#284 x #297, fixed in #305) shipped.
-#[test]
-fn non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_scope_review() {
-    let cfg = cfg_for("zai");
-    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-
-    // A non-TTY text-format run (e.g. `stella run` piped in a script or CI)
-    // must not select the interactive stdio approval gate, and its wired
-    // config must stay headless.
-    let text_capability = approval_capability_for(false, true, false, false);
-    let text_config =
-        pipeline_config_for_approval_capability(&cfg, text_capability, None, &model_ref);
-    assert_ne!(
-        text_capability,
-        PipelineApprovalCapability::Stdio,
-        "a non-tty text run must not select the interactive stdio approval gate"
-    );
-    assert!(
-        text_config.headless,
-        "a non-tty text run's wired config must stay headless"
-    );
-
-    // A JSON-format one-shot run is headless by construction — and even with
-    // both terminal handles real, its wired config must never bypass scope
-    // review; JSON has nowhere to render a prompt regardless of TTY state.
-    let json_capability = approval_capability_for(false, false, true, true);
-    let json_config =
-        pipeline_config_for_approval_capability(&cfg, json_capability, None, &model_ref);
-    assert!(json_config.headless);
-    assert!(
-        !json_config.headless_bypass_scope_review,
-        "a JSON-format run's wired config must never bypass scope review"
-    );
-}
-
-#[test]
 fn existing_providers_still_route_to_their_current_adapter() {
     // Regression: switching the catalog check to resolve_for, the
     // (provider, id) dedup, and the inserted vertex/bedrock arms must NOT
@@ -1098,81 +968,18 @@ mod durability_isolation;
 
 mod code_graph;
 
-/// Issue #644: the machine-readable envelope declares its contract version, and
-/// declares the *same* one on both arms. A version present on the success shape
-/// but missing from the error shape is worse than no version at all — a script
-/// could not rely on reading it, and the error arm is the one a headless
-/// consumer hits most.
+/// The machine-readable envelope leads with `schema_version`, on the one
+/// summary shape a raw step-loop run still emits — `PipelineRunSummary` died
+/// with the staged pipeline it described (#3846). Key order is deliberately
+/// *not* part of the consumer contract — this pins a build convention, not a
+/// promise: the envelope is assembled from a struct with the version declared
+/// first, so a derived `Serialize` emits it at the head of the object where a
+/// human eyeballing output sees it immediately. Rebuilding it with
+/// `serde_json::json!` would silently undo that (a `json!` object is a sorted
+/// map, which sorts `schema_version` into the middle), and nothing else in
+/// the suite would notice.
 #[test]
-fn the_json_summary_envelope_declares_its_schema_version_on_both_arms() {
-    let sample = |status, text: Option<&str>, reason: Option<&str>| PipelineRunSummary {
-        schema_version: crate::SUMMARY_SCHEMA_VERSION,
-        status,
-        text: text.map(str::to_string),
-        cost_usd: 0.25,
-        reason: reason.map(str::to_string),
-        task_class: text.map(|_| "Edit".to_string()),
-        verdict: text.map(|_| serde_json::json!({ "passed": true })),
-        revisions: text.map(|_| 1),
-        candidates_run: text.map(|_| 2),
-        model: "anthropic/claude-opus".to_string(),
-        events: Vec::new(),
-        reflection: serde_json::Value::Null,
-    };
-
-    let ok = serde_json::to_value(sample("completed", Some("done"), None)).expect("serializes");
-    let err = serde_json::to_value(sample("error", None, Some("boom"))).expect("serializes");
-
-    assert_eq!(
-        ok["schema_version"],
-        serde_json::json!(crate::SUMMARY_SCHEMA_VERSION)
-    );
-    assert_eq!(
-        err["schema_version"], ok["schema_version"],
-        "one run, one envelope contract: the arms cannot declare different versions"
-    );
-
-    // The key set is the contract (#373), and the version stamp is now part of
-    // it — on both arms, as an explicit key rather than an inferred default.
-    let keys = |v: &serde_json::Value| {
-        v.as_object()
-            .expect("the summary serializes as an object")
-            .keys()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>()
-    };
-    assert_eq!(
-        keys(&ok),
-        keys(&err),
-        "the success and error arms share one key set"
-    );
-    assert!(keys(&ok).contains("schema_version"));
-}
-
-/// Both machine-readable summaries lead with `schema_version`. Key order is
-/// deliberately *not* part of the consumer contract — this pins a build
-/// convention, not a promise: every envelope is assembled from a struct with the
-/// version declared first, so a derived `Serialize` emits it at the head of the
-/// object where a human eyeballing output sees it immediately. Rebuilding any of
-/// them with `serde_json::json!` would silently undo that (a `json!` object is a
-/// sorted map, which sorts `schema_version` into the middle), and nothing else
-/// in the suite would notice.
-#[test]
-fn every_summary_envelope_leads_with_its_version() {
-    let pipeline = PipelineRunSummary {
-        schema_version: crate::SUMMARY_SCHEMA_VERSION,
-        status: "completed",
-        text: None,
-        cost_usd: 0.0,
-        reason: None,
-        task_class: None,
-        verdict: None,
-        revisions: None,
-        candidates_run: None,
-        model: "anthropic/claude-opus".to_string(),
-        events: Vec::new(),
-        reflection: serde_json::Value::Null,
-    };
+fn the_summary_envelope_leads_with_its_version() {
     let raw = RawRunSummary {
         schema_version: crate::SUMMARY_SCHEMA_VERSION,
         status: "completed",
@@ -1184,15 +991,11 @@ fn every_summary_envelope_leads_with_its_version() {
         files_touched: serde_json::Value::Null,
     };
 
-    for (label, encoded) in [
-        ("pipeline", serde_json::to_string(&pipeline).unwrap()),
-        ("raw step-loop", serde_json::to_string(&raw).unwrap()),
-    ] {
-        assert!(
-            encoded.starts_with(r#"{"schema_version":"#),
-            "the {label} summary must lead with its version, got: {encoded}"
-        );
-    }
+    let encoded = serde_json::to_string(&raw).unwrap();
+    assert!(
+        encoded.starts_with(r#"{"schema_version":"#),
+        "the raw step-loop summary must lead with its version, got: {encoded}"
+    );
 }
 
 // ---------------------------------------------------------------------------

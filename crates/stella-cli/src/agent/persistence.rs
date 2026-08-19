@@ -67,26 +67,6 @@ pub(crate) fn begin_execution(
     }
 }
 
-/// Begin the execution row for a `stella run` turn that the staged pipeline
-/// wraps.
-///
-/// The door is **`run`** — this is `stella run`, whatever wrapped it. That
-/// the pipeline wrapped it is the `variant`, a separate fact in a separate
-/// column (#3388). It used to be recorded as a door called `"pipeline"`,
-/// which made the door depend on the wrapper and split one door in two for
-/// anything grouping by it.
-///
-/// It lives here rather than at its one call site because `agent.rs` is a
-/// grandfathered god file closed to growth.
-pub(crate) fn begin_pipeline_execution(
-    store: &Option<Arc<Store>>,
-    prompt: &str,
-    cfg: &Config,
-    session: &str,
-) -> Option<(Arc<Store>, i64)> {
-    let door = TurnDoor::new("run").wrapped_by(PIPELINE_VARIANT_CLASSIC);
-    begin_execution(store, door.kind, prompt, cfg, Some(session), door.variant)
-}
 
 /// Emit the run's ending — the single terminator of one run's event stream
 /// (#3379, #3398).

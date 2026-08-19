@@ -117,7 +117,6 @@ mod tool_policy;
 #[cfg(test)]
 mod tool_docs;
 mod tool_switches;
-mod trace;
 mod tune_cmd;
 mod turn_diff;
 mod turn_facts;
