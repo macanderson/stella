@@ -191,6 +191,55 @@ pub(crate) fn resolve_seat_models(
     (seats, notices)
 }
 
+/// One installed plugin's declared roles, as the seat list needs them.
+///
+/// Deliberately not a `PluginManifest`: what the seat list needs is an id, a
+/// display name and the role names, and taking the whole manifest would let a
+/// later edit reach for a field — a tier, a grade, a participation level — and
+/// make the seat list depend on something that is not the user's assignment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclaredSeats {
+    /// The plugin's stable install id — the namespace half of every key it
+    /// contributes. **The plugin never writes this**; the caller supplies it
+    /// from the install record, which is what makes the namespace unforgeable
+    /// (`doc:roleless-core` §8.4).
+    pub plugin_id: String,
+    /// The plugin's display name, for the "from" column.
+    pub plugin_name: String,
+    /// The bare role names from the manifest's `[roles.<name>]` keys.
+    pub roles: Vec<String>,
+}
+
+/// Every seat an installed set declares: `(key, plugin display name)`, ordered.
+///
+/// Ordered by `(plugin_id, role)` rather than by the order plugins happened to
+/// be installed, for the reason `doc:roleless-core` §8.3 gives for stage order:
+/// install order is machine-local and not reproducible across clones, so a
+/// surface that reads in that order shows two people different screens for the
+/// same configuration.
+///
+/// A duplicate key cannot arise from two plugins — the id is in the key — but
+/// can from one plugin declaring the same role twice, which a manifest map
+/// makes impossible and this deduplicates anyway rather than rendering a row
+/// the user cannot tell apart from the one above it.
+#[must_use]
+pub(crate) fn declared_seats(plugins: &[DeclaredSeats]) -> Vec<(String, String)> {
+    let mut rows: Vec<(String, String)> = plugins
+        .iter()
+        .flat_map(|plugin| {
+            plugin.roles.iter().map(move |role| {
+                (
+                    format!("{}/{}", plugin.plugin_id, role),
+                    plugin.plugin_name.clone(),
+                )
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    rows.dedup_by(|a, b| a.0 == b.0);
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +290,59 @@ mod tests {
             notices[0].contains("session's model"),
             "the notice must say what happens instead: {notices:?}"
         );
+    }
+
+    fn declared(id: &str, name: &str, roles: &[&str]) -> DeclaredSeats {
+        DeclaredSeats {
+            plugin_id: id.to_string(),
+            plugin_name: name.to_string(),
+            roles: roles.iter().map(|r| (*r).to_string()).collect(),
+        }
+    }
+
+    /// The host builds the key, so the namespace is the install record's and
+    /// not the plugin's. Two plugins declaring the same bare role name get two
+    /// distinct seats — which is the whole reason §8.4 rejected bare names.
+    #[test]
+    fn two_plugins_declaring_the_same_role_get_two_seats() {
+        let seats = declared_seats(&[
+            declared("stella-plan", "Stella Plan", &["planner"]),
+            declared("acme-plan", "Acme Plan", &["planner"]),
+        ]);
+        let keys: Vec<&str> = seats.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["acme-plan/planner", "stella-plan/planner"]);
+    }
+
+    /// Ordered by key, never by install order: install order is machine-local,
+    /// so ordering by it would show two people different screens for the same
+    /// configuration (`doc:roleless-core` §8.3's reasoning, applied to a list).
+    #[test]
+    fn seats_order_by_key_not_by_install_order() {
+        let installed_one_way = declared_seats(&[
+            declared("zulu", "Zulu", &["b", "a"]),
+            declared("alpha", "Alpha", &["z"]),
+        ]);
+        let installed_the_other_way = declared_seats(&[
+            declared("alpha", "Alpha", &["z"]),
+            declared("zulu", "Zulu", &["a", "b"]),
+        ]);
+        assert_eq!(installed_one_way, installed_the_other_way);
+        assert_eq!(
+            installed_one_way
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha/z", "zulu/a", "zulu/b"]
+        );
+    }
+
+    /// No plugins, or plugins declaring no roles, is an empty list — not a row
+    /// apologising for itself. The pane renders the default model and nothing
+    /// more.
+    #[test]
+    fn nothing_declared_is_no_seats() {
+        assert!(declared_seats(&[]).is_empty());
+        assert!(declared_seats(&[declared("quiet", "Quiet", &[])]).is_empty());
     }
 
     /// A `Provider` stand-in for the lookup tests, which never make a call.
