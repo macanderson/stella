@@ -337,6 +337,90 @@ fn every_web_surface_agrees_with_the_observatory_palette() {
     );
 }
 
+/// The transcript surface carries the instrument palette too, for its one
+/// scheme.
+///
+/// A separate test rather than another `Surface` row, because `Surface`
+/// requires a dark *and* a light block and this page has only the dark one —
+/// which is exactly why the matrix above could not see it, and exactly what
+/// let it drift. The v3.0 recolour moved the observatory and every surface the
+/// matrix covers to Ion on Obsidian; `transcript.css` was not one of them, so
+/// it shipped a release declaring itself the instrument palette while carrying
+/// the previous ground and all three previous semantic colours. A reader
+/// clicking a run in the dashboard landed on a page whose "passed" was a
+/// different green from the row they clicked.
+///
+/// Checking one scheme is not the whole contract — giving this page a light
+/// scheme and folding it into the matrix is still #3630 — but a surface with
+/// no test at all is how the drift happened, and the roles it *does* carry can
+/// be held today.
+#[test]
+fn the_transcript_surface_agrees_with_the_observatory_dark_scheme() {
+    let canon = canonical();
+    let css = read("crates/stella-transcript/src/html/transcript.css");
+    let tokens = declarations(between(&css, ":root {", "\n}"));
+
+    // This file's own spelling of each role. `identity` is absent on purpose,
+    // for the same reason it is absent from the arena: a transcript is a
+    // reading surface for a run, and carries no wordmark to spend it on.
+    let names = [
+        ("ground", "--bg"),
+        ("surface", "--panel"),
+        ("text", "--ink"),
+        ("text-2", "--dim"),
+        ("text-3", "--faint"),
+        ("ok", "--green"),
+        ("bad", "--red"),
+        ("warn", "--amber"),
+    ];
+
+    let mut divergences = Vec::new();
+    for (role, want, _light) in &canon {
+        let Some((_, token)) = names.iter().find(|(r, _)| r == role) else {
+            continue;
+        };
+        match tokens.get(*token) {
+            None => divergences.push(format!("declares no `{token}` (role `{role}`)")),
+            Some(got) if got != want => divergences.push(format!(
+                "`{token}` (role `{role}`) is {got}, the observatory says {want}"
+            )),
+            Some(_) => {}
+        }
+    }
+
+    // The ramp steps beside the three named surfaces. Not in `ROLES` — no
+    // other surface spells them — but they are in the observatory's palette
+    // block, and a transcript that took its ground from there and its
+    // hairline from somewhere else would look assembled from two systems.
+    let observatory = read("crates/stella-observatory/src/assets/index.html");
+    let instrument = declarations(between(&observatory, "BEGIN palette", "END palette"));
+    for (token, canonical_name) in [
+        ("--raised", "--raised"),
+        ("--line", "--hairline"),
+        ("--line2", "--hairline-strong"),
+    ] {
+        let want = instrument
+            .get(canonical_name)
+            .unwrap_or_else(|| panic!("observatory defines no {canonical_name}"));
+        match tokens.get(token) {
+            None => divergences.push(format!("declares no `{token}`")),
+            Some(got) if got != want => divergences.push(format!(
+                "`{token}` is {got}, the observatory's `{canonical_name}` is {want}"
+            )),
+            Some(_) => {}
+        }
+    }
+
+    assert!(
+        divergences.is_empty(),
+        "crates/stella-transcript/src/html/transcript.css has drifted from the \
+         observatory, which is the single definition:\n  {}\n\nThe Observatory \
+         serves this page, so a reader arrives here from a dashboard painted in \
+         those values.",
+        divergences.join("\n  ")
+    );
+}
+
 /// The MCP OAuth landing page carries the instrument palette too, for the
 /// tokens it uses.
 #[test]

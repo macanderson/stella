@@ -9,10 +9,8 @@
 use std::path::PathBuf;
 
 fn cc_adapter_source() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/memory/replay/cc_adapter.rs");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/memory/replay/cc_adapter.rs");
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
 }
 
 #[test]

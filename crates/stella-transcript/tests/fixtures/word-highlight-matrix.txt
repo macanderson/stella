@@ -1,0 +1,25 @@
+# stella_transcript::word::highlight over a fixed matrix.
+# Generated — re-bless with:
+#   BLESS=1 cargo test -p stella-transcript --test word_highlight_matrix
+# The TypeScript port must reproduce this byte for byte:
+#   node arenabench/ui/scripts/check-word-diff-parity.mjs
+# Spans: |unchanged| and [changed]. `\n` `\|` `\[` `\]` are escaped.
+case=0 old=|same line| new=|same line|
+case=1 old=|\\setlength{\\parindent}{|[15pt]|}| new=|\\setlength{\\parindent}{|[12pt]|}|
+case=2 old=|{a}{|[b]|}| new=|{a}{|[c]|}|
+case=3 old=|x = |[1] new=|x = |[2]
+case=4 old=|--fast| new=|--fast|[2]
+case=5 old=|prefix_|[alph]|a| new=|prefix_|[bet]|a|
+case=6 old=|let x = 1;| new=|let x = 1;|[ // note]
+case=7 old=|let x = 1;|[ // note] new=|let x = 1;|
+case=8 old=|    indented| new=|    |[    ]|indented|
+case=9 old=|completely different| new=|nothing alike here|
+case=10 old=|keep this part the same but change the |[tail] new=|keep this part the same but change the |[end]
+case=11 old=|a |[1]| b |[2]| c| new=|a |[9]| b |[8]| c|
+case=12 old=|| new=|added|
+case=13 old=|removed| new=||
+case=14 old=|café ün|[ï]|code| new=|café ün|[i]|code|
+case=15 old=|status: |[✅]| done| new=|status: |[❌]| done|
+case=16 old=|a |[🎉]| b| new=|a |[🎈]| b|
+case=17 old=|{"model": "claude-opus-5", "effort": "|[high]|"}| new=|{"model": "claude-opus-5", "effort": "|[medium]|"}|
+case=18 old=|pub fn resolve(&self, id: &|[str]|) -> Option<Pin> {| new=|pub fn resolve(&self, id: &|[TaskId]|) -> Option<Pin> {|
