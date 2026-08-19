@@ -172,6 +172,49 @@ fn observatory_preflight_reports_unsafe_legacy_store() {
     assert!(dot.join("store.db").exists());
 }
 
+/// `stella observe` roots on `current_dir()` and, until this landed, its
+/// banner named only the URL. A workspace with no `store.db` therefore served
+/// a fully working dashboard with every panel empty, which is indistinguishable
+/// from a broken one — the failure mode that cost a full pass over a healthy
+/// 920 MB store and a healthy page before the cause turned out to be the
+/// directory the server was started from.
+#[test]
+fn observatory_preflight_reports_a_workspace_with_no_store() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".stella")).unwrap();
+
+    let observed = crate::storage_cmd::preflight_observatory_stores(dir.path()).unwrap();
+    assert_eq!(observed, crate::storage_cmd::ObservedWorkspace::Unrecorded);
+
+    let notice = crate::storage_cmd::observatory_workspace_notice(dir.path(), observed)
+        .expect("a workspace with no store must earn an advisory");
+    // The remedy is the point: the reader has to learn that the fix is `cd`,
+    // not a bug report.
+    assert!(
+        notice.contains(&dir.path().display().to_string()),
+        "{notice}"
+    );
+    assert!(notice.contains("cd"), "{notice}");
+}
+
+/// The other side of the same rule: a workspace that *has* recorded runs must
+/// not be nagged. An advisory that fires on the ordinary case is noise, and
+/// noise is what gets filtered out before the one run that needed it.
+#[test]
+fn observatory_preflight_stays_quiet_when_the_store_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let private = dir.path().join(".stella").join("private");
+    std::fs::create_dir_all(&private).unwrap();
+    std::fs::write(private.join("store.db"), b"sqlite file").unwrap();
+
+    let observed = crate::storage_cmd::preflight_observatory_stores(dir.path()).unwrap();
+    assert_eq!(observed, crate::storage_cmd::ObservedWorkspace::Recorded);
+    assert_eq!(
+        crate::storage_cmd::observatory_workspace_notice(dir.path(), observed),
+        None
+    );
+}
+
 /// `colored` honours `NO_COLOR`, `CLICOLOR*`, and a non-tty stream, but not
 /// `TERM` — so a dumb terminal (Emacs `M-x shell`, a serial console, an
 /// editor's build pane, `TERM=dumb` in CI) rendered every escape sequence
