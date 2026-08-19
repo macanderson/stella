@@ -68,9 +68,13 @@
 //!    ([`child_turn_plane`] argues why); and a point runs between the parent's
 //!    turns, where the tool registry's event slot is empty — so the spend
 //!    reaches the session's guard and this run's report, but not the store's
-//!    receipt (#3802). The turn's boundary controls are the third
-//!    (#3803): this door publishes none, so a child inherits none, which is
-//!    a no-op until a surface that *has* controls can drive a wrapped turn.
+//!    receipt (#3802). The turn's boundary controls **do** cross (#3803):
+//!    [`dispatch_under_turn_controls`] publishes them for the span of the
+//!    dispatch — every round and every point between them — so a plugin's
+//!    child parks with a paused parent and stops with a stopped one. What
+//!    this door supplies is [`TurnControls::none`], because it is headless
+//!    and has no pause gate or steering tap to publish; the seam is what
+//!    #3554 needs, and a controlled surface fills it by passing its own.
 //!
 //! The ordering that makes 4 possible is worth naming, because it is the shape
 //! of the split between [`bind_installed`] and [`ResolvedWrapper::serving`]: a
@@ -89,7 +93,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use stella_core::budget::BudgetGuard;
 use stella_core::estimator::CalibrationMap;
-use stella_core::ports::ToolExecutor;
+use stella_core::ports::{ToolExecutor, TurnControls};
 use stella_core::router::Router;
 use stella_core::subagent::SubAgentDispatcher;
 use stella_model::provider::Provider;
@@ -697,6 +701,19 @@ pub(crate) struct RawTurnDriver<'a> {
     /// The artifacts this host pinned before the run, and the finding it
     /// reports about them after each turn (#3553).
     pub(crate) watch: &'a crate::wrapper_candidate::TamperWatch,
+    /// This turn's boundary controls — the pause gate and the soft stop that
+    /// govern it — published on the registry for the span of the dispatch so
+    /// every child dispatched underneath honours them (#3803).
+    ///
+    /// A field rather than something this driver derives, because a driver
+    /// cannot invent the seam: it belongs to whichever surface has a human
+    /// behind it. `crate::agent::goal::run_raw_one_shot` supplies
+    /// [`TurnControls::none`] — that path is headless, publishes no pause gate
+    /// and installs no steering tap, so there is nothing there to honour. A
+    /// controlled surface driving a wrapped turn (the deck, #3554) supplies its
+    /// own, exactly as `command_deck::lead_control::turn_controls` already does
+    /// for the turns it drives directly.
+    pub(crate) controls: TurnControls,
     /// What each round's turn returned, in order — the caller's own view of a
     /// loop the dispatcher owns.
     pub(crate) results: Vec<Result<(), CliFailure>>,
@@ -793,7 +810,13 @@ pub(crate) async fn run_wrapped(
         // for why that is the shared work tree and not an isolated worktree.
         candidate,
     };
-    let report = bound.dispatch.run(input, &mut driver).await;
+    // Copied out of the driver before it is borrowed mutably — both are shared
+    // handles, so this costs nothing and keeps the publication above the
+    // dispatch rather than inside a round.
+    let registry = driver.registry;
+    let controls = driver.controls.clone();
+    let report =
+        dispatch_under_turn_controls(&bound.dispatch, input, registry, controls, &mut driver).await;
     // Whatever a plugin's last point spent has no turn left to fold it in, so
     // this driver folds it (#3576). See `settle_plugin_child_spend`.
     settle_plugin_child_spend(driver.registry, &mut *driver.budget);
@@ -808,6 +831,40 @@ pub(crate) async fn run_wrapped(
         }
         Err(error) => Err(CliFailure::from(error.to_string())),
     }
+}
+
+/// Run a wrapper's whole dispatch with `controls` published on `registry`.
+///
+/// [`SubAgentDispatcher`]'s contract requires the driver of a turn to hand the
+/// engine it builds the *current* turn's controls, and a session-scoped
+/// dispatcher can only get them by reading them off the registry at dispatch
+/// time ([`ToolRegistry::attach_turn_controls`]). Every other driver in this
+/// crate publishes them; the wrapped path did not, so every child it dispatched
+/// ran with [`TurnControls::none`] — a paused session that kept spending inside
+/// the child, and a soft stop that ended the parent while the child ran on
+/// (#3803, the #922 shape one layer out).
+///
+/// **The span is the dispatch, not the round.** Scoping the guard to
+/// `RawTurnDriver::run_turn` would look right and be wrong: a plugin spends its
+/// child turns from a *point* — `before_turn`, `after_turn` — and those run
+/// between the rounds (#3576), which is precisely when a round-scoped guard has
+/// already dropped. So the guard is held here, across every round and every
+/// point, and comes down when this function returns — including on an unwind,
+/// which is the reason [`stella_tools::subagent::TurnControlsGuard`] clears on
+/// drop rather than on an explicit detach.
+///
+/// Takes `&mut dyn TurnDriver` rather than the concrete [`RawTurnDriver`] so
+/// the property is witnessable against a stubbed engine: what the witness needs
+/// to observe is what a *child* sees, and that is the same on either driver.
+async fn dispatch_under_turn_controls(
+    dispatch: &WrapperDispatch,
+    input: RoundInput,
+    registry: &ToolRegistry,
+    controls: TurnControls,
+    driver: &mut dyn TurnDriver,
+) -> Result<DispatchReport, stella_runtime::wrapper::WrapperError> {
+    let _controls = registry.attach_turn_controls(controls);
+    dispatch.run(input, driver).await
 }
 
 /// Print what the wrapper concluded, every point that abstained, and every

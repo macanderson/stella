@@ -744,6 +744,168 @@ printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":
     assert_eq!(wrapper.child_spends().len(), 1);
 }
 
+/// A dispatcher that answers a child the way [`crate::subagent::SessionSubAgents`]
+/// does — by reading the *current* turn's controls off the registry at dispatch
+/// time and refusing to spend when the turn it belongs to has already been
+/// stopped.
+///
+/// It reads the same slot through the same accessor as the shipping dispatcher
+/// (`ToolRegistry::turn_controls`), so what it observes is exactly what the
+/// real one observes; what it does with a latched stop is a two-line stand-in
+/// for the child engine, whose own honouring of these seams is witnessed in
+/// `crate::subagent::tests`.
+struct StopAwareDispatcher {
+    registry: Arc<stella_tools::ToolRegistry>,
+}
+
+#[async_trait]
+impl SubAgentDispatcher for StopAwareDispatcher {
+    async fn dispatch(&self, _spec: SubAgentSpec) -> SubAgentOutcome {
+        let controls = self.registry.turn_controls();
+        let stopped = controls
+            .steering
+            .as_ref()
+            .is_some_and(|tap| tap.soft_stop_requested());
+        if stopped {
+            return SubAgentOutcome::Incomplete {
+                report: SubAgentReport {
+                    summary: String::new(),
+                    truncated: false,
+                    cost_usd: 0.0,
+                    steps: 0,
+                    absorbed_messages: 0,
+                },
+                reason: stella_core::driver::SOFT_STOP_REASON.to_string(),
+            };
+        }
+        SubAgentOutcome::Completed(SubAgentReport {
+            summary: "spent the model on a stopped turn".to_string(),
+            truncated: false,
+            cost_usd: 0.02,
+            steps: 3,
+            absorbed_messages: 7,
+        })
+    }
+}
+
+/// **Witness (#3803).** A wrapped turn publishes its controls for the span of
+/// the dispatch, so the child a *plugin* asks for honours the stop that governs
+/// the parent.
+///
+/// Fails before this change with the child reporting `Completed`: `RawTurnDriver`
+/// attached nothing, so `ToolRegistry::turn_controls` answered
+/// `TurnControls::none()` and the dispatcher had no stop to see —
+/// [`SubAgentDispatcher`]'s contract broken at the one driver that never held up
+/// its end. It is the #922 shape one layer out: the parent is stopped, and the
+/// plugin's child runs on.
+///
+/// The plugin issues its `child_turn` from `before_turn` — a point, which runs
+/// *between* the rounds — which is why the guard is held across the dispatch and
+/// not merely across `run_turn`. A round-scoped guard passes nothing here.
+///
+/// The engine is the one thing stubbed, exactly as in the sibling witness above
+/// and for the same reason: [`TurnDriver`] is the seam the socket is designed
+/// around, and everything between the plugin's stdout and what the dispatcher
+/// reads is the shipping path.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_stopped_wrapped_turn_stops_the_child_its_plugin_asked_for() {
+    use stella_plugin::{TamperFinding, TurnOutcome};
+    use stella_runtime::wrapper::{DrivenTurn, TurnPrelude};
+
+    /// The engine, stubbed — this witness is about what the child sees, not
+    /// about what the turn answered.
+    struct StubTurn;
+
+    #[async_trait(?Send)]
+    impl TurnDriver for StubTurn {
+        async fn run_turn(&mut self, _prelude: TurnPrelude) -> DrivenTurn {
+            DrivenTurn {
+                outcome: TurnOutcome {
+                    completed: true,
+                    answer: "done".to_string(),
+                    tools: Some(Vec::new()),
+                    changed_files: Some(Vec::new()),
+                },
+                tamper: TamperFinding::NotChecked,
+            }
+        }
+    }
+
+    let dir = tempfile::tempdir().expect("a temp dir for the installed plugin");
+    // The plugin asks for a child and reports back whether it ran, so the
+    // assertion below reads the plugin's own view rather than the host's.
+    std::fs::write(
+        dir.path().join("main.sh"),
+        r#"
+read -r request
+printf '%s\n' '{"call":"child_turn","id":7,"args":{"role":"reviewer","instruction":"read the diff"}}'
+read -r answer
+case "$answer" in
+  *'"completed":false'*) finding="the child stopped with its parent" ;;
+  *) finding="the child ran on" ;;
+esac
+printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"reviewer","text":"%s"}]}}\n' "$finding"
+"#,
+    )
+    .expect("the plugin script is written");
+
+    let registry = Arc::new(stella_tools::ToolRegistry::new(PathBuf::from(".")));
+    let manifest = PluginManifest::from_toml_str(GRADING_MANIFEST).expect("fixture must load");
+    let plane = Arc::new(child_turn_plane(
+        &manifest,
+        Arc::new(StopAwareDispatcher {
+            registry: Arc::clone(&registry),
+        }) as Arc<dyn SubAgentDispatcher>,
+    ));
+    let roster = roster(vec![installed(
+        GRADING_MANIFEST,
+        &dir.path().to_string_lossy(),
+    )]);
+    let wrapper = bind_installed(&roster, "grading-v1", &mut |_| {})
+        .expect("the installed plugin declares this variant")
+        .serving(WrapperHost::recalling(no_recall()).with_child_turns(plane))
+        .expect("it binds");
+
+    // The turn is stopped before it is driven — the state a user leaves behind
+    // by pressing Esc, latched by contract so every boundary after it sees it.
+    let tap: Arc<crate::subsession::SteeringTap> = Arc::default();
+    tap.request_soft_stop();
+    let controls = stella_core::ports::TurnControls::none().with_steering(tap);
+
+    let mut driver = StubTurn;
+    let report = super::dispatch_under_turn_controls(
+        &wrapper.dispatch,
+        RoundInput {
+            goal: "put the retry back".to_string(),
+            signals: pre_turn_signals(false, false),
+            candidate: None,
+        },
+        &registry,
+        controls,
+        &mut driver,
+    )
+    .await
+    .expect("the declared stage program resolves");
+
+    assert!(report.faults.is_empty(), "{:?}", report.faults);
+    assert_eq!(
+        wrapper.child_spends().len(),
+        1,
+        "the child was dispatched — this is about what it did, not whether it ran"
+    );
+    assert!(
+        !wrapper.child_spends()[0].completed,
+        "a stopped parent must not keep spending inside the child its plugin asked for"
+    );
+
+    assert!(
+        registry.turn_controls().is_empty(),
+        "and the guard comes down with the dispatch, so the stop cannot latch \
+         onto the children of a turn that has not started yet"
+    );
+}
+
 /// **Witness (#3576, requirement 3).** What a plugin's last point spent
 /// lands on the session's guard.
 ///
