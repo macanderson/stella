@@ -434,6 +434,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             let turn_start = messages.len();
             let started_unix = crate::memory::unix_now_secs();
             presence.update_prompt(goal);
+            // One ledger per round of the arc (#3962), filled by the goal loop
+            // from the journal its renderer drained.
+            let mut goal_rounds: Vec<TurnFriction> = Vec::new();
             let result = run_goal_turn(
                 &*provider,
                 base_tools,
@@ -448,6 +451,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 Some(presence.id()),
                 recall_event,
                 memory.as_mut(),
+                Some(&mut goal_rounds),
             )
             .await;
             presence.needs_input();
@@ -462,15 +466,11 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             if let Err(e) = &result {
                 eprintln!("  {} {}\n", "Error:".red().bold(), e);
             }
-            // `/goal` reflects with an empty ledger, deliberately and for now
-            // (#3946). `run_goal_turn` runs SEVERAL turns, each with its own
-            // event channel, while this reflection covers the whole goal's
-            // transcript — so there is no single turn whose friction describes
-            // it. Folding every round into one ledger is the mistake #3552
-            // named on the wrapper's `TurnFacts`: it reports the first round's
-            // tools as the third round's. Per-round ledgers threaded through
-            // the goal loop are the real answer and are their own change.
-            let goal_friction = TurnFriction::default();
+            // `/goal` reflects ONCE over an arc of several turns, so it hands
+            // reflection one ledger per round rather than one for the arc
+            // (#3962). The fold it is not allowed to make is the merged one:
+            // that is the mistake #3552 named on the wrapper's `TurnFacts`,
+            // where the first round's tools are reported as the third round's.
             reflect_on_interactive_turn(
                 &*provider,
                 cfg,
@@ -478,7 +478,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 reflect::InteractiveTurn {
                     messages: &messages,
                     turn_start,
-                    friction: &goal_friction,
+                    friction: &goal_rounds,
                 },
                 &result,
                 &mut budget,
@@ -564,7 +564,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             reflect::InteractiveTurn {
                 messages: &messages,
                 turn_start,
-                friction: &friction,
+                friction: std::slice::from_ref(&friction),
             },
             &result,
             &mut budget,

@@ -11,6 +11,25 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent;
 use crate::cache_insight::{InsightScope, cache_insight_for};
+use crate::memory::TurnFriction;
+
+/// What a lane's closed turn stream leaves behind for its owner.
+///
+/// Two facts, not one, since #3962. `persistence_complete` was always the
+/// forwarder's answer; `friction` is the fold of the same stream that
+/// reflection reads — and it is folded HERE, in the one seam every deck lane
+/// shares, rather than in `command_deck.rs`, because that file is a god file
+/// closed to growth and because a lane that starts reflecting later should
+/// inherit the ledger rather than re-derive it.
+///
+/// [`Default`] is `persistence_complete: false` — the answer a forwarder that
+/// panicked or was cancelled owes, which is what its `unwrap_or(false)` said
+/// before this struct existed.
+#[derive(Default)]
+pub(crate) struct LaneStreamEnd {
+    pub(crate) persistence_complete: bool,
+    pub(crate) friction: TurnFriction,
+}
 
 /// Warn that execution closeout could not write its audit record (files
 /// touched / memory citations / outcome).
@@ -61,7 +80,7 @@ pub(crate) fn spawn_forwarder(
     inbound: UnboundedSender<Inbound>,
     lane: String,
     plan_board: Option<stella_tools::tasks::TaskBoardHandle>,
-) -> tokio::task::JoinHandle<bool> {
+) -> tokio::task::JoinHandle<LaneStreamEnd> {
     tokio::spawn(async move {
         let mut seq = 0u64;
         // This lane's open run of streamed reasoning fragments, joined into one
@@ -173,6 +192,7 @@ pub(crate) fn spawn_forwarder(
                 _ => {}
             }
             bridge.observe(&event);
+            friction.observe(&event);
             // A plan that reached the gate is the plan whose progress the
             // board records, so this is where it becomes one. Seeded on the
             // proposal rather than on approval: the ids must already resolve
@@ -284,7 +304,10 @@ pub(crate) fn spawn_forwarder(
             persistence_complete = false;
         }
         bridge.finish();
-        persistence_complete
+        LaneStreamEnd {
+            persistence_complete,
+            friction,
+        }
     })
 }
 
@@ -314,11 +337,11 @@ pub(crate) fn spawn_forwarder(
 pub(crate) async fn close_turn_stream(
     registry: &stella_tools::ToolRegistry,
     tx: UnboundedSender<AgentEvent>,
-    forwarder: tokio::task::JoinHandle<bool>,
-) -> bool {
+    forwarder: tokio::task::JoinHandle<LaneStreamEnd>,
+) -> LaneStreamEnd {
     registry.detach_event_stream();
     drop(tx);
-    forwarder.await.unwrap_or(false)
+    forwarder.await.unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -362,10 +385,9 @@ mod tests {
         )
         .await;
 
-        let persistence_complete =
-            settled.expect("the registry-held sender must not wedge the turn tail");
+        let ended = settled.expect("the registry-held sender must not wedge the turn tail");
         assert!(
-            persistence_complete,
+            ended.persistence_complete,
             "an event-only stream persists cleanly"
         );
         // The forwarded event reached the deck lane before the stream closed.
@@ -376,7 +398,7 @@ mod tests {
     async fn lane_events(
         registry: &stella_tools::ToolRegistry,
         tx: UnboundedSender<AgentEvent>,
-        forwarder: tokio::task::JoinHandle<bool>,
+        forwarder: tokio::task::JoinHandle<LaneStreamEnd>,
         in_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Inbound>,
     ) -> Vec<AgentEvent> {
         close_turn_stream(registry, tx, forwarder).await;

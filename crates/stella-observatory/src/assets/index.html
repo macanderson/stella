@@ -2539,6 +2539,9 @@ addEventListener("keydown", (e) => {
 });
 
 /* ── projects switcher ───────────────────────────────────────────────── */
+/* `/api/projects` already ships only rows with a live store (plus the current
+   workspace), and reports the rest as `known`/`omitted` counts — this filter
+   is the second line of defence, not the one paying for the payload (#3953). */
 function renderProjects(p) {
   const sel = $("proj");
   const current = (p.projects ?? []).find(x => x.is_current);

@@ -224,7 +224,7 @@ fn the_whole_rendering_reads_like_this() {
 
     let out = build(TurnEvidence {
         transcript: &transcript,
-        friction: &friction,
+        friction: std::slice::from_ref(&friction),
         succeeded: true,
     });
     // Ten messages under a 6k budget: nothing is elided, so there is no
@@ -468,7 +468,7 @@ fn the_friction_section_names_the_costliest_step_by_its_wire_role() {
     let mut friction = TurnFriction::default();
     friction.observe(&step_usage(1, ModelCallRole::Triage, 0.001, 900));
     friction.observe(&step_usage(7, ModelCallRole::WitnessAuthor, 0.31, 61_000));
-    let section = friction.section();
+    let section = friction.section(1);
     assert!(
         section.contains("step 7 (witness_author) $0.3100"),
         "the role is spelled as the wire spells it, so a reflection's account of \
@@ -510,7 +510,7 @@ fn the_friction_section_names_every_failed_tool_and_the_loop_detector() {
         evidence: "same two calls, three times".into(),
         aborted: true,
     });
-    let section = friction.section();
+    let section = friction.section(1);
     for expected in [
         "bash (c1): exit 101: could not compile stella-core",
         "slowest tool: bash (c1) took 1m36s",
@@ -536,7 +536,7 @@ fn a_result_without_its_start_is_recorded_under_its_call_id() {
         speculated: false,
     });
     assert!(
-        friction.section().contains("orphan: no such file"),
+        friction.section(1).contains("orphan: no such file"),
         "dropping it would lose a failure to bookkeeping"
     );
     let transcript = vec![
@@ -546,7 +546,7 @@ fn a_result_without_its_start_is_recorded_under_its_call_id() {
     ];
     let out = build(TurnEvidence {
         transcript: &transcript,
-        friction: &friction,
+        friction: std::slice::from_ref(&friction),
         succeeded: false,
     });
     assert!(
@@ -559,7 +559,7 @@ fn a_result_without_its_start_is_recorded_under_its_call_id() {
 /// a header promising evidence it has none of (#2483).
 #[test]
 fn an_empty_ledger_renders_no_friction_section() {
-    assert!(TurnFriction::default().section().is_empty());
+    assert!(TurnFriction::default().section(1).is_empty());
     let transcript = vec![user("hi"), assistant("hello")];
     let out = build(TurnEvidence::from_transcript(&transcript, true));
     assert!(
@@ -599,7 +599,7 @@ fn the_digest_is_a_function_of_the_turn() {
         let transcript = long_turn(30, 4, "boom");
         build(TurnEvidence {
             transcript: &transcript,
-            friction: &friction,
+            friction: std::slice::from_ref(&friction),
             succeeded: false,
         })
     };
@@ -653,9 +653,9 @@ fn the_ledger_is_bounded_and_reports_what_it_refused() {
     assert_eq!(friction.dropped, 25);
     assert!(
         friction
-            .section()
+            .section(1)
             .contains("25 further friction records were not retained"),
         "a silent truncation reads as \"this was everything\"\n\n{}",
-        friction.section()
+        friction.section(1)
     );
 }
