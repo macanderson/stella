@@ -498,52 +498,35 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "pipeline.verified_run",
-        // Deliberately describes the mechanism rather than the slogan: the
-        // ladder's guarantee is that the HOST authors the witness, runs its
-        // command, and credits the flip it observed. Verification arriving as
-        // a plugin is plugin-reported instead (#3511), so "verified done, not
-        // claimed done" is true of this path and not of the binary.
-        engine_home: "stella-pipeline: the plan/witness/verify/verdict ladder — the host authors \
-                      the witness, runs its command, and credits only the fail→pass flip it \
-                      observed itself",
+        // Retired, not merely undocumented: the built-in staged pipeline
+        // (`stella-pipeline` — the plan/witness/verify/verdict ladder that
+        // authored its own witness, ran it, and credited only the fail→pass
+        // flip it observed itself) was deleted from the workspace (removal
+        // census, `docs/spec/pipeline-as-plugins.md` §7 slice 2). Both
+        // surfaces below were `Shipped` against that crate; neither is
+        // `NotApplicable`, because the *capability* — a host that runs the
+        // check itself and credits only a flip it witnessed — is still a
+        // real product intent, just relocated: `doc:pipeline-as-plugins`
+        // moves it to an installable verification plugin (Oxagen's Vera is
+        // the reference one) that reports its own evidence instead of Stella
+        // running the check. That is a materially different guarantee
+        // (self-reported vs. host-run — see AGENTS.md's opening), so this
+        // row stays `Deferred` on both surfaces rather than being
+        // re-`Shipped` against the plugin path without a new witness proving
+        // *that* path's evidence contract.
+        engine_home: "no engine-owned ladder today — a bound wrapper plugin runs and reports its \
+                      own evidence via crates/stella-plugin's wire contract; the engine holds no \
+                      opinion about how it was produced",
         engine_entries: &[],
-        cli: SurfacePosture::Shipped {
-            mechanism: "`stella run` (default pipeline path) with the scope-review approval gate",
-            witness: "non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_scope_review",
+        cli: SurfacePosture::Deferred {
+            waiting_on: "an installed wrapper plugin driven via `stella run --pipeline <plugin-id>` \
+                         (crates/stella-cli/src/wrapper_plugin.rs); `--pipeline classic` is refused \
+                         outright now that the built-in ladder is gone",
         },
-        // Shipped in #1288, as the mode flag this row's `waiting_on` named as
-        // the alternative to a `/v1/runs` resource: `pipeline` on `POST
-        // /v1/turns` (and `POST /v1/sessions/{id}/turns`) drives the turn
-        // through `Pipeline::run` instead of a bare engine step loop, over
-        // the SAME transport every other turn already uses — the SSE
-        // stream, `POST /v1/turns/{id}/cancel`, and the settlement hook all
-        // work unchanged, exactly as `goal.loop` (#1297) established for its
-        // own mode flag. The one genuinely new wire primitive is the
-        // approval gate: `ServerFrame::ScopeReviewRequest` and `POST
-        // /v1/turns/{id}/approve`, symmetric with `tool-result` /
-        // `provider-result` (`stella-serve/src/pipeline_run.rs`,
-        // `stella-serve/src/remote.rs::RemoteApprovalGate`). Verification's
-        // process-launching ports (`TestRunner`, `DiagnosticRunner`) are
-        // remoted through the SAME `ToolRequest`/`ToolResultIn` frames every
-        // tool call already crosses (`RemoteVerificationRunner`) — not a new
-        // containment decision, `tools.local_execution`'s posture below
-        // applied to two more typed callers.
-        //
-        // Declared, not silent, follow-up (`pipeline_run.rs`'s own module
-        // docs carry the full list): context recall, repo structure, lint,
-        // mutation, coverage, and candidate-workspace isolation are not
-        // wired yet (every one of those ports is designed to degrade open
-        // when absent, so a served run still verifies — it just cannot
-        // isolate best-of-N candidates or measure diff coverage yet); the
-        // witness-author role rides the worker's provider rather than
-        // getting its own id the way verifier does; and `pipeline` is refused
-        // alongside `goal`/`sub_agents` on the same turn rather than
-        // composed with them.
-        api: SurfacePosture::Shipped {
-            mechanism: "a `pipeline` block on POST /v1/turns and POST /v1/sessions/{id}/turns \
-                        drives the turn through Pipeline::run; POST /v1/turns/{id}/approve \
-                        resolves the scope-review gate",
-            witness: "a_pipeline_run_is_requestable_over_the_wire_and_its_approval_gate_round_trips",
+        api: SurfacePosture::Deferred {
+            waiting_on: "no wire-level equivalent has shipped for a plugin-driven verified run; \
+                         POST /v1/turns's `pipeline` field is refused unconditionally \
+                         (crates/stella-serve/src/routes.rs) rather than dispatching anything",
         },
     },
     Capability {
@@ -714,7 +697,7 @@ mod tests {
 
     /// API sources a witness may live in: the serve crate's unit tests plus
     /// its end-to-end suites.
-    fn api_sources() -> [&'static str; 16] {
+    fn api_sources() -> [&'static str; 15] {
         [
             include_str!("../../stella-serve/src/server.rs"),
             // The remoted ports — home of the `tools.contracts` witness
@@ -737,7 +720,6 @@ mod tests {
             include_str!("../../stella-serve/tests/http.rs"),
             include_str!("../../stella-serve/tests/hostguard.rs"),
             include_str!("../../stella-serve/tests/goal_and_subagents.rs"),
-            include_str!("../../stella-serve/tests/pipeline.rs"),
         ]
     }
 
