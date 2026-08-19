@@ -1655,15 +1655,6 @@ pub async fn run_deck_session(
                             control: stella_tui::AgentControl::Stop, agent,
                         }) => {
                             if agent == LEAD {
-                                // Pipeline turns accept mid-turn `>` steering
-                                // (the execute engine drains the tap) but the
-                                // STOP stays a hard cancel: a pipeline is
-                                // triage→…→verifier, so a mid-execute soft stop
-                                // has no single obvious continuation. Only the
-                                // step-loop turn soft-stops.
-                                if pipeline_on {
-                                    break TurnEnd::Cancelled { hold: false };
-                                }
                                 // First Esc = SOFT stop: end at the next
                                 // boundary keeping completed steps. The
                                 // pair's second press (StopAndHold below)
