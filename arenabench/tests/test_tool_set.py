@@ -154,10 +154,14 @@ class TestSeatEnvironment:
         )
         return runner._agent_environment(spec, seat, run)
 
-    def test_an_undeclared_match_exports_nothing(self, tmp_path) -> None:
+    def test_an_undeclared_match_exports_nothing(
+        self, tmp_path, stella_adapter
+    ) -> None:
         assert "STELLA_LEAN_TOOLS" not in self._env(_spec({}), tmp_path)
 
-    def test_a_declared_set_reaches_the_seat_as_a_closed_set(self, tmp_path) -> None:
+    def test_a_declared_set_reaches_the_seat_as_a_closed_set(
+        self, tmp_path, stella_adapter
+    ) -> None:
         # `only:` and not the bare list — the bare form adds the discovery
         # tools on top, and a four-tool arm that advertises seven is not the
         # arm the template declared or provenance records.

@@ -87,6 +87,24 @@ Specific changes this crate is the far end of:
   arbiter of its own to double — see
   [`stella-runtime`](../stella-runtime)'s README for exactly which doors
   call `WrapperDispatch` today.
+- **Best-of-N is a real capability on `stella run`, and only there.**
+  [`src/candidate_workspaces.rs`](src/candidate_workspaces.rs) is the
+  isolation substrate `stella_runtime::wrapper::CandidateWorkspaces` asks for
+  (#3892): one `git worktree` per candidate under
+  `.stella/private/candidates/`, one **writing** worker turn rooted in each,
+  and an adoption that is `git diff` in the candidate and `git apply` on the
+  real tree. Three things a reader should not have to derive. It applies a
+  *patch* rather than committing or merging, so an adopted candidate leaves
+  exactly what the user's own turn leaves and best-of-N can never write
+  someone's history for them. Its turns go through the session's **one**
+  dispatcher ([`src/subagent.rs`](src/subagent.rs)'s
+  `dispatch_in_workspace`), so there is still one sub-agent pool and one spend
+  ledger over one session's money — only the registry is per-candidate, which
+  is forced: N candidates run concurrently in N trees and a registry's `root`
+  is what every path fence resolves against. And `stella goal` installs no
+  fan-out plane, exactly as it installs no `child_turn` plane, because that
+  loop's own even/odd receipt slots (#3833) own the low `turn_instance`
+  values.
 - **Resolving a wrapper and serving it are two moments, deliberately.**
   `bind_installed` finds the plugin and declares its transport *before* the
   provider is built, so `--pipeline` naming nothing installed fails as a typo
@@ -186,6 +204,7 @@ file), never as a planning assumption.
 | [`src/command_deck.rs`](src/command_deck.rs) + [`src/command_deck/`](src/command_deck), [`src/subsession.rs`](src/subsession.rs), [`src/session_persist.rs`](src/session_persist.rs), [`src/claims.rs`](src/claims.rs), [`src/cache_insight.rs`](src/cache_insight.rs) | The deck driver: bridges engine `AgentEvent`s into `stella-tui`'s `Inbound` fold, runs per-prompt sub-sessions, tees every fold-relevant envelope to the resume journal, and coordinates concurrent writers by claim-on-first-write. |
 | [`src/tui.rs`](src/tui.rs), [`src/interactive.rs`](src/interactive.rs) | The non-deck surfaces: `render_event`'s plain streaming renderer and the approvals plane's TTY question io (`AskUserIo`). |
 | [`src/auth_cmd.rs`](src/auth_cmd.rs), [`src/mcp_cmd.rs`](src/mcp_cmd.rs), [`src/memory_cmd.rs`](src/memory_cmd.rs), [`src/usage_cmd.rs`](src/usage_cmd.rs), [`src/fleet_cmd.rs`](src/fleet_cmd.rs), [`src/inspect.rs`](src/inspect.rs), [`src/stats.rs`](src/stats.rs), [`src/export.rs`](src/export.rs) | One module per command family. Everything but `fleet_cmd` runs without a resolved provider. |
+| [`src/candidate_workspaces.rs`](src/candidate_workspaces.rs) + [`src/candidate_workspaces/`](src/candidate_workspaces) | The best-of-N isolation substrate (#3892): `git worktree` per candidate, a writing worker turn rooted in each, `git apply` to land a winner, forced removal of the rest. Installed by `wrapper_plugin.rs`'s `session_host` on `stella run --pipeline <variant>`. |
 | [`src/plugin_cmd.rs`](src/plugin_cmd.rs) + [`src/plugin_cmd/`](src/plugin_cmd) (`roster.rs`, `process.rs`) | `stella plugin install\|list\|remove` (#3380/#3479): resolves `.stella/plugins/` and `~/.stella/plugins/`, renders `stella_plugin::consent_text` before anything executes, gates the project scope on `project_code_execution_trusted()` (#3509), and is the one place `LoopGrant::permits_hook`/`permits_point` are consulted against an installed manifest. Loads and shows consent for a manifest; does not yet drive a turn through one — `stella-runtime` has no host sequence for it to call (see that crate's README). |
 | [`src/model_catalog.rs`](src/model_catalog.rs), [`src/credential_handoff.rs`](src/credential_handoff.rs), [`src/credential_status.rs`](src/credential_status.rs), [`src/enterprise_telemetry.rs`](src/enterprise_telemetry.rs) | The only place that knows both models.dev's provider ids and stella's (`bootstrap()` installs the catalog slug validation and pricing resolve against); launcher FD key handoff; the shared "where did this key come from" verdict for `models`/`config`/`auth list`; the managed-only operational spool. |
 | [`src/arena.rs`](src/arena.rs) | The arena-bench adapter (`--task-dir/--journal/--state-dir/--resume`). |

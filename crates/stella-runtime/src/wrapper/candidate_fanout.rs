@@ -153,6 +153,19 @@ pub struct CandidateWork {
     pub agent_id: String,
     /// What the candidate is asked to do — the plugin's instruction verbatim.
     pub instruction: String,
+    /// The plugin's **own word** for the role it named, passed through
+    /// untouched.
+    ///
+    /// [`Self::seat`] beside it is the receipt label, drawn from a closed enum
+    /// this workspace owns; this is the routing key, drawn from the plugin's
+    /// manifest and meaningful only to the plugin that wrote it and the user
+    /// who assigned a model to it. Carrying both is what
+    /// [`ChildTurns`](super::ChildTurns) does at its own dispatch, and for the
+    /// same reason: without this a substrate can book the right seat but never
+    /// reach the model the *user* assigned to that role, so every candidate
+    /// runs on the session's own model however the user configured the plugin.
+    /// Nothing downstream may branch on the contents.
+    pub role: String,
     /// The responsibility this turn's model calls are attributed with. Always
     /// [`ModelCallRole::Worker`]; carried explicitly so a substrate books the
     /// seat it is told rather than one it assumes.
@@ -691,6 +704,7 @@ impl<W: CandidateWorkspaces> CandidateFanoutPlane for CandidateFanouts<W> {
                     CandidateWork {
                         agent_id: format!("plugin:{}/{}#{index}", self.plugin, args.role),
                         instruction: args.instruction.clone(),
+                        role: args.role.clone(),
                         seat,
                         budget_usd: share,
                         turn_instance: self.turn_instance,

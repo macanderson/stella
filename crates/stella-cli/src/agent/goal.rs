@@ -157,11 +157,7 @@ pub(crate) async fn run_raw_one_shot(
     // provider built two lines up (#3576).
     let bound = match resolved {
         Some(resolved) => {
-            let host = crate::wrapper_plugin::session_host(
-                &cfg.workspace_root,
-                resolved.manifest(),
-                sub_agents,
-            );
+            let host = crate::wrapper_plugin::session_host(cfg, resolved.manifest(), sub_agents);
             Some(
                 resolved
                     .serving(host)

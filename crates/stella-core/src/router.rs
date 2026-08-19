@@ -10,11 +10,21 @@
 //! over a caller-supplied abstraction (`ProviderProfile`) instead of any
 //! concrete catalog type, and has no I/O of its own: `resolve` is a plain
 //! synchronous function over owned data. It returns *data* describing what
-//! happened (a `ModelRef` plus an optional `FallbackInfo`); the host above
-//! this crate is what turns a `FallbackInfo` into an
-//! `AgentEvent::ProviderFallback` and pushes it onto the event channel —
-//! there is no event channel here. (That host was `stella-pipeline` when this
-//! was written; that crate was deleted in #3865.)
+//! happened (a `ModelRef` plus an optional [`FallbackInfo`]); the host above
+//! this crate is what turns that into an `AgentEvent::ProviderFallback` and
+//! pushes it onto the event channel — there is no event channel here.
+//!
+//! That host is `stella-cli`, and the whole chain is worth naming because the
+//! type's own name appears at only one end of it: `SessionFallback::
+//! resolve_fallback` (`stella-cli/src/agent/engine.rs`) reads
+//! [`RouterDecision::fallback`] and carries [`FallbackInfo::reason`] into a
+//! `ports::ResolvedFallback`, which `attempt_provider_fallback`
+//! (`stella-core/src/driver/model_fallback.rs`) sends as the event. Every step
+//! after the first destructures the value, so a search for the *type* finds
+//! the definition and nothing else — which is exactly how a reader concludes
+//! this type is unconsumed and that L-M7's "never a silent fallback" is
+//! unbacked here. It is backed; grep for `decision.fallback`, not for
+//! `FallbackInfo` (#3916).
 //!
 //! Binding lessons this module exists to satisfy: L-M3 (no `"auto"` string
 //! sentinel anywhere — absence of a pin is `Option::None`), L-M6 (role-based
@@ -275,8 +285,11 @@ impl CircuitBreaker {
 
 /// A breaker-forced provider substitution — maps directly onto
 /// `AgentEvent::ProviderFallback`'s fields. `stella-core` has no event
-/// channel; the host above it is what turns this into the real event (see
-/// the module docs). Never constructed for an intentional routing choice (e.g. verifier's
+/// channel; the host above it is what turns this into the real event —
+/// `stella-cli`'s `SessionFallback::resolve_fallback` reads it and
+/// [`Self::reason`] reaches the wire from there (the module docs name the
+/// full chain, and why grepping this type's *name* will not find it).
+/// Never constructed for an intentional routing choice (e.g. verifier's
 /// cross-family preference) — only when the originally preferred provider
 /// was unavailable (L-M7: fallback is always visible, never silent).
 #[derive(Debug, Clone, PartialEq, Eq)]

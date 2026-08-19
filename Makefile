@@ -471,6 +471,18 @@ main-canary: ## Ask whether main still composes green (check only; no issue is f
 main-canary-test: ## Test the post-merge canary, announcements included (hermetic; not part of `gate`)
 	./scripts/test-main-canary.sh
 
+# The canary's other half: it detects, this is what consumes the detection at
+# the point a merge is still a decision (#3917). Not a gate step for the same
+# reason the canary is not — it asks the issue tracker a question, and `gate`
+# is hermetic and offline by contract.
+.PHONY: main-red-hold
+main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)
+	@./scripts/check-main-red-hold.sh
+
+.PHONY: main-red-hold-test
+main-red-hold-test: ## Test the red-main hold, blocking branch included (hermetic; not part of `gate`)
+	./scripts/test-main-red-hold.sh
+
 .PHONY: check
 check: $(GATE_GUARDS) $(GATE_NO_BUILD) lint ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy, no rustdoc and no tests
 

@@ -66,46 +66,47 @@ pub fn current_summary(cfg: &Config) -> String {
 pub fn configured_role_pins(
     cfg: &Config,
 ) -> Vec<(stella_tui::deck::PipelineRole, stella_tui::deck::RolePin)> {
-    use crate::settings::EngineAgentKind;
     use stella_tui::deck::{PipelineRole, RolePin};
 
     let engine = crate::settings::Settings::load(&cfg.workspace_root)
         .ok()
         .and_then(|s| s.agent_engine_config);
 
-    [
-        (PipelineRole::Triage, EngineAgentKind::Triage),
-        (PipelineRole::Worker, EngineAgentKind::Worker),
-        (PipelineRole::Verifier, EngineAgentKind::Verifier),
-    ]
-    .into_iter()
-    .map(|(slot, kind)| {
-        // `model_for` already applies the full precedence chain
-        // (`agents.<kind>.model` > flat per-role > `default_model`), so this
-        // agrees with what the router will actually pick rather than
-        // re-deriving it and drifting.
-        let (provider, model) = match engine.as_ref().and_then(|e| e.model_for(kind)) {
-            // Split on the FIRST slash only: `openrouter/openai/gpt-5.5` is
-            // one provider and a two-segment model, not three segments.
-            Some(spec) => match spec.split_once('/') {
-                Some((p, m)) => (p.to_string(), m.to_string()),
-                // A bare slug names no provider, so it resolves through
-                // whichever one this session is on.
-                None => (cfg.provider.id.to_string(), spec.to_string()),
-            },
-            // No opinion configured — the role rides the session's own pin.
-            None => (cfg.provider.id.to_string(), cfg.model_id.to_string()),
-        };
-        (
-            slot,
-            RolePin {
-                provider,
-                model,
-                served: false,
-            },
-        )
-    })
-    .collect()
+    // `PipelineRole::Worker` alone. Triage and Verifier were pinned here from
+    // `pipeline_triage_model`/`pipeline_verifier_model` until #3908 retired
+    // both: settings can no longer express a model for either, so publishing a
+    // pin for them would be the deck reporting an intent nothing recorded.
+    // They now render unconfigured, which is what they are — and what a
+    // plugin's declared seat will replace in #3909.
+    [PipelineRole::Worker]
+        .into_iter()
+        .map(|slot| {
+            // `model_for` already applies the full precedence chain
+            // (`agents.default.model` > `default_model`), so this agrees with what
+            // the router will actually pick rather than re-deriving it and
+            // drifting.
+            let (provider, model) = match engine.as_ref().and_then(|e| e.model_for()) {
+                // Split on the FIRST slash only: `openrouter/openai/gpt-5.5` is
+                // one provider and a two-segment model, not three segments.
+                Some(spec) => match spec.split_once('/') {
+                    Some((p, m)) => (p.to_string(), m.to_string()),
+                    // A bare slug names no provider, so it resolves through
+                    // whichever one this session is on.
+                    None => (cfg.provider.id.to_string(), spec.to_string()),
+                },
+                // No opinion configured — the role rides the session's own pin.
+                None => (cfg.provider.id.to_string(), cfg.model_id.to_string()),
+            };
+            (
+                slot,
+                RolePin {
+                    provider,
+                    model,
+                    served: false,
+                },
+            )
+        })
+        .collect()
 }
 
 /// Validate `id` against the catalog (exactly as the settings tab's default
@@ -176,9 +177,7 @@ pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
     // A hand-edited `agents.default.model` outranks the flat `default_model`
     // (settings precedence), so clear it — exactly what the tab's save does.
     if let Some(ags) = engine.agents.as_mut()
-        && let Some(a) = ags
-            .get_mut(crate::settings::EngineAgentKind::Default)
-            .as_mut()
+        && let Some(a) = ags.default.as_mut()
     {
         a.model = None;
     }
@@ -292,8 +291,9 @@ mod tests {
         std::fs::write(
             user_dir.join("settings.json"),
             r#"{"enable_recap": "on", "agent_engine_config": {
+                 "compaction_budget_tokens": 90000,
                  "pipeline_triage_model": "deepseek/deepseek-chat",
-                 "agents": {"verifier": {"prompt": "You are a strict reviewer."}}
+                 "agents": {"default": {"prompt": "You are a strict reviewer."}}
                }}"#,
         )
         .unwrap();
@@ -311,14 +311,26 @@ mod tests {
         );
         let engine = raw.get("agent_engine_config").unwrap();
         assert_eq!(
-            engine.get("pipeline_triage_model").and_then(|v| v.as_str()),
-            Some("deepseek/deepseek-chat")
+            engine
+                .get("compaction_budget_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(90000),
+            "a live engine key the edit never mentioned must survive"
         );
         assert_eq!(
             engine
-                .pointer("/agents/verifier/prompt")
+                .pointer("/agents/default/prompt")
                 .and_then(|v| v.as_str()),
             Some("You are a strict reviewer.")
+        );
+        // A retired key is the one thing the save does NOT carry forward, and
+        // that is deliberate: `save_to` re-serializes the typed block, which no
+        // longer has a field to hold it. The operator was told by name that it
+        // reads nothing (`settings::unknown`); writing it back would keep the
+        // file asserting a capability the engine does not have.
+        assert!(
+            engine.get("pipeline_triage_model").is_none(),
+            "a retired key must not be re-written on save: {engine}"
         );
         assert_eq!(
             engine.get("default_model").and_then(|v| v.as_str()),

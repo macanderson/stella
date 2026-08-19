@@ -7,27 +7,25 @@
 
 use super::*;
 
-/// EngineConfig for `kind`: defaults + the workspace root as hook `cwd`,
-/// with the agent's `agent_engine_config` tuning applied — temperature and
-/// max_tokens override the engine defaults only when set (the "Include"
-/// contract), effort/reasoning/params land verbatim (they default to
+/// EngineConfig for the session's agent: defaults + the workspace root as
+/// hook `cwd`, with the agent's `agent_engine_config` tuning applied —
+/// temperature and max_tokens override the engine defaults only when set (the
+/// "Include" contract), effort/reasoning/params land verbatim (they default to
 /// `None` anyway).
 ///
 /// `catalog_ref` is the `(provider_id, model_id)` the catalog-based clamps
 /// below (context-window compaction budget, reasoning capability) are
-/// computed against — the model THIS kind's calls actually land on, not
-/// necessarily `cfg`'s. For `Default`/`Verifier` that is `cfg.provider.id`/
-/// `cfg.model_id`; for `Worker` it is the wiring's resolved worker model
-/// (issue #276 — honoring `pipeline_worker_model`/`agents.worker.*` must
-/// also clamp against the model it actually routes to, or a worker pinned to
-/// a smaller-context or non-reasoning model still gets the DEFAULT model's
-/// clamps, which is exactly the wire-shape/400 class issue #273 exists to
-/// warn about).
-fn tuned_engine_config(
-    cfg: &Config,
-    kind: crate::settings::EngineAgentKind,
-    catalog_ref: (&str, &str),
-) -> EngineConfig {
+/// computed against — the model the calls actually land on, which is
+/// `cfg.provider.id`/`cfg.model_id`.
+///
+/// It stays a parameter rather than being read off `cfg` because the two can
+/// legitimately differ, and #276 is the record of what it costs when they are
+/// conflated: a call routed to a smaller-context or non-reasoning model still
+/// got the session model's clamps, which is the wire-shape/400 class #273
+/// exists to warn about. The role that used to diverge here was the worker's;
+/// the ones that will diverge again are plugin-declared seats (#3909), which
+/// resolve their own model through [`crate::agent::seats`].
+fn tuned_engine_config(cfg: &Config, catalog_ref: (&str, &str)) -> EngineConfig {
     let (provider_id, model_id) = catalog_ref;
     let mut engine = EngineConfig {
         cwd: cfg.workspace_root.display().to_string(),
@@ -149,7 +147,7 @@ fn tuned_engine_config(
                 None => cap,
             });
         }
-        let tuning = crate::engine_config::tuning_for(settings, kind);
+        let tuning = crate::engine_config::tuning_for(settings);
         if tuning.temperature.is_some() {
             engine.temperature = tuning.temperature;
         }
@@ -217,11 +215,7 @@ fn tuned_engine_config(
 
 /// EngineConfig for a session's default (interactive/step-loop) agent.
 pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
-    tuned_engine_config(
-        cfg,
-        crate::settings::EngineAgentKind::Default,
-        (cfg.provider.id, &cfg.model_id),
-    )
+    tuned_engine_config(cfg, (cfg.provider.id, &cfg.model_id))
 }
 
 /// [`engine_config_for`] for a deck sub-session (`crate::subsession`) — the
@@ -488,49 +482,47 @@ fn pin_role(
     }
 }
 
-/// Resolve the engine wiring for a pipeline run whose session-default worker
-/// is `worker_ref` (already resolved by `Config` — an explicit `--model`
-/// flag beats `default_model`/`agents.default.*` there, see
-/// `Config::load_with_settings`; it beats the WORKER-role settings here, via
-/// `cfg.model_pinned_by_flag`). `configured`
-/// is the caller's own [`crate::config::discover_configured_providers`]
-/// snapshot — injected rather than rediscovered here so this function is a
-/// plain, testable one over owned data.
+/// Resolve the engine wiring for a run whose session-default model is
+/// `worker_ref` (already resolved by `Config` — an explicit `--model` flag
+/// beats `default_model`/`agents.default.*` there, see
+/// `Config::load_with_settings`; it beats the settings spec here too, via
+/// `cfg.model_pinned_by_flag`). `configured` is the caller's own
+/// [`crate::config::discover_configured_providers`] snapshot — injected rather
+/// than rediscovered here so this function is a plain, testable one over owned
+/// data.
 ///
-/// Routing rules, in order:
-/// - WORKER (and `Role::Plan`, which shares the worker's tier when unpinned
-///   — `resolve_tier` in `stella-core`'s router) honors
-///   `pipeline_worker_model`/`agents.worker.*`
+/// Routing rules:
+/// - The session role honors `default_model`/`agents.default.*`
 ///   ([`crate::engine_config::model_spec_for`]) when configured and its
-///   provider is credentialed; unset or unroutable falls back to the
-///   session default `worker_ref` (issue #276). An explicit `--model`
+///   provider is credentialed; unset or unroutable falls back to
+///   `worker_ref` (issue #276). An explicit `--model`
 ///   (`cfg.model_pinned_by_flag`) suppresses that settings override
-///   entirely — the flag exists to pin the worker for one invocation, so it
+///   entirely — the flag exists to pin the model for one invocation, so it
 ///   outranks the config file.
-/// - TRIAGE and VERIFIER pins come from their configured model specs the same
-///   way, but always fall back to the (possibly worker-overridden) worker
-///   model on any failure — the pre-existing behavior.
-/// - `auto_mode: on` replaces the verifier spec with
-///   [`crate::engine_config::auto_verifier_spec`]'s pick from
-///   `allowed_models` (cross-family from the ACTUAL worker model, then
-///   price tier); when the allowed list yields nothing usable it falls back
-///   to the explicit verifier spec, then to normal router degradation.
 /// - A pin equal to the session-default model needs no extra adapter — the
 ///   primary resolver entry already serves it.
 ///
-/// Pins deliberately bypass the circuit breaker (`RoleTable` semantics —
-/// an explicit pin wins unconditionally). If a pinned verifier's provider
-/// fails, the pipeline's verifier call degrades to its heuristic verdict,
-/// the same soft path an unreachable verifier always took.
+/// It resolved four more roles until #3908 — verifier, triage, research and
+/// plan, each from its own `pipeline_<role>_model` key, each pinned into the
+/// [`RoleTable`]. Those pins were **read by nothing**: the only live
+/// `Router::resolve` call sites are `SessionFallback::resolve_fallback`
+/// (`Role::Worker` alone) and [`resolve_cross_family_verifier`], and the
+/// latter builds its router with `RoleTable::new()`. So an operator could
+/// set `pipeline_verifier_model` and watch it resolve, log, and steer
+/// nothing — including at the one place a second model actually runs. The
+/// keys are retired (`settings::unknown`) rather than dropped in silence, and
+/// a model for a participant other than the session's own is now a
+/// plugin-declared seat ([`crate::agent::seats`]).
+///
+/// The `Role::Worker` pin below survives because it is the one that was ever
+/// read. Pins deliberately bypass the circuit breaker (`RoleTable`
+/// semantics — an explicit pin wins unconditionally).
 pub(crate) fn resolve_engine_wiring(
     cfg: &Config,
     worker_ref: &ModelRef,
     configured: &[crate::config::ConfiguredProvider],
 ) -> EngineWiring {
-    use crate::engine_config::{
-        ModelSpec, auto_verifier_spec, model_spec_for, own_model_spec_for, spec_family,
-    };
-    use crate::settings::EngineAgentKind;
+    use crate::engine_config::model_spec_for;
 
     let worker_profile = ProviderProfile::new(
         worker_ref.provider.clone(),
@@ -548,9 +540,8 @@ pub(crate) fn resolve_engine_wiring(
         notices: Vec::new(),
     };
     let Some(engine) = cfg.engine_settings.clone() else {
-        // No engine settings at all is the stock posture — and the most
-        // common same-model one: every role rides the session default.
-        push_same_model_notice(&mut wiring, None);
+        // No engine settings at all is the stock posture: the session rides
+        // the resolved default.
         return wiring;
     };
 
@@ -558,24 +549,15 @@ pub(crate) fn resolve_engine_wiring(
     // a resolvable key is reported and skipped, never a hard error.
     let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
 
-    // Issue #276: resolve the WORKER's own override first, before anything
-    // that needs to know the worker's actual model (verifier cross-family
-    // selection, the capability clamp's "rides the worker" fallback below).
-    // `Role::Plan` and `Role::Research` are pinned alongside `Role::Worker` to
-    // the same model — unpinned, they share the worker's tier (`resolve_tier`
-    // treats all three identically), so leaving them out would silently revert
-    // plan/research/witness turns to the session default the moment the worker
-    // is overridden, defeating "plan rides the worker". A role that names its
-    // own model re-pins over this a few lines down; this is the floor, not
-    // the final answer.
+    // Issue #276: the session's own settings override, which the capability
+    // clamp downstream needs to be computed against.
+    //
     // ...unless the invocation carries an explicit `--model`. That flag's
-    // documented job IS pinning the worker model for one run, so settings
-    // must lose to it — otherwise the pin is not merely ignored but
-    // unobservable: the run reports the model that was asked for while a
-    // different one does the work and bills for it. Only the WORKER spec is
-    // suppressed; `pipeline_triage_model`/`pipeline_verifier_model` still apply,
-    // since `--model` says nothing about those roles.
-    let worker_spec = match model_spec_for(&engine, EngineAgentKind::Worker, &is_provider) {
+    // documented job IS pinning the model for one run, so settings must lose
+    // to it — otherwise the pin is not merely ignored but unobservable: the
+    // run reports the model that was asked for while a different one does the
+    // work and bills for it.
+    let worker_spec = match model_spec_for(&engine, &is_provider) {
         Some(spec) if cfg.model_pinned_by_flag => {
             // An empty slug is the "provider pin without a model" form.
             let configured_label = if spec.model.is_empty() {
@@ -584,18 +566,23 @@ pub(crate) fn resolve_engine_wiring(
                 format!("{}/{}", spec.provider, spec.model)
             };
             wiring.notices.push(format!(
-                "engine config: worker model `{configured_label}` skipped — `--model` pinned \
+                "engine config: model `{configured_label}` skipped — `--model` pinned \
                  `{worker_ref}` for this invocation"
             ));
             None
         }
         other => other,
     };
+    // `Role::Worker` alone. It was pinned alongside `Role::Plan` and
+    // `Role::Research` so those would follow an overridden worker rather than
+    // reverting to the session default; both of those roles are gone (#3908),
+    // and `Role::Worker` is the one `SessionFallback::resolve_fallback`
+    // actually resolves.
     let effective_worker_ref = match &worker_spec {
         Some(spec) => pin_role(
             &mut wiring,
-            &[Role::Worker, Role::Plan, Role::Research],
-            "worker",
+            &[Role::Worker],
+            "model",
             spec,
             worker_ref,
             configured,
@@ -604,86 +591,8 @@ pub(crate) fn resolve_engine_wiring(
         .unwrap_or_else(|| worker_ref.clone()),
         None => worker_ref.clone(),
     };
-    wiring.worker_model = effective_worker_ref.clone();
-
-    // The verifier's cross-family preference must compare against the model the
-    // worker ACTUALLY resolves to — comparing against the stale session
-    // default here would let auto-mode pick a verifier that turns out to share
-    // the overridden worker's family (or vice versa), defeating the
-    // bias-resistance the family comparison exists for.
-    let worker_family = spec_family(&ModelSpec {
-        provider: effective_worker_ref.provider.clone(),
-        model: effective_worker_ref.model_id.clone(),
-    });
-    let verifier_spec = if engine.auto_mode_on() {
-        auto_verifier_spec(&engine, &worker_family, &is_provider)
-            .or_else(|| model_spec_for(&engine, EngineAgentKind::Verifier, &is_provider))
-    } else {
-        model_spec_for(&engine, EngineAgentKind::Verifier, &is_provider)
-    };
-    let triage_spec = model_spec_for(&engine, EngineAgentKind::Triage, &is_provider);
-    // `own_model_spec_for`, not `model_spec_for`: these two inherit the worker
-    // rather than `default_model` (see that function's doc), so `None` here
-    // means "leave the worker pin from above standing".
-    let research_spec = own_model_spec_for(&engine, EngineAgentKind::Research, &is_provider);
-    let plan_spec = own_model_spec_for(&engine, EngineAgentKind::Plan, &is_provider);
-
-    let role_specs = [
-        (Role::Triage, "triage", triage_spec),
-        (Role::Verifier, "verifier", verifier_spec),
-        // After the worker pin above, so a role that names its own model
-        // replaces the inherited one rather than racing it.
-        (Role::Plan, "plan", plan_spec),
-        (Role::Research, "research", research_spec),
-    ];
-
-    let mut verifier_pin: Option<ModelRef> = None;
-    for (role, label, spec) in role_specs {
-        let Some(spec) = spec else { continue };
-        let pinned = pin_role(
-            &mut wiring,
-            &[role],
-            label,
-            &spec,
-            worker_ref,
-            configured,
-            "rides the worker",
-        );
-        if matches!(role, Role::Verifier) {
-            verifier_pin = pinned;
-        }
-    }
-
-    push_same_model_notice(&mut wiring, verifier_pin.as_ref());
+    wiring.worker_model = effective_worker_ref;
     wiring
-}
-
-/// The same-model degradation, named at wiring time — before a token is
-/// spent — instead of discovered mid-run. A same-model posture is
-/// legitimate and the pipeline runs regardless (an auto-routing gateway
-/// can serve distinct upstream models behind one id, and refusing would
-/// punish exactly that setup); what the operator is owed is the fact, the
-/// consequence, and the way out. Only claimed when it is *certain*: an
-/// explicit verifier pin equal to the worker, or an unpinned verifier with
-/// no other provider profile the router could cross to. The ambiguous
-/// multi-profile case is left to the pipeline's own run-time independence
-/// check, which resolves through the real router and announces itself via
-/// `unproven`.
-fn push_same_model_notice(wiring: &mut EngineWiring, verifier_pin: Option<&ModelRef>) {
-    let verifier_is_worker = match verifier_pin {
-        Some(pin) => *pin == wiring.worker_model,
-        None => wiring.profiles.len() == 1,
-    };
-    if verifier_is_worker {
-        let model = &wiring.worker_model;
-        wiring.notices.push(format!(
-            "verifier and worker are both `{model}` — verification is degraded for `{model}`: \
-             the witness author is not independent, so an authored failing test is written by \
-             the same model whose work it exists to test. The pipeline still runs; set \
-             `pipeline_verifier_model` (or `agents.verifier.model`) to a different model to \
-             restore an independent witness author"
-        ));
-    }
 }
 
 pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> {
@@ -1030,11 +939,18 @@ pub(crate) fn reflection_route(
 ) -> Option<ReflectionRoute> {
     let engine = cfg.engine_settings.as_ref()?;
     let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
-    let spec = crate::engine_config::model_spec_for(
-        engine,
-        crate::settings::EngineAgentKind::Triage,
-        &is_provider,
-    )?;
+    // The session's own model. It was the TRIAGE pin until #3908: reflection
+    // is a short classification, so riding the cheapest configured role made
+    // sense while the staged pipeline still had one. That role went with the
+    // pipeline (#3865), and a reflection call routed through a key nothing
+    // else read was routing through a setting that had stopped resolving.
+    //
+    // Reflection is a good candidate for a seat of its own — it is exactly the
+    // "cheap, high-volume, latency-bound" shape a per-seat assignment exists
+    // for — but core naming that seat itself would be core re-acquiring a role
+    // vocabulary. It becomes a plugin-declared seat or it stays on the session
+    // model; #3936 carries the choice.
+    let spec = crate::engine_config::model_spec_for(engine, &is_provider)?;
     let entry = configured.iter().find(|c| c.config.id == spec.provider)?;
     // An empty slug is the "provider pin without a model" form — the
     // provider's own default model, exactly as `pin_role` reads it.
@@ -1044,11 +960,11 @@ pub(crate) fn reflection_route(
         spec.model
     };
     let routed = ModelRef::new(entry.config.id, slug.clone());
-    // The triage agent's own tuning, resolved through the same helper the
-    // worker path uses so the auto modes apply identically. It rides out even
-    // when no adapter is built below, because the posture is a fact about the
-    // pin, not about whether the pin needed a second connection pool.
-    let tuning = crate::engine_config::tuning_for(engine, crate::settings::EngineAgentKind::Triage);
+    // The agent's own tuning, resolved through the same helper the request
+    // path uses so the auto modes apply identically. It rides out even when no
+    // adapter is built below, because the posture is a fact about the pin, not
+    // about whether the pin needed a second connection pool.
+    let tuning = crate::engine_config::tuning_for(engine);
     let posture = crate::memory::ReflectionPosture {
         reasoning: tuning.reasoning,
         effort: tuning.effort,
@@ -1056,7 +972,7 @@ pub(crate) fn reflection_route(
     if routed == ModelRef::new(cfg.provider.id, cfg.model_id.clone()) {
         // Same instance the primary resolver already serves: no new adapter
         // (the "no duplicate adapter" rule `pin_role` applies), but this is
-        // still the model the triage pin chose, so its posture still governs.
+        // still the model the settings chose, so its posture still governs.
         return Some(ReflectionRoute {
             provider: None,
             posture,

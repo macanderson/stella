@@ -27,14 +27,30 @@
 #
 # ── The normative home ───────────────────────────────────────────────────────
 #
-# `role_key()` in crates/stella-cli/src/config_wiring.rs, which maps
-# `EngineAgentKind` to the exact string that appears in `agents.<role>` and
-# `pipeline_<role>_model`. The enum is the type; `role_key` is the *wire
-# spelling*, and the wire spelling is what the other three languages copy.
+# `ENGINE_AGENT_NAMES` plus `RETIRED_ENGINE_AGENT_NAMES` in
+# crates/stella-cli/src/settings/unknown.rs — together, the role words this
+# workspace still recognizes in an `agents.<role>` block or a
+# `pipeline_<role>_model` key.
+#
+# It was `role_key()` in crates/stella-cli/src/config_wiring.rs until #3908,
+# which deleted the `EngineAgentKind` enum that function mapped. Repointed
+# rather than deleted, exactly as the paragraph below has always demanded: the
+# Python and JavaScript producers still spell these five words, so something
+# still has to hold four languages to one spelling. What changed is only where
+# the Rust side keeps them — a live set of one (`default`) and a retired set of
+# five, which is what the settings surface now actually is.
+#
+# The guard therefore checks the UNION. That is deliberate and it is the
+# honest reading: arenabench and the harbor adapter still WRITE
+# `pipeline_verifier_model`, Stella still recognizes it, and the two must agree
+# on its spelling for exactly as long as that is true. When slice 6 (#3910)
+# stops the Python writing them — once a role name travels with the run as
+# trace data (#3906) — this guard and its GATE_STEPS entry go together, and
+# `RETIRED_ENGINE_AGENT_NAMES` can shrink to nothing.
 #
 # Note this is NOT `stella_protocol::ModelCallRole`, which has fourteen variants
 # describing individual model calls (PlanRepair, WitnessAuthor, Summarization…).
-# Those never cross a language boundary. The four agent-config roles do, and
+# Those never cross a language boundary. The agent-config roles do, and
 # they are the whole subject here.
 #
 # ── Aliases ──────────────────────────────────────────────────────────────────
@@ -76,31 +92,41 @@ retired_spellings="judge"
 
 # ── The truth ────────────────────────────────────────────────────────────────
 
-rust_home="crates/stella-cli/src/config_wiring.rs"
+rust_home="crates/stella-cli/src/settings/unknown.rs"
 
 if [ ! -f "$rust_home" ]; then
-  note "FAIL — $rust_home does not exist; role_key() is the normative home."
+  note "FAIL — $rust_home does not exist; ENGINE_AGENT_NAMES +"
+  note "     RETIRED_ENGINE_AGENT_NAMES are the normative home."
   emit
   exit 1
 fi
 
-# The match arms of role_key(): `EngineAgentKind::Verifier => "verifier",`
+# The two consts, each a `&[&str]` literal that may wrap across lines:
+#   pub(crate) const ENGINE_AGENT_NAMES: &[&str] = &["default"];
+#   pub(crate) const RETIRED_ENGINE_AGENT_NAMES: &[&str] =
+#       &["worker", "verifier", "triage", "research", "plan"];
+# Read from each const's own line through the terminating `];`.
 roles="$(
   awk '
-    /pub fn role_key/ { inside = 1; next }
-    inside && /^\}/   { exit }
-    inside && /EngineAgentKind::[A-Za-z]+ *=> *"[a-z_]+"/ {
-      match($0, /"[a-z_]+"/)
-      print substr($0, RSTART + 1, RLENGTH - 2)
+    /const (ENGINE_AGENT_NAMES|RETIRED_ENGINE_AGENT_NAMES) *:/ { inside = 1 }
+    inside {
+      line = $0
+      while (match(line, /"[a-z_]+"/)) {
+        print substr(line, RSTART + 1, RLENGTH - 2)
+        line = substr(line, RSTART + RLENGTH)
+      }
+      if (/\];/) { inside = 0 }
     }
-  ' "$rust_home" | LC_ALL=C sort
+  ' "$rust_home" | LC_ALL=C sort -u
 )"
 
 if [ -z "$roles" ]; then
-  note "FAIL — could not read any role from role_key() in $rust_home."
-  note "     If that function moved or changed shape, repoint this guard;"
+  note "FAIL — could not read any role from ENGINE_AGENT_NAMES /"
+  note "     RETIRED_ENGINE_AGENT_NAMES in $rust_home."
+  note "     If those consts moved or changed shape, repoint this guard;"
   note "     do not delete it. It is the only thing holding four languages"
-  note "     to one spelling."
+  note "     to one spelling. Retiring it outright is #3910, and only after"
+  note "     #3906 makes role names travel as trace data."
   emit
   exit 1
 fi
@@ -243,14 +269,19 @@ fi
 
 for old in $retired_spellings; do
   if is_role "$old"; then
-    note "FAIL — '$old' is listed as retired but role_key() still emits it."
+    note "FAIL — '$old' is a retired SPELLING (a word we stopped using for a"
+    note "     role that still exists), so it must not appear in either"
+    note "     engine-agent name list in $rust_home. Note the two senses of"
+    note "     'retired' in play: RETIRED_ENGINE_AGENT_NAMES holds correct"
+    note "     spellings of roles that no longer exist. Only a retired"
+    note "     spelling is drift."
     fail=1
   fi
 done
 
 if [ "$fail" -ne 0 ]; then
   note ""
-  note "The role names live in role_key() in $rust_home."
+  note "The role names live in $rust_home."
   note "Renaming one is a cross-language change: the Rust compiler will not"
   note "find the Python dict or the JavaScript literal, and neither will your"
   note "tests. Update every producer named above in the same PR."

@@ -5,7 +5,7 @@
 //! than onto the end of an already-oversized file, and these tests were the
 //! growth that tripped it. They are one subject — `resolve_engine_wiring`'s
 //! precedence order — so they move together with the two groups they belong
-//! with: the `pipeline_worker_model` routing they extend, and the
+//! with: the session-model routing they extend, and the
 //! `worker_model_*` fallbacks they share `cfg_with_engine` with.
 //!
 //! Everything here reaches `cfg_for`, `Config`, `Role`, and `ModelRef` through
@@ -30,9 +30,9 @@ fn the_turn_timeout_flag_reaches_every_role_that_can_continue() {
     // in every test that only exercises the engine crate. This is the wire, so
     // it is what proves the flag is not decorative.
     //
-    // Every role, not just the worker: the deadline being guarded belongs to
-    // the process, so a worker that declines a continuation while a verifier
-    // spends the remaining time past it would defeat the point.
+    // Every constructor, not just the plain one: the deadline being guarded
+    // belongs to the process, so a lane that spends the remaining time past it
+    // would defeat the point.
     let mut cfg = cfg_for("zai");
     cfg.turn_timeout = Some(std::time::Duration::from_secs(840));
 
@@ -41,7 +41,7 @@ fn the_turn_timeout_flag_reaches_every_role_that_can_continue() {
         Some(std::time::Duration::from_secs(840)),
     );
     assert_eq!(
-        crate::agent::verifier_engine_config_for(&cfg).turn_budget,
+        crate::agent::subsession_engine_config_for(&cfg).turn_budget,
         Some(std::time::Duration::from_secs(840)),
     );
 
@@ -82,7 +82,10 @@ fn a_bound_session_checkpoints_from_every_role() {
 
     for (role, engine) in [
         ("default", crate::agent::engine_config_for(&cfg)),
-        ("verifier", crate::agent::verifier_engine_config_for(&cfg)),
+        (
+            "run-kind",
+            crate::agent::engine_config_for_kind(&cfg, "run"),
+        ),
     ] {
         assert!(
             engine.checkpoint_sink.is_some(),
@@ -114,7 +117,10 @@ fn every_role_shares_one_session_view_of_affordable_output_ceilings() {
     let cfg = cfg_for("zai");
     let roles = [
         ("default", crate::agent::engine_config_for(&cfg)),
-        ("verifier", crate::agent::verifier_engine_config_for(&cfg)),
+        (
+            "run-kind",
+            crate::agent::engine_config_for_kind(&cfg, "run"),
+        ),
         (
             "sub-session",
             crate::agent::subsession_engine_config_for(&cfg),
@@ -158,14 +164,17 @@ fn every_role_shares_one_session_view_of_affordable_output_ceilings() {
 }
 
 #[test]
-fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
-    // Issue #276: `pipeline_worker_model` (and `agents.worker.*`) must
+fn the_settings_model_is_inert_without_the_fix_but_routes_with_it() {
+    // Issue #276: the engine settings' model (and `agents.default.*`) must
     // actually change what `Role::Worker` resolves to — previously the
     // worker always rode `worker_ref` (the session default), no matter what
     // this setting said.
+    //
+    // Expressed through `pipeline_worker_model` until #3908 retired it; the
+    // rule is unchanged, and `default_model` is the key that carries it.
     let cfg = cfg_with_engine(
         "zai", // session default: zai/glm-5.2
-        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5" }"#,
+        r#"{ "default_model": "anthropic/claude-fable-5" }"#,
     );
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
@@ -175,18 +184,12 @@ fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
     let overridden = ModelRef::new("anthropic", "claude-fable-5");
     assert_eq!(
         wiring.worker_model, overridden,
-        "the wiring's own worker_model must reflect the pipeline_worker_model override"
+        "the wiring's own worker_model must reflect the settings override"
     );
     assert_eq!(
         wiring.pins.get(Role::Worker),
         Some(&overridden),
         "Role::Worker must be pinned to the configured worker model"
-    );
-    assert_eq!(
-        wiring.pins.get(Role::Plan),
-        Some(&overridden),
-        "Role::Plan shares the worker's tier and must follow the override too, or plan/witness \
-         turns would silently keep running on the session default"
     );
     assert!(
         wiring
@@ -196,10 +199,9 @@ fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
         "an adapter for the overridden worker model must be built"
     );
 
-    // The full round trip through the actual router (what any `resolve_provider`
-    // caller reaches — the staged pipeline's was the original, deleted with
-    // that crate in #3865) must resolve BOTH roles to the override,
-    // not just the raw pin table.
+    // The full round trip through the actual router — `SessionFallback` is the
+    // one live `Router::resolve` caller, and `Role::Worker` is the one role it
+    // asks for, which is why that pin is the one #3908 kept.
     let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
     let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
     assert_eq!(
@@ -207,23 +209,18 @@ fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
         overridden,
         "the router must actually route worker turns to the override"
     );
-    assert_eq!(
-        router.resolve(Role::Plan).unwrap().model_ref,
-        overridden,
-        "the router must actually route plan turns to the override"
-    );
 }
 
 #[test]
-fn an_explicit_model_flag_outranks_pipeline_worker_model() {
+fn an_explicit_model_flag_outranks_the_settings_model() {
     // An explicit `--model` is a per-invocation pin of the WORKER model —
     // that is the flag's whole documented job. Before this,
-    // `pipeline_worker_model` was applied unconditionally on top of the
+    // the settings model was applied unconditionally on top of the
     // already-resolved session default, so `--model zai/glm-5.2` silently ran
     // (and billed for) `anthropic/claude-fable-5` instead.
     let mut cfg = cfg_with_engine(
         "zai", // --model zai/glm-5.2
-        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5" }"#,
+        r#"{ "default_model": "anthropic/claude-fable-5" }"#,
     );
     cfg.model_pinned_by_flag = true;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
@@ -276,165 +273,11 @@ fn an_explicit_model_flag_outranks_pipeline_worker_model() {
     );
 }
 
-/// The benchmark's two arms, at the layer that decides whether the authored
-/// witness can run at all (#1007).
-///
-/// `Pipeline::can_author_independent_witness` compares the resolved verifier's
-/// `model_ref` with the worker's and refuses to let the worker author the test
-/// that verifies it. The benchmark posture expresses routing only through
-/// `default_model`, so both roles land on one model and the witness tier is
-/// structurally off — every Terminal-Bench number before #1007 was measured
-/// that way. Adding `pipeline_verifier_model` is what splits them.
-///
-/// Both arms asserted together because the pair is the point: the control arm
-/// must keep collapsing (it is the published baseline) and the treatment arm
-/// must actually separate.
 #[test]
-fn the_benchmark_posture_splits_worker_and_verifier_only_on_the_witness_arm() {
-    let worker_ref = ModelRef::new("openrouter", "z-ai/glm-5.1");
-    let configured = vec![configured_provider("openrouter")];
-
-    let control = cfg_with_engine(
-        "openrouter",
-        r#"{ "default_model": "openrouter/z-ai/glm-5.1",
-             "allowed_models": ["openrouter/z-ai/glm-5.1"] }"#,
-    );
-    let control = resolve_engine_wiring(&control, &worker_ref, &configured);
-    assert_eq!(
-        control.pins.get(Role::Verifier),
-        control.pins.get(Role::Worker),
-        "the control arm must keep the verifier on the worker's model — that is \
-         precisely what leaves the authored witness with no independent author"
-    );
-
-    let treatment = cfg_with_engine(
-        "openrouter",
-        r#"{ "default_model": "openrouter/z-ai/glm-5.1",
-             "pipeline_verifier_model": "openrouter/deepseek/deepseek-v4-pro",
-             "allowed_models": ["openrouter/z-ai/glm-5.1",
-                                "openrouter/deepseek/deepseek-v4-pro"] }"#,
-    );
-    let treatment = resolve_engine_wiring(&treatment, &worker_ref, &configured);
-    let author = ModelRef::new("openrouter", "deepseek/deepseek-v4-pro");
-    assert_eq!(
-        treatment.pins.get(Role::Verifier),
-        Some(&author),
-        "the witness arm must pin the verifier to the second model"
-    );
-    assert_ne!(
-        treatment.pins.get(Role::Verifier),
-        treatment.pins.get(Role::Worker),
-        "worker and verifier must resolve to different models, or the witness \
-         tier stays off with a posture hash claiming it is on"
-    );
-}
-
-/// The same-model degradation is a fact the operator is owed BEFORE a token
-/// is spent — the pipeline keeps running (an auto-routing gateway can serve
-/// distinct upstream models behind one id, so refusing would punish exactly
-/// that setup), but the notice must name the duplicated model and the config
-/// key that restores independence.
-#[test]
-fn a_same_model_posture_is_named_in_a_wiring_notice_not_refused() {
-    let same_model_notice = |wiring: &EngineWiring| {
-        wiring
-            .notices
-            .iter()
-            .any(|n| n.contains("verifier and worker are both") && n.contains("degraded"))
-    };
-
-    // The stock posture: no engine settings at all, every role on the
-    // session default.
-    let plain = cfg_for("zai");
-    let plain_ref = ModelRef::new(plain.provider.id, plain.model_id.clone());
-    let wiring = resolve_engine_wiring(&plain, &plain_ref, &[configured_provider("zai")]);
-    assert!(
-        same_model_notice(&wiring),
-        "no engine settings means every role rides `{plain_ref}` — the degradation \
-         must be named: {:?}",
-        wiring.notices
-    );
-    assert!(
-        wiring
-            .notices
-            .iter()
-            .any(|n| n.contains(&plain_ref.to_string()) && n.contains("pipeline_verifier_model")),
-        "the notice must name the duplicated model and the key that fixes it: {:?}",
-        wiring.notices
-    );
-
-    // The benchmark control-arm shape: settings present, but routing entirely
-    // through `default_model`.
-    let control = cfg_with_engine(
-        "openrouter",
-        r#"{ "default_model": "openrouter/z-ai/glm-5.1",
-             "allowed_models": ["openrouter/z-ai/glm-5.1"] }"#,
-    );
-    let worker_ref = ModelRef::new("openrouter", "z-ai/glm-5.1");
-    let wiring = resolve_engine_wiring(&control, &worker_ref, &[configured_provider("openrouter")]);
-    assert!(
-        same_model_notice(&wiring),
-        "a settings posture that lands every role on one model is the same fact: {:?}",
-        wiring.notices
-    );
-
-    // A split posture must NOT raise it.
-    let split = cfg_with_engine(
-        "openrouter",
-        r#"{ "default_model": "openrouter/z-ai/glm-5.1",
-             "pipeline_verifier_model": "openrouter/deepseek/deepseek-v4-pro" }"#,
-    );
-    let wiring = resolve_engine_wiring(&split, &worker_ref, &[configured_provider("openrouter")]);
-    assert!(
-        !same_model_notice(&wiring),
-        "an independent verifier pin is not degraded — no notice: {:?}",
-        wiring.notices
-    );
-}
-
-#[test]
-fn an_explicit_model_flag_leaves_triage_and_verifier_pins_alone() {
-    // `--model` says nothing about the triage/verifier roles, so their own
-    // settings must keep applying — suppressing them too would make the flag
-    // a blunt instrument that silently un-configures the rest of the pipeline.
-    let mut cfg = cfg_with_engine(
-        "zai",
-        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5",
-             "pipeline_triage_model": "deepseek/deepseek-chat",
-             "pipeline_verifier_model": "openai/gpt-5.5" }"#,
-    );
-    cfg.model_pinned_by_flag = true;
-    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let configured = vec![
-        configured_provider("zai"),
-        configured_provider("anthropic"),
-        configured_provider("deepseek"),
-        configured_provider("openai"),
-    ];
-
-    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
-
-    assert_eq!(wiring.worker_model, model_ref, "worker follows the flag");
-    assert_eq!(
-        wiring.pins.get(Role::Triage),
-        Some(&ModelRef::new("deepseek", "deepseek-chat")),
-        "the configured triage model must survive an explicit --model"
-    );
-    assert_eq!(
-        wiring.pins.get(Role::Verifier),
-        Some(&ModelRef::new("openai", "gpt-5.5")),
-        "the configured verifier model must survive an explicit --model"
-    );
-}
-
-#[test]
-fn without_a_model_flag_pipeline_worker_model_still_wins() {
+fn without_a_model_flag_the_settings_model_still_wins() {
     // The guard must key off the FLAG, not merely the presence of a worker
     // setting: with no `--model`, issue #276's behavior is unchanged.
-    let cfg = cfg_with_engine(
-        "zai",
-        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5" }"#,
-    );
+    let cfg = cfg_with_engine("zai", r#"{ "default_model": "anthropic/claude-fable-5" }"#);
     assert!(!cfg.model_pinned_by_flag);
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
@@ -444,7 +287,7 @@ fn without_a_model_flag_pipeline_worker_model_still_wins() {
     assert_eq!(
         wiring.worker_model,
         ModelRef::new("anthropic", "claude-fable-5"),
-        "an unpinned run must still honor pipeline_worker_model (#276)"
+        "an unpinned run must still honor the settings model (#276)"
     );
     assert!(
         wiring.notices.is_empty(),
@@ -455,13 +298,11 @@ fn without_a_model_flag_pipeline_worker_model_still_wins() {
 
 #[test]
 fn worker_model_unset_falls_back_to_the_session_default() {
-    // No `pipeline_worker_model`/`agents.worker.*` configured at all: the
-    // worker must behave exactly as before this fix — riding the session
-    // default, no pin, no extra adapter.
-    let cfg = cfg_with_engine(
-        "zai",
-        r#"{ "pipeline_verifier_model": "anthropic/claude-fable-5" }"#,
-    );
+    // No model configured at all — only an unrelated knob, so the block
+    // exists and says nothing about the model. The worker must behave
+    // exactly as before this fix: riding the session default, no pin, no
+    // extra adapter.
+    let cfg = cfg_with_engine("zai", r#"{ "auto_mode": "off" }"#);
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
 
@@ -493,7 +334,7 @@ fn worker_model_with_no_resolvable_credential_falls_back_and_notices() {
     // gate), so it never reaches `pin_role`'s credential lookup at all.
     let cfg = cfg_with_engine(
         "zai",
-        r#"{ "agents": { "worker": { "provider": "anthropic" } } }"#,
+        r#"{ "agents": { "default": { "provider": "anthropic" } } }"#,
     );
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let configured = vec![configured_provider("zai")]; // anthropic NOT configured
@@ -509,8 +350,8 @@ fn worker_model_with_no_resolvable_credential_falls_back_and_notices() {
         wiring
             .notices
             .iter()
-            .any(|n| n.contains("worker") && n.contains("anthropic")),
-        "a skipped worker override must be reported: {:?}",
+            .any(|n| n.contains("model") && n.contains("anthropic")),
+        "a skipped model override must be reported: {:?}",
         wiring.notices
     );
 }
@@ -521,7 +362,7 @@ fn worker_override_equal_to_the_session_default_still_pins_without_a_duplicate_a
     // to must not build a redundant second adapter (mirrors the existing
     // triage/verifier "same instance" optimization) — but the pin is still
     // recorded, matching that established behavior.
-    let cfg = cfg_with_engine("zai", r#"{ "pipeline_worker_model": "zai/glm-5.2" }"#);
+    let cfg = cfg_with_engine("zai", r#"{ "default_model": "zai/glm-5.2" }"#);
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let configured = vec![configured_provider("zai")];
 
@@ -532,103 +373,6 @@ fn worker_override_equal_to_the_session_default_still_pins_without_a_duplicate_a
     assert!(
         wiring.extra_providers.is_empty(),
         "no extra adapter is needed when the override equals the session default"
-    );
-}
-
-#[test]
-fn worker_override_shifts_the_verifiers_cross_family_comparison() {
-    // Issue #276's router-correctness corollary: once the worker is
-    // overridden, auto-mode verifier selection (and the router's own unpinned-
-    // verifier cross-family fallback) must compare against the model the
-    // worker ACTUALLY resolves to, not the stale session default — else a
-    // verifier could silently collapse to the same family as the real worker.
-    let cfg = cfg_with_engine(
-        "zai",
-        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5",
-             "auto_mode": "on",
-             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"] }"#,
-    );
-    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
-
-    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
-
-    // The worker now runs on Anthropic; auto-mode must pick the cross-family
-    // candidate (zai) as verifier, not Anthropic again (which the STALE
-    // "worker family = zai" comparison would have wrongly treated as
-    // cross-family).
-    assert_eq!(
-        wiring.pins.get(Role::Verifier),
-        Some(&ModelRef::new("zai", "glm-5.2")),
-        "auto-mode verifier selection must be cross-family from the OVERRIDDEN worker, not the \
-         session default"
-    );
-}
-
-/// #1147's acceptance criterion, at the layer that decides it: a posture
-/// carrying ONLY the flat `pipeline_verifier_model` — no `agents.verifier.model`,
-/// no `agents.verifier.provider` — must make `Role::Verifier` resolve to that model
-/// through the real router, so `Pipeline::can_author_independent_witness`
-/// sees a verifier distinct from the worker.
-///
-/// The benchmark's witness arm is exactly this shape, and the bug report
-/// suspected the flat key never reached role resolution. It does: what the
-/// live run actually lost was the *pin*, dropped by `pin_role` when the
-/// author's adapter could not be built (see
-/// `a_trusted_posture_whose_verifier_pin_cannot_be_built_refuses_the_run`). This
-/// test pins the half that works so a future refactor cannot quietly break
-/// the half that was never broken.
-#[test]
-fn the_flat_pipeline_verifier_model_alone_resolves_role_verifier_to_the_witness_author() {
-    // The benchmark posture verbatim in shape: one `--model`-pinned worker,
-    // per-agent tuning WITHOUT a model, and the author expressed only as the
-    // flat root key.
-    let mut cfg = cfg_with_engine(
-        "anthropic",
-        r#"{ "default_model": "anthropic/claude-sonnet-5",
-             "pipeline_verifier_model": "anthropic/claude-fable-5",
-             "allowed_models": ["anthropic/claude-sonnet-5",
-                                "anthropic/claude-fable-5"],
-             "auto_mode": "off", "effort_auto": "off", "reasoning_auto": "off",
-             "agents": { "verifier": { "effort": "xhigh", "reasoning": "on" } } }"#,
-    );
-    // `--model anthropic/claude-sonnet-5`, as the adapter passes it. The flag
-    // suppresses the WORKER spec only; the verifier key must survive it.
-    cfg.model_id = "claude-sonnet-5".to_string();
-    cfg.model_pinned_by_flag = true;
-    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
-    let configured = vec![configured_provider("anthropic")];
-
-    let wiring = resolve_engine_wiring(&cfg, &worker_ref, &configured);
-
-    let author = ModelRef::new("anthropic", "claude-fable-5");
-    assert_eq!(
-        wiring.pins.get(Role::Verifier),
-        Some(&author),
-        "the flat key alone must pin the verifier; notices: {:?}",
-        wiring.notices
-    );
-
-    // The round trip through the real router is the claim that matters —
-    // `Pipeline::resolve_provider(Role::Verifier)` calls exactly this.
-    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
-    let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
-    assert_eq!(
-        router.resolve(Role::Verifier).unwrap().model_ref,
-        author,
-        "Role::Verifier must route to the flat-key author"
-    );
-    assert_ne!(
-        router.resolve(Role::Verifier).unwrap().model_ref,
-        router.resolve(Role::Worker).unwrap().model_ref,
-        "worker and verifier must differ, or the authored witness has no author"
-    );
-    assert!(
-        wiring
-            .extra_providers
-            .iter()
-            .any(|(model_ref, _)| *model_ref == author),
-        "the author needs its own adapter, or the pin routes to nothing"
     );
 }
 
@@ -655,7 +399,10 @@ fn the_model_timeout_setting_reaches_every_roles_engine() {
     let expected = Some(std::time::Duration::from_secs(1572));
     for (role, engine) in [
         ("default", crate::agent::engine_config_for(&cfg)),
-        ("verifier", crate::agent::verifier_engine_config_for(&cfg)),
+        (
+            "run-kind",
+            crate::agent::engine_config_for_kind(&cfg, "run"),
+        ),
     ] {
         assert_eq!(
             engine.model_timeout, expected,
@@ -970,7 +717,7 @@ fn the_max_output_tokens_flag_outranks_every_configured_cap() {
     // is the process's spend. Capping the worker while the verifier kept the
     // model's whole ceiling would move the cost rather than reduce it.
     assert_eq!(
-        crate::agent::verifier_engine_config_for(&cfg).max_output_tokens,
+        crate::agent::subsession_engine_config_for(&cfg).max_output_tokens,
         Some(24_000),
     );
 }
@@ -1027,20 +774,25 @@ fn a_zero_per_model_cap_is_ignored_rather_than_sent() {
 ///
 /// It ran on the WORKER model from the day it shipped — with `memory.rs`
 /// calling it "one cheap model call" the whole time — because no reflection
-/// pin existed anywhere in the role wiring. The route rides the triage
-/// declaration (`pipeline_triage_model`/`agents.triage.*`): the posture's one
-/// existing statement of "the cheap, fast model", so there is no second knob
-/// for the two to drift apart on.
+/// pin existed anywhere in the role wiring.
+///
+/// The route rode the TRIAGE declaration until #3908: that was the posture's
+/// one existing statement of "the cheap, fast model". Triage went with the
+/// staged pipeline it staffed (#3865), and a route through a key nothing else
+/// resolved was a route through a setting that had stopped answering — so the
+/// route now resolves the session's own model, exactly as the rest of the
+/// wiring does. Giving reflection a cheap model of its own again means giving
+/// it a plugin-declared seat, which is #3936.
 #[test]
-fn reflection_routes_to_the_configured_triage_model() {
+fn reflection_routes_to_the_configured_model() {
     let cfg = cfg_with_engine(
-        "zai", // session default (the worker): zai/glm-5.2
-        r#"{ "pipeline_triage_model": "deepseek/deepseek-chat" }"#,
+        "zai", // session default: zai/glm-5.2
+        r#"{ "default_model": "deepseek/deepseek-chat" }"#,
     );
     let configured = vec![configured_provider("zai"), configured_provider("deepseek")];
 
     let route = reflection_route(&cfg, &configured)
-        .expect("a credentialed triage pin must route reflection off the worker");
+        .expect("a credentialed settings model must route reflection off the session default");
     let (model, provider) = route
         .provider
         .as_ref()
@@ -1049,29 +801,29 @@ fn reflection_routes_to_the_configured_triage_model() {
     assert_eq!(
         provider.id(),
         "deepseek",
-        "the routed adapter must be the triage provider's, not the worker's"
+        "the routed adapter must be the configured provider's, not the session default's"
     );
 }
 
-/// #2174 witness: the triage agent's configured thinking posture reaches the
+/// #2174 witness: the agent's configured thinking posture reaches the
 /// reflection request, on both axes.
 ///
-/// Reflection dispatches on the model the triage pin selected (#1847) and then
-/// built its request with `reasoning: None`, so `agents.triage.reasoning: off`
+/// Reflection dispatches on the model the settings selected (#1847) and then
+/// built its request with `reasoning: None`, so a configured `reasoning: off`
 /// chose the model for a call it could not reach. On a reasoning model that
 /// meant a thinking stream billed against reflection's output cap — the
 /// mechanism behind execution 63's `finish_reason: length` at exactly 2,048
 /// tokens and a nine-day frozen learning plane.
 #[test]
-fn the_triage_posture_governs_the_reflection_request() {
+fn the_configured_posture_governs_the_reflection_request() {
     let cfg = cfg_with_engine(
         "zai",
-        r#"{ "pipeline_triage_model": "deepseek/deepseek-chat",
-             "agents": { "triage": { "reasoning": "off", "effort": "high" } } }"#,
+        r#"{ "default_model": "deepseek/deepseek-chat",
+             "agents": { "default": { "reasoning": "off", "effort": "high" } } }"#,
     );
     let configured = vec![configured_provider("zai"), configured_provider("deepseek")];
 
-    let route = reflection_route(&cfg, &configured).expect("routable triage pin");
+    let route = reflection_route(&cfg, &configured).expect("routable settings model");
     assert_eq!(
         route.posture,
         crate::memory::ReflectionPosture {
@@ -1085,11 +837,11 @@ fn the_triage_posture_governs_the_reflection_request() {
     // selected this model, so its posture still governs the call.
     let same_model = cfg_with_engine(
         "zai",
-        r#"{ "pipeline_triage_model": "zai/glm-5.2",
-             "agents": { "triage": { "reasoning": "off" } } }"#,
+        r#"{ "default_model": "zai/glm-5.2",
+             "agents": { "default": { "reasoning": "off" } } }"#,
     );
     let route = reflection_route(&same_model, &[configured_provider("zai")])
-        .expect("a pin naming the session default is still a triage pin");
+        .expect("a model naming the session default is still a route");
     assert!(
         route.provider.is_none(),
         "the worker adapter already serves that exact model — a duplicate \
@@ -1102,23 +854,20 @@ fn the_triage_posture_governs_the_reflection_request() {
 /// dispatch — because reflection is best-effort by contract and a
 /// configuration problem must never cost the turn its learning.
 #[test]
-fn reflection_rides_the_worker_when_the_triage_tier_is_unroutable() {
+fn reflection_rides_the_worker_when_the_configured_model_is_unroutable() {
     // The stock posture: no engine settings at all.
     let stock = cfg_for("zai");
     assert!(reflection_route(&stock, &[configured_provider("zai")]).is_none());
 
-    // A triage pin whose provider has no resolvable credential.
-    let uncredentialed = cfg_with_engine(
-        "zai",
-        r#"{ "pipeline_triage_model": "deepseek/deepseek-chat" }"#,
-    );
+    // A configured model whose provider has no resolvable credential.
+    let uncredentialed = cfg_with_engine("zai", r#"{ "default_model": "deepseek/deepseek-chat" }"#);
     assert!(reflection_route(&uncredentialed, &[configured_provider("zai")]).is_none());
 
-    // A triage pin naming the session default model rides the worker ADAPTER
-    // and is still a route: no duplicate connection pool, but the pin's
-    // posture still governs the call (asserted above, #2174).
-    let same_model = cfg_with_engine("zai", r#"{ "pipeline_triage_model": "zai/glm-5.2" }"#);
+    // A configured model naming the session default rides the worker ADAPTER
+    // and is still a route: no duplicate connection pool, but its posture
+    // still governs the call (asserted above, #2174).
+    let same_model = cfg_with_engine("zai", r#"{ "default_model": "zai/glm-5.2" }"#);
     let route = reflection_route(&same_model, &[configured_provider("zai")])
-        .expect("a pin naming the session default is still a triage pin");
+        .expect("a model naming the session default is still a route");
     assert!(route.provider.is_none());
 }

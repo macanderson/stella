@@ -47,7 +47,7 @@ use std::path::Path;
 use crate::config::{Dialect, LOCAL_PROVIDER, PROVIDERS, ProviderConfig};
 use crate::engine_config::{ModelSpec, model_spec_for, parse_model_spec};
 use crate::model_catalog::validate_model_slug;
-use crate::settings::{AgentEngineConfig, EngineAgentKind};
+use crate::settings::AgentEngineConfig;
 use stella_model::catalog::Catalog;
 
 /// One flagged settings problem — where it lives, the offending value, and
@@ -159,17 +159,6 @@ pub fn check_base_url_coherence(
             other.id,
         ),
     })
-}
-
-fn kind_label(kind: EngineAgentKind) -> &'static str {
-    match kind {
-        EngineAgentKind::Default => "default",
-        EngineAgentKind::Worker => "worker",
-        EngineAgentKind::Verifier => "verifier",
-        EngineAgentKind::Triage => "triage",
-        EngineAgentKind::Research => "research",
-        EngineAgentKind::Plan => "plan",
-    }
 }
 
 /// Whether this provider's seed-catalog ids are vendor-namespaced (carry a
@@ -296,30 +285,6 @@ fn check_spec(
     check_resolved_spec(location, trimmed, &spec)
 }
 
-/// Which flat key actually feeds [`AgentEngineConfig::model_for`] for `kind`
-/// when the agent itself sets no `model` (issue #273's remaining validator
-/// gap): the kind's own `pipeline_<kind>_model` when set, else `default_model`
-/// — the same fallback order `model_for` implements. Used only to label a
-/// flagged issue with the setting the user actually needs to fix.
-fn flat_source_label(engine: &AgentEngineConfig, kind: EngineAgentKind) -> &'static str {
-    let flat_specific = match kind {
-        EngineAgentKind::Default => None,
-        EngineAgentKind::Worker => engine.pipeline_worker_model.as_deref(),
-        EngineAgentKind::Verifier => engine.pipeline_verifier_model.as_deref(),
-        EngineAgentKind::Triage => engine.pipeline_triage_model.as_deref(),
-        EngineAgentKind::Research => engine.pipeline_research_model.as_deref(),
-        EngineAgentKind::Plan => engine.pipeline_plan_model.as_deref(),
-    };
-    match (kind, flat_specific.is_some()) {
-        (EngineAgentKind::Worker, true) => "pipeline_worker_model",
-        (EngineAgentKind::Verifier, true) => "pipeline_verifier_model",
-        (EngineAgentKind::Triage, true) => "pipeline_triage_model",
-        (EngineAgentKind::Research, true) => "pipeline_research_model",
-        (EngineAgentKind::Plan, true) => "pipeline_plan_model",
-        _ => "default_model",
-    }
-}
-
 /// Validate every model reference in the engine settings. Per-agent `model`
 /// entries are resolved through the engine's own [`model_spec_for`], so the
 /// check honors the agent's explicit `provider` field (a set `provider` sends
@@ -337,15 +302,7 @@ pub fn check_engine_settings(
     {
         issues.push(issue);
     }
-    for kind in [
-        EngineAgentKind::Default,
-        EngineAgentKind::Worker,
-        EngineAgentKind::Verifier,
-        EngineAgentKind::Triage,
-    ] {
-        let Some(agent) = engine.agent(kind) else {
-            continue;
-        };
+    if let Some(agent) = engine.agent() {
         // The agent's OWN explicit `model` pin, if it set one.
         let own_model = agent
             .model
@@ -353,9 +310,9 @@ pub fn check_engine_settings(
             .map(str::trim)
             .filter(|m| !m.is_empty());
         if let Some(trimmed) = own_model {
-            let location = format!("agents.{}.model", kind_label(kind));
+            let location = format!("agents.{}.model", crate::config_wiring::DEFAULT_ROLE);
             // Resolve exactly as the engine does — honoring `agent.provider`.
-            match model_spec_for(engine, kind, is_provider) {
+            match model_spec_for(engine, is_provider) {
                 Some(spec) => {
                     if let Some(issue) = check_resolved_spec(&location, trimmed, &spec) {
                         issues.push(issue);
@@ -370,41 +327,20 @@ pub fn check_engine_settings(
                     }
                 }
             }
-            continue;
         }
-        // Issue #273: the agent sets no `model` of its own, but a `provider`
-        // pin still stands — its effective model comes from a flat key
-        // (`pipeline_<kind>_model` or `default_model`). That flat string is
-        // ALREADY validated on its own as a plain `provider/slug` spec
-        // (`default_model` above, or nowhere at all for the pipeline-specific
-        // keys), but never combined with THIS provider pin — the exact
-        // combination the engine actually sends. Skip `Default`: its flat key
-        // IS `default_model`, and the resolved wire model is separately
-        // backstopped by `check_resolved_model` at launch, so adding it here
-        // would only risk a duplicate (the launch-time dedup matches on
-        // identical `value`, not location).
-        if matches!(
-            kind,
-            EngineAgentKind::Worker | EngineAgentKind::Verifier | EngineAgentKind::Triage
-        ) && agent
-            .provider
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|p| !p.is_empty())
-            && let Some(raw) = engine.model_for(kind)
-            && let Some(spec) = model_spec_for(engine, kind, is_provider)
-            && let Some(issue) = check_resolved_spec(
-                &format!(
-                    "agents.{} (provider pin over {})",
-                    kind_label(kind),
-                    flat_source_label(engine, kind)
-                ),
-                raw,
-                &spec,
-            )
-        {
-            issues.push(issue);
-        }
+        // Issue #273's other half — an agent that sets a `provider` pin but no
+        // `model`, so its effective model comes from a flat key — deliberately
+        // has no arm here, and #273's own scoping note is why: for the DEFAULT
+        // agent that flat key IS `default_model`, which is validated above on
+        // its own, and whose resolved wire model is separately backstopped by
+        // `check_resolved_model` at launch. A check here would be the third
+        // look at one string.
+        //
+        // It had an arm until #3908 because the pin could be fed by a
+        // `pipeline_<role>_model` key instead, on a role that was validated
+        // nowhere else — and that arm always excluded `Default` for exactly the
+        // reason above. Those keys are retired, so the excluded case is the
+        // only case, and what is left is the exclusion.
     }
     for (i, model) in engine.allowed_models().iter().enumerate() {
         if let Some(issue) = check_spec(&format!("allowed_models[{i}]"), model, is_provider) {
@@ -558,16 +494,13 @@ pub fn inspect_model_config(
         report.source = "--model / STELLA_MODEL".to_string();
         spec = parse_model_spec(raw, &is_provider);
     } else if let Some(engine) = &settings.agent_engine_config
-        && let Some(resolved) = model_spec_for(engine, EngineAgentKind::Default, &is_provider)
+        && let Some(resolved) = model_spec_for(engine, &is_provider)
         && !resolved.model.is_empty()
     {
         // Rungs 2 and 3, told apart by which key actually answered.
-        report.source = match engine
-            .agent(EngineAgentKind::Default)
-            .and_then(|a| a.model.as_deref())
-        {
+        report.source = match engine.agent().and_then(|a| a.model.as_deref()) {
             Some(m) if !m.trim().is_empty() => "agents.default.model",
-            _ => flat_source_label(engine, EngineAgentKind::Default),
+            _ => "default_model",
         }
         .to_string();
         spec = Some(resolved);
@@ -693,13 +626,13 @@ mod tests {
 
     #[test]
     fn per_agent_provider_pin_is_sent_verbatim_not_split() {
-        // A verifier pinned to OpenRouter with a slug that itself contains `/`:
+        // An agent pinned to OpenRouter with a slug that itself contains `/`:
         // the engine sends `openai/gpt-6` VERBATIM to OpenRouter (unseeded →
         // its endpoint is the authority), so the check must NOT re-split the
         // slug and validate the phantom `openai/gpt-6` against the OpenAI
         // catalog (where `gpt-6` does not exist) — that was a false positive.
         let engine: AgentEngineConfig = serde_json::from_str(
-            r#"{ "agents": { "verifier": { "provider": "openrouter", "model": "openai/gpt-6" } } }"#,
+            r#"{ "agents": { "default": { "provider": "openrouter", "model": "openai/gpt-6" } } }"#,
         )
         .unwrap();
         assert!(
@@ -714,64 +647,12 @@ mod tests {
         // catalog and is correctly flagged (the string carries its own
         // routing).
         let engine: AgentEngineConfig =
-            serde_json::from_str(r#"{ "agents": { "verifier": { "model": "openai/nope" } } }"#)
+            serde_json::from_str(r#"{ "agents": { "default": { "model": "openai/nope" } } }"#)
                 .unwrap();
         let issues = check_engine_settings(&engine, &is_seed_provider);
         assert_eq!(issues.len(), 1, "{issues:?}");
-        assert_eq!(issues[0].location, "agents.verifier.model");
+        assert_eq!(issues[0].location, "agents.default.model");
         assert_eq!(issues[0].value, "openai/nope");
-    }
-
-    #[test]
-    fn provider_pin_over_a_flat_key_is_validated_issue_273() {
-        // The remaining validator gap (#273): the verifier sets ONLY `provider`
-        // (no `agents.verifier.model`), so its effective model rides
-        // `pipeline_verifier_model` — a bare, de-namespaced OpenRouter slug that
-        // reaches the wire as `auto`, which OpenRouter does not serve. Before
-        // the fix this was invisible: the per-kind loop only looked at the
-        // agent's OWN `model` field.
-        let engine: AgentEngineConfig = serde_json::from_str(
-            r#"{ "pipeline_verifier_model": "auto",
-                 "agents": { "verifier": { "provider": "openrouter" } } }"#,
-        )
-        .unwrap();
-        let issues = check_engine_settings(&engine, &is_seed_provider);
-        assert_eq!(
-            issues.len(),
-            1,
-            "a mis-shaped flat-key model under a provider pin must be flagged: {issues:?}"
-        );
-        assert_eq!(
-            issues[0].location,
-            "agents.verifier (provider pin over pipeline_verifier_model)"
-        );
-        assert_eq!(issues[0].value, "auto");
-        assert!(
-            issues[0].message.contains("vendor namespace"),
-            "{}",
-            issues[0].message
-        );
-    }
-
-    #[test]
-    fn provider_pin_over_default_model_is_labeled_by_its_real_source() {
-        // Same gap, but the verifier's flat fallback is `default_model` (no
-        // `pipeline_verifier_model` set) — the location must name the key that
-        // actually fed the resolution, not always `pipeline_verifier_model`.
-        // `default_model` is a valid seeded bare slug on its own (clean at
-        // the top-level check), so the ONLY issue is the new provider-pin
-        // combination — proving it, not an unrelated `default_model` typo.
-        let engine: AgentEngineConfig = serde_json::from_str(
-            r#"{ "default_model": "glm-5.2",
-                 "agents": { "verifier": { "provider": "openrouter" } } }"#,
-        )
-        .unwrap();
-        let issues = check_engine_settings(&engine, &is_seed_provider);
-        assert_eq!(issues.len(), 1, "{issues:?}");
-        assert_eq!(
-            issues[0].location,
-            "agents.verifier (provider pin over default_model)"
-        );
     }
 
     #[test]
@@ -781,7 +662,7 @@ mod tests {
         // branch — it is handled entirely by the pre-existing own-model path
         // and produces no false positive.
         let engine: AgentEngineConfig = serde_json::from_str(
-            r#"{ "agents": { "verifier": { "provider": "openrouter", "model": "openai/gpt-6" } } }"#,
+            r#"{ "agents": { "default": { "provider": "openrouter", "model": "openai/gpt-6" } } }"#,
         )
         .unwrap();
         assert!(
@@ -792,15 +673,19 @@ mod tests {
 
     #[test]
     fn default_kind_provider_pin_over_default_model_is_not_double_checked() {
-        // Default is deliberately excluded from the new branch — its flat key
-        // IS `default_model` and its resolved wire model is separately
-        // backstopped by `check_resolved_model` at launch (issue #273's
-        // scoping note). `default_model` alone (`glm-5.2`, a seeded bare
-        // slug) is clean; ONLY combining it with the `agents.default`
-        // provider pin (openrouter, which needs a `vendor/` namespace) would
-        // produce an issue — so if the new branch covered Default too, this
-        // would flag. It must not: the combination stays clean here, exactly
-        // because Default is excluded and left to the launch-time backstop.
+        // The default agent is deliberately not checked for the provider-pin
+        // combination — its flat key IS `default_model` and its resolved wire
+        // model is separately backstopped by `check_resolved_model` at launch
+        // (issue #273's scoping note). `default_model` alone (`glm-5.2`, a
+        // seeded bare slug) is clean; ONLY combining it with the
+        // `agents.default` provider pin (openrouter, which needs a `vendor/`
+        // namespace) would produce an issue — so a check here would flag it.
+        // It must not: the combination stays clean, left to the backstop.
+        //
+        // #3908 made this the ONLY case. The branch that did check the
+        // combination existed for roles fed by a `pipeline_<role>_model` key,
+        // which were validated nowhere else and which always excluded this one;
+        // those keys are retired, so the exclusion is all that remains.
         let engine: AgentEngineConfig = serde_json::from_str(
             r#"{ "default_model": "glm-5.2",
                  "agents": { "default": { "provider": "openrouter" } } }"#,

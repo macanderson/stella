@@ -386,13 +386,37 @@ Five things a caller must know rather than discover:
   second diff over the first. A refused *or failed* adoption discards nothing:
   the losers are the only copies of work that might still be wanted.
 
-**The plane is not installed by any shipped driver yet.** `stella-cli` assembles
-`HostPlanes` with `recall` and `child_turn` and no isolation substrate, so both
-calls are answered `unavailable` — a declared gap the plugin is told about,
-never a silence. Wiring a substrate needs a rooted writing turn, which the
-session's `SubAgentDispatcher` cannot express today; tracked separately (see
-`crates/stella-runtime/src/wrapper/candidate_fanout.rs`'s `CandidateWorkspaces`
-for why that is a port rather than a field on `SubAgentSpec`).
+**`stella run --pipeline <variant>` installs the plane; every other door
+declines it.** The substrate is
+`crates/stella-cli/src/candidate_workspaces.rs` — one `git worktree` per
+candidate under `.stella/private/candidates/`, one writing worker turn inside
+each, and an adoption that is `git diff` in the candidate and `git apply` on
+the real tree (#3892). Three consequences a plugin author should know:
+
+- **Adoption applies a patch; it does not commit, merge or rebase.** An
+  adopted candidate leaves the same thing the user's own turn leaves —
+  working-tree changes — so best-of-N can never put a commit in someone's
+  history that they did not write. `git apply` validates every hunk before
+  writing any and is passed no `--reject`, so a candidate that no longer
+  applies changes nothing at all and is reported as a failed adoption. There
+  is no conflict-resolution path: resolving one is a judgement, and a host
+  making it silently would be editing the user's tree on its own authority.
+- **`stella goal` installs no fan-out plane**, exactly as it installs no
+  `child_turn` plane, and for the same reason: that loop's own even/odd
+  worker/verifier receipt slots (#3833) own the low `turn_instance` values
+  across a run, so a plugin's fixed slot would collide there rather than
+  merely crowd.
+- **A candidate turn runs behind the operator's `tools.<name>` switches** and
+  the session authorization gate. It is the one dispatched child in the tree
+  that does; `delegate`'s children run against the bare registry and always
+  have, which is #3930 rather than a property of this capability.
+
+What is still not covered: a process **killed** mid-fan-out leaks its
+worktrees, since the sweep that discards them runs at the end of a wrapped run
+(#2813 is that shape); and `stella fleet gc` deliberately cannot reclaim them,
+because the substrate stays out of the `.stella/worktrees/` + `fleet/`
+namespace rather than borrow a sweeper that would then delete checkouts it did
+not create.
 
 ---
 

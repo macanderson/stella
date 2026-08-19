@@ -336,7 +336,7 @@ without asking you to configure anything.
 
 This is a *baseline*, not a lock. It composes underneath the whole
 [`agent_engine_config`](/docs/configuration/agent-engine-config) scope chain, so any
-field you set is yours — set `pipeline_verifier_model` and the verifier is whatever you said,
+field you set is yours — set `default_model` and the session model is whatever you said,
 while the rest of the posture stays. It also applies only when OpenRouter is the provider
 that actually got picked: run `--model anthropic/…` with an OpenRouter key present and you
 have an Anthropic session, with no part of this routed through the gateway.

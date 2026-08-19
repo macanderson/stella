@@ -233,24 +233,52 @@ Two constraints that are not obvious from the code:
   (`crates/stella-tui/src/envelope/engine_config.rs`). That envelope is a shared
   cell with slice 5; exactly one PR owns the shape change.
 
-**4b — `EngineAgentKind` and `role_key()`.** Blocked behind slices 2 and 6, and
-this is the forcing constraint: `scripts/check-role-names.sh` parses
+**4b — `EngineAgentKind` and `role_key()`.** Planned as blocked behind slices 2
+and 6, on this forcing constraint: `scripts/check-role-names.sh` parsed
 `role_key()`'s match arms out of `crates/stella-cli/src/config_wiring.rs` by awk
 and **fails closed** when the function is gone, with a message that says in
 terms "repoint this guard; do not delete it". `role_key()` takes an
-`EngineAgentKind`, so the enum cannot go while the guard reads it, and the guard
-cannot go before slice 2 (§6, slice 6). Leave both standing with a comment
-naming the guard as their last consumer, so the next reader does not try again.
+`EngineAgentKind`, so the enum could not go while the guard read it, and the
+guard could not go before slice 2.
 
-The split is not a climb-down: 4a removes every key a user can *set*, which is
-the visible half and the one §2 is about. What survives is one enum and one
-function feeding a guard, invisible to users, deleted the moment the guard's
-premise dissolves.
+**Landed with 4a instead, because the block dissolved on inspection.** The
+constraint was never "the enum must survive" — it was "something must hold four
+languages to one spelling". Deleting `role_key()` and repointing the guard at
+`ENGINE_AGENT_NAMES` + `RETIRED_ENGINE_AGENT_NAMES` in
+`crates/stella-cli/src/settings/unknown.rs` satisfies the guard's own
+instruction literally (repoint, do not delete) and keeps the contract intact:
+the union of the live name and the five retired ones is exactly the vocabulary
+arenabench, the harbor adapter, the Observatory filter and the TUI's
+`PipelineRole` still spell, and the guard still checks all four producers
+against it. It reports `6 role(s) [default plan research triage verifier
+worker]`, unchanged.
+
+That is strictly better than leaving the enum standing: the words survive where
+they are actually still true — as *retired spellings this workspace still
+recognizes* — rather than as a live enum nothing routes on. When slice 6 (#3910)
+retires the contract, `RETIRED_ENGINE_AGENT_NAMES` empties and the guard goes
+with it, exactly as planned.
 
 - **Witness:** a settings file carrying every retired key loads, warns by name,
   and changes no behavior.
 - **Done when (4a):** no `pipeline_<role>_model` or `agents.<persona>` key
   exists, and the bench harness configures a seat rather than a pipeline pin.
+
+**What shipped, against that bar.** The keys are gone from the settings schema,
+and `EngineAgentKind` with them. The **bench harness was deliberately not
+migrated**, and the retired keys are therefore *recognized* by the
+trusted-launcher seam rather than refused — `RETIRED_ENGINE_ROOT` in
+`settings::unknown` carries the argument. Migrating the harness re-hashes every
+posture digest registered in `bench/READINESS.md` §8.4, which is the
+published-numbers call #3870 reserves for a maintainer; it lands with slice 6,
+where the Python stops writing the keys. Until then both doors name the keys out
+loud, which is the half that ends the silence without spending a number.
+
+Note the #1147 protection the constraint above cites — "a posture naming a
+verifier that does not resolve refuses the run" — **no longer exists on any
+branch**: it lived in `stella-pipeline` and went in #3865, leaving
+`Config::engine_settings_trusted` set by two call sites and read by none.
+Nothing was regressed here; the gap predates this slice and is filed separately.
 
 ### Slice 5 — the settings UI becomes a seat list (gap D)
 

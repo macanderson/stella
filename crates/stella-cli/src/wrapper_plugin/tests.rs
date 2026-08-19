@@ -660,6 +660,226 @@ async fn a_declared_child_turn_runs_on_this_hosts_dispatcher() {
     );
 }
 
+/// A provider that never answers — the candidate turns below are about the
+/// *wiring*, not about what a model would say.
+struct NeverProvider;
+
+#[async_trait]
+impl stella_protocol::Provider for NeverProvider {
+    fn id(&self) -> &str {
+        "never"
+    }
+    async fn complete_ref(
+        &self,
+        _request: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        Err(stella_protocol::ProviderError::Terminal(
+            "no provider in tests".into(),
+        ))
+    }
+}
+
+/// A manifest that asks for both halves of best-of-N at the worker tier.
+const CANDIDATES_MANIFEST: &str = r#"
+name = "candidates-wrapper"
+[loop]
+participation = "steering"
+points = ["before_turn"]
+calls = ["candidate_fanout", "adopt_candidate"]
+max_fanout_width = 2
+[subloop]
+stages = ["research"]
+[roles.attempt]
+tier = "worker"
+[runtime]
+argv = ["/bin/sh", "${plugin_dir}/main.sh"]
+timeout_secs = 30
+[wrapper]
+id = "candidates-v1"
+[[wrapper.stages]]
+name = "research"
+"#;
+
+/// **Witness (#3892).** `session_host` installs a candidate fan-out plane, so
+/// a `stella run --pipeline <variant>` really can fan out.
+///
+/// Asserted through `session_host` → `serving` → the gate rather than by
+/// building `HostPlanes` by hand, because the regression this guards is
+/// exactly a missing `.with_candidate_fanout(..)` at that one call site: a
+/// hand-built plane would still pass while every shipped run answered
+/// `Unavailable`. The companion assertion below is the anti-vacuity half —
+/// a host assembled without one really does say `Unavailable`, so the first
+/// assertion is about the wiring and not about the gate being permissive.
+#[tokio::test]
+async fn a_stella_run_host_serves_candidate_fanout() {
+    use stella_plugin::{HostCallOutcome, HostCallRefusal};
+    use stella_runtime::wrapper::HostCallChannel;
+
+    let repo = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["init", "-q", "-b", "main"],
+        vec!["config", "user.email", "a@b.invalid"],
+        vec!["config", "user.name", "t"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .args(&args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    std::fs::write(repo.path().join("seed.txt"), "seed\n").unwrap();
+    for args in [vec!["add", "-A"], vec!["commit", "-qm", "seed"]] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .args(&args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+
+    let mut cfg =
+        crate::config::Config::for_tests(crate::config::PROVIDERS[0].clone(), "m".to_string());
+    cfg.workspace_root = repo.path().to_path_buf();
+    let registry = Arc::new(stella_tools::ToolRegistry::new(repo.path().to_path_buf()));
+    let sub_agents = Arc::new(crate::subagent::SessionSubAgents::new(
+        Arc::new(NeverProvider),
+        &registry,
+        stella_core::EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    ));
+    std::mem::forget(registry);
+
+    let roster = roster(vec![installed(
+        CANDIDATES_MANIFEST,
+        "/plugins/candidates-wrapper",
+    )]);
+    let resolved = bind_installed(&roster, "candidates-v1", &mut |_| {})
+        .expect("the installed plugin declares this variant");
+    let manifest = resolved.manifest().clone();
+    let wrapper = resolved
+        .serving(super::session_host(&cfg, &manifest, sub_agents))
+        .expect("a found variant binds");
+
+    let outcome = wrapper
+        .gate
+        .open()
+        .call(stella_plugin::HostCallArgs::CandidateFanout(
+            stella_plugin::CandidateFanoutArgs {
+                role: "attempt".to_string(),
+                instruction: "try it".to_string(),
+                width: 1,
+            },
+        ))
+        .await;
+    // The provider never answers, so the candidate's *turn* fails — but the
+    // capability was reached, which is the claim. `Unavailable` here would
+    // mean no plane was installed at all.
+    assert!(
+        !matches!(
+            outcome,
+            HostCallOutcome::Err(ref failure)
+                if failure.refusal == HostCallRefusal::Unavailable
+        ),
+        "`session_host` must install a fan-out plane, got {outcome:?}"
+    );
+    assert!(
+        !wrapper.fanout_spends().is_empty(),
+        "and what it bought must be readable back for the run's report"
+    );
+
+    // Anti-vacuity: the same plugin on a host assembled without the plane is
+    // told `Unavailable`, so the assertion above is about the wiring.
+    let bare = bind_installed(&roster, "candidates-v1", &mut |_| {})
+        .expect("the installed plugin declares this variant")
+        .serving(WrapperHost::recalling(no_recall()))
+        .expect("a found variant binds");
+    assert!(
+        matches!(
+            bare.gate
+                .open()
+                .call(stella_plugin::HostCallArgs::CandidateFanout(
+                    stella_plugin::CandidateFanoutArgs {
+                        role: "attempt".to_string(),
+                        instruction: "try it".to_string(),
+                        width: 1,
+                    },
+                ))
+                .await,
+            HostCallOutcome::Err(ref failure)
+                if failure.refusal == HostCallRefusal::Unavailable
+        ),
+        "a host with no substrate declares the gap rather than pretending"
+    );
+
+    // Nothing is left on disk: the sweep is what a wrapped run calls.
+    let leaked = wrapper.sweep_candidates().await;
+    assert!(
+        leaked.is_empty(),
+        "the sweep must take every workspace: {leaked:?}"
+    );
+}
+
+/// A fan-out's spend is printed, and the clamp is printed with it (#3892).
+///
+/// The largest spend a plugin can cause on one host call — N *writing* worker
+/// turns — so a run that reported child turns and stayed silent here would be
+/// visible about the cheap spend and quiet about the expensive one. The
+/// requested width appears only when it differs from what ran, because "asked
+/// 5, ran 3" and "asked 3, ran 3" are different facts about a plugin and only
+/// the host knows which one happened.
+#[test]
+fn a_fanout_reports_what_it_bought_and_names_a_clamp() {
+    use stella_protocol::event::ModelCallRole;
+    use stella_runtime::wrapper::CandidateFanoutSpend;
+
+    let clamped = super::fanout_spend_lines(&[CandidateFanoutSpend {
+        role: "attempt".into(),
+        seat: ModelCallRole::Worker,
+        requested_width: 5,
+        width: 3,
+        cost_usd: 0.4200,
+        completed: 2,
+    }])
+    .remove(0);
+    assert!(clamped.contains("3 candidate turn(s)"), "{clamped}");
+    assert!(clamped.contains("attempt"), "{clamped}");
+    assert!(clamped.contains("0.4200"), "the money is named: {clamped}");
+    assert!(clamped.contains("2 finished"), "{clamped}");
+    assert!(
+        clamped.contains("asked for 5"),
+        "a clamp the plugin could not see is a clamp it will report as its \
+         own choice: {clamped}"
+    );
+
+    let unclamped = super::fanout_spend_lines(&[CandidateFanoutSpend {
+        role: "attempt".into(),
+        seat: ModelCallRole::Worker,
+        requested_width: 3,
+        width: 3,
+        cost_usd: 0.1,
+        completed: 3,
+    }])
+    .remove(0);
+    assert!(
+        !unclamped.contains("asked for"),
+        "nothing was clamped, so nothing is said about it: {unclamped}"
+    );
+
+    assert!(
+        super::fanout_spend_lines(&[]).is_empty(),
+        "a plugin that never fanned out keeps a silent run silent"
+    );
+}
+
 /// The independence rule survives the wiring: a role intent the manifest
 /// declares but that resolves to the **worker's** seat is refused, and
 /// refused as `Forbidden` — "you may not have this" — rather than as the
