@@ -102,13 +102,26 @@ pub struct AgentEngineConfig {
     pub allowed_models: Option<Vec<String>>,
     /// Which model each **plugin-declared seat** runs on.
     ///
-    /// Keys are opaque names an installed plugin chose for the participants in
-    /// its process (`"planner"`, `"reviewer"`, `"second-opinion"`); values are
-    /// model strings in `--model` spelling. Nothing in this workspace matches a
-    /// key against a literal, and nothing validates one against a list of known
-    /// roles — there is no such list, deliberately. A plugin describes the
-    /// process it needs; this map is where the user decides whether a
-    /// participant gets a model of its own.
+    /// ```jsonc
+    /// "seat_models": {
+    ///   "vera/verifier": "anthropic/claude-opus-5",
+    ///   "stella-plan/planner": "deepseek/deepseek-chat"
+    /// }
+    /// ```
+    ///
+    /// Keys are `<plugin-id>/<role>`, where the role is a name the plugin chose
+    /// for a participant in its process; values are model strings in `--model`
+    /// spelling. Nothing in this workspace matches a key against a literal, and
+    /// nothing validates one against a list of known roles — there is no such
+    /// list, deliberately. A plugin describes the process it needs; this map is
+    /// where the user decides whether a participant gets a model of its own.
+    ///
+    /// **The plugin declares only the bare role name; the host applies the
+    /// prefix.** That is what makes the namespace non-forgeable: a plugin never
+    /// writes `vera/…`, so it cannot declare a role under another plugin's name
+    /// and capture the assignment meant for it. There is deliberately no bare
+    /// form and no precedence ladder — resolution is one lookup, and a miss is
+    /// the default model (`doc:roleless-core` §8.4).
     ///
     /// Absent, or absent for a given seat, means that seat runs on the
     /// session's model — so installing a plugin with five participants costs

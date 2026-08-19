@@ -165,9 +165,13 @@ impl ModelsSection {
 ///
 /// ```toml
 /// [seats]
-/// planner = "openrouter/openai/gpt-5.5"
-/// reviewer = "anthropic/claude-opus-5"
+/// "stella-plan/planner" = "openrouter/openai/gpt-5.5"
+/// "vera/verifier" = "anthropic/claude-opus-5"
 /// ```
+///
+/// Keys are `<plugin-id>/<role>` (`doc:roleless-core` §8.4). The plugin
+/// declares only the bare role name and the host applies the prefix, so the
+/// namespace cannot be forged by a plugin claiming another's.
 ///
 /// Its own top-level table, and **not** a flattened part of `[agents]`, for the
 /// exact reason [`AgentsSection`]'s doc gives for why it may flatten: that set

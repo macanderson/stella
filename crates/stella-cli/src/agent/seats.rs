@@ -30,6 +30,23 @@
 //! pipeline was the second kind, and deleting it (#3865) is what freed the
 //! socket to be the first.
 //!
+//! # The key is `<plugin-id>/<role>`, and the host writes the prefix
+//!
+//! A seat name is always plugin-qualified — `vera/verifier`,
+//! `stella-plan/planner` — with no bare form and no precedence ladder
+//! (`doc:roleless-core` §8.4). Two properties follow, and both are why the
+//! qualification is not merely tidy:
+//!
+//! - **No silent inheritance.** A bare `planner` assignment would be picked up
+//!   by the next plugin that happens to declare a role of that name, handing it
+//!   a spending decision made about a different plugin weeks earlier.
+//! - **The namespace is non-forgeable.** The plugin declares only its bare local
+//!   role name and never writes the prefix; the host applies it. So a hostile
+//!   plugin cannot declare `vera/verifier` and capture Vera's assignment.
+//!
+//! Note this is a rule about the *shape* of the key, not a licence to read it:
+//! the lookup below still compares whole strings and never splits one.
+//!
 //! # Who decides what
 //!
 //! - **The plugin** declares the roles its process needs, in its manifest. It

@@ -279,30 +279,140 @@ slot in `EvidenceSet`'s flip/tamper/measurement vocabulary.
   count of models a session uses is exactly one plus the number of seats a human
   assigned.
 
-## 8. Decisions still open
+## 8. Decisions — settled 2026-08-19
 
-These block slice 3 and should be settled before it starts; each is a genuine
-fork, not a detail.
+These blocked slice 3. All four are now decided; each subsection records the
+decision and the reasoning, because the reasoning is what a later change would
+be overriding.
 
-1. **Is "activated" distinct from "installed"?** §2 says "install … activate",
-   which implies a plugin can be present but inert. Today `--pipeline <id>`
-   names one wrapper per run. A standing activation set is a different model
-   with different consent, ordering and failure semantics.
-2. **What is a stage, formally?** Either (a) a named ordering over the existing
-   four points, which is cheap and composes with what shipped, or (b) a new
-   dispatch point with its own contract, which is more expressive and more to
-   get wrong. (a) is the recommendation unless a concrete plugin needs (b).
-3. **Do stages compose or conflict?** Two installed plugins both declaring a
-   stage "before the worker" need a deterministic order. Manifest-declared
-   priority, install order, and explicit user ordering are all defensible; a
-   nondeterministic one is not, given byte-stable prompts (invariant 7 in
-   `AGENTS.md`).
-4. **Seat namespacing.** Slice 0 made a seat name a bare string, so two plugins
-   both declaring `planner` share one assignment. That is either a feature
-   (assign once, applies to any plugin's planner) or a collision (two plugins
-   mean different things). Recommendation: keep bare names, because the user is
-   assigning to a *concept they recognize* rather than to a plugin's internals —
-   and revisit only when a real collision is reported.
+### 8.1 Installed and active are two concerns
+
+**Decided 2026-08-19 (Mac).** Installing a plugin puts it on disk and records
+consent, and leaves it **inert**. A separate enable/disable writes to settings
+and is what makes it participate in every turn.
+
+- Install is often bulk or transitive; a command that reads like "download this"
+  must not silently change every future turn.
+- The enabled set is scoped config, so a project can enable a plugin for the team
+  while an individual machine need not — the existing 3-scope merge, unchanged.
+- Disable is a kill switch that is not uninstall. When a plugin misbehaves
+  mid-incident, losing consent state to stop it is the wrong trade.
+- The enabled set is the reviewable list slice 5's pane renders.
+
+`--pipeline <id>` narrows in meaning: "run with exactly this, ignoring the
+enabled set" — the per-run override that benchmark arms and experiments already
+use it as.
+
+### 8.2 A stage is a named ordering over the existing four points
+
+**Decided 2026-08-19 (Mac).** Option (a). A manifest declares a stage's name, the
+point it attaches to, and a coarse band; the turn loop composes the enabled set.
+No fifth dispatch point.
+
+- The four points are **demonstrably** sufficient for the stages we know we want:
+  [`doc:turn-loop-wrappers`] §4 already maps every historical pipeline stage onto
+  them (triage/recall/research/plan/scope → `before_turn`, witness →
+  `after_turn`, verify → `judge`, revise → `again?`). That is evidence from a
+  system that ran, not optimism about one that has not.
+- A fifth point is a second wire contract to keep in step, with its own
+  transports and admissibility rules, against a socket whose whole argument is
+  that there is one contract.
+- What is missing is not a point but **identity and order** — a name, so a stage
+  can be shown, attributed and disabled individually; and a position, so N
+  plugins compose. Both are manifest metadata over dispatch that already exists.
+
+Option (b) stays available, taken when a **concrete** plugin needs something the
+four points cannot express, with that plugin as the evidence.
+
+### 8.3 Stage order is resolved into config, never observed from install order
+
+**Decided 2026-08-19 (Mac).** A manifest declares a **coarse band**
+(`early`/`normal`/`late`), not a fine-grained integer. On enable, the resolved
+order is **written into settings** and read from there; ties inside a band break
+on plugin id, lexicographically.
+
+- **Install order is disqualified outright.** It is invisible, machine-local and
+  not reproducible across clones, so the composed prompt would depend on the
+  order someone happened to type commands — fatal for byte-stable prompts
+  (`AGENTS.md` invariant 7) and for reproducing a benchmark run elsewhere.
+- Manifest priority *alone* moves the fight rather than settling it: two authors
+  both claim priority 0. A coarse band gives no ladder to climb.
+- Writing the resolved order down, rather than recomputing it per run, makes it
+  reviewable and diffable — and stops a plugin author reordering someone's turn
+  by shipping a new manifest.
+
+### 8.4 Seat names are always plugin-qualified
+
+**Decided 2026-08-19 (Mac), reversing this document's first recommendation.**
+A seat is `<plugin-id>/<role>`. There is no bare form and no precedence ladder:
+resolution is one lookup, and a miss is the default model.
+
+```toml
+[seats]
+"vera/test_author"    = "openrouter/openai/gpt-5.5"
+"vera/verifier"       = "anthropic/claude-opus-5"
+"stella-plan/planner" = "deepseek/deepseek-chat"
+```
+
+**The separator is `/`, because it is already this file's idiom.** The *values*
+beside these keys are `provider/slug` model strings, and `parse_model_spec`
+splits them on the first `/`. A reader who understands
+`openrouter/openai/gpt-5.5` needs nothing new to understand `vera/verifier`.
+
+Two alternatives were weighed and rejected, and the reasons are different in
+kind:
+
+- **A dot is dangerous.** In TOML, `vera.verifier = "…"` inside `[seats]` is
+  *dotted-key syntax*: it parses as a nested table `vera` containing `verifier`,
+  not as a flat key. It is correct only when quoted, and the unquoted form
+  silently means something else in a config surface this project ships.
+- **A double underscore is merely ugly**, and was argued for on a constraint
+  that does not exist: seats have no environment-variable override and none is
+  planned, so "survives an env var" was a hypothetical requirement invented to
+  justify a separator.
+
+Slash's one real cost is that TOML must quote the key. That is a **loud** cost —
+an unquoted `vera/verifier = "x"` is a parse error the user sees immediately —
+which is a different category from the dot's silent mis-parse. `crates/stella-cli/src/settings/toml_config.rs`
+carries a round-trip test pinning it.
+
+One constraint follows for slice 3: **a plugin id may not contain `/`**. Core
+never splits a seat key — it compares whole strings — but the host constructs
+one and a display surface reverses it, so the separator must be unambiguous at
+those two points.
+
+The bare form was recommended here first, for one-line convenience when several
+plugins declare the same role name and want the same model. Three things killed
+it:
+
+1. **It breaches invariant 4 through a side door.** Assign `planner` for one
+   plugin, install a second that also declares `planner` six weeks later, and the
+   new plugin silently inherits a spending decision made about a different one.
+   That is "installing a plugin multiplies the bill", arriving by the route a
+   collision *warning* would have existed to paper over — and a mechanism whose
+   safety depends on a warning firing is worse than one where the failure cannot
+   occur.
+2. **The namespace must be non-forgeable, and that requires the host to apply
+   it.** A plugin declares its bare local name (`planner`) in its manifest and
+   never writes the prefix; the host qualifies it. So a hostile plugin cannot
+   declare `vera/verifier` and capture the assignment meant for Vera. Bare names
+   have no equivalent protection — any plugin declaring `verifier` picks up
+   whatever that word was assigned.
+3. **The convenience is recoverable and the safety is not.** "Assign every
+   planner at once" is a UI bulk action writing N explicit qualified keys.
+   Un-sharing a bare key already written into a settings file is not.
+
+Consequences: an assignment naming a plugin that is not enabled warns by name (a
+detectable orphan, strictly better than a silent share); plugin authors no longer
+need distinctive role names for safety, so `vera` naming a role `verifier` is
+unambiguous rather than an invitation; and the resolution the slice-0 code
+already ships — one map lookup, miss means default — is the final shape rather
+than a stepping stone.
+
+**The word `verifier` is banned from core, not from plugins.** A plugin may name
+its roles anything; core compares the string and never interprets it.
+`verifier` in a manifest is data. `Role::Verifier` in `stella-core` is the thing
+being deleted.
 
 ## 9. How we will know it worked
 
