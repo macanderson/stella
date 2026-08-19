@@ -129,11 +129,32 @@ suites() {
 # `grep -Eq` over the PR diff. `.githooks/pre-push` asks the same question about
 # the pushed diff, so it reads the answer from here instead of carrying a copy —
 # the copy is what this whole file exists to abolish.
+#
+# Anchored to the `id: scope` step, NOT to the first `grep -Eq` in the file.
+# There is exactly one today, so an unanchored scan gets the right answer by
+# luck; the moment a later step greps for anything, `head -1` would hand the
+# hook a pattern that is not the scope filter, and the hook would silently
+# select the wrong paths. Silently, because the hook cannot tell a wrong
+# regex from a right one -- which is the failure mode this whole file exists
+# to abolish, so it must not be reintroduced by the reader of the copy.
 scope_filter() {
-  local pattern
-  pattern="$(sed -n "s/.*grep -Eq '\(.*\)'.*/\1/p" "$workflow" | head -1)"
+  local step pattern
+  # The step's block: from its `id: scope` line to the next step at the same
+  # indent (`      - name:`). awk rather than sed because the end condition is
+  # a different line than the start.
+  step="$(awk '
+    /^[[:space:]]+id:[[:space:]]*scope[[:space:]]*$/ { inside = 1; next }
+    inside && /^[[:space:]]{6}- name:/ { exit }
+    inside { print }
+  ' "$workflow")"
+  [ -n "$step" ] || die \
+    "could not find the \`id: scope\` step in $workflow." \
+    "  .githooks/pre-push reads the scope filter out of that step; it has no" \
+    "  copy of its own. If the step was renamed, teach this function the new" \
+    "  name rather than typing the pattern out somewhere else."
+  pattern="$(printf '%s\n' "$step" | sed -n "s/.*grep -Eq '\(.*\)'.*/\1/p" | head -1)"
   [ -n "$pattern" ] || die \
-    "could not find the scope filter (a \`grep -Eq '…'\`) in $workflow." \
+    "found the \`id: scope\` step in $workflow but no \`grep -Eq '…'\` in it." \
     "  .githooks/pre-push selects on that pattern; it has no copy of its own."
   printf '%s\n' "$pattern"
 }

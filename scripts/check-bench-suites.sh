@@ -121,6 +121,30 @@ elif [ "${filter#^\(}" = "$filter" ]; then
   note "     $hook greps the pushed diff with it; an unanchored pattern would"
   note "     match paths the workflow does not consider bench tooling."
   fail=1
+else
+  # Shape alone proves nothing: a pattern grabbed from the wrong step can still
+  # begin `^(`. Behaviour is the real question, so ask it -- does this regex
+  # actually select bench tooling, and actually decline everything else? Both
+  # halves matter and fail differently: a filter that matches nothing makes the
+  # hook silently stop running the suites (the #2847 defect returning by
+  # another door), and one that matches everything makes every Rust-only push
+  # pay for a ~62s arenabench run.
+  for probe in bench/harbor_adapter/x.py arenabench/tests/x.py; do
+    if ! printf '%s\n' "$probe" | grep -Eq "$filter"; then
+      note "FAIL — the scope filter does not match $probe, which IS bench tooling:"
+      note "     $filter"
+      note "     $hook would not run the suites for a push that touches it."
+      fail=1
+    fi
+  done
+  for probe in crates/stella-core/src/driver.rs README.md; do
+    if printf '%s\n' "$probe" | grep -Eq "$filter"; then
+      note "FAIL — the scope filter matches $probe, which is NOT bench tooling:"
+      note "     $filter"
+      note "     $hook would run the Python suites on unrelated pushes."
+      fail=1
+    fi
+  done
 fi
 
 # ── 4. The Makefile does not carry a second copy of the list ─────────────────
