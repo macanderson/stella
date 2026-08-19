@@ -418,7 +418,12 @@ impl WorkJournal {
             .map_err(|e| StoreError::io("cannot run git hash-object", e))?;
         {
             use std::io::Write as _;
-            let stdin = child.stdin.as_mut().expect("piped");
+            let stdin = child.stdin.as_mut().ok_or_else(|| {
+                StoreError::io(
+                    "git child has no piped stdin",
+                    std::io::Error::from(std::io::ErrorKind::BrokenPipe),
+                )
+            })?;
             stdin
                 .write_all(content.as_bytes())
                 .map_err(|e| StoreError::io("cannot write blob", e))?;
@@ -847,7 +852,12 @@ impl WorkJournal {
             .map_err(|e| StoreError::io("cannot run git update-ref", e))?;
         {
             use std::io::Write as _;
-            let stdin = child.stdin.as_mut().expect("piped");
+            let stdin = child.stdin.as_mut().ok_or_else(|| {
+                StoreError::io(
+                    "git child has no piped stdin",
+                    std::io::Error::from(std::io::ErrorKind::BrokenPipe),
+                )
+            })?;
             stdin
                 .write_all(input.as_bytes())
                 .map_err(|e| StoreError::io("cannot write ref deletions", e))?;
