@@ -141,10 +141,6 @@ async fn a_control_turn_is_frameless_through_the_pipeline_port_too() {
         memory.recall_block(lesson).await.is_none(),
         "and the worker's block is frameless on the same turn"
     );
-    assert!(
-        memory.pipeline_recall_block(lesson).await.is_none(),
-        "including the frames-free block a pipeline-driven turn injects"
-    );
 }
 
 /// Attribution is the entire readout of the experiment, and it used to be
@@ -228,9 +224,10 @@ fn every_recalling_driver_arms_the_control_first() {
         ("agent/goal.rs", include_str!("../../agent/goal.rs")),
         ("command_deck.rs", include_str!("../../command_deck.rs")),
     ];
-    // The two recall doors a driver can take: the full block, and the
-    // frames-free block a pipeline-driven turn injects beside its port.
-    const RECALL_CALLS: [&str; 2] = ["recall_block_reported(", "pipeline_recall_block("];
+    // The one recall door a driver can take. It was two until #3865 deleted
+    // the staged pipeline and this change deleted the frames-free block that
+    // existed only to sit beside that pipeline's own recall port.
+    const RECALL_CALLS: [&str; 1] = ["recall_block_reported("];
 
     for (name, source) in DRIVERS {
         let first_recall = RECALL_CALLS

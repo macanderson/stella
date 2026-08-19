@@ -5,8 +5,10 @@ honest-degradation contract.
 
 The synthetic-source tests pin the parser's blind spots (the same ones the
 harbor adapter's ``TestCatalogCeilingParser`` learned the hard way); the
-live tests read the real files in this repository, so a catalog.rs or
-posture.py shape change fails here before it ships a broken select.
+live tests read the real files in a *configured Stella checkout*, so a
+catalog.rs or posture.py shape change fails here before it ships a broken
+select. With no checkout configured they skip — ArenaBench is agent-agnostic
+and its own gate installs no Rust tree (#3919).
 """
 
 from __future__ import annotations
@@ -17,8 +19,6 @@ import pytest
 
 from arenabench import catalog as cat
 from arenabench import sut
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _SYNTHETIC = """
 impl Catalog {
@@ -89,23 +89,35 @@ class TestParser:
 
 
 class TestLiveSources:
-    """Against the real files in this repository — the shape ratchet."""
+    """Against the real files in a Stella checkout — the shape ratchet.
 
-    def test_the_real_catalog_parses_to_entries(self) -> None:
-        source = (_REPO_ROOT / cat._CATALOG_REL).read_text(encoding="utf-8")
+    The checkout comes from the `stella_checkout` fixture, which resolves it
+    through `ARENABENCH_STELLA_REPO` / `ARENABENCH_STELLA_ADAPTER` / the
+    walk-up and skips when there is none. These reached Stella's tree as
+    `parents[2]` until #3919 — a hard-coded monorepo layout, which stops
+    meaning anything the moment this folder is its own repository.
+
+    A missing checkout skips; a checkout whose files have moved still FAILS,
+    because that is the drift this class exists to catch.
+    """
+
+    def test_the_real_catalog_parses_to_entries(self, stella_checkout: Path) -> None:
+        source = (stella_checkout / cat._CATALOG_REL).read_text(encoding="utf-8")
         entries = cat.parse_catalog(source)
         assert entries, "the shipping catalog parsed to zero entries"
         assert all(e["slug"] and e["provider"] for e in entries)
 
-    def test_the_real_posture_yields_benchmarked_slugs(self) -> None:
-        source = (_REPO_ROOT / cat._POSTURE_REL).read_text(encoding="utf-8")
+    def test_the_real_posture_yields_benchmarked_slugs(
+        self, stella_checkout: Path
+    ) -> None:
+        source = (stella_checkout / cat._POSTURE_REL).read_text(encoding="utf-8")
         benchmarked = cat.parse_benchmarked_slugs(source)
         assert "claude-sonnet-5" in benchmarked
 
     def test_payload_groups_by_provider_and_flags_benchmarked(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, stella_checkout: Path
     ) -> None:
-        monkeypatch.setenv("ARENABENCH_STELLA_REPO", str(_REPO_ROOT))
+        monkeypatch.setenv("ARENABENCH_STELLA_REPO", str(stella_checkout))
         payload = cat.models_payload()
         providers = payload["providers"]
         assert providers, "no providers in the payload"
@@ -124,6 +136,14 @@ class TestLiveSources:
         itself running out of and nothing looked there."""
         monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
         monkeypatch.delenv("ARENABENCH_STELLA_ADAPTER", raising=False)
+        if sut.stella_repo() is None:
+            pytest.skip(
+                "this arena is not running out of a Stella checkout, so the "
+                "walk-up this pins has nothing to find. It is the fallback "
+                "for a dev launch from inside the monorepo; configure "
+                "ARENABENCH_STELLA_REPO to exercise the configured path "
+                "instead."
+            )
         assert cat.models_payload()["providers"]
 
     def test_no_checkout_degrades_with_the_env_name(

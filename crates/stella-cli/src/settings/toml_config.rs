@@ -194,25 +194,20 @@ impl SeatsSection {
 /// `[agents]` — the flattened engine config.
 ///
 /// The JSON nests per-agent config one level below the flat model fields
-/// (`agent_engine_config.agents.verifier`); rendered literally that is
-/// `[agents.agents.verifier]`. Flattening is safe because the agent set is CLOSED
-/// — the four names are struct fields, not map keys, so a per-agent table can
-/// never collide with a root field. Opening that set (a later phase) means
-/// either restoring the nesting or reserving these names explicitly.
+/// (`agent_engine_config.agents.default`); rendered literally that is
+/// `[agents.agents.default]`. Flattening is safe because the agent set is
+/// CLOSED — `default` is a struct field, not a map key, so the per-agent table
+/// can never collide with a root field.
+///
+/// **This is exactly why plugin seats went to their own `[seats]` table** and
+/// not into this one: seat names are chosen by whatever the operator
+/// installed, so folding them here would put user-chosen keys in the same
+/// namespace as `auto_mode` and `default_model`. The closed set is what keeps
+/// the flattening safe, and #3908 shrank it to one rather than opening it.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_verifier_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_worker_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_triage_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_research_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_plan_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_mode: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -228,21 +223,11 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_result_horizon_steps: Option<u64>,
 
-    // The built-in agents, as tables. Serialized LAST so the flat scalars
+    // The built-in agent, as a table. Serialized LAST so the flat scalars
     // above are not stranded after a table header — TOML would then read them
     // as keys of that table, which is the same hazard `[run]` exists to avoid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worker: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verifier: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub triage: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub research: Option<AgentEngineAgent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plan: Option<AgentEngineAgent>,
 }
 
 impl AgentsSection {
@@ -650,11 +635,6 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection, S
     let per_agent = cfg.agents.clone().unwrap_or_default();
     let agents = AgentsSection {
         default_model: cfg.default_model.clone(),
-        pipeline_verifier_model: cfg.pipeline_verifier_model.clone(),
-        pipeline_worker_model: cfg.pipeline_worker_model.clone(),
-        pipeline_triage_model: cfg.pipeline_triage_model.clone(),
-        pipeline_research_model: cfg.pipeline_research_model.clone(),
-        pipeline_plan_model: cfg.pipeline_plan_model.clone(),
         auto_mode: cfg.auto_mode,
         effort_auto: cfg.effort_auto,
         reasoning_auto: cfg.reasoning_auto,
@@ -663,11 +643,6 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection, S
         compaction_budget_tokens: cfg.compaction_budget_tokens,
         tool_result_horizon_steps: cfg.tool_result_horizon_steps,
         default: per_agent.default,
-        worker: per_agent.worker,
-        verifier: per_agent.verifier,
-        triage: per_agent.triage,
-        research: per_agent.research,
-        plan: per_agent.plan,
     };
     let models = ModelsSection {
         allowed: cfg.allowed_models.clone(),
@@ -727,21 +702,11 @@ fn lower_agents(
 
     let per_agent = AgentEngineAgents {
         default: agents.default,
-        worker: agents.worker,
-        verifier: agents.verifier,
-        triage: agents.triage,
-        research: agents.research,
-        plan: agents.plan,
     };
     let agents_field = (per_agent != AgentEngineAgents::default()).then_some(per_agent);
 
     Some(AgentEngineConfig {
         default_model: agents.default_model,
-        pipeline_verifier_model: agents.pipeline_verifier_model,
-        pipeline_worker_model: agents.pipeline_worker_model,
-        pipeline_triage_model: agents.pipeline_triage_model,
-        pipeline_research_model: agents.pipeline_research_model,
-        pipeline_plan_model: agents.pipeline_plan_model,
         allowed_models: models.allowed,
         // Absent stays absent: an empty `[seats]` table must not become an
         // empty-but-present map, which the scope merge would read as a real

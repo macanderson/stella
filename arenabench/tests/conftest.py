@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+from arenabench import sut
 from arenabench.snapshot import load_capture_status, load_manifest
 
 MATCHES = Path(__file__).parent / "fixtures" / "matches"
@@ -86,6 +87,86 @@ def _isolate_dataset_corpus(config) -> None:
     (empty / "harbor").mkdir(parents=True, exist_ok=True)
     os.environ["ARENABENCH_DATASETS"] = str(empty / "datasets")
     os.environ["HARBOR_CACHE_DIR"] = str(empty / "harbor")
+
+
+# ---------------------------------------------------------------------------
+# The Stella checkout the cross-language ratchets read
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stella_checkout() -> Path:
+    """The Stella checkout to read Rust sources from, or skip the test.
+
+    A handful of tests are *ratchets across the language boundary*: they read
+    a file in Stella's tree and assert that a constant here still agrees with
+    it. They are the reason a Rust rename cannot silently leave ArenaBench
+    spelling a role the engine no longer resolves (#1449).
+
+    They used to reach that tree as ``Path(__file__).parents[2]`` — true only
+    while this folder sits inside the Stella monorepo. That is a hard-coded
+    layout, and it fails two ways: it went stale in place when
+    ``crates/stella-pipeline`` was deleted (#3865, filed as #3919), and it
+    becomes meaningless the moment this folder is its own repository, where
+    ``parents[2]`` is whatever directory happens to be above the checkout.
+
+    So the checkout is resolved through the seam ArenaBench already publishes
+    for exactly this question — ``ARENABENCH_STELLA_REPO``, then
+    ``ARENABENCH_STELLA_ADAPTER``, then the walk-up from this package
+    (:func:`arenabench.sut.stella_repo`) — and a run with no checkout skips
+    rather than fails. That asymmetry is the whole design:
+
+    * **No checkout: skip.** ArenaBench is agent-agnostic and its own gate
+      installs no Rust tree. A ratchet against a file that is not there is not
+      a failure of this repository.
+    * **A checkout, but the file is gone or unreadable: FAIL.** That is the
+      ratchet doing its job — the authority moved and nobody told the reader.
+      Repoint the test in the same change; never soften it to a skip, which is
+      how #3919 stayed invisible for as long as it did.
+    """
+    repo = sut.stella_repo()
+    if repo is None:
+        pytest.skip(
+            "no Stella checkout to read: "
+            f"{sut.repo_problem()} These assertions are a cross-language "
+            "ratchet against Stella's Rust sources; point "
+            "ARENABENCH_STELLA_REPO at a checkout to run them."
+        )
+    return repo
+
+
+@pytest.fixture
+def stella_adapter(tmp_path_factory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A synthetic ``stella_harbor`` source tree, wired as this rig's adapter.
+
+    Building a seat's environment goes through
+    :func:`arenabench.adapter.seat_import_roots`, which stages the adapter and
+    raises :class:`~arenabench.adapter.AdapterUnavailableError` when neither
+    ``ARENABENCH_STELLA_ADAPTER`` nor a Stella checkout names one. The tests
+    that request this fixture are not about *finding* the adapter — they are
+    about what the seat's environment contains once one exists (lineage opt-in,
+    tool-set closure, credential screening, the launch command) — so they
+    supply one instead of borrowing whatever happens to sit beside the
+    checkout.
+
+    That is a strict improvement even inside the monorepo: their outcome stops
+    depending on whether the developer's `bench/harbor_adapter` is present and
+    intact. It is what makes them run at all once this folder is its own
+    repository, where there is no Stella tree to borrow from (#3919). The
+    tests that genuinely assert discovery and refusal — `test_adapter.py`'s
+    unconfigured cases — deliberately do not take this fixture.
+
+    The package holds one empty ``__init__.py`` and nothing else: staging
+    digests the files under it and refuses an empty directory, and no test
+    here imports it. The seat subprocess that would is never launched.
+    """
+    root = tmp_path_factory.mktemp("stella-adapter")
+    package = root / "stella_harbor"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv("ARENABENCH_STELLA_ADAPTER", str(root))
+    monkeypatch.setenv("ARENABENCH_HOME", str(root / "home"))
+    return root
 
 
 # ---------------------------------------------------------------------------

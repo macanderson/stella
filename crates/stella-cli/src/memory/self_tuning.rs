@@ -30,8 +30,7 @@ use stella_core::self_tuning::{
 use stella_protocol::completion::ReasoningEffort;
 
 use crate::settings::{
-    AgentEngineAgent, AgentEngineConfig, EngineAgentKind, Toggle, project_config_path,
-    user_config_path,
+    AgentEngineAgent, AgentEngineConfig, Toggle, project_config_path, user_config_path,
 };
 
 /// The settings path the effort knob lives at — the `knob` field of every
@@ -361,17 +360,15 @@ pub(crate) fn promote(
     let mut cfg = load_scope_engine_config(&path);
 
     let prior_effort = cfg
-        .agent(EngineAgentKind::Worker)
+        .agent()
         .and_then(|a| a.effort)
         .map(|e| effort_label(e).to_string());
     let prior_auto = cfg.effort_auto.map(Toggle::is_on);
 
     let agents = cfg.agents.get_or_insert_with(Default::default);
-    let worker = agents
-        .get_mut(EngineAgentKind::Worker)
-        .get_or_insert_with(AgentEngineAgent::default);
+    let worker = agents.default.get_or_insert_with(AgentEngineAgent::default);
     worker.effort = Some(chosen);
-    // Disable auto-effort so the pinned worker effort actually takes effect.
+    // Disable auto-effort so the pinned effort actually takes effect.
     cfg.effort_auto = Some(Toggle::Off);
 
     cfg.save_to(&path)?;
@@ -422,9 +419,7 @@ pub(crate) fn rollback(workspace_root: &Path) -> Result<RollbackOutcome, String>
         None => None,
     };
     let agents = cfg.agents.get_or_insert_with(Default::default);
-    let worker = agents
-        .get_mut(EngineAgentKind::Worker)
-        .get_or_insert_with(AgentEngineAgent::default);
+    let worker = agents.default.get_or_insert_with(AgentEngineAgent::default);
     worker.effort = restored_effort;
 
     // Restore effort_auto exactly (absent stays absent).
@@ -472,7 +467,7 @@ mod tests {
 
     fn worker_effort_in(path: &Path) -> Option<String> {
         let cfg = load_scope_engine_config(path);
-        cfg.agent(EngineAgentKind::Worker)
+        cfg.agent()
             .and_then(|a| a.effort)
             .map(|e| effort_label(e).to_string())
     }
@@ -639,7 +634,7 @@ mod tests {
         let mut seed = AgentEngineConfig::default();
         let agents = seed.agents.get_or_insert_with(Default::default);
         agents
-            .get_mut(EngineAgentKind::Worker)
+            .default
             .get_or_insert_with(AgentEngineAgent::default)
             .effort = Some(ReasoningEffort::Low);
         seed.save_to(&settings).unwrap();

@@ -1,12 +1,19 @@
 //! SETTINGS tab — the home of all config in stella, behind a one-line
-//! secondary nav (AGENTS | TOOLS, switched with ←/→) exactly like the AGENTS
-//! tab:
+//! secondary nav (AGENTS | TOOLS | SEATS, switched with ←/→) exactly like the
+//! AGENTS tab:
 //!
 //! - **AGENTS** ([`crate::views::engine`]): the `agent_engine_config` editor —
 //!   the per-role model / prompt / sampling overrides plus the global routing
 //!   toggles.
 //! - **TOOLS** ([`crate::views::tools`]): which of this session's tools are
 //!   switched off.
+//! - **SEATS** ([`crate::views::seats`]): which model each **plugin-declared**
+//!   role runs on. Read-only for now; the editor arrives with the AGENTS
+//!   pane's persona tabs leaving (`doc:roleless-core` slice 5b).
+//!
+//! The nav, the ←/→ cycle and the key handler all read [`SettingsPane::ALL`],
+//! so a fourth pane is one entry there rather than four edits that can drift
+//! apart.
 //!
 //! One pane is on screen at a time and it fills the tab, so neither editor is
 //! ever squeezed into half a terminal — the old side-by-side split truncated
@@ -30,7 +37,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::deck::WorkspaceModel;
-use crate::deck_ui::DeckUi;
+use crate::deck_ui::{DeckAction, DeckUi};
 use crate::theme;
 
 /// Which pane this tab shows — its secondary nav, switched with ←/→ exactly
@@ -52,15 +59,49 @@ pub enum SettingsPane {
     Agents,
     /// The `tools` editor: which of this session's tools are switched off.
     Tools,
+    /// The `seats` view: which model each plugin-declared role runs on.
+    Seats,
 }
 
 impl SettingsPane {
+    /// Left-to-right nav order, which is also the ←/→ cycle order.
+    ///
+    /// A slice rather than three hand-written comparisons, so adding a pane is
+    /// one entry here instead of an edit in the nav, an edit in the key
+    /// handler, and an edit in the dispatch — the shape that let
+    /// `EngineTab::ALL` drift from `EngineRole::ALL` before it was derived.
+    pub const ALL: [SettingsPane; 3] = [
+        SettingsPane::Agents,
+        SettingsPane::Tools,
+        SettingsPane::Seats,
+    ];
+
     /// The nav label, UPPERCASE like every other secondary-nav label.
     pub fn label(self) -> &'static str {
         match self {
             SettingsPane::Agents => "AGENTS",
             SettingsPane::Tools => "TOOLS",
+            SettingsPane::Seats => "SEATS",
         }
+    }
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|p| *p == self).unwrap_or(0)
+    }
+
+    /// The pane to the left, or `None` at the first.
+    ///
+    /// **Does not wrap**, and the `None` is load-bearing rather than tidy: the
+    /// key handler returns it unhandled so ← at the left edge keeps falling
+    /// through to whatever handled it before, exactly as the two hard-coded
+    /// guards it replaced did.
+    pub fn prev(self) -> Option<Self> {
+        self.index().checked_sub(1).map(|i| Self::ALL[i])
+    }
+
+    /// The pane to the right, or `None` at the last.
+    pub fn next(self) -> Option<Self> {
+        Self::ALL.get(self.index() + 1).copied()
     }
 }
 
@@ -80,6 +121,51 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     match ui.settings_pane {
         SettingsPane::Agents => crate::views::engine::render_panel(ui, body, buf),
         SettingsPane::Tools => crate::views::tools::render_panel(ui, body, buf),
+        SettingsPane::Seats => crate::views::seats::render_panel(ui, body, buf),
+    }
+}
+
+/// The SETTINGS tab's browse-level keys: ←/→ between panes, `e` to edit what
+/// you are looking at, `t` for the tools editor from anywhere.
+///
+/// Lives here rather than in `deck_ui.rs` — which is a grandfathered god file
+/// closed to growth (AGENTS.md § "God files") — because it is pane vocabulary,
+/// and the pane owns its vocabulary the same way each view owns its own state.
+/// Moving it also made room for a third pane without touching the ratchet.
+///
+/// Returns `None` for a key this tab does not claim, including ← at the first
+/// pane and → at the last: those must keep falling through to whatever handled
+/// them before, which is what the two hard-coded pane guards used to do.
+pub fn handle_key(
+    key: crossterm::event::KeyEvent,
+    ui: &mut DeckUi,
+    composer_empty: bool,
+) -> Option<DeckAction> {
+    use crossterm::event::KeyCode;
+
+    if !composer_empty || !key.modifiers.is_empty() {
+        return None;
+    }
+    match key.code {
+        KeyCode::Left => ui.settings_pane.prev().map(|pane| {
+            ui.settings_pane = pane;
+            DeckAction::Handled
+        }),
+        KeyCode::Right => ui.settings_pane.next().map(|pane| {
+            ui.settings_pane = pane;
+            DeckAction::Handled
+        }),
+        // `e` edits what you are looking at — the one key every pane shares,
+        // rather than a per-pane letter to remember. SEATS has no editor yet
+        // (`crate::views::seats`, slice 5b), so it claims the key and does
+        // nothing rather than silently focusing a different pane's editor.
+        KeyCode::Char('e') => Some(match ui.settings_pane {
+            SettingsPane::Agents => crate::views::engine::focus_panel(ui),
+            SettingsPane::Tools => crate::views::tools::focus_panel(ui),
+            SettingsPane::Seats => DeckAction::Handled,
+        }),
+        KeyCode::Char('t') => Some(crate::views::tools::focus_panel(ui)),
+        _ => None,
     }
 }
 
@@ -99,20 +185,20 @@ fn render_pane_nav(pane: SettingsPane, area: Rect, buf: &mut Buffer) {
             theme::muted()
         }
     };
-    let line = Line::from(vec![
-        Span::raw("  "),
-        Span::styled(
-            SettingsPane::Agents.label(),
-            style_for(pane == SettingsPane::Agents),
-        ),
-        Span::styled("  │  ", theme::muted()),
-        Span::styled(
-            SettingsPane::Tools.label(),
-            style_for(pane == SettingsPane::Tools),
-        ),
-        Span::styled("   ←/→", theme::muted()),
-    ]);
-    Paragraph::new(line).render(area, buf);
+    // Built from `SettingsPane::ALL` rather than written out, so a pane added
+    // there appears here with no edit — the same derivation `EngineTab::ALL`
+    // uses over `EngineRole::ALL`, and for the same reason: a hand-typed copy
+    // costs nothing until the day it silently renders one label fewer than the
+    // tab actually has.
+    let mut spans = vec![Span::raw("  ")];
+    for (i, entry) in SettingsPane::ALL.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  │  ", theme::muted()));
+        }
+        spans.push(Span::styled(entry.label(), style_for(pane == *entry)));
+    }
+    spans.push(Span::styled("   ←/→", theme::muted()));
+    Paragraph::new(Line::from(spans)).render(area, buf);
 }
 
 #[cfg(test)]
@@ -189,24 +275,50 @@ mod tests {
 
     /// ←/→ walk the nav from browse state, and stop at each end rather than
     /// wrapping — the AGENTS tab's contract, key-for-key.
+    ///
+    /// Walks all of [`SettingsPane::ALL`] rather than naming two panes, so
+    /// adding a fourth extends the walk instead of silently leaving it
+    /// asserting an interior stretch of the nav.
     #[test]
     fn left_right_walk_the_panes_from_a_blank_composer() {
         let (model, mut ui) = open_ui();
-        assert_eq!(ui.settings_pane, SettingsPane::Agents, "agents first");
+        assert_eq!(ui.settings_pane, SettingsPane::ALL[0], "agents first");
 
+        for expected in &SettingsPane::ALL[1..] {
+            handle_deck_key(key(KeyCode::Right), &model, &mut ui);
+            assert_eq!(ui.settings_pane, *expected);
+        }
+        let last = *SettingsPane::ALL.last().expect("panes exist");
         handle_deck_key(key(KeyCode::Right), &model, &mut ui);
-        assert_eq!(ui.settings_pane, SettingsPane::Tools);
-        handle_deck_key(key(KeyCode::Right), &model, &mut ui);
-        assert_eq!(ui.settings_pane, SettingsPane::Tools, "no wrap at the end");
+        assert_eq!(ui.settings_pane, last, "no wrap at the end");
 
-        handle_deck_key(key(KeyCode::Left), &model, &mut ui);
-        assert_eq!(ui.settings_pane, SettingsPane::Agents);
+        for expected in SettingsPane::ALL.iter().rev().skip(1) {
+            handle_deck_key(key(KeyCode::Left), &model, &mut ui);
+            assert_eq!(ui.settings_pane, *expected);
+        }
         handle_deck_key(key(KeyCode::Left), &model, &mut ui);
         assert_eq!(
             ui.settings_pane,
-            SettingsPane::Agents,
+            SettingsPane::ALL[0],
             "no wrap at the start"
         );
+    }
+
+    /// The nav is built from [`SettingsPane::ALL`], so every pane is reachable
+    /// by name. A pane that exists but is not on the nav is one a user can only
+    /// find by pressing → and noticing the body changed.
+    #[test]
+    fn the_nav_names_every_pane() {
+        let (_model, mut ui) = open_ui();
+        let nav = draw(&mut ui, 160);
+        let nav = nav.lines().next().unwrap_or_default().to_string();
+        for pane in SettingsPane::ALL {
+            assert!(
+                nav.contains(pane.label()),
+                "nav names {}: {nav:?}",
+                pane.label()
+            );
+        }
     }
 
     /// `e` edits whichever pane is showing — one key, not a letter per pane.

@@ -64,7 +64,12 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-use stella_protocol::{AgentEvent, CompletionMessage, MessageRole, ModelCallRole, ToolOutput};
+// `AgentEvent` and `ModelCallRole` are named only by the test-gated fold
+// below (and by doc links, which carry their own full paths), so they are
+// gated with it rather than imported for a build that cannot use them.
+#[cfg(test)]
+use stella_protocol::{AgentEvent, ModelCallRole};
+use stella_protocol::{CompletionMessage, MessageRole, ToolOutput};
 
 /// The whole digest's character ceiling.
 ///
@@ -120,9 +125,10 @@ const FRICTION_LIST_CAP: usize = 6;
 /// instead of growing. A turn cannot produce more friction than this and still
 /// have a summarizable shape, and an unbounded fold on a long-running turn is a
 /// leak in a best-effort path.
+#[cfg(test)]
 const FRICTION_ENTRY_CAP: usize = 512;
 
-/// One model call's metering record, as [`AgentEvent::StepUsage`] reported it.
+/// One model call's metering record, as [`AgentEvent::StepUsage`](stella_protocol::AgentEvent::StepUsage) reported it.
 #[derive(Debug, Clone)]
 struct StepCost {
     step: usize,
@@ -132,8 +138,8 @@ struct StepCost {
     tool_calls: usize,
 }
 
-/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`],
-/// closed by its [`AgentEvent::ToolResult`].
+/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`](stella_protocol::AgentEvent::ToolStart),
+/// closed by its [`AgentEvent::ToolResult`](stella_protocol::AgentEvent::ToolResult).
 #[derive(Debug, Clone)]
 struct ToolPass {
     call_id: String,
@@ -150,7 +156,7 @@ struct ToolPass {
 
 /// What a turn's event stream says about where its time and money went.
 ///
-/// Folded live by the surface that owns the turn's [`AgentEvent`] stream and
+/// Folded live by the surface that owns the turn's [`AgentEvent`](stella_protocol::AgentEvent) stream and
 /// handed to reflection as evidence the transcript does not carry: a
 /// `CompletionMessage` records what was said, never what it cost or how long it
 /// took, and a retry or a loop-detector firing leaves no message at all.
@@ -163,7 +169,10 @@ struct ToolPass {
 pub struct TurnFriction {
     steps: Vec<StepCost>,
     tools: Vec<ToolPass>,
-    /// Calls awaiting their result: `call_id` → index into `tools`.
+    /// Calls awaiting their result: `call_id` → index into `tools`. Written
+    /// only by the test-gated fold below, so it is gated with it — the
+    /// struct is only ever built through the derived `Default`.
+    #[cfg(test)]
     open: HashMap<String, usize>,
     retries: Vec<String>,
     loops: Vec<String>,
@@ -178,14 +187,19 @@ impl TurnFriction {
     /// `AgentEvent` variant must not change what a turn's friction *is* until
     /// someone decides that it should.
     ///
-    /// No production caller since #3865 — its one production caller,
-    /// `FrictionTap` (`agent/reflect.rs`), wrapped the staged pipeline's own
-    /// event stream and was removed with the crate that drove it (the raw
-    /// step-loop builds `TurnEvidence` from its transcript directly,
-    /// `TurnEvidence::from_transcript`, and never folds a live event stream).
-    /// Kept for `memory/reflection/tests.rs`'s and `digest/tests.rs`'s direct
-    /// coverage of the fold/render pipeline this method feeds.
-    #[allow(dead_code)]
+    /// **Test-gated (#3872).** Its one production caller, `FrictionTap`
+    /// (`agent/reflect.rs`), wrapped the staged pipeline's own event stream
+    /// and was removed with the crate that drove it (#3865); the raw
+    /// step-loop builds `TurnEvidence` from its transcript directly
+    /// (`TurnEvidence::from_transcript`) and never folds a live event stream,
+    /// because its events ride a bare `UnboundedSender` with nothing to wrap
+    /// (#2483). Giving the raw loop a tap is that issue's feature, not this
+    /// module's cleanup — so until it lands, the fold exists for
+    /// `memory/reflection/tests.rs` and `digest/tests.rs` alone. `cfg(test)`
+    /// says that and keeps it out of the shipped binary; an
+    /// `#[allow(dead_code)]` would instead have claimed the lint was wrong
+    /// when it was right.
+    #[cfg(test)]
     pub fn observe(&mut self, event: &AgentEvent) {
         match event {
             AgentEvent::ToolStart { call } => {
@@ -272,7 +286,9 @@ impl TurnFriction {
 
     /// The `tools` slot a result belongs in, opening one for a result whose
     /// start was never seen. `None` means the entry cap refused it.
-    #[allow(dead_code)]
+    ///
+    /// Gated with its only caller, [`Self::observe`].
+    #[cfg(test)]
     fn close(&mut self, call_id: &str) -> Option<usize> {
         if let Some(index) = self.open.remove(call_id) {
             return Some(index);
@@ -290,7 +306,8 @@ impl TurnFriction {
         Some(self.tools.len() - 1)
     }
 
-    #[allow(dead_code)]
+    /// Gated with its only caller, [`Self::observe`].
+    #[cfg(test)]
     fn push_retry(&mut self, entry: String) {
         if self.retries.len() >= FRICTION_ENTRY_CAP {
             self.dropped += 1;
@@ -306,18 +323,6 @@ impl TurnFriction {
             && self.tools.is_empty()
             && self.retries.is_empty()
             && self.loops.is_empty()
-    }
-
-    /// Whether the turn dispatched any tool call at all — the "did real
-    /// work" signal the staged pipeline's episode/reflection gates used to
-    /// read. The pipeline's worker turns deliberately kept tool calls out of
-    /// the planner transcript (L-E6), so this event-stream witness was the
-    /// only way to see them; gone with the pipeline (#3865) — the raw
-    /// step-loop's own transcript already carries every tool call, so
-    /// `turn_warrants_reflection(&messages)` alone is sufficient for it.
-    #[allow(dead_code)]
-    pub(crate) fn saw_tool_activity(&self) -> bool {
-        !self.tools.is_empty()
     }
 
     /// A shared empty ledger, so [`TurnEvidence::from_transcript`] can hand out
@@ -755,6 +760,7 @@ fn human_ms(ms: u64) -> String {
 /// The wire token for a call role (`plan_repair`, not `PlanRepair`), so a
 /// reflection's account of a turn greps against `stella-events.jsonl` — which
 /// is the record anyone checking the claim will open.
+#[cfg(test)]
 fn role_token(role: ModelCallRole) -> String {
     match serde_json::to_value(role) {
         Ok(serde_json::Value::String(token)) => token,

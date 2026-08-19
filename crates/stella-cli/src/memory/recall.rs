@@ -232,64 +232,6 @@ impl SessionMemory {
         }
     }
 
-    /// The volatile block for a turn the *pipeline* will drive: skills and
-    /// the record channel — every section of
-    /// [`Self::recall_block_reported`] EXCEPT the recalled frames.
-    ///
-    /// The pipeline recalls frames itself through its [`ContextRecallPort`]
-    /// (this very store, on the one-shot path) and renders them into the
-    /// goal message, then feeds the same frames to the planner and the
-    /// witness author. A caller that injected the full block *and* handed
-    /// the pipeline the port recalled twice per turn — two store/embedding
-    /// round trips — and billed the same frame content into the prompt
-    /// twice, once as "Relevant context" here and once as "## Recalled
-    /// context" there. The deck guards the same duplication by dropping the
-    /// whole block on pipeline turns; that guard threw away skills and
-    /// records with it. This keeps exactly the sections the pipeline has no
-    /// channel for.
-    ///
-    /// No telemetry rides with it, deliberately: the one `ContextRecall`
-    /// event for a pipeline turn is the pipeline's own, and this block does
-    /// no frame recall to report.
-    ///
-    /// No production caller since #3865 — its one call site was the staged
-    /// pipeline's one-shot driver, removed with the crate that drove it.
-    /// Kept for its own test coverage (`memory/tests.rs`,
-    /// `memory/tests/ab_control.rs`) of the skills/draft-claims/volatile
-    /// section this block still uniquely assembles.
-    #[allow(dead_code)]
-    pub async fn pipeline_recall_block(&self, prompt: &str) -> Option<String> {
-        if self.ab_suppressed || !self.steering_enabled {
-            return None;
-        }
-        let all_skills = self.load_skills();
-        let selected = skills::select_skills_reporting(
-            &all_skills,
-            prompt,
-            &self.active_domains(prompt),
-            &SelectionConfig::default(),
-        );
-        let record = self.turn_record_rendered(prompt);
-
-        let signal = stella_core::steering::TurnSignal {
-            prompt,
-            ..Default::default()
-        };
-        let set = query_gathered_plane(&signal, &[], &[], &selected, record.as_ref());
-        report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
-
-        let mut sections: Vec<String> = Vec::new();
-        let kept = kept_skills(&selected.selected, &set);
-        if !kept.is_empty() {
-            sections.push(skills::render_skills_section(&kept));
-        }
-        if let Some(section) = record.and_then(|(_, rendered)| record_section_text(rendered)) {
-            sections.push(section);
-        }
-        sections.push(render_today_section(now_unix_secs()));
-        (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
-    }
-
     /// The volatile block for a turn that has DRIFTED from its opening
     /// prompt (#3243 Phase 3) — the same three selectors as
     /// [`Self::recall_block_reported`], queried against what the turn has

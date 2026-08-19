@@ -17,9 +17,6 @@ scope = "project"
 
 [agents]
 default_model = "openrouter/moonshotai/kimi-k3"
-pipeline_verifier_model = "openrouter/anthropic/claude-opus-5"
-pipeline_worker_model = "openrouter/moonshotai/kimi-k3"
-pipeline_triage_model = "openrouter/anthropic/claude-haiku-4.5"
 auto_mode = "off"
 effort_auto = "off"
 reasoning_auto = "off"
@@ -28,18 +25,33 @@ reasoning_auto = "off"
 effort = "xhigh"
 reasoning = "on"
 
-[agents.worker]
-provider = "openrouter"
-prompt = "do not overthink how to solve problems - if you have multiple approaches you are considering don't waste time deliberating and reasoning choose an approach and know if it fails you can always go back and try the other approache(s)"
-effort = "xhigh"
-reasoning = "on"
-
-[agents.verifier]
-provider = "openrouter"
-prompt = "you are not to solve for completing the task - you are only verifying the task was completed by executing a test that must fail in the environment and pass with the workers code implemented to solve for the task."
-effort = "xhigh"
-reasoning = "on"
-
-[agents.triage]
-provider = "openrouter"
-reasoning = "off"
+# ── Retired by #3908 ─────────────────────────────────────────────────────────
+#
+# This file used to carry `pipeline_verifier_model`, `pipeline_worker_model`
+# and `pipeline_triage_model`, plus `[agents.worker]`, `[agents.verifier]` and
+# `[agents.triage]`. They were pins on the staged pipeline deleted in #3865,
+# and by the time that crate left the workspace they steered nothing — stella
+# now recognizes them, ignores them, and names them on load.
+#
+# `[agents.default]` above is unchanged, so what this repository actually runs
+# is exactly what it ran before. The two prompts below are kept verbatim rather
+# than dropped, because they are the part a migration cannot regenerate — but
+# note that NEITHER was reaching the step loop: the worker prompt was read only
+# by the pipeline's system-prompt builder, and the verifier's only by a stage
+# that no longer exists.
+#
+# To bring one back deliberately:
+#   - as the session's own instruction, set `prompt` under `[agents.default]`;
+#   - as a participant in an installed plugin's process, assign that plugin's
+#     seat a model under `[seats]` and give the plugin its own prompt.
+#
+# worker:
+#   "do not overthink how to solve problems - if you have multiple approaches
+#    you are considering don't waste time deliberating and reasoning choose an
+#    approach and know if it fails you can always go back and try the other
+#    approache(s)"
+#
+# verifier:
+#   "you are not to solve for completing the task - you are only verifying the
+#    task was completed by executing a test that must fail in the environment
+#    and pass with the workers code implemented to solve for the task."

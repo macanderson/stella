@@ -3381,29 +3381,10 @@ pub(crate) fn focused_id(model: &WorkspaceModel, ui: &DeckUi) -> Option<AgentId>
 /// other tab's letter verb so typing a prompt still works from here. Once
 /// focused, that editor claims every key ahead of this handler (see
 /// `handle_deck_key`), so ←/→ can never move the nav mid-edit.
+/// The SETTINGS tab's browse-level keys, which live with the panes they are
+/// about — see [`crate::views::settings::handle_key`].
 fn handle_settings_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
-    use crate::views::settings::SettingsPane;
-    if !composer_empty || !key.modifiers.is_empty() {
-        return None;
-    }
-    match key.code {
-        KeyCode::Left if ui.settings_pane == SettingsPane::Tools => {
-            ui.settings_pane = SettingsPane::Agents;
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Right if ui.settings_pane == SettingsPane::Agents => {
-            ui.settings_pane = SettingsPane::Tools;
-            Some(DeckAction::Handled)
-        }
-        // `e` edits what you are looking at — the one key both panes share,
-        // rather than a per-pane letter to remember.
-        KeyCode::Char('e') => Some(match ui.settings_pane {
-            SettingsPane::Agents => crate::views::engine::focus_panel(ui),
-            SettingsPane::Tools => crate::views::tools::focus_panel(ui),
-        }),
-        KeyCode::Char('t') => Some(crate::views::tools::focus_panel(ui)),
-        _ => None,
-    }
+    crate::views::settings::handle_key(key, ui, composer_empty)
 }
 
 fn handle_agents_key(

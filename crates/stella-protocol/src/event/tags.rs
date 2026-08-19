@@ -196,9 +196,19 @@ agent_event_tags! {
     GoalVerdict => "goal_verdict",
         ConsumerPosture::Unclassified { issue: "#2703" },
         &[];
+    // Audited out of the #2703 backlog by #3916. `Surfaced` rather than
+    // `Behavioral`: the swap has already happened in
+    // `stella-core/src/driver/model_fallback.rs::attempt_provider_fallback`
+    // by the time this is sent — the event announces the decision, it does
+    // not carry it, so deleting every consumer would change what a human
+    // sees and nothing the engine does. The Observatory is a genuinely
+    // selecting surface: `sessions.rs`'s journal query names
+    // `provider_fallback` in its explicit `event_type` list, counts it, and
+    // renders it as a warn chip. `stella-cli/src/diag_bridge.rs` also
+    // branches to a diagnostic record, which is recording, not deciding.
     ProviderFallback => "provider_fallback",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Surfaced,
+        &[Surface::Observatory];
     FileChange => "file_change",
         ConsumerPosture::Unclassified { issue: "#2703" },
         &[];
