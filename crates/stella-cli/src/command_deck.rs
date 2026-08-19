@@ -1916,19 +1916,6 @@ pub async fn run_deck_session(
                         ) => {
                             handle_issues_input(&input, cfg, &in_tx);
                         }
-                        // Scope review had exactly one consumer — the staged
-                        // pipeline's `DeckApprovalGate`, which parked on this
-                        // input to answer its `ApprovalGate::confirm`. Both
-                        // are gone (#3865): no
-                        // door raises the scope-review card any more, so a
-                        // `ScopeDecision` arriving here has nothing to
-                        // answer. `UserInput::ScopeDecision` itself is left
-                        // in place — deleting or re-homing it is
-                        // stella-tui-side surface work this slice does not
-                        // do; tracked as #3861.
-                        Some(WorkspaceInput::ToAgent {
-                            input: UserInput::ScopeDecision(_), ..
-                        }) => {}
                         // Everything above peeled off `Stop` and every worker
                         // lane, so this is the LEAD's own pause/resume/restart.
                         Some(WorkspaceInput::Control { control, .. }) => {

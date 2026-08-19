@@ -275,9 +275,10 @@ impl WrapperResponse {
 ///   way *back* — a scope, a withheld adoption path, a witness artifact — is
 ///   resolved against this handle's root by the host and refused if it lands
 ///   anywhere else, after symlinks, on the host's own filesystem
-///   (`CandidateDenial`, and [`crate::fence`] for the implementation — it was
-///   `stella_pipeline::ports::CandidateHandles`'s until that crate was
-///   deleted, #3865). The refusal is the host's; nothing here is a promise
+///   (`CandidateDenial`, and this crate's `candidate_grant::fence` for the
+///   implementation — it was the staged pipeline's
+///   `ports::CandidateHandles` until #3865 deleted that crate). The refusal is
+///   the host's; nothing here is a promise
 ///   the plugin was asked to keep.
 ///
 /// So a plugin that ignores the root and lies about where it went has told the
@@ -719,6 +720,10 @@ pub struct AfterTurnResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceSet {
+    /// Whose observation this set is. Host-owned like [`Self::tamper`] — not a
+    /// word a plugin can say, and set by [`EvidenceSet::from_observed`] from
+    /// the fact that its input *is* a plugin's `after_turn` body (#3513).
+    pub provenance: EvidenceProvenance,
     /// What the wrapper saw of the fail→pass flip.
     pub flip: FlipObservation,
     /// What the **host's** tamper check found. Snapshotting artifact identity
@@ -740,9 +745,15 @@ impl EvidenceSet {
     /// Deliberately *not* an empty set that reads as "nothing was wrong":
     /// [`FlipObservation::Unobservable`] makes `judge` abstain rather than
     /// blame the worker for evidence nobody collected.
+    ///
+    /// Its provenance is [`EvidenceProvenance::HostObserved`] because the
+    /// `Unobservable` flip here is the *host's* own conclusion about a plugin
+    /// that did not answer, not a claim the plugin made. It can never credit
+    /// anything, so this is about honesty in the report, not the verdict.
     #[must_use]
     pub fn unobserved() -> Self {
         Self {
+            provenance: EvidenceProvenance::HostObserved,
             flip: FlipObservation::Unobservable,
             tamper: TamperFinding::NotChecked,
             measurements: BTreeMap::new(),
@@ -795,6 +806,31 @@ pub enum TamperFinding {
     NotChecked,
 }
 
+/// Who observed the evidence a verdict was decided from.
+///
+/// #3511's Option 2 settled that a verification plugin reports its own
+/// evidence and the host does not re-run it. What that settlement left behind
+/// is this: a `Met` reached on a plugin's word was byte-identical to one
+/// reached on a host's observation, at the exact seam the oracle is moving to
+/// (#3513). This does not decide anything — `judge` reads it never — it
+/// travels with the evidence so the verdict can say whose claim it is.
+///
+/// Closed, for [`FlipObservation`]'s reason: an unknown provenance must be a
+/// refusal, never a silently weaker claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceProvenance {
+    /// The flip and the measurements are the plugin's own report of its own
+    /// work. Honest, consented to at install, and *not* a host observation.
+    PluginReported,
+    /// The host itself established this evidence.
+    ///
+    /// Today the only producer is [`EvidenceSet::unobserved`]: no host in this
+    /// tree can observe a flip for itself, because the one host call that
+    /// would run a check answers `Unsupported` (#3580).
+    HostObserved,
+}
+
 /// The rule that decides done, as data.
 ///
 /// Assembled from what the manifest already declares — `[requirements]` and
@@ -843,8 +879,13 @@ impl VerdictRule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
-    /// Every declared requirement is met by the evidence.
-    Met,
+    /// Every declared requirement is met by the evidence — and on whose
+    /// observation. The provenance is carried, never consulted: `judge`
+    /// reaches this arm on the evidence alone (#3513).
+    Met {
+        /// Whose observation the requirements were met on.
+        evidence: EvidenceProvenance,
+    },
     /// At least one requirement is determinately unmet.
     Unmet {
         /// The failures, in requirement order.
@@ -1014,8 +1055,11 @@ pub struct Correction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
-    /// Every declared requirement is met.
-    Met,
+    /// Every declared requirement is met — and on whose observation (#3513).
+    Met {
+        /// Whose observation the requirements were met on.
+        evidence: EvidenceProvenance,
+    },
     /// Requirements remain unmet and the loop will not try again.
     Unmet {
         /// What is still unmet — reported, never silently dropped.

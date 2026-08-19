@@ -20,11 +20,10 @@ not depend on `stella-store`.
 
 It depends on three workspace crates: [`stella-protocol`](../stella-protocol)
 for the wire types, [`stella-core`](../stella-core) for the engine, and
-[`stella-engine`](../stella-engine) for the step facade (#971). It used to take
-a fourth, `stella-pipeline`, for the verification pipeline (#1288); that crate
-was deleted from the workspace (#3865) and this surface has no verification
-path of its own — `doc:wrapper-socket` §6 names driving `WrapperDispatch` from
-here as an acceptance criterion that has not landed (#3551).
+[`stella-engine`](../stella-engine) for the step facade (#971). A fourth,
+`stella-pipeline`, supplied the verification pipeline (#1288) until that crate
+was deleted from the workspace (#3865); this crate serves the raw loop, and a
+verification wrapper reaches it as a plugin over the socket, not as an edge.
 It is not a leaf either: [`stella-parity`](../stella-parity) depends on it, to
 check that every HTTP route is claimed by a parity row. It builds its own
 binary from [`src/main.rs`](src/main.rs); `stella-cli` does not link it, and

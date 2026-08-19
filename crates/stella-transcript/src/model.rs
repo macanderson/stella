@@ -71,6 +71,13 @@ pub enum NodeId {
         /// Hunk index within the file diff.
         hunk: usize,
     },
+    /// The `n`th note of the `t`th turn.
+    Note {
+        /// Turn index.
+        turn: usize,
+        /// Note index within the turn.
+        note: usize,
+    },
 }
 
 impl NodeId {
@@ -83,6 +90,7 @@ impl NodeId {
             NodeId::Step { turn, step } => format!("t{turn}s{step}"),
             NodeId::Output { turn, step } => format!("t{turn}s{step}o"),
             NodeId::Prose { turn, prose } => format!("t{turn}p{prose}"),
+            NodeId::Note { turn, note } => format!("t{turn}n{note}"),
             NodeId::File { turn, step, file } => format!("t{turn}s{step}f{file}"),
             NodeId::Hunk {
                 turn,
@@ -449,6 +457,88 @@ impl Step {
     }
 }
 
+/// What class of thing a [`Note`] records — the sole input to its glyph and
+/// colour.
+///
+/// Deliberately a *visual* taxonomy rather than a mirror of the engine's event
+/// enum, for the same reason [`ToolKind`] is: the engine has some thirty event
+/// kinds and gains more every release, and a renderer that must grow an arm per
+/// event is a renderer that silently drops the ones it has not heard of yet.
+/// Grouping by how a row should *read* keeps that surface closed — an event
+/// this crate has never seen is [`NoteKind::Other`] and renders as a plain muted
+/// line, which is the correct degradation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteKind {
+    /// A pipeline stage boundary — triage, plan, execute, witness, verify.
+    Stage,
+    /// Context moved: recall, context writes, compaction, transcript eviction.
+    Context,
+    /// Money and routing: budget ticks, provider fallback, model retries.
+    Meter,
+    /// The run waiting on something outside itself: parks, wakes, questions.
+    Wait,
+    /// A judgement about the work: verdicts, scope and hunk reviews, tasks.
+    Verdict,
+    /// Work handed elsewhere: sub-agents, commits, pull requests, media.
+    Handoff,
+    /// Anything this crate has never heard of.
+    Other,
+}
+
+impl NoteKind {
+    /// The single glyph both renderers use.
+    #[must_use]
+    pub fn glyph(self) -> &'static str {
+        match self {
+            NoteKind::Stage => "—",
+            NoteKind::Context => "◆",
+            NoteKind::Meter => "$",
+            NoteKind::Wait => "⏸",
+            NoteKind::Verdict => "⚑",
+            NoteKind::Handoff => "↳",
+            NoteKind::Other => "·",
+        }
+    }
+
+    /// The stable class/color token, shared by both renderers.
+    #[must_use]
+    pub fn token(self) -> &'static str {
+        match self {
+            NoteKind::Stage => "stage",
+            NoteKind::Context => "context",
+            NoteKind::Meter => "meter",
+            NoteKind::Wait => "wait",
+            NoteKind::Verdict => "verdict",
+            NoteKind::Handoff => "handoff",
+            NoteKind::Other => "other",
+        }
+    }
+}
+
+/// A non-call event worth a row in the transcript.
+///
+/// The turn backbone is [`Turn::prompt`] → [`Step`]s → [`Turn::answer`], but a
+/// real run also recalls context, compacts, falls back to another provider,
+/// parks, delegates, commits and returns verdicts. Those are not steps and not
+/// prose, and before this existed a surface rendering through this model had
+/// nowhere to put them — so the only way to wire a live surface up was to drop
+/// them, which is a regression dressed as a migration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Note {
+    /// Which class of row this is.
+    pub kind: NoteKind,
+    /// The one-line summary. Always shown.
+    pub summary: String,
+    /// Rows revealed when the note is expanded. Empty means the note has no
+    /// fold control at all, rather than an empty body behind one.
+    pub detail: Vec<String>,
+    /// Which step this note precedes, so the renderer can interleave notes,
+    /// prose and steps in the order they happened. Mirrors
+    /// [`Prose::before_step`].
+    pub before_step: usize,
+}
+
 /// An assistant reasoning block between calls.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Prose {
@@ -469,6 +559,11 @@ pub struct Turn {
     pub prompt: String,
     /// Reasoning blocks, interleaved with steps by `before_step`.
     pub prose: Vec<Prose>,
+    /// Non-call rows — recall, compaction, verdicts, delegation — interleaved
+    /// with steps by `before_step`. `serde(default)` so a transcript recorded
+    /// before notes existed still deserializes (invariant #4).
+    #[serde(default)]
+    pub notes: Vec<Note>,
     /// The model iterations.
     pub steps: Vec<Step>,
     /// The agent's final message. `None` while the turn is still running.

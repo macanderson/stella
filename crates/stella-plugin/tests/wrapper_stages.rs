@@ -3,11 +3,11 @@
 //! named load error instead.
 //!
 //! The two fixtures are the load-bearing claim. `wrapper-staged-v1.toml`
-//! transcribes the order `crates/stella-pipeline/src/pipeline.rs` ran before
-//! that crate was deleted from the workspace (#3865); `wrapper-lean-v1.toml`
-//! is a cheaper second shape. They differ in nothing but their text, which is
-//! what makes the manifest a declaration the code reads rather than a
-//! description of one hardcoded path.
+//! transcribes the order the staged pipeline's `pipeline.rs` ran
+//! (`crates/stella-pipeline`, deleted in #3865);
+//! `wrapper-lean-v1.toml` is a cheaper second shape. They differ in nothing
+//! but their text, which is what makes the manifest a declaration the code
+//! reads rather than a description of one hardcoded path.
 //!
 //! What these tests deliberately do **not** claim: that either variant *runs*.
 //! Binding a stage name to the loop needs the four wrapper interception
@@ -62,7 +62,8 @@ fn todays_stage_order_loads_as_a_manifest() {
             StageName::Witness,
             StageName::Verify,
         ],
-        "the staged order is the one StageName declares, widest-first"
+        "the order must match the stage_rank the staged pipeline's replay.rs \
+         defined before #3865 deleted that crate — this enum is the ordering now"
     );
 }
 

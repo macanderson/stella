@@ -12,11 +12,10 @@
 //! budgeter sees and the bytes the prompt pays for cannot drift apart (the
 //! #3334 single-producer discipline).
 //!
-//! The recalled-frame adapter is deliberately **not** here: `RecalledFrame` is
-//! a `stella-protocol` type (it was `stella-pipeline`'s until that crate's
-//! removal census retargeted it, #3865), and the adapter belongs to the host
-//! above this crate. It lives with the plane implementation in
-//! `stella-cli::memory::steering`.
+//! The recalled-frame adapter is deliberately **not** here: `RecalledFrame`
+//! was a staged-pipeline type when this was written (`crates/stella-pipeline`,
+//! deleted in #3865; the type now lives in `stella-protocol::recall`), and the
+//! adapter sits with the plane implementation in `stella-cli::memory::steering`.
 
 use crate::records::{Registry, RenderedChannel, render};
 use crate::skills::{self, SelectedSkill};

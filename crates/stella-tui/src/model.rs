@@ -1022,11 +1022,11 @@ impl SessionModel {
             | AgentEvent::BlockRegistered { .. }
             // `CandidateDelivery` too: its files arrive as `FileChange`.
             | AgentEvent::CandidateDelivery { .. }
-            // `Proof` folded the PROOF rail, whose only emitter was
-            // `stella-pipeline`; the rail went with that crate's extraction
-            // (#3511) and the crate itself is now deleted (#3865), so nothing
-            // in this workspace emits it. The step survives in the traces tab
-            // and the transcript export, which read the raw stream.
+            // `Proof` folded the PROOF rail, whose only emitter was the staged
+            // pipeline; the rail went ahead of that crate's extraction
+            // (#3511), and the crate itself was deleted in #3865, so nothing
+            // emits `Proof` today. The step survives in the traces tab and the transcript
+            // export, which read the raw stream.
             | AgentEvent::Proof { .. }
             | AgentEvent::StepManifest { .. } => {}
             AgentEvent::Error { message, retryable } => {

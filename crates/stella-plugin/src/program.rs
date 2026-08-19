@@ -28,11 +28,11 @@
 //! # Scope
 //!
 //! Resolving is not dispatching. A [`StageProgram`] is an ordered list of
-//! names a host may consult, not a schedule this crate executes. Its first
-//! consumer was the built-in staged pipeline's `variant` module, deleted with
-//! that crate (#3865); the four wrapper interception points shipped in
-//! `stella-runtime` (#3380, #3479) and a wrapper plugin's host is the
-//! consumer now. `doc:turn-loop-wrappers` §5 and §9.4.
+//! names a host may consult, not a schedule this crate executes — the staged
+//! pipeline's `variant` module was the first consumer
+//! (`crates/stella-pipeline`, deleted in #3865), and `stella-runtime`'s
+//! `WrapperDispatch` (#3380) is the one that survives it.
+//! `doc:turn-loop-wrappers` §5 and §9.4.
 
 use crate::error::ManifestError;
 use crate::wrapper::{Condition, Signal, SignalKind, StageName, Wrapper};

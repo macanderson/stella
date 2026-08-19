@@ -801,8 +801,9 @@ pub enum AgentEvent {
     ///
     /// # The two producers, and what each one's answer means
     ///
-    /// 1. **Candidate adoption** — `Pipeline::deliver_winner`
-    ///    (`stella-pipeline/src/pipeline/delivery.rs`), one event per
+    /// 1. **Candidate adoption** — `Pipeline::deliver_winner` (the built-in
+    ///    staged pipeline's `pipeline/delivery.rs`, deleted in #3865), one
+    ///    event per
     ///    `AdoptedChange`, emitted beside the `CandidateWorkspace::attribute_adopted`
     ///    call that writes the same rows to the host's durable ledger (#2907).
     ///    This one **was** attribution: adoption measured a candidate against a

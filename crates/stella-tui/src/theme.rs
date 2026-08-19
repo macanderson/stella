@@ -105,8 +105,8 @@ pub const DANGER_BRIGHT: Color = palette::DANGER;
 /// readers to ignore the failure hue. Nothing else may take this role.
 ///
 /// **No renderer claims it today.** Its only consumer was the witness panel,
-/// removed ahead of `stella-pipeline`'s extraction (#3511; that crate has
-/// since been deleted from the workspace, #3865). The token is kept
+/// removed ahead of the staged pipeline's extraction (#3511); that crate was
+/// then deleted outright (#3865). The token is kept
 /// because [`palette`] mirrors the brand kit at `docs/brand/` and the contrast
 /// tables below are checked against it; retiring it is #3790.
 pub const ORACLE_PRE_FLIP: Color = palette::ORACLE_RED;
@@ -620,12 +620,6 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (SUCCESS, 78, 10),
     (WARNING, 178, 3),
     (DANGER, 204, 9),
-    // Nearest cube entry to #F87171 is 203 (255,95,95) — one step from
-    // DANGER's 204, so the two stay distinct at 256 colours. At 16 colours
-    // there is only one red (9) and the pre-flip state shares it with
-    // danger; the `red ──▸ green` wording, not the hue, carries the meaning
-    // there (the same glyph-over-hue rule every status obeys).
-    (ORACLE_PRE_FLIP, 203, 9),
     (VIOLET, 98, 13),
     (AMBER, 179, 3),
     (TEAL, 44, 6),
@@ -734,7 +728,6 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     (SUCCESS, palette::SUCCESS_INK),
     (WARNING, palette::WARNING_INK),
     (DANGER, palette::DANGER_INK),
-    (ORACLE_PRE_FLIP, palette::ORACLE_RED_INK),
     // Inline code — a darker sage, 5.26:1 on paper.
     (CODE, Color::Rgb(0x2A, 0x71, 0x50)),
     // Categorical hues, darkened for AA on the warm paper (RUN/HELD/NUMBER==

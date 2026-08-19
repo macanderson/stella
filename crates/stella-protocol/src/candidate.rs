@@ -5,12 +5,11 @@
 //! `doc:pipeline-as-plugins` §4 A10, `doc:wrapper-socket` §6.
 //!
 //! `after_turn` is defined as "author a witness, run the oracle, read the
-//! flip", and all three of those need the candidate worktree. When this type
-//! was designed that worktree was only reachable as the then-existing
-//! `stella_pipeline::ports::CandidateWorkspace` — nineteen methods returning
-//! borrowed trait objects (that crate was deleted from the workspace in
-//! #3865) — and **an out-of-process plugin cannot be handed a `&dyn`
-//! anything**
+//! flip", and all three of those need the candidate worktree. When these types
+//! were designed that worktree was reachable only as the staged pipeline's
+//! `ports::CandidateWorkspace` (`crates/stella-pipeline`, deleted in #3865)
+//! — nineteen methods returning borrowed trait objects — and **an
+//! out-of-process plugin cannot be handed a `&dyn` anything**
 //! (`doc:wrapper-socket` §6, the no-host-assumed acceptance test). What
 //! crosses instead is a [`CandidateHandle`]: a name the host minted, which
 //! the host resolves back to the live workspace on every use.
@@ -18,12 +17,10 @@
 //! # The subset is six operations, and that is a decision
 //!
 //! [`CandidateOp`] is the whole plugin-facing surface: create, root, run-test,
-//! seal, adopt, remove. The other thirteen methods `CandidateWorkspace` then
-//! carried served the staged pipeline's own orchestration — seeding a private
-//! task board, gating announcements, grafting a witness between snapshots, the
-//! post-seal escape probe — and none of them is a question a plugin asks. The
-//! subset outlived the trait it was cut from: the six are still the whole
-//! surface. Every
+//! seal, adopt, remove. The other thirteen methods on `CandidateWorkspace`
+//! serve the pipeline's own orchestration — seeding a private task board,
+//! gating announcements, grafting a witness between snapshots, the post-seal
+//! escape probe — and none of them is a question a plugin asks. Every
 //! operation added here is one more thing a Python or TypeScript plugin author
 //! must understand before writing a line, so the count is the design.
 //!
@@ -34,10 +31,10 @@
 //! trustworthy on the way back in: every path a plugin names is resolved
 //! against the handle's root by the host and refused if it lands outside
 //! ([`PathDenial`]). The refusal is the host's, on the host's filesystem,
-//! after symlinks — never a promise the plugin was asked to keep. The
-//! implementation of that fence is `stella_plugin::candidate_grant::fence`
-//! (it was `stella_pipeline::ports::handle` when this was written, and moved
-//! ahead of that crate's deletion, #3865).
+//! after symlinks — never a promise the plugin was asked to keep. The fence
+//! was first implemented by the staged pipeline's `ports::handle`
+//! (`crates/stella-pipeline`, deleted in #3865); `stella-cli`'s
+//! `wrapper_candidate.rs` carries it now.
 //!
 //! # Why this crate and not `stella-plugin`
 //!
@@ -54,9 +51,9 @@
 //! 3. `stella-plugin` already depends on `stella-protocol`, so the
 //!    plugin-facing request/response envelope can name these types without
 //!    moving them. The reverse placement would push every host that resolves a
-//!    handle — `stella-cli` today, and later `stella-runtime` and
-//!    `stella-serve` — through the manifest-parsing crate to reach a type that
-//!    parses no manifests.
+//!    handle — `stella-cli` today, `stella-runtime` and `stella-serve` as the
+//!    socket reaches them — through the manifest-parsing crate to reach a type
+//!    that parses no manifests.
 //!
 //! # Wire shape
 //!
@@ -244,10 +241,11 @@ pub enum CandidateDenial {
     #[error("the test command was refused: {reason}")]
     TestCommandRefused {
         /// The parser's own reason, as prose. The vocabulary it comes from is
-        /// the host's (`stella_plugin::TestInvocationError`; it was
-        /// `stella_pipeline::witness`'s until that crate was deleted, #3865)
-        /// and is deliberately not mirrored here: a second copy of a closed
-        /// enum in this crate is a rule in two places.
+        /// the host's — the staged pipeline's `witness::TestInvocationError`
+        /// when this was written (`crates/stella-pipeline`, deleted in #3865),
+        /// a wrapper plugin's own oracle now — and is deliberately not mirrored
+        /// here: a second copy of a closed enum in this crate is a rule in two
+        /// places.
         reason: String,
     },
 }

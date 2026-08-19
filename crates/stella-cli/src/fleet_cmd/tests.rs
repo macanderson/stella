@@ -146,6 +146,7 @@ async fn fleet_attempt_persists_usage_before_complete_closeout() {
         execution.clone(),
         "anthropic".into(),
         false,
+        None,
     );
     tx.send(AgentEvent::StepUsage {
         upstream_provider: None,

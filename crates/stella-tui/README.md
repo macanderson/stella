@@ -36,12 +36,12 @@ land squarely on the fold:
   completion it sees as "the work is over" is wrong for any multi-round run —
   which is most of them.
 - **Stages are a wrapper's vocabulary, not the engine's.** The staged panels
-  render events that the built-in staged pipeline emitted; that crate left the
-  workspace to become an installable plugin and is now deleted (#3246, #3865).
-  The deck must stay legible for a run with **no** wrapper at all — the raw
-  loop is the default (#3381), and is the only path in this workspace — so a
-  stage-shaped view has to degrade to "the loop ran and here is what it
-  changed" rather than look broken.
+  render stage events emitted by whatever wraps the turn. That was
+  `crates/stella-pipeline`, which left the workspace to become an installable
+  plugin (#3246) and was deleted in #3865. The deck must stay legible
+  for a run with **no** wrapper at all — the raw loop is the default
+  (#3381) — so a stage-shaped view has to degrade to "the loop ran and here is
+  what it changed" rather than look broken.
 
 The boundary is unchanged and is what makes this safe: everything drawn is derived
 from the inbound stream, so a new wrapper's events are new rows to fold, never a

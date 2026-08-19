@@ -37,14 +37,20 @@ thiserror = { workspace = true }
 # accident.
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt"] }
 async-trait = { workspace = true }
+# `join_all` for the candidate fan-out (#3844): N candidate turns run
+# concurrently in N disjoint workspaces, and awaiting them in sequence would
+# make a width-3 fan-out cost three turns of wall clock for no reason. Already
+# a workspace dependency of six crates; nothing else here needs a combinator.
+futures-util = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 # `judge` is a pure total function over a closed evidence vocabulary, which is
 # exactly the shape the rest of the workspace states as a property rather than
-# a table (stella-core's loop detection, and the witness verification the
-# since-deleted stella-pipeline held, #3865). #3510's invariant — a declared check narrows done and never
+# a table (stella-core's loop detection, and the staged pipeline's witness
+# verification before #3865 deleted that crate). #3510's invariant — a
+# declared check narrows done and never
 # widens it — is quantified over every oracle a manifest can express, so it is
 # a property test, not a case.
 proptest = { workspace = true }

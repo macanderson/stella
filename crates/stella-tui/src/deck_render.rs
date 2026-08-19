@@ -174,16 +174,6 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
             render_inspect_overlay(ui, area, b)
         });
     }
-    // The plan-review dialog: modal while the focused agent's scope gate is
-    // pending and unanswered — it is the surface that halts the session.
-    // Below the cards on purpose: raising `/plan` over it is how a reviewer
-    // reads the envelope detail before deciding (Esc lowers the card and the
-    // dialog is back on top).
-    if let Some(proposal) = views::scope_dialog::pending(model, ui) {
-        guarded_overlay(buf, area, "plan review", |b| {
-            views::scope_dialog::render(proposal, ui.scope_input.as_ref(), area, b)
-        });
-    }
     // The floating cards (`/plan` · `/models` · `/budget`): at most one is up
     // (`CardState::raise` lowers the rest); help and the startup notice still
     // win the top of the stack below.
@@ -239,9 +229,6 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         // The routing card holds the user's words and owns every key until
         // they say where they go — it is checked first in `handle_deck_key`.
         || ui.pending_dispatch.is_some()
-        // The plan-review dialog answers on a single keypress — the caret
-        // must not sit in the composer while it is up (`gates.rs`).
-        || views::scope_dialog::pending(model, ui).is_some()
         // The INSTALLED AGENTS sub-modes (editor / create flow / version
         // picker) are modal text inputs while open.
         || ui.installed.mode != InstalledMode::Browse

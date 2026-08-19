@@ -288,11 +288,11 @@ printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":
 /// declared, it resolves, and the host still refuses it: a plugin may not spend
 /// the model whose work it is judging.
 ///
-/// The built-in staged pipeline's roster *reported* this loss for an operator
-/// who chose it (`Roster::independence_losses`, deleted with that crate in
-/// #3865); a plugin cannot choose it at all, and gets the
-/// [`HostCallRefusal::Forbidden`] code that says so rather than one that reads
-/// like a misconfiguration.
+/// The staged pipeline's roster *reported* this loss for an operator who chose
+/// it (`Roster::independence_losses`; `crates/stella-pipeline`, deleted in
+/// #3865); a plugin cannot choose it at all, and
+/// gets the [`HostCallRefusal::Forbidden`] code that says so rather than one
+/// that reads like a misconfiguration.
 #[tokio::test]
 async fn a_plugin_cannot_name_a_role_intent_that_resolves_to_the_worker() {
     let manifest = manifest();

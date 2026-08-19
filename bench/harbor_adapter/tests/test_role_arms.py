@@ -341,9 +341,6 @@ class TestTheArmSurvivesEverySeamItCrosses:
             research_model=_CHEAP,
             plan_effort="medium",
             plan_model=_CHEAP,
-            max_revisions=4,
-            candidates=2,
-            verifier_evidence_demand=True,
             model_timeout_secs=1572,
         )
         permitted = (

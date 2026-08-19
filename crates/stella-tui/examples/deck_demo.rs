@@ -23,8 +23,8 @@ use tokio::sync::mpsc;
 use stella_tui::scenario::{demo_graph, demo_inbound};
 use stella_tui::{
     AgentControl, AgentMeta, AgentStatus, DeckOptions, EngineConfigState, GraphNode, GraphSnapshot,
-    Inbound, ScopeDecision, SkillsView, SlashCommand, ToolPolicyState, ToolRow, UserInput,
-    WorkspaceInput, run_deck,
+    Inbound, SkillsView, SlashCommand, ToolPolicyState, ToolRow, UserInput, WorkspaceInput,
+    run_deck,
 };
 
 /// A stand-in session tool surface for the TOOLS panel: three built-in
@@ -123,38 +123,11 @@ async fn main() -> std::io::Result<()> {
                         status: AgentStatus::Killed,
                     });
                 }
-                // Gate answers (scope decisions, ask-user replies) loop back
-                // as the inbound events a real engine would emit, so the
-                // pending gate actually clears and the demo's advertised
-                // in-place answering works end to end.
+                // Gate answers (ask-user replies) loop back as the inbound
+                // events a real engine would emit, so the pending gate
+                // actually clears and the demo's advertised in-place
+                // answering works end to end.
                 WorkspaceInput::ToAgent { agent, input } => match input {
-                    UserInput::ScopeDecision(decision) => {
-                        let _ = react_tx.send(Inbound::Event {
-                            agent: agent.clone(),
-                            event: AgentEvent::Text {
-                                text: format!("scope decision: {decision:?}\n"),
-                            },
-                        });
-                        // Any non-ScopeReview stage clears the pending gate;
-                        // an abort ends the run instead. A revision sends the
-                        // demo back to PLAN, which is what the real pipeline
-                        // does with the note.
-                        let next = match decision {
-                            ScopeDecision::Approve | ScopeDecision::Trim => AgentEvent::Stage {
-                                name: StageKind::Execute,
-                                scope: stella_protocol::StageScope::Run,
-                            },
-                            ScopeDecision::Revise { .. } => AgentEvent::Stage {
-                                name: StageKind::Plan,
-                                scope: stella_protocol::StageScope::Run,
-                            },
-                            ScopeDecision::Abort => AgentEvent::TurnComplete {
-                                model: "glm-5.2".into(),
-                                cost_usd: 0.0,
-                            },
-                        };
-                        let _ = react_tx.send(Inbound::Event { agent, event: next });
-                    }
                     // The answer to a pending question card returns as a
                     // ToolResult correlated by the card's id — the
                     // documented path that clears it.

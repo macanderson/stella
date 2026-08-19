@@ -19,9 +19,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
 use stella_plugin::{
-    Continuation, EvidenceSet, FlipObservation, FlipPolicy, LoopGrant, Oracle, OracleCheck,
-    OracleCommand, Outcome, Participation, RoundState, StopReason, TamperFinding, TamperPolicy,
-    UndecidedReason, UnmetBecause, Verdict, VerdictRule,
+    Continuation, EvidenceProvenance, EvidenceSet, FlipObservation, FlipPolicy, LoopGrant, Oracle,
+    OracleCheck, OracleCommand, Outcome, Participation, RoundState, StopReason, TamperFinding,
+    TamperPolicy, UndecidedReason, UnmetBecause, Verdict, VerdictRule,
 };
 use stella_runtime::wrapper::{again, judge};
 
@@ -73,6 +73,7 @@ fn budget_rule() -> VerdictRule {
 
 fn evidence(flip: FlipObservation, tamper: TamperFinding) -> EvidenceSet {
     EvidenceSet {
+        provenance: EvidenceProvenance::PluginReported,
         flip,
         tamper,
         measurements: BTreeMap::new(),
@@ -123,6 +124,7 @@ fn judge_is_total_over_the_evidence_vocabulary() {
             for tamper in tampers() {
                 for (set_name, measurements) in &measurement_sets {
                     let evidence = EvidenceSet {
+                        provenance: EvidenceProvenance::PluginReported,
                         flip,
                         tamper: tamper.clone(),
                         measurements: measurements.clone(),
@@ -130,7 +132,15 @@ fn judge_is_total_over_the_evidence_vocabulary() {
                     let verdict = judge(rule, &evidence);
                     let case = format!("{rule_name} / {flip:?} / {tamper:?} / {set_name}");
 
-                    if verdict == Verdict::Met {
+                    if let Verdict::Met { evidence: whose } = verdict {
+                        // Provenance is carried across the whole matrix, not
+                        // stamped at one point: every credited verdict here is
+                        // decided from a plugin's reported evidence (#3513).
+                        assert_eq!(
+                            whose,
+                            EvidenceProvenance::PluginReported,
+                            "{case}: a credited verdict must name whose evidence it rests on"
+                        );
                         // The two halves **conjoin** (#3510). A rule that
                         // declares both must satisfy both; declaring a check
                         // does not excuse the requirement from the flip.
@@ -189,7 +199,13 @@ fn a_flip_decided_requirement_answers_exactly_this() {
 
     let table: Vec<(FlipObservation, TamperFinding, Verdict)> = vec![
         // A flip, and the artifacts are the ones that were authored.
-        (FlipObservation::Achieved, clean.clone(), Verdict::Met),
+        (
+            FlipObservation::Achieved,
+            clean.clone(),
+            Verdict::Met {
+                evidence: EvidenceProvenance::PluginReported,
+            },
+        ),
         // A flip whose artifacts were rewritten is not a flip. This is the
         // whole of the tamper exclusion: a worker that edits the witness must
         // not be able to win by it.
@@ -366,9 +382,14 @@ fn a_rule_that_never_passed_validation_still_cannot_be_silently_met() {
 /// deciding done.
 #[test]
 fn a_rule_with_no_requirements_is_met() {
+    // `HostObserved`, and not because a host observed a flip: the evidence
+    // being judged is the host's own `unobserved()` set, and there is no
+    // requirement here for a plugin to have reported anything about (#3513).
     assert_eq!(
         judge(&VerdictRule::default(), &EvidenceSet::unobserved()),
-        Verdict::Met
+        Verdict::Met {
+            evidence: EvidenceProvenance::HostObserved
+        }
     );
 }
 
@@ -407,6 +428,7 @@ fn a_determinate_failure_outranks_an_undecidable_clause() {
     let verdict = judge(
         &rule,
         &EvidenceSet {
+            provenance: EvidenceProvenance::PluginReported,
             flip: FlipObservation::NotAttempted,
             tamper: TamperFinding::NotChecked,
             measurements: BTreeMap::from([("p50".to_string(), 118)]),
@@ -426,6 +448,7 @@ fn the_hold_allowance_is_the_ask_clamped_to_the_hosts_ceiling() {
     let verdict = judge(
         &budget_rule(),
         &EvidenceSet {
+            provenance: EvidenceProvenance::PluginReported,
             flip: FlipObservation::NotAttempted,
             tamper: TamperFinding::NotChecked,
             measurements: BTreeMap::from([("p50".to_string(), 118)]),
@@ -437,6 +460,7 @@ fn the_hold_allowance_is_the_ask_clamped_to_the_hosts_ceiling() {
         points: vec![stella_plugin::WrapperPoint::AfterTurn],
         calls: Vec::new(),
         max_calls: None,
+        max_fanout_width: None,
         max_holds: ask,
     };
     let round = |spent: u32, ceiling: u32| RoundState {
@@ -515,6 +539,7 @@ fn an_abstention_does_not_buy_another_turn() {
             points: vec![stella_plugin::WrapperPoint::AfterTurn],
             calls: Vec::new(),
             max_calls: None,
+            max_fanout_width: None,
             max_holds: Some(8),
         },
     );
@@ -556,6 +581,7 @@ fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion()
         judge(
             &rule,
             &EvidenceSet {
+                provenance: EvidenceProvenance::PluginReported,
                 flip: FlipObservation::NotAchieved,
                 tamper: TamperFinding::Tampered {
                     artifact: "tests/witness.rs".into()
@@ -574,6 +600,7 @@ fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion()
         judge(
             &rule,
             &EvidenceSet {
+                provenance: EvidenceProvenance::PluginReported,
                 flip: FlipObservation::Achieved,
                 tamper: TamperFinding::Tampered {
                     artifact: "tests/witness.rs".into()
@@ -592,6 +619,7 @@ fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion()
         judge(
             &rule,
             &EvidenceSet {
+                provenance: EvidenceProvenance::PluginReported,
                 flip: FlipObservation::Achieved,
                 tamper: TamperFinding::NotChecked,
                 measurements: within_budget.clone(),
@@ -609,12 +637,15 @@ fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion()
         judge(
             &rule,
             &EvidenceSet {
+                provenance: EvidenceProvenance::PluginReported,
                 flip: FlipObservation::Achieved,
                 tamper: TamperFinding::Clean,
                 measurements: within_budget,
             }
         ),
-        Verdict::Met
+        Verdict::Met {
+            evidence: EvidenceProvenance::PluginReported
+        }
     );
 
     // ...and the check keeps its own force under a credited flip.
@@ -622,6 +653,7 @@ fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion()
         judge(
             &rule,
             &EvidenceSet {
+                provenance: EvidenceProvenance::PluginReported,
                 flip: FlipObservation::Achieved,
                 tamper: TamperFinding::Clean,
                 measurements: BTreeMap::from([("p50".to_string(), 118)]),
@@ -650,7 +682,10 @@ fn met_requirements(rule: &VerdictRule, evidence: &EvidenceSet) -> BTreeSet<Stri
                 requirements: BTreeMap::from([((*name).clone(), (*statement).clone())]),
                 oracle: rule.oracle.clone(),
             };
-            judge(&one, evidence) == Verdict::Met
+            judge(&one, evidence)
+                == Verdict::Met {
+                    evidence: EvidenceProvenance::PluginReported,
+                }
         })
         .map(|(name, _)| name.clone())
         .collect()
@@ -709,6 +744,7 @@ fn any_evidence() -> impl Strategy<Value = EvidenceSet> {
     );
     (prop::sample::select(FLIPS.as_slice()), tamper, measurements).prop_map(
         |(flip, tamper, measurements)| EvidenceSet {
+            provenance: EvidenceProvenance::PluginReported,
             flip,
             tamper,
             measurements,

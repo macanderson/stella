@@ -62,10 +62,10 @@ above is the tracking of its departure, not a claim that it has already left.
 
 What does not change: the twelve phases of a step, the safe-boundary rule, and
 the fact that **adjudicating the work was never this crate's job**. The staged
-verification flow was always a *caller* — `crates/stella-pipeline`, now
-deleted from the workspace on its way out into a plugin (#3246, #3865). A turn
-driven with no wrapper installed runs the loop and reports what it changed; it
-does not verify itself.
+verification flow was always a *caller* — `crates/stella-pipeline`, which left
+the workspace entirely in #3865 on its way into a plugin (#3246). A turn driven
+with no wrapper installed runs the loop and reports what it changed; it does not
+verify itself.
 
 ## Where it sits
 
@@ -158,7 +158,7 @@ lib.rs), never as a planning assumption.
 | [`src/loop_detect.rs`](src/loop_detect.rs) | `detect_loop()` — exact repeats and short cycles over `CallRecord`s. |
 | [`src/shell_text.rs`](src/shell_text.rs) | Reading a shell command as *text*: the quote-aware `shell_words` splitter, `is_operator_word`, and `bare_sleep_seconds` — the stall classifier the `bash` advisory and the engine's stall rung ([`src/driver/loop_escalation.rs`](src/driver/loop_escalation.rs)) share, so one operator list serves both (#2022). |
 | [`src/retry.rs`](src/retry.rs) | `RetryPolicy`, backoff computation, `retry_with_backoff*`, and the `Sleeper` port. |
-| [`src/starvation.rs`](src/starvation.rs) | Reasoning-starvation arithmetic: output-contract headroom, the empty-`length` signature, and the retry cap. Shared by `stella-cli`'s standalone-call chokepoint and the engine's own overflow summarizer, because one copy is what makes a fix reach both (#2128, #2174); the third caller was the since-deleted `stella-pipeline`'s management chokepoint (#3865). |
+| [`src/starvation.rs`](src/starvation.rs) | Reasoning-starvation arithmetic: output-contract headroom, the empty-`length` signature, and the retry cap. Written to serve two chokepoints from one copy, because one copy is what makes a fix reach both (#2128, #2174): `stella-cli`'s standalone-call chokepoint, and the staged pipeline's management chokepoint until that crate was deleted (#3865). |
 | [`src/repair.rs`](src/repair.rs) | `plan_repair()` — whether a verdict that refuted the model's success claim earns another attempt, bounded by an explicit cap and by the budget/wall-clock headroom the caller measured. |
 | [`src/speculation.rs`](src/speculation.rs) | Early execution of read-only tool calls announced mid-stream (`pub(crate)`). |
 | [`src/receipts.rs`](src/receipts.rs) | `ReceiptLedger` — `BlockRegistered` + `StepManifest` context receipts, content-free (digests, never payloads). |

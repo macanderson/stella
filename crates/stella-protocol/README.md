@@ -74,7 +74,7 @@ invariant #4).
 The behavior over these types always has a home elsewhere: decision logic over
 events, budgets, and compaction in `stella-core`; wire transport implementing
 `Provider` in [`stella-model`](../stella-model); rendering in `stella-tui`;
-persistence in `stella-store`. And
+persistence in `stella-store`; diffing in [`stella-diff`](../stella-diff). And
 nothing may be imported back from any of them — the mirrored-field examples in
 the intro are the required pattern for wanting a core type on the wire, not a
 workaround to clean up.
@@ -186,9 +186,9 @@ fails `cargo build -p stella-protocol` with `E0004` right at the invocation.
 The comment directly below it carries the full downstream checklist: which
 matchers the compiler will also stop you at (`stella-tui`
 `model::Model::apply`, `textline::event_line`, `deck::trace_of`) and — the
-dangerous half — which ones it cannot (`deck::event_intensity`,
-`deck::status_from_event`). Read that list before you add a variant; it is
-maintained there, not here.
+dangerous half — which ones it cannot (the replay differ's volatile keep-set,
+`deck::event_intensity`, `deck::status_from_event`). Read that list before you
+add a variant; it is maintained there, not here.
 
 Note the guard is now about *this workspace's* renderers staying complete, not
 about wire safety: external readers survive a new variant on their own.
@@ -337,8 +337,8 @@ older binary. If yes, it belongs on `LifecycleEventEnvelope`, not here. If no:
    matchers in `stella-tui` will stop you one crate at a time, then hand-audit
    the wildcard matchers the compiler cannot catch. This step is not optional
    bookkeeping — a variant landed on `main` past the compile-enforced half and
-   broke the then-existing `stella-pipeline` (#421, that crate deleted since,
-   #3865) and then `stella-tui` (#422) on separate days.
+   broke two downstream crates on separate days (#421, then #422; the first of
+   those was the staged pipeline, deleted since in #3865).
 
 **Adding a lifecycle event** — add the token to `context_event::event_type`,
 the payload struct, the `LifecycleEvent` variant, the `decode` arm, and a

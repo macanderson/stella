@@ -60,6 +60,7 @@ use stella_plugin::{
     LoopGrant, RecallFrame, RecallResult,
 };
 
+use super::candidate_fanout::CandidateFanoutPlane;
 use super::child_turn::ChildTurnPlane;
 
 /// The host's own ceiling on host calls per point, when a caller states none.
@@ -81,17 +82,17 @@ pub const DEFAULT_RECALL_FRAMES: u32 = 8;
 
 /// The host's context plane, as the socket needs it.
 ///
-/// Deliberately shaped like [`stella_protocol::ContextRecallPort::recall`]
-/// (née `stella_pipeline::ContextRecallPort`, retargeted to `stella-protocol`
-/// ahead of that crate's deletion, #3865) — one goal in, the frames out,
-/// never an error the caller has to special-case
+/// Deliberately shaped like [`stella_protocol::ContextRecallPort::recall`] —
+/// which is where that port lives since #3865 retargeted it out of
+/// `stella-pipeline` ahead of deleting that crate — one
+/// goal in, the frames out, never an error the caller has to special-case
 /// (weak or absent context degrades to "no frames", L-C6) — so a host that
 /// already has a recall port implements this by projecting its frames into the
 /// wire view and nothing else.
 ///
 /// It is **not** that trait, and that is not an oversight:
-/// `crates/stella-runtime/tests/no_pipeline_edge.rs` asserts executably that the
-/// assembly seam declares no edge to the staged pipeline, because a wrapper
+/// `crates/stella-runtime/tests/no_policy_crate_edge.rs` asserts executably that
+/// the assembly seam declares no edge to a policy-above-the-loop crate, because a wrapper
 /// `stella-cli` can drive and `stella-serve` cannot is a CLI feature wearing a
 /// socket's name. The projection is the driver's, and it is mechanical.
 ///
@@ -159,6 +160,7 @@ pub struct HostPlanes {
     recall: Option<Box<dyn RecallHost>>,
     max_frames: u32,
     child_turns: Option<Box<dyn ChildTurnPlane>>,
+    candidate_fanout: Option<Box<dyn CandidateFanoutPlane>>,
 }
 
 impl Default for HostPlanes {
@@ -177,6 +179,7 @@ impl std::fmt::Debug for HostPlanes {
             .field("recall", &self.recall.is_some())
             .field("max_frames", &self.max_frames)
             .field("child_turns", &self.child_turns.is_some())
+            .field("candidate_fanout", &self.candidate_fanout.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -191,6 +194,7 @@ impl HostPlanes {
             recall: None,
             max_frames: DEFAULT_RECALL_FRAMES,
             child_turns: None,
+            candidate_fanout: None,
         }
     }
 
@@ -222,6 +226,20 @@ impl HostPlanes {
     #[must_use]
     pub fn with_child_turns(mut self, child_turns: impl ChildTurnPlane + 'static) -> Self {
         self.child_turns = Some(Box::new(child_turns));
+        self
+    }
+
+    /// Serve `candidate_fanout` and `adopt_candidate` from this plane —
+    /// [`CandidateFanouts`](super::CandidateFanouts) over the host's own
+    /// isolation substrate, ordinarily.
+    ///
+    /// **One plane for both capabilities**, because they are two halves of one
+    /// piece of state: adoption is fenced against the handle table the fan-out
+    /// minted, and a host that could install the second without the first
+    /// would be installing a fence with nothing behind it.
+    #[must_use]
+    pub fn with_candidate_fanout(mut self, plane: impl CandidateFanoutPlane + 'static) -> Self {
+        self.candidate_fanout = Some(Box::new(plane));
         self
     }
 }
@@ -259,6 +277,30 @@ impl HostCapabilities for HostPlanes {
                     .child_turn(child_turn)
                     .await
                     .map(HostCallOk::ChildTurn)
+            }
+            HostCallArgs::CandidateFanout(fanout) => {
+                let Some(plane) = self.candidate_fanout.as_ref() else {
+                    return Err(HostCallFailure::new(
+                        HostCallRefusal::Unavailable,
+                        "this host fans no turns out into isolated candidate workspaces — no \
+                         isolation substrate was attached to its capabilities",
+                    ));
+                };
+                plane.fanout(fanout).await.map(HostCallOk::CandidateFanout)
+            }
+            HostCallArgs::AdoptCandidate(adopt) => {
+                // The same plane answers both, so an adoption asked of a host
+                // that never fanned anything out is told the substrate is
+                // missing rather than that its handle is unknown — the true
+                // reason, and a different thing for a plugin author to fix.
+                let Some(plane) = self.candidate_fanout.as_ref() else {
+                    return Err(HostCallFailure::new(
+                        HostCallRefusal::Unavailable,
+                        "this host holds no candidate workspaces to adopt from — no isolation \
+                         substrate was attached to its capabilities",
+                    ));
+                };
+                plane.adopt(adopt).await.map(HostCallOk::AdoptCandidate)
             }
             HostCallArgs::RunTest(_) => Err(HostCallFailure::new(
                 HostCallRefusal::Unsupported,
@@ -548,6 +590,7 @@ mod tests {
             points: vec![WrapperPoint::BeforeTurn],
             calls,
             max_calls,
+            max_fanout_width: None,
             max_holds: None,
         }
     }

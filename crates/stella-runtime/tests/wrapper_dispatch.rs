@@ -5,9 +5,9 @@
 //! itself, calling the four points in an order the test file wrote down — so
 //! every property it establishes is a property of that file, and nothing in the
 //! workspace had to hold the same order. That is exactly what #3494 found:
-//! `grep -rn "before_turn\|after_turn" crates/stella-cli/src
-//! crates/stella-pipeline/src` returned one port handle and no dispatch (the
-//! second path existed then; that crate was deleted in #3865).
+//! `grep -rn "before_turn\|after_turn"` over `stella-cli` and the
+//! then-still-present `stella-pipeline` (deleted in #3865) returned one port
+//! handle and no dispatch.
 //!
 //! These tests drive `stella_runtime::WrapperDispatch` — the production
 //! sequence — with a plugin written in `sh` on one side and a recording
@@ -25,8 +25,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use stella_plugin::{
-    Outcome, PluginManifest, SignalValues, StageName, StopReason, TamperFinding, TurnOutcome,
-    UnmetBecause, Verdict,
+    EvidenceProvenance, Outcome, PluginManifest, SignalValues, StageName, StopReason,
+    TamperFinding, TurnOutcome, UnmetBecause, Verdict,
 };
 use stella_protocol::completion::{CompletionMessage, MessageRole};
 use stella_runtime::wrapper::{
@@ -236,8 +236,19 @@ async fn a_wrapper_plugins_verdict_decides_whether_another_turn_runs() {
          asked for a second turn"
     );
     assert_eq!(report.rounds, 2);
-    assert_eq!(report.verdict, Verdict::Met, "p50 101 is inside 105");
-    assert_eq!(report.outcome, Outcome::Met);
+    assert_eq!(
+        report.verdict,
+        Verdict::Met {
+            evidence: EvidenceProvenance::PluginReported
+        },
+        "p50 101 is inside 105"
+    );
+    assert_eq!(
+        report.outcome,
+        Outcome::Met {
+            evidence: EvidenceProvenance::PluginReported
+        }
+    );
     assert!(report.met());
 
     // The contribution reached the turn — as volatile messages, never the

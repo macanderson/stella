@@ -60,12 +60,11 @@ a fleet worker is whatever implements `FleetWorker`, and teaching this crate the
 worker's internals crosses the seam.
 
 Single-agent orchestration in particular does not belong here. That includes
-best-of-N candidates for a single prompt, which look fleet-shaped — isolated
-worktrees, parallel workers — but are one turn's candidates, selected and
-discarded, not ledgered tasks with lineage. It belonged to
-`crates/stella-pipeline`, deleted from the workspace in #3865; a wrapper
-plugin driven through `stella_runtime::WrapperDispatch` is where it lands now,
-and it is still not this crate's.
+best-of-N candidates for a
+single prompt, which look fleet-shaped — isolated worktrees, parallel workers — but
+are one turn's candidates, selected and discarded, not ledgered tasks with lineage.
+That work lived in `crates/stella-pipeline` until #3865 deleted it; a
+verification wrapper plugin is where it belongs now.
 The model-call/tool loop itself stays in [`stella-core`](../stella-core), and the
 real worker, plan parsing and `--spend-limit` split stay in
 `crates/stella-cli/src/fleet_cmd.rs`.

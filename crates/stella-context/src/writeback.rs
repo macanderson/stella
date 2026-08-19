@@ -212,9 +212,9 @@ impl FactAssertion {
 }
 
 /// The kind of a memory record. Reflections are the post-turn self-improvement
-/// lessons the CLI writes after every chat turn (generation is host scope —
-/// `stella-cli` today, and the since-deleted `stella-pipeline` before #3865;
-/// storage + recall are this crate's).
+/// lessons the CLI writes after every chat turn (generation is the host's
+/// scope — `stella-cli`, and the staged pipeline before #3865 deleted that
+/// crate; storage + recall are this crate's).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryKind {

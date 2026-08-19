@@ -294,12 +294,12 @@ files), never from the worker's claims. Rounds continue until the verifier
 confirms the goal, or a backstop (round cap, `--spend-limit`, worker abort) ends
 the run honestly as *not met*.
 
-Each working round is a raw step-loop turn by default; `--pipeline classic`
-makes rounds staged pipeline runs instead — double verification (pipeline
-verifier *and* goal verifier) is rigor you pay for, so add the inner pipeline
-only when the goal verifier alone is not enough. `stella goal` cannot yet
-drive an installed wrapper plugin (#3695) — only `classic` or the raw
-default.
+Each working round is a raw step-loop turn by default; `--pipeline <variant>`
+binds an installed wrapper plugin once and dispatches each round's worker turn
+through it, leaving the goal verifier untouched (#3695, goal half). An
+arbiter-grade wrapper is refused on this door — the goal loop is already its
+own completion arbiter (#3832) — and `--pipeline classic` names a staged
+pipeline that no longer exists (#3865).
 
 **Use it when** you can state the outcome crisply but not the steps —
 "the suite passes and clippy is clean", "the flaky test is fixed, proven by

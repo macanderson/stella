@@ -1,9 +1,9 @@
 //! Durable adapter for paid one-shot calls that are not part of an engine turn.
 //!
-//! This was written as the standalone counterpart to the staged pipeline's
-//! `metered_raw_call` chokepoint (`stella-pipeline`, deleted in #3865), and it
-//! carries the same two mechanisms for the same reason — it is the only one of
-//! the pair left.
+//! This was the standalone counterpart to the staged pipeline's
+//! `metered_raw_call` chokepoint (`crates/stella-pipeline`, deleted in #3865),
+//! and it carries the same two mechanisms for the same reason — it is the only
+//! one of the pair left.
 //! Every call through here is a bounded call with a written output contract —
 //! a JSON lessons array, an authored manifest, a domain list — and a reasoning
 //! model bills its thinking against the one `max_output_tokens` number on the
@@ -55,8 +55,8 @@ pub(crate) struct StandaloneCallError {
 
 /// Role-shaped request bounds `(visible output, effort)` for the standalone
 /// chokepoint — the counterpart to the staged pipeline's `management_bounds`
-/// (`crates/stella-pipeline/src/pipeline/raw_usage.rs`, deleted in #3865), and
-/// exhaustive over
+/// (its `pipeline/raw_usage.rs`; `crates/stella-pipeline`, deleted in #3865),
+/// and exhaustive over
 /// [`ModelCallRole`] for the same reason: a new standalone role must decide
 /// its bounds here rather than inherit whatever number its call site happened
 /// to pick in isolation.

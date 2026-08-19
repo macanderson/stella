@@ -1,11 +1,10 @@
 # The stage order the built-in staged pipeline ran, as a manifest.
 #
-# Every condition here transcribes a branch that lived in
-# `crates/stella-pipeline/src/pipeline.rs::run` — a file at its file-size
-# ceiling and closed to growth, which is why the order had to leave Rust
-# before another variant could exist (#3381). That crate has since been
-# deleted from the workspace (#3865); this fixture is what the order looked
-# like, kept as the reference shape a verification plugin declares.
+# Every condition here transcribes a branch that lived in that pipeline's
+# `pipeline.rs::run` — a file at its file-size ceiling and closed to growth,
+# which is why the order had to leave Rust before another variant could exist
+# (#3381). The crate is gone (#3865), so this fixture is now the record of
+# that order rather than a transcription of live code.
 name = "staged"
 description = "The stage order Stella has shipped since the staged pipeline landed."
 

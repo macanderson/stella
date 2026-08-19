@@ -102,11 +102,12 @@ pub enum BuiltinLane {
     SubagentFork,
     /// A raw fleet worker turn (`stella-cli`'s `fleet_cmd`).
     FleetWorker,
-    /// A staged-pipeline stage turn. Its only producer was the built-in
-    /// staged pipeline (`stella-pipeline`'s `execute_stage`/`witness_stage`),
-    /// deleted from the workspace in #3865, so nothing in this workspace
-    /// stamps this lane today; the token stays readable because already-written
-    /// telemetry carries it. Retiring it is #3881.
+    /// A staged-pipeline stage turn. Named for the built-in staged pipeline's
+    /// `execute_stage`/`witness_stage` (`crates/stella-pipeline`, deleted in
+    /// #3865); the tag stays on the wire so a recorded lane from a
+    /// pre-removal build still deserializes. **Nothing in this workspace
+    /// stamps this lane today** — retiring it, or re-homing a producer onto a
+    /// wrapper plugin's declared stages, is #3881.
     PipelineStage,
     /// A turn driven by a remote host over the wire (`stella-serve`'s
     /// `session`).

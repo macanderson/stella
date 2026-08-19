@@ -1,13 +1,12 @@
 //! The `[wrapper]` block — a turn-loop wrapper's stage order, declared.
 //!
-//! Slice of #3381. The conditional stage order the built-in staged pipeline
-//! ran was hardcoded branches inside `crates/stella-pipeline/src/pipeline.rs`,
-//! a file on the god-file list and closed to growth — so that design could not
-//! absorb another variant even if we wanted one. A wrapper plugin declares the
-//! order instead, and the conditions become a line you can read and change.
-//! The crate those branches lived in has since been deleted from the
-//! workspace (#3865), which leaves this the only place a stage order is
-//! expressed at all.
+//! Slice of #3381. The conditional stage order the staged pipeline ran was
+//! hardcoded branches inside its own `pipeline.rs` — a file on the god-file
+//! list and closed to growth, so that design could not absorb another variant
+//! even if we had wanted one. A wrapper plugin declares the order instead, and
+//! the conditions become a line you can read and change. The crate those
+//! branches lived in (`crates/stella-pipeline`) was deleted in #3865, which
+//! leaves this block as the only place a stage order is expressed.
 //!
 //! Two rules carried from #3245 slice A, not re-derived here:
 //!
@@ -113,11 +112,11 @@ impl WrapperStage {
 /// Closed by design, the [`FlipPolicy`] reasoning applied to stages: an
 /// unknown value must be a load error rather than a silently shorter run, and
 /// a future stage adds a variant here. The names and their order were taken
-/// from `stage_rank` in `crates/stella-pipeline/src/replay.rs`, which was the
-/// canonical ordering when this was written; that crate was deleted from the
-/// workspace (#3865), so this enum is now the canonical ordering itself.
-/// [`StageName::kind`] keeps it tied to [`StageKind`]'s twelve mechanically
-/// rather than as a claim, since it is one-to-one onto them.
+/// from `stage_rank` in the staged pipeline's `replay.rs`
+/// (`crates/stella-pipeline`, deleted in #3865), which was the canonical
+/// ordering then — and [`StageName::kind`] makes the correspondence
+/// mechanical rather than a claim, since it is one-to-one onto
+/// [`StageKind`]'s twelve. With that crate gone, this enum *is* the ordering.
 ///
 /// **A name here is not a promise that every host runs it.** The vocabulary
 /// mirrors [`StageKind`] because a wrapper that cannot spell a boundary
@@ -145,18 +144,16 @@ pub enum StageName {
     Witness,
     /// Turn evidence into a verdict.
     Verify,
-    /// The verdict boundary — and **a staged run does not dispatch it**,
-    /// which is the one thing a manifest author has to know before writing the
-    /// name down.
+    /// The verdict boundary — and **the staged pipeline does not dispatch
+    /// it**, which is the one thing a manifest author has to know before
+    /// writing the name down.
     ///
-    /// The built-in staged pipeline emitted no [`StageKind::Verdict`] at all:
-    /// its verify stage emitted the `Verdict` *event* directly from
-    /// `ladder_decision`, and `crates/stella-pipeline/src/pipeline/tests.rs`
-    /// asserted the stage never appeared in that stream. That crate has since
-    /// been deleted (#3865), and the shape carries over to a verification
-    /// plugin that ports the same ladder (`doc:pipeline-as-plugins` §8). The
-    /// hosts that do emit the boundary are the goal loops —
-    /// `crates/stella-cli/src/agent/goal.rs` and
+    /// The staged pipeline emitted no [`StageKind::Verdict`] at all: its
+    /// verify stage emitted the `Verdict` *event* directly from
+    /// `ladder_decision`, and its own `pipeline/tests.rs` asserted the stage
+    /// never appeared in that stream (`crates/stella-pipeline`, deleted in
+    /// #3865). The hosts that do emit the boundary are the
+    /// goal loops — `crates/stella-cli/src/agent/goal.rs` and
     /// `crates/stella-serve/src/goal.rs` run-scoped,
     /// `crates/stella-core/src/goal.rs` turn-scoped — so a wrapper naming
     /// `verdict` describes a goal-loop run and not a staged one.

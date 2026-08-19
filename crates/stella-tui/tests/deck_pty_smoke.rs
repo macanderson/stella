@@ -27,9 +27,9 @@ use std::time::{Duration, Instant};
 
 /// Generous: CI machines are slow, the first frame waits out crossterm's
 /// keyboard-enhancement probe (which this pty never answers), and the demo
-/// paces its scripted scenario at one event per 500ms — the scope-review
-/// card this test answers is the LAST of those events, ~20s in (re-checked
-/// when the scenario grew the task/witness events; still well inside WAIT).
+/// paces its scripted scenario at one event per 500ms — the scope review this
+/// test waits for is the LAST of those events, ~20s in (re-checked when the
+/// scenario grew the task/witness events; still well inside WAIT).
 const WAIT: Duration = Duration::from_secs(60);
 
 /// `cargo test` builds examples by default, so the demo binary normally sits
@@ -348,17 +348,19 @@ fn run_deck_paints_folds_resizes_and_restores_under_a_real_pty() {
     deck.resize(30, 100);
     deck.wait_for("a repaint after resize", |d| d.raw_len() > before);
 
-    // The scenario's LAST event is a scope review on the focused agent, and
-    // the plan-review dialog owns the keyboard while it is pending. Wait for
-    // the dialog, answer it with the single keypress it advertises:
-    // submissions channel → demo reactor → `scope decision: Approve` echoed
-    // back over the inbound lane. The full user→engine→user round trip.
-    deck.wait_for("the plan-review dialog", |d| {
+    // The scenario's LAST event is a scope review on the focused agent, so
+    // this needle proves the whole scripted timeline drained and painted
+    // rather than stalling partway.
+    //
+    // It used to be answered here too: the plan-review dialog owned the
+    // keyboard and `a` sent a decision back through the demo reactor. #3861
+    // removed that gate — nothing has raised it since the staged pipeline was
+    // deleted (#3865) — so the review now paints as an ordinary fold. The
+    // user→deck→child→user round trip this test exists to pin is carried by
+    // the `!` shell lane immediately below, which drives the same key reader
+    // and the same fold-and-paint path.
+    deck.wait_for("the scripted scenario's last event", |d| {
         d.painted().contains("Refactortheautomationsstore")
-    });
-    deck.send(b"a");
-    deck.wait_for("the gate answer round trip", |d| {
-        d.painted().contains("scopedecision:Approve")
     });
 
     // The `!` shell lane, end to end: key reader → composer → Shell action →
@@ -453,15 +455,11 @@ fn the_accessible_deck_runs_inline_answers_input_and_never_takes_the_screen() {
     deck.resize(30, 100);
     deck.wait_for("a repaint after resize", |d| d.raw_len() > before);
 
-    // Input still round-trips: the scenario's last event is a scope-review
-    // gate, and its one-keypress answer goes key → submissions → demo
-    // reactor → inbound lane → fold → paint.
-    deck.wait_for("the plan-review dialog", |d| {
+    // The scripted timeline drains to its last event and paints inline. The
+    // scope-review gate that used to be answered here is gone (#3861); the
+    // input round trip is the `!` lane below.
+    deck.wait_for("the scripted scenario's last event", |d| {
         d.painted().contains("Refactortheautomationsstore")
-    });
-    deck.send(b"a");
-    deck.wait_for("the gate answer round trip", |d| {
-        d.painted().contains("scopedecision:Approve")
     });
 
     // A `!` command puts an entry on the focused lane that this test owns the

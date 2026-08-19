@@ -253,11 +253,8 @@ pub enum DatasetCmd {
 /// Every field is always present — no `skip_serializing_if` anywhere — so
 /// each line of the dataset carries the same keys and a consumer never has to
 /// distinguish "absent" from "not applicable". Absence is spelled `null`.
-/// (Inside [`RewardLabel`] that type's own wire shape applies — it is
-/// [`crate::reward`]'s, `skip_serializing_if` and all, and is carried
-/// verbatim. It reads a verification ladder's verdict, which no path in this
-/// workspace produces since `stella-pipeline` was deleted, #3865: the field is
-/// `None` on every record a raw run writes.)
+/// (Inside [`RewardLabel`] that type's own wire shape applies and is carried
+/// verbatim; it belonged to `stella-pipeline` until #3865 deleted that crate.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatasetRecord {
     pub schema: u32,
