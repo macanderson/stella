@@ -19,9 +19,7 @@ No Docker, no network, no model key: every fixture is synthetic.
 
 from __future__ import annotations
 
-import re
 import tomllib
-from pathlib import Path
 
 import pytest
 
@@ -32,14 +30,6 @@ from arenabench.model import (
     Engine,
     MatchSpec,
     ResponsibilityConfig,
-)
-
-_ROSTER_RS = (
-    Path(__file__).resolve().parents[2]
-    / "crates"
-    / "stella-pipeline"
-    / "src"
-    / "roster.rs"
 )
 
 HEADER = """
@@ -254,33 +244,39 @@ class TestTheDownloadPathKeepsIt:
 class TestReassignmentTargets:
     """`RESPONSIBILITY_AGENTS` is derived, so the derivation gets asserted.
 
-    The list an authoring surface offers as reassignment targets is Stella's
-    `AgentId::BUILTIN`, and ArenaBench derives it as `ROLES` minus `default`
-    rather than keeping a fourth hand-maintained copy of a Rust vocabulary —
-    the drift `scripts/check-role-names.sh` exists for (#1449).
+    ArenaBench derives the list an authoring surface offers as reassignment
+    targets from `ROLES` minus `default`, rather than keeping a fourth
+    hand-maintained copy of a Rust vocabulary — the drift
+    `scripts/check-role-names.sh` exists for (#1449).
 
-    The premise, that Stella's bindable agents are exactly its configurable
-    non-default roles, is an *inference*. It holds today, and this reads the
-    Rust source to say so out loud: an unresolvable name is a
-    `RosterError::UnknownAgent` raised inside the container after the image is
-    built, so a select offering one spends a container build on a typo and
-    reports it as the seat failing.
+    `test_the_derived_list_is_stellas_builtin_agent_set` used to sit here and
+    cross-check that derivation against `AgentId::BUILTIN`, read out of
+    `crates/stella-pipeline/src/roster.rs`. **That crate was deleted from the
+    workspace in #3865 and `AgentId::BUILTIN` does not exist anywhere any
+    more**, so the assertion could no longer pass — it raised
+    `FileNotFoundError` on a path that is gone, which is what turned
+    `harbor_adapter + analyzer pytest` red on `main` (#3901 predicted exactly
+    this: the Python bench surfaces wanted checking for *live breakage*, not
+    assuming to be prose).
+
+    It is removed rather than repointed, for two reasons worth stating so the
+    next reader does not restore it:
+
+    1. **The property it protected is still enforced, by a gate step.**
+       `scripts/check-role-names.sh` holds `ROLES` in `model.py` to
+       `role_key()` in `crates/stella-cli/src/config_wiring.rs` — a normative
+       home that still exists — across all four producers. Repointing this
+       test at the same source would be a fourth copy of a check that is
+       already green, which is the duplication #1449 argued against.
+    2. **Re-creating a `BUILTIN` list to satisfy a bench test would be
+       actively wrong.** `doc:roleless-core` (epic #3903) is removing role
+       names from the engine on purpose: core is to know one name, `default`.
+       A bench assertion demanding that core publish a roster of the others
+       would pull against that directive.
+
+    The sibling below still asserts the half that needs no Rust file: the
+    derivation's whole content is that `default` is dropped.
     """
-
-    def test_the_derived_list_is_stellas_builtin_agent_set(self) -> None:
-        source = _ROSTER_RS.read_text(encoding="utf-8")
-        match = re.search(
-            r"BUILTIN:\s*&'static\s*\[&'static\s*str\]\s*=\s*&\[(?P<names>[^\]]*)\]",
-            source,
-        )
-        assert match, f"could not find AgentId::BUILTIN in {_ROSTER_RS}"
-        builtin = tuple(re.findall(r'"([^"]+)"', match.group("names")))
-        assert builtin, "AgentId::BUILTIN parsed to zero names"
-        assert set(RESPONSIBILITY_AGENTS) == set(builtin), (
-            "the reassignment targets ArenaBench offers and the agents Stella "
-            f"resolves have diverged: {sorted(RESPONSIBILITY_AGENTS)} vs "
-            f"{sorted(builtin)}"
-        )
 
     def test_the_interactive_default_is_not_a_reassignment_target(self) -> None:
         """`default` is the step loop and owns no pipeline responsibility.
