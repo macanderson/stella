@@ -181,8 +181,9 @@ _STAR = re.compile(r'<path d="(M64 26[^"]*)" fill="(#[0-9A-Fa-f]{6})"')
 def check_light_cut_colour() -> None:
     """The light cuts paint the mark in `BRAND_ON_LIGHT`, not full `BRAND`.
 
-    v3.0 split the mark's colour by ground: ion measures 1.61:1 on paper,
-    below even the 3:1 non-text floor, so the light cuts step down the ramp
+    v3.0 split the mark's colour by ground and v4.0 kept the split: the brand
+    measures 2.63:1 on paper, below the 3:1 non-text floor, so the light cuts
+    step down the ramp
     while the dark and adaptive ones keep full strength. That is a *rule*, and
     a rule the kit only writes down is a rule the next recolour silently
     breaks — the bronze era's own drift (a bronze wordmark shipped beside
@@ -200,7 +201,7 @@ def check_light_cut_colour() -> None:
             if found.upper() == ck.BRAND:
                 raise SystemExit(
                     f"{name} paints the mark in full BRAND ({ck.BRAND}), which "
-                    f"measures 1.61:1 on paper. Light cuts take BRAND_ON_LIGHT "
+                    f"measures 2.63:1 on paper. Light cuts take BRAND_ON_LIGHT "
                     f"({ck.BRAND_ON_LIGHT})."
                 )
         if ck.BRAND_ON_LIGHT.upper() not in src.upper():
