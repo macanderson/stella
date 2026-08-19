@@ -683,42 +683,6 @@ fn push_same_model_notice(wiring: &mut EngineWiring, verifier_pin: Option<&Model
     }
 }
 
-/// Maps each pinned [`ModelRef`] to its adapter: the primary (worker)
-/// provider plus the wiring's extra per-role adapters. The worker entry is
-/// borrowed (the caller owns it — boxed in one-shot, `&dyn` in the deck
-/// and goal paths); the extras are borrowed from the [`EngineWiring`].
-pub(crate) struct RoleProviderResolver<'p> {
-    primary: &'p dyn Provider,
-    primary_ref: ModelRef,
-    extra: &'p [(ModelRef, Box<dyn Provider>)],
-}
-
-impl<'p> RoleProviderResolver<'p> {
-    pub(crate) fn new(
-        primary: &'p dyn Provider,
-        primary_ref: ModelRef,
-        extra: &'p [(ModelRef, Box<dyn Provider>)],
-    ) -> Self {
-        Self {
-            primary,
-            primary_ref,
-            extra,
-        }
-    }
-}
-
-impl ProviderResolver for RoleProviderResolver<'_> {
-    fn provider_for(&self, model: &ModelRef) -> Option<&dyn Provider> {
-        if *model == self.primary_ref {
-            return Some(self.primary);
-        }
-        self.extra
-            .iter()
-            .find(|(model_ref, _)| model_ref == model)
-            .map(|(_, provider)| &**provider)
-    }
-}
-
 pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> {
     build_provider_parts(
         &cfg.provider,

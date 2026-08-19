@@ -1,67 +1,28 @@
 //! Post-turn reflection at the CLI's turn boundaries: the interactive-turn
-//! dispatch, the friction tap that gives reflection its event-derived evidence,
-//! and the two report renderers.
+//! dispatch and the two report renderers.
 //!
 //! Split verbatim out of `agent.rs` — no behavior change in the move — because
 //! that file sits at its file-size ratchet ceiling and this cluster is a
 //! coherent unit: everything here is about what happens *after* a turn's last
 //! model call, and nothing else in `agent.rs` calls into it.
+//!
+//! This module used to also carry `FrictionTap`, the event-stream fold that
+//! gave the staged pipeline's reflection gate its tool-call evidence (the
+//! pipeline path kept the worker's tool-calling turns out of `messages`, so
+//! `turn_warrants_reflection(&messages)` alone was always false there). That
+//! pipeline is gone from this build (#3846); the raw step-loop's `messages`
+//! already carries every tool call, so `turn_warrants_reflection` alone is
+//! sufficient for it and always was.
 
 use colored::Colorize;
-use stella_core::{BudgetGuard, EventSender};
+use stella_core::BudgetGuard;
 use stella_protocol::{AgentEvent, CompletionMessage, Provider};
 
 use super::{
-    OutputFormat, ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, reflect_routed,
-    remaining_budget, settle_reflection_budget, should_reflect_on, turn_warrants_reflection,
+    OutputFormat, ReflectionReport, SessionMemory, TurnEvidence, reflect_routed, remaining_budget,
+    settle_reflection_budget, should_reflect_on, turn_warrants_reflection,
 };
 use crate::config::Config;
-
-/// The live fold that gives reflection what a transcript cannot carry.
-///
-/// A [`TurnFriction`] has to be built from the turn's [`AgentEvent`] stream, and
-/// the only place that stream is complete *and* still in this process's hands is
-/// the sender every producer emits on. So the tap wraps that sender: fold, then
-/// forward untouched.
-///
-/// It deliberately does not read the persisted journal instead. Events reach
-/// `store.db` from the renderer task (`agent::persistence::spawn_renderer`),
-/// which is still draining when reflection runs, so a read there would return a
-/// prefix of the turn whose length depends on scheduling — and the digest would
-/// stop being a function of the turn.
-#[derive(Clone, Default)]
-pub(crate) struct FrictionTap {
-    ledger: std::sync::Arc<std::sync::Mutex<TurnFriction>>,
-}
-
-impl FrictionTap {
-    /// Wrap `downstream` so every event folded here is still delivered there.
-    ///
-    /// A poisoned lock is stepped over rather than propagated: this is a
-    /// best-effort observation of a turn that has already happened, and a panic
-    /// on the event path would take down a turn to protect a digest.
-    pub(crate) fn tap(&self, downstream: EventSender) -> EventSender {
-        let ledger = self.ledger.clone();
-        EventSender::from_fn(move |event| {
-            ledger
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .observe(&event);
-            downstream.send(event)
-        })
-    }
-
-    /// What the tap has folded so far. Cloned rather than drained: the turn's
-    /// senders may still be live (reflection's own accounting events ride the
-    /// same channel), and a drain would make this method's result depend on how
-    /// many times it had been called.
-    pub(crate) fn snapshot(&self) -> TurnFriction {
-        self.ledger
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
 
 /// Post-turn reflection for one interactive REPL turn, shared by the plain
 /// prompt handler and `/goal` — the two carried byte-identical copies of
