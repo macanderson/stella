@@ -262,6 +262,12 @@ pub(crate) async fn run_raw_one_shot(
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
     let mut presence = SessionPresence::announce(cfg, prompt);
+    // This turn's friction ledger (#3946), filled by the raw arm below from the
+    // journal its renderer drained and read by the reflection further down. The
+    // wrapped arm leaves it empty on purpose: that turn's events are the
+    // plugin's to observe through the wrapper socket, and a host-side fold
+    // would describe a turn this door did not drive.
+    let mut friction = TurnFriction::default();
     // The wrapper socket's first driver (#3494). With no `--pipeline` the arm
     // below is the one that has always run, unchanged: one turn, no dispatch,
     // and a NULL `pipeline_variant` because no wrapper ran over it.
@@ -325,6 +331,7 @@ pub(crate) async fn run_raw_one_shot(
             Some(presence.id()),
             recall_event,
             memory.as_mut(),
+            Some(&mut friction),
         )
         .await
         .map(|_| ()),
@@ -360,15 +367,16 @@ pub(crate) async fn run_raw_one_shot(
         && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        // No friction ledger on this path yet: the raw step loop's events ride a
-        // bare `UnboundedSender`, so there is nothing to wrap (#2483). The
-        // transcript here does carry every tool call and its typed result, which
-        // is what the digest selects on.
+        // The friction ledger this door folded above (#3946). It was empty here
+        // for as long as the raw loop had no producer — so reflection saw every
+        // tool call the transcript carried, but never what any of them cost, how
+        // long they took, or that the turn had retried or looped, none of which
+        // a `CompletionMessage` records.
         let mut report = crate::memory::reflect_routed(
             m,
             cfg,
             &*provider,
-            crate::memory::TurnEvidence::from_transcript(&messages, outcome.is_ok()),
+            crate::memory::TurnEvidence::with_friction(&messages, &friction, outcome.is_ok()),
             format != OutputFormat::Text,
             crate::agent::remaining_budget(&budget),
         )

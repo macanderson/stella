@@ -19,10 +19,34 @@ use stella_core::BudgetGuard;
 use stella_protocol::{AgentEvent, CompletionMessage, Provider};
 
 use super::{
-    OutputFormat, ReflectionReport, SessionMemory, TurnEvidence, reflect_routed, remaining_budget,
-    settle_reflection_budget, should_reflect_on, turn_warrants_reflection,
+    OutputFormat, ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, reflect_routed,
+    remaining_budget, settle_reflection_budget, should_reflect_on, turn_warrants_reflection,
 };
 use crate::config::Config;
+
+/// What one interactive turn produced, as the three things reflection reads
+/// about it.
+///
+/// Grouped rather than passed flat because #3946's friction ledger was the
+/// eighth argument, and `too_many_arguments` was right to object: `messages`
+/// and `turn_start` are one fact (the transcript, and where this turn starts
+/// in it) and `friction` is the event-stream half of that same turn. Bundling
+/// them is the move `reflect_routed`'s own comment already names — "them as
+/// [`TurnEvidence`] is what keeps this at seven arguments" — applied one layer
+/// up, rather than an `#[allow]` asserting the lint was wrong.
+pub(super) struct InteractiveTurn<'a> {
+    /// The whole session history, not this turn's slice — selection is the
+    /// digest's job (#2460).
+    pub(super) messages: &'a [CompletionMessage],
+    /// Where this turn's own work starts in `messages`; the reflection gate
+    /// reads only that slice, so a conversational turn spends no model call.
+    pub(super) turn_start: usize,
+    /// This turn's folded event ledger (#3946). The transcript records what
+    /// was said; only this records what it cost, how long it took, and whether
+    /// the turn retried or looped — none of which a `CompletionMessage`
+    /// carries.
+    pub(super) friction: &'a TurnFriction,
+}
 
 /// Post-turn reflection for one interactive REPL turn, shared by the plain
 /// prompt handler and `/goal` — the two carried byte-identical copies of
@@ -41,20 +65,19 @@ pub(super) async fn reflect_on_interactive_turn<T, E: std::fmt::Display>(
     provider: &dyn Provider,
     cfg: &Config,
     memory: &mut Option<SessionMemory>,
-    messages: &[CompletionMessage],
-    turn_start: usize,
+    turn: InteractiveTurn<'_>,
     result: &Result<T, E>,
     budget: &mut BudgetGuard,
 ) {
     if should_reflect_on(result)
-        && turn_warrants_reflection(&messages[turn_start..])
+        && turn_warrants_reflection(&turn.messages[turn.turn_start..])
         && let Some(m) = memory
     {
         let mut report = reflect_routed(
             m,
             cfg,
             provider,
-            TurnEvidence::from_transcript(messages, result.is_ok()),
+            TurnEvidence::with_friction(turn.messages, turn.friction, result.is_ok()),
             false,
             remaining_budget(budget),
         )

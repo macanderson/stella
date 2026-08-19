@@ -33,8 +33,8 @@ use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
 use crate::interactive::human_is_present;
 use crate::memory::{
-    ReflectionReport, SessionMemory, TurnEvidence, inject_recall_block, reflect_routed,
-    should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, inject_recall_block,
+    reflect_routed, should_reflect_on, turn_warrants_reflection,
 };
 use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -461,12 +461,24 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             if let Err(e) = &result {
                 eprintln!("  {} {}\n", "Error:".red().bold(), e);
             }
+            // `/goal` reflects with an empty ledger, deliberately and for now
+            // (#3946). `run_goal_turn` runs SEVERAL turns, each with its own
+            // event channel, while this reflection covers the whole goal's
+            // transcript — so there is no single turn whose friction describes
+            // it. Folding every round into one ledger is the mistake #3552
+            // named on the wrapper's `TurnFacts`: it reports the first round's
+            // tools as the third round's. Per-round ledgers threaded through
+            // the goal loop are the real answer and are their own change.
+            let goal_friction = TurnFriction::default();
             reflect_on_interactive_turn(
                 &*provider,
                 cfg,
                 &mut memory,
-                &messages,
-                turn_start,
+                reflect::InteractiveTurn {
+                    messages: &messages,
+                    turn_start,
+                    friction: &goal_friction,
+                },
                 &result,
                 &mut budget,
             )
@@ -509,6 +521,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         let turn_start = messages.len();
         let started_unix = crate::memory::unix_now_secs();
         presence.update_prompt(input);
+        // This turn's friction, filled by `run_turn` from the journal its
+        // renderer drained, and read by the reflection below (#3946).
+        let mut friction = TurnFriction::default();
         let result = run_turn(
             &*provider,
             base_tools,
@@ -526,6 +541,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             Some(presence.id()),
             recall_event,
             memory.as_mut(),
+            Some(&mut friction),
         )
         .await;
         presence.needs_input();
@@ -544,8 +560,11 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             &*provider,
             cfg,
             &mut memory,
-            &messages,
-            turn_start,
+            reflect::InteractiveTurn {
+                messages: &messages,
+                turn_start,
+                friction: &friction,
+            },
             &result,
             &mut budget,
         )
@@ -1111,6 +1130,13 @@ pub(crate) async fn run_turn(
     // same memory afterwards, and a reflection that cannot name its execution
     // files an id-less row (NULL `self_rating`).
     mut session_memory: Option<&mut SessionMemory>,
+    // Where this turn's friction ledger lands, for a caller that reflects
+    // afterwards (#3946). An out-parameter rather than a second return value
+    // because the wrapped door reaches this function through the wrapper
+    // socket's `TurnDriver`, whose `DrivenTurn` shape is a wire contract —
+    // widening the return type to serve reflection would push a reflection
+    // concern into the socket. `None` for a caller that does not reflect.
+    friction: Option<&mut TurnFriction>,
 ) -> Result<TurnOutcome, CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
@@ -1211,6 +1237,15 @@ pub(crate) async fn run_turn(
     let rendered = close_event_stream(registry, tx, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
+    // The turn's friction, folded from the journal the renderer just finished
+    // draining (#3946). Folded here rather than live because this is the first
+    // point at which the whole stream is both complete and still owned — and
+    // the fold reads durations off the events themselves, so the result is the
+    // same one a live tap would have built. Borrowed before `collected` is
+    // moved into the JSON envelope below.
+    if let Some(slot) = friction {
+        *slot = TurnFriction::from_events(&collected);
+    }
 
     let (outcome_label, cost) = match &outcome {
         TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
