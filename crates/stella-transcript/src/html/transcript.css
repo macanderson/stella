@@ -121,6 +121,18 @@
      v3.0 recolour. */
   --hunk-bg: #0d1420;
   --hunk-ink: #6f87a8;
+  /* The two tints of `--cyan` that carry speaker identity into text: the
+     prompt echoed in a turn digest, and the user's own prose. Derived from
+     `--cyan` rather than from the ramp, which is why they are the only two
+     derived surfaces whose light values are a darkening rather than a
+     lightening — the hue has to survive, and on paper that means going down
+     the value scale instead of up. */
+  --pq-ink: #cfe9ec;
+  --you-prose: #d2f3f6;
+  /* The fill text on a categorical roletag. Scheme-independent on purpose:
+     `--cyan` and `--violet` do not change between schemes (see the header),
+     so the ink that has to stay legible on them must not change either. */
+  --on-category: #000000;
 
   --mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
@@ -148,6 +160,26 @@
     --del-word: rgba(168, 32, 54, 0.28);
     --add-line: rgba(11, 107, 61, 0.09);
     --add-word: rgba(11, 107, 61, 0.24);
+
+    /* The derived surfaces, each flipped about the ramp it was derived from:
+       a step *below* the ground in the dark scheme is a step *above* the paper
+       here. Skipping this half is not a smaller change but a broken one —
+       these roles are wells, hovers and body text, so leaving them dark puts
+       a near-black box on a white page and, worse, prints `--code` grey on
+       the near-white diff washes, where it cannot be read at all. That was
+       this file's state until now: the values were written inline, and an
+       inline literal is precisely what a scheme cannot override. */
+    --sunken: #f2f5f9;
+    --sunken-2: #eef2f7;
+    --hover: #f0f3f7;
+    --hover-raised: #eaeff5;
+    --selected: #dfe6ee;
+    --hairline-soft: #f1f4f8;
+    --code: #2b323a;
+    --hunk-bg: #eef3fb;
+    --hunk-ink: #4a6285;
+    --pq-ink: #12626b;
+    --you-prose: #0f5b64;
   }
 }
 
@@ -219,7 +251,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .st.err { color: var(--red); font-weight: 700; }
 .st.run { color: var(--cyan); }
 .tdigest { color: var(--dim); font-size: 12px; min-width: 0; }
-.tdigest .pq { color: #cfe9ec; }
+.tdigest .pq { color: var(--pq-ink); }
 .tdigest .aq { color: var(--ink); }
 .tdigest .sep { color: var(--faint); }
 
@@ -255,10 +287,10 @@ details[open] > summary .chev { transform: rotate(90deg); }
   padding: 1px 7px;
   border-radius: 4px;
 }
-.you .roletag { color: #000; background: var(--cyan); }
-.agent .roletag { color: #000; background: var(--violet); }
+.you .roletag { color: var(--on-category); background: var(--cyan); }
+.agent .roletag { color: var(--on-category); background: var(--violet); }
 .prose { max-width: 72ch; color: var(--ink); }
-.you .prose { color: #d2f3f6; }
+.you .prose { color: var(--you-prose); }
 .prose p { margin: 0 0 8px; }
 .prose p:last-child { margin: 0; }
 .prose-fold > summary { color: var(--dim); }
