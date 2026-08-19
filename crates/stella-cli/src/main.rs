@@ -1255,18 +1255,25 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                  successful."
             );
             // `monitor` takes no `--pipeline`/`--no-pipeline` of its own — it is
-            // `goal` with a fixed prompt, not a door #3381 named — so its
-            // driver stays pinned to the staged pipeline exactly as before the
-            // flip, deliberately: fixing CI is exactly the multi-file,
-            // verify-gated work the pipeline's ladder was built for, and
-            // nothing here reads a user flag for the flip to invert.
+            // `goal` with a fixed prompt, not a door #3381 named. It used to
+            // stay pinned to the staged pipeline deliberately: fixing CI is
+            // exactly the multi-file, verify-gated work the pipeline's ladder
+            // was built for. The ladder is gone (removal census,
+            // `docs/spec/pipeline-as-plugins.md` §7 slice 1) — `--pipeline
+            // classic` is refused everywhere now, and pinning `monitor` to it
+            // would only route it into that same refusal. `monitor` degrades
+            // to the raw loop like every other door with no `--pipeline`
+            // named: it loses the witness/scope-review scaffolding, not its
+            // completion criterion — `stella_core::Engine::assess` (the goal
+            // loop's own verifier, a `stella-core` mechanism this deletion
+            // does not touch) is what actually judges "fully green."
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_goal_cmd(
                     &cfg,
                     &goal,
                     cli.globals.spend_limit,
-                    wrapper_plugin::PipelineChoice::Classic,
+                    wrapper_plugin::PipelineChoice::Raw,
                 ),
             )?;
         }
