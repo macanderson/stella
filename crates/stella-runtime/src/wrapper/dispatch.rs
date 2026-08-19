@@ -64,9 +64,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use stella_plugin::{
-    AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceSet,
-    ObservedEvidence, Outcome, PROTOCOL_VERSION, PluginManifest, PublishedSignal, RoundState,
-    SignalValues, StageName, TamperFinding, TurnOutcome, Verdict, VerdictRule, WrapperPoint,
+    AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceProvenance,
+    EvidenceSet, ObservedEvidence, Outcome, PROTOCOL_VERSION, PluginManifest, PublishedSignal,
+    RoundState, SignalValues, StageName, TamperFinding, TurnOutcome, Verdict, VerdictRule,
+    WrapperPoint,
 };
 use stella_protocol::completion::CompletionMessage;
 
@@ -351,7 +352,18 @@ impl WrapperDispatch {
             let observed = self
                 .close_round(round, &input, program.stages(), driven.outcome, &mut faults)
                 .await;
-            let evidence = EvidenceSet::from_observed(observed, driven.tamper);
+            // `None` is the host's own conclusion about a plugin that did not
+            // answer — an undeclared point, or a fault already on `faults` —
+            // and must not be dressed as the plugin's report of nothing
+            // (#3513). Either way the flip is `Unobservable` and `judge`
+            // abstains; what differs is whose silence it is.
+            let evidence = match observed {
+                Some(observed) => EvidenceSet::from_observed(observed, driven.tamper),
+                None => EvidenceSet {
+                    tamper: driven.tamper,
+                    ..EvidenceSet::unobserved()
+                },
+            };
 
             let verdict = judge(&self.rule, &evidence);
             let state = RoundState {
@@ -468,13 +480,13 @@ impl WrapperDispatch {
         stages: &[StageName],
         outcome: TurnOutcome,
         faults: &mut Vec<WrapperError>,
-    ) -> ObservedEvidence {
+    ) -> Option<ObservedEvidence> {
         if !self
             .manifest
             .loop_grant
             .permits_point(WrapperPoint::AfterTurn)
         {
-            return ObservedEvidence::nothing();
+            return None;
         }
         let request = AfterTurnRequest {
             protocol_version: PROTOCOL_VERSION,
@@ -486,10 +498,10 @@ impl WrapperDispatch {
             turn: outcome,
         };
         match self.wrapper.after_turn(request).await {
-            Ok(response) => response.evidence,
+            Ok(response) => Some(response.evidence),
             Err(error) => {
                 faults.push(error);
-                ObservedEvidence::nothing()
+                None
             }
         }
     }
@@ -503,14 +515,26 @@ impl DispatchReport {
     /// why this is a convenience and not the answer.
     #[must_use]
     pub fn met(&self) -> bool {
-        matches!(self.outcome, Outcome::Met)
+        matches!(self.outcome, Outcome::Met { .. })
     }
 
     /// The reason a surface prints, in the words the declaration used.
     #[must_use]
     pub fn summary(&self) -> String {
         match &self.outcome {
-            Outcome::Met => format!("{}: every declared requirement is met", self.variant),
+            // A `Met` the plugin asserted about its own work must not print as
+            // an observation. The host does not re-run a plugin's checks
+            // (#3511's Option 2), so the only honest report of that verdict
+            // names whose word it rests on (#3513).
+            Outcome::Met { evidence } => match evidence {
+                EvidenceProvenance::HostObserved => {
+                    format!("{}: every declared requirement is met", self.variant)
+                }
+                EvidenceProvenance::PluginReported => format!(
+                    "{}: every declared requirement is met, on the plugin's own reported evidence",
+                    self.variant
+                ),
+            },
             Outcome::Unmet { unmet, stopped } => {
                 let clauses: Vec<String> = unmet.iter().map(ToString::to_string).collect();
                 format!(
