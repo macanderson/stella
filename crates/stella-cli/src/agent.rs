@@ -7,7 +7,7 @@
 //! `AgentEvent` stream live via a spawned draining task.
 
 use std::collections::HashMap;
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -21,12 +21,7 @@ use stella_core::{
 use stella_mcp::{McpConfig, McpServerConfig, McpToolSet};
 use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
-use stella_pipeline::{
-    AlwaysAbortGate, CmdOutcome, McpPrefetchPort, PipelineConfig, PipelinePorts, PipelineStatus,
-    ProviderResolver, RepoStatusPort, RepoStructurePort,
-};
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput, UNKNOWN_MODEL};
-use stella_protocol::{ContextRecallPort, NoContextRecall};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool};
@@ -43,7 +38,7 @@ use crate::memory::{
 };
 use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
-use crate::{OutputFormat, config::Config, resume_frame};
+use crate::{OutputFormat, config::Config};
 use stella_context::EpisodeOutcome;
 
 mod budget;
@@ -74,11 +69,7 @@ pub(crate) use graph::spawn_session_graph;
 use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
 pub use init::run_init;
 pub(crate) use init::{InitIo, InitLine, deck_narrator, deck_notice_narrator, init_workspace};
-use outcome::{
-    VerificationRequirement, pipeline_episode_outcome, pipeline_failure_reason,
-    pipeline_session_status, pipeline_status_label, pipeline_status_result,
-};
-pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
+pub(crate) use outcome::settled_cost_since;
 use output::*;
 pub(crate) use persistence::{
     PersistOutcome, begin_execution, close_event_stream, persist_event, persist_event_detailed,
@@ -86,7 +77,7 @@ pub(crate) use persistence::{
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
-pub(crate) use reflect::{FrictionTap, surface_reflection};
+pub(crate) use reflect::surface_reflection;
 use reflect::{reflect_on_interactive_turn, reflection_json};
 pub(crate) use skill_usage::stamp_and_record_skill_usage;
 pub(crate) use tools::*;
