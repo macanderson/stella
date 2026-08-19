@@ -153,6 +153,18 @@ input, and every later stage must see the replacement); dispatch-time input
 validation against the advertised schema; execution; observer events. New
 cross-cutting behaviour belongs here, not sprinkled into tools.
 
+Since #2793 the hook-chain-and-approval half of that list is reachable as a
+**port** rather than only from inside this function: `ToolRegistry` implements
+`stella_core::ports::DispatchGate`, and `execute` runs through the same entry
+rather than a second copy that happens to agree. That exists because a
+decorator which dispatches a name of its own — `McpToolSet`, `CustomToolSet` —
+never reaches `execute` at all, so before #2793 a blocking handler returning
+`Deny` stopped a built-in and did not stop an MCP tool with the same effect.
+A decorator therefore has two obligations: call `admit_dispatch` before running
+a name it owns, and **forward `dispatch_gate()` for the names it merely passes
+through** — a decorator that lets the `None` default stand silently disarms the
+gate for everything beneath it.
+
 **The catalog is the single declaration point.**
 [`src/catalog.rs`](src/catalog.rs) declares every dispatchable name once,
 with its `read_only` and `speculation_safe` flags and its policy group.
