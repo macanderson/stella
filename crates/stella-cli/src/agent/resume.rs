@@ -22,28 +22,20 @@
 //!
 //! # What resuming honestly costs
 //!
-//! Three things, said here rather than discovered:
-//!
 //! - **The system prompt is the checkpointed one, byte for byte.** The deck's
 //!   turn-boundary resume regenerates it (rules may have changed); mid-turn,
 //!   fidelity wins — the transcript the provider priced and cached is the
 //!   transcript it gets back.
-//! - **A turn interrupted mid-pipeline re-enters the pipeline only when its
-//!   frame says it can** (#1671). A frame carrying the pipeline's progress
-//!   record — class, goal, plan cursor, test baseline — restores through
-//!   [`stella_pipeline::Pipeline::resume`]: the turn finishes, the unreached
-//!   plan steps run, and the witness and verify stages run on the
-//!   completed work, with the residual losses (lint baseline, authored
-//!   witness) named up front. A frame without that record — an older writer,
-//!   a kill before execution — falls back to the plain engine turn, and
-//!   never *silently*: the run names every stage it is not restoring, drops
-//!   the green tick, and files its audit row as
-//!   `resumed_complete_unverified` (#1615).
-//! - **A turn that executed in a candidate worktree resumes in the
-//!   workspace, as a plain turn.** The candidate died with the process;
-//!   restoration declines (`PipelineResume::from_progress`).
+//! - **A turn interrupted mid-pipeline always resumes as a plain engine
+//!   turn** (#3846: the staged pipeline that used to restore beyond it,
+//!   `crates/stella-pipeline`, is gone workspace-wide). A frame left by an
+//!   older build — [`crate::resume_frame::PipelineFrame`] — is still read and
+//!   reported on, never silently dropped: the run names every stage it is
+//!   not restoring, drops the green tick, and files its audit row as
+//!   `resumed_complete_unverified` (#1615), the graceful refusal
+//!   [`crate::resume_frame::ResumeFrame::advisory`] states in full.
 
-use super::outcome::{VerificationRequirement, pipeline_status_result, turn_outcome_result};
+use super::outcome::turn_outcome_result;
 use super::*;
 use crate::failure::CliFailure;
 
