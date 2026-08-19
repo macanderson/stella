@@ -83,6 +83,11 @@ pub(crate) fn spawn_forwarder(
 ) -> tokio::task::JoinHandle<LaneStreamEnd> {
     tokio::spawn(async move {
         let mut seq = 0u64;
+        // The lane's friction ledger (#3962), folded as the stream goes past
+        // rather than from a collected `Vec` the way `agent::run_turn` does:
+        // this task forwards each event and keeps none, and a ledger is bounded
+        // where a retained journal is not.
+        let mut friction = TurnFriction::default();
         // This lane's open run of streamed reasoning fragments, joined into one
         // row per thought rather than one per few tokens (#3969). One run per
         // forwarder, and a forwarder is one lane — every lane has a registry
