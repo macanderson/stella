@@ -39,8 +39,6 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
             "auto_mode": "off",
             "effort_auto": "on",
             "headless_scope_bypass": "off",
-            "pipeline_max_revisions": 4,
-            "pipeline_candidates": 2,
             "agents": {
               "verifier": {
                 "provider": "openrouter",
@@ -93,8 +91,6 @@ pipeline_verifier_model = "openrouter/openai/gpt-5.5"
 auto_mode = "off"
 effort_auto = "on"
 headless_scope_bypass = "off"
-pipeline_max_revisions = 4
-pipeline_candidates = 2
 
 [agents.verifier]
 provider = "openrouter"
@@ -722,7 +718,7 @@ fn a_migration_drops_the_retired_verdict_key() {
         r#"{
              "agent_engine_config": {
                "default_model": "zai/glm-5.2",
-               "pipeline_require_diff_coverage": "on",
+               "model_timeout_secs": 60,
                "pipeline_require_independent_verifier": "on"
              }
            }"#,
@@ -736,7 +732,7 @@ fn a_migration_drops_the_retired_verdict_key() {
         "a retired engine key must not be copied into a generated file: {generated}"
     );
     assert!(
-        generated.contains("pipeline_require_diff_coverage"),
+        generated.contains("model_timeout_secs"),
         "the live neighbour must survive: {generated}"
     );
 }
