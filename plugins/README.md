@@ -8,6 +8,7 @@ yes or no. Nothing a plugin does is inferred.
 | Plugin | Replaces | Points | Status |
 | --- | --- | --- | --- |
 | [`stella-research/`](stella-research/) | the pipeline's research **and recall** stages | `before_turn` | Track B's first extraction (#3380 §7); recall asks the host for the context plane (#3540) |
+| [`stella-plan/`](stella-plan/) | the pipeline's plan stage | `before_turn` | Track B's second extraction (#3380 §7); the plan *is* a model call, so it asks the host for one bounded `child_turn` at the `planner` role intent (#3562, #3576) |
 
 ## Why these are not workspace members
 
