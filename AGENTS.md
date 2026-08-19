@@ -139,6 +139,23 @@ silent failure costs here). `make main-canary` runs the same check locally
 without filing anything; `scripts/main-canary.sh`'s header carries the full
 argument, including why it deliberately does not open a fix PR (#3332).
 
+A sixth, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
+and this is what consumes the detection at the point a merge is still a
+decision. It runs on `pull_request`, asks the tracker whether a `main-red`
+issue is open, and fails if one is — naming it. On 2026-08-19 the canary
+worked exactly as designed and it did not help: it filed its issue at 16:57:01,
+and four more PRs merged onto the non-compiling tree over the next 35 minutes,
+the first of them **twelve seconds later** (#3917). Once `main` is red every
+PR's checks are red too, so red stops distinguishing "your change is broken"
+from "the base is" — which is how one composition break became four breaks in
+three crates, each hiding the next. The `unblocks-main` label is the designed
+way through, so the hold never blocks its own repair, and an unreachable
+tracker fails **open** because this is the second line of defence and the
+canary's issue is the first. Compiles nothing. `make main-red-hold` asks by
+hand; `make main-red-hold-test` covers it, blocking branch included. Reporting
+becomes holding only when a maintainer adds it to main's required checks —
+a repository setting, not a file in this tree.
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
