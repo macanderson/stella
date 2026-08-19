@@ -730,8 +730,6 @@ async fn run_task(
     // a one-shot or deck turn. The store is rooted in the task worktree so
     // parallel workers never contend on a single SQLite writer.
     let store = agent::open_store(root);
-    // Owned above the pipeline so it outlives every engine it builds (#1595).
-    let calibration = agent::seed_calibration(&store, &cfg);
     // `pipeline_variant` is always NULL now — the staged pipeline that used
     // to drive some fleet workers (#3381, #3388, #3684) is gone (#3846), so
     // every attempt this build records ran the raw step-loop.
