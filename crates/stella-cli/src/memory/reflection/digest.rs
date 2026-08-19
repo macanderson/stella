@@ -122,7 +122,7 @@ const FRICTION_LIST_CAP: usize = 6;
 /// leak in a best-effort path.
 const FRICTION_ENTRY_CAP: usize = 512;
 
-/// One model call's metering record, as [`AgentEvent::StepUsage`](stella_protocol::AgentEvent::StepUsage) reported it.
+/// One model call's metering record, as [`AgentEvent::StepUsage`] reported it.
 #[derive(Debug, Clone)]
 struct StepCost {
     step: usize,
@@ -132,8 +132,8 @@ struct StepCost {
     tool_calls: usize,
 }
 
-/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`](stella_protocol::AgentEvent::ToolStart),
-/// closed by its [`AgentEvent::ToolResult`](stella_protocol::AgentEvent::ToolResult).
+/// One tool call's pass through the turn — opened by [`AgentEvent::ToolStart`],
+/// closed by its [`AgentEvent::ToolResult`].
 #[derive(Debug, Clone)]
 struct ToolPass {
     call_id: String,
@@ -150,7 +150,7 @@ struct ToolPass {
 
 /// What a turn's event stream says about where its time and money went.
 ///
-/// Folded live by the surface that owns the turn's [`AgentEvent`](stella_protocol::AgentEvent) stream and
+/// Folded live by the surface that owns the turn's [`AgentEvent`] stream and
 /// handed to reflection as evidence the transcript does not carry: a
 /// `CompletionMessage` records what was said, never what it cost or how long it
 /// took, and a retry or a loop-detector firing leaves no message at all.
