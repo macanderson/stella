@@ -219,14 +219,32 @@ def main() -> int:
     baseline = read_baseline(baseline_path)
 
     if update:
-        merged = {c: min(n, baseline.get(c, n)) for c, n in counts.items()}
-        raised = {c: (baseline[c], n) for c, n in counts.items() if n > baseline.get(c, n)}
+        # An absent crate's allowance is ZERO, never "whatever it happens to
+        # have now" -- the check path below has always spelled it
+        # `baseline.get(crate, 0)`, and the writer spelling it
+        # `baseline.get(c, n)` made the comparison `n > n`, permanently False.
+        # So the one case the ratchet exists to block -- a crate introducing
+        # its FIRST `Result<_, String>` -- was the one case `--update` silently
+        # grandfathered, writing the new entry and reporting success (#3750).
+        merged = {c: min(n, baseline.get(c, 0)) for c, n in counts.items()}
+        raised = {
+            c: (baseline.get(c, 0), n)
+            for c, n in counts.items()
+            if n > baseline.get(c, 0)
+        }
         if raised:
             for crate, (was, now) in sorted(raised.items()):
-                print(
-                    f"check-typed-errors: refusing to raise {crate} from {was} to {now}.",
-                    file=sys.stderr,
+                # A crate with no entry is not "raised from 0" -- it is being
+                # added, and saying so names the remedy the reader needs.
+                note = (
+                    f"refusing to raise {crate} from {was} to {now}."
+                    if crate in baseline
+                    else (
+                        f"refusing to add {crate} at {now} -- a crate absent "
+                        "from the ratchet must be at zero."
+                    )
                 )
+                print(f"check-typed-errors: {note}", file=sys.stderr)
             print(
                 "check-typed-errors: the ratchet only tightens -- type the new "
                 "signatures instead (AGENTS.md invariant #5).",

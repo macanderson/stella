@@ -305,6 +305,14 @@ typed-errors: ## Assert no library crate's public API returns Result<_, String> 
 typed-errors-update: ## Retighten the invariant-#5 ratchet (run after typing signatures)
 	@python3 ./scripts/check-typed-errors.py --update
 
+.PHONY: typed-errors-test
+typed-errors-test: ## Test the invariant-#5 ratchet's direction (hermetic; not part of `gate`)
+	./scripts/test-typed-errors.sh
+
+.PHONY: shellcheck-guard-test
+shellcheck-guard-test: ## Test the shellcheck step's presence guard (hermetic; not part of `gate`)
+	./scripts/test-shellcheck-guard.sh
+
 .PHONY: diagnostic-codes
 diagnostic-codes: ## Assert docs/reference/diagnostics.md documents every emitted diagnostic code (#2507)
 	@./scripts/check-diagnostic-codes.sh
@@ -317,8 +325,43 @@ diag-reference: ## Regenerate the diagnostic-code reference from the tree, prese
 doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included (#634, #2336; CARGO_SCOPE to narrow)
 	RUSTDOCFLAGS="-D warnings" cargo doc $(CARGO_SCOPE) --no-deps --document-private-items --keep-going
 
+# The presence guard exists because the failure it replaces was
+# indistinguishable from a real finding: on a machine without the binary this
+# recipe died with `/bin/sh: 1: shellcheck: not found` and `make: *** Error
+# 127`, which reads exactly like a shell-lint failure in a script somebody just
+# edited (#3615). It fails rather than skipping — a gate step that can no-op is
+# a gate step that will, and a green tick over an unrun check is the one
+# outcome the gate exists to prevent. The MESSAGE carries the
+# distinction, never the exit code: GNU make normalises any recipe failure to
+# its own status 2, so no caller can tell "could not run" from "ran and found
+# something" by the number -- measured, a real finding exits the recipe 1 and
+# make still reports 2. The lint invocation below is byte-identical to what it
+# always was, so a machine that has shellcheck sees no change at all.
+# Covered by scripts/test-shellcheck-guard.sh (`make shellcheck-guard-test`),
+# which pins both halves: the notice on an absent binary, and that a present
+# one is still invoked with its argv intact and its findings still fatal.
 .PHONY: shellcheck
 shellcheck: ## Lint install.sh, scripts/*.sh, and .githooks/* (#916)
+	@command -v shellcheck >/dev/null 2>&1 || { \
+	  printf '%s\n' \
+	    'shellcheck: UNAVAILABLE — THIS STEP DID NOT RUN.' \
+	    '' \
+	    '  shellcheck is not on PATH. No shell script was linted, so this is' \
+	    '  NOT a lint finding: nothing was checked, and nothing has been' \
+	    '  established about install.sh, scripts/*.sh, scripts/lib/*.sh or' \
+	    '  .githooks/*.' \
+	    '' \
+	    '  Install it, then re-run `make shellcheck`:' \
+	    '' \
+	    '    apt-get install -y shellcheck   # Debian/Ubuntu (most dev containers)' \
+	    '    brew install shellcheck         # macOS' \
+	    '    dnf install -y ShellCheck       # Fedora' \
+	    '' \
+	    '  ./scripts/setup-dev-env.sh --check reports it alongside the rest of' \
+	    '  the tooling the gate needs. CI runs the same lint on a runner where' \
+	    '  shellcheck is preinstalled (.github/workflows/ci.yml), so a missing' \
+	    '  binary here is a gap in this machine, never a red tree.' >&2; \
+	  exit 2; }
 	shellcheck install.sh scripts/*.sh scripts/lib/*.sh .githooks/*
 
 # Deliberately not part of `gate`: it needs a Docker daemon, which the gate
