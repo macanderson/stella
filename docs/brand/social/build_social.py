@@ -49,8 +49,8 @@ REPO = HERE.parents[2]
 # brand tokens — docs/brand/css/tokens.css is normative; these mirror it
 # ---------------------------------------------------------------------------
 
-BRAND = "#00D1F9"  # Ion — the comet, on every ground
-BRAND_DEEP = "#00778F"  # small brand *text* on light surfaces only
+BRAND = "#C58A32"  # Bronze Gold — the comet, on every ground
+BRAND_DEEP = "#8B5E1A"  # small brand *text* on light surfaces only
 INK = "#070B10"
 PAPER = "#E9EDF2"  # cool text on dark
 PAPER_BG = "#EEF1F5"  # light-mode surface
@@ -144,12 +144,19 @@ GITHUB_BOX = 24.0
 class Theme:
     """One ground and everything that has to change with it.
 
-    Note what does *not* change: the comet stays #00D1F9 on both grounds.
-    These are banners, always rendered on the ground the theme names, so the
-    v3.0 light-lockup rule (the mark drops to brand-700 on paper, because ion
-    holds 1.83:1 against white) does not reach here — a social canvas paints
-    its own ground, and this one is #EEF1F5, where the mark reads. Only
-    brand-coloured *lettering* drops, and only on light.
+    Note what does *not* change: the comet stays #C58A32 on both grounds.
+    Only brand-coloured *lettering* drops, and only on light.
+
+    That carve-out is inherited, and its stated reason never held. The kit's
+    light-mark rule (tokens.css `--stella-mark-shape`, cometkit's
+    `BRAND_ON_LIGHT`) exists *because* the mark sits on paper, so "a social
+    canvas paints its own ground, and this one is #EEF1F5" is the condition
+    that triggers the rule rather than one that exempts it. Measured on
+    #EEF1F5: ion was 1.83:1, gold is 2.63:1, brand-700 is 4.99:1 — v4.0's
+    return to gold improves the number without reaching the 3:1 graphical
+    floor. Which stop the social mark takes is a brand decision, not a
+    follow-on edit to a recolour, so it is left as it was and tracked in
+    #3973.
     """
 
     name: str

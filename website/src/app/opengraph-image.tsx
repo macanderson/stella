@@ -22,7 +22,7 @@ import {
  *
  * Colours are literals or imported constants rather than CSS vars because
  * Satori resolves no cascade: Ink #070b10, Paper #e9edf2, Bronze Gold
- * #00d1f9 (6.4:1 on ink), muted #9299a1 (6.8:1 on ink). Keep the markup inside Satori's
+ * #c58a32 (6.4:1 on ink), muted #9299a1 (6.8:1 on ink). Keep the markup inside Satori's
  * supported subset — plain <path>/<rect> fills only, no gradients, masks, or
  * filters (the trails are pre-flattened rounded rects for exactly this
  * reason), and every element with children carries an explicit `display`.
@@ -246,7 +246,7 @@ export default function OpengraphImage() {
               // The one thing on the card a reader is meant to act on. The
               // wash is the accent at 12%, written out because Satori has no
               // cascade and cannot resolve a custom property.
-              background: "rgba(0,209,249,0.12)",
+              background: "rgba(197,138,50,0.12)",
               color: BRAND,
             }}
           >

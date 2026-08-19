@@ -24,7 +24,7 @@
  */
 
 /** Ion. Inline fallback for contexts with no cascade (Satori). */
-export const BRAND = "#00d1f9";
+export const BRAND = "#c58a32";
 
 /** The comet on its own — docs/brand/logo/svg/logomark-color.svg. */
 export const MARK_VIEW_BOX = "0 0 96 96";
