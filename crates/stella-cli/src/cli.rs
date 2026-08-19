@@ -1056,7 +1056,7 @@ pub(crate) enum Command {
         only: inspect::RoleFilter,
     },
 
-    /// Pass calibration: false-positive rate vs CI and revert ground truth
+    /// Pass calibration: false-positive rate vs CI and reverts
     ///
     /// Fold every recorded session's pass verdicts against the evidence
     /// observed after them (#871, #1293): how often did an unproven PASS —

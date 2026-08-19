@@ -13,7 +13,7 @@ stella calibration --format json  # machine-readable tallies
 ```
 
 <Callout type="warn">
-**Nothing in Stella emits a verdict any more.** The built-in staged pipeline
+**Nothing in stella emits a verdict any more.** The built-in staged pipeline
 was the only in-tree producer of `Verdict` events and was deleted; a plain
 `stella run` is the raw step loop with no verification stage over it. Verdicts
 now come from an **installed verification plugin** (`stella plugin install`,
