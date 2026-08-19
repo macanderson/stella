@@ -69,6 +69,7 @@ use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
 pub use init::run_init;
 pub(crate) use init::{InitIo, InitLine, deck_narrator, deck_notice_narrator, init_workspace};
 pub(crate) use outcome::settled_cost_since;
+pub(crate) use output::reflection_explicitly_disabled;
 use output::*;
 pub(crate) use persistence::{
     PersistOutcome, ReasoningRun, begin_execution, close_event_stream, flush_reasoning_tail,
