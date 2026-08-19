@@ -263,11 +263,13 @@ fn a_steering_wrapper_is_not_refused_by_the_arbiter_gate() {
         .expect("a steering-grade wrapper can never hold a round open — nothing to refuse");
 }
 
-/// `classic` and no flag at all both resolve away from `Plugin` before
-/// reaching the gate, so neither is refused anywhere — only a *named*
-/// variant is ever in reach of the gate, and only on `fleet`.
+/// A directly-constructed [`PipelineChoice::Classic`] (no live path builds
+/// one — `resolve()` refuses the literal `--pipeline classic` before it ever
+/// would, see the variant's own doc comment) and the ordinary resolved `Raw`
+/// choice both bypass this gate entirely — only a *named* plugin variant is
+/// ever in reach of it, and only on `fleet`.
 #[test]
-fn classic_and_raw_are_never_refused_on_any_door() {
+fn a_directly_constructed_classic_choice_and_resolved_raw_are_never_refused_on_any_door() {
     reject_plugin_variant_for_door("goal", PipelineChoice::Classic)
         .expect("classic has no plugin to drive — nothing to refuse");
     reject_plugin_variant_for_door("goal", PipelineChoice::Raw)
@@ -310,11 +312,12 @@ fn each_verification_flag_alone_is_refused_against_the_raw_loop() {
 /// only ever fires against a resolution that cannot honor the flag. No live
 /// path can construct `Classic` any more (`PipelineChoice::resolve` refuses
 /// `--pipeline classic` outright), so this exercises the early return
-/// directly rather than through a realistic caller; it documents the current
-/// shape of dead scaffolding this function still carries, kept until the
-/// slice that deletes `PipelineChoice::Classic` deletes this branch too.
+/// directly, against a `Classic` value built by hand, rather than through a
+/// realistic caller; it documents the current shape of dead scaffolding this
+/// function still carries, kept until the slice that deletes
+/// `PipelineChoice::Classic` deletes this branch too.
 #[test]
-fn verification_flags_are_accepted_with_pipeline_classic() {
+fn verification_flags_are_accepted_against_a_directly_constructed_classic_choice() {
     reject_verification_flags_without_pipeline(PipelineChoice::Classic, Some("pytest"), true, true)
         .expect("classic runs the verification machinery these flags belong to");
 }

@@ -13,8 +13,9 @@
 //! (mocked-nowhere, so hanging or erroring for an unrelated reason) provider
 //! call — and passes on this one: the arbiter grade is refused before the
 //! provider is ever built, on the same pre-flight rung
-//! `reject_verification_flags_without_pipeline` uses, at zero cost and zero
-//! provider calls. No mock server is stood up and no real API key is used —
+//! `reject_verification_flags_without_pipeline` uses — before any paid model
+//! call, though not before config load and catalog bootstrap, which still
+//! run ahead of it. No mock server is stood up and no real API key is used —
 //! deliberately, matching `verification_flags_require_pipeline_cli.rs`'s
 //! discipline: if this refusal ever stopped firing before dispatch, the
 //! process would hang or fail for a completely different (network) reason,

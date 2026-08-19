@@ -504,9 +504,13 @@ left with a half-applied edit. It is a **global** flag, so it goes before the
 subcommand:
 
 ```bash
-stella --spend-limit 1.50 run --test-command "cargo test -p stella-core" \
+stella --spend-limit 1.50 run \
   "make the loop detector treat a repeated no-op tool call as progress-free"
 ```
+
+(`--test-command` is refused unless the run is wrapped in an installed
+verification plugin — `stella run --pipeline <plugin-id> --test-command …` —
+since a plain `stella run` has no verification stage to hand it to.)
 
 `STELLA_SPEND_LIMIT` is the same knob without touching the command line. See
 [Telemetry &amp; budget](/docs/telemetry).

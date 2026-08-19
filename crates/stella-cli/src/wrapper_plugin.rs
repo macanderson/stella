@@ -331,8 +331,8 @@ pub(crate) fn reject_plugin_variant_for_door(
 /// module doc, and `plugins/stella-goal/README.md`, for why that plugin runs
 /// there and not here). So this refuses before the provider is ever built —
 /// the same pre-flight rung [`reject_verification_flags_without_pipeline`]
-/// and [`reject_plugin_variant_for_door`] use — at zero cost and zero
-/// provider calls, every time.
+/// and [`reject_plugin_variant_for_door`] use — before any paid model call,
+/// every time, though not before config load and catalog bootstrap.
 ///
 /// Steering and observer wrappers are unaffected and keep running per round
 /// on `stella goal` exactly as before: neither grade can reach `again`'s
