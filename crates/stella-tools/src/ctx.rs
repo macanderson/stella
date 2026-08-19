@@ -21,6 +21,31 @@
 //! failing the call over it would let an observability bug break a working
 //! tool.
 //!
+//! # Why attribution lives here and not on the tool (#3807)
+//!
+//! The `task` tool mints an agent id per delegation and recorded it nowhere:
+//! `agent_uses` had exactly one writer, the deck's named-agent path, so a
+//! session that delegated eight children exported zero rows and sub-agent
+//! health had no audit trail at all.
+//!
+//! Two seams were available. The first — a late-attached ledger handle on
+//! `SpawnSubAgent`, mirroring
+//! [`DispatcherSlot`](crate::subagent::DispatcherSlot) — was **not** taken:
+//! that slot exists to break a genuine reference cycle (the dispatcher owns
+//! the registry that owns the tool), and the ledger has no such cycle to
+//! break. Paying a slot's cost — a nullable handle, an attach call every host
+//! must remember, and a tool that silently records nothing when one forgets —
+//! buys nothing here, and the next tool that wants to attribute would need its
+//! own copy of it.
+//!
+//! The second is this: the registry already builds one context per call and
+//! already owns the ledger, so a clone rides along beside the bus with no new
+//! host step at all, and [`ToolCtx::record_agent_use`] serves any future tool.
+//! Attribution is not the contract-gated vocabulary `emit` is — a row names
+//! its own recorder and is drained per execution either way — so it needs no
+//! allowlist. A [`ToolCtx::bare`] context has no ledger and records nothing,
+//! the same shape `emit` already has.
+//!
 //! # Events never ride the output
 //!
 //! The loop detector keys on output bytes, so a timing or progress marker in
@@ -55,6 +80,9 @@ pub struct ToolCtx {
     /// root, so a context built before an operator widened anything confines
     /// to the workspace — the safe direction.
     scope: SessionScope,
+    /// The session's agent-invocation ledger, when this context came from a
+    /// registry (see the module docs, "Why attribution lives here").
+    agent_uses: Option<crate::agent_use::AgentUseLedgerHandle>,
 }
 
 impl ToolCtx {
@@ -75,6 +103,7 @@ impl ToolCtx {
             bus,
             allowed,
             scope,
+            agent_uses: None,
         }
     }
 
@@ -84,6 +113,15 @@ impl ToolCtx {
     #[must_use]
     pub fn with_scope(mut self, scope: SessionScope) -> Self {
         self.scope = scope;
+        self
+    }
+
+    /// The same context, able to attribute an invocation to the session's
+    /// agent-use ledger — what
+    /// [`crate::registry::ToolRegistry::execute`] attaches on every call.
+    #[must_use]
+    pub fn with_agent_ledger(mut self, ledger: crate::agent_use::AgentUseLedgerHandle) -> Self {
+        self.agent_uses = Some(ledger);
         self
     }
 
@@ -99,6 +137,7 @@ impl ToolCtx {
             bus: None,
             allowed: Vec::new(),
             scope,
+            agent_uses: None,
         }
     }
 
@@ -378,6 +417,29 @@ impl ToolCtx {
         };
         fields.insert("tool".into(), Value::String(self.tool.clone()));
         bus.emit_named(event, Value::Object(fields));
+        true
+    }
+
+    /// Record one agent invocation this call is responsible for, against the
+    /// session ledger the persistence layer drains per execution.
+    ///
+    /// Returns whether it was recorded — `false` only for a context with no
+    /// ledger ([`Self::bare`]), the same reported-drop shape as
+    /// [`Self::emit`]. A tool that mints a child agent should call this
+    /// **before** the dispatch it describes, so a turn cancelled mid-child
+    /// still carries the evidence that the child existed.
+    pub fn record_agent_use(&self, agent: &str, version: u32, reason: &str) -> bool {
+        let Some(ledger) = &self.agent_uses else {
+            return false;
+        };
+        ledger
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .record(crate::agent_use::AgentUseEvent {
+                agent: agent.to_string(),
+                version,
+                reason: reason.to_string(),
+            });
         true
     }
 
