@@ -186,11 +186,13 @@ reasoning_auto = "on"   # on = thinking on for verifier/worker/default/plan,
                         # off for triage and research — overrides any
                         # per-agent `reasoning`
 
-# on = a headless run proceeds past scope review instead of stopping at
-# ScopeReviewRequiredHeadless. OFF by default and deliberately so: scope
-# review is what keeps a large blast radius from landing unattended, and a
-# headless surface has nobody to ask. Turn it on only where the tree is
-# disposable and the budget cap is the real guard.
+# INERT — parses, merges, and changes nothing at any value. It used to let a
+# headless run proceed past scope review instead of stopping at
+# ScopeReviewRequiredHeadless; that stage was deleted with the staged pipeline.
+# It is not rejected as an unknown key because a published benchmark posture
+# hashes it, so removing the name would invalidate already-reported numbers.
+# Shown here because this file documents the shape settings.json accepts today,
+# and this key is part of that shape — not because it is worth setting.
 headless_scope_bypass = "off"
 
 # ---- per-agent overrides. Every field optional = "no opinion" ---------------

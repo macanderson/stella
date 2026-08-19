@@ -157,6 +157,8 @@ pipeline_plan_model     = "zai/glm-5.2"
 auto_mode               = "off"
 effort_auto             = "on"
 reasoning_auto          = "on"
+# Inert (the scope-review stage it steered is gone); reserved rather than
+# retired because a published benchmark posture hashes the name.
 headless_scope_bypass   = "off"
 hunk_review             = "off"
 # `allowed_models` MOVED to [models].allowed. §6.1 migrates it and warns on
@@ -248,7 +250,8 @@ prompt_file = ".stella/prompts/security-reviewer.md"
 #
 # Three are deliberately NOT configurable here, because each already has an
 # owner and a second switch is how these blocks rot — see DESIGN.md §4.5:
-#   ScopeReview  -> owned by agents.headless_scope_bypass
+#   ScopeReview  -> the stage is gone; agents.headless_scope_bypass, which
+#                   used to own it, is inert and owns nothing now
 #   Complete     -> terminal, not a stage
 #   ContextRecall / ContextWrite / Reflect -> owned by [context]
 

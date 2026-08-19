@@ -64,9 +64,19 @@ instead — see [Local and air-gapped](/docs/examples#local-and-air-gapped).
 
 ## The gate that fires *before* you spend
 
-A spend limit stops a run partway. The [scope review](/docs/inference-pipeline#3-scope-review)
-stops it *before the first edit*, which is usually the outcome you actually
-wanted.
+<Callout type="warn">
+This gate shipped as a stage of the built-in staged pipeline, and it was
+removed along with it. A plain `stella run` has never had it and does not gain
+it, and the `agent_engine_config.headless_scope_bypass` key that used to wave a
+headless run past it is now inert — setting it changes nothing either way. The
+section below is kept as the description of what a scope gate is *for*, because
+that shape is what a verification plugin implements on its own side of the
+wrapper socket; treat it as the contract to look for in a plugin, not as
+behavior this binary still has.
+</Callout>
+
+A spend limit stops a run partway. A scope review stops it *before the first
+edit*, which is usually the outcome you actually wanted.
 
 When a plan's blast radius crosses any of three thresholds, stella pauses and
 shows you the plan:
@@ -89,12 +99,12 @@ prefix that would not have tripped review, and `x` aborts. Anything longer than
 one of those words is read as *what you want changed*, sending the plan back to
 the planner with your note attached.
 
-<Callout type="warn">
-Headless runs must opt in to bypassing this gate explicitly —
-`agent_engine_config.headless_scope_bypass: "on"`. Without it there is no silent
-auto-approve: a plan over the thresholds **ends the run**. That is deliberate,
-because a scope gate that quietly approves itself in CI is not a scope gate.
-</Callout>
+The rule a headless run needs from a gate like this is that it must never
+silently auto-approve itself: with nobody to ask, a plan over the thresholds
+should end the run rather than wave itself through, because a scope gate that
+approves itself in CI is not a scope gate. That is a property to check a
+verification plugin for — it is not something this binary decides any more, and
+no setting here turns it on or off.
 
 ## What the money is actually spent on
 
