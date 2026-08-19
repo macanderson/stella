@@ -88,6 +88,11 @@ pub(crate) fn spawn_forwarder(
         // forwarder, and a forwarder is one lane — every lane has a registry
         // and a channel of its own, so two lanes' thoughts cannot fuse.
         let mut reasoning = agent::ReasoningRun::default();
+        // The lane's friction ledger (#3962), folded as the stream goes past
+        // rather than from a collected `Vec` the way `agent::run_turn` does:
+        // this task forwards each event and keeps none, and a ledger is bounded
+        // where a retained journal is not.
+        let mut friction = TurnFriction::default();
         // Two independent latches, not one. A single shared flag meant an
         // early usage gap — the benign, self-healing condition — silenced any
         // later store-write failure, which is the one that actually points at
