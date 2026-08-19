@@ -123,6 +123,16 @@ impl SessionDurability {
     /// Called once per pipeline run, before the first stage. Silently ignored
     /// on an unbound handle, like everything else here: a session with no
     /// durable record has no checkpoint for a frame to ride on either.
+    ///
+    /// **No production caller since #3846** — the staged pipeline that used
+    /// to call this (`resume_frame::declare`/`ProgressSink`) is gone, so no
+    /// build past this one will ever write a fresh frame. Kept, not deleted:
+    /// [`Self::pipeline_frame`] (the read side) is still live — it is how
+    /// `stella daemon resume` recognizes a frame an *older* build wrote — and
+    /// `a_pipeline_frame_rides_every_checkpoint_and_retires_with_it` is the
+    /// one test proving the write/retract mechanics the read side depends on
+    /// having worked correctly when it did run.
+    #[allow(dead_code)]
     pub fn set_pipeline_frame(&self, json: String) {
         let bound = self.bound.read().unwrap_or_else(|p| p.into_inner()).clone();
         if let Some(bound) = bound {

@@ -525,7 +525,7 @@ pub(crate) fn resolve_engine_wiring(
     configured: &[crate::config::ConfiguredProvider],
 ) -> EngineWiring {
     use crate::engine_config::{
-        ModelSpec, auto_verifier_spec, model_spec_for, own_model_spec_for, spec_family, tuning_for,
+        ModelSpec, auto_verifier_spec, model_spec_for, own_model_spec_for, spec_family,
     };
     use crate::settings::EngineAgentKind;
 

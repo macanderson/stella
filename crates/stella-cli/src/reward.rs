@@ -449,7 +449,14 @@ pub struct RewardLabel {
 
 impl RewardLabel {
     /// `true` when this trajectory carries a usable scalar.
+    ///
+    /// No production caller today — `dataset_cmd`'s export reads `.reward`
+    /// directly — but `dataset_cmd/tests.rs` and `reward/tests.rs` both
+    /// assert through this name as the natural spelling of the check, so it
+    /// stays a named accessor rather than every caller re-deriving
+    /// `.reward.is_some()`.
     #[must_use]
+    #[allow(dead_code)]
     pub fn is_scored(&self) -> bool {
         self.reward.is_some()
     }

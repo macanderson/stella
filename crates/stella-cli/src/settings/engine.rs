@@ -636,6 +636,7 @@ impl AgentEngineConfig {
     /// survive only because settings-merge tests still exercise the
     /// scope-chain precedence rule for `agent_engine_config.headless_scope_bypass`
     /// through it — no production code consults the answer any more.
+    #[allow(dead_code)]
     pub fn headless_scope_bypass_on(&self) -> bool {
         self.headless_scope_bypass.is_some_and(Toggle::is_on)
     }

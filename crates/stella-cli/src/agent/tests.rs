@@ -1,4 +1,5 @@
 use super::*;
+use super::reflect::reflection_json;
 use crate::config::{ConfiguredProvider, PROVIDERS, ProviderConfig};
 use stella_model::credential::ApiKey;
 use stella_protocol::event::BudgetMode; // no longer re-exported via `super::*` (#971)
