@@ -1063,7 +1063,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             output_format,
         } => {
             let pipeline_choice =
-                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
             // A verification flag with nowhere to land is refused before the
             // prompt is even resolved, not silently dropped after a paid call
             // starts (#3696).
@@ -1119,7 +1119,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // adapter that silently ignores `--test-command` reports a number
             // measured without the oracle the runner asked for.
             wrapper_plugin::reject_verification_flags_without_pipeline(
-                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref()),
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?,
                 test_command.as_deref(),
                 false,
                 false,
@@ -1146,7 +1146,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             pipeline,
         } => {
             let pipeline_choice =
-                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref());
+                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
             wrapper_plugin::reject_plugin_variant_for_door("goal", pipeline_choice)?;
             let goal = prompt_source::resolve(
                 goal,
