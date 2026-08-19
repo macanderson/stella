@@ -144,27 +144,17 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     // they can still stop it, not from an audit row afterwards (#1615).
     let frame = crate::resume_frame::ResumeFrame::read(&cfg.durability);
 
-    // Restoration (#1671): when the frame carries the pipeline's progress
-    // record and the killed run was executing un-isolated, this resume
-    // re-enters the staged pipeline — the interrupted turn continues and the
-    // witness and verify stages run on the completed work. `None` keeps
-    // the honest bare-turn path with its full advisory, and validation lives
-    // in `PipelineResume::from_progress` so "restore approximately" is not a
-    // state this driver can reach.
-    let restored = crate::resume_frame::restoration(&frame, &checkpoint);
-
     let turn_start = Instant::now();
     let step = checkpoint.step;
     eprintln!(
         "  resuming {} at step {step} — completed steps stay done, nothing re-runs",
         record.id
     );
-    let advisory = if restored.is_some() {
-        Some(crate::resume_frame::restored_advisory())
-    } else {
-        frame.advisory()
-    };
-    if let Some(advisory) = advisory {
+    // A frame naming a staged pipeline (#3846: the crate that could restore
+    // one is gone) always takes the bare-turn path below — `frame.advisory()`
+    // reports exactly what that costs, the graceful refusal this module's own
+    // doc comment promises.
+    if let Some(advisory) = frame.advisory() {
         for (i, line) in advisory.iter().enumerate() {
             // The marker leads the summary line only; the rest are already
             // indented continuations of it.
