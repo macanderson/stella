@@ -18,7 +18,10 @@
 //!   non-active record (`records::registry::blocking_reason`), so an archived
 //!   revision leaves steering the moment it lands. The prior revision is not
 //!   erased anywhere: the rules directory is Git-tracked, and transaction
-//!   time on this substrate *is* the repository history.
+//!   time on this substrate *is* the repository history. `stella context
+//!   validate` reads that archived revision as history rather than as a
+//!   finding, which is what lets a completed retirement end green — the two
+//!   halves disagreed about it until #3254.
 //! - **Changed claims retire nothing here.** Their replacements are proposals
 //!   until a reviewer keeps them, and retiring the old record first would
 //!   open a steering gap between the two deliberate acts. `stella context

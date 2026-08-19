@@ -196,6 +196,41 @@ if grep -Eq '^(docs/wire/|crates/stella-(protocol|serve|plugin)/|scripts/(export
   wire_touched=1
 fi
 
+# ── The Python bench suites ──────────────────────────────────────────────────
+#
+# The same hole as wire-schema above, in a language the cargo tiers cannot see.
+# `.github/workflows/bench.yml` gates seven pytest suites; `make bench-test`
+# used to run three of them, so four had no local command at all. #2844 merged
+# on 2026-08-11 with that workflow already reporting `failure`, on a
+# DETERMINISTIC arenabench failure any local run of the file would have caught,
+# and `main` went red. This hook is the repository's stated answer to
+# `enforce_admins` being off, and for those suites it had nothing to run.
+#
+# The selection question is bench.yml's own: does the pushed diff touch the
+# bench tooling? So the pattern is READ from that workflow rather than copied
+# here — unlike wire-schema's list above, which is still two answers to one
+# question. scripts/check-bench-suites.sh fails the gate if a copy reappears.
+#
+# It costs minutes when it fires (arenabench alone is ~70s), which is why it
+# fires only on a matching diff, and why `GATE=fast` — whose contract is
+# "no tests" — skips it out loud rather than silently.
+
+bench_touched=0
+if ! bench_filter="$(./scripts/bench-suites.sh filter 2>/dev/null)" || [ -z "$bench_filter" ]; then
+  # Same rule as the cargo scope: what cannot be narrowed with confidence runs.
+  bench_touched=1
+  bench_reason="cannot read bench.yml's scope filter"
+elif [ "$force_full" = "1" ]; then
+  # bench.yml runs every suite for anything that is not a pull request, on the
+  # same reasoning force_full encodes here: main is the branch whose green-ness
+  # is claimed, and a diff we could not compute is not a diff we may trust.
+  bench_touched=1
+  bench_reason="$scope_reason"
+elif grep -Eq "$bench_filter" "$changed"; then
+  bench_touched=1
+  bench_reason="the pushed diff touches the bench tooling"
+fi
+
 if [ -z "$scope" ] && [ "$wire_touched" = "0" ]; then
   target="guards-fast"
   label="make guards-fast (no crate reachable, wire contract untouched — no cargo build)"
@@ -210,13 +245,25 @@ else
   label="make gate (guards + fmt-check · clippy -D warnings · rustdoc · test)"
 fi
 
+aborted() {
+  printf '\033[31m✖ %s failed — push aborted.\033[0m\n' "$1" >&2
+  printf '  Fix the errors above, or step down a rung: GATE=fast git push (reduced gate),\n' >&2
+  printf '  GATE=full git push (whole workspace), SKIP_GATE=1 git push (bypass entirely).\n' >&2
+  exit 1
+}
+
 printf '\033[36m▸ pre-push gate — %s\033[0m\n' "$label" >&2
-if make "$target" CARGO_SCOPE="$scope"; then
-  printf '\033[32m✔ gate green — pushing\033[0m\n' >&2
-  exit 0
+make "$target" CARGO_SCOPE="$scope" || aborted "gate"
+
+if [ "$bench_touched" = "1" ]; then
+  if [ "${GATE:-}" = "fast" ]; then
+    printf '\033[33m⚠ skipping make bench-test (%s) — GATE=fast runs no tests\033[0m\n' \
+      "$bench_reason" >&2
+  else
+    printf '\033[36m▸ pre-push gate — make bench-test (%s)\033[0m\n' "$bench_reason" >&2
+    make bench-test || aborted "bench-test"
+  fi
 fi
 
-printf '\033[31m✖ gate failed — push aborted.\033[0m\n' >&2
-printf '  Fix the errors above, or step down a rung: GATE=fast git push (reduced gate),\n' >&2
-printf '  GATE=full git push (whole workspace), SKIP_GATE=1 git push (bypass entirely).\n' >&2
-exit 1
+printf '\033[32m✔ gate green — pushing\033[0m\n' >&2
+exit 0

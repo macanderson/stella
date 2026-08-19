@@ -86,6 +86,7 @@ python3 ./scripts/check-doc-links.py check
 python3 ./scripts/check-module-reachability.py
 python3 ./scripts/check-typed-errors.py
 ./scripts/check-diagnostic-codes.sh
+./scripts/check-bench-suites.sh
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check
@@ -134,8 +135,15 @@ your diff can actually reach, so a change confined to one crate no longer pays
 for all 28 members (#1135). It falls back to the whole workspace for a push to
 `main`, a tag, a diff touching a workspace-root manifest / `Cargo.lock` / a
 build script / the gate machinery, and for anything it cannot narrow with
-confidence. See what it would choose with `make impacted`. Under time pressure,
-step down a rung rather than switching the gate off:
+confidence. See what it would choose with `make impacted`.
+
+If the diff touches the Python bench tooling (`bench/**`, `arenabench/**`,
+`crates/stella-model/src/catalog.rs`, or `.github/workflows/bench.yml`) the hook
+also runs `make bench-test`, which runs every pytest suite that workflow gates
+and needs [uv](https://docs.astral.sh/uv/). It is not a `make gate` step — it
+costs minutes, and a Rust-only push cannot have changed its answer (#2847).
+
+Under time pressure, step down a rung rather than switching the gate off:
 
 ```bash
 GATE=fast git push       # guards + fmt + clippy — no rustdoc, no tests

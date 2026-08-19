@@ -33,6 +33,12 @@ main and does everything — no manual steps:
    pass. Its commit carries `[skip release]`, so the sync itself never cuts a
    release. If a sync PR is ever left open (red check, race with another
    merge), the next release supersedes it automatically — no cleanup needed.
+   Both the stamp and the merge are checked against
+   `scripts/check-lockfile-sync.sh`: the script refuses to author a stamp whose
+   `Cargo.lock` does not resolve, and the workflow refuses to merge a sync
+   branch that would leave main's lock unresolvable even though the branch's
+   own checks were green (#3336). A refusal is the "left open" case above and
+   heals on the next release.
    On a **minor or major** release the same PR also **rolls
    [`CHANGELOG.md`](CHANGELOG.md)**: whatever sits under `## [Unreleased]`
    moves beneath a new version heading, and `[Unreleased]` is left empty for

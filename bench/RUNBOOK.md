@@ -94,7 +94,7 @@ python3 "$claim_repo/bench/harbor_adapter/stella_harbor/freshness.py" \
 **Offline smoke before spending anything:**
 ```bash
 python3 bench/smoke/smoke_test.py --stella-bin "$STELLA_BINARY" || true  # linux bin won't run on the host's arch check if cross — see note
-make bench-test                          # adapter + analyzer suites must be green
+make bench-test                          # every Python suite bench.yml gates must be green
 ```
 
 ---

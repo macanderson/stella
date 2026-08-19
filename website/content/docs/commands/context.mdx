@@ -130,6 +130,12 @@ something must not steer**, which makes it usable as a gate:
 stella context validate || echo "steering needs review before this merges"
 ```
 
+A record you **retired** is the one thing that does not fail it. Retirement
+archives the record in place — the file stays in `.stella/rules/` as history and
+the loader stops selecting it — so `validate` lists it under "Retired" and moves
+on. A refuted claim still fails, and so does an archived record that also carries
+a blocking finding.
+
 This is the answer to the problem inherited documentation always has: a record
 extracted from a README that was true in 2024 is a confident, wrong instruction
 today. The probe is declarative and runs against the tree, so staleness is

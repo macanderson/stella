@@ -44,6 +44,18 @@
 //! provider's own rejection reason (see `http::classify_http_status`) —
 //! never a raw credential.
 //!
+//! **A red run names its own cause.** These tests are opt-in and cost money,
+//! so a failure is typically read days later by someone with no credential to
+//! re-run it. Every failing smoke therefore reports through
+//! [`failure_report`]: a verdict (credential / quota / wire shape /
+//! undetermined) derived from the typed `ProviderError` variant — which *is*
+//! the adapter's own classification of the status code — plus the recovered
+//! status and a bounded prefix of the provider's text. The message it
+//! replaces stated the ambiguity instead of resolving it ("could be a genuine
+//! wire-shape regression OR an unrelated account/auth/quota/billing
+//! problem"), which is what left #3259's red run undiagnosable from its log.
+//! The verdict path is covered offline by the witnesses beside it.
+//!
 //! **The Anthropic `cache_control` question** (the other half of #274):
 //! `anthropic.rs`'s `stamp_tail_cache_breakpoint` places `cache_control`
 //! only on content BLOCKS (the system block, and the last block of the
@@ -60,7 +72,7 @@ use stella_model::catalog::Catalog;
 use stella_model::credential::{ApiKey, CredentialsFile};
 use stella_model::factory::{Dialect, ProviderSpec, build_provider};
 use stella_model::provider::Provider;
-use stella_protocol::{CompletionMessage, CompletionRequest};
+use stella_protocol::{CompletionMessage, CompletionRequest, ProviderError};
 
 /// Serializes the tests in this file that mutate `STELLA_LIVE_SMOKE` (the
 /// gate-behavior witnesses below) against every test that reads it
@@ -410,6 +422,9 @@ fn row(id: &str) -> &'static LiveProvider {
 /// offline for free. This test runs on every `cargo test`, makes no network
 /// call, needs no credential, and fails by name.
 ///
+/// The other half of that ambiguity — a live failure that named no cause at
+/// all — is now answered where it happens, by [`failure_report`] (#3259).
+///
 /// It mirrors `stella_cli::config::tests::
 /// every_provider_default_model_resolves_against_the_catalog_seed`, which
 /// asserts the same property for the production table.
@@ -564,6 +579,384 @@ fn armed_provider(provider: &LiveProvider) -> Option<Box<dyn Provider>> {
     }
 }
 
+// ---- failure diagnosis: what a red smoke actually establishes ------------
+
+/// Longest prefix (in characters) of the provider's own error text a failed
+/// smoke prints, so a CDN error page or a multi-kilobyte gateway blob can
+/// never flood a CI log.
+///
+/// Characters rather than bytes, for the reason `http::body_snippet` gives
+/// for the same bound one layer down: a provider body is
+/// environment-controlled text and a byte slice can land mid-character. 512
+/// characters is at most ~2 KiB of UTF-8, and the diagnostic half of a
+/// provider error — its status line and the opening sentence of its reason
+/// — is always at the front, so the cut never costs the verdict. This is the
+/// second, tighter bound: the adapter has already clipped the raw body to
+/// `http::ERROR_BODY_SNIPPET_CHARS` before it ever reaches here.
+const FAILURE_DETAIL_CHARS: usize = 512;
+
+/// What a failed live smoke call **establishes** about its own cause.
+///
+/// This exists because the old failure message stated the question instead of
+/// answering it — "could be a genuine wire-shape regression OR an unrelated
+/// account/auth/quota/billing problem" — which left every red run needing a
+/// human with a credential to re-run it before anyone knew whether the
+/// adapter was broken (issue #3259). The status code already resolves three
+/// of the four cases; only the fourth is genuinely undetermined, and saying
+/// so is different from saying it about all of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureCause {
+    /// HTTP 401/403 — the provider refused the key itself.
+    Credential,
+    /// HTTP 429, or a refusal to fund the requested output ceiling.
+    Quota,
+    /// A response arrived and stella's own parser could not reassemble it.
+    WireShape,
+    /// None of the above; the status code does not settle it by itself.
+    Undetermined,
+}
+
+impl FailureCause {
+    /// The verdict line, written so a reader of a CI log needs nothing else
+    /// to know whether the adapter is suspect.
+    fn headline(self) -> &'static str {
+        match self {
+            FailureCause::Credential => {
+                "CREDENTIAL — the provider refused the key itself (HTTP 401/403). The secret is \
+                 revoked, mistyped, expired, or not entitled to this model. This is NOT a \
+                 wire-shape regression: the request never reached shape validation. Rotate the \
+                 credential and re-run."
+            }
+            FailureCause::Quota => {
+                "QUOTA — the key was accepted and the call refused for rate or spend reasons \
+                 (HTTP 429, or a refusal to fund the requested output ceiling). This is NOT a \
+                 wire-shape regression: the request shape was never judged. Wait out the limit \
+                 or raise the cap/credit, then re-run."
+            }
+            FailureCause::WireShape => {
+                "WIRE SHAPE — the provider answered and stella's own parser could not \
+                 reassemble a CompletionResult from it. The credential worked. This is the \
+                 regression this suite exists to catch: fix the adapter under \
+                 crates/stella-model/src/ and land a witness test with it."
+            }
+            FailureCause::Undetermined => {
+                "UNDETERMINED — this failure is none of the three a status code resolves on its \
+                 own, so this run does not name a cause. Read the status and detail below: a \
+                 4xx naming a rejected field is a wire-shape regression; a 402 or an \
+                 out-of-credits body is billing; a 5xx or a transport fault is the provider \
+                 being unwell and settles nothing either way."
+            }
+        }
+    }
+}
+
+/// Both halves of what the typed error tells us: the variant's name (for the
+/// log) and the cause it establishes (for the verdict).
+///
+/// The test holds a [`ProviderError`], never the raw `reqwest::Response` — the
+/// adapter has already read the status and the body and folded both into this
+/// error (`http::classify_http_status`). So the verdict is derived from the
+/// **variant**, which *is* the adapter's own classification of the status
+/// code, and never from scraping its prose.
+///
+/// One exhaustive match on purpose: a new `ProviderError` variant must fail
+/// this file to compile rather than landing silently in the `Undetermined`
+/// bucket, which is the same "declared, not silent" discipline invariant #10
+/// applies to events.
+fn classify(error: &ProviderError) -> (&'static str, FailureCause) {
+    match error {
+        // 401 and 403 both land here (`classify_http_status`'s first two arms).
+        ProviderError::Auth(_) => ("ProviderError::Auth", FailureCause::Credential),
+        ProviderError::RateLimited { .. } => ("ProviderError::RateLimited", FailureCause::Quota),
+        // Not a 429, but the same kind of answer: the account cannot afford
+        // the ceiling asked for. Nothing about the request *shape* was judged.
+        ProviderError::OutputBudgetExceeded { .. } => {
+            ("ProviderError::OutputBudgetExceeded", FailureCause::Quota)
+        }
+        // "A response arrived but could not be decoded into a
+        // CompletionResult" — the variant's own contract, and exactly the
+        // regression signal this suite was built for.
+        ProviderError::Malformed(_) => ("ProviderError::Malformed", FailureCause::WireShape),
+        // A 5xx or a network fault: the provider is unwell, which is evidence
+        // for neither answer.
+        ProviderError::Transport { .. } => ("ProviderError::Transport", FailureCause::Undetermined),
+        // A 4xx the dialect does not model (400/402/404/422 …). A rejected
+        // field and an out-of-credits 402 both arrive as this, so the class
+        // alone cannot separate them — the printed status and body can.
+        ProviderError::Terminal(_) => ("ProviderError::Terminal", FailureCause::Undetermined),
+        ProviderError::ContextOverflow { .. } => {
+            ("ProviderError::ContextOverflow", FailureCause::Undetermined)
+        }
+        ProviderError::UnknownModel { .. } => {
+            ("ProviderError::UnknownModel", FailureCause::Undetermined)
+        }
+        ProviderError::Cancelled => ("ProviderError::Cancelled", FailureCause::Undetermined),
+    }
+}
+
+/// The numeric HTTP status the adapter stamped into its message, when it
+/// stamped one.
+///
+/// **Display only** — no verdict depends on it. `classify_http_status` writes
+/// the status as `HTTP 401` / `HTTP 400 Bad Request` into every arm that saw
+/// a wire response, so recovering it puts the number on its own line instead
+/// of leaving a reader to find it inside a paragraph. A miss returns `None`
+/// rather than a guess: an error raised before any response (DNS, connect,
+/// TLS, cancellation) genuinely has no status, and printing one would be the
+/// invented evidence this whole change exists to stop.
+fn recovered_status(text: &str) -> Option<u16> {
+    text.match_indices("HTTP ").find_map(|(at, marker)| {
+        let digits: String = text[at + marker.len()..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if digits.len() != 3 {
+            return None;
+        }
+        digits
+            .parse::<u16>()
+            .ok()
+            .filter(|status| (100..=599).contains(status))
+    })
+}
+
+/// `text` bounded to [`FAILURE_DETAIL_CHARS`], with the elision named
+/// explicitly so nobody mistakes the cut for the provider's whole answer.
+/// Mirrors `http::body_snippet`, one layer up.
+fn bounded_detail(text: &str) -> String {
+    let total = text.chars().count();
+    if total <= FAILURE_DETAIL_CHARS {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(FAILURE_DETAIL_CHARS).collect();
+    let elided = total - FAILURE_DETAIL_CHARS;
+    format!(
+        "{head}… (+{elided} more chars, elided by live-smoke's {FAILURE_DETAIL_CHARS}-char cap)"
+    )
+}
+
+/// The panic message a failed smoke reports: a verdict, the status that
+/// justifies it, the error class it came from, and a bounded prefix of the
+/// provider's own text.
+///
+/// Shared by [`smoke`] and [`anthropic_smoke`] — the two sites that carried
+/// the old ambiguous wording, kept as one function so a third provider cannot
+/// grow a third dialect of it. Safe to print: `ProviderError`'s own contract
+/// forbids an adapter putting a credential, an `Authorization` header, or a
+/// keyed URL into these strings.
+fn failure_report(provider_id: &str, error: &ProviderError) -> String {
+    let text = error.to_string();
+    let (class, cause) = classify(error);
+    let status = recovered_status(&text).map_or_else(
+        || "none — this error was raised before any HTTP response arrived".to_string(),
+        |status| format!("HTTP {status}"),
+    );
+    format!(
+        "{provider_id} live smoke did not return a parseable 200.\n  \
+         verdict: {}\n  \
+         status: {status}\n  \
+         error class: {class}\n  \
+         detail (the provider's own status and body, bounded to \
+         {FAILURE_DETAIL_CHARS} chars): {}",
+        cause.headline(),
+        bounded_detail(&text),
+    )
+}
+
+// ---- failure-diagnosis witnesses (always run; never touch the network) ---
+
+/// The failure report of a red run is the only artifact anyone reads, and it
+/// is produced on a path (an armed live call against a real endpoint) that
+/// cannot be exercised in CI. These witnesses cover it the way the drift
+/// guards above cover the table: offline, unconditional, no credential.
+///
+/// Every error below is built with the literal text its adapter arm writes
+/// (`http::classify_http_status`), so the recovery of the status is checked
+/// against the real wording rather than a convenient invention.
+#[test]
+fn an_auth_refusal_is_reported_as_a_credential_problem() {
+    let error = ProviderError::Auth(
+        "anthropic rejected the credential (HTTP 401): invalid x-api-key — the key looks \
+         revoked, mistyped, or was never loaded"
+            .to_string(),
+    );
+    assert_eq!(classify(&error).1, FailureCause::Credential);
+
+    let report = failure_report("anthropic", &error);
+    assert!(report.contains("CREDENTIAL"), "{report}");
+    assert!(report.contains("status: HTTP 401"), "{report}");
+    assert!(
+        report.contains("NOT a wire-shape regression"),
+        "a 401 settles the question the old message asked — the report must say so: {report}"
+    );
+}
+
+/// A 403 is the other half of the credential answer, and reaches the same
+/// variant by a different arm of the classifier.
+#[test]
+fn a_forbidden_refusal_is_also_reported_as_a_credential_problem() {
+    let error = ProviderError::Auth(
+        "anthropic rejected the credential (HTTP 403): permission denied — the key is valid \
+         but lacks permission for this request"
+            .to_string(),
+    );
+    assert_eq!(classify(&error).1, FailureCause::Credential);
+    assert!(
+        failure_report("anthropic", &error).contains("status: HTTP 403"),
+        "the 403 arm's status must survive into the report"
+    );
+}
+
+#[test]
+fn a_rate_limit_is_reported_as_quota() {
+    let error = ProviderError::RateLimited {
+        message: "anthropic rate limit".to_string(),
+        retry_after_ms: Some(2_000),
+    };
+    assert_eq!(classify(&error).1, FailureCause::Quota);
+
+    let report = failure_report("anthropic", &error);
+    assert!(report.contains("QUOTA"), "{report}");
+    assert!(
+        report.contains("NOT a wire-shape regression"),
+        "a 429 settles the question too: {report}"
+    );
+}
+
+/// The affordability refusal is not a 429, but it is the same answer: the
+/// account, not the request shape, is what the provider refused.
+#[test]
+fn an_output_budget_refusal_is_reported_as_quota() {
+    let error = ProviderError::OutputBudgetExceeded {
+        message: "openrouter cannot afford the requested output ceiling (HTTP 402)".to_string(),
+        affordable_output_tokens: Some(117_676),
+    };
+    assert_eq!(classify(&error).1, FailureCause::Quota);
+}
+
+#[test]
+fn an_unparseable_response_is_reported_as_a_wire_shape_regression() {
+    let error = ProviderError::Malformed("missing field `content` at line 1 column 84".to_string());
+    assert_eq!(classify(&error).1, FailureCause::WireShape);
+
+    let report = failure_report("anthropic", &error);
+    assert!(report.contains("WIRE SHAPE"), "{report}");
+    assert!(
+        report.contains("crates/stella-model/src/"),
+        "the one verdict that indicts stella must say where the fix goes: {report}"
+    );
+    assert!(
+        report.contains("status: none"),
+        "a decode failure carries no status line, and the report must say `none` rather than \
+         invent one: {report}"
+    );
+}
+
+/// The point of the change: where the status resolves the question, the
+/// report answers it and does not restate the old either/or.
+#[test]
+fn a_resolved_status_never_restates_the_old_ambiguity() {
+    for error in [
+        ProviderError::Auth("anthropic rejected the credential (HTTP 401)".to_string()),
+        ProviderError::RateLimited {
+            message: "anthropic rate limit".to_string(),
+            retry_after_ms: None,
+        },
+        ProviderError::Malformed("trailing characters at line 3".to_string()),
+    ] {
+        let report = failure_report("anthropic", &error);
+        assert!(
+            !report.contains("could be"),
+            "the report must name a cause, not offer a menu of them: {report}"
+        );
+    }
+}
+
+/// The fourth case is genuinely unresolved by the status alone, and saying so
+/// plainly is the honest answer — not the same sentence pasted over the three
+/// cases that ARE resolved.
+#[test]
+fn an_unclassified_failure_says_undetermined_rather_than_guessing() {
+    for error in [
+        ProviderError::Terminal("anthropic HTTP 400 Bad Request: {\"error\":{}}".to_string()),
+        ProviderError::transport("anthropic HTTP 529 Overloaded: overloaded_error".to_string()),
+    ] {
+        assert_eq!(classify(&error).1, FailureCause::Undetermined);
+        let report = failure_report("anthropic", &error);
+        assert!(report.contains("UNDETERMINED"), "{report}");
+        assert!(
+            report.contains("does not name a cause"),
+            "an undetermined run must say it is undetermined: {report}"
+        );
+    }
+}
+
+/// A 400's status reaches the report even though its class does not settle
+/// the verdict — that number is the whole reason the fourth case is still
+/// worth printing.
+#[test]
+fn an_undetermined_failure_still_prints_the_status_it_had() {
+    let report = failure_report(
+        "anthropic",
+        &ProviderError::Terminal(
+            "anthropic HTTP 400 Bad Request: bad `thinking` field".to_string(),
+        ),
+    );
+    assert!(report.contains("status: HTTP 400"), "{report}");
+}
+
+/// A provider that answers a failure with a multi-kilobyte CDN page must not
+/// flood the CI log — the cap is explicit and its elision is named.
+#[test]
+fn the_failure_report_bounds_a_huge_body() {
+    let huge = format!(
+        "anthropic HTTP 500 Internal Server Error: {}",
+        "x".repeat(20_000)
+    );
+    let report = failure_report("anthropic", &ProviderError::transport(huge));
+    assert!(
+        report.chars().count() < 2_000,
+        "a 20,000-char body must not reach the log in full; report was {} chars",
+        report.chars().count()
+    );
+    assert!(
+        report.contains("more chars, elided by live-smoke's 512-char cap"),
+        "the cut must name itself so nobody reads it as the provider's whole answer: {report}"
+    );
+}
+
+/// Multi-byte text must survive the bound intact — the reason the cap counts
+/// characters and not bytes.
+#[test]
+fn the_bound_never_splits_a_multi_byte_character() {
+    let bounded = bounded_detail(&"é".repeat(5_000));
+    assert!(bounded.starts_with('é'));
+    assert!(bounded.contains("+4488 more chars"), "{bounded}");
+}
+
+/// A short error is passed through untouched: the cap is a ceiling, not a
+/// reformatter.
+#[test]
+fn a_short_error_is_not_truncated() {
+    let short = "anthropic HTTP 400 Bad Request: no";
+    assert_eq!(bounded_detail(short), short);
+}
+
+/// Status recovery is a display convenience, so it must decline rather than
+/// guess: no number at all, and a number that is not an HTTP status, both
+/// yield `None`.
+#[test]
+fn status_recovery_declines_rather_than_guesses() {
+    assert_eq!(
+        recovered_status("provider transport error: dns failure"),
+        None
+    );
+    assert_eq!(recovered_status("HTTP two hundred"), None);
+    assert_eq!(recovered_status("HTTP 99"), None);
+    assert_eq!(recovered_status("HTTP 9999"), None);
+    assert_eq!(recovered_status("anthropic HTTP 429: slow down"), Some(429));
+}
+
 /// Send `request` and report. Shared by every provider so the success log and
 /// the failure wording stay identical across adapters.
 async fn smoke(provider: &LiveProvider, built: Box<dyn Provider>, request: CompletionRequest) {
@@ -572,24 +965,11 @@ async fn smoke(provider: &LiveProvider, built: Box<dyn Provider>, request: Compl
             "[live_smoke] {}: OK — model={} finish={:?} usage={:?} cost_usd={} text={:?}",
             provider.id, r.model, r.finish_reason, r.usage, r.cost_usd, r.text
         ),
-        // Deliberately does NOT say "rejected the request shape": a failure
-        // here can be an account-billing 400 that never reached shape
-        // validation, so pre-judging the cause would print something false on
-        // the exact failure this suite exists to distinguish from a real
-        // regression. `e` already carries the provider's own status + body
-        // (never a raw credential), so a human reading it tells wire-shape
-        // apart from auth/quota/billing.
-        //
-        // What it can no longer be is an unknown slug: the factory's seed
+        // What this can no longer be is an unknown slug: the factory's seed
         // floor rejects those before any wire call, and
         // `every_live_smoke_slug_resolves_against_the_catalog_seed` catches
         // them offline before that.
-        Err(e) => panic!(
-            "{} live smoke did not return a parseable 200 — could be a genuine wire-shape \
-             regression OR an unrelated account/auth/quota/billing problem; read the status \
-             and body below to tell which: {e}",
-            provider.id
-        ),
+        Err(e) => panic!("{}", failure_report(provider.id, &e)),
     }
 }
 
@@ -630,11 +1010,10 @@ async fn anthropic_smoke() {
             r.usage.cached_input_tokens,
             r.text
         ),
-        Err(e) => panic!(
-            "anthropic live smoke did not return a parseable 200 — could be a genuine \
-             wire-shape regression OR an unrelated account/auth/quota/billing problem; \
-             read the status and body below to tell which: {e}"
-        ),
+        // Same report as every other provider's — see [`failure_report`].
+        // This test hand-rolls only its SUCCESS arm (to print the two cache
+        // counters); the failure arm must not drift from the shared one.
+        Err(e) => panic!("{}", failure_report(provider.id, &e)),
     }
 }
 

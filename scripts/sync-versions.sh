@@ -20,6 +20,13 @@
 #     release only. A patch release does not touch that file; see the rationale
 #     in changelog-roll.sh's header and RELEASING.md § "What records a change".
 #
+# Then it PROVES the stamp it just wrote resolves, with the same oracle ci.yml
+# and `make gate` use, and refuses to hand back a tree that would red `main`
+# (#3336). Both call sites need that guarantee for a different reason: the tag
+# is what `install.sh --locked` and Homebrew build from, and the write-back PR
+# is merged by auto-tag.yml itself with an admin bypass, so no required check
+# stands between it and `main`.
+#
 # perl, not `sed -i "0,/re/"`: that address form is GNU-only and SILENTLY
 # no-ops on BSD sed (macOS).
 set -euo pipefail
@@ -43,3 +50,25 @@ perl -pi -e 's/tag: "v[^"]*"/tag: "v$ENV{NEW_VERSION}"/; s/^  version "[^"]*"/  
 # standing up a throwaway Cargo workspace for `cargo update` above.
 # scripts/test-changelog-roll.sh covers it; `make changelog-roll-test` runs it.
 "$(dirname "$0")/changelog-roll.sh" CHANGELOG.md
+
+# Prove the lock this script just wrote resolves against the manifests it just
+# rewrote, before either call site commits it.
+#
+# `cargo update --workspace` above does pick up a workspace member that did not
+# exist in the previous lock — scripts/test-release-lockfile.sh drives this
+# script over a fixture that adds one and asserts the result passes `cargo
+# metadata --locked`. So this is not a second opinion about a suspected bug in
+# that line. It is the release path declining to author a version stamp it has
+# not checked: the failure it guards against is invisible in the produced diff,
+# only ever surfaced by a `--locked` build, and by then it is on a tag or on
+# `main`, where it fails everyone (#3336).
+#
+# The sibling guard rather than a bare `cargo metadata --locked`: one oracle,
+# with the same wording ci.yml prints, instead of a second copy that can drift
+# from the check the sync is trying to satisfy. `--manifest-dir "$PWD"` because
+# the tree being stamped is the caller's working directory, which is not
+# necessarily the checkout this script was invoked from.
+if ! "$(dirname "$0")/check-lockfile-sync.sh" --manifest-dir "$PWD"; then
+  echo "::error::Cargo.lock does not resolve after stamping ${version} — refusing to author a version-sync that would fail every --locked build." >&2
+  exit 1
+fi

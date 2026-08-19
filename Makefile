@@ -39,7 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    diagnostic-codes
+                    diagnostic-codes bench-suites
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -179,11 +179,21 @@ record-demo-video: ## Re-cut docs/demo/stella-deck.mp4 from the command deck (FI
 	@echo "deck's own layout decides, so a layout change can move content out"
 	@echo "of shot without failing anything."
 
+# Every Python suite `.github/workflows/bench.yml` runs, and no other. The list
+# is NOT here: scripts/bench-suites.sh reads it out of that workflow, because a
+# second hand-written copy is what produced #2847 — the workflow ran seven
+# suites, this target ran three, and the arenabench failure that reddened `main`
+# on 2026-08-11 had no local command that would have caught it.
+#
+# Deliberately NOT a `make gate` step. It takes minutes (arenabench alone is
+# ~70s) and would tax every Rust-only push for a question that push cannot have
+# changed. .githooks/pre-push runs it instead for a push whose diff matches the
+# workflow's own scope filter, so the suites are gated where they are relevant
+# and free where they are not. `make bench-suites` — which IS a gate step —
+# holds the arrangement together without running a single test.
 .PHONY: bench-test
-bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer + trace triage)
-	cd bench/harbor_adapter && uv sync --locked --extra dev && uv run --no-sync pytest -q
-	cd bench/terminal_bench_analysis && uv sync --locked --extra dev && uv run --no-sync pytest -q
-	python3 -m pytest -q bench/trace_triage/tests
+bench-test: ## Run every Python bench suite .github/workflows/bench.yml runs (#2847)
+	@./scripts/bench-suites.sh run
 
 # Deliberately NOT a `make gate` step: it reads S3 and talks to GitHub, and the
 # gate must stay runnable offline and side-effect-free. `gate-parity` would fail
@@ -408,6 +418,10 @@ print-gate-steps:
 gate-parity: ## Assert AGENTS.md and CONTRIBUTING.md list the real gate steps (#1437)
 	@./scripts/check-gate-parity.sh
 
+.PHONY: bench-suites
+bench-suites: ## Assert `make bench-test` runs every suite bench.yml runs, by derivation (#2847)
+	@./scripts/check-bench-suites.sh
+
 .PHONY: left-behind
 left-behind: ## Assert every TODO/FIXME/XXX/HACK in code names a tracking issue (#1454)
 	@./scripts/check-left-behind.sh
@@ -443,6 +457,10 @@ lockfile-sync: ## Assert Cargo.lock resolves against the manifests as committed 
 .PHONY: lockfile-sync-test
 lockfile-sync-test: ## Test the lockfile guard against synthetic skewed workspaces (hermetic; not part of `gate`)
 	./scripts/test-lockfile-sync.sh
+
+.PHONY: release-lockfile-test
+release-lockfile-test: ## Test that the release version stamp leaves Cargo.lock resolvable, new members included (hermetic; not part of `gate`)
+	./scripts/test-release-lockfile.sh
 
 # Deliberately not a gate step: it judges the MERGED tree, which is a question
 # no pre-merge run can answer. .github/workflows/main-canary.yml is where it

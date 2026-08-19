@@ -44,7 +44,12 @@ mod explain;
 mod govern;
 mod propose;
 mod review;
-mod validate;
+// `pub(crate)` for one reason: the retirement handshake spans two commands, so its
+// witness has to drive both halves. `ingest --refresh` archives a record in place and
+// `context validate` decides whether that is a finding — the bug they had (#3254) was
+// invisible to either module's own tests, and a test that re-implemented one half
+// could not have caught it.
+pub(crate) mod validate;
 
 // The reviewer identity, shared with the ingest refresh path: a retirement
 // event must name the same actor a keep decision would (#2728).

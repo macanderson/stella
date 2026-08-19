@@ -141,6 +141,50 @@ fn records_from_other_sources_are_untouched() {
     assert_eq!(record.status, Some(RecordStatus::Active));
 }
 
+/// #3254 witness: a **completed** retirement leaves `stella context validate`
+/// green, so the retirement flow can end.
+///
+/// The two halves used to disagree about where an archived revision lives.
+/// This module archives in place and the file stays in `.stella/rules/` (the
+/// test above depends on that); `validate` counted every loaded record that
+/// was not steering, so the freshly archived revision failed the check CI
+/// runs on every PR — permanently, since nothing about that file ever changes
+/// again. There was no edit that could turn it green, which is why #3244
+/// shipped a deleted record file as its workaround.
+///
+/// Driving both commands is the point: each half's own tests passed
+/// throughout, and a test that re-created the archived file by hand instead
+/// of running the retirement could drift out from under this the same way.
+#[test]
+fn a_completed_retirement_leaves_validate_green() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    publish(root, "pkg", "use pnpm exclusively", "notes.md");
+    publish(root, "deploy", "deploys run from main", "notes.md");
+
+    crate::context_cmd::validate::run_validate(root, crate::query_format::QueryFormat::Text)
+        .expect("two live records validate");
+
+    apply(root, "notes.md", &[asserted("pkg", "use pnpm exclusively")]).expect("applies");
+
+    let archived = root
+        .join(crate::context_records::RULES_DIR)
+        .join("ctx.acme.web.deploy.toml");
+    assert!(
+        archived.exists(),
+        "the archived revision stays put — the rules directory is the audit trail"
+    );
+    assert_eq!(
+        read_published(root, "deploy").status,
+        Some(RecordStatus::Archived)
+    );
+
+    crate::context_cmd::validate::run_validate(root, crate::query_format::QueryFormat::Text)
+        .expect("a retired revision is history, not a finding");
+    crate::context_cmd::validate::run_validate(root, crate::query_format::QueryFormat::Json)
+        .expect("and the json report agrees — one exit contract, not two");
+}
+
 /// An already-archived record is not retired again: retirement is a one-way
 /// act, and re-archiving would mint a fresh revision on every refresh.
 #[test]
