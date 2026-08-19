@@ -1,15 +1,16 @@
-//! The model-call attempt ladder and its rate-limit recovery (#2677): drive
-//! `retry_with_backoff_observed` for one step, and when sustained rate
-//! limiting outlives the inline ladder, park the turn — chunked engine-side
-//! sleeps bounded by the task deadline's real headroom — instead of aborting
+//! The model-call attempt ladder and its wait-recovery (#2677, #2742): drive
+//! `retry_with_backoff_observed` for one step, and when a failure whose cure
+//! is waiting — sustained rate limiting, or a 529 overload brownout — outlives
+//! the inline ladder, park the turn — chunked engine-side sleeps bounded by
+//! the task deadline's real headroom — instead of aborting
 //! a run that still has budget to spend (#2667 measured exactly that loss:
 //! 7 attempts burned in 15s with 880s of budget left). A child module of
 //! `driver` (the `settlement.rs` pattern) so the engine internals stay
 //! reachable without growing `driver.rs` past the size gate.
 //!
 //! The decision arithmetic — when a park is affordable, how long it waits —
-//! is pure and lives in [`crate::retry`] (`plan_rate_limit_park`); this
-//! module owns the effects: the per-attempt usage envelopes, the
+//! is pure and lives in [`crate::retry`] (`plan_park`); this module owns
+//! the effects: the per-attempt usage envelopes, the
 //! `TurnParked`/`TurnWoken` span and per-chunk keep-alive narration, the
 //! soft-stop check that ends a multi-minute wait early, and the
 //! exhausted-ladder breaker feedback. The terminal event pair itself is
@@ -35,7 +36,7 @@ use crate::step::CancelUsageGuard;
 /// the comparator lineage allows its unattended rate-limit retries. Without
 /// this, a deadline-less interactive session against a hard-down provider
 /// would park forever; with it, the session narrates its waits for six hours
-/// and then surfaces the rate limit.
+/// and then surfaces the provider's own error.
 pub(super) const MAX_PARKED_WAIT_MS: u64 = 6 * 60 * 60 * 1000;
 
 /// Wall clock a park must leave unspent under a task deadline: waking with
@@ -48,6 +49,11 @@ const PARK_DEADLINE_RESERVE_MS: u64 = 30_000;
 /// span plus per-chunk keep-alive narration on the event stream, and the
 /// soft-stop latch as the early exit — a park must not make Esc wait out a
 /// provider brownout.
+///
+/// The narration is deliberately class-neutral and defers to the parked
+/// error's own rendered `reason`: since #2742 a park opens for a 429 *or* a
+/// 529, and a fixed "rate limited" prefix would have mislabelled half of
+/// them.
 struct RateLimitPark<'e, 'a> {
     engine: &'e Engine<'a>,
     budget: &'e BudgetGuard,
@@ -69,7 +75,7 @@ impl ParkSupervisor for RateLimitPark<'_, '_> {
     fn park_opened(&mut self, planned_ms: u64, chunk_ms: u64, reason: &str) {
         let deadline_secs = planned_ms.div_ceil(1000);
         let _ = self.events.send(AgentEvent::TurnParked {
-            description: format!("provider rate limited — backing off {deadline_secs}s ({reason})"),
+            description: format!("provider backing off {deadline_secs}s ({reason})"),
             poll_interval_secs: chunk_ms / 1000,
             deadline_secs,
         });
@@ -95,7 +101,7 @@ impl ParkSupervisor for RateLimitPark<'_, '_> {
         if waited_ms > 0 {
             let _ = self.events.send(AgentEvent::Text {
                 text: format!(
-                    "\n⏳ Still rate limited — waited {}s of {}s before the next attempt.\n",
+                    "\n⏳ Still backing off — waited {}s of {}s before the next attempt.\n",
                     waited_ms / 1000,
                     planned_ms.div_ceil(1000),
                 ),

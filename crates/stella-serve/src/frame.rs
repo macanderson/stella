@@ -280,6 +280,16 @@ pub enum ProviderErrorWire {
         #[serde(default)]
         retry_after_ms: Option<u64>,
     },
+    /// The host's provider is shedding load (HTTP 529). Carried distinctly
+    /// rather than folded into `Transport` because the engine branches on it:
+    /// a sustained overload that outlives the inline ladder converts into a
+    /// supervised parked wait, which `Transport` declines (#2742). A remote
+    /// provider's brownout must recover exactly as a local one's does.
+    Overloaded {
+        message: String,
+        #[serde(default)]
+        retry_after_ms: Option<u64>,
+    },
     Auth {
         message: String,
     },
@@ -329,6 +339,13 @@ impl From<ProviderErrorWire> for ProviderError {
                 message,
                 retry_after_ms,
             },
+            ProviderErrorWire::Overloaded {
+                message,
+                retry_after_ms,
+            } => ProviderError::Overloaded {
+                message,
+                retry_after_ms,
+            },
             ProviderErrorWire::Auth { message } => ProviderError::Auth(message),
             ProviderErrorWire::UnknownModel { slug } => ProviderError::UnknownModel { slug },
             ProviderErrorWire::Malformed { message } => ProviderError::Malformed(message),
@@ -359,6 +376,13 @@ impl From<&ProviderError> for ProviderErrorWire {
                 message,
                 retry_after_ms,
             } => ProviderErrorWire::RateLimited {
+                message: message.clone(),
+                retry_after_ms: *retry_after_ms,
+            },
+            ProviderError::Overloaded {
+                message,
+                retry_after_ms,
+            } => ProviderErrorWire::Overloaded {
                 message: message.clone(),
                 retry_after_ms: *retry_after_ms,
             },
@@ -586,12 +610,27 @@ mod tests {
                 message: "429, no hint".into(),
                 retry_after_ms: None,
             },
+            ProviderError::Overloaded {
+                message: "529".into(),
+                retry_after_ms: Some(90_000),
+            },
+            ProviderError::Overloaded {
+                message: "529, no hint".into(),
+                retry_after_ms: None,
+            },
             ProviderError::Auth("bad key".into()),
             ProviderError::UnknownModel {
                 slug: "glm-5.2".into(),
             },
             ProviderError::Malformed("truncated".into()),
             ProviderError::Cancelled,
+            ProviderError::ContextOverflow {
+                message: "prompt is too long".into(),
+            },
+            ProviderError::OutputBudgetExceeded {
+                message: "can only afford 47365".into(),
+                affordable_output_tokens: Some(47_365),
+            },
             ProviderError::Terminal("refused".into()),
         ];
         for original in cases {
@@ -610,7 +649,40 @@ mod tests {
                 original.is_retryable(),
                 "retry classification changed across the wire: {json}"
             );
+            assert_eq!(
+                back.is_park_eligible(),
+                original.is_park_eligible(),
+                "park eligibility changed across the wire: {json}"
+            );
+            assert_eq!(
+                back.retry_after_hint_ms(),
+                original.retry_after_hint_ms(),
+                "the server's stated backoff changed across the wire: {json}"
+            );
         }
+    }
+
+    /// The overload class is the one the engine converts into a supervised
+    /// parked wait (#2742), so a host that omits the optional hint must still
+    /// parse — and must still arrive park-eligible on the engine side.
+    #[test]
+    fn an_overload_without_a_backoff_hint_still_parses_and_stays_park_eligible() {
+        let wire: ProviderErrorWire = serde_json::from_value(
+            serde_json::json!({ "kind": "overloaded", "message": "HTTP 529" }),
+        )
+        .expect("the hint is optional");
+        let ProviderErrorWire::Overloaded { retry_after_ms, .. } = wire else {
+            panic!("wrong variant");
+        };
+        assert_eq!(retry_after_ms, None);
+
+        let back: ProviderError = ProviderErrorWire::Overloaded {
+            message: "HTTP 529".into(),
+            retry_after_ms: None,
+        }
+        .into();
+        assert!(back.is_retryable());
+        assert!(back.is_park_eligible());
     }
 
     /// `retry_after_ms` is the one optional field on the error wire, and it

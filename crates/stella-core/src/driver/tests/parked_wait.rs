@@ -331,6 +331,16 @@ fn throttled() -> ProviderError {
     }
 }
 
+/// The other brownout shape: HTTP 529, the non-standard "overloaded" status
+/// Anthropic and Z.ai shed load with, as `http::classify_http_status` hands
+/// it over.
+fn overloaded() -> ProviderError {
+    ProviderError::Overloaded {
+        message: "anthropic HTTP 529 Overloaded: overloaded".into(),
+        retry_after_ms: None,
+    }
+}
+
 /// The witness for #2667's measured loss (7 attempts burned in 15s with 880s
 /// of budget left): sustained hint-less rate limiting that exhausts the
 /// inline ladder now parks — bounded by wall clock, narrated on the stream —
@@ -493,5 +503,120 @@ async fn a_hint_past_the_remaining_deadline_still_fails_fast_without_parking() {
             .iter()
             .any(|e| matches!(e, AgentEvent::TurnParked { .. })),
         "no park may open for a wait that cannot fit"
+    );
+}
+
+/// The witness for #2742. A 529 brownout that outlasts the inline ladder used
+/// to reach `stella-core` as `ProviderError::Transport`, which the park path
+/// declines — so the seventh attempt exhausted ~16s of ladder and aborted the
+/// turn with the whole wall-clock budget still unspent, the exact loss #2667
+/// measured for 429s. Classified as `Overloaded` it parks instead, on the
+/// same hint-less 30s->5min schedule, and the step completes when the
+/// provider comes back.
+///
+/// Fails before the change with `TurnOutcome::Aborted` and a
+/// `RetriesExhausted` on the stream.
+#[tokio::test]
+async fn a_sustained_529_brownout_parks_within_budget_and_recovers() {
+    // Nine 529s: six absorbed by the inline ladder, three more that only a
+    // park survives. The tenth call succeeds.
+    let mut script: Vec<Result<CompletionResultAlias, ProviderError>> =
+        (0..9).map(|_| Err(overloaded())).collect();
+    script.push(Ok(text_result("recovered — done")));
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(script),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("do the task"),
+    ];
+    // No task deadline: the park allowance is the absolute six-hour cap.
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { ref text, .. } if text.contains("recovered")),
+        "a sustained 529 brownout with budget left must recover, not abort: {outcome:?}"
+    );
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        10,
+        "every scripted attempt must have been dispatched"
+    );
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnParked { description, .. } if description.contains("529")
+        )),
+        "the park must open a typed span naming the overload it is waiting out"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnWoken { reason, .. } if reason == "retry_window_elapsed"
+        )),
+        "the elapsed park must close its span"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::RetriesExhausted { .. })),
+        "a recovered brownout is not an exhaustion"
+    );
+}
+
+/// The park is exactly two classes wide, pinned from the other side: an
+/// ordinary transport fault of the same length still exhausts the ladder and
+/// aborts. Without this, "529 recovers" and "every retryable failure now
+/// waits six hours" look identical from inside the diff — and the second is a
+/// far worse bug than the one #2742 fixes.
+#[tokio::test]
+async fn a_sustained_transport_fault_still_exhausts_the_ladder_and_aborts() {
+    let script: Vec<Result<CompletionResultAlias, ProviderError>> = (0..9)
+        .map(|_| Err(ProviderError::transport("connection reset by peer")))
+        .collect();
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(script),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("do the task"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Aborted { .. }),
+        "a transport fault is not survived by waiting: {outcome:?}"
+    );
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        7,
+        "the standard ladder is one call plus six retries, and nothing more"
+    );
+    assert!(
+        !drain_events(&mut rx)
+            .iter()
+            .any(|e| matches!(e, AgentEvent::TurnParked { .. })),
+        "no park may open for a failure waiting cannot fix"
     );
 }

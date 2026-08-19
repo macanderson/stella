@@ -751,6 +751,7 @@ mod tests {
             // (`http::classify_http_status`), and its per-dialect tests
             // exercise each provider's exact body shape there.
             include_str!("http.rs"),
+            include_str!("http/tests.rs"),
             include_str!("anthropic/tests.rs"),
             include_str!("anthropic/tests/cache_breakpoints.rs"),
             include_str!("anthropic/tests/thinking.rs"),

@@ -351,6 +351,28 @@ impl Catalog {
                 // for no reason anyone had chosen. The benchmark's own 64000
                 // survives on purpose and is now declared in `posture.py`
                 // rather than inherited from here.
+                //
+                // Why 128000 is worth the gateway refusal risk (#3757). A
+                // gateway prices the credit *check* against the ceiling the
+                // caller asks for rather than the tokens it will spend, which
+                // is why OpenRouter refuses this row with `can only afford M`
+                // against a balance that would fund the real call many times
+                // over — the one `OutputBudgetPosture::Detected` row in
+                // `provider_parity.rs`.
+                //
+                // That is a recovered failure now, not a terminal one, and the
+                // mechanism is documented where it lives rather than restated
+                // here: see `stella_core::driver::output_budget_recovery`'s
+                // module doc for the clamp-and-re-run and how often a session
+                // re-probes. The trade is that bounded round-trip against
+                // permanently halving what every user's long answers may hold.
+                //
+                // The measurement in #3757 cannot decide this: a ceiling
+                // bounds the longest answer, not the median, so "299 output
+                // tokens per call" is evidence either way. Pinned by
+                // `an_unconfigured_run_asks_for_the_models_whole_output_budget`
+                // in `stella-cli`, so lowering it argues with an assertion
+                // rather than slipping through a struct literal.
                 .with_max_output_tokens(Some(128_000)),
                 // The previous-generation mainstream Sonnet. Seeded for the
                 // same hard-stop reason as its successor above: a frozen
@@ -759,6 +781,10 @@ impl Catalog {
                 // `top_provider.max_completion_tokens = 128000` for
                 // `anthropic/claude-sonnet-5` (checked 2026-08-03). Route is
                 // not a model property — see the parity test below.
+                //
+                // This is the route the affordability refusal actually bites
+                // on; the first-party row above carries the argument for why
+                // the ceiling stays 128000 anyway (#3757).
                 .with_max_output_tokens(Some(128_000)),
                 // Seeded so the head-to-head panel can seat Stella's *worker*
                 // on Opus-tier through the gateway. Without a row here the

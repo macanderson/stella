@@ -16,7 +16,13 @@ use crate::completion::PartialUsage;
 /// key in its query string, no raw response body that might echo one back.
 /// A leak here escapes the process on the very stream `--output-format
 /// stream-json` publishes.
-#[derive(Debug, Error)]
+// `Clone` because scripted-provider test harnesses replay a scripted error
+// more than once, and every one of them was otherwise obliged to keep its own
+// hand-written exhaustive mirror of this enum — a copy that goes stale
+// silently the moment a variant lands (`stella-core`'s driver tests carried
+// exactly that mirror until #2742 added a variant to it). Every payload here
+// is owned data with no source chain, so the derive is free.
+#[derive(Debug, Clone, Error)]
 pub enum ProviderError {
     /// The request never reached a usable response: DNS, TCP, TLS, a dropped
     /// connection, or a client-side timeout — and, by adapter convention, a
@@ -53,6 +59,42 @@ pub enum ProviderError {
         message: String,
         /// The server's stated backoff, when it sent one. Honored verbatim by
         /// `stella-core::retry` — a stated window always beats a guessed one.
+        retry_after_ms: Option<u64>,
+    },
+
+    /// The provider is shedding load: it read the request and refused to
+    /// serve it *right now* — HTTP 529, the non-standard "overloaded" status
+    /// Anthropic and Z.ai return during a brownout. Retryable, and the only
+    /// other variant besides [`ProviderError::RateLimited`] that can carry
+    /// the server's own backoff hint.
+    ///
+    /// Split out of [`ProviderError::Transport`] for the reason
+    /// [`ProviderError::ContextOverflow`] is split out of
+    /// [`ProviderError::Terminal`]: a caller has to *branch* on it, and a
+    /// caller reaching that branch by scraping `Transport`'s prose for
+    /// "HTTP 529" would be parsing a message written for a human. Every
+    /// retryable failure gets the inline ladder, but only a failure whose
+    /// recovery is a function of **waiting** earns the parked wait (#2677)
+    /// when the ladder runs out — a reset connection retried in five minutes
+    /// is no likelier to succeed than one retried in one second, while an
+    /// overloaded fleet is. Folded into `Transport`, a sustained 529
+    /// brownout burned the ~16s ladder and aborted a turn with wall-clock
+    /// budget still unspent (#2742) — the exact loss #2667 measured for 429s.
+    ///
+    /// Deliberately carries no [`crate::completion::PartialUsage`]: this is a
+    /// status-line classification, taken before any response body became a
+    /// stream, so there is never accounting to salvage. An overload signalled
+    /// *mid-stream* (a provider's in-band `overloaded_error` frame) can have
+    /// observed usage and therefore stays `Transport` today — the deliberate
+    /// gap tracked in #3859, not an oversight.
+    // The hint is interpolated by hand for the same reason `RateLimited`
+    // does it: `{retry_after_ms:?}` leaks Rust syntax into a user-facing line.
+    #[error("provider overloaded{}: {message}", .retry_after_ms.as_ref().map(|ms| format!(" (retry after {ms}ms)")).unwrap_or_default())]
+    Overloaded {
+        /// The provider's own explanation, summarized for the user.
+        message: String,
+        /// The server's stated backoff, when it sent one. Honored verbatim by
+        /// `stella-core::retry`, exactly as `RateLimited`'s is.
         retry_after_ms: Option<u64>,
     },
 
@@ -177,14 +219,46 @@ impl ProviderError {
 
     /// Whether the step-driver should retry this call with backoff.
     /// Terminal on 4xx-class failures (auth, unknown model, malformed
-    /// request); retryable on transport/rate-limit/5xx-class failures.
-    /// Cancellation is never retried.
+    /// request); retryable on transport/rate-limit/overload/5xx-class
+    /// failures. Cancellation is never retried.
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            ProviderError::Transport { .. } | ProviderError::RateLimited { .. }
+            ProviderError::Transport { .. }
+                | ProviderError::RateLimited { .. }
+                | ProviderError::Overloaded { .. }
         )
+    }
+
+    /// Whether this failure's recovery is a function of **waiting**, and so
+    /// whether it may be converted into a supervised parked wait when the
+    /// inline retry ladder runs out (#2677, #2742).
+    ///
+    /// A strictly narrower question than [`Self::is_retryable`], and the
+    /// reason the two are separate methods: every park-eligible error is
+    /// retryable, but a dropped connection is retryable without waiting five
+    /// minutes being any likelier to fix it than waiting one second. Set
+    /// here, at the source, so `stella-core::retry` never re-derives the
+    /// classification from a status code or a message (L-M7).
+    #[must_use]
+    pub fn is_park_eligible(&self) -> bool {
+        matches!(
+            self,
+            ProviderError::RateLimited { .. } | ProviderError::Overloaded { .. }
+        )
+    }
+
+    /// The server's own stated backoff in milliseconds, for the two variants
+    /// that can carry one. `None` for every other variant, and for a server
+    /// that sent no hint — the caller then guesses with its own backoff.
+    #[must_use]
+    pub fn retry_after_hint_ms(&self) -> Option<u64> {
+        match self {
+            ProviderError::RateLimited { retry_after_ms, .. }
+            | ProviderError::Overloaded { retry_after_ms, .. } => *retry_after_ms,
+            _ => None,
+        }
     }
 }
 
@@ -271,6 +345,104 @@ mod tests {
                 .partial_usage()
                 .is_none()
         );
+    }
+
+    /// The #2742 witness at the type level: an overloaded provider is
+    /// retryable *and* park-eligible, while an ordinary transport fault is
+    /// retryable and NOT — that gap is the whole reason the variant exists.
+    #[test]
+    fn overloaded_is_retryable_and_park_eligible_while_transport_is_only_retryable() {
+        let overloaded = ProviderError::Overloaded {
+            message: "anthropic HTTP 529 Overloaded: overloaded".into(),
+            retry_after_ms: None,
+        };
+        assert!(overloaded.is_retryable());
+        assert!(overloaded.is_park_eligible());
+
+        let transport = ProviderError::transport("connection reset");
+        assert!(transport.is_retryable());
+        assert!(
+            !transport.is_park_eligible(),
+            "waiting five minutes does not un-reset a connection"
+        );
+    }
+
+    /// Park eligibility is strictly narrower than retryability: nothing
+    /// terminal may sneak into a parked wait.
+    #[test]
+    fn no_terminal_variant_is_park_eligible() {
+        for err in [
+            ProviderError::Auth("bad key".into()),
+            ProviderError::Malformed("bad json".into()),
+            ProviderError::Cancelled,
+            ProviderError::Terminal("HTTP 400".into()),
+            ProviderError::ContextOverflow {
+                message: "too long".into(),
+            },
+            ProviderError::OutputBudgetExceeded {
+                message: "cannot afford".into(),
+                affordable_output_tokens: Some(4_096),
+            },
+            ProviderError::UnknownModel {
+                slug: "glm-5.2-turbo".into(),
+            },
+        ] {
+            assert!(!err.is_park_eligible(), "{err}");
+        }
+    }
+
+    /// Both hint-carrying variants surface their hint through one accessor,
+    /// and the variants that carry none say so rather than inventing one.
+    #[test]
+    fn only_the_waiting_variants_carry_a_server_backoff_hint() {
+        assert_eq!(
+            ProviderError::RateLimited {
+                message: "429".into(),
+                retry_after_ms: Some(500),
+            }
+            .retry_after_hint_ms(),
+            Some(500)
+        );
+        assert_eq!(
+            ProviderError::Overloaded {
+                message: "529".into(),
+                retry_after_ms: Some(90_000),
+            }
+            .retry_after_hint_ms(),
+            Some(90_000)
+        );
+        assert_eq!(
+            ProviderError::Overloaded {
+                message: "529".into(),
+                retry_after_ms: None,
+            }
+            .retry_after_hint_ms(),
+            None
+        );
+        assert_eq!(
+            ProviderError::transport("reset").retry_after_hint_ms(),
+            None
+        );
+    }
+
+    /// The rendered line is for a human: no `Some(90000)` Debug syntax, and
+    /// the stated wait is visible when the server gave one.
+    #[test]
+    fn overloaded_renders_its_hint_without_leaking_rust_syntax() {
+        let err = ProviderError::Overloaded {
+            message: "anthropic HTTP 529 Overloaded: overloaded".into(),
+            retry_after_ms: Some(90_000),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("provider overloaded"), "{msg}");
+        assert!(msg.contains("retry after 90000ms"), "{msg}");
+        assert!(!msg.contains("Some("), "{msg}");
+
+        let hintless = ProviderError::Overloaded {
+            message: "z.ai HTTP 529: overloaded".into(),
+            retry_after_ms: None,
+        };
+        assert!(!hintless.to_string().contains("retry after"), "{hintless}");
     }
 
     #[test]
