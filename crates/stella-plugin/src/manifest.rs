@@ -609,6 +609,12 @@ impl PluginManifest {
             if !seen_hooks.insert(*hook) {
                 return Err(ManifestError::DuplicateHook { hook: *hook });
             }
+            // The loop-lifecycle pair is spellable here — it is one vocabulary
+            // — and not routable to a plugin, so it is refused by name rather
+            // than granted and never dispatched (#3599).
+            if matches!(hook, HookEvent::PreIssueWork | HookEvent::PostIssueWork) {
+                return Err(ManifestError::HookNotAvailableToPlugins { hook: *hook });
+            }
         }
         if !grant.hooks.is_empty() && !participation.includes(Participation::Steering) {
             return Err(ManifestError::HooksRequireSteering { participation });
@@ -873,6 +879,29 @@ mod tests {
                 hook: HookEvent::PreToolUse
             }
         ));
+    }
+
+    /// **The other half of "an undeclared hook is never invoked".** A plugin
+    /// may spell the loop-lifecycle events — they are one vocabulary — and may
+    /// not be routed at them: they are dispatched by the self-driving loop
+    /// from the operator's own hooks settings, outside any turn. Refused by
+    /// name, so an author learns it here rather than from a grant that
+    /// silently never fires (#3599).
+    #[test]
+    fn a_plugin_may_not_be_routed_at_a_loop_lifecycle_hook() {
+        for hook in ["PreIssueWork", "PostIssueWork"] {
+            let err = parse(&format!(
+                "name = \"x\"\n[loop]\nparticipation = \"steering\"\nhooks = [\"{hook}\"]"
+            ))
+            .unwrap_err();
+            assert!(
+                matches!(err, ManifestError::HookNotAvailableToPlugins { .. }),
+                "{hook} must be refused: {err:?}"
+            );
+            let text = err.to_string();
+            assert!(text.contains(hook), "{text}");
+            assert!(text.contains("outside any turn"), "{text}");
+        }
     }
 
     /// The set-based duplicate checks must name the same offender the prefix

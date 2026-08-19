@@ -56,6 +56,8 @@ fn concat_hooks(base: &mut Option<Hooks>, extra: &Hooks) {
     join(&mut target.post_tool_use, &extra.post_tool_use);
     join(&mut target.stop, &extra.stop);
     join(&mut target.pre_compact, &extra.pre_compact);
+    join(&mut target.pre_issue_work, &extra.pre_issue_work);
+    join(&mut target.post_issue_work, &extra.post_issue_work);
 }
 
 impl Settings {

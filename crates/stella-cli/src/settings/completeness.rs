@@ -165,8 +165,10 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
 }
 
 /// One row per field of [`Hooks`]. Every event concatenates across scopes —
-/// any scope may add a gate, none may remove another's — so all five are
-/// [`Posture::Merged`].
+/// any scope may add a gate, none may remove another's — so all of them are
+/// [`Posture::Merged`], the loop-lifecycle pair included: a gate that holds an
+/// agent off an issue is exactly the kind a project should be able to add to
+/// one an operator already set.
 fn hooks_ledger(h: &Hooks) -> Vec<Field> {
     let d = Hooks::default();
     let Hooks {
@@ -175,6 +177,8 @@ fn hooks_ledger(h: &Hooks) -> Vec<Field> {
         post_tool_use,
         stop,
         pre_compact,
+        pre_issue_work,
+        post_issue_work,
     } = h;
     vec![
         keyed(
@@ -194,6 +198,16 @@ fn hooks_ledger(h: &Hooks) -> Vec<Field> {
         ),
         keyed("Stop", Posture::Merged, stop != &d.stop),
         keyed("PreCompact", Posture::Merged, pre_compact != &d.pre_compact),
+        keyed(
+            "PreIssueWork",
+            Posture::Merged,
+            pre_issue_work != &d.pre_issue_work,
+        ),
+        keyed(
+            "PostIssueWork",
+            Posture::Merged,
+            post_issue_work != &d.post_issue_work,
+        ),
     ]
 }
 
@@ -265,7 +279,9 @@ const EVERY_KEY: &str = r#"{
     "PreToolUse":   [ { "hooks": [{ "command": "pre-tool-use" }] } ],
     "PostToolUse":  [ { "hooks": [{ "command": "post-tool-use" }] } ],
     "Stop":         [ { "hooks": [{ "command": "stop" }] } ],
-    "PreCompact":   [ { "hooks": [{ "command": "pre-compact" }] } ]
+    "PreCompact":   [ { "hooks": [{ "command": "pre-compact" }] } ],
+    "PreIssueWork":  [ { "hooks": [{ "command": "pre-issue-work" }] } ],
+    "PostIssueWork": [ { "hooks": [{ "command": "post-issue-work" }] } ]
   },
   "mcp": { "registry_url": "https://registry.test/v0.1" },
   "agent_engine_config": { "default_model": "acme/acme-large" },
@@ -336,7 +352,7 @@ fn every_merged_settings_field_survives_the_scope_merge() {
     }
 }
 
-/// All five hook events concatenate across scopes.
+/// Every hook event concatenates across scopes.
 ///
 /// **Witness.** Fails on the base commit at `Stop` and `PreCompact`.
 /// Separate from the ledger test above because `hooks` is one row there:
