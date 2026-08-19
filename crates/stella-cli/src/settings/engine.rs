@@ -131,8 +131,10 @@ pub struct AgentEngineConfig {
     ///
     /// This is the replacement for the `pipeline_<role>_model` keys above,
     /// which name roles a core loop no longer has: those were pins on a staged
-    /// pipeline deleted in #3865, and their removal — along with the
-    /// four-language contract pinning the same words — is #3908, under epic #3903.
+    /// pipeline deleted in #3865. Their removal is #3908; retiring the
+    /// four-language contract that pins the same words is #3910, and it is
+    /// deliberately a separate ticket because the guard may only go once role
+    /// names travel as trace data (#3906). Epic #3903.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat_models: Option<std::collections::BTreeMap<String, String>>,
     /// Per-model output ceilings, overriding what the catalog knows the model
