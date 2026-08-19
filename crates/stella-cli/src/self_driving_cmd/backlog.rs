@@ -188,6 +188,20 @@ pub(super) async fn file_finding(
     provider.file(&signed).await.map(Filed::New)
 }
 
+/// The ranked defect queue as bare keys, in the order the loop should take
+/// them.
+///
+/// The same read and the same ranking `queue` renders — one definition of
+/// "defect", folded a third way. A driver that filtered the queue itself would
+/// be the second definition B1 removed.
+pub(super) fn ranked_keys(provider: &dyn IssueProvider) -> Result<Vec<String>, String> {
+    let (defects, _) = ranked(provider)?;
+    Ok(defects
+        .into_iter()
+        .map(|issue| issue.number.to_string())
+        .collect())
+}
+
 /// Resolve one issue by key, through the port.
 ///
 /// Reads the open queue and finds the key rather than asking the tracker for

@@ -17,6 +17,7 @@ mod backlog;
 mod config;
 mod convention;
 mod deliver;
+mod drive;
 mod lifecycle;
 pub(crate) mod probes;
 pub(crate) mod state;
@@ -203,6 +204,33 @@ pub(crate) enum SelfDrivingCmd {
         /// Output format.
         #[arg(long, value_enum, default_value = "text")]
         format: QueryFormat,
+    },
+
+    /// Drive the loop: ask the machine what now, do it, ask again.
+    ///
+    /// This is the verb that runs unattended. It claims from the ranked queue,
+    /// works each issue through the turn loop, opens a pull request, watches
+    /// CI, and merges when the machine says to — and on a block it PARKS and
+    /// keeps polling rather than exiting, because a host that exits makes the
+    /// loop's self-resume impossible no matter what the machine returns.
+    Drive {
+        /// How many issues to take before stopping.
+        ///
+        /// A bound so one invocation terminates; the real loop never does.
+        /// Reaching it is reported as *reached the bound*, never as *finished*.
+        #[arg(long, default_value_t = 1)]
+        max_issues: u32,
+
+        /// Merge without waiting for a human approval.
+        ///
+        /// Off by default. A default that merged unreviewed would make the
+        /// safe choice the one an operator has to remember to opt into.
+        #[arg(long)]
+        no_review: bool,
+
+        /// Seconds between polls while waiting on CI.
+        #[arg(long, default_value_t = 45)]
+        poll_secs: u64,
     },
 
     /// Bring an issue up to this workspace's standard.
@@ -542,6 +570,11 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), 
         } => file_finding(&st, title, body, labels, *format),
         SelfDrivingCmd::Work { issue, format } => work_issue(&st, issue, spend_limit, *format),
         SelfDrivingCmd::Deliver { cmd } => deliver_cmd(cmd),
+        SelfDrivingCmd::Drive {
+            max_issues,
+            no_review,
+            poll_secs,
+        } => drive::drive(*max_issues, *no_review, spend_limit, *poll_secs),
         SelfDrivingCmd::Triage {
             issue,
             dry_run,

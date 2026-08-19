@@ -318,6 +318,15 @@ pub(super) fn observe(root: &std::path::Path, pr: &str) -> Result<Observation, S
     Ok(observation_from(&view, &base_checks))
 }
 
+/// Take a pull request out of draft.
+///
+/// Called only when the machine returned `MarkReady`, which it does once CI is
+/// green — so a pull request that never goes green never asks a human to look
+/// at it.
+pub(super) fn mark_ready(pr: &str) -> Result<(), String> {
+    gh(&["pr", "ready", pr]).map(|_| ())
+}
+
 /// Merge the pull request.
 ///
 /// Called **only** when [`stella_autonomy::deliver_next`] returned

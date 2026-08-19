@@ -21,6 +21,7 @@ stella self-driving calibrate (--ok | --resource-fail | --show)
 stella self-driving queue [--limit N] [--format <text|json>]
 stella self-driving file --title TEXT [--body TEXT] [--label L…] [--format <text|json>]
 stella self-driving work --issue KEY [--spend-limit USD] [--format <text|json>]
+stella self-driving drive [--max-issues N] [--no-review] [--poll-secs N]
 stella self-driving triage --issue KEY [--dry-run] [--format <text|json>]
 stella self-driving close --issue KEY (--completed | --not-planned REASON | --duplicate-of KEY | --partial DONE --remaining KEY…) [--pr KEY | --commit SHA] [--per CITATION]
 stella self-driving deliver open --issue KEY --branch B --title T
@@ -124,6 +125,16 @@ Two properties are deliberate and tested.
 **The outcome is measured from the tree, never from what the turn said.** A turn that exits cleanly and narrates success while changing nothing reports `no_change` and releases its worktree. The two disagree exactly when it matters, and a loop that believed the narration would open empty pull requests.
 
 Worktrees live under `.stella/private/self-driving/` on `self-driving/` branches — outside the fleet's namespace, because `stella fleet gc` reclaims by namespace and must not be given authority over checkouts it did not create.
+
+### drive
+
+`stella self-driving drive` is the verb that runs unattended. It asks the machine what to do next, does it, and asks again: claim from the ranked queue, work the issue through the turn loop, open a pull request, watch CI, merge when the machine says to.
+
+**On a block it parks and keeps polling — it does not exit.** Self-resume is structural, because the machine holds no latch: a block is recomputed from scratch on every call and stops being returned the moment its cause is gone. But a host that exits on a block makes resumption impossible no matter what the machine returns. Nobody should ever have to tell this loop it may resume; a human who raises the ceiling, restores the grant, drops the stop flag or merges the escalated pull request has already said everything that needs saying.
+
+`--max-issues` bounds one invocation so it terminates. The real loop never does, which is why the bound is a flag rather than a constant, and why reaching it is reported as *reached the bound* rather than as *finished*.
+
+Steps the machine returns that this build cannot perform — sweeping an audit lens, curating a proposal — are **reported and then stop the loop**, never silently skipped. A driver that did nothing for a step it was handed would look healthy forever.
 
 ### triage
 
