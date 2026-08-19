@@ -585,8 +585,9 @@ pub enum HostCallRefusal {
     /// ask for something else. The standing case is verifier independence — a
     /// `child_turn` whose role intent resolves to the **worker's** seat would
     /// let a plugin grade the work with the model that did it, which is the
-    /// self-grading `stella_pipeline`'s roster already reports on and which a
-    /// plugin may not buy at all.
+    /// self-grading the staged pipeline's roster reported on
+    /// (`crates/stella-pipeline`, deleted in #3865) and which a plugin may not
+    /// buy at all.
     Forbidden,
     /// This host does not implement the capability at all. A declared gap on
     /// the host's side, not a fault of the plugin's.

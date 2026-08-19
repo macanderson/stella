@@ -125,7 +125,8 @@ fn no_flag_at_all_resolves_to_the_raw_loop() {
     );
 }
 
-/// **Witness (#3865).** `--pipeline classic` used to resolve to [`PipelineChoice::Classic`];
+/// **Witness (#3865).** `--pipeline classic` used to resolve to a `Classic`
+/// variant of [`PipelineChoice`] (itself since deleted, #3867);
 /// the built-in staged pipeline is gone, so it must now refuse instead. This
 /// assertion fails on the pre-slice-1 code (which still resolves `Ok`) and
 /// passes on this one. An unknown/plugin variant is unaffected — it still
@@ -230,6 +231,16 @@ fn a_steering_wrapper_is_not_refused_by_the_arbiter_gate() {
         .expect("a steering-grade wrapper can never hold a round open — nothing to refuse");
 }
 
+/// The resolved `Raw` choice bypasses this gate entirely on every door — only
+/// a *named* plugin variant is ever in reach of it, and only on `fleet`.
+#[test]
+fn a_resolved_raw_choice_is_never_refused_on_any_door() {
+    reject_plugin_variant_for_door("goal", PipelineChoice::Raw)
+        .expect("raw has no plugin to drive — nothing to refuse");
+    reject_plugin_variant_for_door("fleet", PipelineChoice::Raw)
+        .expect("raw has no plugin to drive — nothing to refuse");
+}
+
 /// **Witness (#3696).** `--keep-witness`, `--require-verified`, and
 /// `--test-command` used to reach `run_one_shot` on the `Raw` arm and be
 /// silently dropped there (`run_raw_one_shot` takes no `keep_witness`/
@@ -258,18 +269,32 @@ fn each_verification_flag_alone_is_refused_against_the_raw_loop() {
     assert!(err.contains("--require-verified"), "{err}");
 }
 
-/// [`PipelineChoice::Classic`] itself still bypasses this gate — the refusal
-/// only ever fires against a resolution that cannot honor the flag. No live
-/// path can construct `Classic` any more (`PipelineChoice::resolve` refuses
-/// `--pipeline classic` outright), so this exercises the early return
-/// directly, against a `Classic` value built by hand, rather than through a
-/// realistic caller; it documents the current shape of dead scaffolding this
-/// function still carries, kept until the slice that deletes
-/// `PipelineChoice::Classic` deletes this branch too.
+/// **Witness (#3867).** The gate no longer has a bypass arm: `--keep-witness`
+/// is refused against **every** [`PipelineChoice`] that exists, with no
+/// variant left that accepts it.
+///
+/// This replaces `verification_flags_are_accepted_against_a_directly_constructed_classic_choice`,
+/// which asserted the opposite for the one variant that could accept the flag
+/// — `PipelineChoice::Classic`, deleted here. That test could not survive its
+/// subject, so the property it guarded is restated as its complement.
+///
+/// The `match` below is the structural half, and is why this is a witness
+/// rather than a restatement: it names every variant with no wildcard, so
+/// re-adding a third variant fails to compile here (`E0004`) instead of
+/// silently reintroducing an arm that bypasses the refusal. On the pre-#3867
+/// code the same `match` does not compile at all — `Classic` is unnamed —
+/// which is the fail half of the flip.
 #[test]
-fn verification_flags_are_accepted_against_a_directly_constructed_classic_choice() {
-    reject_verification_flags_without_pipeline(PipelineChoice::Classic, Some("pytest"), true, true)
-        .expect("classic runs the verification machinery these flags belong to");
+fn no_pipeline_choice_variant_bypasses_the_verification_flag_gate() {
+    for choice in [PipelineChoice::Raw, PipelineChoice::Plugin("budget-v1")] {
+        let what = match choice {
+            PipelineChoice::Raw => "the raw loop",
+            PipelineChoice::Plugin(variant) => variant,
+        };
+        let err = reject_verification_flags_without_pipeline(choice, None, true, false)
+            .expect_err("no choice runs the witness machinery --keep-witness belongs to");
+        assert!(err.contains("--keep-witness"), "{what}: {err}");
+    }
 }
 
 /// A bare raw run with none of the three flags is unaffected — the gate
@@ -306,13 +331,12 @@ fn plugin_variant_accepts_test_command_but_still_refuses_witness_flags() {
 }
 
 /// A wrapper plugin is a child process the host starts, so the enterprise
-/// process-free authority must refuse it exactly as it refuses the staged
+/// process-free authority must refuse it exactly as it refused the staged
 /// pipeline — and `--pipeline <variant>` must not read as "raw" merely
-/// because it is not `classic`.
+/// because it names no built-in.
 #[test]
 fn a_wrapper_plugin_is_not_the_process_free_surface() {
     assert!(PipelineChoice::Raw.is_raw());
-    assert!(!PipelineChoice::Classic.is_raw());
     assert!(
         !PipelineChoice::Plugin("budget-v1").is_raw(),
         "a plugin spawns a process, so it is not the surface that spawns none"

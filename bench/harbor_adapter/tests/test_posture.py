@@ -45,10 +45,7 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
 # re-export kept alive only for a test is a public surface nobody asked for.
 from stella_harbor.posture import (  # noqa: E402 - after importorskip by design
     _BENCHMARKED_SLUGS,
-    resolve_candidates,
-    resolve_max_revisions,
     resolve_model_timeout,
-    resolve_verifier_evidence_demand,
 )
 
 
@@ -302,36 +299,44 @@ class TestWorkerEffortAndTriageArms:
             assert posture[role_key] in posture["allowed_models"]
 
 
-class TestAttemptCountArms:
-    """Revisions and best-of-N as selectable, hashed arms (#1211 §6.7, §6.8).
+class TestRetiredAttemptCountArms:
+    """The three knobs the staged pipeline took with it (#3871).
 
-    Before these existed the two knobs were unreachable rather than merely
-    unset: outside `stella-pipeline`'s own tests, `max_revisions` was written
-    once (to `2`) and `candidates` once (to `None`), so best-of-N was fully
-    implemented and had never run in production.
+    `max_revisions` and `candidates` (#1211 §6.7, §6.8) and
+    `verifier_evidence_demand` (#1295) were selectable, hashed arms until
+    `crates/stella-pipeline` — the only thing that read any of them — was
+    deleted (#3865). This class is what is left: proof that the posture no
+    longer emits their keys, that asking for one fails loudly at the call site,
+    and that the digest the removal must NOT have moved did not move.
     """
 
     _MODEL = "openrouter/anthropic/claude-sonnet-5"
 
-    def test_unset_selectors_reproduce_the_frozen_posture(self) -> None:
-        """The keys must be ABSENT when unselected, not present-at-default.
+    _RETIRED_KEYS = (
+        "pipeline_max_revisions",
+        "pipeline_candidates",
+        "pipeline_verifier_evidence_demand",
+    )
+    _RETIRED_KWARGS = ("max_revisions", "candidates", "verifier_evidence_demand")
 
-        The digest is taken over this dict, so writing `pipeline_max_revisions:
-        2` — the value every historical run actually had — would still change
-        every recorded hash, to describe a posture identical to the one they
-        already described. Absence is the only encoding of "the engine's
-        default" that keeps `bench/READINESS.md` honest.
+    def test_the_retired_keys_are_neither_emitted_nor_accepted(self) -> None:
+        """**Witness (#3871).** Both halves, because either alone is passable.
+
+        The emission half fails on the pre-removal code, which writes each key
+        whenever its selector is set. The kwarg half is what makes the removal
+        *loud*: a caller that still selects an arm gets a `TypeError` naming the
+        argument, here, rather than a run that launches and is refused by
+        `config::trusted_engine_config_shape_is_strict` with an engine-config
+        error that never names the knob — or, worse on the pre-#3865 engine, one
+        that starts and silently measures the default.
         """
-        default_posture, default_json, default_digest = _benchmark_engine_posture(
-            self._MODEL
-        )
-        explicit = _benchmark_engine_posture(
-            self._MODEL, max_revisions=None, candidates=None
-        )
-        assert default_json == explicit[1]
-        assert default_digest == explicit[2]
-        assert "pipeline_max_revisions" not in default_posture
-        assert "pipeline_candidates" not in default_posture
+        posture, _normalized, _digest = _benchmark_engine_posture(self._MODEL)
+        for key in self._RETIRED_KEYS:
+            assert key not in posture, f"{key} is retired and must not be emitted"
+
+        for kwarg in self._RETIRED_KWARGS:
+            with pytest.raises(TypeError, match=kwarg):
+                _benchmark_engine_posture(self._MODEL, **{kwarg: 2})
 
     def test_the_registered_sonnet_digest_is_unchanged(self) -> None:
         """The one digest an external gate already checks by prefix.
@@ -342,33 +347,17 @@ class TestAttemptCountArms:
         preflight on the rig, where the feedback costs a run.
 
         It moved once, from `c8536200`, when the output cap left the posture
-        (#2411). That is the mechanism working: an arm that asks for a
-        different budget is a different arm and must not reuse the old hash.
+        (#2411). Retiring the three attempt-count knobs (#3871) must NOT move
+        it a second time, and that is this test's job here: all three followed
+        the omit-when-unset rule, so a posture that never selected one is
+        byte-identical before and after their removal. A red assertion here
+        would mean the removal silently re-registered every historical number
+        under a posture that no longer describes them.
         """
         _posture, _normalized, digest = _benchmark_engine_posture(
             "anthropic/claude-sonnet-5"
         )
         assert digest.startswith("6c7fc70c")
-
-    def test_each_selector_moves_the_digest_and_only_its_own_key(self) -> None:
-        """Two arms, two hashes — and neither disturbs the rest of the posture."""
-        base, _base_json, base_digest = _benchmark_engine_posture(self._MODEL)
-        revised, _revised_json, revised_digest = _benchmark_engine_posture(
-            self._MODEL, max_revisions=4
-        )
-        best_of, _best_json, best_digest = _benchmark_engine_posture(
-            self._MODEL, candidates=2
-        )
-        assert revised["pipeline_max_revisions"] == 4
-        assert "pipeline_candidates" not in revised
-        assert best_of["pipeline_candidates"] == 2
-        assert "pipeline_max_revisions" not in best_of
-        assert len({base_digest, revised_digest, best_digest}) == 3
-        # Model routing, effort and the ceilings are untouched by either — an
-        # attempt-count arm must not be a second, undeclared variable.
-        for arm in (revised, best_of):
-            for key in ("default_model", "allowed_models", "agents"):
-                assert arm[key] == base[key]
 
     def test_selected_knobs_stay_inside_the_launcher_vocabulary(self) -> None:
         """The fail-closed seam refuses the RUN on an unknown root key.
@@ -388,77 +377,9 @@ class TestAttemptCountArms:
             verifier="openrouter/anthropic/claude-fable-5",
             worker_effort="xhigh",
             triage_model="openrouter/anthropic/claude-haiku-4.5",
-            max_revisions=4,
-            candidates=2,
-            verifier_evidence_demand=True,
             model_timeout_secs=1572,
         )
         assert set(posture) <= _engine_root_fields()
-
-    def test_resolvers_treat_unset_as_inherit_and_refuse_a_lost_value(self) -> None:
-        """`None` inherits; empty is a refusal, not a second spelling of `None`.
-
-        An empty selector means a value was lost between the launcher and here.
-        Inheriting the default there would score the run under a configuration
-        nobody chose — the same failure the effort selector refuses.
-        """
-        assert resolve_max_revisions(None) is None
-        assert resolve_candidates(None) is None
-        assert resolve_max_revisions("4") == 4
-        assert resolve_candidates(" 2 ") == 2
-        for resolver in (resolve_max_revisions, resolve_candidates):
-            with pytest.raises(ValueError, match="must not be empty"):
-                resolver("   ")
-            with pytest.raises(ValueError, match="must be an integer"):
-                resolver("two")
-
-    def test_bounds_refuse_a_fat_fingered_digit_and_a_zero_candidate(self) -> None:
-        """The ceilings catch the typo whose cost is a bill, not a wrong answer.
-
-        `0` splits the two: no revisions is a real arm (one shot, no retry), so
-        it is admissible. Zero candidates is not — the pipeline floors it to 1
-        anyway, so accepting it would let two selector values describe the same
-        run under two different digests.
-        """
-        assert resolve_max_revisions("0") == 0
-        with pytest.raises(ValueError, match="candidates must be between 1"):
-            resolve_candidates("0")
-        with pytest.raises(ValueError, match="max revisions must be between"):
-            resolve_max_revisions("40")
-        with pytest.raises(ValueError, match="candidates must be between"):
-            resolve_candidates("20")
-
-    def test_the_corroboration_ask_is_a_selectable_arm(self) -> None:
-        """#1295, the same omit-when-unset rule the attempt counts follow.
-
-        The vocabulary is the setting's own (`on`/`off`), plus `1`/`0` for a
-        shell with an integer to hand. A bare `true` is refused rather than
-        guessed at: the CLI parses this key as a `Toggle`, so a JSON bool would
-        be a run that dies at launch wearing a posture that claims it ran.
-        """
-        assert resolve_verifier_evidence_demand(None) is None
-        assert resolve_verifier_evidence_demand("on") is True
-        assert resolve_verifier_evidence_demand(" OFF ") is False
-        assert resolve_verifier_evidence_demand("1") is True
-        assert resolve_verifier_evidence_demand("0") is False
-        for lost in ("", "   ", "true", "yes"):
-            with pytest.raises(ValueError, match="must be one of on/off"):
-                resolve_verifier_evidence_demand(lost)
-
-        unset, _unset_json, unset_digest = _benchmark_engine_posture(self._MODEL)
-        assert "pipeline_verifier_evidence_demand" not in unset
-        on, _on_json, on_digest = _benchmark_engine_posture(
-            self._MODEL, verifier_evidence_demand=True
-        )
-        off, _off_json, off_digest = _benchmark_engine_posture(
-            self._MODEL, verifier_evidence_demand=False
-        )
-        assert on["pipeline_verifier_evidence_demand"] == "on"
-        assert off["pipeline_verifier_evidence_demand"] == "off"
-        # Three distinct digests: the two arms cannot be confused with each
-        # other, and neither can be confused with the historical posture that
-        # never mentioned the key.
-        assert len({unset_digest, on_digest, off_digest}) == 3
 
 
 class TestModelTimeoutArm:

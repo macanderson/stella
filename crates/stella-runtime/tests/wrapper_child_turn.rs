@@ -288,8 +288,9 @@ printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":
 /// declared, it resolves, and the host still refuses it: a plugin may not spend
 /// the model whose work it is judging.
 ///
-/// `stella_pipeline`'s roster *reports* this loss for an operator who chooses
-/// it (`Roster::independence_losses`); a plugin cannot choose it at all, and
+/// The staged pipeline's roster *reported* this loss for an operator who chose
+/// it (`Roster::independence_losses`; `crates/stella-pipeline`, deleted in
+/// #3865); a plugin cannot choose it at all, and
 /// gets the [`HostCallRefusal::Forbidden`] code that says so rather than one
 /// that reads like a misconfiguration.
 #[tokio::test]

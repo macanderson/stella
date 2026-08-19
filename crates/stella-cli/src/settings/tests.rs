@@ -89,12 +89,12 @@ fn the_edit_reader_refuses_a_file_it_cannot_parse() {
     let wrong_type = write(
         dir.path(),
         "wrong-type.json",
-        r#"{"enable_recap": true,
+        r#"{"ignore_gitignore": true,
             "agent_engine_config": {"default_model": "zai/glm-5.2"}}"#,
     );
     assert!(
         user_engine_config_at(&wrong_type).is_err(),
-        "`enable_recap` is a Toggle, not a bool — the read must refuse rather \
+        "`ignore_gitignore` is a Toggle, not a bool — the read must refuse rather \
          than hand back an empty config the caller would then persist"
     );
 }
@@ -453,60 +453,49 @@ fn every_tool_is_on_with_no_settings_at_all() {
     }
 }
 
-/// The recap keeps the older on/off-string discipline, and it is the
-/// nearest neighbour to the tool switches — worth pinning beside them so
-/// a change to `Toggle` can't quietly loosen either.
+/// **Witness (#3870).** The three knobs the staged pipeline's removal left
+/// inert are retired: a settings file that sets one still parses, and the
+/// operator is told the feature is gone rather than told to check the
+/// spelling.
+///
+/// This replaces `recap_defaults_off_and_takes_the_toggle_vocabulary_only`,
+/// `trace_capture_defaults_off_and_survives_the_scope_merge`,
+/// `enable_recap_survives_the_scope_merge` and
+/// `enable_recap_defaults_off_when_no_scope_sets_it` — four tests that
+/// asserted the fields worked, and could not survive their subjects. The
+/// merge-drop property those tests guarded is *not* lost: it is
+/// [`ignore_gitignore_defaults_on_and_an_off_survives_the_scope_merge`] and
+/// [`create_worktrees_survives_the_scope_merge`], which cover it on live
+/// fields.
+///
+/// Fails on the pre-#3870 code in both halves: the keys were still readable
+/// (so nothing was retired) and `retirement` returned `None` for all three.
 #[test]
-fn recap_defaults_off_and_takes_the_toggle_vocabulary_only() {
-    assert!(!Settings::default().recap_enabled(), "recap defaults off");
-    assert!(
-        serde_json::from_str::<Settings>(r#"{"enable_recap":"on"}"#)
-            .unwrap()
-            .recap_enabled(),
-        "\"on\" enables the recap"
-    );
-    assert!(
-        !serde_json::from_str::<Settings>(r#"{"enable_recap":"off"}"#)
-            .unwrap()
-            .recap_enabled()
-    );
-    // A typo'd value is a loud parse error, not a silent false (the whole
-    // point of the Toggle enum over a bool).
-    assert!(serde_json::from_str::<Settings>(r#"{"enable_recap":true}"#).is_err());
-}
+fn the_knobs_the_pipeline_removal_left_inert_are_retired_not_merely_unknown() {
+    for key in [
+        "enable_recap",
+        "run.recap",
+        "trace_capture",
+        "run.trace_capture",
+        "agent_engine_config.approval_wait_secs",
+        "agents.approval_wait_secs",
+    ] {
+        let why = super::unknown::retirement(key)
+            .unwrap_or_else(|| panic!("{key} must be explained as retired, not spell-checked"));
+        assert!(
+            !why.is_empty(),
+            "{key}: a retirement reason is the whole point of the list"
+        );
+    }
 
-/// The #1042 trace flag: defaults off, Toggle vocabulary only, and — the
-/// `enable_recap` lesson — it must survive the SCOPE MERGE, not just direct
-/// deserialization. The merge half fails on a build whose `overlay_scope`
-/// forgets the field: every scope parses it and the merged value reads
-/// `None` no matter what any file said.
-#[test]
-fn trace_capture_defaults_off_and_survives_the_scope_merge() {
-    assert!(
-        !Settings::default().trace_capture_enabled(),
-        "trace capture defaults off"
-    );
-    assert!(
-        serde_json::from_str::<Settings>(r#"{"trace_capture":"on"}"#)
-            .unwrap()
-            .trace_capture_enabled()
-    );
-    // Toggle discipline: a bool is a loud parse error, not a silent false.
-    assert!(serde_json::from_str::<Settings>(r#"{"trace_capture":true}"#).is_err());
-
-    let dir = tempfile::tempdir().unwrap();
-    let user = write(dir.path(), "user.json", r#"{"trace_capture": "on"}"#);
-    // A later scope that says nothing must not reset the lower scope's "on"…
-    let silent = write(dir.path(), "silent.json", r#"{"providers": {}}"#);
-    let merged = Settings::load_from(&[user.clone(), silent]).unwrap();
-    assert!(
-        merged.trace_capture_enabled(),
-        "the merge must carry the flag (the enable_recap lesson)"
-    );
-    // …and a later explicit "off" wins.
-    let off = write(dir.path(), "off.json", r#"{"trace_capture": "off"}"#);
-    let merged = Settings::load_from(&[user, off]).unwrap();
-    assert!(!merged.trace_capture_enabled());
+    // Still parses — retiring a key must never turn an existing settings file
+    // into a hard error, which is the trade `settings/unknown.rs` exists to
+    // make. It is simply read by nothing now.
+    let parsed = serde_json::from_str::<Settings>(
+        r#"{"enable_recap":"on","trace_capture":"on","providers":{}}"#,
+    )
+    .expect("a retired key stays parseable");
+    assert_eq!(parsed.providers.len(), 0);
 }
 
 /// The probe's gitignore filter: **defaults ON** when no scope mentions it —
@@ -1100,94 +1089,18 @@ fn managed_authority_settings_round_trip() {
     assert_eq!(round_trip, policy);
 }
 
-/// `enable_recap` must survive the scope merge.
-///
-/// It did not: `overlay_scope` copied every other top-level key and silently
-/// dropped this one, so `"enable_recap": "on"` in any settings.json parsed
-/// fine, merged to `None`, and never reached the runtime. The existing
-/// coverage missed it because it exercised `recap_enabled()` on a
-/// directly-deserialized `Settings` — which is exactly the one path where the
-/// field was never lost. This test goes through `Settings::load`, the way the
-/// binary does.
-///
-/// `Settings::load` reads the process-global `STELLA_MANAGED_SETTINGS`, so
-/// this test must join the env lock even though it mutates nothing: a
-/// bystander read of that global races the sibling tests above between their
-/// `set_var` and their `EnvRestore` drop, and briefly sees another test's
-/// scratch fixture — which fails the managed-settings ownership check and
-/// turns this assertion into a flake (#3312).
-#[test]
-fn enable_recap_survives_the_scope_merge() {
-    let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_MANAGED_SETTINGS"]);
-    let dir = tempfile::tempdir().expect("tempdir");
-    let workspace = dir.path();
-    std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
-    std::fs::write(
-        workspace.join(".stella/settings.json"),
-        r#"{"enable_recap": "on"}"#,
-    )
-    .expect("write settings");
-    // SAFETY: env lock held for the whole mutate-read-cleanup window; the
-    // `EnvRestore` guard above undoes this even on an unwinding assertion.
-    unsafe {
-        std::env::set_var(
-            "STELLA_MANAGED_SETTINGS",
-            workspace.join("no-such-managed.json"),
-        );
-    }
-
-    let merged = Settings::load(workspace).expect("settings load");
-    assert!(
-        merged.recap_enabled(),
-        "a scope that sets `enable_recap: on` must reach the merged settings"
-    );
-}
-
-/// The complement: an absent key must not reset a lower scope's value, and the
-/// default stays off.
-///
-/// Asserting a DEFAULT means asserting that no scope set it — including the
-/// user scope under `$HOME`, which this process does not own. Without the env
-/// lock and a redirected `$HOME` the assertion depends on the developer's real
-/// `~/.stella/settings.json`, and races any test that legitimately points
-/// `HOME` somewhere else. Both were true: it passed only because no such test
-/// had yet written `enable_recap` into its scratch home.
-#[test]
-fn enable_recap_defaults_off_when_no_scope_sets_it() {
-    let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_MANAGED_SETTINGS"]);
-    let dir = tempfile::tempdir().expect("tempdir");
-    let workspace = dir.path();
-    std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
-    std::fs::write(workspace.join(".stella/settings.json"), r#"{}"#).expect("write settings");
-    let _home = crate::paths::test_user_home(workspace.join("empty-home"));
-    // SAFETY: env lock held for the whole mutate-read-cleanup window; the
-    // `EnvRestore` guard above undoes this even on an unwinding assertion.
-    unsafe {
-        std::env::set_var(
-            "STELLA_MANAGED_SETTINGS",
-            workspace.join("no-such-managed.json"),
-        );
-    }
-
-    let merged = Settings::load(workspace).expect("settings load");
-    assert!(!merged.recap_enabled(), "recap defaults off");
-}
-
 /// `create_worktrees` must survive the scope merge — the `enable_recap`
 /// lesson, repeated.
 ///
-/// It did not: `overlay_scope` copied `enable_recap`, `trace_capture`, `ui`
-/// and `context` explicitly and silently dropped this one, so
+/// It did not: `overlay_scope` copied the other top-level keys explicitly and
+/// silently dropped this one, so
 /// `"create_worktrees": "never"` in any settings.json parsed fine, merged to
 /// `None`, and `create_worktrees()` answered `Ask` no matter what any file
 /// said. The direct-deserialization tests below never caught it because the
 /// merge is the only place the field was lost. This test goes through
 /// `Settings::load`, the way the binary does.
 ///
-/// It joins the env lock for the same reason
-/// [`enable_recap_survives_the_scope_merge`] does: reading the ambient
+/// It joins the env lock because reading the ambient
 /// `STELLA_MANAGED_SETTINGS` without the lock races the mutating tests above
 /// (#3312).
 #[test]

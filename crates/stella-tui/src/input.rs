@@ -17,8 +17,6 @@ pub enum UserInput {
         text: String,
         attachments: Vec<Attachment>,
     },
-    /// The user's answer to a pending scope-review gate (L-E5).
-    ScopeDecision(ScopeDecision),
     /// The user's answer to a pending `ask_user` question. `id` correlates it
     /// back to the question (and, downstream, to the `ask_user` tool call's
     /// `ToolResult`); `answer` is either a chosen option's text or the user's
@@ -45,11 +43,10 @@ pub enum UserInput {
 /// - a list of numbers and ranges (`1 3`, `1,3`, `2-4`, `1, 3-5`).
 ///
 /// `None` means "that was not an answer" and the caller keeps the card up.
-/// Unlike the scope card there is no revise channel to absorb prose here, and
-/// this is the gate whose wrong answer edits somebody's files — so an
+/// This is the gate whose wrong answer edits somebody's files, so an
 /// unrecognized line must do nothing at all rather than be interpreted
 /// generously. An out-of-range number is dropped rather than failing the whole
-/// line, matching how `ScopeDecision::Trim` indices are read.
+/// line.
 #[must_use]
 pub fn hunk_selection_from_typed(text: &str, total: usize) -> Option<Vec<usize>> {
     let text = text.trim().trim_end_matches(['.', '!', ',']).trim();
@@ -84,20 +81,6 @@ pub fn hunk_selection_from_typed(text: &str, total: usize) -> Option<Vec<usize>>
     out.sort_unstable();
     out.dedup();
     Some(out)
-}
-
-/// The answers the plan-review dialog offers. Three are single keystrokes
-/// (`a`/`t`/`x`); the fourth carries the refine note typed after `r`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScopeDecision {
-    /// Run the plan as proposed.
-    Approve,
-    /// Approve, but trim the plan down first.
-    Trim,
-    /// Re-plan with this note — the reviewer wants a different scope.
-    Revise { note: String },
-    /// Abort the plan.
-    Abort,
 }
 
 #[cfg(test)]

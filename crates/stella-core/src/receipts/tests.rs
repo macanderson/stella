@@ -758,8 +758,9 @@ fn a_receipts_two_numbers_reconcile_the_same_way_in_any_language() {
 
 // The round trip that keeps the renderer and the parser from drifting.
 //
-// A rendered recall line crosses a crate boundary — `stella-cli` and
-// `stella-pipeline` write it, `receipts` reads it — so it is a wire format,
+// A rendered recall line crosses a crate boundary — `stella-cli` writes it
+// (as did the staged pipeline, until #3865 deleted that crate), `receipts`
+// reads it — so it is a wire format,
 // and invariant 4's serde-first discipline applies: it round-trips, or it is
 // a defect. It had already drifted once, silently, which is exactly #3243
 // D4: the pipeline wrote its id in a position the parser never inspected, so
