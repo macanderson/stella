@@ -26,7 +26,7 @@ use std::process::Command;
 
 use async_trait::async_trait;
 use stella_protocol::issue::{
-    Issue, IssueClass, IssueError, IssueKey, IssueLabel, IssueProvider, IssueState,
+    Issue, IssueClass, IssueDraft, IssueError, IssueKey, IssueLabel, IssueProvider, IssueState,
 };
 
 /// The provider id this adapter answers to, and the one an error names.
@@ -134,6 +134,57 @@ impl IssueProvider for GhIssueProvider {
                 reason: error.to_string(),
             })?;
         Ok(rows.into_iter().map(GhIssue::into_issue).collect())
+    }
+
+    async fn file(&self, draft: &IssueDraft) -> Result<IssueKey, IssueError> {
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "create".into(),
+            "--title".into(),
+            draft.title.clone(),
+            "--body".into(),
+            draft.body.clone(),
+        ];
+        for label in &draft.labels {
+            args.push("--label".into());
+            args.push(label.name.clone());
+        }
+
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        let raw = gh_json(&borrowed)?;
+
+        // `gh issue create` prints the issue URL, not JSON, so the key is the
+        // last path segment. Parsed rather than assumed: a `gh` that printed
+        // something else must fail loudly here, because the alternative is a
+        // filing the loop cannot reference and therefore cannot close.
+        let url = raw.trim();
+        let key = url
+            .rsplit('/')
+            .next()
+            .filter(|segment| !segment.is_empty() && segment.chars().all(|c| c.is_ascii_digit()))
+            .ok_or_else(|| IssueError::Malformed {
+                provider: GITHUB.into(),
+                reason: format!("`gh issue create` printed no issue number: {url:?}"),
+            })?;
+
+        Ok(IssueKey::from(key))
+    }
+
+    async fn close(&self, key: &IssueKey, receipt: &str) -> Result<(), IssueError> {
+        gh_json(&[
+            "issue",
+            "close",
+            key.as_str(),
+            "--comment",
+            receipt,
+            "--reason",
+            "completed",
+        ])
+        .map(|_| ())
+    }
+
+    async fn comment(&self, key: &IssueKey, body: &str) -> Result<(), IssueError> {
+        gh_json(&["issue", "comment", key.as_str(), "--body", body]).map(|_| ())
     }
 }
 

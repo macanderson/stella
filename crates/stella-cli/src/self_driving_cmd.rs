@@ -14,6 +14,7 @@
 //! two surfaces cannot drift.
 
 mod backlog;
+mod convention;
 pub(crate) mod probes;
 pub(crate) mod state;
 mod surface;
@@ -154,6 +155,31 @@ pub(crate) enum SelfDrivingCmd {
 
         /// Output format: the ranked table, or the picked issues under the
         /// versioned query envelope (#1568).
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
+    },
+
+    /// File a finding as an issue, through the bound provider.
+    ///
+    /// Refuses rather than degrades. A draft is checked against this
+    /// workspace's issue convention *before* the tracker is reached, and one
+    /// already in the seen set is not filed twice — an unclassified filing
+    /// comes back next cycle as an untriaged defect the loop must triage
+    /// (`doc:backlog-self-driving` §3.1a).
+    File {
+        /// The one-line title. Also the dedup key, after normalization.
+        #[arg(long)]
+        title: String,
+
+        /// The handoff body. Assume the reader has none of your context.
+        #[arg(long, default_value = "")]
+        body: String,
+
+        /// A label to apply. Repeat for each.
+        #[arg(long = "label")]
+        labels: Vec<String>,
+
+        /// Output format.
         #[arg(long, value_enum, default_value = "text")]
         format: QueryFormat,
     },
@@ -335,6 +361,12 @@ pub(crate) fn run(cmd: &SelfDrivingCmd) -> Result<(), String> {
             show,
         } => calibrate_cmd(&st, *ok, *resource_fail, *show),
         SelfDrivingCmd::Queue { limit, format } => queue(&st, *limit, *format),
+        SelfDrivingCmd::File {
+            title,
+            body,
+            labels,
+            format,
+        } => file_finding(&st, title, body, labels, *format),
         SelfDrivingCmd::Run { cmd } => match cmd {
             RunCmd::Start => run_start(&st),
             RunCmd::End { status, reason } => run_end(&st, status, reason),
@@ -866,6 +898,57 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
 /// The queue verb: the ranked defect batch this cycle draws from.
 fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
     backlog::render_queue(st, &crate::issue_provider::GhIssueProvider, limit, format)
+}
+
+/// `stella self-driving file` — file a finding, if it is novel and conformant.
+///
+/// The digest is recorded **only on a filing that actually happened**. Marking a
+/// refused draft as seen would make the loop's own failure to classify look like
+/// a finding already handled, and it would never be filed again.
+fn file_finding(
+    st: &LoopState,
+    title: &str,
+    body: &str,
+    labels: &[String],
+    format: QueryFormat,
+) -> Result<(), String> {
+    let root = std::env::current_dir().map_err(|e| format!("no working directory: {e}"))?;
+    let bound = convention::load(&root);
+
+    let draft = stella_protocol::issue::IssueDraft {
+        title: title.to_owned(),
+        body: body.to_owned(),
+        labels: labels
+            .iter()
+            .map(|name| stella_protocol::issue::IssueLabel { name: name.clone() })
+            .collect(),
+        parent: None,
+    };
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("could not start a runtime for the issue provider: {e}"))?;
+    let outcome = runtime
+        .block_on(backlog::file_finding(
+            &crate::issue_provider::GhIssueProvider,
+            &bound.convention,
+            &st.seen(),
+            &draft,
+        ))
+        .map_err(|error| error.to_string())?;
+
+    if let backlog::Filed::New(key) = &outcome {
+        st.add_seen(&stella_autonomy::finding_digest(title))?;
+        if format == QueryFormat::Json {
+            println!(r#"{{"filed":"{key}"}}"#);
+        } else {
+            println!("filed #{key}");
+        }
+        return Ok(());
+    }
+
+    backlog::render_not_filed(&outcome, &bound, format)
 }
 
 // ---------------------------------------------------------------------------

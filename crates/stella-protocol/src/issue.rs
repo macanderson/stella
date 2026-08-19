@@ -242,6 +242,32 @@ pub enum IssueError {
     },
 }
 
+/// A prospective issue, before a tracker has assigned it a key.
+///
+/// Distinct from [`Issue`] rather than an [`Issue`] with an empty key, because
+/// the fields differ in kind: a draft has no key, no state, no `created_at` and
+/// no url — the tracker decides all four — and a type whose invalid states are
+/// unrepresentable beats one whose caller must remember which four fields are
+/// ignored on write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueDraft {
+    /// One line.
+    pub title: String,
+    /// The handoff. Assume the reader has none of the filer's context.
+    pub body: String,
+    /// The labels to apply.
+    ///
+    /// **Checked against the workspace's convention before this ever reaches a
+    /// provider** (`stella_autonomy::conform`). A provider is the wrong layer
+    /// to enforce classification: it would have to learn every tracker's
+    /// taxonomy, and a refusal from here could not say which axis was missing.
+    #[serde(default)]
+    pub labels: Vec<IssueLabel>,
+    /// The epic or parent this hangs off, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<IssueKey>,
+}
+
 /// The port every tracker is reached through — invariant 1 for the backlog
 /// plane.
 ///
@@ -250,13 +276,23 @@ pub enum IssueError {
 /// local journal, which is exactly the property the witness test asserts by
 /// ranking a real queue with no `gh` on `PATH` at all.
 ///
-/// # Read-only, on purpose, at this slice
+/// # The write half
 ///
-/// Filing, claiming and closing are `doc:backlog-self-driving` §3.1's other
-/// four `backlog` calls, and they are deliberately not here yet: a write path
-/// with nothing calling it is the unwired code AGENTS.md's "nothing left
-/// behind" rule exists to prevent. This trait grows the write half in the
-/// slice that serves those calls, and #3599 tracks it.
+/// [`Self::file`] and [`Self::close`] landed with the `backlog` verbs that call
+/// them (#3599 B1b) — until then they were deliberately absent, because a write
+/// path with nothing calling it is the unwired code AGENTS.md's "nothing left
+/// behind" rule exists to prevent.
+///
+/// **There are no default implementations**, and that is the point. A provider
+/// that cannot write must say so in its own `id`'s voice by returning a typed
+/// error, because a default that silently no-ops would let the loop believe it
+/// had filed what it found — which is precisely the failure the residue
+/// discipline exists to prevent, arriving through the mechanism meant to stop
+/// it.
+///
+/// Claiming is **not** here. A tracker's assignee field has no
+/// compare-and-swap and no lease, so a claim goes in the fleet ledger where the
+/// primitive actually exists (see the module docs).
 #[async_trait]
 pub trait IssueProvider: Send + Sync {
     /// Stable id for this provider, e.g. `"github"` — what an error names and
@@ -272,6 +308,25 @@ pub trait IssueProvider: Send + Sync {
     /// bounds the read, because a tracker with ten thousand open issues should
     /// not have all of them cross this boundary to produce a batch of five.
     async fn list_open(&self, limit: usize) -> Result<Vec<Issue>, IssueError>;
+
+    /// File a new issue and return the key the tracker assigned it.
+    ///
+    /// The key is the whole return value on purpose: it is what makes the
+    /// filing *referenceable* — a receipt, a `Closes #N`, a parent edge — and a
+    /// filing the loop cannot name afterwards is barely better than none.
+    async fn file(&self, draft: &IssueDraft) -> Result<IssueKey, IssueError>;
+
+    /// Close an issue, recording why.
+    ///
+    /// `receipt` names the evidence (`doc:backlog-self-driving` §4.3) and is
+    /// required rather than optional: a closure with no evidence cannot be
+    /// re-checked later, and the count of unsweepable closures is the direct,
+    /// unflattering measure of how often `done` was a claim rather than a
+    /// proof.
+    async fn close(&self, key: &IssueKey, receipt: &str) -> Result<(), IssueError>;
+
+    /// Add a comment — the trail that binds an execution to an issue.
+    async fn comment(&self, key: &IssueKey, body: &str) -> Result<(), IssueError>;
 }
 
 #[cfg(test)]

@@ -214,8 +214,9 @@ decides, `stella-cli` probes):
 | **`plugins/stella-selfdriving`** (the driver) | *Policy only*: when to run, how many at once, in what order, when to stop, what to escalate. A loop that asks for declared capabilities and nothing else. | It is the piece an operator should be able to fork, replace, or write in another language without forking Stella. |
 
 The load-bearing consequence: **the judgement half becomes Stella's own agent
-loop.** `work` (§3.2) runs a unit of backlog through Stella's staged pipeline —
-the same triage → … → verify → verdict path a `stella run` takes. If Stella's
+loop.** `work` (§3.2) runs a unit of backlog through Stella's turn loop — the
+same path a `stella run` takes, with whatever the installed plugins add over it
+and nothing else. If Stella's
 loop is not good enough to drive Stella's own backlog, that is a finding about
 Stella, and it should be measured rather than routed around by borrowing
 somebody else's agent. Today it is routed around.
@@ -307,11 +308,75 @@ provider configured" is the user-facing ask, and it is also the only piece every
 other verb group depends on: `work` needs a unit, `sweep` needs somewhere to
 file, `deliver` needs something to close.
 
+### 3.1a The backlog convention — learned, never assumed
+
+`backlog file` is what makes "nothing left behind" a guarantee rather than a
+habit. But a tracker is not a bag of text: every repository the loop attaches to
+already has a classification scheme and a writing standard, and **filing into it
+wrongly is worse than not filing at all** — the queue the loop ranks is the
+queue the loop just polluted.
+
+**The defect is a feedback loop, and it is live in this repository today.**
+`rank_defects` counts an issue as a defect if it carries `bug` **or** `triage` —
+an untriaged issue is a defect nobody has classified yet. Meanwhile
+`.github/workflows/issue-triage.yml` adds `triage` to any issue opened without
+one of its `TYPE_LABELS`, and the comment above that rule names the exact case:
+*"Issues opened outside the template (`gh issue create`, the API) carry no labels
+at all — those are exactly the ones this catches."* A loop filing through the API
+**is** that case. So an unlabelled filing is stamped `triage` by the workflow and
+read back next cycle as an untriaged defect the loop is responsible for
+triaging. The loop manufactures its own queue, and every measure of whether it is
+gaining or losing ground on the backlog silently includes its own exhaust.
+
+**Three sources, in precedence order**, because two of them will disagree and the
+tie has to break the same way every time:
+
+| Source | What it is | Why it ranks here |
+|---|---|---|
+| **Enforced** | Automation acts on it — `issue-triage.yml`'s `TYPE_LABELS`, the `triage` lifecycle | The only source that is a *fact* rather than a claim. A workflow that stamps an untyped issue is not describing a convention, it **is** one — it will do that to the loop's filings whatever any document says. |
+| **Declared** | Issue templates, the label set, a `CONTRIBUTING` section, the handoff format in `scripts/self-driving/commands/self-driving/tickets.md` | Authoritative about intent, silent about practice. It may describe a rule nothing enforces and everyone ignores. |
+| **Observed** | The distribution over recent issues | The only source that is a guess. Fills an axis the two above leave undefined; never overrides either. Recorded as `Observed` precisely so a human can see which parts nobody actually stated. |
+
+The result binds as a source-tracked **convention manifest** beside the provider
+manifest under `.stella/issues/`, for the same reason that one is tracked: a
+convention that was *inferred* must be readable by a human before it steers a
+filing. **The loop never infers and files in one motion.**
+
+**Conform or refuse, never best-effort.** A filing that cannot be classified
+under the bound convention is an error, not a degraded post. That is the whole
+mechanism — it is what stops the loop poisoning the queue it ranks, and it is why
+`conform` returns every violation at once rather than the first: a filing refused
+one reason at a time is a filing refused four times.
+
+**Where no standard exists, the loop proposes one and grants itself nothing.** A
+proposed convention is **inert** — `conform` refuses every filing against it,
+including one that would be conformant if the convention were bound. This is §7's
+rule pointed at classification: a loop that invented a taxonomy and then filed
+under it has granted itself the authority to define how this repository
+classifies work. Acceptance is a human's, and under governance mode `regulated`
+it stays one.
+
+The model is portable and this repository's vocabulary is not baked into it:
+axes (`type`, `priority`, `area` here), each with membership, a requirement
+(`ExactlyOne` / `AtMostOne` / `Any`) and its source; plus **reserved** labels the
+loop may never apply itself. `triage` is this repository's one reserved label —
+it marks an issue that arrived from outside without a type, and the loop knows
+what it found, so applying it would be claiming to be a stranger to its own
+filing. Note the interesting failure is not "missing" but **ambiguous**: two
+priority labels on one issue is not a stricter filing, it is a filing whose rank
+is decided by whichever label the ranker happens to test first.
+
+Lands in `crates/stella-autonomy/src/convention.rs` — pure, and over borrowed
+label text rather than a `stella_protocol::Issue`, so the crate keeps the
+no-workspace-dependency property that lets the Observatory link its folds. That
+is the same trade `rank_defects` already makes, and the one mapping from a
+tracker's shape into this one lives in the caller.
+
 ### 3.2 `work` — one unit of backlog, through Stella's own loop
 
 | Call | Returns | What it does |
 |---|---|---|
-| `work start --issue <key>` | `json` | Resolve context for the issue, create the isolated worktree, run the staged pipeline against it, return the outcome and the diff. |
+| `work start --issue <key>` | `json` | Resolve context for the issue, create the isolated worktree, run Stella's turn loop against it — with whatever the installed plugins wrap it in — and return the outcome and the diff. |
 | `work status` | `query-envelope` | The in-flight unit: stage, spend, elapsed, checkpoint. |
 | `work abandon` | `text` | Release the claim and the worktree, recording why. Abandonment is a *recorded outcome*, never a silent drop. |
 
@@ -322,9 +387,21 @@ mechanism rather than new invention:
 - **Isolation is `candidate_ws.rs`'s shadow worktree**, not a branch checkout of
   the operator's tree. The loop must be able to run while a human works in the
   same clone.
-- **Done is the pipeline's verdict**, not the model's claim: the flip oracle,
-  tamper exclusion, `ladder_decision`. Self-driving gets no weaker definition of
-  done than a `stella run` gets, and gets no new terminal state.
+- **Done is whatever the installed plugins make it**, and this design invents no
+  definition of its own. The staged pipeline that once ran the flip oracle,
+  tamper exclusion and `ladder_decision` is **deleted from this workspace**
+  (#3852/#3865) and `--pipeline classic` is refused outright, so there is no
+  built-in verdict left to inherit. Self-driving therefore gets exactly what a
+  `stella run` gets on the same machine — no weaker, and no new terminal state —
+  which with no verification plugin installed is the turn's own outcome.
+
+  **Say the consequence out loud rather than letting the old sentence imply
+  otherwise:** on a workspace with no verification plugin, a `work` outcome means
+  *the turn finished*, not *the change is proven*. What makes an autonomous merge
+  safe is not this stage — it is `deliver` (§3.3), which gates on CI observed on
+  the forge. That is a weaker guarantee than the deleted pipeline offered and it
+  is the true one; a design doc that kept promising the stronger one would be
+  the expedient this repository treats as a defect.
 - **Abort is at safe boundaries** (invariant 6). A budget ceiling reached
   mid-tool waits for the tool.
 
@@ -413,16 +490,44 @@ pub enum LoopStep {
     Sweep { lens: &'static str },
     Curate,
     Watch { until: WakeCondition },
-    Halt { reason: HaltReason },
+    Blocked { reason: BlockReason, clears_when: Clearance },
 }
 
-pub fn step(state: &LoopState, obs: &Observation, now: Timestamp) -> LoopStep;
+pub fn step(state: &LoopState, obs: &LoopObservation) -> LoopStep;
 ```
 
-`Halt` exists and is reachable — for a spent budget, a revoked grant, an
+`Blocked` exists and is reachable — for a spent budget, a revoked grant, an
 operator stop, or an `Escalated` PR the policy declines to abandon. **A loop
-that cannot halt is not autonomous, it is unsupervised**, and those are
+that cannot stop is not autonomous, it is unsupervised**, and those are
 different things.
+
+**But a block is a park, not a death, and it clears itself.** The loop resumes
+the moment the thing blocking it goes away, and *nobody has to tell it that it
+may*. There is no resume input, no acknowledgement and no operator gesture in
+the contract: a human who raises the ceiling, restores the grant, drops the stop
+flag or merges the escalated PR has already said everything that needs saying,
+and asking them to also say "go" is asking twice.
+
+This is structural rather than promised — **the machine holds no latch.** `step`
+is a total function of the current state and the current observation, so a block
+is recomputed from scratch on every poll and simply stops being returned when
+its cause is gone. There is no `blocked` flag that could be left set, which
+means there is no state an operator could have to clear.
+`a_cleared_block_resumes_with_no_resume_signal` is the witness, and it asserts
+all four reasons, because a latch on any one of them would strand the loop
+exactly there.
+
+Two consequences worth stating:
+
+- **Every `BlockReason` names a `Clearance`** — the observable that will let it
+  go. `BlockReason::clearance()` is total, so a new reason cannot be added
+  without answering "and what would un-block it?". A block with no clearance is
+  by definition one that needs a human to say "go".
+- **The one obligation on a host is to keep polling.** A host that exits the
+  process on `Blocked` makes resumption impossible no matter what the machine
+  returns, which is why the variant carries its clearance rather than reading as
+  a terminal state. This is the same shape as `watch` mode: cheap sentinels, and
+  the loop wakes itself.
 
 ---
 
@@ -592,6 +697,85 @@ rather say that now than discover it from a bad release.
 
 ---
 
+### 6.5 The doctrine — whose decision system the loop is running
+
+Self-driving stands in for a person, and **a person deciding what to do next is
+not running a universal algorithm.** They are applying a system they developed.
+One maintainer's standing instruction is *"when two designs both work, ship the
+one still correct in five years under a different maintainer"* — that is this
+repository's, and it is written down in `CLAUDE.md`. Another's is *"ship the
+smallest diff that closes the ticket"*. **Both are legitimate, and a loop that
+hardcodes either is a loop that can only replace one of them.**
+
+So the tie-breakers are configuration: a `[doctrine]` manifest, source-tracked
+beside the provider and convention manifests under `.stella/issues/`, because the
+person who starts the loop is the person who decides how it decides — and that is
+only true if what it will do is legible *before* it does it.
+
+**The line is machine-readability, and it is drawn to avoid a fifth steering
+plane.** This repository already carries four that do not know about each other
+(#3243), and the fastest way to make it five is a free-text "how should I decide
+things" field. So:
+
+| Belongs in `[doctrine]` | Belongs in a context record |
+|---|---|
+| Closed enums and numbers a **pure machine** branches on — `foreign_breakage`, `contention`, `queue_order`, `abandon_escalated`, the `deliver` ceilings | Prose instruction for the **judgement half** — "prefer the architecturally sound option", "match the neighbourhood", "no new dependencies casually" |
+| No model ever reads it. An operator's declared preference becomes *testable*: you can assert `FileAndWait` does not adopt, and the assertion cannot be talked out of. | Already has a home (`.stella/rules/*.toml`, `doc:context-pr`), already governed, already versioned. |
+
+The test is invariant 5's: **does a caller branch on it?** A pure machine
+branching on a closed enum belongs; a sentence a model reads does not. A
+`[doctrine]` field that wants to say something prose-shaped **is** a context
+record, and the answer to that request is a pointer, not a field.
+
+#### The loop exhausts its permitted channels before it parks
+
+A blockage is not automatically somebody else's problem. The case that matters is
+a **red base the loop did not cause**: it blocks everyone, and a loop that waits
+for its author has a throughput equal to somebody else's response time. But a
+loop wandering into unrelated code is also how an autonomous system becomes a
+liability — so this is exactly a doctrine axis, not a rule:
+
+- `file_and_wait` *(default)* — make it visible, leave the fix to a human.
+- `file_and_adopt` — make it visible, then fix it at the top of the queue.
+- `ignore` — neither. Present for the operator who wants a silent loop, and
+  deliberately **not** the default: a system that notices breakage and says
+  nothing is the worst of the three.
+
+Three orderings inside that are load-bearing:
+
+1. **File first, always, under every policy that files at all.** The ticket is
+   what makes the breakage visible and attributable *even if the fix never
+   lands*, so filing is never contingent on fixing being attempted.
+2. **Check contention before adopting.** Two workers on one broken `main`
+   produce a merge conflict on top of an outage.
+3. **Unblock before claiming.** A red base makes every PR the loop produces fail
+   CI, so it is dealt with before more are made.
+
+And a red base stops *merges*, not *authoring* — so under `file_and_wait`, once
+filed, the loop carries on with ordinary work rather than parking.
+
+#### Collision avoidance, and the signal nobody checks
+
+Contention evidence is **heuristic**, which is why how much it weighs is also
+doctrine. Four signals, and only one is authoritative:
+
+| Signal | Weight |
+|---|---|
+| **Ledger claim** | Authoritative — a lease with an owner and an expiry. |
+| Open PR | Strong hint. |
+| Remote branch | A name that resembles the work. |
+| **Worktree on this machine** | The one nobody remembers to check — and the one most likely to be the loop's *own other session*. Two self-driving processes against one clone see each other **only** here. |
+
+`ContentionPolicy` weighs them: `defer` on any signal (the default — a duplicated
+fix costs two workers and a conflict, a deferred one costs a poll interval);
+`claims_only` for the solo operator whose remote is full of their own stale
+branches, where deferring on branch names would deadlock the loop against itself;
+`proceed` regardless, recorded and never silent. A deferral carries the evidence
+that caused it, because "deferred" with no evidence is indistinguishable from
+never having looked.
+
+---
+
 ## 7. Curation: the loop may propose any authority, and grant itself none
 
 The user's ask includes the loop "curating its own set of tools and context
@@ -693,7 +877,7 @@ drew its batch from. Both numbers are now folds of one ranking of one read.
 | `LoopStep`, `step`, `PrState`, supply model, re-arm rule | `stella-autonomy` (pure; new modules — the crate has no god files and must keep none) |
 | `Issue`, `IssueState`, `IssueClass`, `PrId`, receipts | `stella-protocol` (types only) |
 | Residue detection, discharge rules | `stella-core` (pure, no I/O) |
-| The residue gate stage | `stella-pipeline`, beside `verify`/`witness` |
+| The residue gate stage | **Homeless.** `stella-pipeline` is deleted (#3852/#3865) and this row named it; B5 has to pick a home before it can be built — a wrapper plugin's own side, or a `stella-cli` check over the turn's transcript. Tracked in #3901's sweep of the same stale claim. |
 | `backlog`/`work`/`deliver`/`sweep`/`curate` verbs, the forge adapter, provider manifests | `stella-cli` (`self_driving_cmd/` — note `self_driving_cmd.rs` is 1005 lines and new logic lands in siblings) |
 | Issue claims | `stella-fleet` ledger |
 | The driver channel: dispatch context, `[driver]` block, `permits_call` | `stella-plugin` (wire + gate), `stella-runtime` (`src/wrapper/`, beside the existing host-call dispatch) |
@@ -762,7 +946,9 @@ land early if the residue gate is wanted sooner than the autonomy.
 - **Building a tracker.** Stella writes to the customer's.
 - **Replacing the human as the steering authority.** §6.4, §7.
 - **Autonomous release by default.** §6.4.
-- **A new definition of done.** The pipeline's verdict is the only one.
+- **A new definition of done.** Self-driving takes whatever the turn loop and the
+  installed plugins yield, and adds nothing of its own — see §3.2 on what that
+  is worth when nothing verifying is installed.
 - **Project management.** The loop drains a readiness queue; what belongs in the
   queue stays a human's call.
 - **Making the loop unstoppable.** `Halt` is a first-class outcome.

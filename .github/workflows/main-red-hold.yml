@@ -1,0 +1,65 @@
+name: main-red-hold
+
+# While `main` is known-broken, say so on the pull request (#3917).
+#
+# `main-canary.yml` asks "does main still compose?" after every merge and files
+# one labelled issue when the answer is no. On 2026-08-19 it did exactly that
+# — and four more PRs merged onto the broken tree over the next 35 minutes,
+# the first of them twelve seconds after the issue was filed. The detector was
+# never the problem. The signal had no consumer at the one place a decision
+# was still being made, which is invariant #10's shape pointed at CI.
+#
+# This job is that consumer. It compiles nothing and checks out only the
+# scripts it runs: one question to the issue tracker, seconds, on every PR.
+#
+# ── Why a separate workflow ──────────────────────────────────────────────────
+#
+# Same disjoint-trigger reasoning that gave wire-schema.yml and empty-diff.yml
+# their own files. The canary runs on `push` to main and must judge the merged
+# tree; this runs on `pull_request` and must reach a human while there is
+# still a decision to make. Folding it into ci.yml would also hide it behind
+# that workflow's `paths-ignore`, and "main does not compile" is not a fact
+# about which paths a PR touched.
+#
+# Deliberately NOT wired into `merge_group`: a queue builds the merged result,
+# which is a different and better question, and one this check does not need
+# to duplicate.
+#
+# ── Making it blocking ───────────────────────────────────────────────────────
+#
+# As shipped this reports; branch protection is what makes a report a hold,
+# and that is a repository setting rather than a file in this tree. Adding
+# "main is not known-broken" to main's required checks is the one-line change
+# that turns this from advice into the mechanism #3917 asks for. It is written
+# to be safe to require: it fails open on an unreachable tracker, and the
+# `unblocks-main` label exists so the repair is never the thing it blocks.
+
+on:
+  pull_request:
+
+# Reads the tracker and the PR's labels. Nothing here writes.
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: main-red-hold-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  main-red-hold:
+    name: main is not known-broken
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Hold if the canary says main is red
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Via env rather than inlined into the shell, so a PR number can
+          # never be read as script (the standard `${{ }}` injection shape in
+          # a `run:` block).
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: ./scripts/check-main-red-hold.sh --pr "$PR_NUMBER"

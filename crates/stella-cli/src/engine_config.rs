@@ -524,6 +524,7 @@ pub fn state_from_settings(
     catalog_models: Vec<String>,
     model_efforts: std::collections::HashMap<String, Vec<String>>,
     roles: Vec<stella_tui::envelope::RoleWiringRow>,
+    declared: &[(String, String)],
 ) -> EngineConfigState {
     let agents = EngineRole::ALL
         .iter()
@@ -574,15 +575,43 @@ pub fn state_from_settings(
         catalog_models,
         model_efforts,
         agents,
+        seats: seat_rows(engine, declared),
         roles,
     }
 }
 
-/// Rebuild the settings object from an edited snapshot. The model lands on
-/// the FLAT `default_model` key — the canonical simple form — with
-/// `agents.default.model` cleared, so a TUI save never leaves the two sources
-/// disagreeing. Empty agent objects and an empty allowed list are omitted
-/// entirely (the file stays minimal).
+/// The assignable seats: every role an installed plugin declares, paired with
+/// the model the user assigned to it.
+///
+/// `declared` is `(seat key, plugin display name)` from
+/// [`crate::agent::seats::declared_seats`] — the host has already built each
+/// key, so nothing here parses one.
+///
+/// **A seat with no assignment is `None`, never a substituted model.** The
+/// pane renders `None` as "the default model", which is the truth; filling it
+/// in here with `default_model`'s value would make an unassigned seat
+/// indistinguishable on screen from one a user deliberately pinned to the same
+/// model, and only one of those survives a change to the default.
+fn seat_rows(
+    engine: &AgentEngineConfig,
+    declared: &[(String, String)],
+) -> Vec<stella_tui::SeatRow> {
+    let assignments = engine.seat_models.as_ref();
+    declared
+        .iter()
+        .map(|(key, from)| stella_tui::SeatRow {
+            model: assignments.and_then(|map| map.get(key)).cloned(),
+            key: key.clone(),
+            from: from.clone(),
+        })
+        .collect()
+}
+
+/// Rebuild the settings object from an edited snapshot. Models land on
+/// the FLAT per-role keys (`default_model`, `pipeline_*_model`) — the
+/// canonical simple form — with `agents.<k>.model` cleared, so a TUI save
+/// never leaves the two sources disagreeing. Empty agent objects and an
+/// empty allowed list are omitted entirely (the file stays minimal).
 pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
     let mut engine = AgentEngineConfig {
         auto_mode: Some(if state.auto_mode {
@@ -1073,6 +1102,7 @@ mod tests {
             vec!["zai/glm-5.2".into()],
             Default::default(),
             Vec::new(),
+            &[],
         );
         assert!(!state.auto_mode);
         assert!(state.effort_auto);
@@ -1111,6 +1141,7 @@ mod tests {
             vec!["zai/glm-5.2".into()],
             Default::default(),
             Vec::new(),
+            &[],
         );
         assert_eq!(state2.agents, state.agents);
         assert_eq!(state2.allowed_models, state.allowed_models);
