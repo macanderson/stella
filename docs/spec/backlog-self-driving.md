@@ -477,16 +477,44 @@ pub enum LoopStep {
     Sweep { lens: &'static str },
     Curate,
     Watch { until: WakeCondition },
-    Halt { reason: HaltReason },
+    Blocked { reason: BlockReason, clears_when: Clearance },
 }
 
-pub fn step(state: &LoopState, obs: &Observation, now: Timestamp) -> LoopStep;
+pub fn step(state: &LoopState, obs: &LoopObservation) -> LoopStep;
 ```
 
-`Halt` exists and is reachable — for a spent budget, a revoked grant, an
+`Blocked` exists and is reachable — for a spent budget, a revoked grant, an
 operator stop, or an `Escalated` PR the policy declines to abandon. **A loop
-that cannot halt is not autonomous, it is unsupervised**, and those are
+that cannot stop is not autonomous, it is unsupervised**, and those are
 different things.
+
+**But a block is a park, not a death, and it clears itself.** The loop resumes
+the moment the thing blocking it goes away, and *nobody has to tell it that it
+may*. There is no resume input, no acknowledgement and no operator gesture in
+the contract: a human who raises the ceiling, restores the grant, drops the stop
+flag or merges the escalated PR has already said everything that needs saying,
+and asking them to also say "go" is asking twice.
+
+This is structural rather than promised — **the machine holds no latch.** `step`
+is a total function of the current state and the current observation, so a block
+is recomputed from scratch on every poll and simply stops being returned when
+its cause is gone. There is no `blocked` flag that could be left set, which
+means there is no state an operator could have to clear.
+`a_cleared_block_resumes_with_no_resume_signal` is the witness, and it asserts
+all four reasons, because a latch on any one of them would strand the loop
+exactly there.
+
+Two consequences worth stating:
+
+- **Every `BlockReason` names a `Clearance`** — the observable that will let it
+  go. `BlockReason::clearance()` is total, so a new reason cannot be added
+  without answering "and what would un-block it?". A block with no clearance is
+  by definition one that needs a human to say "go".
+- **The one obligation on a host is to keep polling.** A host that exits the
+  process on `Blocked` makes resumption impossible no matter what the machine
+  returns, which is why the variant carries its clearance rather than reading as
+  a terminal state. This is the same shape as `watch` mode: cheap sentinels, and
+  the loop wakes itself.
 
 ---
 
