@@ -780,7 +780,7 @@
       "title": "The verification gate \u2014 how CI says whether a change helps or hurts the agent"
     },
     "verification-surface": {
-      "path": "docs/design/verification-surface.md",
+      "path": "docs/spec/verification-surface.md",
       "status": "implemented",
       "title": "The deck's verification surface in the plugin era"
     },
