@@ -553,17 +553,10 @@ pub enum WorktreePolicy {
 // whole point of the port boundary) and give tests trivial doubles for the
 // ports they aren't exercising.
 
-/// A [`ContextRecallPort`] that recalls nothing — the correct default before
-/// `stella-context` is wired, and for tasks where context grounding is off.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NoContextRecall;
-
-#[async_trait]
-impl ContextRecallPort for NoContextRecall {
-    async fn recall(&self, _goal: &str) -> Recall {
-        Recall::default()
-    }
-}
+/// [`NoContextRecall`] moved to `stella_protocol::recall` alongside
+/// [`ContextRecallPort`] (see the `pub use` above) — re-exported here so
+/// `crate::ports::NoContextRecall` still resolves.
+pub use stella_protocol::NoContextRecall;
 
 /// A [`RepoStructurePort`] that offers no structure — the planner falls back
 /// to goal + recall alone.
@@ -884,13 +877,13 @@ mod tests {
         assert_eq!(fail.assertion_result(), Some(false));
     }
 
+    // `RecalledFrame`/`ContextRecallPort`/`Recall`/`NoContextRecall` moved to
+    // `stella_protocol::recall` along with the tests that exercised them
+    // directly (`distinct_label`, `telemetry_event`, `NoContextRecall`'s
+    // inertness) — see that module's `mod tests`. What stays here is the
+    // no-op default this crate still owns.
     #[tokio::test]
-    async fn no_op_ports_are_inert() {
-        assert!(NoContextRecall.recall("anything").await.is_empty());
-        assert!(
-            NoContextRecall.recall("anything").await.usage.is_none(),
-            "a port with no CGP host behind it reports no usage"
-        );
+    async fn no_repo_structure_is_inert() {
         assert!(NoRepoStructure.structure_summary().await.is_empty());
         let proposal = ScopeProposal {
             summary: "x".into(),
@@ -903,117 +896,5 @@ mod tests {
             AlwaysAbortGate.review(&proposal).await,
             ScopeDecision::Abort
         );
-    }
-
-    /// #2476's predicate: a label is dropped for exactly the two shapes the
-    /// memory mint (`truncate_label`) produces, and nothing else.
-    #[test]
-    fn a_label_minted_from_the_content_is_not_distinct() {
-        let frame = |label: &str, content: &str| RecalledFrame {
-            citation_label: label.into(),
-            content: content.into(),
-            ..recalled("workspace-memory", "nod_x", None)
-        };
-        // ≤80 chars: the mint copies the content verbatim.
-        let short = frame("prefer rg over grep", "prefer rg over grep");
-        assert_eq!(short.distinct_label(), None);
-        // >80 chars: the mint keeps the first 79 chars plus `…`.
-        let long_content = "a".repeat(120);
-        let minted: String = format!("{}…", "a".repeat(79));
-        let long = frame(&minted, &long_content);
-        assert_eq!(long.distinct_label(), None);
-        // Whitespace differences do not defeat the match — both sides render
-        // trimmed, so they compare trimmed.
-        let padded = frame("  prefer rg over grep  ", "prefer rg over grep\n");
-        assert_eq!(padded.distinct_label(), None);
-        // An empty label was never citable text at all.
-        assert_eq!(frame("", "some content").distinct_label(), None);
-    }
-
-    #[test]
-    fn an_author_chosen_label_stays_distinct() {
-        let frame = |label: &str, content: &str| RecalledFrame {
-            citation_label: label.into(),
-            content: content.into(),
-            ..recalled("code-graph", "nod_y", None)
-        };
-        // A path label over a code excerpt — the ordinary code-graph shape.
-        let hit = frame("src/lib.rs", "fn main() {}");
-        assert_eq!(hit.distinct_label(), Some("src/lib.rs"));
-        // A hand-picked label that happens to open the content is NOT the
-        // mint's shape (no `…`), so it is the author's choice and it stays.
-        let prefix = frame("prefer rg", "prefer rg over grep here");
-        assert_eq!(prefix.distinct_label(), Some("prefer rg"));
-        // `…`-terminated, but over different text: distinct.
-        let elsewhere = frame("retry policy…", "the backoff doubles per attempt");
-        assert_eq!(elsewhere.distinct_label(), Some("retry policy…"));
-        // A frame with no content cannot cover any label.
-        let bare = frame("an episode title", "");
-        assert_eq!(bare.distinct_label(), Some("an episode title"));
-    }
-
-    fn recalled(provider: &str, id: &str, digest: Option<&str>) -> RecalledFrame {
-        RecalledFrame {
-            citation_label: format!("label for {id}"),
-            provider: provider.into(),
-            source: "stella-context".into(),
-            kind: "memory".into(),
-            uri: None,
-            method: None,
-            content: "body".into(),
-            token_cost: 7,
-            id: Some(id.into()),
-            content_digest: digest.map(str::to_owned),
-        }
-    }
-
-    #[test]
-    fn a_recall_projects_to_one_telemetry_event_with_provenance_intact() {
-        // Phase 2 (#713) deliverable 3. The projection lives here, once, so
-        // the five surfaces that recall cannot disagree about the shape of the
-        // event they report — the failure mode of copying it into each.
-        let recall = Recall {
-            frames: vec![
-                recalled("workspace-memory", "nod_a", Some("sha256:aa")),
-                recalled("workspace-memory", "nod_b", None),
-                recalled("code-graph", "sym_c", Some("sha256:cc")),
-            ],
-            usage: None,
-            latency_ms: 42,
-            used_ann_index: Some(true),
-        };
-        let Some(stella_protocol::AgentEvent::ContextRecall {
-            frames,
-            provider_mix,
-            tokens,
-            ..
-        }) = recall.telemetry_event()
-        else {
-            panic!("a non-empty recall reports an event");
-        };
-        assert_eq!(tokens, 21, "the summed per-frame cost");
-        // The mix counts frames that reached the prompt, per provider, in
-        // first-seen order.
-        assert_eq!(provider_mix.len(), 2);
-        assert_eq!(provider_mix[0].provider, "workspace-memory");
-        assert_eq!(provider_mix[0].frames, 2);
-        assert_eq!(provider_mix[1].frames, 1);
-        // The digest survives the projection — the whole point of deliverable
-        // 2. Before this it was hard-coded `None` at the one emission site.
-        assert_eq!(frames[0].content_digest.as_deref(), Some("sha256:aa"));
-        assert_eq!(
-            frames[1].content_digest, None,
-            "a provider that declared none keeps none — that absence is the \
-             signal that the frame is not verifiable and must be re-queried"
-        );
-        assert_eq!(frames[2].content_digest.as_deref(), Some("sha256:cc"));
-    }
-
-    #[test]
-    fn an_empty_recall_reports_nothing_rather_than_an_empty_event() {
-        // A turn that recalled nothing did not have a recall stage worth a
-        // receipt; an empty event would be a row that means "we looked" and
-        // reads as "we found nothing", which are different claims.
-        assert!(Recall::default().telemetry_event().is_none());
     }
 }
