@@ -225,11 +225,15 @@ pub struct EngineConfig {
     /// This exists because those are all *external* stopping conditions, and
     /// an agent that has already met its goal will happily keep spending
     /// against them — the measured story (Terminal-Bench run `or1`, task
-    /// `pypi-server`) lives in `stella-pipeline::flip_halt`'s module doc.
+    /// `pypi-server`) lived in `stella-pipeline::flip_halt`'s module doc,
+    /// until that crate was deleted from the workspace (#3865).
     ///
     /// The host owns the predicate because only the host knows what "done"
-    /// means. `stella-pipeline` supplies one that fires when its flip oracle
-    /// observes the tracked test go fail→pass.
+    /// means. The staged pipeline supplied one that fired when its flip oracle
+    /// observed the tracked test go fail→pass; **no host in this workspace
+    /// supplies one today**, which `stella-parity`'s
+    /// `turn.halt_on_goal_met` row records as a gap rather than a shipped
+    /// capability.
     pub turn_halt: Option<Arc<dyn TurnHalt>>,
     /// Task-mode opt-in (#2663): a completing turn that mutated the workspace
     /// and was not yet challenged is nudged once to prove its work

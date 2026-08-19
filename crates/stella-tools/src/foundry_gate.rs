@@ -29,7 +29,9 @@
 //! the worker that must satisfy it, and its integrity comes from tamper
 //! exclusion rather than secrecy: the filesystem identity of the artifact is
 //! snapshotted, and a flip is credited only while those bytes are unchanged
-//! (`stella_pipeline::witness::witness_identity_matches`). An adopted tool has
+//! (`stella_pipeline::witness::witness_identity_matches`, in the crate deleted
+//! by #3865; `stella_plugin::ArtifactIdentity` is where the host-side half of
+//! that comparison lives now). An adopted tool has
 //! exactly that shape. Its script is a file in the repository that anything
 //! with a shell can rewrite, and the proof that justified adopting it was a
 //! proof about *that script's behavior*. Re-pointing the manifest at a new

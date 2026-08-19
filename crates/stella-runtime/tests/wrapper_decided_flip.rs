@@ -106,7 +106,9 @@ fn dispatch() -> WrapperDispatch {
 }
 
 /// The grant a driver that runs in the tree it already has mints — the shape
-/// `stella_pipeline::ports::host_tree_grant` produces.
+/// [`stella_plugin::host_tree_grant`] produces (it was
+/// `stella_pipeline::ports::host_tree_grant` until that crate was deleted,
+/// #3865).
 fn granted(root: &str) -> CandidateGrant {
     CandidateGrant::new(CandidateHandle::new("host-tree"), root).with_test(
         TestPlan::new("sh", vec!["tests/witness_flip.sh".to_string()])

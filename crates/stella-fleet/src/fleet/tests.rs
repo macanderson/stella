@@ -1,7 +1,9 @@
 //! Unit tests for [`super`] — split out to keep `fleet.rs` under the
 //! file-size ratchet; a child module, so the dispatch seam's private
-//! internals stay reachable via `super::*` (the same shape as
-//! `stella-pipeline/src/pipeline/tests.rs`).
+//! internals stay reachable via `super::*` (the same shape
+//! `stella-core/src/receipts/tests.rs` uses, and the one
+//! `stella-pipeline/src/pipeline/tests.rs` used before that crate was deleted,
+//! #3865).
 
 use super::*;
 use std::path::{Path, PathBuf};

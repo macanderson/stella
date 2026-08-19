@@ -34,10 +34,10 @@
 //! `stella_plugin::Oracle::unmet` already holds, restated where the verdict is
 //! actually made.
 //!
-//! [`ladder_decision`](https://github.com/oxagen/stella) in
-//! `crates/stella-pipeline/src/verify.rs` is the same shape and the reason
-//! porting the staged pipeline onto this socket is a re-home rather than a
-//! rewrite: every arm of that ladder is terminal, and so is every arm here.
+//! `ladder_decision`, in the since-deleted `crates/stella-pipeline/src/verify.rs`
+//! (#3865), was the same shape — which is why porting the staged pipeline onto
+//! this socket is a re-home rather than a rewrite (`doc:pipeline-as-plugins`
+//! §8): every arm of that ladder was terminal, and so is every arm here.
 
 use std::fmt::Write as _;
 

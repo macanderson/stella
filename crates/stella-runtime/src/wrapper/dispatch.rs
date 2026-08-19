@@ -3,7 +3,8 @@
 //!
 //! `doc:wrapper-socket` describes four points and this crate shipped all four
 //! (#3380), but nothing called them: `grep -rn "after_turn" crates/stella-cli/src
-//! crates/stella-pipeline/src` found one port handle and no dispatch, so an
+//! crates/stella-pipeline/src` (the second path existed then; the crate was
+//! deleted in #3865) found one port handle and no dispatch, so an
 //! installed wrapper plugin participated in nothing (#3494). This module is the
 //! missing caller, and it is deliberately **not** in `stella-cli`: §6's
 //! acceptance criterion is that the same plugin runs under `stella-cli`,

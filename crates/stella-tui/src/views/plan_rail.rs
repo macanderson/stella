@@ -37,16 +37,19 @@
 //! # What used to sit under it
 //!
 //! A second panel, `PROOF`, carried the verification standing of the turn. Its
-//! only data source was `AgentEvent::Proof`, which `stella-pipeline` is the
-//! sole emitter of, so it is removed here ahead of that crate's extraction into
-//! an installable verification plugin (`doc:pipeline-as-plugins`, #3511). The
-//! rail is PLAN alone until a plugin-fed replacement is designed — see #3790.
+//! only data source was `AgentEvent::Proof`, whose sole emitter was
+//! `stella-pipeline`, so it was removed here ahead of that crate's extraction
+//! into an installable verification plugin (`doc:pipeline-as-plugins`, #3511);
+//! the crate has since been deleted outright (#3865), so nothing emits that
+//! event in this workspace at all. The rail is PLAN alone until a plugin-fed
+//! replacement is designed — see #3790.
 //!
 //! # Copy law (D6)
 //!
 //! `PLAN`, plan step. Never task, scope or issue — those are other tools' words
 //! (GitHub's, Jira's) — and never `warrant`, `witness`, `oracle`, `tamper` or
-//! `verdict`, which name `stella-pipeline` stages.
+//! `verdict`, which name a verification wrapper's stages (the built-in staged
+//! pipeline's, before #3865 deleted it; a verification plugin's now).
 //!
 //! A pure line-builder ([`plan_rows`]) so the state→colour mapping is
 //! unit-testable without a terminal.

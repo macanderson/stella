@@ -468,9 +468,10 @@ impl<'a> Engine<'a> {
     /// boundary and ends the turn as [`TurnOutcome::Completed`] when it
     /// fires. Takes `&self` and returns a new engine — the
     /// [`Self::with_turn_instance`] shape, not the consuming-builder shape —
-    /// because the caller that knows the goal is met is `stella-pipeline`,
-    /// which is handed an `&Engine` it does not own and needs a
-    /// per-candidate variant of it.
+    /// because the caller that knows the goal is met was the staged pipeline
+    /// (`stella-pipeline`, deleted in #3865), which was handed an `&Engine` it
+    /// did not own and needed a per-candidate variant of it. A verification
+    /// plugin's host is in the same position.
     ///
     /// Deliberately NOT expressed through [`crate::ports::TurnSteering`]'s
     /// soft stop, the other step-boundary exit: that one is a *user* asking

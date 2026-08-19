@@ -120,13 +120,14 @@ the contract that makes "plugin" mean something enforceable rather than
 aspirational: a declaration a host can check *before* anything runs, written by
 someone who does not get to see the engine. Two things follow from that.
 
-**The first plugin is Stella's own verification.** The staged pipeline
-([`stella-pipeline`](../stella-pipeline)) is the wrapper the `[wrapper]` block
-was designed for, and it is leaving the workspace to become a plugin (#3246,
-`doc:turn-loop-wrappers`). When it does, Stella no longer verifies its own work
-unless that plugin is installed — which is exactly why the manifest's rules are
-load errors rather than warnings: an opt-in verifier that silently declined to
-participate would be worse than none.
+**The first plugin is Stella's own verification.** The built-in staged
+pipeline (`crates/stella-pipeline`) was the wrapper the `[wrapper]` block was
+designed for, and it left the workspace to become a plugin — the crate is
+deleted (#3246, #3865, `doc:turn-loop-wrappers`). Stella therefore no longer
+verifies its own work unless a verification plugin is installed, which is
+exactly why the manifest's rules are load errors rather than warnings: an
+opt-in verifier that silently declined to participate would be worse than
+none.
 
 **Declared, then callable, and now driven.** The manifest is declared here.
 The socket a caller would drive it through — the `TurnWrapper` trait, `judge`,
@@ -136,10 +137,10 @@ end-to-end against a real subprocess plugin in that crate's own tests. The
 host sequence that calls all four points for a live turn is
 `stella_runtime::WrapperDispatch`, and `stella-cli` drives it: `--pipeline
 <variant>` on `stella run` resolves an installed manifest and runs a live
-turn through `crate::wrapper_plugin` (#3494), and separately
-`stella-pipeline`'s own staged pipeline now dispatches from the shipped
-`[wrapper]` block via `Pipeline::begin_turn_schedule` (#3408) rather than a
-hardcoded stage order. The remaining gap: `stella-cli`'s manifest loader
+turn through `crate::wrapper_plugin` (#3494). The built-in staged pipeline
+was taught to dispatch from its own shipped `[wrapper]` block rather than a
+hardcoded stage order (#3408) before it was deleted (#3865), so an installed
+plugin is the only remaining caller. The remaining gap: `stella-cli`'s manifest loader
 (`stella plugin install|list|remove`) resolves and shows consent for a
 manifest without itself driving a turn through it — that command surface is
 about installation, not execution, so nothing there needs to.
@@ -212,7 +213,8 @@ before it crosses.
   so a condition on an execute/witness/verify signal is answered from a real
   per-boundary value rather than a pre-run snapshot. `Clone`, so a caller
   fanning one turn into several candidates gives each its own copy from a
-  shared prefix. `stella-pipeline`'s `Schedule` is a thin wrapper over this.
+  shared prefix. The built-in staged pipeline's `Schedule` was a thin wrapper
+  over this, until that crate was deleted (#3865).
 - `src/evidence.rs` — the `[oracle]` block's evidence half: `OracleCheck`,
   the `MeasurementRule` grammar and its parser, the load-time rules that keep
   a check readable and every requirement decidable, and `Oracle::unmet`.
@@ -296,14 +298,16 @@ more:
   routes hooks through `LoopGrant::permits_hook`. The project tier is gated on
   `project_code_execution_trusted()` — a cloned repository's plugins do not
   load until the workspace is trusted (#3509).
-- **`stella-pipeline`** consumes the `[wrapper]` half: `src/variant.rs`
-  embeds `variants/classic.toml` and resolves it through `Wrapper::resolve`,
-  and `src/schedule.rs`'s `Schedule` walks `ProgressiveResolver` stage by
-  stage as each stage's real facts become known. **It is now driven by the
-  answer, not merely checked against it** (#3408, #3672): `Pipeline::run`
-  calls `Schedule::decide` at each stage boundary and ANDs it with the small
-  set of grammar-inexpressible host-internal facts, so `classic.toml` decides
-  every stage question the closed condition grammar can express.
+The third consumer was **`stella-pipeline`**, which consumed the `[wrapper]`
+half: `src/variant.rs` embedded `variants/classic.toml` and resolved it
+through `Wrapper::resolve`, and `src/schedule.rs`'s `Schedule` walked
+`ProgressiveResolver` stage by stage as each stage's real facts became known.
+It ended up *driven* by the answer rather than merely checked against it
+(#3408, #3672) — `Pipeline::run` called `Schedule::decide` at each stage
+boundary and ANDed it with the small set of grammar-inexpressible
+host-internal facts. That crate was deleted from the workspace (#3865), so the
+`[wrapper]` half has no in-tree consumer today: an installed wrapper plugin,
+driven through `stella_runtime::WrapperDispatch`, is what consumes it now.
 
 What is still unconsumed is narrower than it was: the subloop runner, and the
 Stop-gate binding of a plugin's declared hold allowance. Both arrive with the

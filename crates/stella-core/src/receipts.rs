@@ -419,7 +419,8 @@ fn split_recall(content: &str) -> Vec<RecallSegment<'_>> {
 /// One recalled item, in the shape the renderer writes and the parser reads.
 ///
 /// The two halves of the write→citation loop used to be three: `stella-cli`
-/// rendered one format, `stella-pipeline` rendered another, and
+/// rendered one format, the then-existing `stella-pipeline` rendered another
+/// (that crate was deleted in #3865), and
 /// `parse_recall_item` understood only the first. A pipeline turn therefore
 /// produced no `memory_citations` at all, because the id it wrote sat in a
 /// position the parser never looked (#3243 D4). A rendered line is a wire

@@ -105,7 +105,8 @@ pub const DANGER_BRIGHT: Color = palette::DANGER;
 /// readers to ignore the failure hue. Nothing else may take this role.
 ///
 /// **No renderer claims it today.** Its only consumer was the witness panel,
-/// removed ahead of `stella-pipeline`'s extraction (#3511). The token is kept
+/// removed ahead of `stella-pipeline`'s extraction (#3511; that crate has
+/// since been deleted from the workspace, #3865). The token is kept
 /// because [`palette`] mirrors the brand kit at `docs/brand/` and the contrast
 /// tables below are checked against it; retiring it is #3790.
 pub const ORACLE_PRE_FLIP: Color = palette::ORACLE_RED;

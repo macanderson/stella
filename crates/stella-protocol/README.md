@@ -30,7 +30,7 @@ rather than in `stella-model` precisely so `stella-core` can drive every model
 call through `&dyn Provider` without linking a single vendor adapter.
 
 ```
-stella-protocol ← stella-core ← stella-cli / stella-pipeline / stella-tui …
+stella-protocol ← stella-core ← stella-cli / stella-tui …
        ↑ also: stella-model (implements Provider), stella-tools, stella-store,
          stella-mcp, stella-media, stella-fleet, stella-runtime, stella-engine,
          stella-serve, stella-observatory, stella-plugin (HookEvent only)
@@ -74,7 +74,7 @@ invariant #4).
 The behavior over these types always has a home elsewhere: decision logic over
 events, budgets, and compaction in `stella-core`; wire transport implementing
 `Provider` in [`stella-model`](../stella-model); rendering in `stella-tui`;
-persistence in `stella-store`; replay and diffing in `stella-pipeline`. And
+persistence in `stella-store`. And
 nothing may be imported back from any of them — the mirrored-field examples in
 the intro are the required pattern for wanting a core type on the wire, not a
 workaround to clean up.
@@ -184,12 +184,11 @@ It generates both `type_tag()` and `KNOWN_TYPE_TAGS` from one variant→tag
 mapping, and the generated match has no wildcard arm — so adding a variant
 fails `cargo build -p stella-protocol` with `E0004` right at the invocation.
 The comment directly below it carries the full downstream checklist: which
-matchers the compiler will also stop you at (`stella-pipeline`
-`replay::event_signature`, `stella-tui` `model::Model::apply`,
-`textline::event_line`, `deck::trace_of`) and — the dangerous half — which ones
-it cannot (`replay::structural_diff`'s volatile keep-set,
-`deck::event_intensity`, `deck::status_from_event`). Read that list before you
-add a variant; it is maintained there, not here.
+matchers the compiler will also stop you at (`stella-tui`
+`model::Model::apply`, `textline::event_line`, `deck::trace_of`) and — the
+dangerous half — which ones it cannot (`deck::event_intensity`,
+`deck::status_from_event`). Read that list before you add a variant; it is
+maintained there, not here.
 
 Note the guard is now about *this workspace's* renderers staying complete, not
 about wire safety: external readers survive a new variant on their own.
@@ -335,11 +334,11 @@ older binary. If yes, it belongs on `LifecycleEventEnvelope`, not here. If no:
    `E0004` until you do.
 3. Add a round-trip test asserting the `"type"` tag serializes as you expect.
 4. Work the checklist in `type_tag`'s doc comment: the compile-enforced
-   matchers in `stella-pipeline` and `stella-tui` will stop you one crate at a
-   time, then hand-audit the wildcard matchers the compiler cannot catch. This
-   step is not optional bookkeeping — a variant landed on `main` past the
-   compile-enforced half and broke `stella-pipeline` (#421) and then
-   `stella-tui` (#422) on separate days.
+   matchers in `stella-tui` will stop you one crate at a time, then hand-audit
+   the wildcard matchers the compiler cannot catch. This step is not optional
+   bookkeeping — a variant landed on `main` past the compile-enforced half and
+   broke the then-existing `stella-pipeline` (#421, that crate deleted since,
+   #3865) and then `stella-tui` (#422) on separate days.
 
 **Adding a lifecycle event** — add the token to `context_event::event_type`,
 the payload struct, the `LifecycleEvent` variant, the `decode` arm, and a

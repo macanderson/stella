@@ -36,9 +36,11 @@
 //!
 //! # What this is a projection of
 //!
-//! Nothing here decides anything. `stella-pipeline`'s `pipeline::delivery`
-//! module already holds the decision as a typed value, and these types are its
-//! wire shape — which is why no new logic was needed to say what happened.
+//! Nothing here decides anything. The decision was held as a typed value in
+//! the then-existing `stella-pipeline`'s `pipeline::delivery` module, and
+//! these types are its wire shape — which is why no new logic was needed to
+//! say what happened. That crate was deleted in #3865, so nothing in this
+//! workspace produces the projection today; retiring it is #3881.
 
 use serde::{Deserialize, Serialize};
 

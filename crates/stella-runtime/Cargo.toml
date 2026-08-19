@@ -43,8 +43,8 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 # `judge` is a pure total function over a closed evidence vocabulary, which is
 # exactly the shape the rest of the workspace states as a property rather than
-# a table (stella-core's loop detection, stella-pipeline's witness
-# verification). #3510's invariant — a declared check narrows done and never
+# a table (stella-core's loop detection, and the witness verification the
+# since-deleted stella-pipeline held, #3865). #3510's invariant — a declared check narrows done and never
 # widens it — is quantified over every oracle a manifest can express, so it is
 # a property test, not a case.
 proptest = { workspace = true }

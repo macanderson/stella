@@ -18,7 +18,11 @@
 //!
 //! `fixtures/name_rung_corpus.jsonl` is this repository's own code-graph
 //! index — every indexed file's path and symbol names, 1,761 files — frozen
-//! as a dataset. It is deliberately **not** re-harvested on every run:
+//! as a dataset, as the tree stood on the day it was harvested. It therefore
+//! still carries `crates/stella-pipeline/**` rows, from before that crate was
+//! deleted from the workspace (#3865); that is the snapshot working as
+//! intended, not drift to repair. It is deliberately **not** re-harvested on
+//! every run:
 //!
 //! - a probe measures the *ranker*, so its corpus must not move underneath
 //!   it, or a rank that changed says nothing about the change that caused it;

@@ -39,8 +39,9 @@
 //! **Compile-enforced** — also exhaustive, so they will not build until you add
 //! an arm; but each break surfaces one crate at a time (CI stops at the first
 //! failing crate), which is exactly how #415's variant reached `main` before
-//! breaking `stella-pipeline` (#421) then `stella-tui` (#422):
-//!   - `stella-pipeline` `replay::event_signature`
+//! breaking two crates on separate days — the then-existing `stella-pipeline`
+//! (#421; that crate was deleted from the workspace in #3865, and its
+//! `replay::event_signature` matcher went with it) then `stella-tui` (#422):
 //!   - `stella-tui` `model::Model::apply`
 //!   - `stella-tui` `textline::event_line`
 //!   - `stella-tui` `deck::trace_of`
@@ -48,9 +49,6 @@
 //! **Silent** — wildcard / `matches!` arms the compiler CANNOT catch, so a new
 //! variant falls through to a default and is wrong only at runtime. These are
 //! the real trap; audit them by hand:
-//!   - `stella-pipeline` `replay::structural_diff` volatile keep-set: add the
-//!     variant if it is a run-to-run artifact absent from older golden streams,
-//!     or it will shift every aligned position of the diff.
 //!   - `stella-tui` `deck::event_intensity` and `deck::status_from_event`: give
 //!     the variant an intensity / agent status if it should register on the
 //!     fleet deck.
@@ -291,7 +289,7 @@ agent_event_tags! {
     // stream-json evidence file.
     RunComplete => "run_complete",
         ConsumerPosture::Behavioral {
-            site: "stella-pipeline/src/replay.rs::validate_stream (stream terminator)",
+            site: "stella-cli/src/arena.rs::observe (run terminator, latches SessionOutcome::Completed)",
         },
         &[Surface::Observatory];
 }

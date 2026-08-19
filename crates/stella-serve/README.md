@@ -18,10 +18,13 @@ not depend on `stella-store`.
 
 ## Where it sits
 
-It depends on four workspace crates: [`stella-protocol`](../stella-protocol)
-for the wire types, [`stella-core`](../stella-core) for the engine,
-[`stella-engine`](../stella-engine) for the step facade (#971), and
-[`stella-pipeline`](../stella-pipeline) for the verification pipeline (#1288).
+It depends on three workspace crates: [`stella-protocol`](../stella-protocol)
+for the wire types, [`stella-core`](../stella-core) for the engine, and
+[`stella-engine`](../stella-engine) for the step facade (#971). It used to take
+a fourth, `stella-pipeline`, for the verification pipeline (#1288); that crate
+was deleted from the workspace (#3865) and this surface has no verification
+path of its own — `doc:wrapper-socket` §6 names driving `WrapperDispatch` from
+here as an acceptance criterion that has not landed (#3551).
 It is not a leaf either: [`stella-parity`](../stella-parity) depends on it, to
 check that every HTTP route is claimed by a parity row. It builds its own
 binary from [`src/main.rs`](src/main.rs); `stella-cli` does not link it, and

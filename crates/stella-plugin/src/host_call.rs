@@ -584,9 +584,11 @@ pub enum HostCallRefusal {
     /// different: there the plugin author edits the manifest, here they must
     /// ask for something else. The standing case is verifier independence — a
     /// `child_turn` whose role intent resolves to the **worker's** seat would
-    /// let a plugin grade the work with the model that did it, which is the
-    /// self-grading `stella_pipeline`'s roster already reports on and which a
-    /// plugin may not buy at all.
+    /// let a plugin grade the work with the model that did it — the
+    /// self-grading the built-in staged pipeline's roster used to report for
+    /// an operator's own configuration (`Roster::independence_losses`, deleted
+    /// with that crate in #3865). An operator could choose it; a plugin may
+    /// not buy it at all.
     Forbidden,
     /// This host does not implement the capability at all. A declared gap on
     /// the host's side, not a fault of the plugin's.

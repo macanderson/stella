@@ -701,11 +701,14 @@ async fn a_plugin_acts_on_the_candidate_using_only_what_the_request_carried() {
         .expect("a UTF-8 temp path")
         .to_string();
 
-    // What the host mints. In production this is
-    // `stella_pipeline::ports::CandidateHandles::grant`, which canonicalises
-    // the root and refuses to mint one it cannot resolve; this crate must not
-    // depend on the pipeline (`tests/no_pipeline_edge.rs`), so the grant is
-    // built here in the shape that host produces.
+    // What the host mints. In production this is `stella_plugin`'s
+    // `host_tree_grant`/`canonical_root`, driven from `stella-cli`'s
+    // `wrapper_candidate` — it canonicalises the root and refuses to mint one
+    // it cannot resolve. (It was `stella_pipeline::ports::CandidateHandles::grant`
+    // when this test was written, until that crate was deleted, #3865.) This
+    // crate must not depend on a policy crate that drives it
+    // (`tests/no_policy_crate_edge.rs`), so the grant is built here in the
+    // shape that host produces.
     let mut request = after("make the failing test pass");
     request.candidate = Some(
         CandidateGrant::new(CandidateHandle::new("candidate-1"), root.clone()).with_test(

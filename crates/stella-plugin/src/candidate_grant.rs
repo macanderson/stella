@@ -31,14 +31,15 @@
 //! the dependency graph so either can reach the minting logic without a
 //! layering violation.
 //!
-//! `stella-pipeline`, while it still exists, re-exports every name below
-//! unchanged from `ports`/`ports::handle`/`witness`, so its own call sites —
-//! including `CandidateHandles`'s own `grant`/`resolve_path`, which now call
-//! [`fence`]/[`canonical_root`] here rather than keeping a second copy —
-//! needed no logic changes, only import-path updates. "One minting
+//! For as long as `stella-pipeline` still existed it re-exported every name
+//! below unchanged from `ports`/`ports::handle`/`witness`, so its own call
+//! sites — including `CandidateHandles`'s own `grant`/`resolve_path`, which
+//! called [`fence`]/[`canonical_root`] here rather than keeping a second copy
+//! — needed no logic changes, only import-path updates. "One minting
 //! implementation and one fence rather than two" (`wrapper_candidate.rs`'s own
 //! module doc) is exactly why the fence stayed a single copy through the move
-//! instead of being duplicated at the new call site.
+//! instead of being duplicated at the new call site; that crate was deleted in
+//! #3865 and this is the only copy left.
 
 use std::path::{Component, Path, PathBuf};
 

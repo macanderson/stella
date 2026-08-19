@@ -101,11 +101,13 @@ its id reaches `executions.pipeline_variant`.
 What has **not** landed: the other two drivers `doc:wrapper-socket` §6 makes an
 acceptance criterion — `stella-serve` over HTTP and a minimal embedded host
 linking `stella-engine` — neither of which calls `WrapperDispatch` yet (#3551);
-and [`stella-pipeline`](../stella-pipeline), which still takes its own branches
-rather than being ported onto this socket (Track B, `doc:pipeline-as-plugins`
-§7) — it now dispatches from its own `[wrapper]` manifest via
-`Schedule`/`ProgressiveResolver` (#3408), a separate mechanism from this
-crate's `TurnWrapper` socket, not this socket wearing a new caller.
+and a port of the built-in staged pipeline onto this socket, which never
+happened: that crate kept its own branches (it dispatched from its own
+`[wrapper]` manifest via `Schedule`/`ProgressiveResolver`, #3408 — a separate
+mechanism from this crate's `TurnWrapper` socket, not this socket wearing a
+new caller) and was then deleted from the workspace outright (#3865, Track B,
+`doc:pipeline-as-plugins` §7). An installed verification plugin driven through
+`WrapperDispatch` is what replaces it.
 Candidate-workspace grants on the CLI path landed (#3553,
 `crates/stella-cli/src/wrapper_candidate.rs`): `RoundInput::candidate` now
 carries a real grant over the shared work tree a `flip = "required"` oracle
@@ -216,7 +218,7 @@ it crosses.
 | `tests/wrapper_verdict.rs` | The property tests behind `judge`/`again`'s totality claim. |
 | `tests/wrapper_env_refusal.rs` | `refuses_env_name`'s refusal list, proven against the names #3512 named. |
 | `tests/host_owned_tamper.rs` | #3499's split: `ObservedEvidence` carries no tamper field: `EvidenceSet::from_observed` is where the host's own finding is merged in. |
-| `tests/no_pipeline_edge.rs` | Executable proof that this crate declares no dependency on `stella-pipeline` — a wrapper `stella-cli` can drive and `stella-serve` cannot is a CLI feature wearing a socket's name. |
+| `tests/no_policy_crate_edge.rs` | Executable proof that this crate declares no dependency on a policy-above-the-loop crate — a wrapper `stella-cli` can drive and `stella-serve` cannot is a CLI feature wearing a socket's name. Its second test holds the guard honest: a forbidden row naming a crate that no longer exists can never fail, which is what became of the original `stella-pipeline` row (#3865). |
 | `tests/wrapper_host_call.rs` | The witness for the host-call channel (#3540, `doc:wrapper-socket` §6b): a plugin asks the host for a capability mid-point and is handed real frames. |
 | `tests/driver_socket.rs` | The witness for the driver channel's transport (#3634, #3599 B0): a `/bin/sh` driver is handed a session, is served a capability it declared and refused one it did not, and ends the session with each of the two terminal answers. Two of its twelve ask the **child** rather than the constructor — what environment the process actually received, and whether a driver that keeps writing after deciding wedges the session — because a constructor interrogated about itself only ever agrees. |
 | `tests/wrapper_transport_limits.rs` | Witnesses for #3380's transport audit: the two resources a plugin process can spend that are not its own — the host's memory, and the machine after the turn ended. |

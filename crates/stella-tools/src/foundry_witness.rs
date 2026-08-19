@@ -5,7 +5,9 @@
 //! protocol pointed at a different subject. There, a witness is a test that
 //! **fails on the current tree and passes on the changed one**, and that
 //! fail→pass flip is what makes "done" a measurement rather than a claim
-//! (`stella_pipeline::witness`). Here the change under proof is not a diff —
+//! (`stella_pipeline::witness`, in the crate deleted by #3865; the protocol
+//! carries over to a verification plugin, `doc:pipeline-as-plugins` §8).
+//! Here the change under proof is not a diff —
 //! it is *the tool existing*. So the two trees become two worlds:
 //!
 //! - **without the tool**: the session's real executor chain, exactly as it is
@@ -21,7 +23,7 @@
 //!
 //! # Fails now, and could fail meaningfully
 //!
-//! `stella_pipeline::witness::density` makes the case that failing first is
+//! `stella_pipeline::witness::density` made the case that failing first is
 //! necessary and nowhere near sufficient: a test that fails only because a
 //! symbol does not exist yet is "a compile check wearing a test's name", and
 //! it flips green without constraining anything. The lazy version of this

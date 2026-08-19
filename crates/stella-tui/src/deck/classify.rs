@@ -346,12 +346,13 @@ pub(super) fn snip(text: &str) -> String {
 /// One-line trace summary of a [`stella_protocol::ProofStep`] for the traces
 /// view — a row recording what each step said when it happened.
 ///
-/// This deliberately keeps `stella-pipeline`'s own vocabulary: a trace is read
-/// by someone debugging the pipeline, for whom `oracle` and `warrant` are the
-/// precise words. It lives here rather than in a panel fold because the traces
-/// tab is a view of the raw event stream, so it costs the deck no folded state
-/// — it moved here when the PROOF rail was removed ahead of that crate's
-/// extraction (#3511), and it retires with `ProofStep` itself.
+/// This deliberately keeps the staged pipeline's own vocabulary: a trace is
+/// read by someone debugging a verification wrapper, for whom `oracle` and
+/// `warrant` are the precise words. It lives here rather than in a panel fold
+/// because the traces tab is a view of the raw event stream, so it costs the
+/// deck no folded state — it moved here when the PROOF rail was removed ahead
+/// of `stella-pipeline`'s extraction (#3511), and it retires with `ProofStep`
+/// itself (#3881; that crate was deleted in #3865, so no producer is left).
 fn proof_trace(step: &stella_protocol::ProofStep) -> String {
     use stella_protocol::{ProofStep, ProofTree};
     match step {

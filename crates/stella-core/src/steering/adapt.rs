@@ -13,8 +13,10 @@
 //! #3334 single-producer discipline).
 //!
 //! The recalled-frame adapter is deliberately **not** here: `RecalledFrame` is
-//! a `stella-pipeline` type, and this crate sits below the pipeline. It lives
-//! with the plane implementation in `stella-cli::memory::steering`.
+//! a `stella-protocol` type (it was `stella-pipeline`'s until that crate's
+//! removal census retargeted it, #3865), and the adapter belongs to the host
+//! above this crate. It lives with the plane implementation in
+//! `stella-cli::memory::steering`.
 
 use crate::records::{Registry, RenderedChannel, render};
 use crate::skills::{self, SelectedSkill};
