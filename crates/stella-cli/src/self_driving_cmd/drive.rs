@@ -598,14 +598,14 @@ fn advance(
             // a genuine failure for as long as the operator left it up.
             if !entry.rerun {
                 entry.rerun = true;
-                match super::deliver::rerun_failed(pr) {
+                match super::deliver::refresh_against_base(pr) {
                     Ok(()) => {
                         audit::record(
                             durable,
                             Audit::PrObserved,
                             Some(pr),
-                            "red against a base that has since gone green — asked the forge to \
-                             run the failed checks again before treating it as ours",
+                            "red against a base that has since gone green — merged the base in for a \
+                             fresh verdict before treating it as ours",
                         );
                         return Ok(false);
                     }
@@ -623,7 +623,21 @@ fn advance(
             // forever, and a counter that only moved on success would never
             // reach it.
             entry.fixes += 1;
-            durable.update_stats(|s| s.fixes_pushed += 1);
+            // Both counters move, because two things are true and a reader of
+            // either number alone would be misled. A fix was owed — that is
+            // `fixes_pushed`, and it is what the attempt ceiling reads. And
+            // the pull request was handed to a human — that is
+            // `prs_escalated`, and it is what a dashboard reads as "needs
+            // someone".
+            //
+            // Counting only the first left the audit log recording
+            // `pr_escalated` twice while `prs_escalated` stayed at zero: two
+            // records of one event that disagreed about what it was.
+            durable.update_stats(|s| {
+                s.fixes_pushed += 1;
+                s.prs_escalated += 1;
+            });
+            tally.escalated += 1;
             audit::record(
                 durable,
                 Audit::PrEscalated,

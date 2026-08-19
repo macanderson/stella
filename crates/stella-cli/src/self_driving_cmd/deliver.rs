@@ -220,18 +220,46 @@ pub(super) fn commit_trailer(issue_key: &str) -> String {
     format!("Closes #{issue_key}")
 }
 
+/// Re-decide a red verdict against the base as it stands now.
+///
+/// The one remedy the loop has for a red it did not cause and cannot see. A
+/// check that ran against a base which has since been repaired keeps its
+/// failing verdict forever, and `base_conclusion` compares what is failing
+/// *now* — so once the base goes green the pull request is left holding a
+/// failure that reproduces nowhere.
+///
+/// # Re-running alone does not do it, and that is the whole subtlety
+///
+/// A `pull_request` run is anchored to the merge commit computed when the run
+/// was **created**. `gh run rerun` replays that same commit, stale base and
+/// all. Measured here rather than assumed: #4022's failed job was re-run at
+/// 23:28, twelve minutes after #4015 repaired `main`, and reproduced the
+/// identical `cargo fmt` diff at `stella-autonomy/src/lib.rs:824` that only
+/// ever existed on the old base.
+///
+/// So the base is merged in first — a new head commit, and a fresh run that
+/// sees the repair. Re-running is kept as the fallback for the case
+/// `update-branch` declines, which is a branch that is *already* current: then
+/// there is no staleness to clear and a red that re-runs green was a flake.
+///
+/// Either way the caller bounds this to once per pull request, so a genuine
+/// failure reaches the fix path on the next poll.
+pub(super) fn refresh_against_base(pr: &str) -> Result<(), String> {
+    // Ahead of the fallback because it is the one that can actually change the
+    // answer. A branch already level with the base refuses here, which is
+    // exactly when re-running is the right move instead.
+    if gh(&["pr", "update-branch", pr]).is_ok() {
+        return Ok(());
+    }
+    rerun_failed(pr)
+}
+
 /// Ask the forge to run this pull request's failed checks again.
 ///
-/// The one remedy the loop has for a red it did not cause and cannot see:
-/// a check that ran against a base which has since been repaired keeps its
-/// failing verdict forever, and no amount of re-reading the forge changes it.
-/// `base_conclusion` compares what is failing *now*, so once the base goes
-/// green the pull request is left holding a failure that reproduces nowhere.
-///
-/// Re-running is cheap and the answer is unambiguous either way, which is why
-/// this is attempted before the fix path rather than instead of it. The caller
-/// bounds it to once per pull request.
-pub(super) fn rerun_failed(pr: &str) -> Result<(), String> {
+/// The fallback half of [`refresh_against_base`] — correct for a flake, and
+/// unable to clear a stale base. See that function for why the distinction
+/// matters.
+fn rerun_failed(pr: &str) -> Result<(), String> {
     // `gh pr checks --json` names the run each check belongs to only through
     // its URL, so the run id is recovered from there. A pull request whose
     // checks all pass yields nothing to re-run, which is not an error.
