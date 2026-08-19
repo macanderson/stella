@@ -25,6 +25,18 @@ use stella_protocol::ReasoningEffort;
 use crate::loop_detect::LoopDetectionConfig;
 use crate::retry::RetryPolicy;
 
+// Named only by this module's doc comments, which moved here with the fields
+// that carry them. Importing them keeps those intra-doc links resolving
+// instead of degrading the prose to plain text.
+//
+// The reason rides the attribute rather than this comment alone: two imports
+// share one paragraph, so a reader (and `check-dead-code-allows`) can only
+// associate it with the first (#3949).
+#[allow(unused_imports, reason = "named by this module's intra-doc links")]
+use super::Engine;
+#[allow(unused_imports, reason = "named by this module's intra-doc links")]
+use crate::budget::BudgetGuard;
+
 /// Everything about a turn's execution that isn't the provider/tools
 /// themselves: prompt shape, retry/compaction/loop tuning, and hard
 /// backstops. `Default` gives sensible starting values for `stella-cli`.

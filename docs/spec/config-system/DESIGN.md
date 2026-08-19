@@ -55,9 +55,12 @@ consequence that follows from it.
 
 1. **One file, in a format that can hold its own documentation.** The
    semantics of `settings.json` currently live in Rust doc comments the user
-   never sees — why `auto_mode` picks a different model family, why
-   `headless_scope_bypass` defaults off, what `ann_enabled` trades away. JSON
-   cannot carry any of it. That knowledge belongs next to the knob.
+   never sees — why `auto_mode` picks a different model family, what
+   `ann_enabled` trades away, and (the sharpest case) that
+   `headless_scope_bypass` is inert and setting it accomplishes nothing. JSON
+   cannot carry any of it. That knowledge belongs next to the knob: a user
+   reading their own settings file has no way to tell a live key from a dead
+   one, which is exactly how that key stayed documented as working.
 2. **A migration seam.** Today a typo and a future key are indistinguishable
    to serde, and the only defense is a warning printed by a hand-maintained
    key list (`settings/unknown.rs`). A `schema_version` turns forward
@@ -311,11 +314,16 @@ a hand-listed subset, or the two drift the first time a stage is added.
 
 Three of the eleven need a decision rather than a default:
 
-- **`ScopeReview` must not be configurable here.** `headless_scope_bypass`
-  already answers "may an unattended run proceed past scope review". Adding
-  `[pipeline.stages.scope_review].enabled` would be exactly the two-flags-one-
-  question bug this section rejects — and on the highest-consequence flag in
-  the file. Leave it out; `headless_scope_bypass` owns it.
+- **`ScopeReview` must not be configurable here.** The reasoning was that
+  `headless_scope_bypass` already answered "may an unattended run proceed past
+  scope review", so adding `[pipeline.stages.scope_review].enabled` would be
+  exactly the two-flags-one-question bug this section rejects. Both flags are
+  now moot: the scope-review stage was deleted with the staged pipeline and
+  `headless_scope_bypass` is inert, owning nothing. The conclusion survives —
+  do not add the stage toggle — but on the plainer ground that this config
+  system does not configure stages that no longer exist. If a verification
+  plugin reintroduces a scope gate, it is the plugin's manifest that
+  configures it, not this file.
 - **`Complete` is terminal**, not a stage anyone turns off. Reject it at load
   the way `execute` is rejected.
 - **`ContextRecall` / `ContextWrite` / `Reflect` already have owners** in the

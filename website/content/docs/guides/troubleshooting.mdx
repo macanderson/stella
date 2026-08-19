@@ -278,11 +278,13 @@ form of its output — `--output-format` is a flag of `run` and `fleet`, and
 ## "The run ended without doing anything"
 
 <CardGrid size="md">
-  <SpecCard title="The scope gate stopped it">
-    A plan over `max_steps` (5), `max_files` (8), or `max_cost_usd` (1.00) pauses for
-    review — and headless, without
-    `agent_engine_config.headless_scope_bypass: "on"`, it **ends the run** rather than
-    auto-approving. Deliberate: a gate that approves itself in CI is not a gate.
+  <SpecCard title="A verification plugin stopped it">
+    A plugin driving the turn can end a run before it edits anything — over a
+    blast-radius threshold, say. Its rule is the plugin's, so check its manifest
+    for what it refuses. The built-in scope gate this card used to describe was
+    removed with the staged pipeline, and the
+    `agent_engine_config.headless_scope_bypass` key that waved a headless run
+    past it is inert — it is not what ended your run.
   </SpecCard>
   <SpecCard title="The spend limit tripped">
     `--spend-limit` aborts cleanly between steps. Exit code `1`; already-committed work

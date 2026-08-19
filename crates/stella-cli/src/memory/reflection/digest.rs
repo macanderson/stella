@@ -311,6 +311,12 @@ impl TurnFriction {
         Some(self.tools.len() - 1)
     }
 
+    /// Dead only *transitively*: its two call sites are both inside
+    /// [`Self::observe`], which lost its own production caller with the staged
+    /// pipeline (#3865). It comes back the moment `observe` does, and until
+    /// then `digest/tests.rs` drives it through that same method — so this is
+    /// one suppression cascading from one decision, not a second orphan.
+    #[allow(dead_code)]
     fn push_retry(&mut self, entry: String) {
         if self.retries.len() >= FRICTION_ENTRY_CAP {
             self.dropped += 1;

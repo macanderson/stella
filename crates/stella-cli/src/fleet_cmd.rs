@@ -15,7 +15,17 @@
 //!
 //! Each worker is a full Stella engine turn (the raw step-loop) running in
 //! its task's workspace with the standard tool registry — headless: no MCP,
-//! no custom tools, so a worker can never block on stdin. The
+//! no custom tools, so a worker can never block on stdin. It is **steered
+//! like every other door**, though (#3947): the byte-stable prefix (workspace
+//! memories + enforced rules) and the volatile recall block (recalled frames,
+//! selected skills, matched context records, today's date) both reach it — see
+//! [`worker_recall_block`], which states what each half can offer inside an
+//! isolated worktree and why arming the A/B control per worker is correct. The
+//! withheld surfaces are the *tool* ones, and they are withheld for a stdin
+//! reason rather than a token one; an unattended lane is precisely where the
+//! repository's published steering should still apply.
+//!
+//! The
 //! parent `--spend-limit` is enforced twice, per the fleet's contract: each child
 //! runs under its own enforced guard, and the fleet stops launching new
 //! waves once the metered total crosses the cap (in-flight siblings settle
@@ -688,6 +698,64 @@ fn worker_event_sender(tx: &mpsc::UnboundedSender<AgentEvent>) -> stella_core::E
     stella_core::EventSender::new(tx.clone()).pairing_stage_complete()
 }
 
+/// The volatile steering block for one fleet attempt: recalled frames, the
+/// selected skills, the matched context records, and today's date.
+///
+/// Fleet workers used to get the byte-stable prefix alone (#3947) — workspace
+/// memories and enforced rules — while every human-facing door also got this
+/// block. The omission read as deliberate but was stated nowhere, and it was
+/// not harmless: [`agent::build_system_prompt`]'s environment block
+/// deliberately keeps today's date OUT of the stable prefix *because* it rides
+/// here (#2901), so a worker carried the knowledge-cutoff clause — "treat
+/// anything that may have moved since as unverified" — with nothing to measure
+/// "since" against.
+///
+/// Rooted at the attempt's own `root` rather than `cfg.workspace_root`, for
+/// the same reason [`agent::open_store`] is above: an isolated task runs in a
+/// linked worktree, and parallel workers must not contend on one SQLite
+/// writer. What that root can offer differs by task, and both answers are
+/// correct — a fresh worktree carries `.stella/rules/*.toml` (the one tracked
+/// part of `.stella/`) and still reaches the user-global `~/.stella/skills`,
+/// but has no `.stella/private/context.db`, so there the block is records and
+/// date and costs no retrieval at all.
+///
+/// The A/B recall control is armed here, as in every other driver. Parallel
+/// workers do not corrupt the schedule by doing so: the suppression counter is
+/// durable and each process claims a distinct number, so the arms interleave
+/// into one workspace-wide sequence — which is the case
+/// `SessionMemory::arm_recall_control`'s docs already name when they list "a
+/// fleet task" among the one-turn-per-process surfaces a per-session counter
+/// could never schedule.
+///
+/// Returns the block and its recall telemetry separately: recall must run
+/// before the engine is handed its messages, and the attempt's event channel
+/// does not exist yet at that point, so the caller owns the send.
+async fn worker_recall_block(
+    root: &Path,
+    cfg: &Config,
+    active_rules: &rules::ResolvedRules,
+    prompt: &str,
+) -> (Option<String>, Option<AgentEvent>) {
+    // `warn: false`, the Command Deck's choice for the Command Deck's reason:
+    // with `--watch` a live grid owns the terminal, and a per-worker store
+    // warning would be N-fold noise painted over it.
+    let Some(mut memory) =
+        crate::memory::SessionMemory::open_for_session(root, false, &cfg.authority, active_rules)
+    else {
+        return (None, None);
+    };
+    memory.arm_recall_control();
+    let recalled = memory.recall_block_reported(prompt).await;
+    let event = recalled.telemetry_event();
+    // `memory` is dropped here: this wires the steering that reaches a worker,
+    // not the reflection that would come back out of one. A fleet attempt still
+    // mines no lessons from its own turn, unlike `stella run` and the REPL —
+    // tracked as its own change rather than smuggled into this one (#3956),
+    // because where the lesson lands is a real decision in a disposable
+    // worktree, not a wiring detail.
+    (recalled.text, event)
+}
+
 /// One worker turn in `root`, on the calling thread's runtime — the
 /// `Engine::run_turn` step-loop, either raw or dispatched through the
 /// installed wrapper plugin `wrapper_variant` names (`--pipeline <variant>`,
@@ -806,6 +874,15 @@ async fn run_task(
         .await,
     )];
     messages.push(CompletionMessage::user(&task.prompt));
+    // The volatile half of this worker's steering (#3947). `build_system_prompt`
+    // above is only the byte-stable prefix — memories and enforced rules; the
+    // selected skills, the matched context records, and today's date ride the
+    // recall block, exactly as they do for `stella run`, `/goal` and the deck.
+    // The event is carried to the channel opened below, which this turn's
+    // telemetry rides — the same split `agent::goal` documents.
+    let (recall_text, recall_event) =
+        worker_recall_block(root, &cfg, &active_rules, &task.prompt).await;
+    crate::memory::inject_recall_block(&mut messages, recall_text);
     // Each child runs under its own enforced guard at the full cap; the
     // parent fleet guard additionally stops new waves on the metered sum.
     let mut budget = agent::build_budget_guard(budget_limit);
@@ -902,6 +979,14 @@ async fn run_task(
                 name: stella_protocol::StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Run,
             });
+            // What recall cost this attempt, on the attempt's own lane (#713,
+            // #3947). Recall ran before this channel existed — it has to, the
+            // block is part of the messages the engine is about to be handed —
+            // so the event waits here rather than being dropped for want of a
+            // sink, which is the discard #713 closed everywhere else.
+            if let Some(event) = recall_event {
+                let _ = tx.send(event);
+            }
             match &wrapped {
                 // `--pipeline <variant>`: the wrapper bound for this attempt
                 // owns the round loop over the same engine the raw arm below
