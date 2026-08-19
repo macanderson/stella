@@ -1,12 +1,16 @@
 //! Goal-driven turns: judged rounds until a verifier confirms the goal is met.
 //!
-//! `run_goal_cmd` drives either the raw `Engine::run_goal` step-loop (the
-//! default since #3381) or the staged pipeline, opted into with `--pipeline
-//! classic`. The goal verifier is independent of the worker model and
-//! answers "does the whole effort meet the goal?" — distinct from the
-//! pipeline's per-change verification verifier.
+//! `run_goal_cmd` drives the raw `Engine::run_goal` step-loop (the default
+//! since #3381), the staged pipeline (`--pipeline classic`), or an installed
+//! wrapper plugin per round (`--pipeline <variant>`, [`goal_wrapped`],
+//! #3695 goal half). The goal verifier is independent of the worker model
+//! and answers "does the whole effort meet the goal?" — distinct from the
+//! pipeline's per-change verification verifier — and stays the same
+//! `Engine::assess` primitive on all three arms.
 
 use super::*;
+
+mod goal_wrapped;
 
 /// The session task board, tool by tool — everything the catalog files under
 /// the `task` group *except* `delegate`, the sub-agent delegation tool that
@@ -392,27 +396,76 @@ pub(crate) async fn run_raw_one_shot(
 /// (`--pipeline classic`) runs the staged pipeline (triage → recall → plan →
 /// execute → witness → verify → verdict); `Raw` — the default since #3381,
 /// with or without `--no-pipeline` — falls back to the raw `Engine::run_goal`
-/// step-loop. A named plugin `Variant` is refused before this is ever called
-/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Goal` arm) —
-/// this door only ever sees `Classic` or `Raw`.
+/// step-loop; `Plugin(variant)` dispatches each round's worker turn through
+/// the named installed wrapper ([`goal_wrapped::run_goal_wrapped_turn`],
+/// #3695 goal half) while the goal verifier stays exactly what `Raw` uses —
+/// **provided the named wrapper is not arbiter-grade**: this door's own
+/// pre-flight rung refuses `participation = "arbiter"` before the provider
+/// is ever built (`wrapper_plugin::reject_arbiter_wrapper_on_goal`, #3832),
+/// because the goal loop is already this door's completion arbiter and a
+/// second one held open inside a judged round is the doubled-supervisor
+/// shape the wrapper design forbids; an arbiter-grade wrapper's designed
+/// home is `stella run --pipeline <variant>` instead. Steering and observer
+/// wrappers reach `Plugin(variant)` unaffected. `stella fleet` still refuses
+/// any named plugin before this is ever called
+/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Fleet` arm).
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
     budget_limit: Option<f64>,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
 ) -> Result<(), crate::failure::CliFailure> {
-    // Only `Classic`/`Raw` reach this door (see the doc above); either reads
-    // as one bool for the rest of this function's branching, same shape as
-    // before #3381.
+    // `Plugin` reads as `Raw` for every branch below except the final
+    // dispatch: the wrapped arm builds the same system prompt, the same
+    // recall block and the same tool stack `Raw` does, and differs only in
+    // which function drives the round loop.
     let use_pipeline = pipeline.is_classic();
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
+    // Resolved before the provider is built and before a single paid call —
+    // exactly the ordering `run_raw_one_shot` uses, and for the same reason:
+    // a `--pipeline` naming nothing installed must fail as a typo, not after
+    // the run it was meant to shape.
+    let resolved = match pipeline.plugin() {
+        Some(variant) => Some(
+            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
+                eprintln!("  ! {line}");
+            })
+            .map_err(crate::failure::CliFailure::from)?,
+        ),
+        None => None,
+    };
+    // Arbiter-grade wrappers are refused here, before binding and before any
+    // paid call — the goal loop is this door's own completion arbiter, and a
+    // wrapper that holds rounds open would run a second hold loop inside one
+    // judged round (#3832). See
+    // `crate::wrapper_plugin::reject_arbiter_wrapper_on_goal`'s doc comment.
+    if let Some(resolved) = &resolved {
+        crate::wrapper_plugin::reject_arbiter_wrapper_on_goal(resolved)
+            .map_err(crate::failure::CliFailure::from)?;
+    }
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
     crate::subagent::install_for_session(cfg, &registry)?;
+    // The goal door's host serves `recall` only — no `child_turn` plane; see
+    // `crate::wrapper_plugin`'s module doc for why a fixed slot is unsafe
+    // across a goal loop's own even/odd round math.
+    let bound = match resolved {
+        Some(resolved) => {
+            let host = crate::wrapper_plugin::WrapperHost::recalling(Box::new(
+                crate::wrapper_recall::SessionRecallHost::open(&cfg.workspace_root),
+            ));
+            Some(
+                resolved
+                    .serving(host)
+                    .map_err(crate::failure::CliFailure::from)?,
+            )
+        }
+        None => None,
+    };
     // Goal mode always renders human-readable output, so its half of the
     // fact is fixed at `true`; the stdio handles settle the rest.
     let ask = human_is_present(true);
@@ -509,6 +562,25 @@ pub async fn run_goal_cmd(
             mcp.clone(),
             recall_event,
             memory.as_mut(),
+        )
+        .await
+    } else if let Some(bound) = &bound {
+        goal_wrapped::run_goal_wrapped_turn(
+            &*provider,
+            base_tools,
+            &custom_tools,
+            &registry,
+            &mut messages,
+            &mut budget,
+            &calibration,
+            cfg,
+            &store,
+            goal,
+            Some(presence.id()),
+            budget_limit,
+            recall_event,
+            memory.as_mut(),
+            bound,
         )
         .await
     } else {
@@ -698,22 +770,22 @@ pub(crate) async fn run_goal_turn(
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
 
-    if let Some((store, id)) = &execution {
-        let (outcome_label, cost) = match &outcome {
-            GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
-            GoalOutcome::Unmet { cost_usd, .. } => ("goal_unmet", *cost_usd),
-        };
-        if !record_execution_end(
-            store,
-            *id,
-            registry,
-            outcome_label,
-            cost,
+    let (outcome_label, cost) = match &outcome {
+        GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
+        GoalOutcome::Unmet { cost_usd, .. } => ("goal_unmet", *cost_usd),
+    };
+    crate::agent::turn_close::close_turn(
+        cfg,
+        store,
+        &execution,
+        registry,
+        session,
+        crate::agent::turn_close::TurnOutcomeRecord {
+            label: outcome_label,
+            cost_usd: cost,
             persistence_complete,
-        ) {
-            warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
-        }
-    }
+        },
+    );
 
     match outcome {
         GoalOutcome::Met {
@@ -1076,22 +1148,22 @@ async fn run_goal_pipeline_turn(
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, total_cost_usd);
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
-    if let Some((store, id)) = &execution {
-        let outcome_label = match &goal_result {
-            Ok(()) => "goal_met",
-            Err(_) => "goal_unmet",
-        };
-        if !record_execution_end(
-            store,
-            *id,
-            registry,
-            outcome_label,
-            total_cost_usd,
+    let outcome_label = match &goal_result {
+        Ok(()) => "goal_met",
+        Err(_) => "goal_unmet",
+    };
+    crate::agent::turn_close::close_turn(
+        cfg,
+        store,
+        &execution,
+        registry,
+        session,
+        crate::agent::turn_close::TurnOutcomeRecord {
+            label: outcome_label,
+            cost_usd: total_cost_usd,
             persistence_complete,
-        ) {
-            warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
-        }
-    }
+        },
+    );
     goal_result
 }
 

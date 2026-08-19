@@ -118,7 +118,10 @@ pub(crate) fn payload(
     // beginning and end — `added`/`removed` above stay the *real* delta, so
     // the tally never quietly shrinks to what the view happened to draw.
     let view = stella_diff::view::elide(&diff.hunks, stella_diff::view::VIEW_CAP);
-    Ok(json!({
+    // `stella_diff::json::view` is the one place `{hunks, elided,
+    // fold_before}` is assembled (#1511) — merged onto this row's own fields
+    // rather than hand-written here too.
+    let mut payload = json!({
         "execution_id": id,
         "found": true,
         "base": baseline.kind,
@@ -129,10 +132,14 @@ pub(crate) fn payload(
         "added": diff.added,
         "removed": diff.removed,
         "minimal": diff.minimal,
-        "hunks": stella_diff::json::hunks(&view.hunks),
-        "elided": view.hidden,
-        "fold_before": view.fold_before,
-    }))
+    });
+    if let Value::Object(view_fields) = stella_diff::json::view(&view) {
+        payload
+            .as_object_mut()
+            .expect("object literal")
+            .extend(view_fields);
+    }
+    Ok(payload)
 }
 
 /// The earlier state the diff is taken against, resolved to bytes plus the

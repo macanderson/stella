@@ -80,9 +80,43 @@
 //! cannot be added to a gate afterwards — the two halves are therefore separate
 //! moments, not one function with an `Option` in it.
 //!
-//! And two scope limits: `--pipeline` is on `stella run` alone and a plugin's
-//! `Unmet` does not fail the process (#3554), and only this driver of
-//! `doc:wrapper-socket` §6's three exists (#3551).
+//! And two scope limits: `--pipeline` reaches `stella run` and `stella goal`
+//! only — `stella fleet` still refuses a named variant (#3695) — and a
+//! plugin's `Unmet` does not fail the process (#3554), and only this driver
+//! of `doc:wrapper-socket` §6's three exists (#3551).
+//!
+//! # `stella goal`'s driver is a second call site, not a second sequence
+//!
+//! `crate::agent::goal::goal_wrapped::run_goal_wrapped_turn` binds a wrapper exactly as
+//! this module's [`resolve`]/[`ResolvedWrapper::serving`] do, then calls
+//! [`WrapperDispatch::run`] once per judged round — the goal loop's own
+//! round loop, not the wrapper's, decides how many rounds run, because the
+//! goal verifier (`stella_core::Engine::assess`) is untouched (#3695, goal
+//! half). That only stays true because [`reject_arbiter_wrapper_on_goal`]
+//! refuses an arbiter-grade wrapper on this door before any of the above ever
+//! runs (#3832): `WrapperDispatch`'s own hold loop only holds a round open
+//! for an arbiter-grade plugin, and a hold-open round dispatched *inside* one
+//! already-judged goal round is a second round-holder judging the same
+//! round, which the goal loop's own `Engine::assess` was already doing —
+//! `run_goal_wrapped_turn` used to only discover this after billing
+//! `1 + DEFAULT_HOST_MAX_HOLDS` worker turns for it, then discard the whole
+//! run (`DispatchReport::rounds != 1`, still checked as a defense-in-depth
+//! assertion — see that module's doc comment). So for the steering/observer
+//! wrappers this door does accept, a round's dispatch always drives exactly
+//! one internal turn, at the round's own `turn_instance`; and the goal
+//! round's own execution row (opened once, before the loop, exactly like
+//! [`RawTurnDriver`]'s door opens one) records `bound`'s variant id for the
+//! whole run, honest because every round under that row really was
+//! dispatched through it.
+//!
+//! The goal door's [`WrapperHost`] serves `recall` and deliberately no
+//! `child_turn` plane: [`PLUGIN_CHILD_TURN_SLOT`] is a fixed `turn_instance`,
+//! chosen because `stella run`'s one-shot worker never uses more than slot 0
+//! — a goal round's own worker/verifier pair already occupies the even/odd
+//! slot beside every round, so a fixed slot collides with whichever round
+//! lands on it (round 1's verifier is already slot 1). Wiring a
+//! collision-safe per-round slot for goal-mode `child_turn` is left to a
+//! follow-up rather than guessed at here (#3833).
 
 use std::sync::Arc;
 
@@ -210,29 +244,84 @@ pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'stat
 
 /// Refuse a named wrapper plugin variant on a door that cannot drive one yet.
 ///
-/// `stella run` is the only door with a real [`TurnDriver`] implementation
-/// ([`WrapperDispatch`] over one raw turn): `goal` and `fleet` each drive
-/// their own **round loop** (a judged goal round, a fleet worker's attempt),
-/// and wiring a wrapper plugin through either is a real driver — not a
-/// formatting difference — that nothing in this crate implements (#3695).
-/// `--pipeline classic` and no `--pipeline` at all both resolve to
+/// `stella run` and `stella goal` each have a real [`TurnDriver`]
+/// implementation now: `run` drives [`WrapperDispatch`] over its one raw
+/// turn, and `goal` drives it once per judged round
+/// (`crate::agent::goal::goal_wrapped::run_goal_wrapped_turn`) while leaving the round
+/// loop's own met/unmet decision — the goal verifier, `Engine::assess` —
+/// untouched (#3695, goal half). `fleet` drives its own **round loop** (a
+/// worker's attempt) with no [`TurnDriver`] over it yet, and wiring one
+/// through is a real driver — not a formatting difference — that nothing in
+/// this crate implements; #3695 stays open for that half. `--pipeline
+/// classic` and no `--pipeline` at all both resolve to
 /// [`PipelineChoice::Classic`]/[`PipelineChoice::Raw`], which is fine on
-/// every door; only a *named* plugin variant is out of reach here, and it is
-/// refused with a message naming `stella run` as the door that can run it —
-/// never silently downgraded to raw or to classic, which would run something
-/// other than what was asked for without saying so.
+/// every door; only a *named* plugin variant on `fleet` is out of reach here,
+/// and it is refused with a message naming `stella run`/`stella goal` as the
+/// doors that can run it — never silently downgraded to raw or to classic,
+/// which would run something other than what was asked for without saying
+/// so.
 pub(crate) fn reject_plugin_variant_for_door(
     door: &str,
     choice: PipelineChoice<'_>,
 ) -> Result<(), String> {
+    if door != "fleet" {
+        return Ok(());
+    }
     match choice.plugin() {
         Some(variant) => Err(format!(
             "--pipeline {variant} is not supported on `stella {door}` yet — wrapper plugins \
-             run only on `stella run --pipeline {variant}` today (#3695). Pass `--pipeline \
-             classic` for the staged pipeline, or omit --pipeline for the raw loop."
+             run on `stella run --pipeline {variant}` and `stella goal --pipeline {variant}` \
+             today, but not `stella fleet` (#3695 stays open for a fleet worker's driver). Pass \
+             `--pipeline classic` for the staged pipeline, or omit --pipeline for the raw loop."
         )),
         None => Ok(()),
     }
+}
+
+/// Refuse an arbiter-grade wrapper plugin on `stella goal`'s pre-flight rung,
+/// before binding completes and before any paid call (#3832).
+///
+/// `stella goal`'s own round loop is this door's completion arbiter:
+/// `Engine::assess` (called directly by
+/// `crate::agent::goal::goal_wrapped::run_goal_wrapped_turn`, or by
+/// `Engine::run_goal` on the raw arm) decides met/unmet after every round
+/// already. A wrapper plugin declaring `participation = "arbiter"` brings a
+/// SECOND hold loop — [`WrapperDispatch`]'s own `judge`/`again` — that wants
+/// to run *inside* one judged round, holding that one round open for up to
+/// `1 + DEFAULT_HOST_MAX_HOLDS` billed worker turns before
+/// `run_goal_wrapped_turn` ever sees the round back
+/// (`DispatchReport::rounds != 1`) — and only then discards the whole run,
+/// after every one of those turns was already paid for. Two round-holders
+/// judging the same round is exactly the doubled-supervisor shape the
+/// wrapper design forbids: an arbiter-grade plugin's designed home is
+/// `stella run --pipeline <variant>`, where `WrapperDispatch`'s hold loop is
+/// the ONLY thing that owns rounds (see `agent/goal/goal_wrapped.rs`'s
+/// module doc, and `plugins/stella-goal/README.md`, for why that plugin runs
+/// there and not here). So this refuses before the provider is ever built —
+/// the same pre-flight rung [`reject_verification_flags_without_pipeline`]
+/// and [`reject_plugin_variant_for_door`] use — at zero cost and zero
+/// provider calls, every time.
+///
+/// Steering and observer wrappers are unaffected and keep running per round
+/// on `stella goal` exactly as before: neither grade can reach `again`'s
+/// `Continuation::Again` arm (only [`stella_plugin::Participation::Arbiter`]
+/// can, `crates/stella-runtime/src/wrapper/verdict.rs`'s `again`), so their
+/// `WrapperDispatch::run` call always returns after exactly one internal
+/// turn and the goal loop's own round math is untouched.
+pub(crate) fn reject_arbiter_wrapper_on_goal(resolved: &ResolvedWrapper) -> Result<(), String> {
+    if resolved.manifest().loop_grant.participation != stella_plugin::Participation::Arbiter {
+        return Ok(());
+    }
+    Err(format!(
+        "--pipeline {variant} (\"{name}\") is arbiter-grade and cannot run on `stella goal` \
+         (#3832): the goal loop is this door's own completion arbiter — Engine::assess decides \
+         met/unmet after every round already — and a wrapper that holds rounds open runs its \
+         own hold loop via WrapperDispatch, which would judge the same round twice. Run it at \
+         its designed home instead: `stella run --pipeline {variant}`. Steering and observer \
+         wrappers are unaffected and still run per round on `stella goal`.",
+        variant = resolved.variant(),
+        name = resolved.manifest().name,
+    ))
 }
 
 /// Refuse a pipeline-only verification flag against a [`PipelineChoice`] that
@@ -329,6 +418,18 @@ impl BoundWrapper {
         self.child_turns
             .as_ref()
             .map_or_else(Vec::new, |plane| plane.spends())
+    }
+
+    /// Print what one round's dispatch concluded, exactly as [`run_wrapped`]
+    /// does for `stella run`'s one-shot report.
+    ///
+    /// A method rather than exposing `gate` — the field [`report_to`] reads
+    /// alongside `report` — because the gate outlives any single round and a
+    /// caller driving several rounds through this same [`BoundWrapper`] (the
+    /// goal loop) must never hold a second reference to it that could drift
+    /// from what [`Self::child_spends`] already reports honestly.
+    pub(crate) fn report(&self, format: OutputFormat, report: &DispatchReport) {
+        report_to(format, report, &self.gate, &self.child_spends());
     }
 }
 
@@ -455,6 +556,16 @@ impl ResolvedWrapper {
     /// assembling this host's planes for it.
     pub(crate) fn manifest(&self) -> &stella_plugin::PluginManifest {
         &self.manifest
+    }
+
+    /// The `--pipeline` value that resolved this wrapper — the same string
+    /// [`resolve`] was called with, kept for callers (like
+    /// [`reject_arbiter_wrapper_on_goal`]) that need to name it in a refusal
+    /// without re-deriving it from the manifest's own `[wrapper] id`, which
+    /// need not match what the user typed under every alias scheme #3512
+    /// leaves room for.
+    pub(crate) fn variant(&self) -> &str {
+        &self.variant
     }
 
     /// Bind the plugin's process to what this host will do for it.

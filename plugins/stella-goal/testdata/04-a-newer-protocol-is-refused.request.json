@@ -1,0 +1,10 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 2,
+    "wrapper": "goal-v1",
+    "stage": "execute",
+    "round": 0,
+    "goal": "fix the retry loop"
+  }
+}

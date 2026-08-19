@@ -59,10 +59,11 @@
 //! - **The stage order is a manifest, not a set of branches** (#3381/#3408).
 //!   `variants/classic.toml` declares the order this crate has run since the
 //!   staged pipeline landed, and [`variant`] resolves it against one turn's
-//!   facts into an ordered stage program. [`pipeline`] still takes its own
-//!   branches: binding the resolved program to them needs the four wrapper
-//!   interception points (#3380), so today the manifest is the readable,
-//!   testable statement of the order rather than its driver.
+//!   facts into an ordered stage program. [`pipeline`] now takes that answer
+//!   as its instruction: every stage question the closed condition grammar
+//!   can express is decided live by [`crate::schedule::Schedule`] at each
+//!   stage boundary, not by a branch that merely happens to agree with
+//!   `classic.toml`. See [`variant`] for exactly what still stays in Rust.
 //!
 //! # The port surface the CLI glue implements
 //!

@@ -36,6 +36,36 @@ id = "budget-v1"
 name = "execute"
 "#;
 
+/// An arbiter-grade wrapper, shaped exactly like `plugins/stella-goal`'s real
+/// manifest (`[loop] participation = "arbiter"`, the `Stop` hook it requires,
+/// one requirement, and a `flip = "not-applicable"` oracle deciding it) —
+/// minimal enough to load, but the same grade `reject_arbiter_wrapper_on_goal`
+/// (#3832) exists to catch on `stella goal`.
+const ARBITER_WRAPPER_MANIFEST: &str = r#"
+name = "goal-arbiter"
+[loop]
+participation = "arbiter"
+hooks = ["Stop"]
+points = ["after_turn"]
+max_holds = 3
+[runtime]
+argv = ["/bin/sh", "${plugin_dir}/main.sh"]
+timeout_secs = 30
+env = ["PATH"]
+[wrapper]
+id = "arbiter-v1"
+[[wrapper.stages]]
+name = "execute"
+[requirements]
+goal-met = "an independent verifier turn assessed the goal as accomplished"
+[oracle]
+flip = "not-applicable"
+measurements = ["met"]
+[[oracle.checks]]
+requirement = "goal-met"
+check = "met >= 1"
+"#;
+
 fn installed(text: &str, dir: &str) -> InstalledPlugin {
     InstalledPlugin {
         manifest: PluginManifest::from_toml_str(text).expect("fixture must load"),
@@ -135,36 +165,102 @@ fn the_deprecation_notice_fires_only_when_no_pipeline_was_passed() {
     assert!(notice.contains("--pipeline"), "{notice}");
 }
 
-/// **Witness (#3695).** `stella goal`/`stella fleet` cannot drive a
-/// wrapper plugin today — only `stella run` implements [`TurnDriver`] over
-/// one — so a named `--pipeline <variant>` must be refused on those doors
+/// **Witness (#3695, fleet half).** `stella fleet` cannot drive a wrapper
+/// plugin yet — it has no [`TurnDriver`] over its own worker-attempt round
+/// loop — so a named `--pipeline <variant>` must still be refused there
 /// rather than silently downgraded to raw or promoted to classic. This
 /// assertion fails on code that has no such gate at all (every door would
 /// accept-and-ignore the variant) and passes on this one.
 #[test]
-fn a_named_plugin_variant_is_refused_on_a_door_that_cannot_drive_one() {
-    let err = reject_plugin_variant_for_door("goal", PipelineChoice::Plugin("budget-v1"))
-        .expect_err("goal has no wrapper driver");
-    assert!(err.contains("budget-v1"), "{err}");
-    assert!(err.contains("stella goal"), "{err}");
-    assert!(
-        err.contains("stella run --pipeline budget-v1"),
-        "the refusal must name the door that CAN run it: {err}"
-    );
-
+fn a_named_plugin_variant_is_refused_on_fleet() {
     let err = reject_plugin_variant_for_door("fleet", PipelineChoice::Plugin("budget-v1"))
-        .expect_err("fleet has no wrapper driver either");
+        .expect_err("fleet has no wrapper driver yet");
+    assert!(err.contains("budget-v1"), "{err}");
     assert!(err.contains("stella fleet"), "{err}");
+    assert!(
+        err.contains("stella run --pipeline budget-v1")
+            && err.contains("stella goal --pipeline budget-v1"),
+        "the refusal must name the doors that CAN run it: {err}"
+    );
+}
+
+/// **Witness (#3695, goal half).** `stella goal` now has a real
+/// [`TurnDriver`] (`crate::agent::goal::goal_wrapped`), so a named
+/// `--pipeline <variant>` is no longer refused there — it used to be,
+/// unconditionally, before this change. This assertion fails against that
+/// code (which returns `Err` for every plugin variant on `goal`) and passes
+/// on this one. (A steering-grade variant, per this file's `WRAPPER_MANIFEST`
+/// fixture — an arbiter-grade one is refused by a separate gate,
+/// [`reject_arbiter_wrapper_on_goal`], #3832.)
+#[test]
+fn a_named_plugin_variant_is_accepted_on_goal() {
+    reject_plugin_variant_for_door("goal", PipelineChoice::Plugin("budget-v1"))
+        .expect("goal now drives a wrapper plugin per round");
+}
+
+/// **Witness (#3832, finding 1).** An arbiter-grade wrapper used to reach
+/// `stella goal`'s round loop and only discover it could not be driven
+/// after `WrapperDispatch::run` had already billed
+/// `1 + DEFAULT_HOST_MAX_HOLDS` worker turns inside one judged round
+/// (`report.rounds != 1`, `goal_wrapped::run_goal_wrapped_turn`) — every one
+/// of those turns paid for before the whole run was discarded. This
+/// assertion fails on the pre-fix code (no such pre-flight check exists, so
+/// `reject_arbiter_wrapper_on_goal` is not even a name in scope / always
+/// returns `Ok`) and passes on this one: the arbiter grade is refused at
+/// resolve/bind time, before any provider is ever built and before a single
+/// paid call — mirrored end to end (no cost, no provider reached) by
+/// `crates/stella-cli/tests/goal_arbiter_wrapper_refusal_cli.rs`.
+#[test]
+fn an_arbiter_grade_wrapper_is_refused_on_goal() {
+    let mut warn = |_: String| {};
+    let roster = roster(vec![installed(
+        ARBITER_WRAPPER_MANIFEST,
+        "/plugins/goal-arbiter",
+    )]);
+    let resolved =
+        bind_installed(&roster, "arbiter-v1", &mut warn).expect("arbiter manifest must load");
+    let err = reject_arbiter_wrapper_on_goal(&resolved)
+        .expect_err("arbiter-grade wrappers cannot run on stella goal (#3832)");
+    assert!(err.contains("arbiter-v1"), "{err}");
+    assert!(err.contains("#3832"), "{err}");
+    assert!(
+        err.contains("stella run --pipeline arbiter-v1"),
+        "the refusal must name the remedy — the wrapper's designed home: {err}"
+    );
+    assert!(
+        err.contains("stella goal"),
+        "the refusal must name the door that refused it: {err}"
+    );
+}
+
+/// The companion half: steering (and, by the same ladder argument, observer)
+/// wrappers are unaffected by the arbiter refusal and keep running per round
+/// on `stella goal` exactly as before — `a_goal_run_dispatches_each_round_
+/// through_the_bound_wrapper` (`goal_wrapped_dispatch_cli.rs`) is the e2e
+/// witness that a steering wrapper's rounds still actually advance; this is
+/// the unit-level companion pinning the gate itself lets it through.
+#[test]
+fn a_steering_wrapper_is_not_refused_by_the_arbiter_gate() {
+    let mut warn = |_: String| {};
+    let roster = roster(vec![installed(WRAPPER_MANIFEST, "/plugins/budget-keeper")]);
+    let resolved =
+        bind_installed(&roster, "budget-v1", &mut warn).expect("steering manifest must load");
+    reject_arbiter_wrapper_on_goal(&resolved)
+        .expect("a steering-grade wrapper can never hold a round open — nothing to refuse");
 }
 
 /// `classic` and no flag at all both resolve away from `Plugin` before
-/// reaching the gate, so neither is refused on a door with no wrapper
-/// driver — only a *named* variant is out of reach there.
+/// reaching the gate, so neither is refused anywhere — only a *named*
+/// variant is ever in reach of the gate, and only on `fleet`.
 #[test]
-fn classic_and_raw_are_never_refused_on_a_door_with_no_wrapper_driver() {
+fn classic_and_raw_are_never_refused_on_any_door() {
     reject_plugin_variant_for_door("goal", PipelineChoice::Classic)
         .expect("classic has no plugin to drive — nothing to refuse");
     reject_plugin_variant_for_door("goal", PipelineChoice::Raw)
+        .expect("raw has no plugin to drive — nothing to refuse");
+    reject_plugin_variant_for_door("fleet", PipelineChoice::Classic)
+        .expect("classic has no plugin to drive — nothing to refuse");
+    reject_plugin_variant_for_door("fleet", PipelineChoice::Raw)
         .expect("raw has no plugin to drive — nothing to refuse");
 }
 

@@ -1,0 +1,1 @@
+stella-goal: this plugin answers before_turn or after_turn only; the host asked for "judge"

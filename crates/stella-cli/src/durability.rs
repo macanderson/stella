@@ -370,14 +370,29 @@ mod tests {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         for (file, marker, boundary) in [
             // `stella run`'s pipeline path and the shared raw turn (the
-            // `--no-pipeline` one-shot, the plain REPL, `/goal`) both close
-            // through `turn_close::close_turn`, which cannot settle an
-            // execution row without also marking the turn.
+            // `--no-pipeline` one-shot, the plain REPL) close through
+            // `turn_close::close_turn`, which cannot settle an execution row
+            // without also marking the turn.
             (
                 "agent.rs",
                 "turn_close::close_turn(",
                 "run_pipeline_one_shot / run_turn",
             ),
+            // `stella goal`'s three arms (raw, `--pipeline classic`, and
+            // `--pipeline <plugin>`) each close through the same
+            // `close_turn`, named `crate::agent::turn_close::close_turn` from
+            // these descendant modules (#2177 shape recurred here — see the
+            // P0 finding this closes).
+            ("agent/goal.rs", "close_turn(", "run_goal_turn"),
+            (
+                "agent/goal/goal_wrapped.rs",
+                "close_turn(",
+                "run_goal_wrapped_turn",
+            ),
+            // The `stella daemon resume` foreground child — the other half
+            // of the same recurrence, folding both its restored-turn and
+            // restored-pipeline endings through one `close_turn` call.
+            ("agent/resume.rs", "close_turn(", "run_resume"),
             // The interactive deck — the original, and for a long time only,
             // caller.
             ("command_deck.rs", mark.as_str(), "run_deck_session"),

@@ -152,8 +152,37 @@ participates in a real turn and its id reaches `executions.pipeline_variant`.
 What remains open, precisely: `stella-serve` over HTTP and a minimal embedded
 `stella-engine` host — §0's other two acceptance-test drivers — do not call
 `WrapperDispatch` yet (#3551), and a named `--pipeline <variant>` plugin is
-refused on `stella goal`/`stella fleet`, which drive their own round loops
-rather than `WrapperDispatch` (#3695).
+still refused on `stella fleet`, which drives its own round loop (a worker's
+attempt) with no `WrapperDispatch` over it (#3695, fleet half).
+
+**Update, 2026-08-19: `stella goal` drives it too, per round — but only a
+steering/observer wrapper.** The other half of #3695 is closed: `stella goal
+--pipeline <variant>` (`crates/stella-cli/src/agent/goal/goal_wrapped.rs`)
+binds the same wrapper once and calls `WrapperDispatch::run` once per judged
+round, wrapping the round's WORKER turn only — the goal verifier
+(`Engine::assess`) is deliberately untouched, so this does *not* answer
+§9.2's "where does the verifier's model call live" question below; it
+sidesteps it by keeping the verifier off the wrapper socket entirely for this
+slice.
+
+**Update, 2026-08-19 (later the same day): an arbiter-grade wrapper is
+refused on this door outright, before dispatch (#3832).** A fault-injection
+audit found the shape #3832 originally described — a wrapper's own `[oracle]`
+holding a round open past one internal turn collides `turn_instance` receipts
+— was reachable only through an arbiter-grade wrapper, and that reaching it
+first burned `1 + DEFAULT_HOST_MAX_HOLDS` (3) billed worker turns inside one
+already-judged goal round before `run_goal_wrapped_turn`'s `DispatchReport::
+rounds != 1` check discarded the whole run. The fix does not allocate
+`turn_instance` room for a held-open round (#3832's original ask); it refuses
+the participation grade that can ever hold one, at the pre-flight rung, before
+the provider is ever built (`wrapper_plugin::reject_arbiter_wrapper_on_goal`)
+— because `stella goal`'s own round loop is already this door's completion
+arbiter, and a second one held open inside a judged round is the
+doubled-supervisor shape the wrapper design forbids. `DispatchReport::rounds
+!= 1` stays as a defense-in-depth assertion, now unreachable for any wrapper
+this door actually accepts. An arbiter-grade wrapper's designed home is
+`stella run --pipeline <variant>` instead — `plugins/stella-goal` is the
+reference one, and its README says so plainly.
 
 > *Original text, now historical:* "`stella-plugin` has **zero consumers**.
 > Nothing calls `PluginManifest::from_toml_str`, there is no `.stella/plugins/`
@@ -668,7 +697,10 @@ Order, easiest and least risky first:
 3. **vera** — `after_turn` + `judge`. Needs A10 (worktrees) and A6 (structured
    verdicts). Ported, not copied: see §8.
 4. **stella-candidates** — the heaviest, needs `again?` with different setup per
-   round.
+   round. **Blocked**: the wrapper socket has no capability for isolated,
+   N-wide candidate fan-out — no multi-workspace grant, no writing `child_turn`
+   equivalent, and no adoption message — so this cannot be built as best-of-N
+   on today's socket (#3844).
 5. **stella-goal** — folded in last so it stops being a second copy.
 
 **The bar for each:** a side-by-side benchmark holds before the built-in path is
