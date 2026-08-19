@@ -307,6 +307,70 @@ provider configured" is the user-facing ask, and it is also the only piece every
 other verb group depends on: `work` needs a unit, `sweep` needs somewhere to
 file, `deliver` needs something to close.
 
+### 3.1a The backlog convention — learned, never assumed
+
+`backlog file` is what makes "nothing left behind" a guarantee rather than a
+habit. But a tracker is not a bag of text: every repository the loop attaches to
+already has a classification scheme and a writing standard, and **filing into it
+wrongly is worse than not filing at all** — the queue the loop ranks is the
+queue the loop just polluted.
+
+**The defect is a feedback loop, and it is live in this repository today.**
+`rank_defects` counts an issue as a defect if it carries `bug` **or** `triage` —
+an untriaged issue is a defect nobody has classified yet. Meanwhile
+`.github/workflows/issue-triage.yml` adds `triage` to any issue opened without
+one of its `TYPE_LABELS`, and the comment above that rule names the exact case:
+*"Issues opened outside the template (`gh issue create`, the API) carry no labels
+at all — those are exactly the ones this catches."* A loop filing through the API
+**is** that case. So an unlabelled filing is stamped `triage` by the workflow and
+read back next cycle as an untriaged defect the loop is responsible for
+triaging. The loop manufactures its own queue, and every measure of whether it is
+gaining or losing ground on the backlog silently includes its own exhaust.
+
+**Three sources, in precedence order**, because two of them will disagree and the
+tie has to break the same way every time:
+
+| Source | What it is | Why it ranks here |
+|---|---|---|
+| **Enforced** | Automation acts on it — `issue-triage.yml`'s `TYPE_LABELS`, the `triage` lifecycle | The only source that is a *fact* rather than a claim. A workflow that stamps an untyped issue is not describing a convention, it **is** one — it will do that to the loop's filings whatever any document says. |
+| **Declared** | Issue templates, the label set, a `CONTRIBUTING` section, the handoff format in `scripts/self-driving/commands/self-driving/tickets.md` | Authoritative about intent, silent about practice. It may describe a rule nothing enforces and everyone ignores. |
+| **Observed** | The distribution over recent issues | The only source that is a guess. Fills an axis the two above leave undefined; never overrides either. Recorded as `Observed` precisely so a human can see which parts nobody actually stated. |
+
+The result binds as a source-tracked **convention manifest** beside the provider
+manifest under `.stella/issues/`, for the same reason that one is tracked: a
+convention that was *inferred* must be readable by a human before it steers a
+filing. **The loop never infers and files in one motion.**
+
+**Conform or refuse, never best-effort.** A filing that cannot be classified
+under the bound convention is an error, not a degraded post. That is the whole
+mechanism — it is what stops the loop poisoning the queue it ranks, and it is why
+`conform` returns every violation at once rather than the first: a filing refused
+one reason at a time is a filing refused four times.
+
+**Where no standard exists, the loop proposes one and grants itself nothing.** A
+proposed convention is **inert** — `conform` refuses every filing against it,
+including one that would be conformant if the convention were bound. This is §7's
+rule pointed at classification: a loop that invented a taxonomy and then filed
+under it has granted itself the authority to define how this repository
+classifies work. Acceptance is a human's, and under governance mode `regulated`
+it stays one.
+
+The model is portable and this repository's vocabulary is not baked into it:
+axes (`type`, `priority`, `area` here), each with membership, a requirement
+(`ExactlyOne` / `AtMostOne` / `Any`) and its source; plus **reserved** labels the
+loop may never apply itself. `triage` is this repository's one reserved label —
+it marks an issue that arrived from outside without a type, and the loop knows
+what it found, so applying it would be claiming to be a stranger to its own
+filing. Note the interesting failure is not "missing" but **ambiguous**: two
+priority labels on one issue is not a stricter filing, it is a filing whose rank
+is decided by whichever label the ranker happens to test first.
+
+Lands in `crates/stella-autonomy/src/convention.rs` — pure, and over borrowed
+label text rather than a `stella_protocol::Issue`, so the crate keeps the
+no-workspace-dependency property that lets the Observatory link its folds. That
+is the same trade `rank_defects` already makes, and the one mapping from a
+tracker's shape into this one lives in the caller.
+
 ### 3.2 `work` — one unit of backlog, through Stella's own loop
 
 | Call | Returns | What it does |

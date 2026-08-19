@@ -39,6 +39,7 @@
 //! a host refuse a build it was not written against, instead of meeting the
 //! skew as an `unrecognized subcommand` three cycles in.
 
+mod convention;
 mod surface;
 
 use std::fmt::Write as _;
@@ -46,6 +47,10 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+pub use convention::{
+    Acceptance, AxisRequirement, BacklogConvention, Conformance, ConventionSource, LabelAxis,
+    Violation, conform,
+};
 pub use surface::{
     Emits, HOST_SURFACE, HOST_SURFACE_VERSION, HostVerb, SurfaceDrift, host_verb, surface_drift,
 };
