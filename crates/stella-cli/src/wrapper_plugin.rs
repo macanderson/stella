@@ -160,8 +160,13 @@ use crate::{OutputFormat, config::Config};
 /// and a plugin both ran" unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PipelineChoice<'a> {
-    /// The built-in staged pipeline, recorded as `classic`. Opt-in only,
-    /// since #3381 — `--pipeline classic` selects it by name.
+    /// The built-in staged pipeline, recorded as `classic`. **Removed**
+    /// (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice 1):
+    /// [`PipelineChoice::resolve`] refuses `--pipeline classic` rather than
+    /// ever producing this variant. It stays declared, not deleted, only
+    /// because [`crate::agent::run_one_shot`]'s classic dispatch arm
+    /// (`run_pipeline_one_shot`) still matches on it — dead code this slice,
+    /// removed in the slice that deletes that function.
     Classic,
     /// The raw step-loop with nothing over it — the default since #3381.
     Raw,
@@ -262,8 +267,7 @@ pub(crate) fn classic_removed_message() -> String {
 pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'static str> {
     no_pipeline.then_some(
         "--no-pipeline is deprecated and does nothing: the raw step-loop is the default now. \
-         Pass --pipeline <variant> to run a wrapper (\"classic\" names the built-in staged \
-         pipeline).",
+         Pass --pipeline <variant> to run an installed wrapper plugin.",
     )
 }
 
@@ -277,14 +281,12 @@ pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'stat
 /// untouched (#3695, goal half). `fleet` drives its own **round loop** (a
 /// worker's attempt) with no [`TurnDriver`] over it yet, and wiring one
 /// through is a real driver — not a formatting difference — that nothing in
-/// this crate implements; #3695 stays open for that half. `--pipeline
-/// classic` and no `--pipeline` at all both resolve to
-/// [`PipelineChoice::Classic`]/[`PipelineChoice::Raw`], which is fine on
-/// every door; only a *named* plugin variant on `fleet` is out of reach here,
-/// and it is refused with a message naming `stella run`/`stella goal` as the
-/// doors that can run it — never silently downgraded to raw or to classic,
-/// which would run something other than what was asked for without saying
-/// so.
+/// this crate implements; #3695 stays open for that half. No `--pipeline` at
+/// all resolves to [`PipelineChoice::Raw`], which is fine on every door;
+/// only a *named* plugin variant on `fleet` is out of reach here, and it is
+/// refused with a message naming `stella run`/`stella goal` as the doors
+/// that can run it — never silently downgraded to raw, which would run
+/// something other than what was asked for without saying so.
 pub(crate) fn reject_plugin_variant_for_door(
     door: &str,
     choice: PipelineChoice<'_>,
@@ -296,8 +298,8 @@ pub(crate) fn reject_plugin_variant_for_door(
         Some(variant) => Err(format!(
             "--pipeline {variant} is not supported on `stella {door}` yet — wrapper plugins \
              run on `stella run --pipeline {variant}` and `stella goal --pipeline {variant}` \
-             today, but not `stella fleet` (#3695 stays open for a fleet worker's driver). Pass \
-             `--pipeline classic` for the staged pipeline, or omit --pipeline for the raw loop."
+             today, but not `stella fleet` (#3695 stays open for a fleet worker's driver). Omit \
+             --pipeline for the raw loop."
         )),
         None => Ok(()),
     }
@@ -361,15 +363,18 @@ pub(crate) fn reject_arbiter_wrapper_on_goal(resolved: &ResolvedWrapper) -> Resu
 /// parameters at all and only threads `test_command` to an installed wrapper's
 /// own oracle. Silently dropping the flag the caller asked for is exactly the
 /// expedient CLAUDE.md forbids, so this refuses before dispatch instead of
-/// letting the run start and the flag do nothing — and it never silently
-/// implies `classic`, which would run something other than what was asked
-/// for without saying so.
+/// letting the run start and the flag do nothing. `--pipeline classic`
+/// itself is refused at [`PipelineChoice::resolve`] now (removal census,
+/// `docs/spec/pipeline-as-plugins.md` §7 slice 1) — this function's own
+/// `choice.is_classic()` early return is therefore dead code today, kept
+/// only because it is harmless and dies with [`PipelineChoice::Classic`]
+/// itself in the slice that deletes the classic dispatch arm.
 ///
 /// `test_command` is meaningful on [`PipelineChoice::Plugin`] too — it arms a
 /// bound wrapper's own `[oracle]` flip check (#3553) — so only that variant
 /// passes it through; `keep_witness`/`require_verified` remain pipeline-only
-/// today and are refused on `Plugin` exactly as on `Raw`, both naming
-/// `--pipeline classic` as the remedy.
+/// today and are refused on `Plugin` exactly as on `Raw`, both naming an
+/// installed verification wrapper plugin as the remedy.
 pub(crate) fn reject_verification_flags_without_pipeline(
     choice: PipelineChoice<'_>,
     test_command: Option<&str>,
