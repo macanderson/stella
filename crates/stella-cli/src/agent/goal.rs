@@ -513,8 +513,11 @@ pub async fn run_goal_cmd(
     println!("  {}\n", goal.dimmed());
 
     let mut messages = vec![CompletionMessage::system(
-        with_session_hook_context(build_system_prompt(cfg, &cfg.workspace_root, &active_rules), cfg)
-            .await,
+        with_session_hook_context(
+            build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
+            cfg,
+        )
+        .await,
     )];
     let mut memory =
         SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
@@ -795,4 +798,3 @@ pub(crate) async fn run_goal_turn(
         }
     }
 }
-

@@ -119,10 +119,7 @@ pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), St
         &prompt,
         None,
         OutputFormat::StreamJson,
-        crate::wrapper_plugin::PipelineChoice::resolve(
-            args.no_pipeline,
-            args.pipeline.as_deref(),
-        )?,
+        crate::wrapper_plugin::PipelineChoice::resolve(args.no_pipeline, args.pipeline.as_deref())?,
         args.test_command.as_deref(),
         // The arena verifiers the task result, not the scaffolding that proved
         // it — a witness left in the tree would show up as unexplained work.

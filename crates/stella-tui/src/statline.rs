@@ -857,8 +857,7 @@ mod tests {
         let ui = DeckUi::default();
         let items = statline_items(&model, &ui);
         for key in [
-            "model", "stage", "cpu", "ctx", "spend", "cache", "saved", "warmth", "engine",
-            "inbox",
+            "model", "stage", "cpu", "ctx", "spend", "cache", "saved", "warmth", "engine", "inbox",
         ] {
             assert!(
                 keys(&items).contains(&key),

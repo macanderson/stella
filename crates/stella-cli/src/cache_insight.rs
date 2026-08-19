@@ -56,7 +56,6 @@ impl InsightScope {
             opens_execute_stage: true,
         }
     }
-
 }
 
 /// `None` for every event variant but `StepUsage`. An unresolvable
