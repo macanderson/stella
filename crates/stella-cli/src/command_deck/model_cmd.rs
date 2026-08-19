@@ -240,7 +240,7 @@ mod tests {
             enable_recap: false,
             trace_capture: false,
             ignore_gitignore: true,
-            reward_policy: stella_pipeline::reward::RewardPolicy::default(),
+            reward_policy: crate::reward::RewardPolicy::default(),
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: None,
             credential_advisories: Vec::new(),

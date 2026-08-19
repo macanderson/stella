@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use stella_core::hooks::Hooks;
-use stella_pipeline::reward::{OutcomeWeights, RewardPolicy, RewardShaping};
+use crate::reward::{OutcomeWeights, RewardPolicy, RewardShaping};
 use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 
 use crate::config::Dialect;
@@ -567,7 +567,7 @@ impl ToolsSettings {
 /// the key is retired rather than kept as a no-op: an accepted key that steers
 /// nothing is the settings failure mode this surface exists to avoid, and a
 /// retired one is at least reported by name by the unrecognized-key pass
-/// (#2616). See [`stella_pipeline::reward`] for the full argument.
+/// (#2616). See [`crate::reward`] for the full argument.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct RewardSettings {
     /// Magnitude of a deterministic pass or fail. Default `1.0`, and the unit

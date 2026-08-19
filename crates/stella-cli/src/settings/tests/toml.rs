@@ -229,7 +229,7 @@ fn no_reward_block_is_exactly_the_defaults() {
     assert_eq!(settings.reward, None);
     assert_eq!(
         settings.reward_policy().unwrap(),
-        stella_pipeline::reward::RewardPolicy::default()
+        crate::reward::RewardPolicy::default()
     );
 }
 
@@ -763,7 +763,7 @@ fn the_retired_verifier_weight_neither_steers_nor_blocks() {
         settings
             .reward_policy()
             .expect("a retired key must not fail a launch"),
-        stella_pipeline::reward::RewardPolicy::default(),
+        crate::reward::RewardPolicy::default(),
         "a retired key must not steer the policy either"
     );
 }

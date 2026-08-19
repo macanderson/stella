@@ -1102,8 +1102,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     output_format,
                     pipeline_choice,
                     test_command.as_deref(),
-                    keep_witness,
-                    require_verified,
                 ),
             )?;
         }

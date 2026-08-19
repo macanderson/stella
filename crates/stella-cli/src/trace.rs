@@ -61,7 +61,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use stella_core::bus::names as plugin_names;
 use stella_core::redact::redact_secrets;
-use stella_pipeline::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
+use crate::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_store::Store;
 
@@ -133,7 +133,7 @@ pub struct TraceRecord {
     /// `nothing_attempted` is exactly the trace a failure-mode study wants,
     /// and deleting it would be the second time this project lost that
     /// evidence. Carries no model-authored text by construction; see
-    /// [`stella_pipeline::reward`].
+    /// [`crate::reward`].
     pub reward: RewardLabel,
     /// Facts plugins contributed to this execution, folded from
     /// `plugin.<id>.*` journal events — see the module doc's "Plugins do not
@@ -979,7 +979,7 @@ mod tests {
         assert_eq!(record.reward.reward, None);
         assert_eq!(
             record.reward.discard,
-            Some(stella_pipeline::reward::DiscardReason::NoVerdict)
+            Some(crate::reward::DiscardReason::NoVerdict)
         );
     }
 
@@ -1123,7 +1123,7 @@ mod tests {
         assert_eq!(record.reward.reward, None);
         assert_eq!(
             record.reward.discard,
-            Some(stella_pipeline::reward::DiscardReason::StepsUnknown)
+            Some(crate::reward::DiscardReason::StepsUnknown)
         );
 
         // The airlock at the trace seam: the verifier's own sentence is in the
@@ -1168,7 +1168,7 @@ mod tests {
         assert_eq!(record.reward.reward, None);
         assert_eq!(
             record.reward.discard,
-            Some(stella_pipeline::reward::DiscardReason::Abstained)
+            Some(crate::reward::DiscardReason::Abstained)
         );
     }
 

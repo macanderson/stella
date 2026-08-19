@@ -31,7 +31,7 @@
 //! ## Rewards and transcripts (#2083)
 //!
 //! Two things #872 shipped without now exist in tree and are carried. The
-//! verdict → scalar mapping (#1043, [`stella_pipeline::reward`]) labels each
+//! verdict → scalar mapping (#1043, [`crate::reward`]) labels each
 //! record from the journal's settled verdict under the workspace's resolved
 //! [`RewardPolicy`] — and the policy rides on every label, so records from
 //! differently-weighted workspaces stay comparable. And the receipts plane
@@ -95,7 +95,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use stella_core::redact::{PLACEHOLDER, redact_secrets};
-use stella_pipeline::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
+use crate::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::AgentEvent;
 use stella_store::{FinishedExecution, MismatchSeverity, RecordedCall, Store};
 
@@ -342,7 +342,7 @@ pub struct DatasetRecord {
     /// `--include-unverified-transcripts` an execution whose receipts plane
     /// holds nothing has an unrecorded step count, and the shaping refuses to
     /// price it as zero, so the label reports
-    /// `stella_pipeline::reward::DiscardReason::StepsUnknown` with its rung,
+    /// `crate::reward::DiscardReason::StepsUnknown` with its rung,
     /// its outcome term and its policy intact. That is the discard's whole
     /// point here: the row stays selectable and re-shapeable, and only the
     /// number that would have been wrong is withheld.
@@ -821,7 +821,7 @@ fn worst_severity(a: MismatchSeverity, b: MismatchSeverity) -> MismatchSeverity 
 ///
 /// `None` exactly when no `Verdict` event reached the journal. Everything
 /// else — an abstention, a pre-rung verdict, an invalid policy — labels
-/// through [`stella_pipeline::reward::label`], which marks what it cannot
+/// through [`crate::reward::label`], which marks what it cannot
 /// score rather than dropping it. Steps count every recorded call (every
 /// role, not just the worker's) and revisions the verdicts beyond the
 /// settling one — the same fold `trace.rs` applies, so a dataset label and a

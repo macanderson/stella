@@ -536,7 +536,7 @@ pub struct Config {
     /// receives a policy that already satisfies the ordering rule rather than
     /// re-checking it — and a workspace with an impossible weight fails at
     /// launch, by name, instead of quietly mislabelling every turn.
-    pub reward_policy: stella_pipeline::reward::RewardPolicy,
+    pub reward_policy: crate::reward::RewardPolicy,
     /// Whether a run does its work in a throwaway git worktree instead of this
     /// checkout (settings `create_worktrees`). Default `ask`, put once at
     /// triage and only when the run is going to change files.
@@ -906,7 +906,7 @@ impl Config {
                     enable_recap: false,
                     trace_capture: false,
                     ignore_gitignore: true,
-                    reward_policy: stella_pipeline::reward::RewardPolicy::default(),
+                    reward_policy: crate::reward::RewardPolicy::default(),
                     create_worktrees: Default::default(),
                     allowed_write_dirs: Vec::new(),
                     authority: crate::settings::AuthorityPolicy::default(),
@@ -1124,7 +1124,7 @@ impl Config {
             enable_recap: false,
             trace_capture: false,
             ignore_gitignore: true,
-            reward_policy: stella_pipeline::reward::RewardPolicy::default(),
+            reward_policy: crate::reward::RewardPolicy::default(),
             create_worktrees: Default::default(),
             allowed_write_dirs: Vec::new(),
             authority: crate::settings::AuthorityPolicy::default(),
@@ -1482,7 +1482,7 @@ impl Config {
             enable_recap: false,
             trace_capture: false,
             ignore_gitignore: true,
-            reward_policy: stella_pipeline::reward::RewardPolicy::default(),
+            reward_policy: crate::reward::RewardPolicy::default(),
             authority: crate::settings::AuthorityPolicy::default(),
             credential_advisories: Vec::new(),
             aux_credentials: Default::default(),
