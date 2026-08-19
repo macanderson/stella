@@ -76,7 +76,7 @@ pub struct EngineConfig {
     /// stubbed), replace the oldest span of the conversation with a
     /// model-written summary instead of letting the next call overflow the
     /// provider's context window. Costs one cheap completion, metered into
-    /// the same [`BudgetGuard`](crate::budget::BudgetGuard) as every other call.
+    /// the same [`BudgetGuard`] as every other call.
     pub summarize_overflow: bool,
     /// Messages at the conversation tail the summarizer never touches —
     /// the recent work the model is actively reasoning over.
