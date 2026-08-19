@@ -200,10 +200,6 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "effort_auto",
     "reasoning_auto",
     "headless_scope_bypass",
-    "pipeline_max_revisions",
-    "pipeline_candidates",
-    "pipeline_verifier_evidence_demand",
-    "pipeline_require_diff_coverage",
     "model_timeout_secs",
     "compaction_budget_tokens",
     "tool_result_horizon_steps",
@@ -311,10 +307,6 @@ const TOML_AGENTS_FIELDS: &[&str] = &[
     "effort_auto",
     "reasoning_auto",
     "headless_scope_bypass",
-    "pipeline_max_revisions",
-    "pipeline_candidates",
-    "pipeline_verifier_evidence_demand",
-    "pipeline_require_diff_coverage",
     "default",
     "worker",
     "verifier",
@@ -517,6 +509,27 @@ mod tests {
         );
     }
 
+    /// Witness for the dead-config removal: the staged pipeline is gone
+    /// (#3865) and took its four benchmark-posture knobs with it —
+    /// `pipeline_max_revisions`, `pipeline_candidates`,
+    /// `pipeline_require_diff_coverage`, `pipeline_verifier_evidence_demand`
+    /// all had zero behavioral consumers left in `AgentEngineConfig`, so a
+    /// deployment setting one silently no-opped instead of being told the
+    /// knob does nothing. Deleting the fields (rather than moving them to
+    /// [`RETIRED`]) means they now fall through to the same unknown-key path
+    /// as any other typo — this is the honest behavior for a benchmark arm
+    /// that measured nothing.
+    #[test]
+    fn the_dead_pipeline_posture_keys_are_named_unknown() {
+        let found = scan(
+            r#"{ "agent_engine_config": { "pipeline_max_revisions": 4 } }"#,
+        );
+        assert_eq!(
+            found,
+            vec!["agent_engine_config.pipeline_max_revisions".to_string()]
+        );
+    }
+
     #[test]
     fn a_fully_valid_file_is_silent() {
         let found = scan(
@@ -595,7 +608,7 @@ mod tests {
             r#"{
                  "reward": { "deterministic_weight": 1.0, "verifier_weight": 0.3 },
                  "agent_engine_config": {
-                   "pipeline_require_diff_coverage": "on",
+                   "model_timeout_secs": 60,
                    "pipeline_require_independent_verifier": "on"
                  }
                }"#,
