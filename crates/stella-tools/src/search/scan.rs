@@ -88,7 +88,7 @@ pub fn scan_hits(root: &Path, query: &str, limit: usize) -> ScanOutcome {
 /// [`scan_hits`] with the file cap injected, so a test can prove the
 /// exhaustion disclosure without writing four thousand files.
 pub fn scan_hits_bounded(root: &Path, query: &str, limit: usize, max_files: usize) -> ScanOutcome {
-    let terms = super::enrich::terms_of(query);
+    let terms = super::names::terms_of(query);
     if terms.is_empty() {
         return ScanOutcome {
             hits: Vec::new(),

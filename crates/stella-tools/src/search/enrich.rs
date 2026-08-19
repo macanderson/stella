@@ -29,6 +29,7 @@ use stella_graph::{CodeGraph, NeighborhoodSymbol};
 
 use super::cache::{self, GatherCache};
 use super::engine::Hit;
+use super::names;
 
 /// The file's neighborhood, from the session cache when the file's bytes are
 /// unchanged since it was gathered, and from the graph otherwise.
@@ -385,8 +386,14 @@ pub fn exact_symbol_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hi
     hits
 }
 
-/// Rank indexed files by how many query terms appear in their path or their
-/// symbol names — the strategy for a workspace with an index but no embedder.
+/// Rank indexed files by NAME — the strategy for a workspace with an index
+/// but no embedder.
+///
+/// This is the graph-facing half: gather every indexed file's path and symbol
+/// names, hand them to [`names::rank`], and dress the result as hits. The
+/// ranking model itself — stemming, word units, rarity and repetition
+/// weighting, and why each exists — lives in [`names`], which is a pure
+/// function a probe can measure without an index (#3138).
 ///
 /// This is what a path glob cannot do: it searches *symbol* names. It is
 /// still a name match, and every answer carrying it says so.
@@ -396,7 +403,7 @@ pub fn exact_symbol_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hi
 /// caller can disclose a cut list — `limit` files shown out of a larger match
 /// set must never read as "only `limit` files matched".
 pub fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> (Vec<Hit>, usize) {
-    let terms = terms_of(query);
+    let terms = names::stems_of(query);
     if terms.is_empty() {
         return (Vec::new(), 0);
     }
@@ -404,9 +411,9 @@ pub fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> (Vec<Hit>, usi
         return (Vec::new(), 0);
     };
 
-    let mut scored: Vec<(usize, String)> = files
+    let corpus: Vec<names::IndexedNames> = files
         .into_iter()
-        .filter_map(|path| {
+        .map(|path| {
             let symbols = graph
                 .file_neighborhood(Path::new(&path))
                 .map(|neighborhood| {
@@ -415,76 +422,28 @@ pub fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> (Vec<Hit>, usi
                         .iter()
                         .map(|symbol| symbol.name.clone())
                         .collect::<Vec<_>>()
-                        .join(" ")
                 })
                 .unwrap_or_default();
-            let haystack = format!("{path} {symbols}").to_lowercase();
-            let hits = terms.iter().filter(|term| haystack.contains(*term)).count();
-            (hits > 0).then_some((hits, path))
+            names::IndexedNames { path, symbols }
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+
+    let mut scored = names::rank(&corpus, query);
     let matched = scored.len();
     scored.truncate(limit);
 
     let hits = scored
         .into_iter()
-        .map(|(hits, path)| Hit {
+        .map(|scored| Hit {
             why: format!(
-                "matched {hits} of {} query term(s) in its path or symbol NAMES (not by meaning)",
+                "matched {} of {} query term(s) as whole words in its path or symbol NAMES (not \
+                 by meaning)",
+                scored.matched_terms,
                 terms.len()
             ),
-            path,
+            path: scored.path,
             focus: None,
         })
         .collect();
     (hits, matched)
-}
-
-/// English function words that carry no signal in a path or a symbol name.
-///
-/// A length floor alone cannot do this job: `the`, `and` and `for` are three
-/// characters and pure noise, while `api`, `sql`, `url` and `log` are three
-/// characters and exactly what someone is searching for. So the floor stays
-/// at three and the handful of words that would otherwise match half the tree
-/// are named. Deliberately short — this is a noise filter, not a linguistics
-/// project, and every word added is a word a caller can no longer search for.
-const STOPWORDS: &[&str] = &[
-    "the", "and", "for", "are", "was", "were", "that", "this", "with", "from", "into", "when",
-    "where", "what", "which", "does", "how", "its", "not", "but", "all", "any", "can", "has",
-    "have", "before", "after", "them", "then", "than",
-];
-
-/// Words worth matching on: lowercase, alphanumeric, at least three
-/// characters, and not a stopword.
-pub fn terms_of(query: &str) -> Vec<String> {
-    let mut terms: Vec<String> = query
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| word.chars().count() >= 3)
-        .map(str::to_lowercase)
-        .filter(|word| !STOPWORDS.contains(&word.as_str()))
-        .collect();
-    terms.sort();
-    terms.dedup();
-    terms
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The stopword list filters function words while keeping the short
-    /// identifiers people actually search for.
-    #[test]
-    fn function_words_are_not_search_terms_but_short_identifiers_are() {
-        let terms = terms_of("where does the api log its sql errors");
-        assert!(terms.contains(&"api".to_string()));
-        assert!(terms.contains(&"sql".to_string()));
-        assert!(terms.contains(&"log".to_string()));
-        assert!(terms.contains(&"errors".to_string()));
-        assert!(!terms.contains(&"where".to_string()));
-        assert!(!terms.contains(&"does".to_string()));
-        assert!(!terms.contains(&"the".to_string()));
-        assert!(!terms.contains(&"its".to_string()));
-    }
 }
