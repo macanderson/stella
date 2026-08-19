@@ -143,7 +143,6 @@ fn droppable(frame: &ServerFrame) -> bool {
         ServerFrame::Event { .. } => true,
         ServerFrame::ToolRequest { .. }
         | ServerFrame::ProviderRequest { .. }
-        | ServerFrame::ScopeReviewRequest { .. }
         | ServerFrame::TurnHeld { .. }
         | ServerFrame::TurnReleased
         | ServerFrame::TurnComplete { .. } => false,

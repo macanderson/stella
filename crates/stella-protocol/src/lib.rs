@@ -69,6 +69,7 @@ pub mod ladder;
 pub mod lane;
 pub mod proof;
 pub mod provider;
+pub mod recall;
 pub mod receipt;
 pub mod role;
 #[cfg(feature = "schema")]
@@ -121,6 +122,10 @@ pub use lane::{BuiltinLane, LaneId, TurnLane};
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
 pub use ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation, ProofTree};
 pub use provider::{Provider, ToolCallObserver};
+// The context-recall port every door's memory injection shares (removal
+// census for `stella-pipeline`, `docs/spec/pipeline-as-plugins.md` §7) — see
+// the module doc for why it lives here rather than in a pipeline-shaped crate.
+pub use recall::{ContextRecallPort, NoContextRecall, Recall, RecalledFrame};
 pub use role::{ModelRef, Role};
 pub use subagent_event::{SubAgentPhase, SubAgentStatus};
 pub use tokens::{

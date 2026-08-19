@@ -48,10 +48,6 @@ pub(super) const DECK_BUILTINS: &[(&str, &str)] = &[
         "open the AGENTS tab: executions & installed agents",
     ),
     (
-        "/pipeline",
-        "toggle the staged pipeline (witness-verified turns)",
-    ),
-    (
         "/export",
         "export session telemetry to a ZIP + HTML dashboard",
     ),

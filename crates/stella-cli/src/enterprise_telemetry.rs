@@ -294,21 +294,17 @@ pub(crate) enum ExecutionSurface {
     Fleet,
     Deck,
     Interactive,
-    WorkspacePorts,
-    CandidateWorkspace,
 }
 
 impl ExecutionSurface {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::RawOneShot,
         Self::PipelineOneShot,
         Self::Goal,
         Self::Fleet,
         Self::Deck,
         Self::Interactive,
-        Self::WorkspacePorts,
-        Self::CandidateWorkspace,
     ];
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -319,8 +315,6 @@ impl ExecutionSurface {
             Self::Fleet => "fleet",
             Self::Deck => "deck",
             Self::Interactive => "interactive",
-            Self::WorkspacePorts => "workspace_ports",
-            Self::CandidateWorkspace => "candidate_workspace",
         }
     }
 }

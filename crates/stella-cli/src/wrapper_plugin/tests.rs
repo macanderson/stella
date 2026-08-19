@@ -114,26 +114,37 @@ fn bound(
 /// without `--no-pipeline`.
 #[test]
 fn no_flag_at_all_resolves_to_the_raw_loop() {
-    assert_eq!(PipelineChoice::resolve(false, None), PipelineChoice::Raw);
+    assert_eq!(
+        PipelineChoice::resolve(false, None),
+        Ok(PipelineChoice::Raw)
+    );
     assert_eq!(
         PipelineChoice::resolve(true, None),
-        PipelineChoice::Raw,
+        Ok(PipelineChoice::Raw),
         "--no-pipeline is a deprecated no-op: it names the same choice as no flag at all"
     );
 }
 
-/// `classic` is still selectable by the id it records, and an unknown
-/// variant still binds a plugin lookup rather than the built-in.
+/// **Witness (#3865).** `--pipeline classic` used to resolve to [`PipelineChoice::Classic`];
+/// the built-in staged pipeline is gone, so it must now refuse instead. This
+/// assertion fails on the pre-slice-1 code (which still resolves `Ok`) and
+/// passes on this one. An unknown/plugin variant is unaffected — it still
+/// binds a plugin lookup rather than the retired built-in.
 #[test]
-fn pipeline_variant_selects_classic_or_a_plugin_by_name() {
-    assert_eq!(
-        PipelineChoice::resolve(false, Some("classic")),
-        PipelineChoice::Classic,
-        "the built-in is selectable by the id it records"
+fn pipeline_classic_is_refused_and_an_unknown_variant_still_binds_a_plugin_lookup() {
+    let refusal =
+        PipelineChoice::resolve(false, Some("classic")).expect_err("classic no longer resolves");
+    assert!(
+        refusal.contains("--pipeline classic"),
+        "the refusal names the flag/value that triggered it: {refusal}"
+    );
+    assert!(
+        refusal.contains("stella plugin install"),
+        "the refusal points at the wrapper-plugin remedy: {refusal}"
     );
     assert_eq!(
         PipelineChoice::resolve(false, Some("budget-v1")),
-        PipelineChoice::Plugin("budget-v1")
+        Ok(PipelineChoice::Plugin("budget-v1"))
     );
 }
 
@@ -141,18 +152,21 @@ fn pipeline_variant_selects_classic_or_a_plugin_by_name() {
 /// be a hard error (`conflicts_with` in clap, then an `Err` from
 /// `resolve`). This assertion fails on the pre-#3381 code (which returns
 /// `Err` here) and passes on this one: a deprecated no-op flag must not
-/// veto an explicit `--pipeline` opt-in, on either variant arm.
+/// veto an explicit `--pipeline` opt-in.
 #[test]
 fn no_pipeline_no_longer_vetoes_an_explicit_pipeline_choice() {
     assert_eq!(
         PipelineChoice::resolve(true, Some("budget-v1")),
-        PipelineChoice::Plugin("budget-v1"),
+        Ok(PipelineChoice::Plugin("budget-v1")),
         "--pipeline wins outright; the deprecated flag has nothing left to veto"
     );
-    assert_eq!(
-        PipelineChoice::resolve(true, Some("classic")),
-        PipelineChoice::Classic
-    );
+}
+
+/// The deprecated `--no-pipeline` flag does not exempt `classic` from its
+/// own refusal — the two are independent, and neither can silence the other.
+#[test]
+fn no_pipeline_does_not_exempt_classic_from_its_refusal() {
+    assert!(PipelineChoice::resolve(true, Some("classic")).is_err());
 }
 
 /// The notice fires exactly when `--no-pipeline` was passed, regardless of
@@ -249,11 +263,13 @@ fn a_steering_wrapper_is_not_refused_by_the_arbiter_gate() {
         .expect("a steering-grade wrapper can never hold a round open — nothing to refuse");
 }
 
-/// `classic` and no flag at all both resolve away from `Plugin` before
-/// reaching the gate, so neither is refused anywhere — only a *named*
-/// variant is ever in reach of the gate, and only on `fleet`.
+/// A directly-constructed [`PipelineChoice::Classic`] (no live path builds
+/// one — `resolve()` refuses the literal `--pipeline classic` before it ever
+/// would, see the variant's own doc comment) and the ordinary resolved `Raw`
+/// choice both bypass this gate entirely — only a *named* plugin variant is
+/// ever in reach of it, and only on `fleet`.
 #[test]
-fn classic_and_raw_are_never_refused_on_any_door() {
+fn a_directly_constructed_classic_choice_and_resolved_raw_are_never_refused_on_any_door() {
     reject_plugin_variant_for_door("goal", PipelineChoice::Classic)
         .expect("classic has no plugin to drive — nothing to refuse");
     reject_plugin_variant_for_door("goal", PipelineChoice::Raw)
@@ -292,11 +308,16 @@ fn each_verification_flag_alone_is_refused_against_the_raw_loop() {
     assert!(err.contains("--require-verified"), "{err}");
 }
 
-/// The same three flags are accepted once `--pipeline classic` selects
-/// the staged pipeline — the refusal only fires against a resolution
-/// that cannot honor the flag, never against `Classic` itself.
+/// [`PipelineChoice::Classic`] itself still bypasses this gate — the refusal
+/// only ever fires against a resolution that cannot honor the flag. No live
+/// path can construct `Classic` any more (`PipelineChoice::resolve` refuses
+/// `--pipeline classic` outright), so this exercises the early return
+/// directly, against a `Classic` value built by hand, rather than through a
+/// realistic caller; it documents the current shape of dead scaffolding this
+/// function still carries, kept until the slice that deletes
+/// `PipelineChoice::Classic` deletes this branch too.
 #[test]
-fn verification_flags_are_accepted_with_pipeline_classic() {
+fn verification_flags_are_accepted_against_a_directly_constructed_classic_choice() {
     reject_verification_flags_without_pipeline(PipelineChoice::Classic, Some("pytest"), true, true)
         .expect("classic runs the verification machinery these flags belong to");
 }

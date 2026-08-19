@@ -51,27 +51,6 @@ fn the_turn_timeout_flag_reaches_every_role_that_can_continue() {
 }
 
 #[test]
-fn the_turn_timeout_flag_is_also_the_pipelines_run_deadline() {
-    // #1507: the repair gate's clock axis measures the RUN's elapsed time, so
-    // it must be fed a run-scoped deadline — and at this surface the flag
-    // declares the invocation's external deadline, which is exactly that.
-    // `apply_pipeline_tuning` is where every driver (run, goal, fleet, deck)
-    // folds settings into a `PipelineConfig`, so this is the one wire.
-    let mut cfg = cfg_for("zai");
-    cfg.turn_timeout = Some(std::time::Duration::from_secs(840));
-    let tuned =
-        crate::agent::apply_pipeline_tuning(&cfg, stella_pipeline::PipelineConfig::default());
-    assert_eq!(tuned.run_budget, Some(std::time::Duration::from_secs(840)),);
-
-    // Absent stays absent: an unmeasured clock axis must abstain, never
-    // inherit a deadline nobody declared.
-    let plain = cfg_for("zai");
-    let untuned =
-        crate::agent::apply_pipeline_tuning(&plain, stella_pipeline::PipelineConfig::default());
-    assert_eq!(untuned.run_budget, None);
-}
-
-#[test]
 fn a_bound_session_checkpoints_from_every_role() {
     // The same argument as the turn budget above, for the same reason: the
     // sink is attached at ONE place (`tuned_engine_config`) precisely so no
@@ -101,14 +80,9 @@ fn a_bound_session_checkpoints_from_every_role() {
     .unwrap();
     cfg.durability.bind(record.clone());
 
-    let worker = ModelRef::new("zai", "glm-5.2".to_string());
     for (role, engine) in [
         ("default", crate::agent::engine_config_for(&cfg)),
         ("verifier", crate::agent::verifier_engine_config_for(&cfg)),
-        (
-            "worker",
-            crate::agent::pipeline_engine_config_for(&cfg, &worker),
-        ),
     ] {
         assert!(
             engine.checkpoint_sink.is_some(),
@@ -138,14 +112,9 @@ fn a_bound_session_checkpoints_from_every_role() {
 #[test]
 fn every_role_shares_one_session_view_of_affordable_output_ceilings() {
     let cfg = cfg_for("zai");
-    let worker = ModelRef::new("zai", "glm-5.2".to_string());
     let roles = [
         ("default", crate::agent::engine_config_for(&cfg)),
         ("verifier", crate::agent::verifier_engine_config_for(&cfg)),
-        (
-            "worker",
-            crate::agent::pipeline_engine_config_for(&cfg, &worker),
-        ),
         (
             "sub-session",
             crate::agent::subsession_engine_config_for(&cfg),
@@ -662,170 +631,6 @@ fn the_flat_pipeline_verifier_model_alone_resolves_role_verifier_to_the_witness_
     );
 }
 
-/// The failure #1147 actually observed, and the guard that now stops it.
-///
-/// `pin_role` degrades softly on *any* pin failure — a missing credential, an
-/// adapter that will not build. That is right for the settings scope chain and
-/// wrong for a trusted posture, whose hash has already published which models
-/// the run used. A benchmark container runs with the catalog frozen
-/// (`STELLA_CATALOG_AUTO_REFRESH=0`), so an author outside the offline seed
-/// fails `validate_model_slug`, the pin is dropped with a stderr notice, and
-/// the verifier silently rides the worker: the witness arm becomes the control
-/// arm at witness-arm cost, under a digest that says otherwise.
-///
-/// The pin stays soft (nothing here should abort on a credential problem).
-/// What changes is that the wired `PipelineConfig` now REFUSES such a run.
-#[test]
-fn a_trusted_posture_whose_verifier_pin_cannot_be_built_refuses_the_run() {
-    let posture = r#"{ "default_model": "anthropic/claude-sonnet-5",
-             "pipeline_verifier_model": "anthropic/model-the-offline-catalog-has-never-heard-of",
-             "auto_mode": "off" }"#;
-    let mut cfg = cfg_with_engine("anthropic", posture);
-    cfg.model_id = "claude-sonnet-5".to_string();
-    cfg.model_pinned_by_flag = true;
-    cfg.engine_settings_trusted = true;
-    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
-    let configured = vec![configured_provider("anthropic")];
-
-    let wiring = resolve_engine_wiring(&cfg, &worker_ref, &configured);
-
-    // The soft degradation itself is unchanged — and this is the exact state
-    // that produced the misdescribed benchmark numbers.
-    assert_eq!(
-        wiring.pins.get(Role::Verifier),
-        None,
-        "an unbuildable author must still degrade softly at the wiring layer"
-    );
-    assert!(
-        wiring
-            .notices
-            .iter()
-            .any(|notice| notice.contains("verifier")),
-        "the dropped pin must say so: {:?}",
-        wiring.notices
-    );
-
-    // ...but the run must not proceed as though the posture were the control
-    // arm, because the posture's own hash says it is not.
-    let config = pipeline_config_for_approval_capability(
-        &cfg,
-        PipelineApprovalCapability::Unavailable,
-        None,
-        &wiring.worker_model,
-    );
-    assert!(
-        config.require_independent_witness,
-        "a trusted posture that names an author must refuse a run without one"
-    );
-}
-
-/// The same posture through the ordinary settings chain must keep degrading.
-/// Nothing is published about a user's session wiring, so a verifier that cannot
-/// be reached costs them the authored witness — never the task. Arming the
-/// refusal here would turn a stray settings key into a broken CLI.
-#[test]
-fn an_untrusted_verifier_setting_never_arms_the_witness_refusal() {
-    let mut cfg = cfg_with_engine(
-        "anthropic",
-        r#"{ "default_model": "anthropic/claude-sonnet-5",
-             "pipeline_verifier_model": "anthropic/claude-fable-5" }"#,
-    );
-    cfg.model_id = "claude-sonnet-5".to_string();
-    assert!(!cfg.engine_settings_trusted, "settings chain, not the seam");
-    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
-
-    assert!(
-        !pipeline_config_for_approval_capability(
-            &cfg,
-            PipelineApprovalCapability::Unavailable,
-            None,
-            &worker_ref,
-        )
-        .require_independent_witness,
-        "an ordinary session must keep degrading, never refuse"
-    );
-}
-
-/// The control arm must not trip the guard. Its posture names no verifier at all
-/// — every role reaches `Role::Verifier` through `model_for`'s fallback to
-/// `default_model` — and it is the published baseline, so arming the refusal
-/// on it would refuse every trial of the arm that is *supposed* to run one
-/// model for every role.
-#[test]
-fn the_trusted_control_arm_posture_does_not_arm_the_witness_refusal() {
-    let mut cfg = cfg_with_engine(
-        "anthropic",
-        r#"{ "default_model": "anthropic/claude-sonnet-5",
-             "allowed_models": ["anthropic/claude-sonnet-5"],
-             "auto_mode": "off",
-             "agents": { "verifier": { "effort": "xhigh", "reasoning": "on" } } }"#,
-    );
-    cfg.model_id = "claude-sonnet-5".to_string();
-    cfg.engine_settings_trusted = true;
-    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
-
-    assert!(
-        !pipeline_config_for_approval_capability(
-            &cfg,
-            PipelineApprovalCapability::Unavailable,
-            None,
-            &worker_ref,
-        )
-        .require_independent_witness,
-        "the control arm claims no independent author and must keep running"
-    );
-}
-
-/// Before #1211 §6.7/§6.8 these two knobs had no writer outside the pipeline's
-/// own tests: `max_revisions` was set once, to `2`, and `candidates` once, to
-/// `None`. Best-of-N was fully implemented and had never run in production —
-/// not disabled by policy, just unreachable. This is the writer.
-#[test]
-fn the_attempt_count_settings_reach_the_pipeline_config() {
-    let mut cfg = cfg_with_engine(
-        "anthropic",
-        r#"{ "default_model": "anthropic/claude-sonnet-5",
-             "pipeline_max_revisions": 4,
-             "pipeline_candidates": 2 }"#,
-    );
-    cfg.model_id = "claude-sonnet-5".to_string();
-    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
-
-    let config = pipeline_config_for_approval_capability(
-        &cfg,
-        PipelineApprovalCapability::Unavailable,
-        None,
-        &worker_ref,
-    );
-    assert_eq!(config.max_revisions, 4);
-    assert_eq!(config.candidates, Some(2));
-}
-
-/// Absent keys must leave the pipeline's OWN defaults in place rather than
-/// restating them here. Asserted against `PipelineConfig::default()` instead of
-/// against the literals `2`/`None`, so the day the pipeline changes its mind
-/// this test follows it — a hard-coded expectation would instead pin the CLI to
-/// a default the pipeline had already abandoned.
-#[test]
-fn absent_attempt_count_settings_leave_the_pipeline_defaults_alone() {
-    let mut cfg = cfg_with_engine(
-        "anthropic",
-        r#"{ "default_model": "anthropic/claude-sonnet-5" }"#,
-    );
-    cfg.model_id = "claude-sonnet-5".to_string();
-    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
-
-    let config = pipeline_config_for_approval_capability(
-        &cfg,
-        PipelineApprovalCapability::Unavailable,
-        None,
-        &worker_ref,
-    );
-    let defaults = stella_pipeline::PipelineConfig::default();
-    assert_eq!(config.max_revisions, defaults.max_revisions);
-    assert_eq!(config.candidates, defaults.candidates);
-}
-
 /// The third of the three coupled ceilings, and until #1211 §6.2 the only one
 /// reachable from no configuration at all: the output cap rides
 /// `agents.<role>.params.max_tokens` and the turn budget is a CLI flag, but
@@ -845,16 +650,11 @@ fn the_model_timeout_setting_reaches_every_roles_engine() {
              "model_timeout_secs": 1572 }"#,
     );
     cfg.model_id = "claude-sonnet-5".to_string();
-    let worker = ModelRef::new("anthropic", "claude-sonnet-5");
 
     let expected = Some(std::time::Duration::from_secs(1572));
     for (role, engine) in [
         ("default", crate::agent::engine_config_for(&cfg)),
         ("verifier", crate::agent::verifier_engine_config_for(&cfg)),
-        (
-            "worker",
-            crate::agent::pipeline_engine_config_for(&cfg, &worker),
-        ),
     ] {
         assert_eq!(
             engine.model_timeout, expected,
@@ -1222,42 +1022,6 @@ fn a_zero_per_model_cap_is_ignored_rather_than_sent() {
     );
 }
 
-/// #1585: a supervised child gets the sidecar transport in EVERY output
-/// format — its stdin is a staged file and its stdout a console log, so the
-/// terminal tests can never pass, and before the sidecar existed that meant
-/// supervision silently removed the scope-review answer a terminal run had.
-/// The prompt rides the attached terminal's stderr, so a machine-format
-/// caller's stdout stays parseable — format does not gate this capability.
-#[test]
-fn approval_capability_for_a_supervised_child_is_sidecar_in_every_format() {
-    for is_text in [true, false] {
-        for stdin_tty in [true, false] {
-            for stdout_tty in [true, false] {
-                assert_eq!(
-                    approval_capability_for(true, is_text, stdin_tty, stdout_tty),
-                    PipelineApprovalCapability::Sidecar,
-                );
-            }
-        }
-    }
-    // And the wired config consults the gate rather than failing headless:
-    // this is the witness that a supervised plan which expands scope parks
-    // instead of dying at the named headless error.
-    let cfg = cfg_for("zai");
-    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let config = pipeline_config_for_approval_capability(
-        &cfg,
-        PipelineApprovalCapability::Sidecar,
-        None,
-        &model_ref,
-    );
-    assert!(
-        !config.headless,
-        "a supervised run has an approver — the sidecar — and must consult it"
-    );
-    assert!(!config.headless_bypass_scope_review);
-}
-
 /// #1847: post-turn reflection must dispatch on the configured cheap tier.
 ///
 /// It ran on the WORKER model from the day it shipped — with `memory.rs`
@@ -1356,145 +1120,4 @@ fn reflection_rides_the_worker_when_the_triage_tier_is_unroutable() {
     let route = reflection_route(&same_model, &[configured_provider("zai")])
         .expect("a pin naming the session default is still a triage pin");
     assert!(route.provider.is_none());
-}
-
-/// #2416: `agents.worker.prompt` must reach the pipeline's worker row, which
-/// is what carries it to the PLAN call. Everything else under `agents.worker`
-/// already reaches plan through `pipeline_engine_config_for`; a system prompt
-/// has no seat in an `EngineConfig`, so this row is the only wire it has.
-#[test]
-fn the_worker_row_carries_agents_worker_tuning_to_the_pipeline() {
-    let cfg = cfg_with_engine(
-        "zai",
-        r#"{ "agents": { "worker": {
-            "prompt": "Never use npm in this repository.",
-            "params": { "temperature": 0.2 }
-        } } }"#,
-    );
-    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let wiring = resolve_engine_wiring(&cfg, &model_ref, &[configured_provider("zai")]);
-
-    assert_eq!(
-        wiring.role_overrides.worker.prompt.as_deref(),
-        Some("Never use npm in this repository."),
-        "the planner writes the worker's work order and must see the worker's own instructions"
-    );
-    assert_eq!(wiring.role_overrides.worker.temperature, Some(0.2));
-
-    // Absent stays absent: an unconfigured worker must add no system message
-    // to the plan call at all.
-    let stock = cfg_for("zai");
-    let stock_ref = ModelRef::new(stock.provider.id, stock.model_id.clone());
-    let stock_wiring = resolve_engine_wiring(&stock, &stock_ref, &[configured_provider("zai")]);
-    assert_eq!(stock_wiring.role_overrides.worker.prompt, None);
-}
-
-/// **The witness for #2374.** Research and plan must be pinnable *apart from*
-/// the worker — model, effort and reasoning — because they are the two roles a
-/// benchmark seat could not turn down.
-///
-/// The measurement that forced this: on Terminal-Bench `fix-git` the engine
-/// posture that reached the container carried four rows (`default`, `worker`,
-/// `verifier`, `triage`). Research was not among them, so it inherited the
-/// worker's `xhigh` and spent 76 seconds over fifteen calls to emit a few
-/// hundred reasoning tokens between them. The knob did not exist; this is its
-/// wire.
-#[test]
-fn research_and_plan_are_pinnable_independently_of_the_worker() {
-    let cfg = cfg_with_engine(
-        "zai", // session default: zai/glm-5.2
-        r#"{
-            "effort_auto": "off",
-            "reasoning_auto": "off",
-            "pipeline_research_model": "anthropic/claude-fable-5",
-            "agents": {
-                "worker":   { "effort": "xhigh", "reasoning": "on" },
-                "research": { "effort": "low",   "reasoning": "off" },
-                "plan":     { "effort": "high" }
-            }
-        }"#,
-    );
-    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
-    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
-
-    // The shaping, on the rows the research and plan stages actually read.
-    let research = &wiring.role_overrides.research;
-    assert_eq!(
-        (research.effort, research.reasoning),
-        (Some(stella_protocol::ReasoningEffort::Low), Some(false)),
-        "research must be able to run below the worker — that is the whole point"
-    );
-    assert_eq!(
-        wiring.role_overrides.plan.effort,
-        Some(stella_protocol::ReasoningEffort::High),
-        "the planner takes its own effort when one is set"
-    );
-    assert_eq!(
-        wiring.role_overrides.worker.effort,
-        Some(stella_protocol::ReasoningEffort::Xhigh),
-        "and turning research down must not touch the worker"
-    );
-
-    // The model half, through the real router rather than the raw pin table.
-    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
-    let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
-    assert_eq!(
-        router.resolve(Role::Research).unwrap().model_ref,
-        ModelRef::new("anthropic", "claude-fable-5"),
-        "pipeline_research_model must actually route research calls"
-    );
-    assert_eq!(
-        router.resolve(Role::Worker).unwrap().model_ref,
-        ModelRef::new("zai", "glm-5.2"),
-        "and must say nothing about the worker's"
-    );
-}
-
-/// The other half of the contract, and the half a careless implementation
-/// breaks: **unconfigured, both roles still ride the worker**.
-///
-/// `model_for` falls through to `default_model`, which is right for triage and
-/// the verifier and wrong here — inheriting it would split research off onto
-/// the settings model the moment `--model` re-pointed the worker, so the run
-/// would report one model and buy two. `own_model_spec_for` is what refuses
-/// that, and this is what proves it.
-#[test]
-fn unpinned_research_and_plan_still_follow_the_worker_override() {
-    let cfg = cfg_with_engine(
-        "zai", // session default: zai/glm-5.2
-        r#"{
-            "effort_auto": "off",
-            "reasoning_auto": "off",
-            "pipeline_worker_model": "anthropic/claude-fable-5",
-            "agents": { "worker": { "prompt": "Never use npm here.", "effort": "xhigh" } }
-        }"#,
-    );
-    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
-    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
-
-    let overridden = ModelRef::new("anthropic", "claude-fable-5");
-    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
-    let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
-    for role in [Role::Worker, Role::Plan, Role::Research] {
-        assert_eq!(
-            router.resolve(role).unwrap().model_ref,
-            overridden,
-            "{role:?} must follow the worker override when it names no model of its own"
-        );
-    }
-
-    // And the shaping inherits field by field, `prompt` included — #2416's
-    // property, which a plan row that started empty would have dropped.
-    assert_eq!(
-        wiring.role_overrides.plan.prompt.as_deref(),
-        Some("Never use npm here."),
-        "an absent agents.plan leaves the planner shaped exactly as the worker is"
-    );
-    assert_eq!(
-        wiring.role_overrides.research.effort,
-        Some(stella_protocol::ReasoningEffort::Xhigh),
-        "same for research — inheritance, not a reset to the provider default"
-    );
 }

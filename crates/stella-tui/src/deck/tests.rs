@@ -754,18 +754,6 @@ fn pr_events_fold_into_the_read_model_latest_wins_and_ci_updates_in_place() {
 }
 
 #[test]
-fn pipeline_toggle_folds_into_the_model() {
-    // `/pipeline` flips routing driver-side; the stat box must track it
-    // through the fold, both directions.
-    let mut w = WorkspaceModel::new();
-    assert!(!w.pipeline, "the deck starts on the raw engine loop");
-    w.apply_inbound(&Inbound::Pipeline(true));
-    assert!(w.pipeline);
-    w.apply_inbound(&Inbound::Pipeline(false));
-    assert!(!w.pipeline);
-}
-
-#[test]
 fn deck_tab_cycles_both_ways() {
     assert_eq!(DeckTab::Session.next(), DeckTab::Agents);
     // Tab order ends …Skills → Mcp → Issues → Settings; Settings wraps to

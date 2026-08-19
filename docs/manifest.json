@@ -520,7 +520,7 @@
     },
     "replay-golden-trajectories": {
       "path": "docs/spec/replay-golden-trajectories.md",
-      "status": "living",
+      "status": "archived",
       "title": "Golden replay trajectories"
     },
     "schema-graph": {

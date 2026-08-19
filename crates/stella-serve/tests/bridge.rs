@@ -76,7 +76,6 @@ fn spec_for(prompt: &str) -> SessionSpec {
         on_settled: None,
         checkpoint: None,
         goal: None,
-        pipeline: None,
         sub_agents: None,
         extensions: stella_serve::Extensions::new(),
         calibration: None,
@@ -164,11 +163,6 @@ async fn tool_round_trip_completes_the_turn() {
             ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
                 panic!("an unpaused turn must not announce a hold")
             }
-            // This turn does not run the pipeline, so it must never reach a
-            // scope-review gate.
-            ServerFrame::ScopeReviewRequest { .. } => {
-                panic!("a plain turn must not raise a scope review")
-            }
         }
     }
 
@@ -210,11 +204,6 @@ async fn immediate_completion_needs_no_tools() {
             // be a frame every host has to learn to ignore.
             ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
                 panic!("an unpaused turn must not announce a hold")
-            }
-            // This turn does not run the pipeline, so it must never reach a
-            // scope-review gate.
-            ServerFrame::ScopeReviewRequest { .. } => {
-                panic!("a plain turn must not raise a scope review")
             }
         }
     }
@@ -457,11 +446,6 @@ async fn streamed_provider_deltas_surface_as_events_before_the_completion() {
                 panic!("an unpaused turn must not announce a hold")
             }
             ServerFrame::ToolRequest { .. } => {}
-            // This turn does not run the pipeline, so it must never reach a
-            // scope-review gate.
-            ServerFrame::ScopeReviewRequest { .. } => {
-                panic!("a plain turn must not raise a scope review")
-            }
         }
     }
 

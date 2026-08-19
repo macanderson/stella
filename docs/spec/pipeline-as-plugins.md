@@ -6,7 +6,22 @@ status: living
 
 # Every wrapper is a plugin: the full extraction plan
 
-**Status:** living, updated 2026-08-18. First written 2026-08-17 as a
+**Status:** living, updated 2026-08-19. **The built-in path is removed.**
+`crates/stella-pipeline` — §7's "last slice" — has been deleted from the
+workspace (#3865, landed on this branch). `stella run --pipeline classic` is
+refused outright, naming `stella plugin install` as the remedy. Host-run
+verification no longer exists in this workspace at all: the only
+verification path left is an installed verification plugin, which supplies
+its own self-reported evidence — Stella evaluates that evidence against the
+plugin's declared rule and never re-runs or re-checks it. Oxagen's Vera is
+the reference verification plugin, private and not shipped in this
+repository. §7 and §8 below are updated in place to say so; the rest of this
+document's Track A/C/D narrative and file:line citations into the deleted
+crate are read out of the tree as it stood before that deletion and are kept
+as the historical record of what shipped and in what order — see this
+branch's own removal notes for exactly what the deletion touched.
+
+First written 2026-08-17 as a
 completion plan; each item below is tracked to landed/open individually as it
 ships, which is the reason this reads as "proposed" in no single place — all
 of Track A (A1–A10) and Track D's D1 have landed (#3479, building on
@@ -661,10 +676,12 @@ keeps. What was already true here — "a plugin supplies evidence
 out-of-process" — is exactly what #3511 makes explicit: the oracle's evidence
 was always plugin-produced, and a host that let a manifest suggest otherwise
 (that the oracle's finding was host-run) was the gap #3511 closes, not
-`judge`'s purity. This is the plugin path specifically — it does not withdraw
-the guarantee from the built-in staged pipeline (§7, §8), which still runs its
-own check and watches the flip; see `AGENTS.md`'s opening description for the
-corrected, path-scoped wording.
+`judge`'s purity. This was the plugin path specifically, stated against a
+built-in staged pipeline (§7, §8) that at the time still ran its own check
+and watched the flip; that built-in pipeline is now deleted from this
+workspace (#3865), so host-run verification described here no longer exists
+at all — every verification path is the plugin path, self-reported. See
+`AGENTS.md`'s opening description for the corrected, post-removal wording.
 
 ---
 
@@ -705,24 +722,40 @@ Order, easiest and least risky first:
 
 **The bar for each:** a side-by-side benchmark holds before the built-in path is
 deleted. The dependency cut — `stella-cli` no longer declaring
-`stella-pipeline`, 174 references across 44 files as of 2026-08-18 (`grep -rn
-stella_pipeline:: crates/stella-cli/src crates/stella-cli/tests`; it was 166/42
-when this section was written and has grown with the flag-inversion and
-schedule-manifest work, not shrunk) — is the **last** slice, never the first.
+`stella-pipeline` — was the **last** slice, never the first, and it has now
+landed (#3865, 2026-08-19): the crate is deleted from the workspace and
+`stella run --pipeline classic` is refused. It shipped **ahead of** the bar
+stated above — `stella-plan`, `vera`, `stella-candidates`, and `stella-goal`
+remain unstarted or blocked (#3844), so no side-by-side benchmark exists for
+most of what the built-in path covered. That is a deliberate maintainer call
+recorded here per CLAUDE.md's "now vs. right", not an oversight this
+paragraph is silent about: the built-in path's own verification machinery
+had already stopped being the default (#3381) and stopped being reachable
+from most surfaces (this branch's earlier slices) before the crate itself
+came out, so the remaining risk was carrying dead, unreferenced code rather
+than losing a working feature. Extraction of the remaining four plugins is
+still real, open work — deleting the built-in path does not mark it done.
 
 ---
 
 ## 8. Vera specifically
 
 Vera is a port, not a lift. It takes the verification nucleus and leaves the
-orchestration.
+orchestration. **The crate these paths named no longer exists in this
+workspace** (#3865, §7) — cited here as the historical source to port
+*from*, readable in this branch's git history at the commit before the
+deletion, not as live files.
 
 **Ports** (pure functions over owned data, which is what makes this realistic):
 `crates/stella-pipeline/src/verify.rs` (`FlipOracle`, `FlipState`,
 `ladder_decision`, the evidence builders, `strip_witness_hunks`),
 `witness.rs` (prompt construction, `parse_test_invocation`, `runner_probe`, the
 three acceptance validators), `witness/airlock.rs`, `flip_halt.rs`, and
-`reward.rs` for the training labels.
+`reward.rs` for the training labels. (`reward.rs` specifically did not move
+with the rest of the crate at deletion time — its RETARGET was blocked on
+real internal consumers the original removal census missed; see #3860. It is
+still in `crates/stella-cli/src/reward.rs` as of this branch, not yet in
+Vera.)
 
 **Carry over first:** the property test
 `flip_requires_a_prior_failing_observation`. A flip with no prior failing
@@ -974,7 +1007,9 @@ be finished first, not approximated.
   driven by `stella-cli`, by `stella-serve` over HTTP, and by a minimal embedded
   host linking `stella-engine`. Prove it with a test that exercises all three,
   not with an argument that it should work (§0).
-- `stella-cli/Cargo.toml` does not declare `stella-pipeline`.
+- `stella-cli/Cargo.toml` does not declare `stella-pipeline`. **Done** —
+  the crate is deleted from the workspace entirely (#3865, 2026-08-19), which
+  is a stronger statement than the checklist item asked for.
 - Core ships zero built-in wrappers and one role (`default`); every other role
   in `/models` is contributed by an installed plugin and disappears when it is
   removed.

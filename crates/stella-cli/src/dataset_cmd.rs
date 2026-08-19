@@ -10,11 +10,13 @@
 //!
 //! ## A fold over the store, not a second capture path
 //!
-//! `trace.rs` (#1042) already assembles a redacted trajectory record — but
-//! `trace_capture` defaults off and is wired at exactly one call site, so
-//! `.stella/private/traces.jsonl` is absent in essentially every real
-//! workspace and carries nothing historical. This module therefore folds
-//! `store.db` directly: the `executions` header for provenance and the
+//! A separate `trace.rs` (#1042) once assembled a redacted trajectory record
+//! from a live pipeline run, but its one call site was the staged pipeline's
+//! one-shot driver — gone from this build (#3865) along with the crate that
+//! drove it — so `.stella/private/traces.jsonl` was already absent in
+//! essentially every real workspace before that removal and carries nothing
+//! historical either way. This module therefore folds `store.db` directly:
+//! the `executions` header for provenance and the
 //! per-execution `events` journal for everything else. That journal is the
 //! only place tool OUTPUTS survive (`tool_calls` records `bytes_out` and
 //! deliberately never the content), so it is the only possible source.
@@ -31,7 +33,7 @@
 //! ## Rewards and transcripts (#2083)
 //!
 //! Two things #872 shipped without now exist in tree and are carried. The
-//! verdict → scalar mapping (#1043, [`stella_pipeline::reward`]) labels each
+//! verdict → scalar mapping (#1043, [`crate::reward`]) labels each
 //! record from the journal's settled verdict under the workspace's resolved
 //! [`RewardPolicy`] — and the policy rides on every label, so records from
 //! differently-weighted workspaces stay comparable. And the receipts plane
@@ -90,12 +92,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use stella_core::redact::{PLACEHOLDER, redact_secrets};
-use stella_pipeline::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::AgentEvent;
 use stella_store::{FinishedExecution, MismatchSeverity, RecordedCall, Store};
 
@@ -342,7 +344,7 @@ pub struct DatasetRecord {
     /// `--include-unverified-transcripts` an execution whose receipts plane
     /// holds nothing has an unrecorded step count, and the shaping refuses to
     /// price it as zero, so the label reports
-    /// `stella_pipeline::reward::DiscardReason::StepsUnknown` with its rung,
+    /// `crate::reward::DiscardReason::StepsUnknown` with its rung,
     /// its outcome term and its policy intact. That is the discard's whole
     /// point here: the row stays selectable and re-shapeable, and only the
     /// number that would have been wrong is withheld.
@@ -821,7 +823,7 @@ fn worst_severity(a: MismatchSeverity, b: MismatchSeverity) -> MismatchSeverity 
 ///
 /// `None` exactly when no `Verdict` event reached the journal. Everything
 /// else — an abstention, a pre-rung verdict, an invalid policy — labels
-/// through [`stella_pipeline::reward::label`], which marks what it cannot
+/// through [`crate::reward::label`], which marks what it cannot
 /// score rather than dropping it. Steps count every recorded call (every
 /// role, not just the worker's) and revisions the verdicts beyond the
 /// settling one — the same fold `trace.rs` applies, so a dataset label and a

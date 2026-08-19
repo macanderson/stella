@@ -83,6 +83,18 @@ impl Sleeper for TokioSleeper {
 /// same allowance — the flag's documented per-turn contract. The interactive
 /// surfaces (chat, the deck) deliberately keep an unarmed deadline: their
 /// sessions span many turns and no single wall-clock ceiling describes them.
+///
+/// **No production caller since #3865.** Its one call site was the staged
+/// pipeline's one-shot driver (`run_pipeline_one_shot`), removed with the
+/// crate that drove it. The raw one-shot door (`run_raw_one_shot`,
+/// `agent/goal.rs`) — the *only* one-shot door since #3381 made it the
+/// default — has called plain `build_budget_guard` instead all along, so
+/// this deadline has been unarmed on every one-shot run for as long as raw
+/// has been the default, not only since this crate's removal. Left as a
+/// gap for a maintainer to re-wire deliberately (with its own bench-effect
+/// read) rather than silently inside this deletion; tracked in #3868.
+/// Kept, not deleted: it is well-tested and is the correct fix's shape.
+#[allow(dead_code)]
 pub(crate) fn one_shot_budget_guard(
     budget_limit: Option<f64>,
     task_allowance: Option<std::time::Duration>,

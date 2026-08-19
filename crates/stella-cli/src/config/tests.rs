@@ -1156,16 +1156,18 @@ fn the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam() {
     assert!(parsed.headless_scope_bypass_on());
 }
 
-/// The same seam again, for the attempt-count arms (#1211 §6.7, §6.8).
-///
-/// `pipeline_max_revisions` and `pipeline_candidates` are the two knobs that
-/// decide how many times a task may be attempted, and until they joined
-/// `settings::ENGINE_ROOT_FIELDS` a posture naming either was not *ignored* — this
-/// seam fails closed, so the trial died at launch. Numbers, not strings, and
-/// the round trip has to preserve them: a dropped `pipeline_candidates` is a
-/// best-of-N arm that costs 2x and measures single-shot.
+/// The same seam again, for the attempt-count arms (#1211 §6.7, §6.8) — now
+/// inverted. `pipeline_max_revisions` and `pipeline_candidates` were the two
+/// knobs that decided how many times a task may be attempted; the staged
+/// pipeline that read them is gone (#3865), and an adversarial audit found
+/// zero remaining behavioral consumers on `AgentEngineConfig`. They were
+/// removed from `settings::ENGINE_ROOT_FIELDS` rather than left as a no-op, so
+/// the trusted-launcher seam — which shares that exact allowlist — must now
+/// FAIL CLOSED on a posture naming either: a benchmark arm that thinks it is
+/// still buying revisions or candidates must be refused at launch, not
+/// silently charged for nothing.
 #[test]
-fn the_benchmark_attempt_count_posture_survives_the_trusted_launcher_seam() {
+fn the_dead_attempt_count_posture_is_refused_by_the_trusted_launcher_seam() {
     let posture = serde_json::json!({
         "default_model": "openrouter/z-ai/glm-5.2",
         "allowed_models": ["openrouter/z-ai/glm-5.2"],
@@ -1183,13 +1185,9 @@ fn the_benchmark_attempt_count_posture_survives_the_trusted_launcher_seam() {
         },
     });
     assert!(
-        super::trusted_engine_config_shape_is_strict(&posture),
-        "the attempt-count posture must pass the strict seam"
+        !super::trusted_engine_config_shape_is_strict(&posture),
+        "a posture naming a removed pipeline knob must be refused, not silently accepted"
     );
-    let parsed: crate::settings::AgentEngineConfig =
-        serde_json::from_value(posture).expect("and deserialize into the settings type");
-    assert_eq!(parsed.pipeline_max_revisions, Some(4));
-    assert_eq!(parsed.pipeline_candidates, Some(2));
 }
 
 /// Witness for the first-run error rewrite: it used to join all thirteen

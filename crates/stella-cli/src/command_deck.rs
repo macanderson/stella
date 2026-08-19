@@ -68,25 +68,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use stella_core::ports::{Principal, ToolExecutor};
-use stella_core::router::CircuitBreaker;
-use stella_core::{BudgetGuard, CalibrationMap, Engine, Router, TurnOutcome};
+use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
 use stella_model::provider::Provider;
-use stella_pipeline::{
-    ContextRecallPort, McpPrefetchPort, NoContextRecall, PipelineConfig, PipelinePorts,
-    PipelineStatus,
-};
 use stella_protocol::{
-    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, ModelRef, PrStatus, TaskItem,
-    ToolOutput,
+    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, TaskItem, ToolOutput,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
 use stella_tools::custom::CustomTool;
 use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{
-    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound,
-    ScopeDecision as DeckScopeDecision, SkillOp, SkillScope, SkillSearchHit, SkillsView,
-    SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
+    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound, SkillOp,
+    SkillScope, SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput,
+    run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -103,7 +97,6 @@ mod lead_control;
 mod model_cmd;
 mod pr_observe;
 mod profile_cmd;
-mod scope_gate;
 mod session_clear;
 mod sessions_view;
 mod settings_io;
@@ -113,20 +106,16 @@ mod theme_cmd;
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
 
 use crate::memory::{SessionMemory, inject_recall_block};
-use crate::runtime::{SystemClock, TokioSleeper};
+use crate::runtime::TokioSleeper;
 use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
-use scope_gate::DeckApprovalGate;
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
 use task_tap::TaskTap;
 
-/// The staged-pipeline lead turn — see [`pipeline_turn`].
-mod pipeline_turn;
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
-use pipeline_turn::run_lead_pipeline_turn;
 
 /// The lead agent's id — the one conversation this driver runs.
 pub(crate) const LEAD: &str = "lead";
@@ -469,8 +458,6 @@ pub async fn run_deck_session(
     let (deck_tx, deck_rx) = mpsc::unbounded_channel::<Inbound>();
     let (sub_tx, mut sub_rx) = mpsc::unbounded_channel::<WorkspaceInput>();
     let (ask_tx, ask_rx) = mpsc::unbounded_channel::<String>();
-    // Scope review's answer path — same shape as `ask_tx`/`ask_rx` above.
-    let (scope_tx, scope_rx) = mpsc::unbounded_channel::<DeckScopeDecision>();
     // The supervisor channel: `task_assign` spawn requests (tap → driver)
     // and sub-session endings (worker → driver). See `crate::subsession`.
     let (sup_tx, mut sup_rx) = mpsc::unbounded_channel::<SupervisorMsg>();
@@ -672,21 +659,7 @@ pub async fn run_deck_session(
         inbound: in_tx.clone(),
         answers: Arc::new(tokio::sync::Mutex::new(ask_rx)),
     };
-    let scope_gate = DeckApprovalGate::new(
-        LEAD.to_string(),
-        in_tx.clone(),
-        scope_rx,
-        Arc::new(ask_io.clone()),
-    );
 
-    // A fresh deck session drives turns through the raw `Engine::run_turn`
-    // loop (`run_lead_turn`) by default since #3381; `/pipeline` toggles it
-    // ON to route through the staged pipeline instead. A resumed session
-    // keeps whatever it last had — the same state the persona choice above
-    // read, so driver and persona start the session agreeing.
-    let pipeline_init = pipeline_persona;
-    // Journal it once so a future flip never faces this ambiguity again.
-    let _ = in_tx.send(Inbound::Pipeline(pipeline_init));
     // Honour the persisted colour theme (`ui.theme`) before the deck spawns its
     // render task, so the very first frame — the launch cinematic — is already
     // in the chosen theme. Best-effort: an unset/unknown value keeps the
@@ -698,7 +671,6 @@ pub async fn run_deck_session(
         slash_commands: deck_slash_commands(&custom),
         initial_graph: agent::graph_snapshot(&cfg.workspace_root),
         no_anim,
-        pipeline: pipeline_init,
         accessible,
         ..Default::default()
     };
@@ -828,12 +800,6 @@ pub async fn run_deck_session(
     // submission is what sets it moving (and runs first).
     let mut dispatch = HoldState::new();
     dispatch.held = resume_hold;
-    // `/pipeline`: route lead turns through the staged pipeline (triage →
-    // execute → witness → verify → verdict) instead of the raw engine loop.
-    // Session-local, OFF at start since #3381 (a fresh deck session runs the
-    // raw loop) unless a resumed session had toggled it ON — mirrored to the
-    // PIPELINE stat box via `Inbound::Pipeline`.
-    let mut pipeline_on = pipeline_init;
     // An agent-creation request that arrived mid-turn: drafting needs the
     // provider (borrowed by the running turn), so it parks here and runs
     // right after the turn settles.
@@ -1103,7 +1069,6 @@ pub async fn run_deck_session(
                                     .send(chrome_note(format!("cannot resume `{id}`: {reason}")));
                             }
                             Ok(mut rs) => {
-                                let had_history = !rs.records.is_empty(); // before the take below
                                 // Park the CURRENT session: sync the journal,
                                 // snapshot the conversation, and either mark it
                                 // Paused — or, if nothing ever happened in it,
@@ -1230,11 +1195,6 @@ pub async fn run_deck_session(
                                     });
                                 }
                                 queue.adopt(sidecar_dir.clone(), restored);
-                                pipeline_on = crate::session_persist::derive_pipeline_persona(
-                                    had_history,
-                                    rs.pipeline,
-                                );
-                                let _ = in_tx.send(Inbound::Pipeline(pipeline_on));
                                 // `--spend-limit` means THIS session, decided and
                                 // implemented on both resume paths: reseed
                                 // the guard's session accumulator to what
@@ -1391,7 +1351,6 @@ pub async fn run_deck_session(
             &registry,
             cfg,
             &custom,
-            &mut pipeline_on,
             agent::remaining_budget(&budget),
             &session_record.id,
             &ask_io,
@@ -1470,41 +1429,24 @@ pub async fn run_deck_session(
         // refresh the volatile recall block, then append the user prompt.
         // `turn_base` is the truncation point that erases the whole turn if
         // it is cancelled; `reflect_start` scopes the reflection gate to what
-        // the turn itself appends. In pipeline mode the pipeline owns BOTH —
-        // recall rides inside its one volatile recall+goal message (L-E8), so
-        // the driver appending either would double them.
+        // the turn itself appends.
         // Phase 2 (#713): the deck recalled and reported nothing. The event
         // is carried to `run_lead_turn`, which owns the turn's channel.
         let mut recall_event = None;
         if let Some(m) = &mut memory {
-            // The A/B control, armed before either branch recalls (#1221): on a
-            // control turn the pipeline's own port goes frameless with the
-            // block, so a deck pipeline turn is a real arm.
+            // The A/B control, armed before recall (#1221).
             m.arm_recall_control();
-            if pipeline_on {
-                // The pipeline recalls frames itself (its port is this same
-                // store) and renders them into its one volatile recall+goal
-                // message, emitting the turn's `ContextRecall`. Dropping the
-                // whole block here — the previous guard — threw skills,
-                // draft claims, and the record channel away with the frames;
-                // the frames-free pipeline block keeps exactly the sections
-                // the pipeline has no channel for.
-                inject_recall_block(&mut messages, m.pipeline_recall_block(&prompt).await);
-            } else {
-                let recalled = m.recall_block_reported(&prompt).await;
-                recall_event = recalled.telemetry_event();
-                inject_recall_block(&mut messages, recalled.text);
-            }
+            let recalled = m.recall_block_reported(&prompt).await;
+            recall_event = recalled.telemetry_event();
+            inject_recall_block(&mut messages, recalled.text);
         }
         let turn_base = messages.len();
-        if !pipeline_on {
-            // Attach any media files the prompt names (including `⌃V`
-            // clipboard images, which arrive as their stored payload path).
-            messages.push(crate::attachments::user_message_in(
-                &prompt,
-                &cfg.workspace_root,
-            ));
-        }
+        // Attach any media files the prompt names (including `⌃V`
+        // clipboard images, which arrive as their stored payload path).
+        messages.push(crate::attachments::user_message_in(
+            &prompt,
+            &cfg.workspace_root,
+        ));
         let reflect_start = messages.len();
 
         // The execution record outlives the turn future so a cancelled turn
@@ -1517,7 +1459,10 @@ pub async fn run_deck_session(
             &prompt,
             cfg,
             Some(&session_record.id),
-            pipeline_on.then_some(agent::persistence::PIPELINE_VARIANT_CLASSIC),
+            // No live path drives a deck turn through the staged pipeline any
+            // more (#3865) — every turn's variant is `None`, exactly like every
+            // other door's raw arm.
+            None,
         );
         if let Some((_, id)) = &execution {
             last_execution_id = Some(*id);
@@ -1572,51 +1517,24 @@ pub async fn run_deck_session(
         let end = {
             // Both arms return `Result<(), CliFailure>`, so one pinned future
             // drives either path through the same select loop.
-            let turn = async {
-                if pipeline_on {
-                    run_lead_pipeline_turn(
-                        &*provider,
-                        base_tools,
-                        &custom_tools,
-                        &registry,
-                        memory.as_ref(),
-                        &prompt,
-                        &mut messages,
-                        &mut budget,
-                        cfg,
-                        &active_rules,
-                        execution.clone(),
-                        &in_tx,
-                        &scope_gate,
-                        &sup_tx,
-                        &lead_holder,
-                        &steering,
-                        &lead_pause,
-                        mcp.clone(),
-                    )
-                    .await
-                } else {
-                    run_lead_turn(
-                        &*provider,
-                        base_tools,
-                        &custom_tools,
-                        &registry,
-                        &mut messages,
-                        &mut budget,
-                        &calibration,
-                        cfg,
-                        execution.clone(),
-                        &in_tx,
-                        &sup_tx,
-                        &lead_holder,
-                        &steering,
-                        &lead_pause,
-                        recall_event,
-                        memory.as_ref(),
-                    )
-                    .await
-                }
-            };
+            let turn = run_lead_turn(
+                &*provider,
+                base_tools,
+                &custom_tools,
+                &registry,
+                &mut messages,
+                &mut budget,
+                &calibration,
+                cfg,
+                execution.clone(),
+                &in_tx,
+                &sup_tx,
+                &lead_holder,
+                &steering,
+                &lead_pause,
+                recall_event,
+                memory.as_ref(),
+            );
             tokio::pin!(turn);
             loop {
                 tokio::select! {
@@ -1730,15 +1648,6 @@ pub async fn run_deck_session(
                             control: stella_tui::AgentControl::Stop, agent,
                         }) => {
                             if agent == LEAD {
-                                // Pipeline turns accept mid-turn `>` steering
-                                // (the execute engine drains the tap) but the
-                                // STOP stays a hard cancel: a pipeline is
-                                // triage→…→verifier, so a mid-execute soft stop
-                                // has no single obvious continuation. Only the
-                                // step-loop turn soft-stops.
-                                if pipeline_on {
-                                    break TurnEnd::Cancelled { hold: false };
-                                }
                                 // First Esc = SOFT stop: end at the next
                                 // boundary keeping completed steps. The
                                 // pair's second press (StopAndHold below)
@@ -2007,14 +1916,19 @@ pub async fn run_deck_session(
                         ) => {
                             handle_issues_input(&input, cfg, &in_tx);
                         }
-                        // Scope review IS engine-driven now: the pipeline's
-                        // `DeckApprovalGate` parks on this channel, so the
-                        // reviewer's answer becomes its `ScopeDecision`.
+                        // Scope review had exactly one consumer — the staged
+                        // pipeline's `DeckApprovalGate`, which parked on this
+                        // input to answer its `ApprovalGate::confirm`. Both
+                        // are gone (#3865): no
+                        // door raises the scope-review card any more, so a
+                        // `ScopeDecision` arriving here has nothing to
+                        // answer. `UserInput::ScopeDecision` itself is left
+                        // in place — deleting or re-homing it is
+                        // stella-tui-side surface work this slice does not
+                        // do; tracked as #3861.
                         Some(WorkspaceInput::ToAgent {
-                            input: UserInput::ScopeDecision(decision), ..
-                        }) => {
-                            let _ = scope_tx.send(decision);
-                        }
+                            input: UserInput::ScopeDecision(_), ..
+                        }) => {}
                         // Everything above peeled off `Stop` and every worker
                         // lane, so this is the LEAD's own pause/resume/restart.
                         Some(WorkspaceInput::Control { control, .. }) => {
@@ -3577,8 +3491,8 @@ fn record_agent_invocation(
 /// transcript as `Text` events — the deck renders exclusively from events, so
 /// printing to stdout (which the alternate screen owns) is never an option.
 ///
-/// Vocabulary: `/help`, `/clear`, `/models`, `/init`, `/agents`,
-/// `/pipeline`. `/files`, `/diff`, `/graph` are deck-local (tab switches) and
+/// Vocabulary: `/help`, `/clear`, `/models`, `/init`, `/agents`.
+/// `/files`, `/diff`, `/graph` are deck-local (tab switches) and
 /// consumed TUI-side; an unknown bare `/command` gets a hint rather than a
 /// wasted model call. Every productized command is no-argument, so the
 /// *whole* trimmed input is matched — `/init do the thing` is a model prompt,
@@ -3595,7 +3509,6 @@ async fn run_deck_command(
     registry: &ToolRegistry,
     cfg: &mut Config,
     custom: &crate::extensions::CustomExtensions,
-    pipeline_on: &mut bool,
     budget_limit: Option<f64>,
     // This deck's session registry id — what scopes `/export` to the session
     // the user is actually in (#2558).
@@ -3641,25 +3554,6 @@ async fn run_deck_command(
         }
         "/theme" => {
             say(theme_cmd::current_summary(cfg));
-        }
-        "/pipeline" => {
-            *pipeline_on = !*pipeline_on;
-            // Flip the PIPELINE stat box live — the deck renders exclusively
-            // from inbound messages, never from driver state it can't see.
-            let _ = in_tx.send(Inbound::Pipeline(*pipeline_on));
-            say(if *pipeline_on {
-                "staged pipeline ON — turns now run triage → recall → (plan → scope review) → \
-                 witness → execute → verify → verdict, with bounded revision. Triage already \
-                 right-sizes each turn: chat answers in one completion, and only genuinely \
-                 multi-step goals plan at all. The witness stage authors a failing test that \
-                 must flip to green before work counts as done; a large plan raises the \
-                 plan-review dialog and waits for you (one keypress: a approve · t trim · \
-                 r refine · x abort). \
-                 `/pipeline` again to return to the raw engine loop."
-                    .to_string()
-            } else {
-                "staged pipeline OFF — turns run the raw engine loop.".to_string()
-            });
         }
         "/init" => {
             // The splash replay, the narrator, and the question channel all
@@ -3800,7 +3694,7 @@ async fn run_deck_command(
                 return DeckCommand::Prompt;
             }
             say(format!(
-                "unknown command `{trimmed}` — try /help, /clear, /models, /theme, /init, /agents, /pipeline, /export, /donate, /files, /diff, /graph"
+                "unknown command `{trimmed}` — try /help, /clear, /models, /theme, /init, /agents, /export, /donate, /files, /diff, /graph"
             ));
         }
     }

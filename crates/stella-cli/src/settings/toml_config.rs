@@ -192,14 +192,6 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_scope_bypass: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_max_revisions: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_candidates: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_verifier_evidence_demand: Option<Toggle>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_require_diff_coverage: Option<Toggle>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_timeout_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction_budget_tokens: Option<u64>,
@@ -223,12 +215,6 @@ pub struct AgentsSection {
     pub research: Option<AgentEngineAgent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<AgentEngineAgent>,
-    /// `[agents.responsibilities.<responsibility>]` — who performs each
-    /// pipeline responsibility and whether it runs (#2381). A table of
-    /// tables, so it sits with the agents above rather than among the flat
-    /// scalars, for the same TOML-stranding reason they do.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub responsibilities: Option<BTreeMap<String, super::ResponsibilitySpec>>,
 }
 
 impl AgentsSection {
@@ -644,10 +630,6 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         effort_auto: cfg.effort_auto,
         reasoning_auto: cfg.reasoning_auto,
         headless_scope_bypass: cfg.headless_scope_bypass,
-        pipeline_max_revisions: cfg.pipeline_max_revisions,
-        pipeline_candidates: cfg.pipeline_candidates,
-        pipeline_verifier_evidence_demand: cfg.pipeline_verifier_evidence_demand,
-        pipeline_require_diff_coverage: cfg.pipeline_require_diff_coverage,
         model_timeout_secs: cfg.model_timeout_secs,
         compaction_budget_tokens: cfg.compaction_budget_tokens,
         tool_result_horizon_steps: cfg.tool_result_horizon_steps,
@@ -658,7 +640,6 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         triage: per_agent.triage,
         research: per_agent.research,
         plan: per_agent.plan,
-        responsibilities: cfg.responsibilities.clone(),
     };
     let models = ModelsSection {
         allowed: cfg.allowed_models.clone(),
@@ -723,15 +704,10 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         effort_auto: agents.effort_auto,
         reasoning_auto: agents.reasoning_auto,
         headless_scope_bypass: agents.headless_scope_bypass,
-        pipeline_max_revisions: agents.pipeline_max_revisions,
-        pipeline_candidates: agents.pipeline_candidates,
-        pipeline_verifier_evidence_demand: agents.pipeline_verifier_evidence_demand,
-        pipeline_require_diff_coverage: agents.pipeline_require_diff_coverage,
         model_timeout_secs: agents.model_timeout_secs,
         compaction_budget_tokens: agents.compaction_budget_tokens,
         tool_result_horizon_steps: agents.tool_result_horizon_steps,
         approval_wait_secs: agents.approval_wait_secs,
         agents: agents_field,
-        responsibilities: agents.responsibilities,
     })
 }

@@ -276,239 +276,23 @@ pub(crate) fn engine_config_for_kind(cfg: &Config, kind: &str) -> EngineConfig {
     engine
 }
 
-/// EngineConfig for a pipeline's execute turns — the WORKER agent's tuning
-/// (plan and witness ride it too, matching the router's tiering).
-/// `worker_model` is [`EngineWiring::worker_model`]: the model the worker
-/// role actually resolves to, honoring `pipeline_worker_model`/
-/// `agents.worker.*` when set (issue #276), falling back to the session
-/// default (`cfg.provider`/`cfg.model_id`) when unset.
-pub(crate) fn pipeline_engine_config_for(cfg: &Config, worker_model: &ModelRef) -> EngineConfig {
-    let mut engine = tuned_engine_config(
-        cfg,
-        crate::settings::EngineAgentKind::Worker,
-        (&worker_model.provider, &worker_model.model_id),
-    );
-    // A pipeline execute turn is always task mode: its declaration is graded,
-    // so it proves a mutation before the declaration stands (#2663).
-    engine.completion_gate = true;
-    engine
-}
-
-/// The safe default for CLI-owned headless surfaces: no host approval port,
-/// so scope expansion stops at the named pipeline error — unless
-/// `agent_engine_config.headless_scope_bypass` opts a `stella run` out (see
-/// `pipeline_config_for_approval_capability`, which ORs this constant with
-/// that setting). Output modes never alter this.
-pub(crate) const HEADLESS_SCOPE_REVIEW_BYPASS: bool = false;
-pub(crate) const HEADLESS_APPROVAL_GATE: AlwaysAbortGate = AlwaysAbortGate;
-
-/// Approval port the one-shot host can actually service. This is explicit so
-/// output serialization cannot silently stand in for execution authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PipelineApprovalCapability {
-    Stdio,
-    /// A supervised child (#1585): the question parks in the session sidecar
-    /// and whichever terminal is attached answers it. Available in EVERY
-    /// output format — the prompt rides the attached terminal's stderr, never
-    /// this process's streams, so a machine-format caller's stdout stays
-    /// parseable.
-    Sidecar,
-    Unavailable,
-}
-
-/// The one-shot approval gate for `capability`, honoring
-/// `agent_engine_config.approval_wait_secs` (#1616) — the sidecar gate's
-/// only caller-supplied tuning, so it lives beside the capability it gates
-/// rather than being computed inline at the call site (which is in the
-/// `agent.rs` god file).
-pub(crate) fn approval_gate_for(
-    cfg: &Config,
-    capability: PipelineApprovalCapability,
-) -> crate::daemon::approval::OneShotApprovalGate {
-    let wait = cfg.engine_settings.as_ref().and_then(|e| e.approval_wait());
-    crate::daemon::approval::OneShotApprovalGate::select(capability, wait)
-}
-
-/// Which approval capability a one-shot host run can actually service, given
-/// whether it is a supervised child, the output format and whether
-/// stdin/stdout are real terminals. A pure function over already-observed
-/// booleans (rather than calling `IsTerminal` itself) so the exact condition
-/// is directly unit-testable.
-///
-/// `supervised` wins first: a supervised child's stdin is a staged file and
-/// its stdout is a console log, so the terminal tests below can never pass —
-/// and the sidecar transport is precisely what restores the answer those
-/// redirections took away (#1585).
-///
-/// Otherwise the answer is exactly "is a human present to answer?", which is
-/// [`crate::interactive::human_can_answer`]'s — the single derivation this
-/// and the approvals plane's question io both read, so a redirected/piped
-/// text-format run can never leave one layer waiting for a human the other
-/// has concluded is absent.
-pub(crate) fn approval_capability_for(
-    supervised: bool,
-    is_text: bool,
-    stdin_is_terminal: bool,
-    stdout_is_terminal: bool,
-) -> PipelineApprovalCapability {
-    if supervised {
-        PipelineApprovalCapability::Sidecar
-    } else if crate::interactive::human_can_answer(is_text, stdin_is_terminal, stdout_is_terminal) {
-        PipelineApprovalCapability::Stdio
-    } else {
-        PipelineApprovalCapability::Unavailable
-    }
-}
-
-/// Whether a TRUSTED engine posture explicitly names a witness/verifier author
-/// other than the worker's model — i.e. the posture's own hash claims the
-/// authored-witness arm, so a run that silently loses that author reports a
-/// number the posture misdescribes (#1147).
-///
-/// Three deliberate narrowings:
-///
-/// * **Trusted postures only.** The settings scope chain keeps its soft
-///   degradation (a verifier whose provider has no credential leaves a notice and
-///   rides the worker, exactly as [`EngineWiring`] documents). Nothing is
-///   published about an ordinary session's wiring, so nothing about it can be
-///   misdescribed.
-/// * **An EXPLICIT verifier key only** — `agents.verifier.model` or the flat
-///   `pipeline_verifier_model`, never [`crate::settings::AgentEngineConfig::model_for`]'s
-///   fallback to `default_model`. The control arm reaches the verifier role
-///   through that fallback, and reading it here would arm the refusal on the
-///   very arm that is *supposed* to run one model for every role.
-/// * **Compared as the caller wrote it.** The posture writes fully-qualified
-///   `provider/slug` specs (the benchmark adapter and the TUI both do), which
-///   is the same shape as [`ModelRef`]'s `Display`. A bare slug that happens
-///   to name the worker's model would arm the refusal spuriously — and that is
-///   the safe direction: the run stops loudly instead of scoring quietly.
-pub(crate) fn trusted_posture_requires_independent_witness(
-    cfg: &Config,
-    worker_model: &ModelRef,
-) -> bool {
-    if !cfg.engine_settings_trusted {
-        return false;
-    }
-    let Some(engine) = cfg.engine_settings.as_ref() else {
-        return false;
-    };
-    engine
-        .agent(crate::settings::EngineAgentKind::Verifier)
-        .and_then(|agent| agent.model.as_deref())
-        .or(engine.pipeline_verifier_model.as_deref())
-        .map(str::trim)
-        .filter(|verifier| !verifier.is_empty())
-        .is_some_and(|verifier| verifier != worker_model.to_string())
-}
-
-/// Build the one-shot pipeline config from the host's approval capability.
-/// Rendering remains a separate concern owned by the event renderer.
-/// `worker_model` is [`EngineWiring::worker_model`], threaded through to
-/// `pipeline_engine_config_for` so the worker's clamps key off the model the
-/// role actually resolves to (issue #276).
-pub(crate) fn pipeline_config_for_approval_capability(
-    cfg: &Config,
-    approval: PipelineApprovalCapability,
-    test_command: Option<&str>,
-    worker_model: &ModelRef,
-) -> PipelineConfig {
-    PipelineConfig {
-        engine: pipeline_engine_config_for(cfg, worker_model),
-        headless: approval == PipelineApprovalCapability::Unavailable,
-        plan_mode: cfg.plan_mode,
-        // The constant is the safe default; a workspace may opt out of it
-        // where the tree is disposable (see `headless_scope_bypass`).
-        headless_bypass_scope_review: cfg
-            .engine_settings
-            .as_ref()
-            .is_some_and(|engine| engine.headless_scope_bypass_on())
-            || HEADLESS_SCOPE_REVIEW_BYPASS,
-        test_command: test_command.map(str::to_string),
-        // A posture that PUBLISHED an independent witness author must not
-        // quietly run without one — see the predicate's doc comment.
-        require_independent_witness: trusted_posture_requires_independent_witness(
-            cfg,
-            worker_model,
-        ),
-        // Where this run's work happens. Resolved from settings here and asked
-        // at triage, once the class says whether anything is going to change.
-        create_worktrees: cfg.create_worktrees.policy(),
-        ..apply_pipeline_tuning(cfg, PipelineConfig::default())
-    }
-}
-
-/// Overlay the settings-file pipeline tuning knobs (`pipeline_max_revisions`,
-/// `pipeline_candidates`) onto `config`, leaving each field at whatever it
-/// already held when the corresponding key is absent.
-///
-/// Applied as a *transform over a base* rather than as two accessors returning
-/// values, because the "absent" case has to mean **the pipeline's own default**
-/// and that default lives in `PipelineConfig::default()`. An accessor would
-/// have to restate `2` and `None` here, and a restated default drifts silently
-/// the day the pipeline changes its mind — the failure mode being a run tuned
-/// by a number nobody chose.
-///
-/// Every driver calls this, not just `stella run`. These are cost/quality
-/// knobs rather than safety gates, so unlike `headless_scope_bypass` — which
-/// `stella goal` and fleet workers deliberately hold hard-off because it
-/// governs whether unattended work may land unreviewed — there is no surface
-/// where honouring the user's setting is the unsafe choice.
-pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) -> PipelineConfig {
-    // The repair gate's run-scoped deadline (#1507). `--turn-timeout` at this
-    // surface declares an EXTERNAL deadline for the invocation (a harness
-    // killing the trial on elapsed time), and one invocation drives one
-    // pipeline run — so the one declaration feeds both the engine's per-turn
-    // continuation allowance and the run deadline, and the two cannot drift.
-    // Absent stays absent: no flag, no clock axis.
-    config.run_budget = cfg.turn_timeout;
-    let Some(engine) = cfg.engine_settings.as_ref() else {
-        return config;
-    };
-    if let Some(max_revisions) = engine.pipeline_max_revisions {
-        config.max_revisions = max_revisions;
-    }
-    // #1291: the strict reading of an UNMEASURABLE overlap. A measured
-    // non-overlap withholds the deterministic credit whatever this says.
-    config.require_diff_coverage = engine.pipeline_require_diff_coverage_on();
-    // #1795: refuse a self-graded verdict where the operator said so. Absent
-    // is off — the single-provider seat keeps its soft path, and the verdict
-    // records grader independence on its snapshot either way.
-    if let Some(candidates) = engine.pipeline_candidates {
-        // Stored as written, including `0`. `PipelineConfig::candidate_count`
-        // floors at 1, so a zero reads as single-shot rather than as "run
-        // nothing" — the same reading `None` gets, and the only one that can
-        // produce a result at all.
-        config.candidates = Some(candidates);
-    }
-    // Tri-state on purpose (#1295): absent keeps the pipeline's default, and
-    // both `on` and `off` are explicit selections. Collapsing absent into
-    // `false` here would silently pin every run that never mentioned the key
-    // to whichever side this file happened to prefer.
-    if let Some(demand) = engine.pipeline_verifier_evidence_demand {
-        config.verifier_evidence_demand = demand.is_on();
-    }
-    // #2381. The returned problems are deliberately dropped HERE and nowhere
-    // else: `Roster::apply` records every rejection on the roster itself, so
-    // `Pipeline::run`'s pre-spend refusal sees them whichever host built the
-    // config. Reporting them a second time from this pure tuning function
-    // would either duplicate the message or — worse — tempt a surface into
-    // handling them differently from the engine's refusal.
-    if let Some(rows) = &engine.responsibilities {
-        let _ = config.roster.apply(rows.iter().map(|(name, spec)| {
-            (
-                name.clone(),
-                stella_pipeline::AssignmentOverride {
-                    enabled: spec.enabled,
-                    agent: spec.agent.as_deref().map(stella_pipeline::AgentId::new),
-                },
-            )
-        }));
-    }
-    config
-}
-
 /// EngineConfig for the goal loop's standalone verifier engine — the VERIFIER
 /// agent's tuning.
+///
+/// Its production caller (`run_goal_pipeline_turn`, `agent/goal.rs`) was
+/// deleted along with the staged pipeline's goal arm (#3865) — `stella goal`'s
+/// surviving `Raw`/`Plugin` arms route their verifier through
+/// `stella_core::Engine::run_goal` directly rather than building a separate
+/// tuned config for it. `#[allow(dead_code)]` rather than deletion because
+/// `agent/tests/engine_wiring.rs`'s cross-role invariant tests
+/// (`checkpoint_sink_reaches_every_role`,
+/// `every_role_shares_one_session_view_of_affordable_output_ceilings`, the
+/// turn-timeout/max-output-tokens propagation tests) assert that
+/// `tuned_engine_config`'s session-wide plumbing (checkpoint sink, budget
+/// ceiling, flag propagation) reaches every `EngineAgentKind`, VERIFIER
+/// included — deleting this wrapper would either lose that coverage or force
+/// three tests to re-derive the config inline for no behavioral gain.
+#[allow(dead_code)]
 pub(crate) fn verifier_engine_config_for(cfg: &Config) -> EngineConfig {
     tuned_engine_config(
         cfg,
@@ -601,14 +385,12 @@ pub(crate) struct EngineWiring {
     /// [`ModelRef`] the pins route to (adapters bind their model id at
     /// construction, so each distinct ref needs its own instance).
     pub(crate) extra_providers: Vec<(ModelRef, Box<dyn Provider>)>,
-    pub(crate) role_overrides: stella_pipeline::PipelineRoleOverrides,
     /// The model `Role::Worker`/`Role::Plan` actually resolve to: the
     /// worker's own `pipeline_worker_model`/`agents.worker.*` pin when one
     /// is configured and its provider is credentialed (issue #276), else
     /// the session default this wiring was built with. Callers building the
     /// worker's own [`EngineConfig`] (catalog-based context-window and
-    /// reasoning-capability clamps) must key off THIS, not `cfg` directly —
-    /// see `pipeline_engine_config_for`.
+    /// reasoning-capability clamps) must key off THIS, not `cfg` directly.
     pub(crate) worker_model: ModelRef,
     pub(crate) notices: Vec<String>,
 }
@@ -742,7 +524,7 @@ pub(crate) fn resolve_engine_wiring(
     configured: &[crate::config::ConfiguredProvider],
 ) -> EngineWiring {
     use crate::engine_config::{
-        ModelSpec, auto_verifier_spec, model_spec_for, own_model_spec_for, spec_family, tuning_for,
+        ModelSpec, auto_verifier_spec, model_spec_for, own_model_spec_for, spec_family,
     };
     use crate::settings::EngineAgentKind;
 
@@ -758,7 +540,6 @@ pub(crate) fn resolve_engine_wiring(
         profiles: vec![worker_profile],
         pins: RoleTable::new(),
         extra_providers: Vec::new(),
-        role_overrides: stella_pipeline::PipelineRoleOverrides::default(),
         worker_model: worker_ref.clone(),
         notices: Vec::new(),
     };
@@ -780,10 +561,9 @@ pub(crate) fn resolve_engine_wiring(
     // the same model — unpinned, they share the worker's tier (`resolve_tier`
     // treats all three identically), so leaving them out would silently revert
     // plan/research/witness turns to the session default the moment the worker
-    // is overridden, defeating "plan rides the worker"
-    // (`pipeline_engine_config_for`'s doc comment). A role that names its own
-    // model re-pins over this a few lines down; this is the floor, not the
-    // final answer.
+    // is overridden, defeating "plan rides the worker". A role that names its
+    // own model re-pins over this a few lines down; this is the floor, not
+    // the final answer.
     // ...unless the invocation carries an explicit `--model`. That flag's
     // documented job IS pinning the worker model for one run, so settings
     // must lose to it — otherwise the pin is not merely ignored but
@@ -822,56 +602,6 @@ pub(crate) fn resolve_engine_wiring(
     };
     wiring.worker_model = effective_worker_ref.clone();
 
-    let triage_tuning = tuning_for(&engine, EngineAgentKind::Triage);
-    let verifier_tuning = tuning_for(&engine, EngineAgentKind::Verifier);
-    // The worker row, which the pipeline's PLAN stage consumes (#2416). Plan
-    // is pinned to the worker's model above; this is the other half of "plan
-    // rides the worker" — the request shaping, and above all `prompt`, which
-    // is the one field `pipeline_engine_config_for` structurally cannot carry
-    // (an `EngineConfig` has no system-message seat, so `agents.worker.prompt`
-    // reached worker turns and stopped at the planner).
-    let worker_tuning = tuning_for(&engine, EngineAgentKind::Worker);
-    // Plan and research over the worker, field by field. The inheritance is
-    // what keeps "rides the worker" true — an absent `agents.plan` leaves the
-    // planner shaped exactly as it was, including the `prompt` #2416 routes
-    // there — while a field the operator did set wins for that field alone.
-    // Resolved HERE, not in the pipeline, so `stella config`'s report and the
-    // request path read one precedence rather than two.
-    let over_worker = |own: crate::engine_config::AgentTuning| stella_pipeline::RoleCallOverrides {
-        prompt: own.prompt.or_else(|| worker_tuning.prompt.clone()),
-        effort: own.effort.or(worker_tuning.effort),
-        reasoning: own.reasoning.or(worker_tuning.reasoning),
-        temperature: own.temperature.or(worker_tuning.temperature),
-        max_output_tokens: own.max_output_tokens.or(worker_tuning.max_output_tokens),
-        params: own.params.or(worker_tuning.params),
-    };
-    wiring.role_overrides.plan = over_worker(tuning_for(&engine, EngineAgentKind::Plan));
-    wiring.role_overrides.research = over_worker(tuning_for(&engine, EngineAgentKind::Research));
-    wiring.role_overrides.worker = stella_pipeline::RoleCallOverrides {
-        prompt: worker_tuning.prompt,
-        effort: worker_tuning.effort,
-        reasoning: worker_tuning.reasoning,
-        temperature: worker_tuning.temperature,
-        max_output_tokens: worker_tuning.max_output_tokens,
-        params: worker_tuning.params,
-    };
-    wiring.role_overrides.triage = stella_pipeline::RoleCallOverrides {
-        prompt: triage_tuning.prompt,
-        effort: triage_tuning.effort,
-        reasoning: triage_tuning.reasoning,
-        temperature: triage_tuning.temperature,
-        max_output_tokens: triage_tuning.max_output_tokens,
-        params: triage_tuning.params,
-    };
-    wiring.role_overrides.verifier = stella_pipeline::RoleCallOverrides {
-        prompt: verifier_tuning.prompt,
-        effort: verifier_tuning.effort,
-        reasoning: verifier_tuning.reasoning,
-        temperature: verifier_tuning.temperature,
-        max_output_tokens: verifier_tuning.max_output_tokens,
-        params: verifier_tuning.params,
-    };
-
     // The verifier's cross-family preference must compare against the model the
     // worker ACTUALLY resolves to — comparing against the stale session
     // default here would let auto-mode pick a verifier that turns out to share
@@ -893,44 +623,6 @@ pub(crate) fn resolve_engine_wiring(
     // means "leave the worker pin from above standing".
     let research_spec = own_model_spec_for(&engine, EngineAgentKind::Research, &is_provider);
     let plan_spec = own_model_spec_for(&engine, EngineAgentKind::Plan, &is_provider);
-
-    // Capability clamp, mirroring `tuned_engine_config`: a role whose
-    // model (pinned, provider-default, or riding the worker) is a
-    // catalog-confirmed non-reasoning model must not carry effort or
-    // reasoning onto the wire. Unknown capability passes through. "Riding
-    // the worker" means the ACTUAL (possibly overridden) worker model.
-    {
-        let clamp = |overrides: &mut stella_pipeline::RoleCallOverrides,
-                     spec: Option<&ModelSpec>| {
-            let resolved: Option<(String, String)> = match spec {
-                Some(s) if !s.model.is_empty() => Some((s.provider.clone(), s.model.clone())),
-                // Provider pin without a model → the provider's default.
-                Some(s) => crate::config::PROVIDERS
-                    .iter()
-                    .find(|p| p.id == s.provider && !p.default_model.is_empty())
-                    .map(|p| (s.provider.clone(), p.default_model.to_string())),
-                None => Some((
-                    effective_worker_ref.provider.clone(),
-                    effective_worker_ref.model_id.clone(),
-                )),
-            };
-            if let Some((provider, model)) = resolved
-                && crate::engine_config::model_supports_reasoning(&provider, &model) == Some(false)
-            {
-                overrides.effort = None;
-                overrides.reasoning = None;
-            }
-        };
-        clamp(&mut wiring.role_overrides.triage, triage_spec.as_ref());
-        clamp(&mut wiring.role_overrides.verifier, verifier_spec.as_ref());
-        // `None` resolves to the ACTUAL (possibly overridden) worker model —
-        // which is exactly what plan and research fall back to when they name
-        // no model of their own, so passing their spec here clamps against
-        // whichever of the two actually serves them.
-        clamp(&mut wiring.role_overrides.worker, None);
-        clamp(&mut wiring.role_overrides.plan, plan_spec.as_ref());
-        clamp(&mut wiring.role_overrides.research, research_spec.as_ref());
-    }
 
     let role_specs = [
         (Role::Triage, "triage", triage_spec),
@@ -987,42 +679,6 @@ fn push_same_model_notice(wiring: &mut EngineWiring, verifier_pin: Option<&Model
              `pipeline_verifier_model` (or `agents.verifier.model`) to a different model to \
              restore an independent witness author"
         ));
-    }
-}
-
-/// Maps each pinned [`ModelRef`] to its adapter: the primary (worker)
-/// provider plus the wiring's extra per-role adapters. The worker entry is
-/// borrowed (the caller owns it — boxed in one-shot, `&dyn` in the deck
-/// and goal paths); the extras are borrowed from the [`EngineWiring`].
-pub(crate) struct RoleProviderResolver<'p> {
-    primary: &'p dyn Provider,
-    primary_ref: ModelRef,
-    extra: &'p [(ModelRef, Box<dyn Provider>)],
-}
-
-impl<'p> RoleProviderResolver<'p> {
-    pub(crate) fn new(
-        primary: &'p dyn Provider,
-        primary_ref: ModelRef,
-        extra: &'p [(ModelRef, Box<dyn Provider>)],
-    ) -> Self {
-        Self {
-            primary,
-            primary_ref,
-            extra,
-        }
-    }
-}
-
-impl ProviderResolver for RoleProviderResolver<'_> {
-    fn provider_for(&self, model: &ModelRef) -> Option<&dyn Provider> {
-        if *model == self.primary_ref {
-            return Some(self.primary);
-        }
-        self.extra
-            .iter()
-            .find(|(model_ref, _)| model_ref == model)
-            .map(|(_, provider)| &**provider)
     }
 }
 

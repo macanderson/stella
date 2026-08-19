@@ -24,7 +24,7 @@
 # all the schemas are reachable at once — the registry's own schemas plus any
 # from CLI-internal layers, and stella-cli has no
 # `src/lib.rs` for a binary to link (#3061 tracks the seam that would let this
-# become an ordinary exporter). `make record-golden` is the same shape.
+# become an ordinary exporter).
 #
 # It needs no network, no API key and no model: every input is either source or
 # the committed example fixture, which is why it can sit in `make gate`.
