@@ -61,7 +61,10 @@ fn every_rail_is_drawn_to_the_requested_width() {
     let run = built("go");
     for width in [60usize, 100, 120] {
         let out = strip_ansi(&frame(&run, 0, width));
-        for line in out.lines().filter(|l| l.starts_with('╭') || l.starts_with('╰')) {
+        for line in out
+            .lines()
+            .filter(|l| l.starts_with('╭') || l.starts_with('╰'))
+        {
             assert_eq!(
                 line.chars().count(),
                 width,
@@ -147,4 +150,3 @@ fn strip_ansi(text: &str) -> String {
     }
     out
 }
-
