@@ -163,10 +163,16 @@ pub(crate) enum PipelineChoice<'a> {
     /// The built-in staged pipeline, recorded as `classic`. **Removed**
     /// (removal census, `docs/spec/pipeline-as-plugins.md` §7 slice 1):
     /// [`PipelineChoice::resolve`] refuses `--pipeline classic` rather than
-    /// ever producing this variant. It stays declared, not deleted, only
-    /// because [`crate::agent::run_one_shot`]'s classic dispatch arm
-    /// (`run_pipeline_one_shot`) still matches on it — dead code this slice,
-    /// removed in the slice that deletes that function.
+    /// ever producing this variant, so no live path constructs it any more —
+    /// hence the `#[allow]` below, which is accurate (dead_code is correct
+    /// that nothing builds one) rather than a lint the project disagrees
+    /// with. It stays declared, not deleted, only because
+    /// [`crate::agent::run_one_shot`]'s classic dispatch arm
+    /// (`run_pipeline_one_shot`) still matches on it and the crate's
+    /// classic-typed persistence/outcome plumbing still names it; both are
+    /// deleted in the same later slice (§1.5.3/§1.5.9 of the census) that
+    /// removes this variant and its `#[allow]` together.
+    #[allow(dead_code)]
     Classic,
     /// The raw step-loop with nothing over it — the default since #3381.
     Raw,
