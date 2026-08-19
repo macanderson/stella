@@ -782,8 +782,11 @@ fn only_a_shared_tree_attempt_shares_the_invocation_root_s_row_ids() {
 fn a_fleet_attempt_reflects_before_its_spend_is_read() {
     const FLEET: &str = include_str!("../fleet_cmd.rs");
 
+    // `rfind` so we anchor on the call site, not the `async fn` definition —
+    // the definition also matches `mine_attempt_lesson(\n` but sits above both
+    // the call and the spend read, which would make the ordering assert vacuous.
     let call = FLEET
-        .find("mine_attempt_lesson(\n")
+        .rfind("mine_attempt_lesson(\n")
         .expect("run_task must mine the attempt's turn (#3956)");
     let spend = FLEET
         .find("let spent = budget.session_spent_usd();")
