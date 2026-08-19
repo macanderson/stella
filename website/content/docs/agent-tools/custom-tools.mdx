@@ -69,12 +69,15 @@ Every field, in the shape the manifest parser accepts:
   <OptionCard name="name" required>
     The name the model sees. Must match `^[a-z][a-z0-9_]{1,63}$` — a lowercase
     letter followed by 1–63 more of `[a-z0-9_]`. A name that collides with a
-    built-in is skipped with a diagnostic rather than shadowing it, and so is a
-    name a built-in used to answer to — `run_tests`, `graph_query`, `grep` and
-    the rest of the retired surface stay reserved. The model still carries
-    those names' priors, and an operator's `"tools": {"run_tests": "off"}`
-    written when that built-in existed would otherwise start addressing your
-    manifest instead of nothing.
+    built-in is skipped with a diagnostic rather than shadowing it, and so is
+    every name listed in the catalog's two retired-name constants —
+    `run_tests`, `graph_query`, `grep` and the rest of those lists. The model
+    still carries those names' priors, and an operator's
+    `"tools": {"run_tests": "off"}` written when that built-in existed would
+    otherwise start addressing your manifest instead of nothing. Those lists
+    are not yet the complete history of names Stella has dispatched — see
+    [#3853](https://github.com/macanderson/stella/issues/3853) — so a name that
+    is accepted today is not proof it was never a built-in.
   </OptionCard>
   <OptionCard name="description" required>
     What the tool does, advertised to the model. An empty description is an

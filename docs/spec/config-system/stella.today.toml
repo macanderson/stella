@@ -297,7 +297,10 @@ scratch    = "off"   # one whole group
   command = "./scripts/session-context.sh"
 
 [[hooks.PreToolUse]]
-matcher = "task"
+# `matcher` globs the TOOL name, and the delegation tool is `delegate` since
+# #3192 -- `task` is now a group switch key and matches no tool, so this hook
+# would fire for nothing.
+matcher = "delegate"
   [[hooks.PreToolUse.hooks]]
   type      = "command"
   command   = "./scripts/audit-spawns.sh"

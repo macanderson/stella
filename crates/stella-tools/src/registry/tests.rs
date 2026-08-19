@@ -267,7 +267,7 @@ async fn get_environment_reports_the_registrys_scratch_directory() {
 /// `execute` + `drain_agent_uses` — the same two calls the session driver
 /// makes — so it measures the wiring rather than the new method.
 #[tokio::test]
-async fn a_task_delegation_records_an_agent_use_row() {
+async fn a_delegate_call_records_an_agent_use_row() {
     use stella_core::subagent::{SubAgentOutcome, SubAgentReport};
 
     struct StubDispatcher;
@@ -290,7 +290,7 @@ async fn a_task_delegation_records_an_agent_use_row() {
 
     let out = reg
         .execute(
-            "task",
+            "delegate",
             &serde_json::json!({
                 "description": "find retry policy",
                 "prompt": "Which file defines the retry policy?",
