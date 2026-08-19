@@ -359,6 +359,8 @@ pub(super) fn start(
 ) -> Result<WorkOutcome, String> {
     use stella_fleet::git::{SystemGitCli, WorktreeManager};
 
+    refuse_if_unsteered(root)?;
+
     let manager = WorktreeManager::new(SystemGitCli, root.to_path_buf())
         .with_worktrees_root(root.join(WORKTREES_DIR))
         .with_branch_prefix(attribution.branch_prefix());
@@ -407,6 +409,54 @@ pub(super) fn start(
     }
 
     Ok(outcome)
+}
+
+/// Refuse to work an issue with the workspace's steering switched off.
+///
+/// **A loop-driven turn must get exactly the steering a person-driven turn
+/// gets.** The whole design says the loop's behaviour comes from context
+/// records — how this repository wants code written, what to prefer, what to
+/// harden — and none of that reaches a turn when project steering is untrusted.
+///
+/// The trap is that it fails *silently and successfully*: the turn runs, writes
+/// plausible code, commits, and the pull request looks like every other one. A
+/// loop working unsteered is not a degraded loop, it is a loop doing work under
+/// nobody's standards, and it is worse than one that did not run — so this
+/// refuses rather than warns.
+///
+/// It refuses only when there is something to lose: a workspace with no records
+/// has no steering to miss, and demanding a trust flag from it would be
+/// ceremony.
+fn refuse_if_unsteered(root: &Path) -> Result<(), String> {
+    let records = root.join(".stella").join("rules");
+    let count = std::fs::read_dir(&records)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
+                })
+                .count()
+        })
+        .unwrap_or(0);
+
+    if count == 0 || crate::settings::project_code_execution_trusted() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "refusing to work an issue with this workspace's steering switched off.\n\
+         \n\
+         {} declares context records and none of them would reach the turn, so it \
+         would write code under nobody's standards — and it would look exactly like \
+         a turn that did.\n\
+         \n\
+         Set STELLA_TRUST_PROJECT=1 to let this repository steer the loop it is \
+         driving.",
+        records.display()
+    ))
 }
 
 /// Turn `git worktree add`'s branch collision into an actionable message.
