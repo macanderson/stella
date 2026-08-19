@@ -1,0 +1,21 @@
+{
+  "point": "after_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "goal-v1",
+    "stage": "execute",
+    "round": 0,
+    "goal": "fix the retry loop",
+    "turn": {
+      "completed": true,
+      "answer": "Fixed the retry loop and added a regression test.",
+      "tools": [
+        "read_file",
+        "edit_file"
+      ],
+      "changed_files": [
+        "src/retry.rs"
+      ]
+    }
+  }
+}

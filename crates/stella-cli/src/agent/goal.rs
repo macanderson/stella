@@ -1,12 +1,16 @@
 //! Goal-driven turns: judged rounds until a verifier confirms the goal is met.
 //!
-//! `run_goal_cmd` drives either the raw `Engine::run_goal` step-loop (the
-//! default since #3381) or the staged pipeline, opted into with `--pipeline
-//! classic`. The goal verifier is independent of the worker model and
-//! answers "does the whole effort meet the goal?" — distinct from the
-//! pipeline's per-change verification verifier.
+//! `run_goal_cmd` drives the raw `Engine::run_goal` step-loop (the default
+//! since #3381), the staged pipeline (`--pipeline classic`), or an installed
+//! wrapper plugin per round (`--pipeline <variant>`, [`goal_wrapped`],
+//! #3695 goal half). The goal verifier is independent of the worker model
+//! and answers "does the whole effort meet the goal?" — distinct from the
+//! pipeline's per-change verification verifier — and stays the same
+//! `Engine::assess` primitive on all three arms.
 
 use super::*;
+
+mod goal_wrapped;
 
 /// The session task board, tool by tool — everything the catalog files under
 /// the `task` group *except* the delegation tool that shares the group name.
@@ -391,27 +395,60 @@ pub(crate) async fn run_raw_one_shot(
 /// (`--pipeline classic`) runs the staged pipeline (triage → recall → plan →
 /// execute → witness → verify → verdict); `Raw` — the default since #3381,
 /// with or without `--no-pipeline` — falls back to the raw `Engine::run_goal`
-/// step-loop. A named plugin `Variant` is refused before this is ever called
-/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Goal` arm) —
-/// this door only ever sees `Classic` or `Raw`.
+/// step-loop; `Plugin(variant)` dispatches each round's worker turn through
+/// the named installed wrapper ([`goal_wrapped::run_goal_wrapped_turn`],
+/// #3695 goal half) while the goal verifier stays exactly what `Raw` uses.
+/// `stella fleet` still refuses a named plugin before this is ever called
+/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Fleet` arm);
+/// this door sees all three.
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
     budget_limit: Option<f64>,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
 ) -> Result<(), crate::failure::CliFailure> {
-    // Only `Classic`/`Raw` reach this door (see the doc above); either reads
-    // as one bool for the rest of this function's branching, same shape as
-    // before #3381.
+    // `Plugin` reads as `Raw` for every branch below except the final
+    // dispatch: the wrapped arm builds the same system prompt, the same
+    // recall block and the same tool stack `Raw` does, and differs only in
+    // which function drives the round loop.
     let use_pipeline = pipeline.is_classic();
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
+    // Resolved before the provider is built and before a single paid call —
+    // exactly the ordering `run_raw_one_shot` uses, and for the same reason:
+    // a `--pipeline` naming nothing installed must fail as a typo, not after
+    // the run it was meant to shape.
+    let resolved = match pipeline.plugin() {
+        Some(variant) => Some(
+            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
+                eprintln!("  ! {line}");
+            })
+            .map_err(crate::failure::CliFailure::from)?,
+        ),
+        None => None,
+    };
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
     crate::subagent::install_for_session(cfg, &registry)?;
+    // The goal door's host serves `recall` only — no `child_turn` plane; see
+    // `crate::wrapper_plugin`'s module doc for why a fixed slot is unsafe
+    // across a goal loop's own even/odd round math.
+    let bound = match resolved {
+        Some(resolved) => {
+            let host = crate::wrapper_plugin::WrapperHost::recalling(Box::new(
+                crate::wrapper_recall::SessionRecallHost::open(&cfg.workspace_root),
+            ));
+            Some(
+                resolved
+                    .serving(host)
+                    .map_err(crate::failure::CliFailure::from)?,
+            )
+        }
+        None => None,
+    };
     // Goal mode always renders human-readable output, so its half of the
     // fact is fixed at `true`; the stdio handles settle the rest.
     let ask = human_is_present(true);
@@ -508,6 +545,25 @@ pub async fn run_goal_cmd(
             mcp.clone(),
             recall_event,
             memory.as_mut(),
+        )
+        .await
+    } else if let Some(bound) = &bound {
+        goal_wrapped::run_goal_wrapped_turn(
+            &*provider,
+            base_tools,
+            &custom_tools,
+            &registry,
+            &mut messages,
+            &mut budget,
+            &calibration,
+            cfg,
+            &store,
+            goal,
+            Some(presence.id()),
+            budget_limit,
+            recall_event,
+            memory.as_mut(),
+            bound,
         )
         .await
     } else {

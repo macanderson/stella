@@ -1,0 +1,12 @@
+{
+  "point": "after_turn",
+  "body": {
+    "protocol_version": 1,
+    "evidence": {
+      "flip": "not-attempted",
+      "measurements": {
+        "met": 1
+      }
+    }
+  }
+}

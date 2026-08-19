@@ -664,14 +664,14 @@ pub(crate) enum Command {
         #[arg(long, hide = true)]
         no_pipeline: bool,
 
-        /// Run each working round through an installed wrapper plugin, by
-        /// the `[wrapper] id` its manifest declares (`stella plugin list`).
-        /// `classic` names the built-in staged pipeline (triage → recall →
-        /// plan → witness → execute → verify); omitted, the raw step-loop
-        /// runs with nothing over it (the default since #3381). A named
-        /// plugin variant is refused today — wrapper plugins run only on
-        /// `stella run --pipeline <variant>` (#3695 tracks driving them
-        /// through a judged round).
+        /// Run each round's working turn through an installed wrapper
+        /// plugin, by the `[wrapper] id` its manifest declares (`stella
+        /// plugin list`). `classic` names the built-in staged pipeline
+        /// (triage → recall → plan → witness → execute → verify); omitted,
+        /// the raw step-loop runs with nothing over it (the default since
+        /// #3381). A named plugin variant dispatches every round's worker
+        /// turn through the wrapper; the goal verifier that decides met/unmet
+        /// is unchanged either way.
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
     },

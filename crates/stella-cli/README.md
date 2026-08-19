@@ -60,14 +60,18 @@ Specific changes this crate is the far end of:
   unwrapped (raw) turn — on every door (#3388). Writing `"pipeline"` or
   `"deck-pipeline"` into `kind` is the bug that migration fixed; the
   measurement surface double-counts if it grows back.
-- **An installed wrapper plugin now dispatches on `stella run`.**
-  [`src/wrapper_plugin.rs`](src/wrapper_plugin.rs) resolves an installed
-  manifest and drives `stella_runtime::WrapperDispatch` for a live turn when
-  `--pipeline <variant>` names a plugin id (#3494); `plugins/stella-research`
-  is the shipped reference plugin. `stella goal` and `stella fleet` have no
-  wrapper driver yet and refuse a named plugin variant rather than silently
-  ignoring it (#3695) — see [`stella-runtime`](../stella-runtime)'s README
-  for exactly which doors call `WrapperDispatch` today.
+- **An installed wrapper plugin now dispatches on `stella run` and `stella
+  goal`.** [`src/wrapper_plugin.rs`](src/wrapper_plugin.rs) resolves an
+  installed manifest and drives `stella_runtime::WrapperDispatch` for a live
+  turn when `--pipeline <variant>` names a plugin id (#3494);
+  `plugins/stella-research` is the shipped reference plugin. `stella goal`
+  binds the same wrapper once and dispatches it once per judged round
+  ([`src/agent/goal_wrapped.rs`](src/agent/goal_wrapped.rs)), leaving the
+  goal verifier untouched (#3695, goal half). `stella fleet` has no wrapper
+  driver yet and refuses a named plugin variant rather than silently
+  ignoring it (#3695, fleet half) — see
+  [`stella-runtime`](../stella-runtime)'s README for exactly which doors
+  call `WrapperDispatch` today.
 - **Resolving a wrapper and serving it are two moments, deliberately.**
   `bind_installed` finds the plugin and declares its transport *before* the
   provider is built, so `--pipeline` naming nothing installed fails as a typo

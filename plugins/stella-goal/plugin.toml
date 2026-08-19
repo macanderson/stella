@@ -1,0 +1,221 @@
+# stella-goal — the goal-supervision reference plugin (#3695 follow-on;
+# `doc:pipeline-as-plugins` §3's `stella-goal` row; `doc:turn-loop-wrappers`
+# §9.2).
+#
+# §9.2 settles the one contradiction that blocked this plugin from existing:
+# the socket's own rule is "judge may not call a model" (synchronous, I/O-free
+# by construction, `stella_runtime::wrapper::verdict`), yet a goal verifier
+# genuinely *is* a model call. The resolution, stated verbatim there: **"The
+# model call belongs to after_turn, never to judge."** So this plugin spends
+# its one verifier-role child turn in `after_turn`, parses the verdict, and
+# reports it as `ObservedEvidence` — a number under a declared measurement
+# name (`wire.rs`'s own doc comment on `EvidenceSet` names this exact shape:
+# "A model call a wrapper spends in after_turn (a goal-mode verifier, say)
+# arrives here… as a number under a declared measurement name"). `judge` then
+# maps that evidence to a verdict deterministically, and `again` decides
+# whether to hold the round open for a correction — the same generic
+# arbiter/oracle machinery `crates/stella-plugin/tests/fixtures/arbiter.toml`
+# and `perf-budget.toml` already exercise, pointed at a verifier's assessment
+# instead of a witness test's flip or a benchmark's number.
+#
+# This is deliberately NOT the same thing as `stella goal --pipeline
+# <variant>` (`crates/stella-cli/src/agent/goal/goal_wrapped.rs`, landed this
+# session for #3695's goal half). That CLI path keeps
+# `stella_core::Engine::assess` as the one thing that decides met/unmet, and
+# says exactly why in its own module doc: encoding `GoalVerifierVerdict`'s
+# free-text feedback into `EvidenceSet`'s flip/measurement vocabulary is a
+# real gap, and moving goal's decision onto `judge`/`again` is a rewrite of
+# goal's verifier semantics ruled out of that slice. This plugin is the OTHER
+# half of the same design: a self-contained goal-supervision wrapper that
+# runs under `stella run --pipeline goal-v1`, using nothing but the generic
+# `WrapperDispatch` loop every arbiter-grade plugin already gets — it never
+# touches `stella goal`'s own command or `Engine::run_goal`. See the README's
+# "Known gaps" table for exactly what this costs against the real thing.
+#
+# What it does, once per round of whatever turn `stella run --pipeline
+# goal-v1` is holding open. At `execute` it contributes the goal framing every
+# working turn gets — the byte-mirrored `goal_kickoff_text`
+# (`crates/stella-core/src/goal.rs`) — so a worker turn started fresh by
+# `stella run`'s door sees the same words `stella goal`'s own loop opens with.
+# After the turn completes, it asks the host for one bounded turn at the
+# `verifier` role intent, sends it the byte-mirrored `VERIFIER_SYSTEM_PROMPT`
+# plus whatever the wire actually carries about the turn that ran, parses the
+# strict-JSON `{"met": ..., "reasoning": ..., "feedback": ...}` answer the way
+# `crates/stella-core/src/goal.rs::parse_verdict` does, and reports `met` as a
+# 0/1 measurement. It makes no model call itself, decides nothing, and grades
+# nothing — the flip from evidence to verdict is `judge`'s, read from the
+# `[requirements]`/`[oracle]` declared below as data.
+#
+# What it deliberately does NOT declare, each for a reason stated in the
+# README beside this file:
+#
+#   - no `recall`, no `run_test`. One host call, at one point, for the one
+#     thing this plugin cannot do itself: run an independent model turn.
+#   - no free-text correction of its own. `again`'s `Correction.guidance` is
+#     rendered by the HOST from the `[requirements]` statement below — this
+#     plugin has no way to carry the verifier's own `feedback` string forward
+#     into it, because `ObservedEvidence` has no field for prose (README
+#     "Known gaps"). That is real fidelity this plugin loses against
+#     `stella goal`'s own loop, not an oversight.
+#   - no `[[capabilities]]`. This plugin never opens a file, never searches a
+#     workspace, and never sees the working turn's own transcript beyond the
+#     `TurnOutcome` the wire carries — see main.py's module doc for exactly
+#     what that omits relative to `Engine::assess`'s real inputs.
+
+name = "stella-goal"
+description = "Frames the goal for the worker turn and, once it completes, asks the host for one independent verifier-role child turn — reporting its met/unmet assessment as evidence, never a verdict. Holds the turn open for a correction round when the declared requirement is unmet."
+
+# Arbiter: this is the whole reason the plugin exists. Steering can contribute
+# context and observe; only arbiter may hold a completion open past its first
+# turn (`Participation::Arbiter`'s own doc comment: "the strongest grant"),
+# and a goal-supervision plugin with nothing weaker to fall back to has to ask
+# for it — the lowest grade that still does the job is arbiter itself.
+[loop]
+participation = "arbiter"
+# Required alongside `arbiter` (`ManifestError::ArbiterMustDeclareStop`) even
+# though nothing in `WrapperDispatch::run`'s judge/again sequence dispatches a
+# `Stop` hook directly — the two are separate completion-gate mechanisms, and
+# this declaration is what a human reads at install to learn this plugin
+# binds the stronger one. `crates/stella-plugin/tests/fixtures/arbiter.toml`
+# and `perf-budget.toml` are the precedent for declaring it this way.
+hooks = ["Stop"]
+# Both points: `before_turn` for the goal framing, `after_turn` for the
+# verifier call and the evidence it produces. An undeclared point is never
+# dispatched (#3501), so leaving either off would silently drop half of what
+# this plugin exists to do.
+points = ["before_turn", "after_turn"]
+# The one host capability this plugin may ask for. `child_turn` is the
+# mechanism `doc:turn-loop-wrappers` §9.3 names for "a wrapper needs one
+# bounded model call it does not own the credential for", and the socket
+# supports it at `after_turn` generically — proven independent of this
+# plugin's own door by `crates/stella-runtime/src/wrapper/child_turn.rs`'s own
+# test fixtures, which declare `points = ["after_turn"]` alongside `calls =
+# ["child_turn"]` and drive the call from there. See README "Known gaps" for
+# the one place that generic support does not yet reach: no shipped host binds
+# a `verifier` seat to serve the role intent this plugin names below.
+calls = ["child_turn"]
+# NOT "one call, ever" despite reading that way at first glance — see README
+# "Known gaps" for the full account. `[loop] max_calls` feeds two different
+# ceilings that do not reset on the same schedule: `HostCallGate` bounds calls
+# per **point conversation** and is fresh every `before_turn`/`after_turn`
+# dispatch (`crates/stella-runtime/src/wrapper/dispatch.rs`'s own doc comment:
+# "a plugin that spent its calls researching before_turn must still be able to
+# ask when after_turn arrives"), so `main.py` asking once per `after_turn` is
+# genuinely "1" against that ceiling. But `ChildTurns` — the plane that
+# actually resolves the `verifier` role intent to a model call — spends this
+# SAME number as a **whole-run** budget that never resets between rounds
+# (`DEFAULT_HOST_MAX_CHILD_TURNS`'s own doc comment: "this bounds how much of
+# the user's money a plugin may spend, so it is per plugin for the whole
+# run"). An arbiter plugin that holds N rounds open, spending one verifier
+# call in each, needs this many child turns for the WHOLE run, not one — so
+# the honest ask is `GoalConfig::default().max_rounds` (8), matching
+# `max_holds` above, even though the host's own default ceiling
+# (`DEFAULT_HOST_MAX_CHILD_TURNS = 4`) will clamp it in practice.
+max_calls = 8
+# The ask, not the ceiling: `stella_core::goal::GoalConfig::default()`'s own
+# `max_rounds` is 8, and a hold buys one more round the same way a goal round
+# does, so 7 holds is the honest mirror of that default. `again` clamps this
+# against the host's own ceiling (`DEFAULT_HOST_MAX_HOLDS = 2`, and
+# `stella run`'s door never raises it — README "Known gaps"), so this plugin
+# asks for goal-mode parity and gets whatever the host is willing to fund.
+max_holds = 7
+
+# Arbiter's own definition of done — one clause, decided entirely by the
+# verifier's `met` answer. There is nothing else for this plugin to hold a
+# turn open over: it does not run tests, does not diff a witness, and asks
+# the host for nothing but the one child turn below.
+[requirements]
+goal-met = "an independent verifier turn assessed the goal as accomplished"
+
+# This oracle's evidence is not a fail→pass flip — a goal verdict is a
+# judgment, not a transition a witness test observes — so `flip =
+# "not-applicable"` and the one requirement above is decided entirely by the
+# check below (`ManifestError::UndecidableRequirement` would refuse this
+# manifest otherwise). No `command` line: with `[runtime]` declared, the
+# oracle is this plugin's own process (`Oracle::command`'s doc comment) —
+# there is no separate oracle binary, because the verifier call already
+# happens inline in `after_turn`.
+[oracle]
+flip = "not-applicable"
+# The one number this oracle ever reports: 1 when the verifier's `met` was
+# `true`, 0 when it was `false`. Absent entirely (never a fabricated 0) on
+# every degradation main.py's module doc names — a missing measurement is
+# `UndecidedReason::MeasurementMissing`, never a silently satisfied budget.
+measurements = ["met"]
+
+[[oracle.checks]]
+requirement = "goal-met"
+check = "met >= 1"
+
+# `[roles]` requires `[subloop]` (`ManifestError::RolesRequireSubloop`) even
+# though this plugin uses none of `[subloop]`'s own bounded-child-turn
+# dispatch mechanism — the same awkward coupling `plugins/stella-plan`
+# documents and tracks at #3496. `stages = ["verify"]` is declared only to
+# satisfy the validator; the host never reads it for this plugin.
+[subloop]
+stages = ["verify"]
+
+# The one role intent this plugin names. `tier = "verifier"` is the honest
+# name for what this call is — an independent assessment of the worker's own
+# turn — but no shipped host's `ChildTurns::declare` binds it today:
+# `default_seats()` serves `worker`/`triage`/`research`/`plan` and
+# deliberately not `verifier` (`child_turn.rs`'s own module doc names the
+# reason: attributing a plugin's child turn to `ModelCallRole::Verdict` would
+# put a call on the receipt the pipeline itself did not make, and a host that
+# wants to serve it must say so with `.with_seat` and own the claim). So this
+# call degrades to `HostCallRefusal::Unavailable` on every host running today
+# — a real, common, honestly-handled case, not a hypothetical one. See
+# README "Known gaps".
+[roles.verifier]
+tier = "verifier"
+
+# The stage order this variant runs, and the id the executions row records
+# (#3388) — transcribed from `stage_rank` in
+# `crates/stella-pipeline/src/replay.rs`, the same source `plan-v1` and
+# `research-v1` read from. Every entry is unconditional: unlike those two
+# plugins, this one has no single pipeline signal that gates its own concern
+# — goal supervision assesses whatever turn ran, the same way
+# `stella_core::Engine::run_goal` assesses every round unconditionally rather
+# than only the rounds some triage signal names.
+[wrapper]
+id = "goal-v1"
+
+[[wrapper.stages]]
+name = "triage"
+
+[[wrapper.stages]]
+name = "recall"
+
+[[wrapper.stages]]
+name = "research"
+
+[[wrapper.stages]]
+name = "plan"
+
+[[wrapper.stages]]
+name = "scope"
+
+[[wrapper.stages]]
+name = "execute"
+
+[[wrapper.stages]]
+name = "witness"
+
+[[wrapper.stages]]
+name = "verify"
+
+# How the host starts this plugin's process. A list, never a shell string;
+# `${plugin_dir}` interpolation is the host's job.
+[runtime]
+argv = ["python3", "${plugin_dir}/main.py"]
+# The one child-turn conversation this plugin holds per point is bounded by
+# the host's own dispatcher and budget guard, so this ceiling is a backstop
+# against a process that hangs before writing anything.
+timeout_secs = 60
+# Default-deny. `PATH` is the whole list, and it is here only so the host can
+# find `python3` — this plugin reaches for no filesystem path, no candidate
+# root, and asks the host for everything else it needs.
+env = ["PATH"]
+
+# No `[[capabilities]]` table: this plugin asks for nothing outside the turn.
+# It never reads a file and never searches a workspace.

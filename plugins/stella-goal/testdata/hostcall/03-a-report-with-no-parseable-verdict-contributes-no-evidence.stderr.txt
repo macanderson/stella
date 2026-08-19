@@ -1,0 +1,1 @@
+stella-goal: the verifier turn's report contained no parseable verdict; contributing no evidence

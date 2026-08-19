@@ -80,9 +80,36 @@
 //! cannot be added to a gate afterwards — the two halves are therefore separate
 //! moments, not one function with an `Option` in it.
 //!
-//! And two scope limits: `--pipeline` is on `stella run` alone and a plugin's
-//! `Unmet` does not fail the process (#3554), and only this driver of
-//! `doc:wrapper-socket` §6's three exists (#3551).
+//! And two scope limits: `--pipeline` reaches `stella run` and `stella goal`
+//! only — `stella fleet` still refuses a named variant (#3695) — and a
+//! plugin's `Unmet` does not fail the process (#3554), and only this driver
+//! of `doc:wrapper-socket` §6's three exists (#3551).
+//!
+//! # `stella goal`'s driver is a second call site, not a second sequence
+//!
+//! `crate::agent::goal::goal_wrapped::run_goal_wrapped_turn` binds a wrapper exactly as
+//! this module's [`resolve`]/[`ResolvedWrapper::serving`] do, then calls
+//! [`WrapperDispatch::run`] once per judged round — the goal loop's own
+//! round loop, not the wrapper's, decides how many rounds run, because the
+//! goal verifier (`stella_core::Engine::assess`) is untouched (#3695, goal
+//! half). Two things that follows from keeping the verifier out of `judge`:
+//! a round's dispatch is refused outright if the plugin's own `[oracle]`
+//! holds it open past one internal turn — `DispatchReport::rounds != 1` —
+//! because a second worker turn at the same `turn_instance` would collide
+//! step manifests with the first rather than degrade gracefully (tracked as
+//! a real limit, not silently accepted); and the goal round's own execution
+//! row (opened once, before the loop, exactly like [`RawTurnDriver`]'s door
+//! opens one) records `bound`'s variant id for the whole run, honest because
+//! every round under that row really was dispatched through it.
+//!
+//! The goal door's [`WrapperHost`] serves `recall` and deliberately no
+//! `child_turn` plane: [`PLUGIN_CHILD_TURN_SLOT`] is a fixed `turn_instance`,
+//! chosen because `stella run`'s one-shot worker never uses more than slot 0
+//! — a goal round's own worker/verifier pair already occupies the even/odd
+//! slot beside every round, so a fixed slot collides with whichever round
+//! lands on it (round 1's verifier is already slot 1). Wiring a
+//! collision-safe per-round slot for goal-mode `child_turn` is left to a
+//! follow-up rather than guessed at here (#3833).
 
 use std::sync::Arc;
 
@@ -210,26 +237,35 @@ pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'stat
 
 /// Refuse a named wrapper plugin variant on a door that cannot drive one yet.
 ///
-/// `stella run` is the only door with a real [`TurnDriver`] implementation
-/// ([`WrapperDispatch`] over one raw turn): `goal` and `fleet` each drive
-/// their own **round loop** (a judged goal round, a fleet worker's attempt),
-/// and wiring a wrapper plugin through either is a real driver — not a
-/// formatting difference — that nothing in this crate implements (#3695).
-/// `--pipeline classic` and no `--pipeline` at all both resolve to
+/// `stella run` and `stella goal` each have a real [`TurnDriver`]
+/// implementation now: `run` drives [`WrapperDispatch`] over its one raw
+/// turn, and `goal` drives it once per judged round
+/// (`crate::agent::goal::goal_wrapped::run_goal_wrapped_turn`) while leaving the round
+/// loop's own met/unmet decision — the goal verifier, `Engine::assess` —
+/// untouched (#3695, goal half). `fleet` drives its own **round loop** (a
+/// worker's attempt) with no [`TurnDriver`] over it yet, and wiring one
+/// through is a real driver — not a formatting difference — that nothing in
+/// this crate implements; #3695 stays open for that half. `--pipeline
+/// classic` and no `--pipeline` at all both resolve to
 /// [`PipelineChoice::Classic`]/[`PipelineChoice::Raw`], which is fine on
-/// every door; only a *named* plugin variant is out of reach here, and it is
-/// refused with a message naming `stella run` as the door that can run it —
-/// never silently downgraded to raw or to classic, which would run something
-/// other than what was asked for without saying so.
+/// every door; only a *named* plugin variant on `fleet` is out of reach here,
+/// and it is refused with a message naming `stella run`/`stella goal` as the
+/// doors that can run it — never silently downgraded to raw or to classic,
+/// which would run something other than what was asked for without saying
+/// so.
 pub(crate) fn reject_plugin_variant_for_door(
     door: &str,
     choice: PipelineChoice<'_>,
 ) -> Result<(), String> {
+    if door != "fleet" {
+        return Ok(());
+    }
     match choice.plugin() {
         Some(variant) => Err(format!(
             "--pipeline {variant} is not supported on `stella {door}` yet — wrapper plugins \
-             run only on `stella run --pipeline {variant}` today (#3695). Pass `--pipeline \
-             classic` for the staged pipeline, or omit --pipeline for the raw loop."
+             run on `stella run --pipeline {variant}` and `stella goal --pipeline {variant}` \
+             today, but not `stella fleet` (#3695 stays open for a fleet worker's driver). Pass \
+             `--pipeline classic` for the staged pipeline, or omit --pipeline for the raw loop."
         )),
         None => Ok(()),
     }
@@ -329,6 +365,18 @@ impl BoundWrapper {
         self.child_turns
             .as_ref()
             .map_or_else(Vec::new, |plane| plane.spends())
+    }
+
+    /// Print what one round's dispatch concluded, exactly as [`run_wrapped`]
+    /// does for `stella run`'s one-shot report.
+    ///
+    /// A method rather than exposing `gate` — the field [`report_to`] reads
+    /// alongside `report` — because the gate outlives any single round and a
+    /// caller driving several rounds through this same [`BoundWrapper`] (the
+    /// goal loop) must never hold a second reference to it that could drift
+    /// from what [`Self::child_spends`] already reports honestly.
+    pub(crate) fn report(&self, format: OutputFormat, report: &DispatchReport) {
+        report_to(format, report, &self.gate, &self.child_spends());
     }
 }
 

@@ -135,36 +135,48 @@ fn the_deprecation_notice_fires_only_when_no_pipeline_was_passed() {
     assert!(notice.contains("--pipeline"), "{notice}");
 }
 
-/// **Witness (#3695).** `stella goal`/`stella fleet` cannot drive a
-/// wrapper plugin today — only `stella run` implements [`TurnDriver`] over
-/// one — so a named `--pipeline <variant>` must be refused on those doors
+/// **Witness (#3695, fleet half).** `stella fleet` cannot drive a wrapper
+/// plugin yet — it has no [`TurnDriver`] over its own worker-attempt round
+/// loop — so a named `--pipeline <variant>` must still be refused there
 /// rather than silently downgraded to raw or promoted to classic. This
 /// assertion fails on code that has no such gate at all (every door would
 /// accept-and-ignore the variant) and passes on this one.
 #[test]
-fn a_named_plugin_variant_is_refused_on_a_door_that_cannot_drive_one() {
-    let err = reject_plugin_variant_for_door("goal", PipelineChoice::Plugin("budget-v1"))
-        .expect_err("goal has no wrapper driver");
-    assert!(err.contains("budget-v1"), "{err}");
-    assert!(err.contains("stella goal"), "{err}");
-    assert!(
-        err.contains("stella run --pipeline budget-v1"),
-        "the refusal must name the door that CAN run it: {err}"
-    );
-
+fn a_named_plugin_variant_is_refused_on_fleet() {
     let err = reject_plugin_variant_for_door("fleet", PipelineChoice::Plugin("budget-v1"))
-        .expect_err("fleet has no wrapper driver either");
+        .expect_err("fleet has no wrapper driver yet");
+    assert!(err.contains("budget-v1"), "{err}");
     assert!(err.contains("stella fleet"), "{err}");
+    assert!(
+        err.contains("stella run --pipeline budget-v1")
+            && err.contains("stella goal --pipeline budget-v1"),
+        "the refusal must name the doors that CAN run it: {err}"
+    );
+}
+
+/// **Witness (#3695, goal half).** `stella goal` now has a real
+/// [`TurnDriver`] (`crate::agent::goal_wrapped`), so a named `--pipeline
+/// <variant>` is no longer refused there — it used to be, unconditionally,
+/// before this change. This assertion fails against that code (which
+/// returns `Err` for every plugin variant on `goal`) and passes on this one.
+#[test]
+fn a_named_plugin_variant_is_accepted_on_goal() {
+    reject_plugin_variant_for_door("goal", PipelineChoice::Plugin("budget-v1"))
+        .expect("goal now drives a wrapper plugin per round");
 }
 
 /// `classic` and no flag at all both resolve away from `Plugin` before
-/// reaching the gate, so neither is refused on a door with no wrapper
-/// driver — only a *named* variant is out of reach there.
+/// reaching the gate, so neither is refused anywhere — only a *named*
+/// variant is ever in reach of the gate, and only on `fleet`.
 #[test]
-fn classic_and_raw_are_never_refused_on_a_door_with_no_wrapper_driver() {
+fn classic_and_raw_are_never_refused_on_any_door() {
     reject_plugin_variant_for_door("goal", PipelineChoice::Classic)
         .expect("classic has no plugin to drive — nothing to refuse");
     reject_plugin_variant_for_door("goal", PipelineChoice::Raw)
+        .expect("raw has no plugin to drive — nothing to refuse");
+    reject_plugin_variant_for_door("fleet", PipelineChoice::Classic)
+        .expect("classic has no plugin to drive — nothing to refuse");
+    reject_plugin_variant_for_door("fleet", PipelineChoice::Raw)
         .expect("raw has no plugin to drive — nothing to refuse");
 }
 
