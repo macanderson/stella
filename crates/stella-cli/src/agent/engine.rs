@@ -386,14 +386,12 @@ pub(crate) struct EngineWiring {
     /// [`ModelRef`] the pins route to (adapters bind their model id at
     /// construction, so each distinct ref needs its own instance).
     pub(crate) extra_providers: Vec<(ModelRef, Box<dyn Provider>)>,
-    pub(crate) role_overrides: stella_pipeline::PipelineRoleOverrides,
     /// The model `Role::Worker`/`Role::Plan` actually resolve to: the
     /// worker's own `pipeline_worker_model`/`agents.worker.*` pin when one
     /// is configured and its provider is credentialed (issue #276), else
     /// the session default this wiring was built with. Callers building the
     /// worker's own [`EngineConfig`] (catalog-based context-window and
-    /// reasoning-capability clamps) must key off THIS, not `cfg` directly —
-    /// see `pipeline_engine_config_for`.
+    /// reasoning-capability clamps) must key off THIS, not `cfg` directly.
     pub(crate) worker_model: ModelRef,
     pub(crate) notices: Vec<String>,
 }
@@ -543,7 +541,6 @@ pub(crate) fn resolve_engine_wiring(
         profiles: vec![worker_profile],
         pins: RoleTable::new(),
         extra_providers: Vec::new(),
-        role_overrides: stella_pipeline::PipelineRoleOverrides::default(),
         worker_model: worker_ref.clone(),
         notices: Vec::new(),
     };
@@ -565,10 +562,9 @@ pub(crate) fn resolve_engine_wiring(
     // the same model — unpinned, they share the worker's tier (`resolve_tier`
     // treats all three identically), so leaving them out would silently revert
     // plan/research/witness turns to the session default the moment the worker
-    // is overridden, defeating "plan rides the worker"
-    // (`pipeline_engine_config_for`'s doc comment). A role that names its own
-    // model re-pins over this a few lines down; this is the floor, not the
-    // final answer.
+    // is overridden, defeating "plan rides the worker". A role that names its
+    // own model re-pins over this a few lines down; this is the floor, not
+    // the final answer.
     // ...unless the invocation carries an explicit `--model`. That flag's
     // documented job IS pinning the worker model for one run, so settings
     // must lose to it — otherwise the pin is not merely ignored but
