@@ -698,14 +698,6 @@ fn worker_event_sender(tx: &mpsc::UnboundedSender<AgentEvent>) -> stella_core::E
     stella_core::EventSender::new(tx.clone()).pairing_stage_complete()
 }
 
-/// One worker turn in `root`, on the calling thread's runtime — the
-/// `Engine::run_turn` step-loop, either raw or dispatched through the
-/// installed wrapper plugin `wrapper_variant` names (`--pipeline <variant>`,
-/// #3695). Fleet used to also route a worker through the staged pipeline
-/// (`--pipeline classic`); that driver has been removed from this build
-/// (#3865), so the raw loop is what a wrapper wraps and what an unwrapped
-/// attempt runs.
-#[allow(clippy::too_many_arguments)] // one caller (EngineWorker::run); composition wiring
 /// The volatile steering block for one fleet attempt: recalled frames, the
 /// selected skills, the matched context records, and today's date.
 ///
@@ -764,6 +756,14 @@ async fn worker_recall_block(
     (recalled.text, event)
 }
 
+/// One worker turn in `root`, on the calling thread's runtime — the
+/// `Engine::run_turn` step-loop, either raw or dispatched through the
+/// installed wrapper plugin `wrapper_variant` names (`--pipeline <variant>`,
+/// #3695). Fleet used to also route a worker through the staged pipeline
+/// (`--pipeline classic`); that driver has been removed from this build
+/// (#3865), so the raw loop is what a wrapper wraps and what an unwrapped
+/// attempt runs.
+#[allow(clippy::too_many_arguments)] // one caller (EngineWorker::run); composition wiring
 async fn run_task(
     cfg: &Config,
     budget_limit: Option<f64>,
