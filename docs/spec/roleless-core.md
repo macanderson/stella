@@ -210,20 +210,57 @@ Two decisions must be settled before writing code, and both are named in §8.
 
 ### Slice 4 — the config collapse (gap D)
 
-Delete `pipeline_<role>_model` (192 refs), `agents.<persona>`, and
-`EngineAgentKind` (276 refs). `agent_engine_config` keeps `default_model`,
+**Splits in two, and the split is forced by a guard rather than chosen.**
+
+**4a — the settings schema.** Delete `pipeline_<role>_model` (192 refs) and the
+`agents.<persona>` map. `agent_engine_config` keeps `default_model`,
 `allowed_models`, `auto_mode`, `effort_auto`, `reasoning_auto`,
 `model_output_caps`, and `seat_models`. Old keys become a **named deprecation**:
 recognized, ignored, and reported once with the seat assignment that replaces
 them — never a silent drop, because these keys currently read like capabilities
 and a silent removal keeps them reading that way.
 
+Two constraints that are not obvious from the code:
+
+- **The bench harness writes `pipeline_verifier_model` into Stella's settings**
+  (`bench/harbor_adapter/stella_harbor/posture.py`,
+  `bench/terminal_bench_analysis/tb21_posture_schema.py`), and a posture naming
+  a verifier that does not resolve now refuses the run — added because the
+  earlier behavior "left the run executing the control arm under a witness-arm
+  digest" (#1147). Inert in the engine is **not** unused by the harness. The
+  adapter and the posture schema migrate in the same PR, or the key stays.
+- The TUI keeps its own mirror of the enum
+  (`crates/stella-tui/src/envelope/engine_config.rs`). That envelope is a shared
+  cell with slice 5; exactly one PR owns the shape change.
+
+**4b — `EngineAgentKind` and `role_key()`.** Blocked behind slices 2 and 6, and
+this is the forcing constraint: `scripts/check-role-names.sh` parses
+`role_key()`'s match arms out of `crates/stella-cli/src/config_wiring.rs` by awk
+and **fails closed** when the function is gone, with a message that says in
+terms "repoint this guard; do not delete it". `role_key()` takes an
+`EngineAgentKind`, so the enum cannot go while the guard reads it, and the guard
+cannot go before slice 2 (§6, slice 6). Leave both standing with a comment
+naming the guard as their last consumer, so the next reader does not try again.
+
+The split is not a climb-down: 4a removes every key a user can *set*, which is
+the visible half and the one §2 is about. What survives is one enum and one
+function feeding a guard, invisible to users, deleted the moment the guard's
+premise dissolves.
+
 - **Witness:** a settings file carrying every retired key loads, warns by name,
   and changes no behavior.
-- **Done when:** the only role name in `crates/stella-cli/src/settings/` is
-  `default`.
+- **Done when (4a):** no `pipeline_<role>_model` or `agents.<persona>` key
+  exists, and the bench harness configures a seat rather than a pipeline pin.
 
 ### Slice 5 — the settings UI becomes a seat list (gap D)
+
+**Parallelizable with 4a, with one shared cell.** The two live in different
+crates — 4a in `crates/stella-cli/src/settings/`, this in `crates/stella-tui/` —
+and meet only at `crates/stella-tui/src/envelope/engine_config.rs`, the mirror
+of `EngineAgentKind` the driver populates. That envelope is the shared cell, and
+the rule is the one this repository has learned three times over: **one PR owns
+it, the other rebases.** This slice should own it, because it is the consumer
+and the new shape is a consequence of what the pane needs to render.
 
 The TUI's `AGENTS` pane loses its six compiled-in persona tabs and gains what
 the `TOOLS` pane already has and it does not: **rows from the live session**.
