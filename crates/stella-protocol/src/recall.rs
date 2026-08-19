@@ -259,11 +259,31 @@ impl ContextRecallPort for NoContextRecall {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn no_context_recall_is_inert() {
-        assert!(NoContextRecall.recall("anything").await.is_empty());
+    /// Drives a future to completion on the current thread with no runtime.
+    ///
+    /// This crate is a zero-logic, zero-I/O leaf (`AGENTS.md` invariant 4) and
+    /// pulls in no async executor — [`ContextRecallPort::recall`] is `async`
+    /// only because the trait must accommodate an implementer that really
+    /// does await a query, and [`NoContextRecall`]'s own body never does.
+    /// `Waker::noop` (stable since 1.90) is enough to poll a future that
+    /// completes on its first poll; a future that genuinely parks would hang
+    /// here, which is the correct failure mode for a "no-op port" test.
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        use std::task::{Context, Poll};
+
+        let mut fut = std::pin::pin!(fut);
+        let waker = std::task::Waker::noop();
+        match fut.as_mut().poll(&mut Context::from_waker(waker)) {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("test future did not complete on its first poll"),
+        }
+    }
+
+    #[test]
+    fn no_context_recall_is_inert() {
+        assert!(block_on(NoContextRecall.recall("anything")).is_empty());
         assert!(
-            NoContextRecall.recall("anything").await.usage.is_none(),
+            block_on(NoContextRecall.recall("anything")).usage.is_none(),
             "a port with no CGP host behind it reports no usage"
         );
     }
