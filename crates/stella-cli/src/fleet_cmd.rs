@@ -79,13 +79,30 @@ pub async fn run_fleet(
     watch: bool,
     task_timeout: Option<std::time::Duration>,
     output_format: crate::OutputFormat,
+    pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
 ) -> Result<(), String> {
+    // The whole door is refused under the enterprise process-free authority,
+    // whatever `--pipeline` says (`authorize_execution_surface_with` admits
+    // `RawOneShot` alone) — so a wrapper plugin's child process can never
+    // start inside that boundary through this door, and `stella run`'s own
+    // `pipeline.is_raw()` check has no counterpart to grow here.
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Fleet,
     )?;
     let root = cfg.workspace_root.clone();
     let plan = load_plan(prompts, plan_file)?;
     plan.validate().map_err(|e| format!("invalid plan: {e}"))?;
+    // Resolved once here, before a worktree is cut or a provider is built, for
+    // the reason `run_raw_one_shot` resolves before its own paid call: a
+    // `--pipeline` naming nothing installed must fail as a typo, not once per
+    // task after the fan-out has started. Each worker binds its own process
+    // from this same roster and root (`wrapped::bind_for_attempt`) — this
+    // resolve is the pre-flight and the one place the roster's notices are
+    // printed.
+    let wrapper_variant = pipeline.plugin();
+    if let Some(variant) = wrapper_variant {
+        crate::wrapper_plugin::resolve(&root, variant, &mut |line| eprintln!("  ! {line}"))?;
+    }
 
     // Pin the base to a sha now: "HEAD" would silently drift as shared-tree
     // tasks commit, and every isolated branch should cut from the same base.
@@ -164,6 +181,7 @@ pub async fn run_fleet(
         per_child_budget: budget_limit.map(|b| b / max_concurrency.max(1) as f64),
         run_id: run_id.clone(),
         dash: worker_dash,
+        wrapper_variant: wrapper_variant.map(str::to_string),
     };
     let fleet = Fleet::new(
         worker,
@@ -484,6 +502,16 @@ struct EngineWorker {
     /// (Running → Done/Failed) and its `run_task` tees every `AgentEvent` to
     /// the grid. `None` keeps the headless path untouched.
     dash: Option<mpsc::UnboundedSender<FleetMsg>>,
+    /// The installed wrapper plugin every attempt runs under
+    /// (`--pipeline <variant>`, #3695), or `None` for the raw step-loop.
+    ///
+    /// The variant *name* rather than a bound wrapper: binding starts nothing,
+    /// but a [`stella_runtime::wrapper::WrapperDispatch`] is neither `Send` to
+    /// the worker's own OS thread nor shareable across concurrent attempts —
+    /// each holds one plugin conversation at a time. So each attempt binds its
+    /// own from this name, in its own tree, and `run_fleet`'s pre-flight has
+    /// already proven the name resolves.
+    wrapper_variant: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -502,6 +530,7 @@ impl FleetWorker for EngineWorker {
         // half of a oneshot from the async side.
         let cfg = self.cfg.clone();
         let per_child_budget = self.per_child_budget;
+        let wrapper_variant = self.wrapper_variant.clone();
         let task = task.clone();
         let root = workspace_root.to_path_buf();
         let claim_holder = format!("{}/{}", self.run_id, task.id);
@@ -547,6 +576,7 @@ impl FleetWorker for EngineWorker {
                         abandon_rx,
                         worker_dash,
                         worker_spend,
+                        wrapper_variant.as_deref(),
                     ))
                 });
             let _ = tx.send(result);
@@ -658,10 +688,13 @@ fn worker_event_sender(tx: &mpsc::UnboundedSender<AgentEvent>) -> stella_core::E
     stella_core::EventSender::new(tx.clone()).pairing_stage_complete()
 }
 
-/// One worker turn in `root`, on the calling thread's runtime — the raw
-/// `Engine::run_turn` step-loop. Fleet used to also route a worker through
-/// the staged pipeline (`--pipeline classic`); that driver has been removed
-/// from this build (#3865), so every worker takes this path now.
+/// One worker turn in `root`, on the calling thread's runtime — the
+/// `Engine::run_turn` step-loop, either raw or dispatched through the
+/// installed wrapper plugin `wrapper_variant` names (`--pipeline <variant>`,
+/// #3695). Fleet used to also route a worker through the staged pipeline
+/// (`--pipeline classic`); that driver has been removed from this build
+/// (#3865), so the raw loop is what a wrapper wraps and what an unwrapped
+/// attempt runs.
 #[allow(clippy::too_many_arguments)] // one caller (EngineWorker::run); composition wiring
 async fn run_task(
     cfg: &Config,
@@ -673,6 +706,7 @@ async fn run_task(
     abandoned: tokio::sync::oneshot::Receiver<()>,
     dash: Option<mpsc::UnboundedSender<FleetMsg>>,
     spend: crate::fleet_spend::SpendRecovery,
+    wrapper_variant: Option<&str>,
 ) -> Result<WorkerOutcome, String> {
     // Where this workspace starts. In an ISOLATED worktree this is the whole
     // attribution story — one writer, so the whole advance to `HEAD` is this
@@ -684,6 +718,20 @@ async fn run_task(
     // multiple fleets (and the deck) safe in ONE tree. Captured before the
     // per-worker root override below.
     let claims_store = agent::open_store(&cfg.workspace_root);
+
+    // Bound before the provider is built and before this attempt's first paid
+    // call, from the INVOCATION root's roster (still `cfg.workspace_root`
+    // here, before the per-worker override below) over the tree this attempt
+    // actually runs in — see `wrapped`'s module doc for why those two roots
+    // differ and which one each half needs.
+    let wrapped = match wrapper_variant {
+        Some(variant) => Some(wrapped::bind_for_attempt(
+            &cfg.workspace_root,
+            root,
+            variant,
+        )?),
+        None => None,
+    };
 
     let mut cfg = cfg.clone();
     cfg.workspace_root = root.to_path_buf();
@@ -730,10 +778,19 @@ async fn run_task(
     // a one-shot or deck turn. The store is rooted in the task worktree so
     // parallel workers never contend on a single SQLite writer.
     let store = agent::open_store(root);
-    // `pipeline_variant` is always NULL now — the staged pipeline that used
-    // to drive some fleet workers (#3381, #3388, #3684) is gone (#3865), so
-    // every attempt this build records ran the raw step-loop.
-    let execution = agent::begin_execution(&store, "fleet", &task.prompt, &cfg, None, None);
+    // The wrapper that actually drove this attempt, or NULL for the raw
+    // step-loop — the same honesty rule #3388/#3684 hold every other door to.
+    // The staged pipeline that used to write `classic` here (#3381) is gone
+    // (#3865), so the only non-NULL value this build can record is an
+    // installed plugin's own variant id (#3695).
+    let execution = agent::begin_execution(
+        &store,
+        "fleet",
+        &task.prompt,
+        &cfg,
+        None,
+        wrapped.as_ref().map(wrapped::AttemptWrapper::variant),
+    );
     // From here on this attempt's spend is durable in the store even if this
     // thread never lives to report it — publish the handle that makes it
     // readable from the dispatch side (#1216).
@@ -825,7 +882,7 @@ async fn run_task(
         let gate: Arc<WatchGate> = Arc::new(WatchGate(pause));
         let _controls = registry
             .attach_turn_controls(stella_core::ports::TurnControls::none().with_gate(gate.clone()));
-        let raced = {
+        let raced: Raced<Result<TurnOutcome, String>> = {
             let hook_runner = ShellHookRunner;
             let mut engine = Engine::with_sleeper(
                 &*provider,
@@ -845,27 +902,56 @@ async fn run_task(
                 name: stella_protocol::StageKind::Execute,
                 scope: stella_protocol::StageScope::Run,
             });
-            // A fleet worker owns its run (#3379) — no pipeline above it, so
-            // the run's terminator is this lane's to emit. It is sent once
-            // below, gated on the worker's own `success` flag, rather than
-            // sealed on drop here: a cancelled or aborted worker must end on
-            // `Error` alone, and only the code after the race knows which of
-            // the three ways this lane ended.
-            let worker = worker_event_sender(&tx);
-            tokio::select! {
-                outcome = engine.run_turn_with_sender(&mut messages, &mut budget, &worker) => {
-                    Raced::Outcome(outcome)
+            match &wrapped {
+                // `--pipeline <variant>`: the wrapper bound for this attempt
+                // owns the round loop over the same engine the raw arm below
+                // drives, and the stop line races the whole dispatch rather
+                // than one turn inside it — a stopped worker must not keep
+                // spending in a plugin's held-open round either (#3695).
+                Some(wrapper) => {
+                    let input = wrapper.round_input(&task.prompt, budget_limit.is_some());
+                    let mut driver = wrapper.driver(&engine, &mut messages, &mut budget, &tx);
+                    // The dispatch's own report is carried out of the race
+                    // rather than settled inside it: `settle` consumes the
+                    // driver for its last round's outcome, and the racing
+                    // future still borrows it until the `select!` scope ends.
+                    let dispatched = tokio::select! {
+                        report = wrapper.dispatch(input, &mut driver) => Some(report),
+                        _ = stop_wait => None,
+                    };
+                    match dispatched {
+                        Some(report) => Raced::Outcome(wrapper.settle(report, driver)),
+                        None => Raced::Stopped,
+                    }
                 }
-                _ = stop_wait => Raced::Stopped,
+                // A fleet worker owns its run (#3379) — no pipeline above it,
+                // so the run's terminator is this lane's to emit. It is sent
+                // once below, gated on the worker's own `success` flag, rather
+                // than sealed on drop here: a cancelled or aborted worker must
+                // end on `Error` alone, and only the code after the race knows
+                // which of the three ways this lane ended.
+                None => {
+                    let worker = worker_event_sender(&tx);
+                    tokio::select! {
+                        outcome = engine.run_turn_with_sender(&mut messages, &mut budget, &worker) => {
+                            Raced::Outcome(Ok(outcome))
+                        }
+                        _ = stop_wait => Raced::Stopped,
+                    }
+                }
             }
         };
         match raced {
-            Raced::Outcome(TurnOutcome::Completed { text, .. }) => {
+            Raced::Outcome(Ok(TurnOutcome::Completed { text, .. })) => {
                 (truncate(&text), true, "completed", false)
             }
-            Raced::Outcome(TurnOutcome::Aborted { reason, .. }) => {
+            Raced::Outcome(Ok(TurnOutcome::Aborted { reason, .. })) => {
                 (truncate(&reason), false, "aborted", false)
             }
+            // A wrapper that could not be driven fails the attempt by name —
+            // never a silently successful one, and never a downgrade to the
+            // raw loop the operator did not ask for.
+            Raced::Outcome(Err(reason)) => (truncate(&reason), false, "aborted", false),
             Raced::Stopped => (STOPPED.to_string(), false, "cancelled", true),
         }
     };
@@ -1052,6 +1138,8 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
         ledger_path.display(),
     );
 }
+
+mod wrapped;
 
 /// Where the fleet command's plan-shape belongs in docs/tests: a plan file is
 /// the serde form of [`stella_fleet::Plan`].

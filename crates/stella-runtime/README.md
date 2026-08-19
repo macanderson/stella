@@ -77,12 +77,15 @@ mapping as a pure function (`tests/wrapper_verdict.rs`,
 is `WrapperDispatch`, which resolves the declared stage program, calls
 `before_turn` per stage, hands a `TurnPrelude` to the host's `TurnDriver`,
 calls `after_turn`, and settles with `judge` + `again` — looping while the
-verdict asks for another turn. `crates/stella-cli` drives it from **two**
+verdict asks for another turn. `crates/stella-cli` drives it from **three**
 doors, not one, each calling `WrapperDispatch::run` a different number of
 times per invocation: `stella run --pipeline <variant>` was its first driver
 and calls it exactly once per process, over the one raw turn the process
-runs; `stella goal --pipeline <variant>` (#3695, goal half) calls it once
-**per judged round** — the goal loop's own round loop, not
+runs; `stella fleet --pipeline <variant>` (#3695, fleet half) calls it once
+**per worker attempt**, on that worker's own thread and over that attempt's
+own tree, with each internal round claiming its own `turn_instance` under the
+attempt's single execution row; `stella goal --pipeline <variant>` (#3695,
+goal half) calls it once **per judged round** — the goal loop's own round loop, not
 `WrapperDispatch`'s, decides how many rounds run, because the goal verifier
 (`stella_core::Engine::assess`) stays outside `judge`/`again` entirely. That
 per-round shape is why `stella goal` refuses an arbiter-grade wrapper before
@@ -95,8 +98,9 @@ round would be a second arbiter judging the round the goal loop's own
 rather than let `WrapperDispatch`'s hold loop and the goal loop's hold loop
 collide. An arbiter-grade wrapper's designed home is `stella run --pipeline
 <variant>` instead, where `WrapperDispatch` is the only thing holding a turn
-open. Either door, an installed wrapper plugin participates in a live turn and
-its id reaches `executions.pipeline_variant`.
+open — and `stella fleet`, whose attempt has no completion arbiter of its own,
+applies no such refusal. On any of the three doors, an installed wrapper plugin
+participates in a live turn and its id reaches `executions.pipeline_variant`.
 
 What has **not** landed: the other two drivers `doc:wrapper-socket` §6 makes an
 acceptance criterion — `stella-serve` over HTTP and a minimal embedded host

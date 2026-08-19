@@ -414,9 +414,11 @@ pub(crate) async fn run_raw_one_shot(
 /// second one held open inside a judged round is the doubled-supervisor
 /// shape the wrapper design forbids; an arbiter-grade wrapper's designed
 /// home is `stella run --pipeline <variant>` instead. Steering and observer
-/// wrappers reach `Plugin(variant)` unaffected. `stella fleet` still refuses
-/// any named plugin before this is ever called
-/// (`wrapper_plugin::reject_plugin_variant_for_door`, main.rs's `Fleet` arm).
+/// wrappers reach `Plugin(variant)` unaffected. `stella fleet` drives a named
+/// plugin per worker attempt now, on its own driver
+/// (`crate::fleet_cmd::wrapped`, #3695 fleet half) — and deliberately
+/// without this door's arbiter refusal, because a fleet attempt has no
+/// completion arbiter of its own for a hold loop to double.
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
