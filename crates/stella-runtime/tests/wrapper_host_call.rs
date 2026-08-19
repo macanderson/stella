@@ -304,6 +304,7 @@ async fn a_grant_below_steering_leaks_no_capability() {
         points: vec![WrapperPoint::BeforeTurn],
         calls: vec![HostCall::Recall],
         max_calls: None,
+        max_fanout_width: None,
         max_holds: None,
     };
     let gate = gate(smuggled, DEFAULT_HOST_MAX_CALLS);

@@ -144,6 +144,21 @@ registry's event sender is a sink — so the child's `step_usage` reaches the
 run's report and the session's budget guard, but not the store's receipt
 (#3802).
 
+**The candidate-fanout plane exists and no shipped driver installs it.**
+`candidate_fanout` and `adopt_candidate` (#3844) are the capability
+`plugins/stella-candidates` needs and could not previously express: N isolated
+writable workspaces, one full **worker** turn in each, per-candidate evidence
+back on the wire, and one host-applied adoption fenced against the handle table
+the host itself minted. `CandidateFanouts` is the plane and
+`src/wrapper/candidate_fanout.rs`'s `CandidateWorkspaces` is the substrate it
+runs on — a separate port rather than a root field on `SubAgentSpec`, because a
+dispatcher that ignored such a field would run every candidate in the shared
+tree while the plane reported isolation, and nothing in `SubAgentOutcome` could
+tell the two apart. No driver implements the substrate today, so
+`HostPlanes::with_candidate_fanout` is never called and both capabilities are
+answered `Unavailable` — a declared gap, said out loud here rather than
+discovered by a plugin author.
+
 **The driver channel now moves bytes, and still has no production caller.**
 `SubprocessDriver` (#3634) is the transport between the wire
 (`stella_plugin::driver`) and the gate (`src/wrapper/driver_call.rs`): it
@@ -216,6 +231,7 @@ it crosses.
 | `src/wrapper/framing.rs` | Where one message ends on a child's stdout, and the one task that owns its stdin — shared by both transports, because a second framer would be quadratic and pass its tests. |
 | `src/wrapper/host_call.rs` | The host half of the host-call channel: a plugin may ask the host for a capability, never reach for one itself — this module is the half that decides and applies the install-time grant (`doc:wrapper-socket` §6b). |
 | `src/wrapper/child_turn.rs` | The `ChildTurn` port: the host spends a model call at a declared role intent (`triage`, `planner`, `witness_author`, …) so a plugin never holds a provider credential itself (`doc:turn-loop-wrappers` §9.3). |
+| `src/wrapper/candidate_fanout.rs` | The `candidate_fanout`/`adopt_candidate` plane: N isolated writable workspaces, one worker turn in each, and the one adoption that lands a winner — over a `CandidateWorkspaces` substrate no shipped driver installs yet, so both calls answer `unavailable` today (#3844, `doc:wrapper-socket` §6b). |
 | `tests/no_ambient_reads.rs` | The executable form of the invariant above. |
 | `tests/wrapper_socket.rs` | The socket's end-to-end proof: a real `/bin/sh` subprocess plugin driven through `TurnWrapper` by the test's own round loop. It proves the socket *answers*; what it cannot prove is that anything in the workspace holds the same order, which is what `tests/wrapper_dispatch.rs` is for. `#![cfg(unix)]`; #3497 tracks the portable in-tree plugin binary a Windows-proof version needs. |
 | `tests/wrapper_dispatch.rs` | The host sequence's witness: the same kind of `/bin/sh` plugin driven through the **shipped** `WrapperDispatch`, proving a contribution reaches the turn after the stable prefix, its evidence reaches `judge`, and the verdict is what decides whether another turn runs. `#![cfg(unix)]` for the same reason. |
@@ -227,6 +243,7 @@ it crosses.
 | `tests/driver_socket.rs` | The witness for the driver channel's transport (#3634, #3599 B0): a `/bin/sh` driver is handed a session, is served a capability it declared and refused one it did not, and ends the session with each of the two terminal answers. Two of its twelve ask the **child** rather than the constructor — what environment the process actually received, and whether a driver that keeps writing after deciding wedges the session — because a constructor interrogated about itself only ever agrees. |
 | `tests/wrapper_transport_limits.rs` | Witnesses for #3380's transport audit: the two resources a plugin process can spend that are not its own — the host's memory, and the machine after the turn ended. |
 | `tests/wrapper_child_turn.rs` | The witness for `child_turn` (#3564, #3541, `doc:turn-loop-wrappers` §9.3): the host, not the plugin, spends the model call at a declared role intent. |
+| `tests/wrapper_candidate_fanout.rs` | The witness for `candidate_fanout` (#3844): a plugin asks for three attempts, scores them off the wire, names a winner by handle, and the host lands exactly that one and discards the rest. |
 | `tests/wrapper_decided_flip.rs` | The witness for #3553: a plugin whose `[oracle]` declares `flip = "required"` reaches a decided verdict through the real dispatch. |
 | `tests/research_plugin_conformance.rs` | The witness for Track B's first extraction: `plugins/stella-research` answers a real `before_turn` request over the wire in well-formed `stella_plugin::wire` shapes. |
 | `tests/research_plugin_dispatch.rs` | Grades `plugins/stella-research` against `WrapperDispatch` itself — the declared stage program actually calling it, not just the wire shape being correct. |

@@ -240,9 +240,14 @@ before it crosses.
   gate-checked by `scripts/check-wire-schema.sh`; compiled into no default
   build.
 - `src/host_call.rs` — the channel that lets a plugin ask the host for
-  something (recall, a bounded child turn, a test re-run) and read the answer
-  before it replies. The host performs the call and applies
-  `LoopGrant::permits_call`, so the plugin never reaches anything itself.
+  something (recall, a bounded child turn, a test re-run, an N-wide candidate
+  fan-out, the adoption of one of its candidates) and read the answer before it
+  replies. The host performs the call and applies `LoopGrant::permits_call`, so
+  the plugin never reaches anything itself. The last two are the pair `#3844`
+  added: `candidate_fanout` is the only capability whose turns **write**, so it
+  carries its own manifest ceiling (`[loop] max_fanout_width`) and its own seat
+  rule — the inverse of `child_turn`'s, since a candidate is the work rather
+  than evidence about it.
 - `src/package.rs` — the `[[tools]]`, `[[skills]]` and `[[records]]` a package
   ships, plus `PluginManifest::reconcile`, which compares what the manifest
   declares against what the host actually found on disk and refuses any
