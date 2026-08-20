@@ -305,10 +305,11 @@ impl Tool for Search {
                 "required": ["query"]
             }),
             read_only: true,
-            // Reads only, but NOT safe to run twice before its step commits:
-            // the semantic rung writes embeddings through into `codegraph.db`
-            // as a side effect of ranking, so a speculated call would do index
-            // work the engine then discards.
+            // Reads only, but NOT safe to run twice before its step commits.
+            // The semantic rung no longer writes vectors (#4043), but
+            // `codegraph::open_or_build` still runs a tree-sitter index
+            // catch-up on the way to answering, so a speculated call would do
+            // index work the engine then discards.
             speculation_safe: false,
         }
     }

@@ -127,7 +127,9 @@ impl IndexReadiness {
 #[must_use]
 pub fn measure(graph: &CodeGraph, fingerprint: &str, settled: bool) -> IndexReadiness {
     let total_files = graph.file_count().unwrap_or(0);
-    let embedded = graph.embedded_file_count(fingerprint).unwrap_or(total_files);
+    let embedded = graph
+        .embedded_file_count(fingerprint)
+        .unwrap_or(total_files);
     let chunks_pending = graph.pending_chunk_file_count(fingerprint).unwrap_or(0);
     IndexReadiness {
         total_files,

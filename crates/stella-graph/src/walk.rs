@@ -68,7 +68,7 @@ fn is_denied_dir(name: &str) -> bool {
 /// ([`WorkspaceIgnore`] is resolved once, at `root`), and `stella` launched
 /// inside it indexes it into its *own* `.stella/private/codegraph.db`. Walking
 /// it here would copy every one of its files into the parent's index — a
-/// second, stale, unownedcopy of a tree that already has an index, and on a
+/// second, stale, unowned copy of a tree that already has an index, and on a
 /// machine with several worktrees checked out under one directory, one copy
 /// per worktree.
 ///
@@ -224,11 +224,7 @@ mod tests {
             "gitdir: /elsewhere/.git/worktrees/feature\n",
         )
         .unwrap();
-        fs::write(
-            root.join("worktrees/feature/src/main.rs"),
-            "fn main() {}\n",
-        )
-        .unwrap();
+        fs::write(root.join("worktrees/feature/src/main.rs"), "fn main() {}\n").unwrap();
 
         // A nested clone: `.git` is a directory.
         fs::create_dir_all(root.join("nested/.git")).unwrap();

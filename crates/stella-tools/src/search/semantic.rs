@@ -81,12 +81,11 @@ pub enum WarmOutcome {
 /// Embed the workspace's indexed files **without answering a query** — the
 /// `stella init` pass.
 ///
-/// The lazy per-query pass is right for a session and wrong for a
-/// single-turn run: it fires only once a search has already been asked, so
-/// the first searches of a session would rank against whichever files
-/// happened to be processed first. This runs the same render, the same table
-/// and the same `(file_id, fingerprint)` keying ahead of the first turn,
-/// where the work is free from the session's perspective.
+/// The background pass ([`super::backfill`]) covers a session; this covers
+/// the single-turn run that has no session to amortise an index over, because
+/// `stella init` is the one command whose job is to make the workspace ready.
+/// Same render, same table, same `(file_id, fingerprint)` keying — the work is
+/// free from every later session's perspective.
 ///
 /// Batched rather than one big pass: each round asks for at most one
 /// request's worth of pending files, so the blocking file reads stay bounded

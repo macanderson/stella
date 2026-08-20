@@ -260,14 +260,14 @@ async fn warm_semantic_index(
 
 /// The one-line report of an eager embedding pass.
 ///
-/// A partial index says so: a pass that stopped at the cap, or gave up on a
-/// broken backend, names how many files were left unembedded, because an index
-/// that silently ranks a subset of the repository is worse than one that says
-/// which subset it ranked. The leftovers are not lost — the lazy per-query
-/// pass picks them up.
+/// A partial index says so: a pass that gave up on a broken backend names how
+/// many files were left unembedded, because an index that silently ranks a
+/// subset of the repository is worse than one that says which subset it
+/// ranked. The leftovers are not lost — the background pass at the next
+/// session start picks them up.
 ///
 /// Unless they cannot be read, which is a different sentence and gets one: no
-/// later pass will pick those up, so "they embed on demand" would be a promise
+/// later pass will pick those up, so "they embed later" would be a promise
 /// this code cannot keep (#3016).
 fn format_warm_outcome(outcome: &crate::search_cmd::semantic::WarmOutcome, model: &str) -> String {
     use crate::search_cmd::semantic::WarmOutcome;
@@ -292,11 +292,11 @@ fn format_warm_outcome(outcome: &crate::search_cmd::semantic::WarmOutcome, model
             ..
         } => format!(
             "✓ semantic index: {embedded} files embedded by {model} — {remaining} left \
-             unembedded (they embed on demand as semantic searches reach them)"
+             unembedded (the background pass at the next session start finishes them)"
         ),
         WarmOutcome::Failed { embedded, reason } => format!(
-            "! semantic index: stopped after {embedded} files — {reason} (the rest embed on \
-             demand)"
+            "! semantic index: stopped after {embedded} files — {reason} (the background pass \
+             at the next session start finishes the rest)"
         ),
     }
 }
@@ -329,14 +329,14 @@ fn format_chunk_warm_outcome(
             ..
         } => format!(
             "✓ chunk index: {files_embedded} file(s) embedded by {model} — {files_remaining} \
-             left unembedded (they embed on demand as searches reach them)"
+             left unembedded (the background pass at the next session start finishes them)"
         ),
         ChunkWarmOutcome::Failed {
             files_embedded,
             reason,
         } => format!(
-            "! chunk index: stopped after {files_embedded} file(s) — {reason} (the rest embed \
-             on demand)"
+            "! chunk index: stopped after {files_embedded} file(s) — {reason} (the background \
+             pass at the next session start finishes the rest)"
         ),
     }
 }
@@ -678,7 +678,8 @@ fn settled_readiness(
     let Ok(graph) = stella_graph::CodeGraph::open(root, &db_path) else {
         return IndexReadiness::unknown();
     };
-    let measured = crate::search_cmd::readiness::measure(&graph, &embedder.fingerprint().id(), true);
+    let measured =
+        crate::search_cmd::readiness::measure(&graph, &embedder.fingerprint().id(), true);
     graph.shutdown();
     measured
 }
@@ -713,23 +714,18 @@ pub(crate) fn spawn_session_graph(
             ))),
         }
         on_ready();
-        // 2) Fill the semantic index (#4043). The index pass above has just
-        //    stamped every changed file's `indexed_at`, and `vectors::pending`
-        //    orders on exactly that, so this pass covers the commit or merge
-        //    this session started after before it reaches the long-stable
-        //    tail. Nothing else fills the index any more — the per-query
-        //    catch-up inside `search` is deleted — so this runs to exhaustion
-        //    rather than to a cap, and reports its coverage as it goes so the
-        //    prompt gate can hold the first turn while a cold workspace fills.
-        //
-        //    After `on_ready` on purpose: the deck must be live and the index
-        //    queryable before the expensive part starts. It is single-flight
-        //    across processes (the embed lease), and a host with no embedder
-        //    configured does nothing at all.
-        backfill_vectors_quietly(&root, &mut status, &mut readiness).await;
-        // 3) Arm the live watcher on a mounted graph kept alive for the
+        // 2) Arm the live watcher on a mounted graph kept alive for the
         //    session. Best-effort: a mount failure only loses live refresh, it
         //    never loses the index built in step 1.
+        //
+        //    **Before** the embedding pass, not after (#4043). While that pass
+        //    was bounded to a couple of hundred files this ran second and cost
+        //    a second or two of live-refresh; the pass is unbounded now, so
+        //    ordering it first would leave a cold monorepo with no watcher for
+        //    however long a whole-tree embed takes — and the agent's own edits
+        //    unindexed for all of it. The two overlap safely: they are separate
+        //    SQLite connections writing different tables, and the embed lease
+        //    is what keeps two embedding passes apart.
         let db_path = crate::search_cmd::codegraph::graph_db_path(&root);
         match stella_graph::CodeGraph::mount(&root, &db_path).await {
             Ok(graph) => {
@@ -739,6 +735,20 @@ pub(crate) fn spawn_session_graph(
                 "! code-graph watcher unavailable: {e} — the index will refresh on the next launch"
             ))),
         }
+        // 3) Fill the semantic index (#4043). The index pass above has just
+        //    stamped every changed file's `indexed_at`, and `vectors::pending`
+        //    orders on exactly that, so this pass covers the commit or merge
+        //    this session started after before it reaches the long-stable
+        //    tail. Nothing else fills the index any more — the per-query
+        //    catch-up inside `search` is deleted — so this runs to exhaustion
+        //    rather than to a cap, and reports its coverage as it goes so the
+        //    prompt gate can hold the first turn while a cold workspace fills.
+        //
+        //    Last on purpose: everything above it is what makes the session
+        //    usable, and this is the part that can take minutes. It is
+        //    single-flight across processes (the embed lease), and a host with
+        //    no embedder configured does nothing at all.
+        backfill_vectors_quietly(&root, &mut status, &mut readiness).await;
     });
     (SessionGraph { graph: slot }, handle)
 }
