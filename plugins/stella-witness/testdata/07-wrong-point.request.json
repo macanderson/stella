@@ -1,0 +1,10 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "witness-v1",
+    "stage": "execute",
+    "round": 0,
+    "goal": "anything"
+  }
+}

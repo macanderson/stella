@@ -1,0 +1,1 @@
+stella-witness: this plugin speaks protocol version 1; the host wrote 2

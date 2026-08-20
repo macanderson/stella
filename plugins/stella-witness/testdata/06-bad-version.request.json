@@ -1,0 +1,13 @@
+{
+  "point": "after_turn",
+  "body": {
+    "protocol_version": 2,
+    "wrapper": "witness-v1",
+    "round": 0,
+    "goal": "anything",
+    "turn": {
+      "completed": true,
+      "answer": "done"
+    }
+  }
+}

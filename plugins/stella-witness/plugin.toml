@@ -1,0 +1,101 @@
+# stella-witness — the open verification plugin (#4029 P3.2,
+# `doc:plugin-completion-plan` §4.1).
+#
+# WHY THIS EXISTS, AND WHY IT IS OPEN. `AGENTS.md`'s first paragraph defines
+# "verified done, not claimed done" as *a property of the path that produced
+# the evidence*. Since #3865 deleted the built-in staged pipeline, the only
+# such path is an installed verification plugin — and if the only one of those
+# were a paid private artefact, the open project's central claim would be
+# unfalsifiable by anyone who had not bought something. This plugin is the
+# referent: the flip oracle, in the open, installable and checkable by anyone.
+#
+# `oxageninc/vera` is the commercial superset — verifier independence across a
+# roster, tamper hardening past artifact identity, multi-oracle composition,
+# the durable flip record, org policy. Verification is open; verification at
+# organisational scale is paid.
+#
+# READ THIS BEFORE INSTALLING. Stella does not run this oracle and does not
+# re-check what comes back. The flip and every measurement below are what this
+# plugin's own process reports it saw. Stella applies the rule declared here to
+# those reported claims and will not credit a requirement they leave undecided
+# — but it cannot tell an earned result from a typed one. That is the
+# architecture rather than an apology (#3511): verification is delivered by the
+# plugin.
+
+name = "stella-witness"
+description = "Watch the test named by the candidate grant go from red to green, and hold the turn open until it does. Reports the flip it observed; Stella applies the declared rule."
+
+# Arbiter, because this plugin's whole job is holding a turn open past its
+# first attempt until the flip happens. Only `arbiter` may do that, and only
+# `arbiter` may declare [requirements] and [oracle]. The `Stop` hook comes
+# with the grade (`ManifestError::ArbiterMustDeclareStop`).
+[loop]
+participation = "arbiter"
+hooks = ["Stop"]
+# `after_turn` only. The flip this plugin observes needs the work to have
+# happened, and the red half it compares against is already pinned by the host
+# in the grant (`TestPlan::baseline`) — so there is nothing for this plugin to
+# do before a turn runs, and it declares nothing it does not implement (#3501).
+points = ["after_turn"]
+# Four rounds of correction. The host clamps this against its own ceiling and
+# says so out loud when it does (#3841).
+max_holds = 4
+
+# ---------------------------------------------------------------------------
+# The definition of done, enumerated. A hold cites these names.
+#
+# Two, and the restraint is the point: this plugin declares only what it
+# actually decides. The nucleus carries a third rule — #867's "the pass fixed
+# the failure the baseline named, not a different one" — and it is NOT
+# declared here, because its fingerprint guard (a per-runner-dialect parser for
+# test names) is not ported yet. Declaring a requirement this plugin could only
+# ever report as satisfied would be a vacuous check that reads as a guarantee.
+# See README.md's "What v1 does not carry".
+# ---------------------------------------------------------------------------
+[requirements]
+witness-flips = "the test the grant names failed before this turn and passes after it"
+witness-stable = "that pass was reproducible — the same invocation passed a second time on the same tree"
+
+[oracle]
+# No `command`: with `[runtime]` declared, the oracle is this plugin's own
+# process (#3501).
+#
+# `flip = "required"` is what decides `witness-flips`. The transition is the
+# one this plugin REPORTS having seen; Stella does not watch it happen.
+flip = "required"
+# `tamper` is deliberately not declared. The policy is host-side and has one
+# value, and the finding it produces is not a word a plugin can say —
+# `ObservedEvidence` has no field for it (#3499).
+#
+# The numbers this plugin reports. A check may read nothing else.
+# `test-duration-ms` is declared and deliberately unread: reporting a number
+# for the trace is legitimate, and only *deciding* on an undeclared one is
+# refused.
+measurements = ["flip-unstable", "test-command-exit-code", "test-duration-ms"]
+
+# #859, as data. A flip whose confirmation re-run failed is `Unstable`: a pass
+# was seen and could not be reproduced, which is a different fact from "the
+# test never passed" and must not buy deterministic credit. The plugin runs the
+# tracked invocation a second time on the same tree and reports 1 here when
+# that second run did not pass.
+[[oracle.checks]]
+requirement = "witness-stable"
+check = "flip-unstable <= 0"
+
+# How the host starts this plugin's process. A list, never a shell string;
+# `${plugin_dir}` interpolation is the host's job.
+[runtime]
+argv = ["python3", "${plugin_dir}/main.py"]
+timeout_secs = 300
+# Default-deny. `PATH` is the whole allowlist: the plugin runs the test
+# invocation the grant names, and needs to find its program.
+env = ["PATH"]
+
+[wrapper]
+id = "witness-v1"
+
+[[wrapper.stages]]
+name = "execute"
+
+[[wrapper.stages]]
+name = "verify"
