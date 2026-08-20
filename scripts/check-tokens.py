@@ -65,7 +65,7 @@ SELF = (
     "design/tokens/stella-tokens.json",
     "scripts/check-tokens.py",
     "scripts/gen-tokens.py",
-    "crates/stella-tui-theme/src/generated.rs",
+    "crates/stella-tui-theme/src/token.rs",
     "design/tokens/stella-tokens.css",
     "website/src/lib/brand-parity.test.ts",
     "crates/stella-cli/src/export/tests.rs",
