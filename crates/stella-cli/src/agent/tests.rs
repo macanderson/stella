@@ -13,6 +13,74 @@ fn one_shot_reflection_defaults_on_for_every_output_format() {
     assert!(one_shot_reflection_enabled(OutputFormat::StreamJson));
 }
 
+/// A machine-format turn learns from itself, because a machine-format turn is
+/// the only kind an autonomous caller makes.
+///
+/// The test directly above asserted `Json` was enabled and passed throughout
+/// the period no JSON turn ever reflected — the call site carried a
+/// `format == OutputFormat::Text` clause the test could not see. A
+/// self-driving run merged sixteen pull requests through
+/// `stella run --output-format json` and finished having recorded no
+/// reflections, no memories and no promoted skills, reading the workspace's
+/// memory on every turn and writing none back. This covers the composed rule
+/// the call site now branches on, so the two cannot disagree again.
+#[test]
+fn a_machine_format_turn_reflects_like_a_text_one() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[DISABLE_REFLECTION_ENV]);
+
+    for format in [
+        OutputFormat::Text,
+        OutputFormat::Json,
+        OutputFormat::StreamJson,
+    ] {
+        assert!(
+            should_reflect_after_one_shot(format, true, true),
+            "{format:?} must reflect: the format decides what is printed, \
+             never what is learned"
+        );
+    }
+}
+
+/// The two per-turn facts are load-bearing, not decoration.
+///
+/// A turn with nothing in it to learn from, or one with no workspace memory
+/// open to record into, spends no reflection call — that is what keeps the
+/// change above from turning every trivial turn into a paid round trip.
+#[test]
+fn reflection_still_needs_a_turn_worth_reflecting_on_and_somewhere_to_put_it() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[DISABLE_REFLECTION_ENV]);
+
+    assert!(
+        !should_reflect_after_one_shot(OutputFormat::Json, false, true),
+        "a turn that did nothing has no lesson in it"
+    );
+    assert!(
+        !should_reflect_after_one_shot(OutputFormat::Json, true, false),
+        "with no memory open there is nowhere for the lesson to go"
+    );
+}
+
+/// The opt-out reaches the composed rule too, not just its format half.
+#[test]
+fn the_reflection_opt_out_still_wins_over_a_machine_format() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[DISABLE_REFLECTION_ENV]);
+    unsafe { std::env::set_var(DISABLE_REFLECTION_ENV, "1") };
+
+    assert!(!should_reflect_after_one_shot(
+        OutputFormat::Json,
+        true,
+        true
+    ));
+    assert!(!should_reflect_after_one_shot(
+        OutputFormat::Text,
+        true,
+        true
+    ));
+}
+
 #[test]
 fn explicit_reflection_opt_out_suppresses_every_one_shot_format() {
     let _env = crate::test_env::lock();

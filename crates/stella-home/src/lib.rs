@@ -203,6 +203,58 @@ pub fn resolve_self_driving_root(stella_home: Option<PathBuf>) -> Option<PathBuf
     stella_home.map(|home| home.join(SELF_DRIVING_DIR))
 }
 
+/// The environment variable that moves a workspace's **state** — and only its
+/// state — somewhere other than the directory the process is standing in.
+///
+/// # Why this exists, and why it is not in [`OVERRIDE_ENV_VARS`]
+///
+/// That list redirects the *user tier* (`~/.stella`). This one redirects the
+/// *workspace tier* (`<workspace>/.stella`), which is a different question with
+/// a different answer, so conflating them would let a user-home override
+/// silently relocate a repository's memories.
+///
+/// It exists because an agent's **code** and an agent's **learning** do not
+/// belong in the same place when the code is checked out somewhere disposable.
+/// A turn that runs in a throwaway git worktree writes its reflections, its
+/// promoted skills, its telemetry and its code graph into `<worktree>/.stella`,
+/// and then the worktree is removed — so the session's entire record of what it
+/// learned is deleted by the cleanup that follows every unit of work.
+///
+/// That is not hypothetical. A self-driving run against `oxagen-platform`
+/// executed 22 turns across 16 merged pull requests and finished with **no
+/// reflections file and no memories directory at all**: every turn had written
+/// them faithfully into a directory built to be destroyed.
+///
+/// Setting this to the real repository root makes the worktree's code
+/// disposable and its learning durable, which is the split that was always
+/// intended.
+pub const WORKSPACE_STATE_ROOT_ENV: &str = "STELLA_WORKSPACE_STATE_ROOT";
+
+/// Where a workspace's `.stella` lives, honouring [`WORKSPACE_STATE_ROOT_ENV`].
+#[must_use]
+pub fn workspace_state_root(workspace_root: &std::path::Path) -> PathBuf {
+    resolve_workspace_state_root(std::env::var_os(WORKSPACE_STATE_ROOT_ENV), workspace_root)
+}
+
+/// [`workspace_state_root`] over the value the caller supplies.
+///
+/// An unset or blank override resolves to `workspace_root` unchanged, so the
+/// ordinary case — a session standing in the repository it is working on — is
+/// exactly what it was before this existed. A **relative** override is refused
+/// the same way, because the whole point is to name a directory that outlives
+/// the process's own working directory, and a relative path does not.
+#[must_use]
+pub fn resolve_workspace_state_root(
+    override_var: Option<OsString>,
+    workspace_root: &std::path::Path,
+) -> PathBuf {
+    let candidate = override_var
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty() && path.is_absolute());
+
+    candidate.unwrap_or_else(|| workspace_root.to_path_buf())
+}
+
 /// Where user-scope plugins are installed: `<stella home>/plugins`, one
 /// directory per plugin beneath it. `None` only when no home is discoverable,
 /// which a caller must read as "there is no user tier here" — never as a
@@ -306,6 +358,48 @@ mod tests {
     /// guard, and nothing another test could observe.
     fn os(value: &str) -> Option<OsString> {
         Some(OsString::from(value))
+    }
+
+    /// A turn that runs in a throwaway git worktree must not take the
+    /// session's learning with it when the worktree is removed.
+    ///
+    /// Twenty-two self-driving turns against a repository finished with no
+    /// reflections, no memories and no promoted skills, because each one wrote
+    /// them faithfully into `<worktree>/.stella/private` — a directory built to
+    /// be destroyed. The override is what separates *where the code is* from
+    /// *where the learning goes*.
+    #[test]
+    fn the_state_root_follows_the_override_not_the_working_directory() {
+        let worktree = PathBuf::from("/tmp/throwaway-worktree");
+        assert_eq!(
+            resolve_workspace_state_root(os("/repo"), &worktree),
+            PathBuf::from("/repo"),
+            "an absolute override displaces the working directory"
+        );
+        assert_eq!(
+            resolve_workspace_state_root(None, &worktree),
+            worktree,
+            "an ordinary session keeps state beside the code it is working on"
+        );
+    }
+
+    /// The override names a durable home, so anything that cannot be one is
+    /// declined rather than half-honoured.
+    ///
+    /// A relative path would resolve against the *worktree's* working
+    /// directory, which is the exact failure this override exists to prevent —
+    /// it would look configured and still be destroyed. An empty value is what
+    /// an unset-but-exported variable looks like from a shell.
+    #[test]
+    fn an_unusable_override_falls_back_instead_of_resolving_somewhere_worse() {
+        let worktree = PathBuf::from("/tmp/throwaway-worktree");
+        for rejected in ["", "../repo", "relative/repo"] {
+            assert_eq!(
+                resolve_workspace_state_root(os(rejected), &worktree),
+                worktree,
+                "{rejected:?} is not a durable root and must not be honoured"
+            );
+        }
     }
 
     #[test]

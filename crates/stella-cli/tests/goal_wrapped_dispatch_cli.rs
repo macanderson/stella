@@ -179,6 +179,20 @@ fn store_path(workspace: &Path) -> PathBuf {
 async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
     let workspace = tempfile::tempdir().expect("workspace");
     let data = tempfile::tempdir().expect("data dir");
+    // The user tier, which `STELLA_DATA_DIR` does not move.
+    //
+    // Removing every `*_API_KEY` below is not hermeticity on its own: an
+    // environment variable is one of two ways a credential reaches the
+    // process, and `~/.stella/credentials.toml` is the other. On a developer
+    // machine with providers configured, this test discovered them through
+    // that file, and the comment below is exactly right about why it matters —
+    // the goal loop's cross-family verifier takes *whatever* is configured. So
+    // the run bound a real OpenRouter verifier against a real zai worker,
+    // spent $0.08 of the developer's money per invocation, and then failed,
+    // because a live model does not answer like the wiremock fixture this test
+    // drives. `STELLA_HOME` moves the whole user tier, so there is no
+    // credentials file to find.
+    let home = tempfile::tempdir().expect("stella home");
     let rounds_log = install_fixture_wrapper(workspace.path());
     let server = mock_two_round_goal_loop().await;
 
@@ -198,6 +212,7 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
             VARIANT,
         ])
         .current_dir(workspace.path())
+        .env("STELLA_HOME", home.path())
         .env("STELLA_DATA_DIR", data.path())
         // Same hermeticity discipline as `run_exits_cli.rs`: no `.env`, no
         // inherited real key, and the project plugin tier trusted so the

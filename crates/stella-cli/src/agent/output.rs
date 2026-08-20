@@ -272,6 +272,30 @@ pub(crate) fn one_shot_reflection_enabled(format: OutputFormat) -> bool {
     supported_format && !reflection_explicitly_disabled()
 }
 
+/// Whether *this* one-shot turn reflects — the whole rule the call site
+/// branches on, in one place a test can reach.
+///
+/// [`one_shot_reflection_enabled`] answers only "is reflection available for
+/// this format", and a test has asserted since it was written that the answer
+/// for `Json` is yes. That test passed for the entire period during which no
+/// JSON turn ever reflected, because the call site carried a fourth condition
+/// — `format == OutputFormat::Text` — that the test could not see. The
+/// declaration and the behaviour disagreed and nothing in the gate connected
+/// them.
+///
+/// So the rule lives here now, taking the two per-turn facts as arguments
+/// rather than reading them: `warrants_reflection` is whether the turn did
+/// enough to have a lesson in it, and `has_memory` is whether there is a
+/// workspace memory open to record one into. A caller that adds a condition
+/// adds it to this function, where it is covered.
+pub(crate) fn should_reflect_after_one_shot(
+    format: OutputFormat,
+    warrants_reflection: bool,
+    has_memory: bool,
+) -> bool {
+    one_shot_reflection_enabled(format) && warrants_reflection && has_memory
+}
+
 /// The reflection opt-out itself, separated from the one-shot format question
 /// above because it is neither about one-shots nor about formats: it is the
 /// workspace-wide "do not spend the extra provider call" switch, and every door

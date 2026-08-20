@@ -93,6 +93,7 @@ fn run_stella(workspace: &Path, data: &Path, args: &[&str]) -> Output {
         ])
         .args(args)
         .current_dir(workspace)
+        .env("STELLA_HOME", data)
         .env("STELLA_DATA_DIR", data)
         // Never read the developer's project env, and never inherit a real
         // key: this test must not be able to reach a provider.

@@ -351,6 +351,7 @@ pub(super) fn verify_locally(dir: &Path, command: &str, timeout_secs: u64) -> Re
 /// one that did not run.
 pub(super) fn run_turn(
     dir: &Path,
+    state_root: &Path,
     prompt: &str,
     spend_limit: Option<f64>,
 ) -> Result<String, String> {
@@ -359,6 +360,18 @@ pub(super) fn run_turn(
 
     let mut cmd = Command::new(exe);
     cmd.current_dir(dir)
+        // The code is disposable; the learning is not.
+        //
+        // A turn runs in a throwaway worktree, and everything it writes under
+        // `.stella/private` — the reflection log the memory miner reads, the
+        // telemetry store, the code graph — would be removed with it. Twenty-two
+        // turns against oxagen-platform finished with no reflections file at
+        // all, because every one of them had written it faithfully into a
+        // directory built to be destroyed.
+        //
+        // Pointing the state root at the repository is what makes a session's
+        // record of what it learned outlast the unit of work that produced it.
+        .env(stella_home::WORKSPACE_STATE_ROOT_ENV, state_root)
         .arg("run")
         .arg("--output-format")
         .arg("json");
@@ -573,6 +586,7 @@ pub(super) fn start(
 
     let turn = run_turn(
         &created.path,
+        root,
         &prompt_for(issue, &attribution.commit),
         spend_limit,
     );
