@@ -812,7 +812,7 @@ fn assess_one(
         .unwrap_or_default();
 
     let prompt = super::triage::prompt(&issue, &body, &cfg.triage);
-    let output = super::work::run_turn(root, &prompt, spend_limit)?;
+    let output = super::work::run_turn(root, root, &prompt, spend_limit)?;
 
     let Some(assessment) = super::triage::parse(&output, &cfg.triage) else {
         super::backlog::escalate_blocking(

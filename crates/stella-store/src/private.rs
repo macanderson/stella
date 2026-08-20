@@ -258,7 +258,15 @@ fn settled_generated_ignore(path: &Path) -> Result<(Vec<u8>, u32)> {
 }
 
 pub(crate) fn ensure_workspace_state_dir(workspace_root: &Path) -> Result<(PathBuf, bool)> {
-    let dir = workspace_root.join(".stella");
+    // The state root, not the working directory.
+    //
+    // These are the same directory for an ordinary session and deliberately
+    // different for a turn executing in a throwaway git worktree: the code is
+    // disposable, the learning is not. Everything beneath here — the
+    // reflection log, the telemetry store, the code graph — follows the
+    // override, so a worktree cannot take a session's memory with it when it
+    // is removed. See `stella_home::WORKSPACE_STATE_ROOT_ENV`.
+    let dir = stella_home::workspace_state_root(workspace_root).join(".stella");
     let created = match std::fs::symlink_metadata(&dir) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
