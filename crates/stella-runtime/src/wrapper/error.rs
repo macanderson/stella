@@ -357,58 +357,26 @@ pub enum WrapperError {
         second: String,
     },
 
-    /// Two composed manifests each declare an `[oracle]`.
-    ///
-    /// One turn has one definition of done. Two oracles is the same defect the
-    /// arbiter rule already names one layer up — two things deciding whether
-    /// the same round is finished — and merging them would mean inventing a
-    /// precedence rule that no manifest declared and no user consented to.
-    #[error(
-        "plugins `{wrapper}` and `{other}` each declare an [oracle], so a composition of them \
-         has two definitions of done — at most one member of a composition may decide when a \
-         turn is finished"
-    )]
-    TwoOracles {
-        /// The first member declaring an oracle.
-        wrapper: String,
-        /// The second.
-        other: String,
-    },
-
     /// Two composed manifests are both arbiter-grade.
     ///
-    /// Checked separately from [`Self::TwoOracles`] because the grade and the
-    /// oracle are independent declarations: only an arbiter may hold a
-    /// completion open, so two of them is two hold loops over one round even
-    /// when only one of them carries an oracle.
+    /// One turn has one thing deciding when it is finished. This is the only
+    /// grade conflict a composition can have, and it is deliberately the only
+    /// one checked, because the manifest schema makes it subsume the two that
+    /// look like siblings: `ManifestError::OracleRequiresArbiter` and
+    /// `RequirementsRequireArbiter` both refuse their block below arbiter
+    /// grade, so two oracles or two requirement sets are *already* two
+    /// arbiters and are refused here rather than by rules of their own.
+    ///
+    /// Writing those rules anyway was the first shape of this check, and they
+    /// were unreachable — an error that cannot fire is worse than no error,
+    /// because it reads as a guarantee somebody tested.
     #[error(
         "plugins `{wrapper}` and `{other}` are both arbiter-grade, so a composition of them \
-         has two things holding one turn open — at most one member of a composition may be \
-         an arbiter"
+         has two things holding one turn open and two definitions of done — at most one \
+         member of a composition may be an arbiter"
     )]
     TwoArbiters {
         /// The first arbiter-grade member.
-        wrapper: String,
-        /// The second.
-        other: String,
-    },
-
-    /// Two composed manifests declare the same requirement name with different
-    /// statements.
-    ///
-    /// The name is what a hold cites, so two members meaning different things
-    /// by one name would make the citation ambiguous exactly when it matters —
-    /// in the sentence explaining why a turn is being held open. Identical
-    /// statements are not a conflict: two plugins agreeing on a requirement is
-    /// a composition working.
-    #[error(
-        "plugins `{wrapper}` and `{other}` both declare the requirement \"{requirement}\" and \
-         mean different things by it, so a hold citing it would be ambiguous"
-    )]
-    ConflictingRequirement {
-        /// The requirement name declared twice.
-        requirement: String,
-        /// The first member declaring it.
         wrapper: String,
         /// The second.
         other: String,

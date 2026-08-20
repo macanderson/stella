@@ -512,9 +512,7 @@ impl WrapperDispatch {
             let round = rounds;
             rounds += 1;
 
-            let mut prelude = self
-                .open_round(round, &input, &program, &mut faults)
-                .await;
+            let mut prelude = self.open_round(round, &input, &program, &mut faults).await;
             // The correction rides last, after this round's own contributions:
             // it is the most recent thing the host has to say, and it is the
             // same volatile shape everything else here takes.

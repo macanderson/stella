@@ -18,23 +18,28 @@
 //! manifest declared and no user consented to at install, taken at the exact
 //! moment it is least visible.
 //!
-//! Four disagreements, each its own [`WrapperError`]:
+//! **Two** disagreements, and the fact that it is two rather than four is the
+//! interesting part:
 //!
 //! - **Stage order** ([`WrapperError::ConflictingStageOrder`]). The merged
 //!   order decides what a later stage can read, because a stage's
 //!   contribution reaches the next one through `BeforeTurnRequest::published`.
 //!   Picking one member's order over another's would silently decide whose
 //!   grounding the other one plans against.
-//! - **Two oracles** ([`WrapperError::TwoOracles`]) — two definitions of done
-//!   for one turn.
-//! - **Two arbiters** ([`WrapperError::TwoArbiters`]) — two hold loops over
-//!   one round. Checked separately from the oracle because the grade and the
-//!   oracle are independent declarations.
-//! - **One requirement name, two meanings**
-//!   ([`WrapperError::ConflictingRequirement`]). The name is what a hold
-//!   cites, so two meanings make the citation ambiguous exactly where it
-//!   matters. Two members declaring the *same* statement is not a conflict —
-//!   that is agreement, and agreement is a composition working.
+//! - **Two arbiters** ([`WrapperError::TwoArbiters`]) — two things holding one
+//!   turn open and deciding when it is done.
+//!
+//! The first draft of this module also refused two `[oracle]` blocks and one
+//! requirement name meaning two things. Both were **unreachable**, and finding
+//! that out is what makes the rule here as small as it is:
+//! `ManifestError::OracleRequiresArbiter` and `RequirementsRequireArbiter`
+//! refuse their block below arbiter grade, so two oracles or two requirement
+//! sets are *already* two arbiters. One rule subsumes all three.
+//!
+//! Those checks were deleted rather than kept as belt-and-braces. An error
+//! variant that cannot fire is worse than no variant: it reads to the next
+//! maintainer as a guarantee somebody tested, and it is dead code that
+//! survives every gate.
 //!
 //! # What it deliberately does not do
 //!
@@ -163,47 +168,29 @@ fn merge_stage_order(manifests: &[PluginManifest]) -> Result<Vec<StageName>, Wra
 }
 
 /// The union of the members' requirements, plus the one oracle among them.
+///
+/// # Why there is no requirement-collision check here
+///
+/// There cannot be a collision. `ManifestError::RequirementsRequireArbiter`
+/// refuses `[requirements]` on any manifest below arbiter grade, and
+/// [`WrapperError::TwoArbiters`] below refuses a second arbiter — so at most
+/// one member of a valid composition carries requirements at all, and a union
+/// over "at most one non-empty set" cannot disagree with itself.
+///
+/// That is a load-bearing assumption rather than an observation, which is why
+/// `wrapper_composition.rs` pins both halves of it: a steering manifest
+/// declaring `[requirements]` is refused at parse, and two arbiters are
+/// refused at bind. If either ever loosens, this fold needs the check that is
+/// deliberately absent, and the test that fails is the one that says so.
 fn merge_rule(manifests: &[PluginManifest]) -> Result<VerdictRule, WrapperError> {
     let mut requirements: BTreeMap<String, String> = BTreeMap::new();
-    let mut declared_by: BTreeMap<String, String> = BTreeMap::new();
     let mut oracle = None;
-    let mut oracle_owner: Option<String> = None;
     let mut arbiter: Option<String> = None;
 
     for manifest in manifests {
-        for (name, statement) in manifest.requirements.clone().unwrap_or_default() {
-            match requirements.get(&name) {
-                // Agreement, not a collision: two plugins saying the same thing
-                // about the same requirement is a composition working.
-                Some(existing) if *existing == statement => {}
-                Some(_) => {
-                    return Err(WrapperError::ConflictingRequirement {
-                        wrapper: declared_by
-                            .get(&name)
-                            .cloned()
-                            .unwrap_or_else(|| manifest.name.clone()),
-                        other: manifest.name.clone(),
-                        requirement: name,
-                    });
-                }
-                None => {
-                    declared_by.insert(name.clone(), manifest.name.clone());
-                    requirements.insert(name, statement);
-                }
-            }
-        }
-
-        if let Some(declared) = manifest.oracle.as_ref() {
-            if let Some(first) = oracle_owner.as_ref() {
-                return Err(WrapperError::TwoOracles {
-                    wrapper: first.clone(),
-                    other: manifest.name.clone(),
-                });
-            }
-            oracle_owner = Some(manifest.name.clone());
-            oracle = Some(declared.clone());
-        }
-
+        // Arbiter first, so the grade conflict is what a caller is told about
+        // when a composition collides on several axes at once — it is the most
+        // structural of them, and the one that explains the others.
         if manifest.loop_grant.participation == Participation::Arbiter {
             if let Some(first) = arbiter.as_ref() {
                 return Err(WrapperError::TwoArbiters {
@@ -212,6 +199,16 @@ fn merge_rule(manifests: &[PluginManifest]) -> Result<VerdictRule, WrapperError>
                 });
             }
             arbiter = Some(manifest.name.clone());
+        }
+
+        requirements.extend(manifest.requirements.clone().unwrap_or_default());
+
+        // No "two oracles" check: `ManifestError::OracleRequiresArbiter` means
+        // an oracle implies arbiter grade, and the check above already refused
+        // a second arbiter — so by the time control reaches here, at most one
+        // member can have one.
+        if let Some(declared) = manifest.oracle.as_ref() {
+            oracle = Some(declared.clone());
         }
     }
 
