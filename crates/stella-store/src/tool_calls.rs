@@ -679,8 +679,9 @@ impl Store {
     /// Rows are emitted in call order; a `tool_start` with no matching result
     /// (turn cut off mid-tool) is recorded as an abandoned, failed call so the
     /// count stays honest. Idempotent, and identical to what the live fold
-    /// wrote — both go through [`refold_tool_calls`]'s rule, keyed on the
-    /// announcing event's `seq`. Returns the count.
+    /// wrote — both go through `refold_tool_calls`'s rule, keyed on the
+    /// announcing event's `seq`. Returns the count. (Named, not linked: that
+    /// function is `pub(crate)`, and this doc is public.)
     pub fn materialize_tool_calls(&self, execution_id: i64) -> Result<usize> {
         let mut conn = self.lock();
         let tx = conn.transaction()?;
