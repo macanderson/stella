@@ -154,9 +154,9 @@ body {
   pointer-events: none;
   opacity: 0.72;
   background-image:
-    radial-gradient(circle at 18% 22%, rgb(41 27 13 / 0.07) 0 0.7px, transparent 0.9px),
+    radial-gradient(circle at 18% 22%, rgb(239 197 63 / 0.07) 0 0.7px, transparent 0.9px),
     radial-gradient(circle at 78% 64%, rgb(255 255 255 / 0.55) 0 0.8px, transparent 1px),
-    linear-gradient(103deg, transparent 0 48%, rgb(70 46 16 / 0.025) 49% 51%, transparent 52% 100%);
+    linear-gradient(103deg, transparent 0 48%, rgb(239 197 63 / 0.025) 49% 51%, transparent 52% 100%);
   background-size: 9px 9px, 13px 13px, 37px 37px;
 }
 .slide.tone-paper::after {
@@ -164,7 +164,7 @@ body {
   position: absolute;
   inset: 18px;
   z-index: 0;
-  border: 1px solid rgb(18 24 29 / 0.12);
+  border: 1px solid rgb(15 15 18 / 0.12);
   pointer-events: none;
 }
 .slide.tone-paper .term {
@@ -301,7 +301,7 @@ table.vs.compact th, table.vs.compact td { padding: 7px 12px; }
 .btrack .fill { flex: 1; }
 .bar { height: 18px; border-radius: 4px; background: var(--border); width: 0; }
 .slide.active .bar { width: var(--w); transition: width 900ms var(--ease-arrive) 240ms; }
-.bar.gold { background: linear-gradient(90deg, var(--gold-deep), var(--gold)); box-shadow: 0 0 18px rgb(197 138 50 / 0.22); }
+.bar.gold { background: linear-gradient(90deg, var(--gold-deep), var(--gold)); box-shadow: 0 0 18px rgb(239 197 63 / 0.22); }
 .bval { font-size: 0.78rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .delta {
   margin-top: 14px; border: 1px solid var(--gold); border-radius: 0;
@@ -331,7 +331,7 @@ table.vs.compact th, table.vs.compact td { padding: 7px 12px; }
 .lockup { display: flex; align-items: center; gap: 18px; margin: 6px 0; }
 .wordmark { font-family: var(--mono); font-size: 4.6rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
 .wordmark sup { color: var(--gold); font-size: 0.42em; }
-.comet { filter: drop-shadow(0 0 24px rgb(197 138 50 / 0.28)); }
+.comet { filter: drop-shadow(0 0 24px rgb(239 197 63 / 0.28)); }
 .slide.active .comet { animation: comet-in 900ms var(--ease-arrive) both; }
 @keyframes comet-in { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: none; } }
 .links a { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(--gold-deep); }
@@ -767,7 +767,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
       </svg>
       <div class="rise" style="--d:4">
         <svg class="dia" viewBox="0 0 420 230" role="img" aria-label="venn diagram of the 89 task panel: 36 tasks solved by both arms, 22 solved only by stella, 8 solved only by Claude Code, 23 solved by neither">
-          <circle cx="165" cy="110" r="86" fill="rgb(197 138 50 / 0.12)" stroke="#EFC53F" stroke-width="1.5"/>
+          <circle cx="165" cy="110" r="86" fill="rgb(239 197 63 / 0.12)" stroke="#EFC53F" stroke-width="1.5"/>
           <circle cx="255" cy="110" r="86" fill="rgb(146 153 161 / 0.10)" stroke="#1F262D" stroke-width="1.5"/>
           <text class="lbl gd" x="100" y="106" text-anchor="middle" font-size="22" font-weight="800">22</text>
           <text class="sm" x="100" y="126" text-anchor="middle">stella only</text>

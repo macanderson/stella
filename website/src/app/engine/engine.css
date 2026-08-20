@@ -86,12 +86,10 @@
    * was a real defect: a background layer has no opacity of its own, so the
    * grid drew at full-strength paper and cut visibly through every line of
    * body text. Opacity has to ride the element, not the colour. */
-  background-image: radial-gradient(
-    ellipse 80% 50% at 50% 0%,
-    color-mix(in srgb, var(--stella-brand) 6%, transparent),
-    transparent 70%
-  );
-  background-attachment: fixed;
+  /* The gold bloom is gone. A radial ramp is a gradient, and rule 5 retires
+   * them on every surface — 6% of the brand hue fading to nothing is a smudge
+   * on the uncalibrated panels this recolour exists to survive. The ground is
+   * flat; the grid overlay below is the only decoration the tour keeps. */
 }
 
 /* The kit's terminal grid, at the kit's 5% — decoration behind every station
@@ -337,12 +335,10 @@
 /* vera's chamber runs warmer — the one station with its own light, because it
  * is the one the whole product argument rests on. */
 .eng-station[data-tone="chamber"] {
-  background:
-    radial-gradient(
-      ellipse 70% 60% at 50% 45%,
-      color-mix(in srgb, var(--stella-brand) 7%, transparent),
-      transparent 72%
-    );
+  /* This station used to run warmer via a gold radial wash. Rule 5 retires it;
+   * the station keeps its distinction through its content and its border, not
+   * through a hue smeared under the text. */
+  background: var(--eng-surface-high);
 }
 
 .eng-station-inner {

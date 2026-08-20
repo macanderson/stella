@@ -256,7 +256,7 @@ test("no retired brand value survives anywhere in the site", () => {
     // modern CSS `rgb(r g b / a)`; the comma form is what an `rgba()` literal
     // and Satori (which has no cascade, so the OG card writes its washes out
     // by hand) actually use. Only the first was listed, and the OG card's CTA
-    // shipped an `rgba(255,176,0,0.12)` wash straight through the v3.0
+    // shipped an `rgba(239,197,63,0.12)` wash straight through the v3.0
     // recolour because a hex sweep cannot see a channel triple and this guard
     // was not looking for one.
     "255 176 0",

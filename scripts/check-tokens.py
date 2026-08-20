@@ -83,6 +83,21 @@ MIGRATING: dict[str, str] = {
 }
 
 HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
+
+# The same colours, written the other way. CSS accepts `rgb(197 138 50)` and
+# `rgba(7,11,16,.28)` for values a hex sweep cannot see, and both spellings were
+# live in this tree: 17 retired values survived the first pass of the v5.0
+# migration purely by not being written in hex, including a bronze gradient
+# sweep on the marketing site. A guard that watches one notation of a two-
+# notation language is a guard that reports zero and means nothing.
+#
+# Deliberately not a general colour parser: `hsl()`, `color()` and `oklch()` are
+# not matched, and neither is a computed value. This closes the gap that was
+# actually open rather than pretending to close all of them — see the note in
+# the report for what remains unwatched.
+RGB_FUNC = re.compile(
+    r"rgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})", re.IGNORECASE
+)
 # Text extensions only. A hex "found" inside a PNG is a coincidence.
 TEXT_SUFFIXES = {
     ".css",
@@ -153,6 +168,15 @@ def main() -> int:
                     stray_hits.append(
                         f"{posix}:{lineno}: {match.group(0)} is not a token in "
                         f"design/tokens/stella-tokens.json"
+                    )
+            for match in RGB_FUNC.finditer(line):
+                channels = tuple(int(c) for c in match.groups())
+                if any(c > 255 for c in channels):
+                    continue
+                hexv = "#%02X%02X%02X" % channels
+                if hexv in banned:
+                    ban_hits.append(
+                        f"{posix}:{lineno}: {match.group(0)}) = {hexv} — {banned[hexv]}"
                     )
 
     failed = False

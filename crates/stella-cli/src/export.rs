@@ -604,8 +604,8 @@ fn render_dashboard(
       --neutral-mark: #C2C9D1;
       --ink: #FFFFFF;
       --accent: #0A0A0C;
-      --accent-wash: rgba(7,11,16,.06);
-      --accent-edge: rgba(7,11,16,.28);
+      --accent-wash: rgba(10,10,12,.06);
+      --accent-edge: rgba(10,10,12,.28);
       --sunken: #F3F6F9;
       --control-edge: #828C97;
     }}
@@ -621,8 +621,8 @@ fn render_dashboard(
     --neutral-mark: #C2C9D1;
     --ink: #FFFFFF;
     --accent: #0A0A0C;
-    --accent-wash: rgba(7,11,16,.06);
-    --accent-edge: rgba(7,11,16,.28);
+    --accent-wash: rgba(10,10,12,.06);
+    --accent-edge: rgba(10,10,12,.28);
     --sunken: #F3F6F9;
     --control-edge: #828C97;
   }}

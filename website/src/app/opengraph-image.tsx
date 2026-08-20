@@ -246,7 +246,7 @@ export default function OpengraphImage() {
               // The one thing on the card a reader is meant to act on. The
               // wash is the accent at 12%, written out because Satori has no
               // cascade and cannot resolve a custom property.
-              background: "rgba(197,138,50,0.12)",
+              background: "rgba(239,197,63,0.12)",
               color: BRAND,
             }}
           >
