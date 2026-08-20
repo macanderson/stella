@@ -3306,6 +3306,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-tui-theme"
+version = "0.9.112"
+dependencies = [
+ "ratatui",
+]
+
+[[package]]
 name = "streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
