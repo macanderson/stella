@@ -6,12 +6,13 @@
 //!
 //! ## Why one row and not two
 //!
-//! The v1 statline ([`crate::statline`]) is two rows: a dim micro-label row
-//! stacked over its value row, ten cells wide, carrying MODEL, the stage box,
-//! CPU, CONTEXT, SPEND, CACHE, SAVED, WARMTH, ENGINE and INBOX. Its own module
-//! doc makes the case — stacking the label above the value spends free
-//! vertical space instead of scarce horizontal space — and the case is sound
-//! for the set of cells it was answering for.
+//! The v1 statline was two rows: a dim micro-label row stacked over its value
+//! row, ten cells wide, carrying MODEL, the stage box, CPU, CONTEXT, SPEND,
+//! CACHE, SAVED, WARMTH, ENGINE and INBOX. Its case — stacking the label above
+//! the value spends free vertical space instead of scarce horizontal space —
+//! was sound for the set of cells it was answering for, and
+//! [`crate::statline`]'s module doc keeps it, because a design decision this
+//! surface reversed is worth being able to read.
 //!
 //! v2 changes the set, and the argument does not survive the change. CPU, MEM,
 //! WARMTH and ENGINE move behind `?` and the AGENTS tab (SPEC 5) because none
@@ -37,14 +38,13 @@
 //! are booleans, not a computed ratio: a call either reached a model or it did
 //! not.
 //!
-//! ## What this module is not
+//! ## Where it draws
 //!
-//! Not wired to the live deck yet. Every value here has a live source — the v1
-//! statline already projects all six off `WorkspaceModel` — so this is a
-//! sequencing question, not a data one. The v2 shell that owns this row lands
-//! in P1; wiring a v2 bar under v1 chrome before then would put the only
-//! cool-gray element on a warm screen, and churn the deck's nineteen goldens
-//! twice.
+//! `render_deck`'s bottom band, through [`render_band`] — the deck's only
+//! status row since #4129 deleted the two-row wall. [`crate::v2::project`]
+//! turns the live `WorkspaceModel` into a [`Status`]; nothing in this module
+//! reads the fold itself, which is what keeps every golden below fixture data
+//! all the way down.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
