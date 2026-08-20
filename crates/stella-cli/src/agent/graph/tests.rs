@@ -225,9 +225,15 @@ async fn a_broken_backend_reports_and_leaves_init_successful() {
     );
 }
 
-/// The cap is a stated partial index, not a silent one.
+/// A partial index is a stated one, not a silent one — and it names what
+/// finishes it.
+///
+/// The leftovers no longer come from a cap (#4043 removed it) and no longer
+/// embed themselves on the next query (#4043 deleted that too), so the
+/// sentence names the only thing left that fills an index: the background
+/// pass at the next session start.
 #[test]
-fn a_capped_pass_names_what_it_left_unembedded() {
+fn a_partial_pass_names_what_it_left_unembedded_and_what_finishes_it() {
     let rendered = format_warm_outcome(
         &crate::search_cmd::semantic::WarmOutcome::Warmed {
             embedded: 2_000,
@@ -239,8 +245,12 @@ fn a_capped_pass_names_what_it_left_unembedded() {
     assert!(rendered.contains("2000 files embedded"), "{rendered}");
     assert!(rendered.contains("3231 left unembedded"), "{rendered}");
     assert!(
-        rendered.contains("embed on demand"),
-        "the cap's leftovers are picked up by the lazy pass: {rendered}"
+        rendered.contains("background pass"),
+        "the leftovers must name the pass that finishes them: {rendered}"
+    );
+    assert!(
+        !rendered.contains("on demand"),
+        "nothing embeds on demand any more — that promise cannot be kept: {rendered}"
     );
 }
 
@@ -315,10 +325,11 @@ async fn init_embeds_every_chunk_without_any_semantic_query_being_issued() {
     );
 }
 
-/// Same discipline as `a_capped_pass_names_what_it_left_unembedded`, one rung
-/// sharper.
+/// Same discipline as
+/// `a_partial_pass_names_what_it_left_unembedded_and_what_finishes_it`, one
+/// rung sharper.
 #[test]
-fn a_capped_chunk_pass_names_what_it_left_unembedded() {
+fn a_partial_chunk_pass_names_what_it_left_unembedded_and_what_finishes_it() {
     let rendered = format_chunk_warm_outcome(
         &crate::search_cmd::engine::ChunkWarmOutcome::Warmed {
             files_embedded: 2_000,
@@ -330,8 +341,12 @@ fn a_capped_chunk_pass_names_what_it_left_unembedded() {
     assert!(rendered.contains("2000 file(s) embedded"), "{rendered}");
     assert!(rendered.contains("1231 left unembedded"), "{rendered}");
     assert!(
-        rendered.contains("embed on demand"),
-        "the cap's leftovers are picked up by the lazy pass: {rendered}"
+        rendered.contains("background pass"),
+        "the leftovers must name the pass that finishes them: {rendered}"
+    );
+    assert!(
+        !rendered.contains("on demand"),
+        "nothing embeds on demand any more — that promise cannot be kept: {rendered}"
     );
 }
 

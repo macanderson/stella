@@ -90,6 +90,19 @@ impl NoticeState {
         self.last_at = Some(Instant::now());
     }
 
+    /// Record one notification the user's own keystroke just caused,
+    /// reopening the dialog if it had been dismissed.
+    ///
+    /// The dismissal rule exists to stop *late chrome* popping back up after
+    /// the user waved it away. A refusal is not chrome: the keystroke that
+    /// raised it was theirs, and swallowing it leaves a deliberate no-op
+    /// looking like a broken key. Only a gate may call this — an ordinary
+    /// startup line does not get to override a dismissal.
+    pub fn demand(&mut self, text: impl Into<String>) {
+        self.dismissed = false;
+        self.push(text);
+    }
+
     /// Dismiss now — any key, any mouse event. Idempotent, and permanent for
     /// the session: later notices will not reopen the dialog.
     pub fn dismiss(&mut self) {

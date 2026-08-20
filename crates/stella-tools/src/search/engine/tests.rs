@@ -20,7 +20,7 @@ use super::{
     warm_chunk_vectors,
 };
 use crate::search::semantic::{
-    MAX_FILES_PER_EAGER_PASS, WarmOutcome, warm_file_vectors, warm_file_vectors_with_progress,
+    NO_FILE_CEILING, WarmOutcome, warm_file_vectors, warm_file_vectors_with_progress,
 };
 use crate::search::{codegraph, scan};
 
@@ -238,6 +238,23 @@ fn write_fixture_at_the_real_workspace_path(workspace: &Path) -> std::path::Path
     root
 }
 
+/// [`indexed_fixture`] with its vectors already filled, by the same pass a
+/// session runs in the background ([`crate::search::backfill`]).
+///
+/// **Every test that ranks by meaning goes through this.** Before #4043 a
+/// search embedded whatever the index was missing on its way to answering, so
+/// `indexed_fixture` alone was enough and the warming was invisible. It is
+/// explicit now for the same reason it is explicit in production: filling the
+/// index is not something a query is allowed to do.
+async fn embedded_fixture(
+    workspace: &Path,
+    embedder: &dyn Embedder,
+) -> (std::path::PathBuf, CodeGraph) {
+    let (root, graph) = indexed_fixture(workspace);
+    crate::search::backfill::backfill_opened(&graph, embedder, &mut |_| {}).await;
+    (root, graph)
+}
+
 fn content_of(output: &ToolOutput) -> String {
     match output {
         ToolOutput::Ok { content, .. } => content.clone(),
@@ -261,7 +278,7 @@ fn content_of(output: &ToolOutput) -> String {
 #[tokio::test]
 async fn one_search_call_answers_what_today_takes_several_tools() {
     let workspace = tempfile::tempdir().expect("tempdir");
-    let (root, graph) = indexed_fixture(workspace.path());
+    let (root, graph) = embedded_fixture(workspace.path(), &ConceptEmbedder).await;
 
     // The premise that makes this test worth anything: no lexical route
     // exists from the question to the answer.
@@ -342,9 +359,12 @@ async fn one_search_call_answers_what_today_takes_several_tools() {
 #[tokio::test]
 async fn a_surface_embedder_cannot_answer_the_same_question() {
     let workspace = tempfile::tempdir().expect("tempdir");
-    let (root, graph) = indexed_fixture(workspace.path());
-
     let surface = stella_embed::HashEmbedder::default();
+    // Warmed under the SURFACE backend's own fingerprint: vectors are keyed
+    // by it, so warming with the concept embedder would leave this ranking
+    // nothing to read and the control would pass for the wrong reason.
+    let (root, graph) = embedded_fixture(workspace.path(), &surface).await;
+
     assert_eq!(
         surface.similarity_posture(),
         SimilarityPosture::Surface,
@@ -448,7 +468,7 @@ async fn with_no_index_at_all_the_file_scan_answers_and_labels_itself() {
 #[tokio::test]
 async fn each_depth_renders_a_superset_of_the_one_below() {
     let workspace = tempfile::tempdir().expect("tempdir");
-    let (root, graph) = indexed_fixture(workspace.path());
+    let (root, graph) = embedded_fixture(workspace.path(), &ConceptEmbedder).await;
     let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
 
     // The hit blocks only. The two header lines are deliberately excluded:
@@ -502,7 +522,7 @@ async fn each_depth_renders_a_superset_of_the_one_below() {
 #[tokio::test]
 async fn the_default_answer_carries_the_body_without_a_follow_up_read() {
     let workspace = tempfile::tempdir().expect("tempdir");
-    let (root, graph) = indexed_fixture(workspace.path());
+    let (root, graph) = embedded_fixture(workspace.path(), &ConceptEmbedder).await;
 
     let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
     let content = content_of(&render(
@@ -804,6 +824,7 @@ async fn the_matched_symbol_leads_the_detailed_facets() {
     let root = workspace.path().canonicalize().expect("canonicalize");
     let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
     graph.index_all().expect("index");
+    crate::search::backfill::backfill_opened(&graph, &ConceptEmbedder, &mut |_| {}).await;
 
     let answer = dispatch(
         Some(&graph),
@@ -1143,9 +1164,7 @@ async fn a_fully_embedded_workspace_stops_calling_itself_partial() {
     );
 
     let opened = codegraph::open_or_build(&root).expect("open_or_build");
-    crate::search::semantic::catch_up_embeddings(&opened.graph, &ConceptEmbedder, &fingerprint)
-        .await
-        .expect("whole-file vectors");
+    crate::search::backfill::backfill_opened(&opened.graph, &ConceptEmbedder, &mut |_| {}).await;
 
     // The premise: the collision really happened, so a count comparison over
     // chunks-vs-symbols is unsatisfiable for this workspace.
@@ -1266,6 +1285,7 @@ async fn an_exact_symbol_name_beats_the_ranking_that_would_bury_it() {
     let root = workspace.path().canonicalize().expect("canonicalize");
     let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
     graph.index_all().expect("index");
+    crate::search::backfill::backfill_opened(&graph, &ConceptEmbedder, &mut |_| {}).await;
 
     // The premise: the ranking really does prefer the decoy. Without this the
     // test could pass by luck and prove nothing.
@@ -1340,7 +1360,7 @@ async fn an_exact_name_without_an_embedder_is_still_a_certainty() {
 #[tokio::test]
 async fn a_sentence_never_reaches_the_exact_symbol_rung() {
     let workspace = tempfile::tempdir().expect("tempdir");
-    let (root, graph) = indexed_fixture(workspace.path());
+    let (root, graph) = embedded_fixture(workspace.path(), &ConceptEmbedder).await;
 
     let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
     graph.shutdown();
@@ -1358,7 +1378,7 @@ async fn an_eager_pass_embeds_the_corpus_and_is_idempotent() {
     let workspace = tempfile::tempdir().expect("tempdir");
     let root = write_fixture_at_the_real_workspace_path(workspace.path());
 
-    let outcome = warm_file_vectors(&root, &ConceptEmbedder, MAX_FILES_PER_EAGER_PASS).await;
+    let outcome = warm_file_vectors(&root, &ConceptEmbedder, NO_FILE_CEILING).await;
     assert_eq!(
         outcome,
         WarmOutcome::Warmed {
@@ -1368,7 +1388,7 @@ async fn an_eager_pass_embeds_the_corpus_and_is_idempotent() {
         }
     );
 
-    let again = warm_file_vectors(&root, &ConceptEmbedder, MAX_FILES_PER_EAGER_PASS).await;
+    let again = warm_file_vectors(&root, &ConceptEmbedder, NO_FILE_CEILING).await;
     assert_eq!(
         again,
         WarmOutcome::Warmed {
@@ -1390,7 +1410,7 @@ async fn an_eager_pass_reports_progress_per_batch() {
     let outcome = warm_file_vectors_with_progress(
         &root,
         &ConceptEmbedder,
-        MAX_FILES_PER_EAGER_PASS,
+        NO_FILE_CEILING,
         &mut |embedded| reported.push(embedded),
     )
     .await;
@@ -1467,7 +1487,7 @@ async fn a_broken_backend_makes_the_eager_pass_a_named_failure() {
     let root = write_fixture_at_the_real_workspace_path(workspace.path());
 
     let WarmOutcome::Failed { embedded, reason } =
-        warm_file_vectors(&root, &BrokenEmbedder, MAX_FILES_PER_EAGER_PASS).await
+        warm_file_vectors(&root, &BrokenEmbedder, NO_FILE_CEILING).await
     else {
         panic!("a failing backend must report a failure");
     };

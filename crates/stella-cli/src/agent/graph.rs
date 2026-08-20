@@ -1,6 +1,7 @@
 //! Code-graph build cluster: workspace index construction, the eager semantic
 //! embedding pass, and the session-lifetime live watcher.
 use super::*;
+use crate::search_cmd::readiness::IndexReadiness;
 
 #[cfg(test)]
 mod tests;
@@ -158,19 +159,20 @@ async fn drive_index_blocking<F: FnMut(InitLine) + ?Sized>(
 ///
 /// # Why eagerly, and why here
 ///
-/// The vector pass is lazy by default ([`crate::search_cmd::semantic`]),
-/// which is right for a long interactive session and wrong for a fresh
-/// checkout: the lazy pass fires only once a search has already been asked,
-/// so the first searches rank against whichever files happened to be
-/// processed first. `stella init` is the one place that runs before any
-/// turn, so work done here is free from the session's perspective.
+/// Nothing embeds on the query path any more (#4043): a search ranks over
+/// what the index holds and never fills it. The two passes that do fill it
+/// are this one and the background pass at session start
+/// ([`crate::search_cmd::backfill`]), and this is the one that runs where the
+/// user asked for it — `stella init` is the command whose whole job is to
+/// make the workspace ready, so its work is free from every later session's
+/// perspective.
 ///
 /// # Why it is automatic rather than a flag
 ///
 /// `stella init` is not a free command: it already resolves a provider and
 /// spends a model call on domain inference, and already prints what that cost.
 /// An embedding pass is the same kind of spend on the same command, so it
-/// needs the same treatment — do it, bound it, and say what it did — not a
+/// needs the same treatment — do it and say what it did — not a
 /// flag that leaves the capability off for everyone who never found it. With
 /// no embedder configured it is a labelled no-op, which is the normal case.
 async fn warm_semantic_index(
@@ -180,7 +182,7 @@ async fn warm_semantic_index(
 ) {
     use stella_embed::Embedder;
 
-    use crate::search_cmd::semantic::MAX_FILES_PER_EAGER_PASS;
+    use crate::search_cmd::semantic::NO_FILE_CEILING;
 
     let embedder = match stella_embed::resolve(embed_env) {
         stella_embed::Resolution::Configured(embedder) => embedder,
@@ -213,7 +215,7 @@ async fn warm_semantic_index(
     let outcome = crate::search_cmd::semantic::warm_file_vectors_with_progress(
         workspace_root,
         embedder.as_ref(),
-        MAX_FILES_PER_EAGER_PASS,
+        NO_FILE_CEILING,
         &mut |embedded| {
             if ticker.ready(Instant::now()) {
                 emit(InitLine::Progress(format!(
@@ -240,7 +242,7 @@ async fn warm_semantic_index(
     let chunk_outcome = crate::search_cmd::engine::warm_chunk_vectors_with_progress(
         workspace_root,
         embedder.as_ref(),
-        crate::search_cmd::engine::MAX_FILES_PER_CHUNK_EAGER_PASS,
+        crate::search_cmd::engine::NO_CHUNK_FILE_CEILING,
         &mut |embedded| {
             if ticker.ready(Instant::now()) {
                 emit(InitLine::Progress(format!(
@@ -258,14 +260,14 @@ async fn warm_semantic_index(
 
 /// The one-line report of an eager embedding pass.
 ///
-/// A partial index says so: a pass that stopped at the cap, or gave up on a
-/// broken backend, names how many files were left unembedded, because an index
-/// that silently ranks a subset of the repository is worse than one that says
-/// which subset it ranked. The leftovers are not lost — the lazy per-query
-/// pass picks them up.
+/// A partial index says so: a pass that gave up on a broken backend names how
+/// many files were left unembedded, because an index that silently ranks a
+/// subset of the repository is worse than one that says which subset it
+/// ranked. The leftovers are not lost — the background pass at the next
+/// session start picks them up.
 ///
 /// Unless they cannot be read, which is a different sentence and gets one: no
-/// later pass will pick those up, so "they embed on demand" would be a promise
+/// later pass will pick those up, so "they embed later" would be a promise
 /// this code cannot keep (#3016).
 fn format_warm_outcome(outcome: &crate::search_cmd::semantic::WarmOutcome, model: &str) -> String {
     use crate::search_cmd::semantic::WarmOutcome;
@@ -290,11 +292,11 @@ fn format_warm_outcome(outcome: &crate::search_cmd::semantic::WarmOutcome, model
             ..
         } => format!(
             "✓ semantic index: {embedded} files embedded by {model} — {remaining} left \
-             unembedded (they embed on demand as semantic searches reach them)"
+             unembedded (the background pass at the next session start finishes them)"
         ),
         WarmOutcome::Failed { embedded, reason } => format!(
-            "! semantic index: stopped after {embedded} files — {reason} (the rest embed on \
-             demand)"
+            "! semantic index: stopped after {embedded} files — {reason} (the background pass \
+             at the next session start finishes the rest)"
         ),
     }
 }
@@ -327,14 +329,14 @@ fn format_chunk_warm_outcome(
             ..
         } => format!(
             "✓ chunk index: {files_embedded} file(s) embedded by {model} — {files_remaining} \
-             left unembedded (they embed on demand as searches reach them)"
+             left unembedded (the background pass at the next session start finishes them)"
         ),
         ChunkWarmOutcome::Failed {
             files_embedded,
             reason,
         } => format!(
-            "! chunk index: stopped after {files_embedded} file(s) — {reason} (the rest embed \
-             on demand)"
+            "! chunk index: stopped after {files_embedded} file(s) — {reason} (the background \
+             pass at the next session start finishes the rest)"
         ),
     }
 }
@@ -484,6 +486,14 @@ impl Drop for SessionGraph {
 /// stderr or the deck transcript, never to a machine-readable stdout);
 /// `on_ready` fires once after the build (the deck refreshes its Graph tab
 /// there; other callers pass a no-op).
+///
+/// `readiness` receives the semantic index's coverage as the background
+/// embedding pass fills it, and once more marked settled when that pass
+/// stops. It exists for the interactive prompt gate (#4043), so **only the
+/// deck passes a real one**: the headless doors (`stella run`, `stella
+/// resume`, the plain REPL) take a goal that is already typed, and holding it
+/// would turn a script into a hang. Their answer is the same one a partial
+/// index has always given — rank what is there, say how much that was.
 /// Report — or, with `prune`, reclaim — semantic vectors left behind by an
 /// embedding model this workspace no longer uses (#3652).
 ///
@@ -553,51 +563,132 @@ pub(super) fn report_retired_vectors(
     graph.shutdown();
 }
 
-/// Session-start vector top-up (#3649), reporting only what a user can act on.
+/// Fill the semantic index in the background, for the whole session's
+/// benefit and off every query's critical path (#4043, replacing #3649's
+/// bounded top-up).
+///
+/// # Why it runs unasked, and every launch
+///
+/// Its predecessor skipped a workspace with no vectors at all, on the
+/// argument that embedding a tree the user never asked for spends their
+/// money. That argument held while a search would eventually fill the index
+/// itself; with the lazy per-query pass deleted, "skip it" now means "this
+/// workspace has no semantic search, ever, and nothing will tell you why". So
+/// the opt-in signal is now the embedder being configured at all — a key the
+/// user set, for a capability whose entire purpose is this index. An
+/// unconfigured host still does nothing and says nothing.
+///
+/// Every launch, because the pass is *cheap when there is nothing to do*: it
+/// asks the graph what is pending and finds nothing. The first launch in a
+/// workspace is the expensive one, which is exactly the one
+/// [`crate::search_cmd::readiness`] holds the first prompt for.
+///
+/// # Narration
 ///
 /// Deliberately quieter than `stella init`'s pass. Init is where a workspace
 /// is *configured*, so naming an absent embedder there is help; naming it on
 /// every session start is nagging about a capability the user has already
-/// chosen not to use. So an unconfigured or not-opted-in workspace says
-/// nothing at all, and only a pass that actually embedded something — or
-/// failed while trying — is worth a line.
-/// `status` keeps its `Send` bound deliberately: this runs inside the
-/// `tokio::spawn`ed session task, and a bare `&mut dyn FnMut(InitLine)` would
-/// make the whole future non-`Send` — the same trap `drive_index_blocking`
-/// documents two functions up.
-async fn refresh_recent_vectors_quietly(
+/// chosen not to use. Only a pass that embedded something — or failed while
+/// trying — is worth a line.
+///
+/// Both callbacks keep their `Send` bound deliberately: this runs inside the
+/// `tokio::spawn`ed session task, and a bare `&mut dyn FnMut(_)` would make
+/// the whole future non-`Send` — the same trap `drive_index_blocking`
+/// documents above.
+async fn backfill_vectors_quietly(
     root: &std::path::Path,
     status: &mut (dyn FnMut(InitLine) + Send),
+    readiness: &mut (dyn FnMut(IndexReadiness) + Send),
 ) {
-    use crate::search_cmd::semantic::{RefreshOutcome, WarmOutcome, refresh_recent_vectors};
+    use crate::search_cmd::backfill::{BackfillOutcome, backfill_workspace_vectors};
+    use crate::search_cmd::semantic::WarmOutcome;
 
     let stella_embed::Resolution::Configured(embedder) =
         stella_embed::resolve(&stella_embed::EmbedderEnv::from_process())
     else {
         return;
     };
-    match refresh_recent_vectors(root, embedder.as_ref(), stella_graph::MAX_FILES_PER_PASS).await {
-        RefreshOutcome::Refreshed(WarmOutcome::Warmed { embedded, .. }) if embedded > 0 => {
-            status(InitLine::Step(format!(
-                "· semantic index: {embedded} changed file(s) re-embedded"
+
+    let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
+    // Every tick is the pass saying "still filling"; the settled report is
+    // this function's last act, below, and belongs to nobody else — a pass
+    // that declared itself settled from the inside would release the prompt
+    // gate one batch before it was true.
+    let outcome = backfill_workspace_vectors(root, embedder.as_ref(), &mut |measured| {
+        readiness(measured);
+        if ticker.ready(Instant::now()) {
+            status(InitLine::Progress(format!(
+                "· semantic index: {} of {} files embedded…",
+                measured.indexed_files(),
+                measured.total_files
             )));
         }
-        RefreshOutcome::Refreshed(WarmOutcome::Failed { reason, .. }) => {
+    })
+    .await;
+
+    match &outcome {
+        BackfillOutcome::Ran {
+            files: WarmOutcome::Warmed { embedded, .. },
+            ..
+        } if *embedded > 0 => {
             status(InitLine::Step(format!(
-                "! semantic index: refresh stopped — {reason} (search still ranks over the \
-                 vectors already stored)"
+                "✓ semantic index: {embedded} file(s) embedded — search ranks the whole \
+                 workspace by meaning"
             )));
         }
-        // Nothing changed, no vectors to maintain, or another pass has it.
-        // None of the three is news.
-        _ => {}
+        BackfillOutcome::Ran {
+            files: WarmOutcome::Failed { reason, .. },
+            ..
+        } => {
+            status(InitLine::Step(format!(
+                "! semantic index: the background pass stopped — {reason} (search still ranks \
+                 over the vectors already stored, and says how many that is)"
+            )));
+        }
+        BackfillOutcome::Unavailable(reason) => {
+            status(InitLine::Step(format!(
+                "! semantic index: not filled — {reason}"
+            )));
+        }
+        // Nothing was pending, or another session holds the lease and is
+        // doing this work. Neither is news.
+        BackfillOutcome::Ran { .. } | BackfillOutcome::Busy => {}
     }
+
+    // Settled, whatever happened — including a failure. A gate that outlives
+    // the pass behind it is a wedge: a workspace whose embedder is down must
+    // still take prompts (`search_cmd::readiness`).
+    readiness(settled_readiness(root, embedder.as_ref()));
+}
+
+/// The workspace's index coverage, marked settled — what the prompt gate
+/// reads once the background pass has stopped.
+///
+/// Opens its own connection rather than borrowing the pass's: the pass may
+/// have failed before it opened one at all, and this report is owed either
+/// way. An unopenable graph reports [`IndexReadiness::unknown`], which holds
+/// nothing — the direction `readiness::measure` argues for.
+fn settled_readiness(
+    root: &std::path::Path,
+    embedder: &dyn stella_embed::Embedder,
+) -> IndexReadiness {
+    let Ok(db_path) = stella_store::workspace_private_sqlite_path(root, "codegraph.db") else {
+        return IndexReadiness::unknown();
+    };
+    let Ok(graph) = stella_graph::CodeGraph::open(root, &db_path) else {
+        return IndexReadiness::unknown();
+    };
+    let measured =
+        crate::search_cmd::readiness::measure(&graph, &embedder.fingerprint().id(), true);
+    graph.shutdown();
+    measured
 }
 
 pub(crate) fn spawn_session_graph(
     workspace_root: &std::path::Path,
     mut status: Box<dyn FnMut(InitLine) + Send>,
     on_ready: Box<dyn FnOnce() + Send>,
+    mut readiness: Box<dyn FnMut(IndexReadiness) + Send>,
 ) -> (SessionGraph, tokio::task::JoinHandle<()>) {
     let slot: Arc<std::sync::Mutex<Option<stella_graph::CodeGraph>>> =
         Arc::new(std::sync::Mutex::new(None));
@@ -623,22 +714,18 @@ pub(crate) fn spawn_session_graph(
             ))),
         }
         on_ready();
-        // 2) Top up semantic vectors for whatever changed (#3649). The index
-        //    pass above has just stamped every changed file's `indexed_at`,
-        //    and `vectors::pending` orders on exactly that, so one bounded
-        //    pass here covers the commit or merge this session started after.
-        //    Without it the ordering has nothing pulling it: a session that
-        //    merges and then never runs a semantic search leaves those files
-        //    unembedded indefinitely.
-        //
-        //    After `on_ready` on purpose — this must never delay the first
-        //    turn. It is opt-in (a workspace with no vectors is left alone),
-        //    single-flight, and bounded; every one of those is checked inside
-        //    `refresh_recent_vectors`.
-        refresh_recent_vectors_quietly(&root, &mut status).await;
-        // 3) Arm the live watcher on a mounted graph kept alive for the
+        // 2) Arm the live watcher on a mounted graph kept alive for the
         //    session. Best-effort: a mount failure only loses live refresh, it
         //    never loses the index built in step 1.
+        //
+        //    **Before** the embedding pass, not after (#4043). While that pass
+        //    was bounded to a couple of hundred files this ran second and cost
+        //    a second or two of live-refresh; the pass is unbounded now, so
+        //    ordering it first would leave a cold monorepo with no watcher for
+        //    however long a whole-tree embed takes — and the agent's own edits
+        //    unindexed for all of it. The two overlap safely: they are separate
+        //    SQLite connections writing different tables, and the embed lease
+        //    is what keeps two embedding passes apart.
         let db_path = crate::search_cmd::codegraph::graph_db_path(&root);
         match stella_graph::CodeGraph::mount(&root, &db_path).await {
             Ok(graph) => {
@@ -648,6 +735,20 @@ pub(crate) fn spawn_session_graph(
                 "! code-graph watcher unavailable: {e} — the index will refresh on the next launch"
             ))),
         }
+        // 3) Fill the semantic index (#4043). The index pass above has just
+        //    stamped every changed file's `indexed_at`, and `vectors::pending`
+        //    orders on exactly that, so this pass covers the commit or merge
+        //    this session started after before it reaches the long-stable
+        //    tail. Nothing else fills the index any more — the per-query
+        //    catch-up inside `search` is deleted — so this runs to exhaustion
+        //    rather than to a cap, and reports its coverage as it goes so the
+        //    prompt gate can hold the first turn while a cold workspace fills.
+        //
+        //    Last on purpose: everything above it is what makes the session
+        //    usable, and this is the part that can take minutes. It is
+        //    single-flight across processes (the embed lease), and a host with
+        //    no embedder configured does nothing at all.
+        backfill_vectors_quietly(&root, &mut status, &mut readiness).await;
     });
     (SessionGraph { graph: slot }, handle)
 }
