@@ -939,3 +939,132 @@ fn identity_and_states_are_separated_by_hue_not_by_luminance() {
         );
     }
 }
+
+/// Every `rgba()` wash on an instrument surface is a channel-for-channel copy
+/// of a colour that surface actually declares.
+///
+/// **This is the blind spot every other check in this file has.** The matrix
+/// above compares `--token: #hex` declarations, and a hex sweep — here, in
+/// `export/tests.rs`, in the website's `brand-parity.test.ts` — cannot see
+/// `rgba(74, 222, 128, .10)`. So a recolour moves the hex tokens, the washes
+/// derived from them stay behind, and every guard reports green while the page
+/// paints last season's green behind an added diff line.
+///
+/// That is not hypothetical, and it is not one incident:
+///
+///  - The recolour that added this test moved `--ok`/`--bad`/`--text`/`--ground`
+///    across eight surfaces and left ten triples behind in `export.rs`, two in
+///    the Observatory's light media-query gate (its `[data-theme]` twin four
+///    lines away *was* fixed), eight in `transcript.css` and two in
+///    `docs/benchmarks/index.html`. A review bot found one of the ten; the
+///    other twenty-one were found by looking for the shape.
+///  - `transcript.css`'s `.step.err` carried `rgba(229, 113, 95, …)` — the
+///    pre-instrument bronze error tone, which `export/tests.rs` has listed as
+///    **retired** the entire time. It survived two recolours because it was a
+///    triple, and it was written inline so it could not flip with the theme
+///    either.
+///
+/// The rule is mechanical and has no judgement in it: a triple's `#rrggbb` must
+/// appear as the value of some `--token` in the same file. That admits every
+/// legitimate wash (they are by definition derived from a declared colour) and
+/// rejects exactly the stale copy. Alpha is ignored — it is the wash's own
+/// business.
+#[test]
+fn every_wash_is_a_channel_copy_of_a_declared_colour() {
+    // The instrument surfaces that actually carry washes. `surfaces()` above is
+    // keyed by role, which is the wrong shape here: this asks a question about
+    // a whole file, not about the roles it claims.
+    const FILES: &[&str] = &[
+        "crates/stella-observatory/src/assets/index.html",
+        "crates/stella-cli/src/export.rs",
+        "crates/stella-transcript/src/html/transcript.css",
+        "crates/stella-mcp/src/oauth/callback_page.css",
+        "arenabench/ui/app/globals.css",
+        "arenabench/web/app/globals.css",
+        "docs/benchmarks/index.html",
+        "docs/benchmarks/terminal-bench-2-1-glm-5-2.html",
+    ];
+
+    let mut offenders = Vec::new();
+    for file in FILES {
+        let css = read(file);
+        // Every hex literal in the file, not `declarations()`'s map: that map
+        // is last-write-wins by design (it is how a *scheme* is extracted), so
+        // a dark `--ok` is overwritten by its light twin and a perfectly good
+        // dark wash would read as an orphan. A wash may legitimately derive
+        // from either scheme's ramp, so the membership test is the whole set.
+        let declared = hex_literals(&css);
+
+        for (line_no, line) in css.lines().enumerate() {
+            for triple in channel_triples(line) {
+                let (r, g, b) = triple;
+                let hex = format!("#{r:02x}{g:02x}{b:02x}");
+                if !declared.contains(&hex) {
+                    offenders.push(format!(
+                        "{file}:{} — rgba({r}, {g}, {b}, …) is {hex}, which no \
+                         --token in this file declares",
+                        line_no + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "a wash has drifted from the colour it is supposed to be derived \
+         from:\n  {}\n\nRe-derive it from the token it belongs to rather than \
+         re-typing channels. A hex sweep cannot see these, which is why they \
+         outlive the recolours that should have moved them.",
+        offenders.join("\n  ")
+    );
+}
+
+/// Every `#rrggbb` in `css`, lowercased.
+fn hex_literals(css: &str) -> std::collections::BTreeSet<String> {
+    let bytes = css.as_bytes();
+    let mut found = std::collections::BTreeSet::new();
+    for (i, _) in css.match_indices('#') {
+        let hex = &css[i + 1..];
+        if hex.len() >= 6 && hex.as_bytes()[..6].iter().all(u8::is_ascii_hexdigit) {
+            // Reject a longer run, so `#aabbccdd` is not read as `#aabbcc`.
+            let seventh_is_hex = bytes.get(i + 7).is_some_and(|b| b.is_ascii_hexdigit());
+            if !seventh_is_hex {
+                found.insert(format!("#{}", hex[..6].to_ascii_lowercase()));
+            }
+        }
+    }
+    found
+}
+
+/// The `(r, g, b)` of every `rgba(r, g, b, a)` in `line`, with a **numeric**
+/// alpha required.
+///
+/// The alpha requirement is what keeps a comment that *names* a retired triple
+/// from being read as a use of one — `transcript.css` documents its own former
+/// offender as `rgba(229, 113, 95, …)`, and naming a defect is not committing
+/// it (the same carve-out `brand-parity.test.ts` makes for `tokens.css`).
+fn channel_triples(line: &str) -> Vec<(u8, u8, u8)> {
+    let mut found = Vec::new();
+    for (start, _) in line.match_indices("rgba(") {
+        let rest = &line[start + "rgba(".len()..];
+        let Some(close) = rest.find(')') else {
+            continue;
+        };
+        let parts: Vec<&str> = rest[..close].split(',').map(str::trim).collect();
+        if parts.len() != 4 {
+            continue;
+        }
+        // A numeric alpha, in either CSS spelling (`0.13` or `.08`).
+        if !parts[3].starts_with(|c: char| c.is_ascii_digit() || c == '.')
+            || !parts[3].ends_with(|c: char| c.is_ascii_digit())
+        {
+            continue;
+        }
+        let channels: Option<Vec<u8>> = parts[..3].iter().map(|p| p.parse::<u8>().ok()).collect();
+        if let Some(c) = channels {
+            found.push((c[0], c[1], c[2]));
+        }
+    }
+    found
+}

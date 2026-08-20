@@ -530,8 +530,8 @@ fn render_dashboard(
     --neutral-mark: #4B4B56;
     --ink: #0A0A0C;
     --accent: #E8E8EC;
-    --accent-wash: rgba(233,237,242,.08);
-    --accent-edge: rgba(233,237,242,.38);
+    --accent-wash: rgba(232,232,236,.08);
+    --accent-edge: rgba(232,232,236,.38);
     --sunken: #0A0A0C;
     --control-edge: #777782;
 
@@ -604,8 +604,8 @@ fn render_dashboard(
       --neutral-mark: #A9AAB5;
       --ink: #FFFFFF;
       --accent: #0A0A0C;
-      --accent-wash: rgba(7,11,16,.06);
-      --accent-edge: rgba(7,11,16,.28);
+      --accent-wash: rgba(10,10,12,.06);
+      --accent-edge: rgba(10,10,12,.28);
       --sunken: #F7F7FA;
       --control-edge: #777782;
     }}
@@ -621,8 +621,8 @@ fn render_dashboard(
     --neutral-mark: #A9AAB5;
     --ink: #FFFFFF;
     --accent: #0A0A0C;
-    --accent-wash: rgba(7,11,16,.06);
-    --accent-edge: rgba(7,11,16,.28);
+    --accent-wash: rgba(10,10,12,.06);
+    --accent-edge: rgba(10,10,12,.28);
     --sunken: #F7F7FA;
     --control-edge: #777782;
   }}
@@ -768,16 +768,16 @@ fn render_dashboard(
   .dx-line .no, .dx-line .nn {{ color: var(--text-3); text-align: right;
     font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; }}
   .dx-line .sg {{ text-align: center; -webkit-user-select: none; user-select: none; }}
-  .dx-line.add {{ background: rgba(74, 222, 128, .10); color: var(--text); }}
+  .dx-line.add {{ background: rgba(116, 201, 145, .10); color: var(--text); }}
   .dx-line.add .sg {{ color: var(--ok); }}
-  .dx-line.rem {{ background: rgba(255, 92, 122, .10); color: var(--text); }}
+  .dx-line.rem {{ background: rgba(224, 104, 122, .10); color: var(--text); }}
   .dx-line.rem .sg {{ color: var(--bad); }}
   /* Word-level highlight: the exact changed tokens inside a paired
      removal/addition, a stronger wash of the same hue the row already
      carries — never a third colour, so the rule stays "the row's tint says
      which side, the token's tint says which part". */
-  .dx-line.add .ww {{ background: rgba(74, 222, 128, .34); }}
-  .dx-line.rem .ww {{ background: rgba(255, 92, 122, .34); }}
+  .dx-line.add .ww {{ background: rgba(116, 201, 145, .34); }}
+  .dx-line.rem .ww {{ background: rgba(224, 104, 122, .34); }}
   /* The elision sits between the hunks it replaces, so it has to read as
      unmistakably not a line of the file: raised ground, centred, no gutter. */
   .dx-fold {{ color: var(--text-3); background: var(--raised); text-align: center;

@@ -90,10 +90,17 @@
   /* Diff washes, derived from the semantic pair above at the same alphas.
      Derived, not picked: change `--green`/`--red` and these follow, which is
      why they are spelled as the same channels rather than as new hex. */
-  --del-line: rgba(242, 104, 122, 0.13);
-  --del-word: rgba(242, 104, 122, 0.38);
-  --add-line: rgba(63, 217, 155, 0.12);
-  --add-word: rgba(63, 217, 155, 0.34);
+  --del-line: rgba(224, 104, 122, 0.13);
+  --del-word: rgba(224, 104, 122, 0.38);
+  --add-line: rgba(116, 201, 145, 0.12);
+  --add-word: rgba(116, 201, 145, 0.34);
+  /* The failed-step wash, derived from `--red` the same way. It was an inline
+     `rgba(229, 113, 95, …)` in the rules below — the pre-instrument bronze
+     error tone, which `export/tests.rs` has listed as retired the whole time.
+     A hex sweep cannot see a channel triple, so nothing caught it; and being
+     inline it could not flip with the theme either, which is the exact defect
+     `the_transcript_spells_every_rule_colour_as_a_token` exists to forbid. */
+  --err-wash: rgba(224, 104, 122, 0.07);
 
   /* Derived surfaces. Named rather than written inline wherever a hover or a
      well needed one, because the ramp above is cool and a neutral grey on it
@@ -156,10 +163,11 @@
     --green: #006933;
     --red: #96213c;
     --amber: #8a3f00;
-    --del-line: rgba(168, 32, 54, 0.1);
-    --del-word: rgba(168, 32, 54, 0.28);
-    --add-line: rgba(11, 107, 61, 0.09);
-    --add-word: rgba(11, 107, 61, 0.24);
+    --del-line: rgba(150, 33, 60, 0.1);
+    --del-word: rgba(150, 33, 60, 0.28);
+    --add-line: rgba(0, 105, 51, 0.09);
+    --add-word: rgba(0, 105, 51, 0.24);
+    --err-wash: rgba(150, 33, 60, 0.07);
 
     /* The derived surfaces, each flipped about the ramp it was derived from:
        a step *below* the ground in the dark scheme is a step *above* the paper
@@ -371,7 +379,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 
 .step > summary { padding: 7px 18px 7px 0; border-bottom: 1px solid var(--hairline-soft); }
 .step > summary:hover { background: var(--hover); }
-.step.err > summary { background: rgba(229, 113, 95, 0.07); }
+.step.err > summary { background: var(--err-wash); }
 .digest {
   display: flex;
   gap: 9px;
