@@ -11,21 +11,8 @@ use std::path::{Path, PathBuf};
 use stella_protocol::tool::ToolOutput;
 
 /// The index location `stella init` writes and every graph reader resolves.
-///
-/// Resolved against the *state* root rather than the working directory, which
-/// are the same path for an ordinary session and deliberately different for a
-/// turn executing in a throwaway git worktree. The index is the most expensive
-/// thing a workspace accumulates — a full tree-sitter walk — and hanging it off
-/// the working directory meant every worktree turn built its own from nothing
-/// and destroyed it on the way out. See
-/// [`stella_home::WORKSPACE_STATE_ROOT_ENV`], and
-/// `stella_store::ensure_workspace_state_dir`, which resolves the same way for
-/// every other artifact under `.stella/private`.
 pub fn graph_db_path(root: &Path) -> PathBuf {
-    stella_home::workspace_state_root(root)
-        .join(".stella")
-        .join("private")
-        .join("codegraph.db")
+    root.join(".stella").join("private").join("codegraph.db")
 }
 
 /// Why a code-graph door did not open (invariant #5).

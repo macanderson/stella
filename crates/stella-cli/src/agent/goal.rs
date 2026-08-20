@@ -381,11 +381,8 @@ pub(crate) async fn run_raw_one_shot(
     // `one_shot_reflection_enabled` still honors the benchmark adapter's
     // `STELLA_DISABLE_REFLECTION` opt-out, which is the switch for "do not
     // spend the extra provider call".
-    if should_reflect_after_one_shot(
-        format,
-        turn_warrants_reflection(&messages),
-        memory.is_some(),
-    ) && let Some(m) = &mut memory
+    if should_reflect_after_one_shot(format, turn_warrants_reflection(&messages), memory.is_some())
+        && let Some(m) = &mut memory
     {
         // The friction ledger this door folded above (#3946). It was empty here
         // for as long as the raw loop had no producer — so reflection saw every
