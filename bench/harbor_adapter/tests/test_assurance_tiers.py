@@ -18,16 +18,27 @@ Two questions are covered here, and they are different:
   so every channel into it — the host selector, a harness's overridden builder —
   is honored by construction rather than one at a time.
 - **How a role resolves inside that posture.** The engine reads
-  `agents.<role>.model` > the flat `pipeline_<role>_model` > `default_model`
-  (`AgentEngineConfig::model_for`). A declaration that resolves roles by any
-  other rule is free to disagree with the run it describes, which is the whole
-  defect class.
+  `agents.default.model` > `default_model` (`AgentEngineConfig::model_for`). A
+  declaration that resolves roles by any other rule is free to disagree with
+  the run it describes, which is the whole defect class.
+
+  That ladder used to carry a middle rung — the flat `pipeline_<role>_model` —
+  and this module still reads it. The divergence is deliberate and bounded:
+  #3908 collapsed the engine to the one role core has and **retired** the five
+  flat keys rather than removing them, precisely because this harness and
+  `arenabench` still write them into hashed postures, and refusing them would
+  re-hash every digest registered in `bench/READINESS.md` §8.4. The Python
+  stops writing them in slice 6 (#3910). Until then the two sides are
+  knowingly out of step, so the mirror tests below pin the order of the rungs
+  that *survive* and assert the extra rung is exactly the retired set — a
+  named divergence rather than a drift nobody noticed.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -331,7 +342,9 @@ _SETTINGS_MODULE = [
     _SETTINGS_SRC / "settings.rs",
     *sorted((_SETTINGS_SRC / "settings").glob("*.rs")),
 ]
+_BENCH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "bench.yml"
 _MODEL_FOR_DECL = "pub fn model_for("
+_RETIRED_ROOT_DECL = "pub(crate) const RETIRED_ENGINE_ROOT: &[&str] = &["
 
 
 def _model_for_source() -> str:
@@ -388,9 +401,7 @@ def test_the_engine_still_resolves_a_model_in_the_order_this_module_mirrors() ->
     #3910 lands, this assertion is what fails and sends the next reader to
     `resolve_posture_role_model`.
     """
-    source = _model_for_source()
-    start = source.index(_MODEL_FOR_DECL)
-    body = source[start : source.index("\n    }\n", start)]
+    body = _model_for_body()
     rungs = [
         body.index("self.agent()"),
         body.index("self.default_model"),

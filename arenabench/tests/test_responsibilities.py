@@ -33,6 +33,27 @@ from arenabench.model import (
     ResponsibilityConfig,
 )
 
+# The reader that used to live here — `_ROLE_KEY_RS`, `_ROLE_ARM` and
+# `_role_key_names()`, which parsed `role_key()`'s match arms out of
+# `crates/stella-cli/src/config_wiring.rs` — is deleted, finishing what #3950
+# started. That PR removed the assertion those three existed to serve and the
+# `re`/`pathlib` imports they needed, but left the three behind, so importing
+# this module raised `NameError: name 'Path' is not defined` and NOTHING in
+# `arenabench/tests/` could be collected. It went unseen because the bench
+# workflow's arenabench step never ran: the `harbor_adapter` step above it had
+# been failing since #3944, and one red step masks every step after it.
+#
+# They are deleted rather than repaired, for #3950's own two reasons plus a
+# third it could not have known. The property is still enforced by a gate step
+# (`scripts/check-role-names.sh`), so repointing would be a fourth copy of a
+# passing check; re-creating a role roster for core to publish pulls against
+# `doc:roleless-core` (#3903); and the subject itself is gone — #3908 deleted
+# `role_key()` and `EngineAgentKind`, and repointed that gate at
+# `ENGINE_AGENT_NAMES`/`RETIRED_ENGINE_AGENT_NAMES` in `settings::unknown`. A
+# repaired reader would parse a function that no longer exists and silently
+# return the empty set.
+
+
 HEADER = """
 [match]
 id = "ablation"
