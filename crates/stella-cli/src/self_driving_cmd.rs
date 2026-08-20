@@ -1064,7 +1064,7 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
         }
 
         DeliverCmd::Observe { pr, format } => {
-            let obs = deliver::observe(pr)?.observation;
+            let obs = deliver::observe(pr, &config::load(&state::repo_root()).merge)?.observation;
             if *format == QueryFormat::Json {
                 println!(
                     "{}",
@@ -1131,7 +1131,7 @@ fn decide(
     rebases: u32,
     no_review: bool,
 ) -> Result<stella_autonomy::Transition, String> {
-    let obs = deliver::observe(pr)?.observation;
+    let obs = deliver::observe(pr, &config::load(&state::repo_root()).merge)?.observation;
     let policy = stella_autonomy::DeliverPolicy {
         require_approval: !no_review,
         ..stella_autonomy::DeliverPolicy::default()

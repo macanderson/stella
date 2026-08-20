@@ -44,6 +44,7 @@ mod closure;
 mod convention;
 mod deliver;
 mod doctrine;
+pub mod gate;
 pub mod priority;
 mod stats;
 mod step;
@@ -70,6 +71,7 @@ pub use doctrine::{
     Contention, ContentionPolicy, ContentionVerdict, Doctrine, ForeignBreakage, QueueCriterion,
     contention_verdict,
 };
+pub use gate::{BlockingPolicy, DEFAULT_STUCK_AFTER, blocking, stuck_on_base, waived};
 pub use stats::SessionStats;
 pub use step::{
     BlockReason, CarriedPr, Clearance, IssueRef, LoopObservation, LoopState, LoopStep,

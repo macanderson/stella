@@ -141,11 +141,119 @@ pub(super) fn drive(
     )
     .map_err(|error| format!("could not install the escalation label: {error}"))?;
 
+    // Resolved once: auto-detection reads the filesystem, and the answer
+    // cannot change while the loop runs.
+    let verify_command = cfg
+        .verify_command
+        .clone()
+        .or_else(|| super::work::default_verify_command(&root));
+    match verify_command.as_deref() {
+        Some(command) => audit::record(
+            durable,
+            Audit::SessionStarted,
+            None,
+            &format!("changes will be proved here with `{command}` before delivery"),
+        ),
+        None => audit::record(
+            durable,
+            Audit::SessionStarted,
+            None,
+            "no local verification command — delivery rests on the forge's checks alone",
+        ),
+    }
+
+    // Is the gate winnable at all?
+    //
+    // Measured once, on the base, before any change is judged by it. A
+    // repository whose own test suite already fails on `main` has a local gate
+    // exactly as unwinnable as a suspended CI account, and blocking on it
+    // would be the same mistake one layer down — every pull request rejected
+    // for a failure that was there before it existed.
+    //
+    // When the baseline is red the verification still runs and is still
+    // recorded, but it stops being a veto. That is the honest reading: the
+    // signal cannot distinguish this change's fault from the tree's, so it is
+    // evidence rather than a verdict.
+    let baseline_green = match verify_command.as_deref() {
+        Some(command) => {
+            audit::record(
+                durable,
+                Audit::VerifyStarted,
+                None,
+                &format!(
+                    "measuring the baseline — `{command}` on origin/{base_branch}, in a clean worktree"
+                ),
+            );
+            match super::work::verify_base(
+                &root,
+                &format!("origin/{base_branch}"),
+                command,
+                cfg.verify_timeout_secs,
+            ) {
+                Ok(()) => {
+                    audit::record(
+                        durable,
+                        Audit::Verified,
+                        None,
+                        "the baseline is green, so local verification can veto a change",
+                    );
+                    true
+                }
+                Err(reason) => {
+                    audit::record(
+                        durable,
+                        Audit::Waived,
+                        None,
+                        &format!(
+                            "the baseline is already red ({reason}) — local verification \
+                             becomes advisory, because it cannot tell this change's fault \
+                             from the tree's"
+                        ),
+                    );
+                    false
+                }
+            }
+        }
+        None => false,
+    };
+
     let mut state = LoopState {
         planned: true,
         batch: max_issues,
         ..LoopState::default()
     };
+    // Best effort: a tracker that refuses the label costs the loop its record
+    // of local verification, which is worth a warning and not a refusal to run.
+    if let Err(error) = crate::issue_provider::ensure_label(
+        super::deliver::VERIFIED_LOCALLY_LABEL,
+        "Proved by running this project's own checks locally, not by remote CI.",
+    ) {
+        audit::record(
+            durable,
+            Audit::Transient,
+            None,
+            &format!("could not install the local-verification label: {error}"),
+        );
+    }
+
+    // The loop's own vocabulary, installed before it needs it.
+    //
+    // Triage answers in the configured ladder and then writes that label; a
+    // tracker that does not carry the label rejects the write, and the issue
+    // comes back unassessed forever. A fresh repository has GitHub's stock
+    // labels and nothing else, so this is the ordinary case rather than the
+    // exotic one — it is what lets the loop be pointed at a repository nobody
+    // prepared for it.
+    for (index, rung) in cfg.triage.ladder.rungs.iter().enumerate() {
+        let _ = crate::issue_provider::ensure_label(
+            rung,
+            &format!("Priority {index} — installed by the self-driving loop."),
+        );
+    }
+    for kind in &cfg.triage.defect_kinds {
+        let _ = crate::issue_provider::ensure_label(kind, "Work the self-driving loop may take.");
+    }
+
     let mut spent: HashMap<String, Spent> = HashMap::new();
     // Issues this process already offered to triage. The escalation label is
     // the durable half; this covers the window before it lands, and stops a
@@ -226,13 +334,31 @@ pub(super) fn drive(
                     .into_iter()
                     .find(|k| !state.claimed.iter().any(|c| &c.0 == k) && !spent.contains_key(k))
                 else {
+                    // An empty queue is a state, not an ending.
+                    //
+                    // Returning here made "there is nothing to do right now"
+                    // indistinguishable from "this run is over", and the two
+                    // want opposite responses: somebody files an issue, or a
+                    // human removes an escalation label, and a loop that
+                    // exited is not there to notice. It drained a backlog on
+                    // oxagen-platform at 05:37 and stopped, with the
+                    // repository still red on a failure nobody had filed yet.
+                    //
+                    // Waiting costs one queue read per poll and is the whole
+                    // difference between a batch job and a loop somebody can
+                    // walk away from.
                     audit::record(
                         durable,
-                        Audit::SessionStopped,
+                        Audit::Waited,
                         None,
-                        "the queue offered nothing this run has not already taken",
+                        &format!(
+                            "the queue offers nothing this run has not already taken; \
+                             re-asking in {poll_secs}s — a new issue, or an escalation \
+                             label removed, is all it takes"
+                        ),
                     );
-                    return report(durable, &tally);
+                    sleep(poll_secs);
+                    continue;
                 };
 
                 audit::record(
@@ -300,7 +426,9 @@ pub(super) fn drive(
                 });
 
                 match outcome {
-                    super::work::WorkOutcome::Changed { branch, stat, .. } => {
+                    super::work::WorkOutcome::Changed {
+                        branch, stat, path, ..
+                    } => {
                         audit::record(
                             durable,
                             Audit::WorkChanged,
@@ -308,6 +436,59 @@ pub(super) fn drive(
                             &format!("the turn left changes — {stat}"),
                         );
                         durable.update_stats(|s| s.issues_changed += 1);
+
+                        // Proved here, in the worktree that holds the change,
+                        // before anyone is asked to look at it. On a repository
+                        // whose CI cannot run this is the only evidence there
+                        // will ever be; on one whose CI works it is a cheap
+                        // early read that costs a merge nothing.
+                        let verified = match verify_command.as_deref() {
+                            Some(command) => {
+                                audit::record(
+                                    durable,
+                                    Audit::VerifyStarted,
+                                    Some(&issue.0),
+                                    &format!("proving it here — `{command}`"),
+                                );
+                                match super::work::verify_locally(
+                                    &path,
+                                    command,
+                                    cfg.verify_timeout_secs,
+                                ) {
+                                    Ok(()) => {
+                                        durable.update_stats(|s| s.verified_locally += 1);
+                                        audit::record(
+                                            durable,
+                                            Audit::Verified,
+                                            Some(&issue.0),
+                                            "the project's own checks passed here",
+                                        );
+                                        true
+                                    }
+                                    Err(reason) => {
+                                        audit::record(
+                                            durable,
+                                            Audit::VerifyFailed,
+                                            Some(&issue.0),
+                                            &format!(
+                                                "{reason}{}",
+                                                if baseline_green {
+                                                    " — and the baseline was green, so this \
+                                                     is this change's doing"
+                                                } else {
+                                                    " — but the baseline was already red, so \
+                                                     this is not evidence against the change"
+                                                }
+                                            ),
+                                        );
+                                        // Advisory when the gate was already
+                                        // unwinnable: see `baseline_green`.
+                                        !baseline_green
+                                    }
+                                }
+                            }
+                            None => false,
+                        };
 
                         let title = cfg
                             .attribution
@@ -336,6 +517,20 @@ pub(super) fn drive(
                                 continue;
                             }
                         };
+
+                        if verified {
+                            // On the pull request, not in this process, so it
+                            // survives a restart and a human can see which
+                            // merges rested on local evidence.
+                            if let Err(error) = super::deliver::mark_verified_locally(&pr) {
+                                audit::record(
+                                    durable,
+                                    Audit::Transient,
+                                    Some(&pr),
+                                    &format!("could not record local verification: {error}"),
+                                );
+                            }
+                        }
 
                         audit::record(
                             durable,
@@ -384,7 +579,9 @@ pub(super) fn drive(
             }
 
             LoopStep::Deliver { pr } => {
-                let settled = match advance(&pr.0, &mut spent, no_review, &mut tally, durable) {
+                let settled = match advance(
+                    &cfg.merge, &pr.0, &mut spent, no_review, &mut tally, durable,
+                ) {
                     Ok(settled) => settled,
                     Err(error) => {
                         audit::record(
@@ -655,6 +852,7 @@ fn assess_one(
 /// Returns whether it settled — merged, escalated, or handed back — so the
 /// caller can stop carrying it.
 fn advance(
+    policy_blocking: &stella_autonomy::BlockingPolicy,
     pr: &str,
     spent: &mut HashMap<String, Spent>,
     no_review: bool,
@@ -662,7 +860,7 @@ fn advance(
     durable: &Durable,
 ) -> Result<bool, String> {
     let entry = spent.entry(pr.to_owned()).or_default();
-    let reading = super::deliver::observe(pr)?;
+    let reading = super::deliver::observe(pr, policy_blocking)?;
     if reading.settled {
         // Nothing left to decide. Reached either because the merge below
         // succeeded and the cleanup after it did not, or because a human got
@@ -675,6 +873,27 @@ fn advance(
         );
         return Ok(true);
     }
+    // Said out loud every time. A loop that merges past a check the repository
+    // marks required, without naming which one and on what grounds, is
+    // indistinguishable from one that is simply broken.
+    if !reading.waived.is_empty() {
+        audit::record(
+            durable,
+            Audit::Waived,
+            Some(pr),
+            &format!(
+                "not blocking on {} — {}{}",
+                reading.waived.len(),
+                reading.waived.join("; "),
+                if reading.verified_locally {
+                    ". This change was proved here instead"
+                } else {
+                    ". This change has no local proof either"
+                }
+            ),
+        );
+    }
+
     let obs = reading.observation;
     let policy = DeliverPolicy {
         require_approval: !no_review,

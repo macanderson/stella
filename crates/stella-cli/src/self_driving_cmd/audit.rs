@@ -61,6 +61,14 @@ pub(super) enum Action {
     Deferred,
     /// An issue was marked as attempted and unresolved.
     Escalated,
+    /// The project's own checks were started against a change, here.
+    VerifyStarted,
+    /// They passed.
+    Verified,
+    /// They did not.
+    VerifyFailed,
+    /// A required check was not enforced, and the grounds for that.
+    Waived,
     /// The base branch was found broken with no issue open, so one was filed.
     FiledBaseBreakage,
     /// A turn was asked to place an issue nobody had judged.
@@ -99,6 +107,10 @@ impl Action {
             Self::WorkFailed => "failed",
             Self::Deferred => "deferred",
             Self::Escalated => "escalated",
+            Self::VerifyStarted => "verifying",
+            Self::Verified => "verified",
+            Self::VerifyFailed => "unverified",
+            Self::Waived => "waived",
             Self::FiledBaseBreakage => "filed",
             Self::TriageStarted => "triaging",
             Self::Triaged => "triaged",

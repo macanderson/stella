@@ -225,6 +225,122 @@ fn tree_change(dir: &Path, base: &str) -> Option<String> {
     }
 }
 
+/// The command that proves a change, when the operator has not named one.
+///
+/// Auto-detected from the project's own tooling rather than guessed: each arm
+/// below is a file that only exists because somebody set that toolchain up.
+/// `None` means this build cannot tell, and the caller must not pretend a
+/// change was verified — an unverifiable repository is one where remote CI is
+/// the only gate there is.
+#[must_use]
+pub(super) fn default_verify_command(root: &Path) -> Option<String> {
+    if root.join("Makefile").is_file() {
+        return Some("make gate".to_owned());
+    }
+    if root.join("pnpm-lock.yaml").is_file() {
+        return Some("pnpm -s typecheck && pnpm -s test".to_owned());
+    }
+    if root.join("Cargo.toml").is_file() {
+        return Some("cargo test --workspace".to_owned());
+    }
+    if root.join("package-lock.json").is_file() {
+        return Some("npm test --silent".to_owned());
+    }
+    None
+}
+
+/// Run the verify command against the base branch, in a throwaway worktree.
+///
+/// # Why not simply run it where the loop is standing
+///
+/// Because that is not the tree the loop delivers against. The checkout a
+/// session starts in is whatever the operator left it on — a feature branch,
+/// a half-finished rebase, uncommitted edits — while every work unit branches
+/// from `origin/HEAD`. Measuring one and judging by the other produces a
+/// baseline that describes nothing the loop will ever build on.
+///
+/// That is not hypothetical. On oxagen-platform the checkout sat on
+/// `feat/adaptive-context-provider`, whose typecheck failed in `@oxagen/app`;
+/// `origin/main` failed in `@oxagen/ai` instead, on entirely different files.
+/// Four issues were filed from the wrong tree and every one of them was
+/// already fixed on the branch the loop was working — three turns ran, found
+/// nothing to do, and were right.
+///
+/// The worktree is removed whether the command passed or failed; a probe that
+/// leaves litter behind is one nobody runs twice.
+pub(super) fn verify_base(
+    root: &Path,
+    base: &str,
+    command: &str,
+    timeout_secs: u64,
+) -> Result<(), String> {
+    let probe = root.join(WORKTREES_DIR).join("baseline-probe");
+    let path = probe.to_string_lossy().to_string();
+
+    // A probe left by a killed run is in the way, and holds nothing worth
+    // keeping by construction.
+    let _ = super::state::git(root, &["worktree", "remove", &path, "--force"]);
+    let _ = super::state::git(root, &["worktree", "prune"]);
+
+    super::state::git(root, &["worktree", "add", &path, base, "--detach"])
+        .ok_or_else(|| format!("could not create a worktree at {base} to measure the baseline"))?;
+
+    let outcome = verify_locally(&probe, command, timeout_secs);
+
+    let _ = super::state::git(root, &["worktree", "remove", &path, "--force"]);
+    let _ = super::state::git(root, &["worktree", "prune"]);
+
+    outcome
+}
+
+/// Whether the change in `dir` survives the project's own checks.
+///
+/// # Why a loop needs this at all
+///
+/// A repository whose remote checks cannot go green — a suspended billing
+/// account, an exhausted quota — still has a test suite. Running it here is a
+/// weaker signal than a clean CI run and an enormously stronger one than
+/// nothing, and it is the whole difference between a loop that ships and a
+/// loop that waits for somebody's invoice to clear.
+///
+/// Run in the **work worktree**, so it judges the change in isolation rather
+/// than whatever the main checkout happens to contain.
+///
+/// A command that cannot be started, or that outruns its ceiling, is reported
+/// as *not verified* rather than as verified — the failure of the prover is
+/// not evidence about the proof.
+pub(super) fn verify_locally(dir: &Path, command: &str, timeout_secs: u64) -> Result<(), String> {
+    let mut child = Command::new("bash")
+        .arg("-lc")
+        .arg(command)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| format!("could not start `{command}`: {error}"))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                return Err(format!("`{command}` failed ({status})"));
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return Err(format!(
+                        "`{command}` outran {timeout_secs}s and was stopped"
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+            Err(error) => return Err(format!("could not wait on `{command}`: {error}")),
+        }
+    }
+}
+
 /// Spawn `stella run` in `dir` with `prompt` on stdin.
 ///
 /// Inherits stderr so a human watching a foreground cycle sees the turn, and
@@ -300,10 +416,36 @@ pub(super) fn run_turn(
 /// better in a log than a bare exit code, and pretending to understand it
 /// would be worse than either.
 fn turn_reason(summary: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(summary)
-        .ok()
-        .and_then(|v| {
-            let obj = v.as_object()?.clone();
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(summary) else {
+        return summary.lines().last().unwrap_or(summary).to_owned();
+    };
+
+    // What the turn *said* first, and only then the machine-readable status.
+    //
+    // The status alone is useless at exactly the moment it matters. A turn
+    // that runs for eleven minutes and leaves the tree untouched reports
+    // `completed`, and "the turn changed nothing (completed)" is not a
+    // diagnosis — it is the absence of one, and it left two issues looking
+    // identical to a model that had simply refused.
+    //
+    // The last thing the turn said is the closest thing to a reason it
+    // produced, and it costs nothing to keep.
+    if let Some(text) = last_text(&value) {
+        let text = text.trim();
+        if !text.is_empty() {
+            let condensed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let clipped = condensed.chars().take(600).collect::<String>();
+            return if condensed.chars().count() > 600 {
+                format!("{clipped}…")
+            } else {
+                clipped
+            };
+        }
+    }
+
+    value
+        .as_object()
+        .and_then(|obj| {
             for key in ["reason", "error", "status", "stop_reason"] {
                 if let Some(s) = obj.get(key).and_then(|x| x.as_str())
                     && !s.is_empty()
@@ -314,6 +456,32 @@ fn turn_reason(summary: &str) -> String {
             None
         })
         .unwrap_or_else(|| summary.lines().last().unwrap_or(summary).to_owned())
+}
+
+/// The last `text` field anywhere in a turn's JSON, which is what it said last.
+fn last_text(value: &serde_json::Value) -> Option<String> {
+    let mut found = None;
+    collect_last_text(value, &mut found);
+    found
+}
+
+fn collect_last_text(value: &serde_json::Value, found: &mut Option<String>) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            if let Some(serde_json::Value::String(text)) = fields.get("text") {
+                *found = Some(text.clone());
+            }
+            for item in fields.values() {
+                collect_last_text(item, found);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_last_text(item, found);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Classify what happened, from the tree.
@@ -376,9 +544,27 @@ pub(super) fn start(
 
     let base = base_ref(root);
 
-    let created = runtime
-        .block_on(manager.create(issue.key.as_str(), &base))
-        .map_err(|error| stale_attempt_hint(root, issue.key.as_str(), &error.to_string()))?;
+    let created = match runtime.block_on(manager.create(issue.key.as_str(), &base)) {
+        Ok(created) => created,
+        Err(error) => {
+            // A branch left by an attempt that died is in the way. Whether it
+            // is precious is a question with an answer: if it had delivered,
+            // there would be a pull request open for this issue.
+            //
+            // There is not, so it delivered nothing, and the loop clears it and
+            // starts over rather than deferring the issue forever. An operator
+            // is not always there to sweep up — and this loop is meant to run
+            // for days — so "nothing here will discard it for you" was a rule
+            // that quietly retired an issue on every crash.
+            let text = error.to_string();
+            if !discard_undelivered_attempt(root, issue.key.as_str(), &text) {
+                return Err(stale_attempt_hint(root, issue.key.as_str(), &text));
+            }
+            runtime
+                .block_on(manager.create(issue.key.as_str(), &base))
+                .map_err(|again| stale_attempt_hint(root, issue.key.as_str(), &again.to_string()))?
+        }
+    };
 
     let wt = Worktree {
         branch: created.branch.clone(),
@@ -470,6 +656,62 @@ pub(super) fn refuse_if_unsteered(root: &Path) -> Result<(), String> {
 /// the way. That is worth saying plainly rather than reporting raw git: the
 /// remedy depends on whether the leftover holds work, and only the operator can
 /// decide to throw it away.
+/// Clear a leftover branch and worktree for `key`, when it delivered nothing.
+///
+/// Returns whether anything was cleared, so the caller knows a retry is worth
+/// making.
+///
+/// # Why this is safe to do unattended
+///
+/// The question "does this leftover hold work worth keeping" has an
+/// observable answer rather than a judgement: **if the attempt had delivered,
+/// there would be an open pull request for the issue.** The loop opens one the
+/// moment a turn leaves changes, so a branch with no pull request is a turn
+/// that died before it produced anything — or produced something nobody can
+/// see, which is the same thing from here.
+///
+/// An open pull request stops this cold. So does an unreadable forge: `gh`
+/// failing is not evidence that nothing was delivered, and discarding on a
+/// network blip would throw away real work.
+fn discard_undelivered_attempt(root: &Path, key: &str, error: &str) -> bool {
+    if !error.contains("already exists") {
+        return false;
+    }
+
+    // Ask the forge before touching anything. An error here is a refusal, not
+    // a licence.
+    let Ok(open) = super::deliver::open_prs_for_issue(key) else {
+        return false;
+    };
+    if !open.is_empty() {
+        return false;
+    }
+
+    let branches =
+        super::state::git(root, &["branch", "--list", &format!("*{key}-*")]).unwrap_or_default();
+
+    let mut cleared = false;
+    for branch in branches.lines() {
+        let branch = branch.trim_start_matches(['*', '+', ' ']).trim();
+        if branch.is_empty() {
+            continue;
+        }
+        // The worktree first: git refuses to delete a branch one holds.
+        let path = root
+            .join(WORKTREES_DIR)
+            .join(branch.rsplit('/').next().unwrap_or(branch));
+        let _ = super::state::git(
+            root,
+            &["worktree", "remove", &path.to_string_lossy(), "--force"],
+        );
+        let _ = super::state::git(root, &["worktree", "prune"]);
+        if super::state::git(root, &["branch", "-D", branch]).is_some() {
+            cleared = true;
+        }
+    }
+    cleared
+}
+
 fn stale_attempt_hint(root: &Path, key: &str, error: &str) -> String {
     if !error.contains("already exists") {
         return format!("could not create the worktree: {error}");
