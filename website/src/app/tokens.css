@@ -114,18 +114,29 @@
    * every resting mark, `--stella-signal-live` for small things that are
    * moving. Role names, not hue names, for the same reason the ramp above
    * uses them. */
+  /* Roles, pointed at the generated ramp above rather than restating its
+   * values. Twelve of these were literals identical to an `--st-*` a few lines
+   * up — duplication rather than drift, since `check-tokens.py` would have
+   * caught a value that was not a live token. But it would NOT have caught a
+   * role quietly re-pointed at a different one: the guard asks "is this hex a
+   * token?", never "is this role still the token it names". `var()` makes that
+   * unaskable, which is what the token system is for, and is what the five
+   * brand-core roles above already do.
+   *
+   * The contrast ratios stay in the comments: a measurement is a fact about
+   * this pairing that a `var()` cannot carry. */
   --stella-void: #050507; /* below the canvas — full-bleed backdrops */
-  --stella-canvas: #0a0a0c; /* the page ground */
-  --stella-canvas-code: #0f0f12; /* cards, code blocks */
-  --stella-canvas-row: #17171b; /* highlight rows, hover surfaces */
-  --stella-canvas-edge: #26262c; /* borders */
-  --stella-signal: #efc53f; /* 11.99:1 on canvas */
-  --stella-signal-live: #f7d96b; /* 14.22:1 — small, and moving */
+  --stella-canvas: var(--st-bg); /* the page ground */
+  --stella-canvas-code: var(--st-panel); /* cards, code blocks */
+  --stella-canvas-row: var(--st-hl); /* highlight rows, hover surfaces */
+  --stella-canvas-edge: var(--st-border); /* borders */
+  --stella-signal: var(--st-gold); /* 11.99:1 on canvas */
+  --stella-signal-live: var(--st-gold-bright); /* 14.22:1 — small, and moving */
   --stella-signal-ink: #725a00; /* gold TEXT on the paper ground, 6.02:1 */
-  --stella-text: #e8e8ec; /* 16.19:1 on canvas */
-  --stella-text-2: #a9aab5; /* 8.58:1 — the safe small-text tone */
-  --stella-text-3: #777782; /* 4.47:1 — caption/UI tier, under AA body */
-  --stella-text-dim: #4b4b56; /* 2.30:1 — chrome only, never words */
+  --stella-text: var(--st-text); /* 16.19:1 on canvas */
+  --stella-text-2: var(--st-silver); /* 8.58:1 — the safe small-text tone */
+  --stella-text-3: var(--st-muted); /* 4.47:1 — caption/UI tier, under AA body */
+  --stella-text-dim: var(--st-dim); /* 2.30:1 — chrome only, never words */
   --stella-paper-2: #f4f4f6; /* the cool paper ground */
   --stella-paper-3: #fafafc; /* paper surface */
   --stella-paper-row: #e6e6ea; /* paper hover / raised */
@@ -157,11 +168,11 @@
    *    signal's 0.152) so no status ever out-saturates the one owned colour;
    *    they sit 63.1° and 78.0° from it. Each `-ink` variant holds its dark
    *    twin's hue to within 2° and clears AA on the paper ground. */
-  --stella-success: #74c991;
+  --stella-success: var(--st-green);
   --stella-success-ink: #006933;
   --stella-warning: #e78d54;
   --stella-warning-ink: #8a3f00;
-  --stella-danger: #e0687a;
+  --stella-danger: var(--st-red);
   --stella-danger-ink: #96213c;
 
   /* ── motion — assemble, don't spin ──────────────────────────────────── */
