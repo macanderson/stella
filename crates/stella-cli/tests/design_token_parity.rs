@@ -719,12 +719,39 @@ fn identity_comes_from_the_product_palette() {
     let palette = read("crates/stella-tui/src/palette.rs");
 
     /// `pub const NAME: Color = Color::Rgb(0xRR, 0xGG, 0xBB);` → `#rrggbb`.
+    ///
+    /// Follows one level of `= token::OTHER;` into `stella-tui-theme`. The
+    /// product palette no longer restates every value: since #4135 a stop it
+    /// shares with the terminal is written `pub const BRAND: Color =
+    /// token::GOLD;`, deferring to the theme crate's table — which #4101 made
+    /// the generated one, emitted from `design/tokens/stella-tokens.json`.
+    ///
+    /// That is the direction the token system exists to go, so this reader
+    /// follows it rather than forcing the palette to keep a literal. It does
+    /// not weaken the assertion: the alias resolves to a concrete value and
+    /// the comparison below is against that value, so an identity re-pointed
+    /// at a *different* token still fails. What it stops failing on is a
+    /// palette that stopped duplicating.
+    ///
+    /// The path is derived from the alias rather than hardcoded — `token::`
+    /// names the module, and the module is `token.rs` — so the file moving
+    /// again (as it just did, from `generated.rs`) does not strand this
+    /// reader a third time.
     fn constant(src: &str, name: &str) -> String {
+        let alias = format!("pub const {name}: Color = token::");
+        if let Some(at) = src.find(&alias) {
+            let rest = &src[at + alias.len()..];
+            let token = &rest[..rest
+                .find(';')
+                .unwrap_or_else(|| panic!("{name}'s token alias is unterminated"))];
+            let generated = read("crates/stella-tui-theme/src/token.rs");
+            return constant(&generated, token.trim());
+        }
+
         let decl = format!("pub const {name}: Color = Color::Rgb(");
-        let from = src
-            .find(&decl)
-            .unwrap_or_else(|| panic!("palette.rs declares no {name}"))
-            + decl.len();
+        let from = src.find(&decl).unwrap_or_else(|| {
+            panic!("palette.rs declares no {name}, as a literal or a token alias")
+        }) + decl.len();
         let to = from
             + src[from..]
                 .find(')')
