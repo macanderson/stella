@@ -19,7 +19,9 @@ No Docker, no network, no model key: every fixture is synthetic.
 
 from __future__ import annotations
 
+import re
 import tomllib
+from pathlib import Path
 
 import pytest
 
