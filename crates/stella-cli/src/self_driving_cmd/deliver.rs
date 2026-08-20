@@ -366,6 +366,67 @@ fn run_id_from_link(link: &str) -> Option<String> {
     }
 }
 
+/// The checks this repository actually requires to merge into `branch`.
+///
+/// # Why "CI is red" cannot mean "any check is red"
+///
+/// A repository's rollup contains checks it requires and checks it merely
+/// runs. This one carries a Vercel commit status that has been failing on
+/// every pull request for as long as the account has been blocked — it is
+/// advisory, the forge merges past it, and a human ignores it. A loop that
+/// treats it as blocking never merges anything again, and cannot be argued
+/// out of it: the failure is real, it is red, and it will never go green.
+///
+/// GitHub agrees, and says so in its own vocabulary: #4022 reported
+/// `mergeStateStatus: UNSTABLE, mergeable: MERGEABLE` — advisory checks
+/// failing, merge permitted. Reading branch protection is how the loop learns
+/// the same thing without hardcoding which service to ignore.
+///
+/// An unreadable protection document (no permission, no protection
+/// configured) yields an empty list, and an empty list means **no filtering**:
+/// every check counts, which is what the loop did before it could ask. That is
+/// the conservative direction — it can refuse to merge something mergeable,
+/// but it can never merge something the repository would have blocked.
+fn required_contexts(branch: &str) -> Vec<String> {
+    let out = std::process::Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/branches/{branch}/protection"),
+            "--jq",
+            ".required_status_checks.contexts[]?",
+        ])
+        .env("NO_COLOR", "1")
+        .output();
+    let Ok(out) = out else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Keep only the checks that can block a merge.
+///
+/// An empty `required` list leaves the rollup untouched — see
+/// [`required_contexts`] for why that is the safe reading rather than "nothing
+/// is required".
+#[must_use]
+fn only_required(checks: Vec<Check>, required: &[String]) -> Vec<Check> {
+    if required.is_empty() {
+        return checks;
+    }
+    checks
+        .into_iter()
+        .filter(|check| required.iter().any(|name| name == check.name()))
+        .collect()
+}
+
 /// The forge endpoint carrying a ref's check runs.
 ///
 /// Split out so the one thing that can be wrong here — *which commit gets
@@ -515,7 +576,13 @@ pub(super) fn observe(pr: &str) -> Result<Observation, String> {
     // The forge's own name for the base, passed through untouched. Prefixing
     // it with `origin/` would name a remote-tracking ref this process no
     // longer resolves — see `checks_for_branch`.
-    let base_checks = checks_for_branch(&view.base_ref_name);
+    let required = required_contexts(&view.base_ref_name);
+    let base_checks = only_required(checks_for_branch(&view.base_ref_name), &required);
+
+    // Both sides filtered by the same list, so the base can still excuse a
+    // required check — and an advisory one can no longer condemn.
+    let mut view = view;
+    view.status_check_rollup = only_required(view.status_check_rollup, &required);
 
     Ok(observation_from(&view, &base_checks))
 }
@@ -595,6 +662,78 @@ mod tests {
         assert!(
             !endpoint.contains("origin/"),
             "a remote-tracking ref resolves against the last fetch, not the forge: {endpoint}"
+        );
+    }
+
+    /// An advisory check that fails forever must not block forever.
+    ///
+    /// **The witness for the rule that "CI is red" means the *required*
+    /// checks are red.** This repository runs a Vercel commit status that has
+    /// failed on every pull request for as long as the account has been
+    /// blocked. It is not a required context, the forge merges past it
+    /// (#4022 reported `UNSTABLE / MERGEABLE`), and a human ignores it.
+    ///
+    /// Counting it made the loop escalate two pull requests whose every
+    /// required check was green — and no amount of waiting could have helped,
+    /// because that failure is never going to clear.
+    #[test]
+    fn an_advisory_check_does_not_block_a_merge() {
+        let required = vec!["fmt + clippy + test".to_owned()];
+        let rollup = vec![
+            check("fmt + clippy + test", "SUCCESS"),
+            Check {
+                context: "Vercel".into(),
+                state: "FAILURE".into(),
+                ..Check::default()
+            },
+        ];
+
+        assert_eq!(
+            ci_from(&rollup),
+            CiConclusion::Red,
+            "unfiltered, the advisory failure condemns the pull request"
+        );
+        assert_eq!(
+            ci_from(&only_required(rollup, &required)),
+            CiConclusion::Green,
+            "filtered to what the repository requires, it is green"
+        );
+    }
+
+    /// A repository with no declared requirements keeps every check.
+    ///
+    /// The conservative direction: unable to read protection, the loop can
+    /// still refuse to merge something mergeable, but can never merge
+    /// something the repository would have blocked.
+    #[test]
+    fn no_declared_requirements_filters_nothing() {
+        let rollup = vec![check("a", "FAILURE"), check("b", "SUCCESS")];
+        assert_eq!(only_required(rollup, &[]).len(), 2);
+    }
+
+    /// Filtering applies to the base too, so it can still excuse a required
+    /// check that is broken on both sides.
+    #[test]
+    fn the_base_is_filtered_by_the_same_list() {
+        let required = vec!["fmt + clippy + test".to_owned()];
+        let pr = only_required(
+            vec![
+                check("fmt + clippy + test", "FAILURE"),
+                check("noise", "FAILURE"),
+            ],
+            &required,
+        );
+        let base = only_required(
+            vec![
+                check("fmt + clippy + test", "FAILURE"),
+                check("other noise", "SUCCESS"),
+            ],
+            &required,
+        );
+        assert_eq!(
+            base_conclusion(&pr, &base),
+            CiConclusion::Red,
+            "the required check is broken on the base, so this is not ours"
         );
     }
 
