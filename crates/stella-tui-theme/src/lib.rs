@@ -47,6 +47,24 @@
 
 pub mod clamp;
 pub mod fallback;
+// The generated palette, emitted by `scripts/gen-tokens.py` from
+// `design/tokens/stella-tokens.json` and gate-checked by `make tokens`.
+//
+// It landed without this declaration, which made it invisible to rustc,
+// rustfmt and clippy at once while `make tokens` went on validating it — a
+// generated artifact that was checked and then compiled by nothing (#1750 is
+// the guard that caught it; `check-module-reachability` was failing on `main`).
+//
+// `pub` rather than private because every item in it is generated as `pub`:
+// declaring it privately would make the whole module dead code, and silencing
+// that with `#[allow(dead_code)]` is exactly the suppression AGENTS.md refuses
+// — the lint would not be wrong.
+//
+// It does **not** yet supersede [`token`], and the two are not interchangeable:
+// `generated::ALL` pairs each token with a [`clamp::Clamp`] while
+// `token::ALL` pairs it with a [`token::Role`]. Which table becomes
+// authoritative is a live design question, not something to settle by wiring.
+pub mod generated;
 pub mod glyph;
 pub mod token;
 pub mod wordmark;
