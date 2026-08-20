@@ -28,6 +28,7 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
     let entry = TranscriptEntry::ToolResult {
         call_id: "c1".into(),
         name: "edit_file".into(),
+        path: None,
         ok: true,
         summary: "ok".into(),
         full: "ok".into(),

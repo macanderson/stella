@@ -760,6 +760,35 @@ impl WorkspaceModel {
         }
     }
 
+    /// Remove the queued prompt an [`AgentEvent::Steered`] ack settles.
+    ///
+    /// The row holds what the user typed (`> fix the tests`); the ack carries
+    /// what the driver injected (`fix the tests`), because the marker is the
+    /// routing instruction and is stripped once it has been obeyed. The
+    /// comparison is on that normalized form, and strips exactly one `>` for
+    /// the same reason the driver does — a deliberate `>> literal` steer keeps
+    /// its second marker on both sides and still matches.
+    ///
+    /// Matched rather than popped from the front, because a steer is consumed
+    /// **out of order**: prompts queued before it are still waiting, and it is
+    /// the one that left. Oldest match first, so two identical steers claim
+    /// two rows rather than one row twice.
+    ///
+    /// No match is the ordinary case, not a failure: `Steered` is also how the
+    /// engine narrates its OWN injections — the loop-escalation nudge — which
+    /// were never in anyone's queue and must leave the backlog untouched. That
+    /// is the same guard `PromptStarted` applies to a driver-side prompt.
+    fn claim_steered(&mut self, text: &str) {
+        let steered = text.trim();
+        let position = self.queue.items.iter().position(|queued| {
+            let head = queued.text.trim_start();
+            head.strip_prefix('>').unwrap_or(head).trim() == steered
+        });
+        if let Some(i) = position {
+            self.queue.remove(i);
+        }
+    }
+
     fn apply_event(&mut self, agent: &AgentId, event: &AgentEvent) {
         // Auto-register an agent we've never seen so a stray event is never
         // dropped — the dashboard row appears with what we know.
@@ -778,6 +807,17 @@ impl WorkspaceModel {
 
         // Per-agent pure fold — untouched.
         self.agents[idx].model.apply(event);
+
+        // A steer landed at the running turn's step boundary. The prompt
+        // carrying it never entered the dispatch backlog — the driver's
+        // mid-turn arm reads `> …` straight off the input channel and hands
+        // it to the steering tap — so no `PromptStarted` will ever pop the
+        // queue mirror of it, and the row would sit there as "waiting"
+        // forever while the words it holds were long since delivered. This
+        // ack is the only signal that says they were.
+        if let AgentEvent::Steered { text } = event {
+            self.claim_steered(text);
+        }
 
         // Derived counters.
         {

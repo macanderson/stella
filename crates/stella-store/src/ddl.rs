@@ -402,20 +402,39 @@ pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
 /// running right now" and the interrupted-call sweep — both of which filter
 /// on `state` before anything else.
 ///
-/// `tool_calls_by_call_id` is the live writer's own access path: a
-/// `tool_result` finds the row its `tool_start` opened by `call_id`, which is
-/// the only identity the two events share. It is UNIQUE because one `call_id`
-/// is one call — the invariant that stops a re-announced start from minting a
-/// second row and double-counting the call — but **partial**, excluding
-/// `call_id = ''`. Legacy rows predating the column carry the empty default,
-/// and a total unique index would fail to build on any file holding two of
-/// them, which fails the migration and takes the workspace's whole store with
-/// it. The invariant is only meaningful for real ids anyway.
+/// `event_seq` (v28, #4033) is the position in this execution's `events`
+/// stream of the `tool_start` that announced this call — the row's identity.
+/// `-1` means the announcing event is unknown: a call recovered from a
+/// `tool_result` whose start was never persisted, and every row written before
+/// v28.
+///
+/// It exists because `call_id` **is not unique within an execution** and this
+/// table was keyed on it until v28. Several providers mint the id positionally
+/// (`{tool_name}:{index_within_response}`), so `read_file:0` names the first
+/// read of every response in a turn; every announcement after the first was
+/// read as a re-announcement and folded into the row already there. One
+/// observed execution projected **4 rows from 176 calls**, and 12.2% of one
+/// workspace's calls were erased store-wide — worst on exactly the stuck,
+/// high-call-count turns a dashboard exists to catch. The v17 → v18 migration
+/// that introduced the unique index deleted the colliding rows to make it
+/// build, which is where the loss was first baked in.
+///
+/// `tool_calls_by_event_seq` is therefore the live writer's identity index,
+/// UNIQUE but **partial** (`event_seq >= 0`): the unidentified rows above must
+/// be able to coexist, and a total unique index would fail to build on any
+/// legacy file holding two of them — which fails the migration and takes the
+/// workspace's whole store with it.
+///
+/// `tool_calls_by_call_id` survives as the result path — a `tool_result`
+/// carries no announcing seq, so it still finds its row by `call_id` — but is
+/// **not unique**: it now locates the oldest still-`running` row bearing the
+/// id, which is the call it answers.
 pub(crate) fn tool_calls_ddl(table: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {table} (
        execution_id INTEGER NOT NULL,
        seq INTEGER NOT NULL,
+       event_seq INTEGER NOT NULL DEFAULT -1,
        call_id TEXT NOT NULL DEFAULT '',
        name TEXT NOT NULL,
        surface TEXT NOT NULL DEFAULT 'native',
@@ -442,8 +461,10 @@ pub(crate) const TOOL_CALLS_INDEXES: &str = "CREATE INDEX IF NOT EXISTS tool_cal
        ON tool_calls(name, execution_id);
      CREATE INDEX IF NOT EXISTS tool_calls_by_state
        ON tool_calls(state, execution_id, seq);
-     CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_by_call_id
-       ON tool_calls(execution_id, call_id) WHERE call_id != '';";
+     CREATE INDEX IF NOT EXISTS tool_calls_by_call_id
+       ON tool_calls(execution_id, call_id);
+     CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_by_event_seq
+       ON tool_calls(execution_id, event_seq) WHERE event_seq >= 0;";
 
 /// `execution_reflection` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the agent's own
 /// assessment of ONE turn, tied 1:1 to its execution (and thus to

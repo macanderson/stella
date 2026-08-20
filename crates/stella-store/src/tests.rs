@@ -508,80 +508,6 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
 }
 
 #[test]
-fn materialize_folds_a_reemitted_tool_start_into_one_call() {
-    use stella_protocol::{ToolCall, ToolOutput};
-    let store = Store::in_memory().unwrap();
-    let id = store
-        .begin_execution("deck", "add a feature", "zai", "glm-5.2")
-        .unwrap();
-
-    // The same call_id announced twice: one call, however many times the
-    // stream said so — the result, keyed by call_id alone, must attach to
-    // exactly one row and the call count must not inflate.
-    store
-        .record_event(
-            id,
-            0,
-            &AgentEvent::ToolStart {
-                call: ToolCall {
-                    call_id: "c1".into(),
-                    name: "grep".into(),
-                    input: serde_json::json!({"pattern": "first"}),
-                },
-            },
-        )
-        .unwrap();
-    store
-        .record_event(
-            id,
-            1,
-            &AgentEvent::ToolStart {
-                call: ToolCall {
-                    call_id: "c1".into(),
-                    name: "grep".into(),
-                    input: serde_json::json!({"pattern": "final"}),
-                },
-            },
-        )
-        .unwrap();
-    store
-        .record_event(
-            id,
-            2,
-            &AgentEvent::ToolResult {
-                call_id: "c1".into(),
-                output: ToolOutput::Ok {
-                    content: "hit\n".into(),
-                    data: None,
-                },
-                duration_ms: 12,
-                speculated: false,
-            },
-        )
-        .unwrap();
-
-    let n = store.materialize_tool_calls(id).unwrap();
-    assert_eq!(n, 1, "one call_id is one call");
-    assert_eq!(store.count("tool_calls").unwrap(), 1);
-    let (args, ok): (String, i64) = store
-        .lock()
-        .query_row(
-            "SELECT args_json, ok FROM tool_calls WHERE execution_id = ?1",
-            params![id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(
-        args, r#"{"pattern":"final"}"#,
-        "the last announcement's payload wins (newest-record keep-rule)"
-    );
-    assert_eq!(
-        ok, 1,
-        "the result attached instead of minting a failed twin"
-    );
-}
-
-#[test]
 fn reflection_truncation_flag_requires_the_output_token_limit_marker() {
     let store = Store::in_memory().unwrap();
 
@@ -1107,8 +1033,11 @@ fn skill_usage_records_per_execution_version_rows() {
     //       `'abandoned'` from `'error'` in `tool_calls.state` (#3146). v25
     //       `tool_calls.error_class` (#3145): which KIND of failure, so an
     //       error rate can exclude misuse. v26/v27 split wrapper (#3388) and
-    //       role (#3395) out of `kind`.
-    assert_eq!(SCHEMA_VERSION, 27);
+    //       role (#3395) out of `kind`. v28 identifies a `tool_calls` row by
+    //       the event that announced it, not by a `call_id` that is only
+    //       unique within one response (#4033), and re-folds the histories
+    //       the old key collapsed.
+    assert_eq!(SCHEMA_VERSION, 28);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

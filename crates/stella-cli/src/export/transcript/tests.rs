@@ -184,6 +184,19 @@ fn a_tool_result_is_named_by_its_call_and_takes_its_verdict_from_the_tag() {
         "named from its call:\n{}",
         out.body
     );
+    // And named ONCE. `rendered == 1` counts rows; this counts headers, which
+    // is what a reader actually sees — a result patched into its call's row but
+    // carrying a second `<b>bash</b>` would satisfy the row count and still
+    // print the tool's name twice per call all the way down the document. That
+    // is the defect the arena's transcript shipped
+    // (`arenabench/ui/lib/transcript-view.ts::mergeToolRows`), and the reason to
+    // pin the property here rather than trust the row count to imply it.
+    assert_eq!(
+        count(&out.body, "<b>bash</b>"),
+        1,
+        "the tool is named once per call:\n{}",
+        out.body
+    );
     assert!(
         out.body.contains("git status"),
         "arguments come from ToolCall::input:\n{}",

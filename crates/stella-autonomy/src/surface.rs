@@ -217,6 +217,11 @@ pub const HOST_SURFACE: &[HostVerb] = &[
         summary: "run the loop unattended: claim, work, open, watch, merge — and park rather than exit on a block",
     },
     HostVerb {
+        path: "stats",
+        emits: Emits::Json,
+        summary: "what this session has done so far — the counters a live dashboard reads",
+    },
+    HostVerb {
         path: "triage",
         emits: Emits::QueryEnvelope,
         summary: "bring an issue up to this workspace's convention — repairs what is mechanical, reports what needs judgement",
