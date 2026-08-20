@@ -237,6 +237,10 @@ pub(super) struct PrView {
     /// branch it actually merges into rather than an assumed `main`.
     #[serde(default, rename = "baseRefName")]
     pub base_ref_name: String,
+    /// The pull request's labels, which is where local verification is
+    /// recorded so it survives a restart.
+    #[serde(default)]
+    pub labels: Vec<stella_protocol::IssueLabel>,
     /// `OPEN`, `MERGED`, `CLOSED`.
     ///
     /// Read because a pull request that has already reached its destination
@@ -612,17 +616,28 @@ pub(super) struct Reading {
     pub observation: Observation,
     /// Whether the pull request has already reached a terminal state.
     pub settled: bool,
+    /// Required checks this policy declined to enforce, each with its grounds.
+    ///
+    /// Carried so the caller can say it out loud. A loop that merges past a
+    /// required check without naming which one, and why, is indistinguishable
+    /// from one that is simply broken.
+    pub waived: Vec<String>,
+    /// Whether this change was proved on this machine.
+    pub verified_locally: bool,
 }
 
 /// One read of the forge, plus the second read of the base its
 /// [`Observation::base_ci`] needs.
-pub(super) fn observe(pr: &str) -> Result<Reading, String> {
+pub(super) fn observe(
+    pr: &str,
+    policy: &stella_autonomy::BlockingPolicy,
+) -> Result<Reading, String> {
     let raw = gh(&[
         "pr",
         "view",
         pr,
         "--json",
-        "isDraft,mergeable,reviewDecision,statusCheckRollup,baseRefName,state",
+        "isDraft,mergeable,reviewDecision,statusCheckRollup,baseRefName,state,labels",
     ])?;
     let view: PrView = serde_json::from_str(&raw).map_err(|error| {
         format!("`gh pr view` returned a payload this build cannot read: {error}")
@@ -632,22 +647,106 @@ pub(super) fn observe(pr: &str) -> Result<Reading, String> {
     // it with `origin/` would name a remote-tracking ref this process no
     // longer resolves — see `checks_for_branch`.
     let required = required_contexts(&view.base_ref_name);
-    let base_checks = only_required(checks_for_branch(&view.base_ref_name), &required);
+
+    // Required is necessary and not sufficient. A check that has been red on
+    // the base for every recent commit is not something this pull request can
+    // fix — see `stella_autonomy::gate`.
+    let stuck = if required.is_empty() {
+        std::collections::BTreeSet::new()
+    } else {
+        stella_autonomy::stuck_on_base(
+            &base_failure_history(&view.base_ref_name, policy.stuck_after.max(1)),
+            policy.stuck_after,
+        )
+    };
+    let blocking = stella_autonomy::blocking(&required, &stuck, policy);
+    let waived = stella_autonomy::waived(&required, &stuck, policy);
+
+    let base_checks = only_required(checks_for_branch(&view.base_ref_name), &blocking);
 
     // Both sides filtered by the same list, so the base can still excuse a
-    // required check — and an advisory one can no longer condemn.
+    // blocking check — and a waived one can no longer condemn.
     let mut view = view;
-    view.status_check_rollup = only_required(view.status_check_rollup, &required);
+    let verified_locally = view
+        .labels
+        .iter()
+        .any(|label| label.name == VERIFIED_LOCALLY_LABEL);
+    view.status_check_rollup = only_required(view.status_check_rollup, &blocking);
 
     let settled = matches!(
         view.state.to_ascii_uppercase().as_str(),
         "MERGED" | "CLOSED"
     );
+    let mut observation = observation_from(&view, &base_checks);
+
+    // Nothing is left that can gate this pull request remotely — every check
+    // the repository requires has been waived as unwinnable. The forge has no
+    // opinion to offer, so `ci_from` sees an empty rollup and says `Pending`,
+    // which would park the loop forever on a verdict that is never coming.
+    //
+    // A repository whose CI cannot run still has a test suite. The label says
+    // whether this change survived it on this machine, and that becomes the
+    // verdict — weaker evidence than a clean CI run, and incomparably stronger
+    // than waiting for a suspended account to be reinstated.
+    if !required.is_empty() && blocking.is_empty() {
+        observation.ci = if verified_locally {
+            CiConclusion::Green
+        } else {
+            CiConclusion::Red
+        };
+        observation.base_ci = CiConclusion::Green;
+    }
 
     Ok(Reading {
-        observation: observation_from(&view, &base_checks),
+        observation,
         settled,
+        waived,
+        verified_locally,
     })
+}
+
+/// The label that records a change proved on this machine.
+///
+/// On the pull request rather than in the process, so it survives a restart
+/// and so a human can see exactly which pull requests were merged on local
+/// evidence rather than on a clean CI run.
+pub(super) const VERIFIED_LOCALLY_LABEL: &str = "stella-verified-locally";
+
+/// Record that a pull request was proved on this machine.
+pub(super) fn mark_verified_locally(pr: &str) -> Result<(), String> {
+    gh(&["pr", "edit", pr, "--add-label", VERIFIED_LOCALLY_LABEL]).map(|_| ())
+}
+
+/// Which checks failed on each of the last `depth` commits of `branch`.
+///
+/// Newest first, one entry per commit. Feeds
+/// [`stella_autonomy::stuck_on_base`], whose whole question is whether a check
+/// has *ever* been green recently — so a commit that could not be read yields
+/// an empty entry, which reads as "nothing failed here" and therefore breaks
+/// a stuck streak. That is the conservative direction: an unreadable history
+/// must not manufacture evidence that a check is unwinnable.
+#[must_use]
+pub(super) fn base_failure_history(branch: &str, depth: usize) -> Vec<Vec<String>> {
+    let raw = gh(&[
+        "api",
+        &format!("repos/{{owner}}/{{repo}}/commits?sha={branch}&per_page={depth}"),
+        "--jq",
+        ".[].sha",
+    ])
+    .unwrap_or_default();
+
+    raw.lines()
+        .map(str::trim)
+        .filter(|sha| !sha.is_empty())
+        .take(depth)
+        .map(|sha| {
+            checks_for_branch(sha)
+                .into_iter()
+                .filter(Check::failed)
+                .map(|check| check.name().to_owned())
+                .collect()
+        })
+        .collect()
 }
 
 /// Is the base branch itself broken right now?

@@ -41,7 +41,7 @@ use stella_protocol::issue::Vocabulary;
 use crate::settings::toml_config::{IssuesSection, TomlConfig};
 
 /// Everything the self-driving verbs read out of configuration.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct LoopConfig {
     /// What the loop appends to what it writes, and how it names branches.
     pub attribution: Attribution,
@@ -51,6 +51,26 @@ pub(crate) struct LoopConfig {
     pub triage: stella_autonomy::priority::TriagePolicy,
     /// How the loop decides where two operators would decide differently.
     pub doctrine: stella_autonomy::Doctrine,
+    /// Which checks are allowed to block a merge.
+    pub merge: stella_autonomy::BlockingPolicy,
+    /// The command that proves a change when CI cannot, and its ceiling.
+    pub verify_command: Option<String>,
+    /// Seconds before local verification is abandoned.
+    pub verify_timeout_secs: u64,
+}
+
+impl Default for LoopConfig {
+    fn default() -> Self {
+        Self {
+            attribution: Attribution::default(),
+            vocabulary: Vocabulary::default(),
+            triage: stella_autonomy::priority::TriagePolicy::default(),
+            doctrine: stella_autonomy::Doctrine::default(),
+            merge: stella_autonomy::BlockingPolicy::default(),
+            verify_command: None,
+            verify_timeout_secs: 1800,
+        }
+    }
 }
 
 /// Read the loop's configuration for a workspace.
@@ -70,6 +90,9 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
         vocabulary: vocabulary_for(root, &parsed.issues),
         triage: parsed.self_driving.triage.policy(),
         doctrine: parsed.self_driving.doctrine,
+        merge: parsed.self_driving.merge.policy(),
+        verify_command: parsed.self_driving.verify.command.clone(),
+        verify_timeout_secs: parsed.self_driving.verify.timeout_secs.unwrap_or(1800),
     }
 }
 

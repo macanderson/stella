@@ -66,6 +66,12 @@ pub struct SessionStats {
     /// an issue is not working it — a dashboard that merged the two would
     /// report a labelling pass as delivery.
     pub issues_triaged: u32,
+    /// Changes proved by running the project's own checks on this machine.
+    ///
+    /// Counted separately from anything the forge reported, because the two
+    /// are different grades of evidence and a dashboard that merged them
+    /// would hide which merges rested on which.
+    pub verified_locally: u32,
     /// Filings refused for not matching the workspace's convention.
     pub filings_refused: u32,
     /// Filings skipped because the finding was already in the seen set.

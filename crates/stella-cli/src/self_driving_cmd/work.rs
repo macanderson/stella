@@ -225,6 +225,78 @@ fn tree_change(dir: &Path, base: &str) -> Option<String> {
     }
 }
 
+/// The command that proves a change, when the operator has not named one.
+///
+/// Auto-detected from the project's own tooling rather than guessed: each arm
+/// below is a file that only exists because somebody set that toolchain up.
+/// `None` means this build cannot tell, and the caller must not pretend a
+/// change was verified — an unverifiable repository is one where remote CI is
+/// the only gate there is.
+#[must_use]
+pub(super) fn default_verify_command(root: &Path) -> Option<String> {
+    if root.join("Makefile").is_file() {
+        return Some("make gate".to_owned());
+    }
+    if root.join("pnpm-lock.yaml").is_file() {
+        return Some("pnpm -s typecheck && pnpm -s test".to_owned());
+    }
+    if root.join("Cargo.toml").is_file() {
+        return Some("cargo test --workspace".to_owned());
+    }
+    if root.join("package-lock.json").is_file() {
+        return Some("npm test --silent".to_owned());
+    }
+    None
+}
+
+/// Whether the change in `dir` survives the project's own checks.
+///
+/// # Why a loop needs this at all
+///
+/// A repository whose remote checks cannot go green — a suspended billing
+/// account, an exhausted quota — still has a test suite. Running it here is a
+/// weaker signal than a clean CI run and an enormously stronger one than
+/// nothing, and it is the whole difference between a loop that ships and a
+/// loop that waits for somebody's invoice to clear.
+///
+/// Run in the **work worktree**, so it judges the change in isolation rather
+/// than whatever the main checkout happens to contain.
+///
+/// A command that cannot be started, or that outruns its ceiling, is reported
+/// as *not verified* rather than as verified — the failure of the prover is
+/// not evidence about the proof.
+pub(super) fn verify_locally(dir: &Path, command: &str, timeout_secs: u64) -> Result<(), String> {
+    let mut child = Command::new("bash")
+        .arg("-lc")
+        .arg(command)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| format!("could not start `{command}`: {error}"))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                return Err(format!("`{command}` failed ({status})"));
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return Err(format!(
+                        "`{command}` outran {timeout_secs}s and was stopped"
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+            Err(error) => return Err(format!("could not wait on `{command}`: {error}")),
+        }
+    }
+}
+
 /// Spawn `stella run` in `dir` with `prompt` on stdin.
 ///
 /// Inherits stderr so a human watching a foreground cycle sees the turn, and

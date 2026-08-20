@@ -336,6 +336,12 @@ pub struct SelfDrivingSection {
     /// `[self_driving.attribution]` — what the loop appends to what it writes,
     /// and how it names branches.
     pub attribution: stella_autonomy::Attribution,
+    /// `[self_driving.merge]` — which checks are allowed to block a merge.
+    #[serde(default)]
+    pub merge: MergeSection,
+    /// `[self_driving.verify]` — how to prove a change when CI cannot.
+    #[serde(default)]
+    pub verify: VerifySection,
     /// `[self_driving.doctrine]` — how the loop decides, where two operators
     /// would decide differently.
     ///
@@ -353,6 +359,63 @@ pub struct SelfDrivingSection {
     /// every tracker has. Two teams on one GitHub can want different ladders.
     #[serde(default)]
     pub triage: TriageSection,
+}
+
+/// `[self_driving.merge]` — which checks may block a merge.
+///
+/// Filtering to a repository's *required* contexts is necessary and not
+/// sufficient: a required check fails identically whether the code is wrong or
+/// the billing account is suspended, and only one of those is fixable by a
+/// pull request. See `stella_autonomy::gate`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MergeSection {
+    /// Checks that never block, whatever their history.
+    ///
+    /// The operator's escape hatch. Automatic detection needs several commits
+    /// of evidence; somebody who already knows their deploy provider is
+    /// suspended should not have to wait for the loop to infer it.
+    #[serde(default)]
+    pub ignore_checks: Vec<String>,
+    /// Consecutive failing base commits after which a check is treated as
+    /// unwinnable. `0` disables the inference, leaving only `ignore_checks`.
+    #[serde(default)]
+    pub stuck_after: Option<usize>,
+}
+
+impl MergeSection {
+    /// Resolve to the policy the gate reads.
+    #[must_use]
+    pub fn policy(&self) -> stella_autonomy::BlockingPolicy {
+        stella_autonomy::BlockingPolicy {
+            ignore: self.ignore_checks.clone(),
+            stuck_after: self
+                .stuck_after
+                .unwrap_or(stella_autonomy::DEFAULT_STUCK_AFTER),
+        }
+    }
+}
+
+/// `[self_driving.verify]` — how to prove a change when CI cannot.
+///
+/// A repository whose remote checks cannot go green — a suspended account, an
+/// exhausted quota — still has a test suite. Running it on this machine is a
+/// weaker signal than a clean CI run and a far stronger one than nothing, and
+/// it is the difference between a loop that ships and a loop that waits for a
+/// billing problem to resolve itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerifySection {
+    /// The command that proves a change, run in the work worktree.
+    ///
+    /// Absent means auto-detect from the project's own tooling.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Seconds before the command is abandoned. Defaults to 30 minutes — long
+    /// enough for a monorepo suite, short enough that a wedged process does
+    /// not hold the loop overnight.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 /// `[self_driving.triage]` — how the loop places an issue.
