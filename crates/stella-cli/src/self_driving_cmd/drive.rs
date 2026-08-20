@@ -334,13 +334,31 @@ pub(super) fn drive(
                     .into_iter()
                     .find(|k| !state.claimed.iter().any(|c| &c.0 == k) && !spent.contains_key(k))
                 else {
+                    // An empty queue is a state, not an ending.
+                    //
+                    // Returning here made "there is nothing to do right now"
+                    // indistinguishable from "this run is over", and the two
+                    // want opposite responses: somebody files an issue, or a
+                    // human removes an escalation label, and a loop that
+                    // exited is not there to notice. It drained a backlog on
+                    // oxagen-platform at 05:37 and stopped, with the
+                    // repository still red on a failure nobody had filed yet.
+                    //
+                    // Waiting costs one queue read per poll and is the whole
+                    // difference between a batch job and a loop somebody can
+                    // walk away from.
                     audit::record(
                         durable,
-                        Audit::SessionStopped,
+                        Audit::Waited,
                         None,
-                        "the queue offered nothing this run has not already taken",
+                        &format!(
+                            "the queue offers nothing this run has not already taken; \
+                             re-asking in {poll_secs}s — a new issue, or an escalation \
+                             label removed, is all it takes"
+                        ),
                     );
-                    return report(durable, &tally);
+                    sleep(poll_secs);
+                    continue;
                 };
 
                 audit::record(
