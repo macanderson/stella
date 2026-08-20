@@ -10,6 +10,7 @@ use ratatui::style::Color;
 
 use crate::clamp;
 use crate::fallback;
+use crate::generated;
 use crate::glyph;
 use crate::token::{self, Role};
 use crate::wordmark;
@@ -459,4 +460,88 @@ fn the_wordmark_carries_no_skill_glyph() {
             "the `✦ stella` wordmark is retired (SPEC 3.3)"
         );
     }
+}
+
+// ── The generated palette, against the one this crate renders ───────────────
+
+/// A `token::Role`, spelled the way `generated::Clamp` spells it.
+///
+/// A total `match` rather than a lookup table: a seventh role cannot be added
+/// without answering which generated clamp it corresponds to.
+fn as_clamp(role: Role) -> generated::Clamp {
+    match role {
+        Role::Gray => generated::Clamp::NeutralGray,
+        Role::Gold => generated::Clamp::RestingGold,
+        Role::GoldLift => generated::Clamp::LiftedGold,
+        Role::Silver => generated::Clamp::CoolSilver,
+        Role::Verdict => generated::Clamp::Verdict,
+        Role::Tint => generated::Clamp::Surface,
+    }
+}
+
+/// `design/tokens/stella-tokens.json` and this crate's hand-written palette
+/// hold the same values under the same names.
+///
+/// Two tables describe one palette: `token::ALL`, which every v2 widget
+/// renders, and `generated::ALL`, which `scripts/gen-tokens.py` emits from the
+/// JSON that also feeds the website, the brand kit and the Observatory. Until
+/// the two are consolidated, this is what stops them being two palettes: a
+/// value edited in the JSON without being carried into `token.rs`, or the
+/// reverse, fails here by name.
+///
+/// This could not fail before, and not because it passed — `generated.rs` had
+/// no `mod` declaration, so nothing compiled it, and `make tokens` was checking
+/// a file the crate did not contain.
+///
+/// The generated table is the superset: it carries four `web-light` stops
+/// (`ink`, `paper`, `paper-panel`, `paper-border`) the terminal never draws, so
+/// this asserts containment rather than equality. Every token the TUI *does*
+/// render must appear, which is the direction that matters — a hand-written
+/// token missing from the JSON is a value outside the system.
+#[test]
+fn the_hand_written_palette_agrees_with_the_generated_one() {
+    for (name, color, role) in token::ALL {
+        // The JSON spells names with hyphens; the Rust table uses underscores.
+        let wanted = name.replace('_', "-");
+        let (_, gen_color, gen_clamp) = generated::ALL
+            .iter()
+            .find(|(candidate, _, _)| *candidate == wanted)
+            .unwrap_or_else(|| {
+                panic!(
+                    "token `{name}` is rendered by this crate but is not in \
+                     design/tokens/stella-tokens.json — add it there, or it is \
+                     a colour outside the system"
+                )
+            });
+        assert_eq!(
+            color, *gen_color,
+            "token `{name}` differs between token.rs and the generated palette \
+             — edit design/tokens/stella-tokens.json and run `make tokens-update`"
+        );
+        assert_eq!(
+            as_clamp(role),
+            *gen_clamp,
+            "token `{name}` is held to a different clamp on each side"
+        );
+    }
+}
+
+/// The two copies of the hue clamp's bounds are the same numbers.
+///
+/// `clamp.rs` states them for the code that runs; `generated.rs` states them
+/// from the JSON. Same failure mode as the palette above, on the constants the
+/// predicates are built out of — and a gold clamp that disagrees with itself is
+/// how a value passes one gate and fails the other.
+#[test]
+fn the_clamp_bounds_agree_with_the_generated_ones() {
+    assert_eq!(
+        clamp::GOLD_GREEN_PCT,
+        generated::GOLD_GREEN_PCT,
+        "the resting-gold green ratio differs between clamp.rs and the JSON"
+    );
+    assert_eq!(
+        clamp::GOLD_BLUE_PCT,
+        generated::GOLD_BLUE_PCT,
+        "the resting-gold blue ceiling differs between clamp.rs and the JSON"
+    );
 }

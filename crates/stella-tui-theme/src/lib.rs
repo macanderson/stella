@@ -47,20 +47,22 @@
 
 pub mod clamp;
 pub mod fallback;
-// The generated face of `design/tokens/stella-tokens.json`, emitted by
-// `scripts/gen-tokens.py` and kept in sync by `make tokens`. It carries a
-// second copy of the palette — `generated::ALL` against `token::ALL` —
-// because this crate was created twice, by #4066 (generator first) and #4055
-// (hand-written table first), and the two landed without a textual conflict.
-// This declaration is #4066's, restored: without it the generated artifact is
-// tracked but unreachable, so rustc, rustfmt and clippy all walk past it
-// while `make tokens` still checks it for staleness. Collapsing the two
-// palettes into one is #4058, under epic #4059.
+// The palette as `design/tokens/stella-tokens.json` states it, emitted by
+// `scripts/gen-tokens.py`. It is NOT what this crate renders: [`token`] and
+// [`clamp`] are hand-written and are what every consumer imports.
 //
-// Deliberately not a doc comment: an outer `///` here is merged with the
-// module's own `//!` docs and resolves their intra-doc links in *this* file's
-// scope, where `Color`, `ALL` and `Clamp` do not exist — three rustdoc
-// errors under the gate's `-D warnings`.
+// It arrived undeclared. #4055 created this crate with the hand-written pair;
+// #4066 added the generator and its output beside them and never wrote this
+// line, so the file was invisible to rustc, rustfmt and clippy at once — and
+// `make tokens`, which checks that it is in sync with the JSON, was proving a
+// property of a file nothing compiled (#1750 is the guard that caught it).
+//
+// Declaring it makes the generator load-bearing rather than decorative: with
+// the module reachable, `the_hand_written_palette_agrees_with_the_generated_one`
+// holds the two tables to each other, so a value edited in the JSON without
+// being carried into `token.rs` — or the reverse — is now a red test instead of
+// a silent second palette. Consolidating the two into one file is the right end
+// state and is tracked separately; it is a design change, not a build fix.
 pub mod generated;
 pub mod glyph;
 pub mod token;
