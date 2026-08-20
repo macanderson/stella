@@ -155,8 +155,9 @@ fn sep() -> Span<'static> {
 /// can drop from the right when the row is tight.
 ///
 /// Pure over [`Status`] — THE decision function, unit-testable without a
-/// buffer, the shape [`crate::statline::statline_items`] uses for the same
-/// reason.
+/// buffer. The v1 statline's `statline_items` had the same shape for the same
+/// reason; it was deleted with the two-row wall (#4129), so this is now the
+/// only cell list on the deck's bottom band.
 #[must_use]
 pub fn cells(status: &Status<'_>) -> Vec<Vec<Span<'static>>> {
     let text = Style::new().fg(token::TEXT);
