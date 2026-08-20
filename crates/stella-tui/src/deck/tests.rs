@@ -676,6 +676,77 @@ fn prompt_requeued_returns_the_prompt_to_the_front_of_the_queue() {
     assert!(row.summary.contains("first"), "{}", row.summary);
 }
 
+/// The bug this file's `claim_steered` exists for: a `>`-prefixed prompt is
+/// consumed off the input channel by the driver's mid-turn arm and handed
+/// straight to the steering tap, so it never enters the dispatch backlog and
+/// no `PromptStarted` is ever emitted for it. Before the ack claimed the row,
+/// the queue popup showed the steer as still waiting for the rest of the
+/// session — after the words had already been delivered mid-turn.
+#[test]
+fn a_steered_ack_claims_the_prompt_that_carried_it() {
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    // The shell mirrors every submission, marker and all.
+    w.queue.enqueue("first".into(), 1);
+    w.queue.enqueue("> fix the tests".into(), 2);
+    w.queue.enqueue("last".into(), 3);
+    // The engine drained the tap at a step boundary and acked with the text
+    // it injected — the marker stripped, because it has been obeyed.
+    w.apply_inbound(&ev(
+        "lead",
+        AgentEvent::Steered {
+            text: "fix the tests".into(),
+        },
+    ));
+    assert_eq!(w.queue.pending(), 2, "the steer's own row is gone");
+    let waiting: Vec<&str> = w.queue.items.iter().map(|q| q.text.as_str()).collect();
+    assert_eq!(
+        waiting,
+        vec!["first", "last"],
+        "a steer is consumed out of order — the prompts queued around it wait on"
+    );
+}
+
+/// `Steered` is also how the engine narrates its own mid-turn injections (the
+/// loop-escalation nudge). Those were never queued by anyone, so an ack that
+/// matches no row must leave the backlog exactly as it found it — the same
+/// guard `prompt_started_with_an_unseen_text_never_drops_someone_elses_entry`
+/// puts on the dispatch path.
+#[test]
+fn an_engine_authored_steer_never_claims_someone_elses_prompt() {
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    w.queue.enqueue("> fix the tests".into(), 1);
+    w.apply_inbound(&ev(
+        "lead",
+        AgentEvent::Steered {
+            text: "you have repeated the same tool call three times".into(),
+        },
+    ));
+    assert_eq!(w.queue.pending(), 1);
+}
+
+/// Two identical steers are two prompts the user typed twice, so the first
+/// ack claims one row and the second claims the other — never one row twice,
+/// which would leave a delivered steer on display forever.
+#[test]
+fn identical_steers_claim_one_row_each() {
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    w.queue.enqueue("> again".into(), 1);
+    w.queue.enqueue("> again".into(), 2);
+    let ack = ev(
+        "lead",
+        AgentEvent::Steered {
+            text: "again".into(),
+        },
+    );
+    w.apply_inbound(&ack);
+    assert_eq!(w.queue.pending(), 1);
+    w.apply_inbound(&ack);
+    assert_eq!(w.queue.pending(), 0);
+}
+
 #[test]
 fn front_inserts_stack_so_the_newest_front_insert_runs_first() {
     // Double-Esc requeues the interrupted prompt at the front; the user's
