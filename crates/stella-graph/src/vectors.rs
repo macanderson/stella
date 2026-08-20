@@ -21,13 +21,18 @@
 //!   is the caller's decision, and there are two callers. `stella init` embeds
 //!   the tree it just indexed, up front, so the first tool call of a run can
 //!   already be answered — the pass that matters for a single-turn run, where
-//!   there is no second session to amortise an index over. The per-query pass
-//!   then tops up **incrementally**, [`MAX_FILES_PER_PASS`] files at a time,
-//!   for everything written after init: the agent's own edits, a file added
-//!   later, a workspace that never ran init at all. Neither pass is a second
-//!   way for a vector to exist — both render through [`render_file_text`] and
-//!   both write the same `(file_id, fingerprint)` row — and the cost is paid
-//!   once per `(file content, embedder)` pair either way.
+//!   there is no second session to amortise an index over. A background pass
+//!   at session start then finishes everything written after init: the agent's
+//!   own edits, a file added later, a workspace that never ran init at all.
+//!   Neither pass is a second way for a vector to exist — both render through
+//!   [`render_file_text`] and both write the same `(file_id, fingerprint)` row
+//!   — and the cost is paid once per `(file content, embedder)` pair either
+//!   way.
+//!
+//!   There used to be a third: a query embedded what it was missing before it
+//!   would answer. It was deleted in #4043 — write-side index maintenance
+//!   inside a latency-sensitive read, capped so it could never finish, and
+//!   measured at 46.9 seconds a call.
 //! - **One render, used everywhere.** [`render_file_text`] is the only way a
 //!   file becomes embeddable text. A mismatch between what was indexed and
 //!   what a later pass would index degrades ranking silently, with no error to
@@ -54,10 +59,15 @@ use stella_embed::rank::{Candidate, Scored};
 use crate::error::GraphError;
 use crate::store;
 
-/// The most files one semantic query will embed before answering. The cap is
-/// the difference between "the first query is a little slow" and "the first
-/// query indexes a monorepo": a caller that finds work still pending says so
-/// in its answer, and the next query picks up where this one stopped.
+/// A window size for a pending-file scan: the most files one
+/// [`CodeGraph::files_pending_embedding`](crate::CodeGraph::files_pending_embedding)
+/// call reports.
+///
+/// It used to be a *budget* — the most files one semantic query would embed
+/// before answering — and that is why the number is 200 rather than anything
+/// derived. No query embeds anything now (#4043), so what is left is a bound
+/// on how much of the pending set a single scan materialises at once, which a
+/// pass that loops to exhaustion re-asks for until the answer is empty.
 pub const MAX_FILES_PER_PASS: usize = 200;
 
 /// How much of a file's content reaches the embedder. Every hosted model has

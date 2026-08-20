@@ -34,7 +34,7 @@ use stella_graph::CodeGraph;
 use stella_protocol::tool::ToolOutput;
 
 use super::codegraph::{open_or_build, with_index_warning};
-use super::semantic::{EMBED_BATCH, catch_up_embeddings};
+use super::semantic::EMBED_BATCH;
 use super::{enrich, scan};
 
 #[cfg(test)]
@@ -389,6 +389,39 @@ fn worker_failure(what: &str, error: tokio::task::JoinError) -> String {
 /// the paragraph above forbids — no score from one rung is ever compared
 /// against a score from another, and each hit still says in its own `why:`
 /// which kind of answer it is.
+///
+/// # A partial index answers; it does not fill itself (#4043)
+///
+/// "The ladder degrades, it never fails" is this module's documented property,
+/// and #4043 asked whether a badly-behind index should keep degrading or start
+/// refusing. It keeps degrading — the ladder is unchanged — and what changed
+/// is what a search is allowed to *do about it*: nothing.
+///
+/// Every rung here is now a read. The semantic rung used to embed whatever the
+/// index was missing before it would answer, which is write-side index
+/// maintenance performed synchronously inside a latency-sensitive read: 46.9
+/// seconds a call on the workspace #4035 measured, and roughly a sixth of that
+/// after #4041 batched it. Cheaper, but still on the wrong path and still
+/// unable to finish, because the pass was capped per call — so a workspace
+/// further behind than the cap paid on every query and converged on none of
+/// them. The reflection miner drew the conclusion twice, unprompted: *for
+/// exact file/symbol names, grep first.* An agent routing around its own
+/// primary retrieval tool is the real cost, and it is not paid back by making
+/// the tax smaller.
+///
+/// Filling the index is [`super::backfill`]'s job now, in the background at
+/// session start, unbounded. **What is given up** is stated there and repeated
+/// here because this is where it is felt: a search no longer repairs anything,
+/// so a workspace whose index nothing else fills stays behind forever, and a
+/// one-shot `stella search` in a cold checkout ranks over an empty index
+/// rather than embedding 200 files first. It still answers — the name and
+/// scan rungs need no index at all — and `coverage_note` still says exactly
+/// how much of the tree the ranking saw.
+///
+/// Refusing outright (the fourth option #4043 weighed) was rejected for the
+/// reason the ladder exists: the semantic rung being thin is not a reason to
+/// withhold the exact-symbol hit or the file scan sitting underneath it, and
+/// a tool that answers "run `stella init`" is a tool that answered nothing.
 pub async fn dispatch(
     graph: Option<&CodeGraph>,
     root: &Path,
@@ -519,8 +552,13 @@ fn lead_with(exact: Vec<Hit>, ranked: Vec<Hit>) -> Vec<Hit> {
     hits
 }
 
-/// Embed what is pending, embed the query, rank. `Err` carries a reason
-/// already phrased for the answer's note.
+/// Embed the query, rank. `Err` carries a reason already phrased for the
+/// answer's note.
+///
+/// **One embedder round trip, always: the query's.** Nothing here fills the
+/// index — that is [`super::backfill`]'s pass, off this path entirely (#4043).
+/// A search ranks over what the index holds and discloses how much that was
+/// (`coverage_note`); it never buys coverage with the caller's latency.
 ///
 /// **Both rungs, merged — not chunks-then-files.** Ranking chunks and
 /// returning early whenever they produced anything lets a *partially filled*
@@ -546,11 +584,6 @@ async fn semantic_hits(
     query: &str,
 ) -> Result<(Vec<Hit>, Option<String>), String> {
     let fingerprint = embedder.fingerprint().id();
-    catch_up_embeddings(graph, embedder, &fingerprint)
-        .await
-        .map_err(|error| error.to_string())?;
-    catch_up_chunk_embeddings(graph, embedder, &fingerprint).await?;
-
     let query_vector = match embedder.embed(&[query.to_string()]).await {
         Ok(mut vectors) if !vectors.is_empty() => vectors.remove(0).vector,
         Ok(_) => return Err("the embedder returned no vector for the query".into()),
@@ -672,9 +705,9 @@ fn merge_rungs(
 /// looking — applies to coverage exactly as it does to length.
 ///
 /// The "not a random sample" sentence is the load-bearing one. Embedding fills
-/// in path order, so a partial index is not a uniform thinning of the tree; it
-/// is a prefix of it, and a caller who assumes otherwise will read a miss as
-/// evidence of absence.
+/// in change-recency order (`stella_graph::vectors::pending`), so a partial
+/// index is not a uniform thinning of the tree; it is a prefix of it, and a
+/// caller who assumes otherwise will read a miss as evidence of absence.
 ///
 /// `None` when both rungs are complete, so a healthy workspace pays nothing
 /// for the disclosure.
@@ -709,16 +742,20 @@ fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
     }
     Some(format!(
         "PARTIAL INDEX — this ranking saw {files} of {total_files} files, and {chunks_pending} \
-         indexed file(s) still have symbols with no vector. Embedding fills a batch per call, \
-         most recently changed first, so the remainder is NOT a random sample: it is the code \
-         that has sat unmodified longest. Recent work is covered; a long-stable subsystem may \
-         not be. Run `stella init` to finish it; until then treat a miss as inconclusive and \
-         grep directly for anything exact."
+         indexed file(s) still have symbols with no vector. Embedding fills most recently \
+         changed first, so the remainder is NOT a random sample: it is the code that has sat \
+         unmodified longest. Recent work is covered; a long-stable subsystem may not be. This \
+         search did not wait to fill it — a background pass does that — so trying again in a \
+         moment costs nothing and may see more. Treat a miss here as inconclusive: grep \
+         directly for anything exact."
     ))
 }
 
-/// Embed every indexed chunk still pending under `fingerprint`, up to the
-/// per-pass cap.
+/// Embed one file's pending chunks and store them — the single place a chunk
+/// vector comes into existence, shared by the eager `stella init` pass below
+/// and the background pass in [`super::backfill`], so there is one render, one
+/// table and one fingerprint discipline (mirrors [`super::semantic`]'s
+/// `embed_batch` for whole-file vectors).
 ///
 /// **One file per store call**, because the store's sweep — the thing that
 /// removes a deleted function's vector — keys on the file's content hash, so
@@ -729,26 +766,6 @@ fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
 /// no request: it is re-stamped with the file's new hash and keeps its vector.
 /// That is what makes editing one function in a 60-symbol file cost one
 /// embedding rather than sixty.
-async fn catch_up_chunk_embeddings(
-    graph: &CodeGraph,
-    embedder: &dyn Embedder,
-    fingerprint: &str,
-) -> Result<(), String> {
-    let scan = graph
-        .chunks_pending_embedding(fingerprint, stella_graph::MAX_FILES_PER_CHUNK_PASS)
-        .map_err(|error| format!("the code graph could not be read: {error}"))?;
-
-    for file in &scan.files {
-        embed_and_store_chunk_file(graph, embedder, fingerprint, file).await?;
-    }
-    Ok(())
-}
-
-/// Embed one file's pending chunks and store them — the single place a chunk
-/// vector comes into existence, shared by the lazy per-query catch-up above
-/// and the eager `stella init` pass below, so there is one render, one table
-/// and one fingerprint discipline (mirrors [`super::semantic`]'s `embed_batch`
-/// for whole-file vectors).
 async fn embed_and_store_chunk_file(
     graph: &CodeGraph,
     embedder: &dyn Embedder,
@@ -796,12 +813,10 @@ async fn embed_and_store_chunk_file(
         .map(|_| ())
 }
 
-/// The most files one eager (`stella init`) chunk-embedding pass will
-/// process. Matches [`super::semantic::MAX_FILES_PER_EAGER_PASS`]'s cap and
-/// its reasoning: this pass runs before any turn starts, so its budget is
-/// the user's money and patience rather than a round trip, and a workspace
-/// larger than this gets a **stated** partial index rather than a silent one.
-pub const MAX_FILES_PER_CHUNK_EAGER_PASS: usize = 2_000;
+/// No ceiling here either — see [`super::semantic::NO_FILE_CEILING`], which
+/// this is an alias of rather than a second number, because two caps that
+/// must agree are one cap and a future disagreement.
+pub const NO_CHUNK_FILE_CEILING: usize = super::semantic::NO_FILE_CEILING;
 
 /// What an eager chunk-embedding pass did, as data the caller renders. Total
 /// by construction and never a `Result` — `stella init` must succeed with no
@@ -813,8 +828,8 @@ pub const MAX_FILES_PER_CHUNK_EAGER_PASS: usize = 2_000;
 /// file can be partially chunked).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChunkWarmOutcome {
-    /// The pass ran. `files_remaining` is what the cap left for the lazy
-    /// per-query pass to pick up on the first search.
+    /// The pass ran. `files_remaining` is what the cap left for the
+    /// background pass ([`super::backfill`]) to finish.
     Warmed {
         /// Files whose chunks this pass embedded or re-stamped.
         files_embedded: usize,
@@ -827,8 +842,8 @@ pub enum ChunkWarmOutcome {
         files_remaining: usize,
         /// How many of those this pass could not read from disk. Separated
         /// from `files_remaining` for the reason
-        /// [`super::semantic::WarmOutcome`] gives: the cap's leftovers embed
-        /// themselves on the next query, an unreadable file never will.
+        /// [`super::semantic::WarmOutcome`] gives: the cap's leftovers are
+        /// finished by the background pass, an unreadable file never will be.
         unreadable: usize,
     },
     /// The pass stopped early. `reason` is prose meant to be shown verbatim;
@@ -845,16 +860,12 @@ pub enum ChunkWarmOutcome {
 /// **without answering a query**: the `stella init` pass for the search's
 /// primary ranking rung (#3098).
 ///
-/// The lazy per-query pass above is right for a long session and wrong for a
-/// single-turn run in a fresh checkout: it fires only once a search has
-/// already been asked, capped at `stella_graph::MAX_FILES_PER_CHUNK_PASS`
-/// files a call — so the first several searches in a session would rank
-/// against whichever files happened to be processed first. Running the same
-/// pass here, ahead of the first turn, makes that work free from the
-/// session's perspective — and deliberately not through `open_or_build`, for
-/// the identical reason [`super::semantic`] gives: the caller has just run
+/// Run here, ahead of the first turn, the work is free from the session's
+/// perspective — and deliberately not through `open_or_build`, for the
+/// identical reason [`super::semantic`] gives: the caller has just run
 /// `index_all`, and a second catch-up pass would re-walk and re-hash a tree
-/// nothing has touched since.
+/// nothing has touched since. Whatever the cap leaves is finished by the
+/// background pass ([`super::backfill`]); since #4043 no search fills it.
 #[cfg(test)]
 pub async fn warm_chunk_vectors(
     root: &Path,
@@ -868,11 +879,17 @@ pub async fn warm_chunk_vectors(
 /// receives the cumulative embedded-file count as files commit, so a long
 /// pass can be narrated while it happens instead of summarised after.
 /// Display-only — the callback cannot affect the pass.
-pub async fn warm_chunk_vectors_with_progress(
+///
+/// Generic over the callback for the `Send`-ness reason
+/// `super::semantic::warm_opened` documents: `stella init` narrates through
+/// a closure borrowing a non-`Send` emitter, while the background pass runs
+/// inside a spawned task whose whole future must be `Send`, and a trait
+/// object would force one answer on both.
+pub async fn warm_chunk_vectors_with_progress<P: FnMut(usize) + ?Sized>(
     root: &Path,
     embedder: &dyn Embedder,
     limit: usize,
-    progress: &mut dyn FnMut(usize),
+    progress: &mut P,
 ) -> ChunkWarmOutcome {
     let graph = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
         .map_err(|error| format!("cannot prepare the code graph store: {error}"))
@@ -894,11 +911,11 @@ pub async fn warm_chunk_vectors_with_progress(
     outcome
 }
 
-async fn warm_chunks_opened(
+pub(super) async fn warm_chunks_opened<P: FnMut(usize) + ?Sized>(
     graph: &CodeGraph,
     embedder: &dyn Embedder,
     limit: usize,
-    progress: &mut dyn FnMut(usize),
+    progress: &mut P,
 ) -> ChunkWarmOutcome {
     let fingerprint = embedder.fingerprint().id();
     let mut files_embedded = 0usize;

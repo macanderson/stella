@@ -132,6 +132,7 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
         prefix_fg(&TranscriptEntry::ToolResult {
             call_id: "c1".into(),
             name: "read_file".into(),
+            path: None,
             ok: true,
             summary: "ok".into(),
             full: "ok".into(),
@@ -147,6 +148,7 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
         prefix_fg(&TranscriptEntry::ToolResult {
             call_id: "c2".into(),
             name: "read_file".into(),
+            path: None,
             ok: false,
             summary: "no".into(),
             full: "no".into(),

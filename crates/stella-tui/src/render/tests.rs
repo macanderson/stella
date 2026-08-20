@@ -101,6 +101,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
         TranscriptEntry::ToolResult {
             call_id: "c1".into(),
             name: "bash".into(),
+            path: None,
             ok: true,
             summary: "done".into(),
             full: "done".into(),

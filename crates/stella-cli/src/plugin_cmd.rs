@@ -37,6 +37,7 @@ use std::path::{Path, PathBuf};
 
 use crate::settings::{Settings, Toggle};
 
+pub(crate) mod configure;
 pub(crate) mod package;
 pub(crate) mod process;
 pub(crate) mod roster;
@@ -202,6 +203,21 @@ fn install(
             format!("`{name}` cannot be installed: {mismatch}\n\nNothing was copied.")
         })?;
 
+    // Where a `[[configure]]` table would land, resolved BEFORE the consent
+    // document is printed. A tier this package cannot configure is a refusal,
+    // and a refusal has to come before the words that describe the change as
+    // though it were going to happen — the `reconcile` rule above, applied to
+    // the other half of the document.
+    let config_target = if manifest.configure.is_empty() {
+        None
+    } else {
+        Some(
+            configure::ConfigTarget::resolve(workspace_root, scope).map_err(|reason| {
+                format!("`{name}` cannot be installed: {reason}\n\nNothing was copied.")
+            })?,
+        )
+    };
+
     println!("{}", stella_plugin::consent_text(&manifest));
 
     // The consent text lists the environment allowlist as the manifest wrote
@@ -254,11 +270,40 @@ fn install(
     }
 
     stage_and_commit(source, &tier, &destination)?;
+
+    // The configuration write (#3999). Last, because it is the only step that
+    // reaches outside the tier — and rolled back whole on failure, on
+    // `stage_and_commit`'s reasoning: a package installed with its declared
+    // configuration half-applied is a state neither `list` nor `remove` can
+    // reason about, and it would sit under a name that is now taken.
+    //
+    // The order inside is load-bearing. The journal is written BEFORE the
+    // config, so there is no instant in which the workspace is configured and
+    // nothing on disk knows how to undo it; and the config write is what can
+    // fail, which is why it is the step with an undo behind it rather than the
+    // one with a rollback in front.
+    if let Some(target) = &config_target
+        && let Err(reason) = install_configuration(&manifest, target, &destination)
+    {
+        discard(&destination);
+        return Err(format!(
+            "`{name}` could not configure {}: {reason}\n\nIt was not installed.",
+            target.path().display()
+        ));
+    }
+
     println!(
         "installed `{name}` ({}) into {}",
         scope.as_str(),
         destination.display()
     );
+    if let Some(target) = &config_target {
+        println!(
+            "  set {} value(s) in {} — `stella plugin remove {name}` puts them back",
+            manifest.configure.len(),
+            target.path().display()
+        );
+    }
     if matches!(settings.plugins.get(name), Some(Toggle::Off)) {
         println!(
             "  ! `plugins.{name}` is set to \"off\" in your settings, so it will not run. \
@@ -276,6 +321,26 @@ fn install(
             "  ! this workspace is not trusted to run code, so `{name}` will not load. \
              Set STELLA_TRUST_PROJECT=1 to let this repo's plugins run."
         );
+    }
+    Ok(())
+}
+
+/// Apply a package's `[[configure]]` table, leaving nothing half-done (#3999).
+///
+/// Three steps in one place because their order is the correctness argument:
+/// plan (reads, writes nothing), journal (durable undo), commit (the change).
+/// A failure at the last step undoes itself from the plan it already holds,
+/// rather than trusting that the file it just failed to write is readable.
+fn install_configuration(
+    manifest: &stella_plugin::PluginManifest,
+    target: &configure::ConfigTarget,
+    destination: &Path,
+) -> Result<(), String> {
+    let plan = configure::plan(target, manifest)?;
+    configure::write_journal(destination, &plan.journal)?;
+    if let Err(reason) = plan.commit() {
+        configure::undo(&plan.journal, manifest);
+        return Err(reason);
     }
     Ok(())
 }
@@ -436,12 +501,61 @@ fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
             eprintln!("{notice}");
         }
         for dir in removable_dirs(&tier, name, &installs) {
+            // Before the directory goes, because the journal that says what to
+            // put back lives inside it (#3999). An uninstall that deleted first
+            // could not restore at all — and the manifest, which is what the
+            // keys are taken from, would be gone with it.
+            // The file the writes are allowed to land in is re-derived from
+            // the tier being removed, not read from the journal: the journal
+            // is package-controlled data, so trusting its `config` path would
+            // make `remove` an arbitrary-file write. A tier no longer
+            // resolvable to a `stella.toml` yields `None`, which `revert`
+            // treats as "nothing can be put back" rather than redirected.
+            let expected = configure::ConfigTarget::resolve(workspace_root, scope).ok();
+            let reverted = installs
+                .iter()
+                .find(|plugin| plugin.dir == dir)
+                .map(|plugin| {
+                    configure::revert(
+                        &dir,
+                        &plugin.manifest,
+                        expected.as_ref().map(configure::ConfigTarget::path),
+                    )
+                })
+                .unwrap_or_default();
+
             remove_plugin_dir(&tier, &dir)?;
             println!(
                 "removed `{name}` ({}) from {}",
                 scope.as_str(),
                 dir.display()
             );
+            if !reverted.keys.is_empty()
+                && let Some(config) = &reverted.config
+            {
+                println!(
+                    "  put back {} in {}: {}",
+                    reverted.keys.len(),
+                    config.display(),
+                    reverted.keys.join(", ")
+                );
+            }
+            // The honest half. A `remove` that reported success while leaving a
+            // package's configuration in force is the failure this whole
+            // mechanism exists to prevent, so it is said out loud rather than
+            // swallowed — with the keys named, because the remedy is to edit
+            // them by hand and a user cannot do that without knowing which.
+            if !reverted.unaccounted.is_empty() {
+                eprintln!(
+                    "  ! `{name}` set {} that could NOT be put back — edit them by hand: {}",
+                    if reverted.unaccounted.len() == 1 {
+                        "1 value"
+                    } else {
+                        "several values"
+                    },
+                    reverted.unaccounted.join(", ")
+                );
+            }
             removed += 1;
         }
     }

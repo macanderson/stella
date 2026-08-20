@@ -8,8 +8,12 @@
 //! - `stella-embed` owns the seam, the fingerprint, the HTTP backend and the
 //!   pure ranker.
 //! - This module is the orchestration: embed what is pending and commit it.
-//!   The eager pass is `stella init`'s; the lazy catch-up is the search
-//!   ladder's ([`super::engine`]).
+//!
+//! Both callers of the pass below run it **without a query waiting on it**:
+//! the eager one is `stella init`'s, and the background one is
+//! [`super::backfill`]'s, at session start. There is no longer a third — the
+//! lazy per-query catch-up the search ladder used to run was deleted in #4043,
+//! and that module's header carries the argument.
 
 use std::path::Path;
 
@@ -21,16 +25,26 @@ use stella_graph::FileVector;
 /// while still amortising the round trip across a warm-up pass.
 pub const EMBED_BATCH: usize = 32;
 
-/// The most files one eager (`stella init`) pass will embed.
+/// **There is no ceiling on how much of a workspace gets indexed.** Every
+/// pass — `stella init`'s eager one and [`super::backfill`]'s background one —
+/// embeds every pending file, and the number of files in the workspace is the
+/// only bound.
 ///
-/// Ten times the lazy per-query cap, and bounded for a different reason. The
-/// lazy cap trades coverage for the latency of a query someone is waiting
-/// on; this pass runs before any turn starts, so its budget is the user's
-/// money and patience rather than a round trip. A repository larger than this
-/// gets a **stated** partial index — the emitted line names how many files
-/// were left — because a partial index that silently ranks a subset is worse
-/// than one that says which subset it ranked.
-pub const MAX_FILES_PER_EAGER_PASS: usize = 2_000;
+/// It used to stop at two thousand, on the argument that a pass in front of a
+/// person should be bounded by their patience. The argument fails on the only
+/// workspace it applies to: a repository over the cap could never become
+/// fully searchable, because each pass stopped at the same number and every
+/// search's answer stayed drawn from the same partial corpus. A cap on an
+/// index is not a budget, it is a permanent hole — and a hole exactly where
+/// the tool is most needed, since the repositories over the cap are the ones
+/// nobody can hold in their head.
+///
+/// What is given up: a first `stella init` on a very large repository embeds
+/// all of it, which costs more of the user's embedding budget up front than
+/// it used to. The pass still narrates as it goes, still commits every batch,
+/// and is still interruptible — and this is a one-time cost per workspace,
+/// where the hole it replaces was permanent.
+pub const NO_FILE_CEILING: usize = usize::MAX;
 
 /// What an eager pass did, as data the caller renders.
 ///
@@ -67,12 +81,11 @@ pub enum WarmOutcome {
 /// Embed the workspace's indexed files **without answering a query** — the
 /// `stella init` pass.
 ///
-/// The lazy per-query pass is right for a session and wrong for a
-/// single-turn run: it fires only once a search has already been asked, so
-/// the first searches of a session would rank against whichever files
-/// happened to be processed first. This runs the same render, the same table
-/// and the same `(file_id, fingerprint)` keying ahead of the first turn,
-/// where the work is free from the session's perspective.
+/// The background pass ([`super::backfill`]) covers a session; this covers
+/// the single-turn run that has no session to amortise an index over, because
+/// `stella init` is the one command whose job is to make the workspace ready.
+/// Same render, same table, same `(file_id, fingerprint)` keying — the work is
+/// free from every later session's perspective.
 ///
 /// Batched rather than one big pass: each round asks for at most one
 /// request's worth of pending files, so the blocking file reads stay bounded
@@ -117,90 +130,27 @@ pub async fn warm_file_vectors_with_progress(
     outcome
 }
 
-/// What one session-start refresh decided to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RefreshOutcome {
-    /// The pass ran.
-    Refreshed(WarmOutcome),
-    /// This workspace has no vectors under the active fingerprint, so it has
-    /// never opted into semantic indexing (or has just changed embedder).
-    /// Embedding a whole tree unasked spends the user's API budget on a
-    /// capability they may not want — that is `stella init`'s decision to
-    /// take, not a session start's.
-    NotOptedIn,
-    /// Another pass holds the embed lease (#3650). It is doing this work.
-    Busy,
-}
-
-/// Top up embeddings at session start, bounded, for a workspace that already
-/// uses semantic search (#3649).
+/// One warm pass over an open graph, shared by the eager `stella init` pass
+/// above and the background one in [`super::backfill`] — which is where the
+/// lease discipline lives, because it is the pass that also fills chunks and
+/// the two halves must be single-flight together.
 ///
-/// This is the push half of git-aware reconciliation. `vectors::pending`
-/// orders by change recency, so after a merge the files that commit touched
-/// are already at the front of the queue — but nothing advanced the queue
-/// except `stella init` and the lazy pass inside a search. A session that
-/// merged and then only ran `bash` and `read_file` never embedded them at
-/// all. One bounded pass at session start is what makes the ordering pay off.
+/// The session-start *refresh* that used to live here (#3649) was bounded to
+/// [`stella_graph::MAX_FILES_PER_PASS`] and skipped a workspace with no
+/// vectors at all, on the argument that embedding a tree unasked spends the
+/// user's money. #4043 replaced it with the unbounded, always-on pass in
+/// `backfill`: with the lazy per-query catch-up gone, a workspace that opts
+/// out of the background pass has nothing left to fill its index at all, so
+/// the opt-in signal moved from "already has vectors" to "has an embedder
+/// configured".
 ///
-/// Three guards, each load-bearing:
-///
-/// - **Opt-in.** A workspace with zero vectors under this fingerprint has
-///   never run the eager pass, and starting one unasked spends real money.
-/// - **Single-flight.** The embed lease, so this cannot race the lazy
-///   per-query pass or a second `stella` process.
-/// - **Bounded.** [`stella_graph::MAX_FILES_PER_PASS`] rather than the eager
-///   cap: a session
-///   start is not the moment to embed two thousand files, and the recency
-///   ordering means one batch covers what actually changed.
-pub async fn refresh_recent_vectors(
-    root: &Path,
-    embedder: &dyn Embedder,
-    limit: usize,
-) -> RefreshOutcome {
-    let graph = match stella_store::workspace_private_sqlite_path(root, "codegraph.db")
-        .map_err(|error| format!("cannot prepare the code graph store: {error}"))
-        .and_then(|db_path| {
-            stella_graph::CodeGraph::open(root, &db_path)
-                .map_err(|error| format!("could not open the code graph: {error}"))
-        }) {
-        Ok(graph) => graph,
-        Err(reason) => {
-            return RefreshOutcome::Refreshed(WarmOutcome::Failed {
-                embedded: 0,
-                reason,
-            });
-        }
-    };
-
-    let fingerprint = embedder.fingerprint().id();
-    // Zero is the honest opt-in signal: it cannot distinguish "never wanted
-    // this" from "just switched embedder", and it does not need to — both
-    // mean a whole-tree embed the user has not asked this session to pay for.
-    if graph.embedded_file_count(&fingerprint).unwrap_or(0) == 0 {
-        graph.shutdown();
-        return RefreshOutcome::NotOptedIn;
-    }
-
-    let Some(lease) = graph.acquire_lease(stella_graph::lease::Purpose::Embed) else {
-        graph.shutdown();
-        return RefreshOutcome::Busy;
-    };
-    let outcome = warm_opened(&graph, embedder, limit, &mut |_| {}).await;
-    // Released on the failure path too: a pass that died holds no claim on
-    // the next one, and leaving the lease behind would stall embedding for
-    // the whole TTL over an error the caller already has in hand.
-    graph.release_lease(&lease);
-    graph.shutdown();
-    RefreshOutcome::Refreshed(outcome)
-}
-
 /// `progress` is generic rather than `&mut dyn FnMut(usize)` so each caller's
 /// `Send`-ness is inferred instead of erased. The eager `stella init` pass
-/// narrates through a callback that borrows a non-`Send` emitter; the session
-/// refresh runs inside a `tokio::spawn`ed task and needs the whole future to
-/// be `Send`. A trait object forces one answer on both, and it is the wrong
-/// one for whichever caller did not pick it.
-async fn warm_opened<P: FnMut(usize) + ?Sized>(
+/// narrates through a callback that borrows a non-`Send` emitter; the
+/// background pass runs inside a `tokio::spawn`ed task and needs the whole
+/// future to be `Send`. A trait object forces one answer on both, and it is
+/// the wrong one for whichever caller did not pick it.
+pub(super) async fn warm_opened<P: FnMut(usize) + ?Sized>(
     graph: &stella_graph::CodeGraph,
     embedder: &dyn Embedder,
     limit: usize,
@@ -250,35 +200,14 @@ async fn warm_opened<P: FnMut(usize) + ?Sized>(
     }
 }
 
-/// Embed every file still pending under `fingerprint`, up to the per-pass
-/// cap. The search ladder's lazy catch-up, sharing `stella-graph`'s
-/// pending-scan cursor with the eager pass above so the two warm one index
-/// rather than two.
-pub async fn catch_up_embeddings(
-    graph: &stella_graph::CodeGraph,
-    embedder: &dyn Embedder,
-    fingerprint: &str,
-) -> Result<(), EmbedError> {
-    let scan = graph
-        .files_pending_embedding(fingerprint, stella_graph::MAX_FILES_PER_PASS)
-        .map_err(|error| EmbedError::GraphRead(error.to_string()))?;
-    if scan.files.is_empty() {
-        return Ok(());
-    }
-    for chunk in scan.files.chunks(EMBED_BATCH) {
-        embed_batch(graph, embedder, fingerprint, chunk).await?;
-    }
-    Ok(())
-}
-
-/// Why a warm or catch-up pass stopped (invariant #5).
+/// Why a warm pass stopped (invariant #5).
 ///
 /// The split that matters to a caller is embedder-versus-index: an embedder
 /// failure is usually configuration or a network hop and leaves the index
 /// perfectly usable for the lexical rungs, while a graph read/write failure
-/// means the index itself is the problem. `super::engine` degrades on the
-/// first and reports the second, and it could not tell them apart while both
-/// arrived as prose.
+/// means the index itself is the problem. The narrating callers degrade on
+/// the first and report the second, and they could not tell them apart while
+/// both arrived as prose.
 #[derive(Debug, thiserror::Error)]
 pub enum EmbedError {
     /// The code graph could not be read for pending work.

@@ -269,6 +269,16 @@ pub enum TranscriptEntry {
         /// Resolved from the matching `ToolStart` at fold time so call and
         /// result rows read as one aligned pair.
         name: String,
+        /// The path the call targeted, resolved from the same `ToolStart` as
+        /// `name` and by the same lookup.
+        ///
+        /// Carried so the renderer can tell what *language* a result body is
+        /// written in: a `read_file` output is the named file's source, and
+        /// the extension is the only evidence of that on the entry. Without it
+        /// the deck could colour a body only when the body itself announced
+        /// its format — which is why a file read went uncoloured for every
+        /// language, JSON included (#4019).
+        path: Option<String>,
         ok: bool,
         summary: String,
         /// The output, capped at `OUTPUT_BUDGET` chars — the collapsed row
@@ -682,19 +692,25 @@ impl SessionModel {
                         )
                     }
                 };
-                // Resolve the tool's name from its start entry (results only
-                // carry the call id on the wire).
-                let name = self
+                // Resolve the tool's name and target path from its start entry
+                // (results only carry the call id on the wire). One lookup for
+                // both: they answer to the same entry, and two reverse scans
+                // could only differ by finding different `ToolStart`s for one
+                // call id, which would be worse than either answer.
+                let (name, path) = self
                     .transcript
                     .iter()
                     .rev()
                     .find_map(|e| match e {
                         TranscriptEntry::ToolStart {
-                            call_id: cid, name, ..
-                        } if cid == call_id => Some(name.clone()),
+                            call_id: cid,
+                            name,
+                            path,
+                            ..
+                        } if cid == call_id => Some((name.clone(), path.clone())),
                         _ => None,
                     })
-                    .unwrap_or_else(|| "tool".to_string());
+                    .unwrap_or_else(|| ("tool".to_string(), None));
                 // Only a *successful* mutation gets an inline-diff reference —
                 // a failed call produced no `FileChange`, and rendering the
                 // path's previous diff under its ✗ would attribute a change
@@ -717,6 +733,7 @@ impl SessionModel {
                 self.transcript.push(TranscriptEntry::ToolResult {
                     call_id: call_id.clone(),
                     name,
+                    path,
                     ok,
                     summary,
                     full,
