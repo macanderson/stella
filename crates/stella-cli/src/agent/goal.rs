@@ -357,15 +357,31 @@ pub(crate) async fn run_raw_one_shot(
     // `succeeded=false`). Gated on `turn_warrants_reflection` so a tool-free
     // turn (nothing to mine, failure almost certainly external) never spends a
     // model call. The report is surfaced so a model-call error is never silent.
-    // The raw one-shot closes its execution inside `run_turn`; unlike the
-    // staged pipeline it has no post-turn event phase before that terminal
-    // barrier. Keep machine streams strict by not dispatching an unframed
-    // reflection call after `Complete` (text retains the best-effort loop).
-    // `one_shot_reflection_enabled` additionally honors the benchmark
-    // adapter's `STELLA_DISABLE_REFLECTION` opt-out.
-    if format == OutputFormat::Text
-        && one_shot_reflection_enabled(format)
-        && turn_warrants_reflection(&messages)
+    // Reflection is about what the turn *learned*, not about what it *printed*.
+    //
+    // This guard opened with `format == OutputFormat::Text`, which made the
+    // three conditions after it unreachable for every machine format — and
+    // machine formats are the only ones an autonomous caller uses.
+    // `one_shot_reflection_enabled` names `Json` and `StreamJson` as supported
+    // in its own body, `reflect_routed` already takes a quiet flag for
+    // non-text, and `surface_reflection` already refuses to print on anything
+    // but text. The whole path was built to reflect on JSON and one clause
+    // switched it off.
+    //
+    // What that cost: a self-driving run against `oxagen-platform` executed 22
+    // turns through `stella run --output-format json` across 16 merged pull
+    // requests and finished with **no reflections, no memories and no promoted
+    // skills** — every turn read the workspace's memory and wrote none back.
+    //
+    // The stream contract the old clause protected is still kept, by the piece
+    // that owns it: `surface_reflection` emits nothing on a machine format, so
+    // `Complete` remains the unique final frame. Recording and surfacing are
+    // separate questions and only the second one is about framing.
+    //
+    // `one_shot_reflection_enabled` still honors the benchmark adapter's
+    // `STELLA_DISABLE_REFLECTION` opt-out, which is the switch for "do not
+    // spend the extra provider call".
+    if should_reflect_after_one_shot(format, turn_warrants_reflection(&messages), memory.is_some())
         && let Some(m) = &mut memory
     {
         // The friction ledger this door folded above (#3946). It was empty here
