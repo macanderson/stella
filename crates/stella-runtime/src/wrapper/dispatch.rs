@@ -376,7 +376,7 @@ impl WrapperDispatch {
     /// is stating that grounding comes before planning, and nothing else in
     /// the system knows that. Within one stage their contributions concatenate
     /// in that order; across stages they follow the merged stage order
-    /// [`super::compose`] computed.
+    /// `super::compose` computed.
     ///
     /// Each member keeps its **own** grants. A member that did not declare
     /// `before_turn` is not asked it because another member did; composition
@@ -388,7 +388,7 @@ impl WrapperDispatch {
     /// block — a composition of a wrapper and a non-wrapper is a caller
     /// mistake, not a degraded composition. [`WrapperError::EmptyComposition`]
     /// for no members. Otherwise one of the four conflict variants
-    /// [`super::compose`] documents: contradictory stage order, two oracles,
+    /// `super::compose` documents: contradictory stage order, two oracles,
     /// two arbiters, or one requirement name meaning two things.
     pub fn bind_composed(
         members: Vec<(PluginManifest, Arc<dyn TurnWrapper>)>,
