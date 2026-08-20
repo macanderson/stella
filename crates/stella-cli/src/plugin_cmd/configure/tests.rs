@@ -45,6 +45,7 @@ fn temp_root(label: &str) -> PathBuf {
 fn target_at(path: &Path) -> ConfigTarget {
     ConfigTarget {
         path: path.to_path_buf(),
+        user_private: false,
     }
 }
 

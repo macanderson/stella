@@ -104,6 +104,11 @@ pub(crate) struct ConfigJournal {
 #[derive(Debug)]
 pub(crate) struct ConfigTarget {
     path: PathBuf,
+    /// Whether the write must be owner-only (the user tier, which can hold
+    /// credentials) rather than the committable project-scope mode. Carried on
+    /// the target because [`ConfigPlan::commit`] is the only place that knows
+    /// the bytes and the path, but not the scope they came from.
+    user_private: bool,
 }
 
 impl ConfigTarget {
@@ -114,6 +119,10 @@ impl ConfigTarget {
     /// to it — see this module's header for why creating a TOML file beside a
     /// JSON one is the worst of the three options.
     pub(crate) fn resolve(workspace_root: &Path, scope: PluginScope) -> Result<Self, String> {
+        // The user tier can hold credentials, so its file is owner-only in an
+        // owner-only directory; the project tier is a committable, reviewed
+        // file that keeps the ordinary mode — see [`ConfigPlan::commit`].
+        let user_private = scope == PluginScope::User;
         let (path, json, remedy) = match scope {
             PluginScope::Project => (
                 crate::settings::toml_config::project_toml_path(workspace_root),
@@ -142,7 +151,7 @@ impl ConfigTarget {
                 path.display(),
             ));
         }
-        Ok(Self { path })
+        Ok(Self { path, user_private })
     }
 
     /// The file itself, for a message that needs to name it.
@@ -298,6 +307,9 @@ pub(crate) struct ConfigPlan {
     rendered: String,
     /// Where they go.
     path: PathBuf,
+    /// Whether the write is the owner-only user tier's — carried from the
+    /// [`ConfigTarget`] so [`ConfigPlan::commit`] can honor it.
+    user_private: bool,
 }
 
 /// Read the target, record every prior value, and render the file that would
@@ -333,6 +345,7 @@ pub(crate) fn plan(target: &ConfigTarget, manifest: &PluginManifest) -> Result<C
         },
         rendered: doc.to_string(),
         path: target.path.clone(),
+        user_private: target.user_private,
     })
 }
 
@@ -343,7 +356,7 @@ impl ConfigPlan {
     /// sit; a repository's own `stella.toml` is committed and reviewed like
     /// source, so it keeps the ordinary mode.
     pub(crate) fn commit(&self) -> Result<(), String> {
-        crate::settings::write_config_file(&self.path, self.rendered.as_bytes(), false)
+        crate::settings::write_config_file(&self.path, self.rendered.as_bytes(), self.user_private)
     }
 }
 
