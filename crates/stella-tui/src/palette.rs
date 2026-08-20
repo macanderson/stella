@@ -39,8 +39,14 @@
 //! - **`VOID` and `HAIRLINE_STRONG`,** derived steps either side of the
 //!   declared ramp.
 //!
-//! Until those land in the JSON, `scripts/check-tokens.py` keeps
-//! `crates/stella-tui/` on its migration ledger.
+//! Those are values the token system has no home for yet, and they are fine
+//! where they are: `scripts/check-tokens.py` only requires a hex to *be* a
+//! live token inside its `TOKEN_ONLY` paths, and this crate is not one. What
+//! it does require everywhere is that no **retired** hex appears, and this
+//! crate now meets that — so it has left the `MIGRATING` ledger, and a v4.0
+//! bronze reappearing here fails the gate like anywhere else. #4058 is still
+//! open for the rest of the alignment; leaving the ledger is not the same as
+//! finishing it.
 //!
 //! The identity is **Gold on a cool near-black**: one colour, owned. Gold
 //! `#EFC53F` is the signal -- the mark, the prompt, active/selected, focus --
@@ -69,13 +75,21 @@
 //! ember -> blue -> gold) and the name must outlive the value. Add a *value*
 //! here; name a *role* in `theme`.
 //!
-//! **This is the product palette, not the marketing brand kit.** It is held
-//! apart from `docs/brand/css/tokens.css` and `website/src/app/tokens.css`,
-//! which are still on kit v4.0's Bronze Gold `#C58A32` on Obsidian `#070B10`:
-//! the kit's ramp is byte-parity-checked against ~60 generated binary assets
-//! (logo PNGs, `favicon.ico`, PWA icons, wallpapers, spinner GIFs) that
-//! cannot be regenerated without `rsvg-convert` and `ffmpeg`, so moving it is
-//! a dedicated pass. The closest sibling this file *does* track is the
+//! **This is the product palette, not the marketing brand kit** — but the two
+//! agree by value now, which they did not when this paragraph was first
+//! written. It used to say the kit and `website/src/app/tokens.css` were "still
+//! on kit v4.0's Bronze Gold on Obsidian", and that was true right up until
+//! v5.0 moved them: `docs/brand/css/tokens.css`, the site, the Observatory and
+//! this file are one gold, all downstream of
+//! `design/tokens/stella-tokens.json`. The sentence survived being false
+//! because `crates/stella-tui/` sat in `check-tokens.py`'s `MIGRATING` ledger,
+//! so the hex ban skipped this file entirely; it does not any more. The kit
+//! still moves as its own pass — its ramp is byte-parity-checked against ~60
+//! generated binaries (logo PNGs, `favicon.ico`, PWA icons, wallpapers,
+//! spinner GIFs) needing `rsvg-convert` and `ffmpeg` — which is a statement
+//! about *cadence*, not about the values diverging.
+//!
+//! The closest sibling this file *does* track is the
 //! instrument palette shared by the Observatory
 //! (`crates/stella-observatory/src/assets/index.html`), the `/export`
 //! dashboard and the two arenabench UIs -- same grounds, same text ramp, same
