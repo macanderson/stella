@@ -62,10 +62,12 @@
 //!    holds a provider, an `Engine` or a credential (invariant 3,
 //!    `doc:turn-loop-wrappers` §9.3). The seat it resolves to is the receipt's
 //!    attribution, the child is read-only, the allowance is the host's, and
-//!    what it spent is printed beside what it was refused. Two limits stated
-//!    rather than implied: the `verifier` tier is bound to no seat here, so a
-//!    plugin naming it is answered `Unavailable`
-//!    ([`child_turn_plane`] argues why); and a point runs between the parent's
+//!    what it spent is printed beside what it was refused. Two things stated
+//!    rather than implied: the `verifier` tier **is** bound here, to
+//!    `ModelCallRole::Verdict`, so an arbiter plugin's assessment turn runs
+//!    and is booked as what it is (#3838 — [`child_turn_plane`] argues why,
+//!    including why the refusal that stood here before was right when it was
+//!    written and is not any more); and a point runs between the parent's
 //!    turns, where the tool registry's event slot is empty — so the spend
 //!    reaches the session's guard and this run's report, but not the store's
 //!    receipt (#3802). The turn's boundary controls **do** cross (#3803):
@@ -134,12 +136,12 @@ use stella_core::ports::{ToolExecutor, TurnControls};
 use stella_core::router::Router;
 use stella_core::subagent::SubAgentDispatcher;
 use stella_model::provider::Provider;
-use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
+use stella_plugin::{HostCall, SignalValues, TurnOutcome as WrapperTurnOutcome};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
     CandidateFanoutSpend, CandidateFanouts, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS,
-    DispatchReport, DrivenTurn, HostCallGate, HostPlanes, RoundInput, SubprocessWrapper,
-    TurnDriver, TurnPrelude, WrapperDispatch,
+    DEFAULT_HOST_MAX_CHILD_TURNS, DEFAULT_HOST_MAX_HOLDS, DispatchReport, DrivenTurn, HostCallGate,
+    HostPlanes, RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -516,21 +518,49 @@ const PLUGIN_CANDIDATE_FANOUT_SLOT: u32 = 2;
 /// Three deliberate decisions live here rather than at the call site, because
 /// each is a claim about the user's money or the receipt it lands on (#3576):
 ///
-/// - **No `verifier` seat is bound.** [`ChildTurns`] serves `worker`,
-///   `triage`, `research` and `plan` by default and deliberately not
-///   `verifier`, whose seats are `WitnessAuthor` and `Verdict` — the model
-///   verdict #2584 removed *structurally*. Binding one here would put a call
-///   on the receipt attributed to a role this host did not make, so a plugin
-///   naming a `verifier` tier is told `Unavailable` and this driver does not
-///   pretend otherwise.
+/// - **The `verifier` seat is bound here, to `ModelCallRole::Verdict`**
+///   (#3838). [`ChildTurns`] serves `worker`, `triage`, `research` and `plan`
+///   by default and deliberately not `verifier`; `ChildTurns::with_seat`'s
+///   contract is that a host wanting one *says so and owns the claim*. This
+///   host says so.
 ///
-///   That refusal is correct and also not the real fix. The deeper problem is
-///   that this host has an opinion about the word `verifier` at all: the seat
-///   table below it (`ChildTurns::default_seats`) is a core-owned list of
-///   *plugin* role names, so a plugin whose process needs a `planner` or a
-///   `reviewer` can only be served by a name core already knows. Seats are
-///   meant to be the plugin's vocabulary and the user's model choice, resolved
-///   opaquely — see #3905, under epic #3903.
+///   It reads as a reversal of what stood here before, so the two premises
+///   that changed are worth naming. The old refusal reasoned that attributing
+///   a plugin's child turn to `Verdict` "would put a call on the receipt the
+///   pipeline itself did not make", `Verdict` being the model verdict #2584
+///   removed structurally.
+///
+///   1. **There is no pipeline receipt to protect.** The built-in staged
+///      pipeline was deleted from this workspace (#3865) and
+///      `--pipeline classic` is refused outright, so no host-run verification
+///      stage exists to be misattributed to.
+///   2. **`Verdict` is already this exact call's role.**
+///      `stella_core::goal`'s own loop stamps `role: ModelCallRole::Verdict`
+///      on its independent verifier call, and its test asserts the durable
+///      sequence `[Worker, Verdict, Worker, Verdict]` precisely so a worker
+///      and a verifier call stay distinguishable on the receipt. A goal-
+///      supervision plugin's verifier turn is the same kind of call, so
+///      `Verdict` is the *accurate* attribution, not a borrowed one.
+///
+///   What this does **not** buy: authority. Nothing branches on
+///   `ModelCallRole` — `stella_core::subagent` carries it onto the receipt as
+///   `call_role: spec.role` and no code reads it back to decide anything. The
+///   seat decides what the call is *called*, never what it may *do*. The
+///   independence refusal still compares the resolved seat, so a plugin
+///   cannot reach the worker's seat by renaming it (see the sibling test
+///   `a_role_intent_pointing_at_the_worker_is_still_forbidden`).
+///
+///   Bound for any plugin declaring `tier = "verifier"`, not for one plugin
+///   id: which capabilities a plugin holds is a property of what its manifest
+///   declares and the user consented to, never of its name.
+///
+///   The deeper problem this does not solve: that this host has an opinion
+///   about the word `verifier` at all. The seat table
+///   (`ChildTurns::default_seats`) is a core-owned list of *plugin* role
+///   names, so a plugin needing a `planner` or a `reviewer` can still only be
+///   served by a name core already knows. This adds a fifth known name; it
+///   does not make seats opaque. That is #3905, under epic #3903, and it
+///   subsumes this line when it lands.
 /// - **No per-turn USD carve is requested.** `None` asks for the parent's
 ///   whole remaining headroom, which `BudgetGuard::carve` clamps — and the
 ///   dispatcher behind it carves from the session's sub-agent pool
@@ -543,7 +573,9 @@ pub(crate) fn child_turn_plane(
     manifest: &stella_plugin::PluginManifest,
     dispatcher: Arc<dyn SubAgentDispatcher>,
 ) -> SessionChildTurns {
-    ChildTurns::declare(manifest, dispatcher).with_turn_instance(PLUGIN_CHILD_TURN_SLOT)
+    ChildTurns::declare(manifest, dispatcher)
+        .with_turn_instance(PLUGIN_CHILD_TURN_SLOT)
+        .with_seat("verifier", stella_protocol::event::ModelCallRole::Verdict)
 }
 
 /// This host's candidate fan-out plane for one installed plugin (#3892).
@@ -759,6 +791,67 @@ pub(crate) fn resolve(
 /// dispatcher. [`ResolvedWrapper::serving`] is the other half, and every
 /// wrapper reaches it — a plugin that asks through a transport with *no* gate
 /// has its stdin shut and waits for an answer that never comes (#3561).
+/// Say so when this host will fund less than the manifest asked for (#3841).
+///
+/// `[loop] max_holds` and `max_calls` are **asks, never authorities** — the
+/// host's own ceilings are what actually bound the spend, and that is the
+/// right way round: a plugin that could raise its own ceiling by declaring a
+/// bigger number would be setting the user's budget for them.
+///
+/// The defect is not the clamp, it is the *silence*. A user installing
+/// `stella-goal` reads "asks for up to 7 correction rounds" in the consent
+/// text and gets 2, with nothing naming the difference as a host default
+/// rather than something they chose. `again`'s
+/// `StopReason::AllowanceSpent { spent, allowed }` reports it honestly, but
+/// only at the end of a run that already hit the wall.
+///
+/// So the narrowing is announced before the first round, in the same
+/// one-line-notice shape invariant 8 uses for a pinned effort a provider
+/// cannot honour: never a silent drop.
+///
+/// Deliberately **not** a refusal. A plugin capped below its ask still does
+/// its job, just fewer times, and refusing to run it would turn a visible
+/// narrowing back into an unusable door.
+fn warn_narrowed_ceilings(manifest: &stella_plugin::PluginManifest, warn: &mut dyn FnMut(String)) {
+    let name = manifest.name.as_str();
+    if let Some(asked) = manifest.loop_grant.max_holds
+        && asked > DEFAULT_HOST_MAX_HOLDS
+    {
+        warn(format!(
+            "plugin \"{name}\" asks to hold a turn open for up to {asked} correction \
+             rounds; this host funds {DEFAULT_HOST_MAX_HOLDS} (a host default, not a \
+             setting you chose), so the run stops after {} rounds",
+            DEFAULT_HOST_MAX_HOLDS + 1
+        ));
+    }
+    // `max_calls` feeds two *different* ceilings depending on what the plugin
+    // declared it may call, and the narrowing notice has to name the one that
+    // actually applies (`child_turn.rs` header: the child-turn bound "is a
+    // different bound from the host-call allowance, not a second copy of it").
+    // A plugin that declares `child_turn` spends `max_calls` as child turns for
+    // the whole run, clamped by `DEFAULT_HOST_MAX_CHILD_TURNS` (4) in
+    // `ChildTurns::declare`. A plugin that does not — e.g. a recall-only
+    // wrapper — spends it as host calls per point, clamped by
+    // `DEFAULT_HOST_MAX_CALLS` (8) in `serving`. Comparing every plugin against
+    // 4 and calling it "child turns" would fire a false, mislabelled narrowing
+    // notice for a recall wrapper asking for 5..=8 that this host funds in full.
+    if let Some(asked) = manifest.loop_grant.max_calls {
+        if manifest.loop_grant.calls.contains(&HostCall::ChildTurn) {
+            if asked > DEFAULT_HOST_MAX_CHILD_TURNS {
+                warn(format!(
+                    "plugin \"{name}\" asks for up to {asked} child turns for the whole run; \
+                     this host funds {DEFAULT_HOST_MAX_CHILD_TURNS}"
+                ));
+            }
+        } else if asked > DEFAULT_HOST_MAX_CALLS {
+            warn(format!(
+                "plugin \"{name}\" asks for up to {asked} host calls per point; \
+                 this host funds {DEFAULT_HOST_MAX_CALLS}"
+            ));
+        }
+    }
+}
+
 pub(crate) fn bind_installed(
     roster: &PluginRoster,
     variant: &str,
@@ -803,6 +896,8 @@ pub(crate) fn bind_installed(
             installed.manifest.name
         )
     })?;
+
+    warn_narrowed_ceilings(&installed.manifest, warn);
 
     // `${plugin_dir}` is the host's substitution — this crate is where the
     // install directory is known, exactly as `PluginRoster::hook_routes` does
