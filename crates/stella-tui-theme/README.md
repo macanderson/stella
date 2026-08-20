@@ -104,10 +104,15 @@ the old one. The v1 palette stays normative for every surface still drawing v1
 until that surface migrates; the sweep for warm hex in v2 render code is
 scoped to v2 render code for the same reason.
 
-Note also that `stella-tui::palette` is already held apart from the web brand
-kit by its own module doc (`#FFB81A` against `docs/brand/css/tokens.css`'s
-`#C58A32`), and this crate changes nothing about the kit, the website, or the
-observatory. The v2 spec's scope is the TUI.
+That paragraph described a tree in which `stella-tui::palette`, the brand kit
+and this crate each carried their own gold, and the sentence held them apart by
+naming all three. They agree now: v5.0 put the kit, the site, the Observatory
+and both TUI palettes on one gold, generated from
+`design/tokens/stella-tokens.json` by `scripts/gen-tokens.py` and checked by
+`make tokens`. So there is no longer a divergence to name — the values are one
+value, and `src/generated.rs` is where it lands for this crate. The v2 spec's
+scope is still the TUI; what changed is that the palette above it is shared
+rather than parallel.
 
 ## Consumers
 
