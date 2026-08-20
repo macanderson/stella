@@ -516,21 +516,49 @@ const PLUGIN_CANDIDATE_FANOUT_SLOT: u32 = 2;
 /// Three deliberate decisions live here rather than at the call site, because
 /// each is a claim about the user's money or the receipt it lands on (#3576):
 ///
-/// - **No `verifier` seat is bound.** [`ChildTurns`] serves `worker`,
-///   `triage`, `research` and `plan` by default and deliberately not
-///   `verifier`, whose seats are `WitnessAuthor` and `Verdict` — the model
-///   verdict #2584 removed *structurally*. Binding one here would put a call
-///   on the receipt attributed to a role this host did not make, so a plugin
-///   naming a `verifier` tier is told `Unavailable` and this driver does not
-///   pretend otherwise.
+/// - **The `verifier` seat is bound here, to [`ModelCallRole::Verdict`]**
+///   (#3838). [`ChildTurns`] serves `worker`, `triage`, `research` and `plan`
+///   by default and deliberately not `verifier`; `ChildTurns::with_seat`'s
+///   contract is that a host wanting one *says so and owns the claim*. This
+///   host says so.
 ///
-///   That refusal is correct and also not the real fix. The deeper problem is
-///   that this host has an opinion about the word `verifier` at all: the seat
-///   table below it (`ChildTurns::default_seats`) is a core-owned list of
-///   *plugin* role names, so a plugin whose process needs a `planner` or a
-///   `reviewer` can only be served by a name core already knows. Seats are
-///   meant to be the plugin's vocabulary and the user's model choice, resolved
-///   opaquely — see #3905, under epic #3903.
+///   It reads as a reversal of what stood here before, so the two premises
+///   that changed are worth naming. The old refusal reasoned that attributing
+///   a plugin's child turn to `Verdict` "would put a call on the receipt the
+///   pipeline itself did not make", `Verdict` being the model verdict #2584
+///   removed structurally.
+///
+///   1. **There is no pipeline receipt to protect.** The built-in staged
+///      pipeline was deleted from this workspace (#3865) and
+///      `--pipeline classic` is refused outright, so no host-run verification
+///      stage exists to be misattributed to.
+///   2. **`Verdict` is already this exact call's role.**
+///      `stella_core::goal`'s own loop stamps `role: ModelCallRole::Verdict`
+///      on its independent verifier call, and its test asserts the durable
+///      sequence `[Worker, Verdict, Worker, Verdict]` precisely so a worker
+///      and a verifier call stay distinguishable on the receipt. A goal-
+///      supervision plugin's verifier turn is the same kind of call, so
+///      `Verdict` is the *accurate* attribution, not a borrowed one.
+///
+///   What this does **not** buy: authority. Nothing branches on
+///   `ModelCallRole` — `stella_core::subagent` carries it onto the receipt as
+///   `call_role: spec.role` and no code reads it back to decide anything. The
+///   seat decides what the call is *called*, never what it may *do*. The
+///   independence refusal still compares the resolved seat, so a plugin
+///   cannot reach the worker's seat by renaming it (see the sibling test
+///   `a_role_intent_pointing_at_the_worker_is_still_forbidden`).
+///
+///   Bound for any plugin declaring `tier = "verifier"`, not for one plugin
+///   id: which capabilities a plugin holds is a property of what its manifest
+///   declares and the user consented to, never of its name.
+///
+///   The deeper problem this does not solve: that this host has an opinion
+///   about the word `verifier` at all. The seat table
+///   (`ChildTurns::default_seats`) is a core-owned list of *plugin* role
+///   names, so a plugin needing a `planner` or a `reviewer` can still only be
+///   served by a name core already knows. This adds a fifth known name; it
+///   does not make seats opaque. That is #3905, under epic #3903, and it
+///   subsumes this line when it lands.
 /// - **No per-turn USD carve is requested.** `None` asks for the parent's
 ///   whole remaining headroom, which `BudgetGuard::carve` clamps — and the
 ///   dispatcher behind it carves from the session's sub-agent pool
@@ -543,7 +571,9 @@ pub(crate) fn child_turn_plane(
     manifest: &stella_plugin::PluginManifest,
     dispatcher: Arc<dyn SubAgentDispatcher>,
 ) -> SessionChildTurns {
-    ChildTurns::declare(manifest, dispatcher).with_turn_instance(PLUGIN_CHILD_TURN_SLOT)
+    ChildTurns::declare(manifest, dispatcher)
+        .with_turn_instance(PLUGIN_CHILD_TURN_SLOT)
+        .with_seat("verifier", stella_protocol::event::ModelCallRole::Verdict)
 }
 
 /// This host's candidate fan-out plane for one installed plugin (#3892).

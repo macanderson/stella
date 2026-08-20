@@ -911,6 +911,98 @@ async fn a_role_intent_pointing_at_the_worker_is_still_forbidden() {
     assert!(wrapper.child_spends().is_empty());
 }
 
+/// The shipped `plugins/stella-goal` manifest, read off disk.
+///
+/// Deliberately the real file rather than a fixture string: #3838's whole
+/// failure mode was that a fixture could be made to pass while the plugin
+/// that ships in this repository stayed inert, and nobody would notice. If
+/// this manifest stops declaring `[roles.verifier]`, this test must fail.
+fn shipped_goal_manifest() -> PluginManifest {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../plugins/stella-goal/plugin.toml");
+    let text = std::fs::read_to_string(&path)
+        .expect("the first-party goal plugin ships at plugins/stella-goal/plugin.toml");
+    PluginManifest::from_toml_str(&text).expect("the shipped manifest loads")
+}
+
+/// **Witness (#3838).** The `verifier` role intent that
+/// `plugins/stella-goal` declares resolves on the plane
+/// [`child_turn_plane`] actually builds — the production wiring, not a
+/// test-only `.with_seat` call.
+///
+/// Fails before this change with `HostCallRefusal::Unavailable`:
+/// `ChildTurns::default_seats()` serves `worker`/`triage`/`research`/`plan`
+/// and not `verifier`, and this host bound no seat of its own. The
+/// consequence was not a degraded run but an inert plugin — every
+/// `after_turn` refused, evidence always empty, `judge` abstaining on
+/// `MeasurementMissing`, and the loop ending `Undecided` after exactly one
+/// round on every run, forever.
+///
+/// Asserts the seat is `verdict` and not merely "something resolved",
+/// because the attribution is the claim this host is owning: a plugin's
+/// verifier turn is booked against the same responsibility
+/// `stella_core::goal` books its own independent verifier call against.
+#[tokio::test]
+async fn the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane() {
+    use stella_plugin::ChildTurnArgs;
+    use stella_runtime::wrapper::ChildTurnPlane;
+
+    let manifest = shipped_goal_manifest();
+    assert_eq!(
+        manifest
+            .roles
+            .as_ref()
+            .and_then(|roles| roles.get("verifier"))
+            .map(|role| role.tier.as_str()),
+        Some("verifier"),
+        "the shipped plugin declares [roles.verifier] tier = \"verifier\"; \
+         if that changed, this witness is testing nothing"
+    );
+
+    let dispatcher = RecordingDispatcher::default();
+    let plane = child_turn_plane(
+        &manifest,
+        Arc::new(dispatcher.clone()) as Arc<dyn SubAgentDispatcher>,
+    );
+
+    let result = plane
+        .child_turn(ChildTurnArgs {
+            role: "verifier".to_string(),
+            instruction: "assess whether the goal was accomplished".to_string(),
+        })
+        .await
+        .expect("the shipped host serves the shipped plugin's one role intent");
+
+    assert_eq!(result.role, "verifier", "the plugin's own intent, echoed");
+    assert_eq!(
+        result.seat, "verdict",
+        "booked against the responsibility stella_core::goal books its own \
+         verifier call against, so the spend is visible as what it is"
+    );
+    assert!(
+        result.report.contains("assess whether the goal"),
+        "the child answered the plugin's instruction: {}",
+        result.report
+    );
+
+    let specs = dispatcher.specs();
+    assert_eq!(
+        specs.len(),
+        1,
+        "the HOST made the model call — a plugin that reached for a provider \
+         itself would leave nothing here"
+    );
+    assert_eq!(
+        specs[0].role,
+        stella_protocol::event::ModelCallRole::Verdict,
+        "and the receipt says so"
+    );
+    assert!(
+        !specs[0].write_access,
+        "a verifier gathers evidence about the work; it does not get a write arm"
+    );
+}
+
 /// The same plugin against a host that installs no plane is answered
 /// `Unavailable` — the state every driver was in before this change, and
 /// the one a driver with no dispatcher of its own is still in.
