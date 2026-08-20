@@ -86,6 +86,7 @@ mod paths;
 mod plain;
 // The plugin loader (`doc:pipeline-as-plugins` §A4): install/list/remove, the
 // two-tier roster, and the hook routes a declared grant produces.
+mod plugin_authz;
 mod plugin_cmd;
 mod scoreboard_cmd;
 mod self_driving_cmd;
