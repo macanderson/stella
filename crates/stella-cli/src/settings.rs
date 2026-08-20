@@ -617,8 +617,9 @@ impl RewardSettings {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct UiSettings {
     /// The TUI colour theme slug (`stella-dark` | `stella-light`). Unset — or
-    /// unrecognised — falls back to the default (`stella-dark`, Phosphor Gold
-    /// on Ink; the comet brand kit at `docs/brand/README.md`).
+    /// unrecognised — falls back to the default (`stella-dark`, gold on the
+    /// cool near-black ramp; the product palette at
+    /// `crates/stella-tui/src/palette.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
 }

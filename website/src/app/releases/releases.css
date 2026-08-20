@@ -86,8 +86,8 @@
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
-  background: var(--stella-brand);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--stella-brand) 22%, transparent);
+  background: var(--stella-signal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--stella-signal) 22%, transparent);
 }
 
 /* ── controls ─────────────────────────────────────────────────────────────── */
@@ -277,7 +277,7 @@
   width: 0.625rem;
   height: 0.625rem;
   border-radius: 50%;
-  background: var(--stella-brand);
+  background: var(--stella-signal);
   box-shadow: 0 0 0 4px var(--color-fd-background);
 }
 
@@ -410,7 +410,7 @@
 /* The search hit. Gold at low alpha rather than the browser's default yellow,
  * which is the one colour on the page belonging to no theme. */
 .rl-hit {
-  background: color-mix(in srgb, var(--stella-brand) 30%, transparent);
+  background: color-mix(in srgb, var(--stella-signal) 30%, transparent);
   color: inherit;
   border-radius: 0.15rem;
   padding: 0 0.1em;

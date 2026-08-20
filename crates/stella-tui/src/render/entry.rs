@@ -1033,7 +1033,7 @@ fn pr_status_color(status: PrStatus) -> Color {
     // recolour — see `theme`'s palette-law test.)
     match status {
         PrStatus::Draft => theme::WARNING,
-        PrStatus::Open => theme::ACCENT_DEEP,
+        PrStatus::Open => theme::ACCENT,
         PrStatus::Merged => theme::ACCENT,
         PrStatus::Closed => theme::DANGER,
     }

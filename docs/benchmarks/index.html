@@ -29,9 +29,9 @@
 *,*::before,*::after{box-sizing:border-box}
 body,h1,h2,p,ul{margin:0} ul{list-style:none;padding:0}
 :root{
-  --bg:#FFFFFF; --sub:#F6F6F8; --panel:#FFFFFF;
-  --ink:#0A0A0C; --ink-2:#4D535A; --ink-3:#828C97;
-  --rule:#E7EBF0; --rule-2:#E3E3E8; --pass:#0B6B3D;
+  --bg:#FFFFFF; --sub:#F7F7FA; --panel:#FFFFFF;
+  --ink:#0A0A0C; --ink-2:#4B4B56; --ink-3:#777782;
+  --rule:#E9E9EE; --rule-2:#D0D0D8; --pass:#006933;
   --wash:rgba(10,10,12,.06);
   --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   /* The Instrument scale. Prose runs at 14/1.7/300 and caps at 68ch; labels
@@ -45,19 +45,19 @@ body,h1,h2,p,ul{margin:0} ul{list-style:none;padding:0}
   --dur-state:120ms;
 }
 @media (prefers-color-scheme:dark){:root{
-  --bg:#0A0A0C; --sub:#0D1319; --panel:#11171D;
-  --ink:#E8E8EC; --ink-2:#A4ABB3; --ink-3:#737C88;
-  --rule:#1F262D; --rule-2:#333B43; --pass:#3FD99B;
-  --wash:rgba(233,237,242,.08);}}
+  --bg:#0A0A0C; --sub:#0F0F12; --panel:#17171B;
+  --ink:#E8E8EC; --ink-2:#A9AAB5; --ink-3:#777782;
+  --rule:#26262C; --rule-2:#35353D; --pass:#74C991;
+  --wash:rgba(232,232,236,.08);}}
 :root[data-theme="dark"]{
-  --bg:#0A0A0C; --sub:#0D1319; --panel:#11171D;
-  --ink:#E8E8EC; --ink-2:#A4ABB3; --ink-3:#737C88;
-  --rule:#1F262D; --rule-2:#333B43; --pass:#3FD99B;
-  --wash:rgba(233,237,242,.08);}
+  --bg:#0A0A0C; --sub:#0F0F12; --panel:#17171B;
+  --ink:#E8E8EC; --ink-2:#A9AAB5; --ink-3:#777782;
+  --rule:#26262C; --rule-2:#35353D; --pass:#74C991;
+  --wash:rgba(232,232,236,.08);}
 :root[data-theme="light"]{
-  --bg:#FFFFFF; --sub:#F6F6F8; --panel:#FFFFFF;
-  --ink:#0A0A0C; --ink-2:#4D535A; --ink-3:#828C97;
-  --rule:#E7EBF0; --rule-2:#E3E3E8; --pass:#0B6B3D;
+  --bg:#FFFFFF; --sub:#F7F7FA; --panel:#FFFFFF;
+  --ink:#0A0A0C; --ink-2:#4B4B56; --ink-3:#777782;
+  --rule:#E9E9EE; --rule-2:#D0D0D8; --pass:#006933;
   --wash:rgba(10,10,12,.06);}
 body{background:var(--bg); color:var(--ink);
   font:400 var(--fs-base)/1.55 var(--mono);

@@ -26,13 +26,12 @@
 //!    asserts the coupling is gone for good, not just fixed today.
 //!
 //!    **`--ink` is no longer a fixed hex, and that is the point of the
-//!    change that moved it.** It was `#0A0A0C` on every theme because it sat
-//!    on a Phosphor Gold fill, and gold is dark enough for ink either way.
-//!    The page's accent is now the *text* colour, so "selected" is an
-//!    inversion of the page rather than a hue: the fill takes `--accent` and
-//!    `--ink` is whatever the page's ground is, which necessarily flips with
-//!    the theme (`#0A0A0C` on the obsidian page, `#FFFFFF` on the paper
-//!    one).
+//!    change that moved it.** It was one value on every theme because it sat
+//!    on a gold fill, and gold is dark enough for ink either way. The page's
+//!    accent is now the *text* colour, so "selected" is an inversion of the
+//!    page rather than a hue: the fill takes `--accent` and `--ink` is
+//!    whatever the page's ground is, which necessarily flips with the theme
+//!    (`#0A0A0C` on the dark page, `#FFFFFF` on the paper one).
 //!    Pinning the old literal here would pin the old design, so this now
 //!    asserts the *invariant* the literal was standing in for: `--ink` is
 //!    declared in the dark root and re-pointed in both light gates, and the
