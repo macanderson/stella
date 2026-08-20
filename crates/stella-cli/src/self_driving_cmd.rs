@@ -13,15 +13,24 @@
 //! harness (`make self-driving-test`) drives those delegations end-to-end, so the
 //! two surfaces cannot drift.
 
+mod audit;
 mod backlog;
-mod config;
+// `pub(crate)` rather than private: `plugin_cmd::configure` asserts against
+// this reader directly (#3999). A package that configures attribution has to
+// be shown changing what the loop *reads*, not merely what a file *holds* —
+// a key written to the right path that nothing loads would pass every other
+// assertion. Read-only, so the wider visibility grants no authority.
+pub(crate) mod config;
 mod convention;
 mod deliver;
 mod drive;
+mod hooks;
 mod lifecycle;
 pub(crate) mod probes;
 pub(crate) mod state;
+mod stats;
 mod surface;
+mod triage;
 mod work;
 
 use std::collections::BTreeMap;
@@ -32,6 +41,7 @@ use serde_json::Value;
 use stella_autonomy::{CycleOutcome, CycleRecord, Demand, Tooling};
 
 use crate::query_format::{QueryFormat, Rows};
+use crate::settings::Settings;
 use crate::timefmt::{now_unix, rfc3339_utc_now};
 use state::LoopState;
 
@@ -231,6 +241,16 @@ pub(crate) enum SelfDrivingCmd {
         /// Seconds between polls while waiting on CI.
         #[arg(long, default_value_t = 45)]
         poll_secs: u64,
+    },
+
+    /// What this session has done so far — the counters a dashboard reads.
+    ///
+    /// Written after every step rather than at the end, because a perpetual
+    /// loop that only reported on exit would never report at all.
+    Stats {
+        /// Output format.
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
     },
 
     /// Bring an issue up to this workspace's standard.
@@ -574,7 +594,8 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), 
             max_issues,
             no_review,
             poll_secs,
-        } => drive::drive(*max_issues, *no_review, spend_limit, *poll_secs),
+        } => drive::drive(&st, *max_issues, *no_review, spend_limit, *poll_secs),
+        SelfDrivingCmd::Stats { format } => stats::session_stats(&st, *format),
         SelfDrivingCmd::Triage {
             issue,
             dry_run,
@@ -665,13 +686,16 @@ fn gh_plain(args: &[&str]) -> Option<String> {
 }
 
 /// The demand half of the governor, read through the issue port.
-fn demand() -> Demand {
-    backlog::demand_from(&crate::issue_provider::GhIssueProvider)
+fn demand(root: &std::path::Path) -> Demand {
+    backlog::demand_from(
+        &crate::issue_provider::GhIssueProvider,
+        &config::load(root).triage,
+    )
 }
 
 fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
     let supply = probes::supply(&st.repo_root);
-    let demand = demand();
+    let demand = demand(&st.repo_root);
     let cal = st.calibration();
     let plan = stella_autonomy::plan_cycle(supply, demand, &cal, state::floors());
     let aperture = st.aperture();
@@ -929,7 +953,7 @@ fn watch(st: &LoopState) -> Result<(), String> {
     }
 
     if gh_available() {
-        let d = demand();
+        let d = demand(&st.repo_root);
         if d.open_defects > 0 {
             println!("  ! {} open defects in the queue", d.open_defects);
             triggered = true;
@@ -1131,7 +1155,13 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
 
 /// The queue verb: the ranked defect batch this cycle draws from.
 fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
-    backlog::render_queue(st, &crate::issue_provider::GhIssueProvider, limit, format)
+    backlog::render_queue(
+        st,
+        &crate::issue_provider::GhIssueProvider,
+        &config::load(&st.repo_root).triage,
+        limit,
+        format,
+    )
 }
 
 /// `stella self-driving deliver` — the pull-request rhythm.
@@ -1157,7 +1187,7 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
         }
 
         DeliverCmd::Observe { pr, format } => {
-            let obs = deliver::observe(&root, pr)?;
+            let obs = deliver::observe(pr)?.observation;
             if *format == QueryFormat::Json {
                 println!(
                     "{}",
@@ -1179,7 +1209,7 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
             no_review,
             format,
         } => {
-            let transition = decide(&root, pr, *fixes, *rebases, *no_review)?;
+            let transition = decide(pr, *fixes, *rebases, *no_review)?;
             if *format == QueryFormat::Json {
                 println!(
                     "{}",
@@ -1200,7 +1230,7 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
             rebases,
             no_review,
         } => {
-            let transition = decide(&root, pr, *fixes, *rebases, *no_review)?;
+            let transition = decide(pr, *fixes, *rebases, *no_review)?;
             if transition.action != stella_autonomy::Action::Merge {
                 // Refused, not silently skipped: a caller that asked to merge
                 // and got nothing must be able to tell "already merged" from
@@ -1219,13 +1249,12 @@ fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
 
 /// Observe the forge and run the pure machine over what it said.
 fn decide(
-    root: &std::path::Path,
     pr: &str,
     fixes: u32,
     rebases: u32,
     no_review: bool,
 ) -> Result<stella_autonomy::Transition, String> {
-    let obs = deliver::observe(root, pr)?;
+    let obs = deliver::observe(pr)?.observation;
     let policy = stella_autonomy::DeliverPolicy {
         require_approval: !no_review,
         ..stella_autonomy::DeliverPolicy::default()
@@ -1260,7 +1289,34 @@ fn work_issue(
     let issue = backlog::resolve(&crate::issue_provider::GhIssueProvider, key)?;
 
     let attribution = config::load(&root).attribution;
+
+    // The `PreIssueWork` gate (#3599), before the worktree exists and before
+    // any model call — so a skip costs nothing and leaves nothing behind.
+    let settings = Settings::load(&root).unwrap_or_default();
+    let hook_issue = hooks::HookIssueInfo {
+        number: key.to_string(),
+        title: Some(issue.title.clone()),
+        branch: None,
+    };
+    if let hooks::WorkGate::Skip { reason } =
+        hooks::before_issue_work(&root, &settings, &hook_issue)
+    {
+        // Exit 0: a held issue is the loop being steered, not the loop
+        // failing, and a driver that treated it as an error would stop the
+        // sweep at the first fenced-off item.
+        if format == QueryFormat::Json {
+            println!(
+                "{}",
+                serde_json::json!({ "outcome": "skipped", "why": reason })
+            );
+        } else {
+            println!("skipped #{key} — {reason}");
+        }
+        return Ok(());
+    }
+
     let outcome = work::start(&root, &issue, spend_limit, &attribution)?;
+    hooks::after_issue_work(&root, &settings, &hook_issue, hook_outcome(&outcome));
 
     match &outcome {
         work::WorkOutcome::Changed { branch, stat, .. } => {
@@ -1289,6 +1345,23 @@ fn work_issue(
         // A failure exits non-zero: a caller that scripted this must not read
         // "the command returned" as "the issue was worked".
         work::WorkOutcome::Failed { reason } => Err(format!("#{key} was not worked: {reason}")),
+    }
+}
+
+/// The work unit's outcome, in the vocabulary a `PostIssueWork` hook reads.
+///
+/// Three arms rather than a boolean, and the mapping is total by `match` so a
+/// fourth `WorkOutcome` cannot silently become "no change" — which is the arm
+/// a subscriber acts on least and would notice missing last.
+fn hook_outcome(outcome: &work::WorkOutcome) -> hooks::HookIssueOutcome {
+    match outcome {
+        work::WorkOutcome::Changed { stat, .. } => hooks::HookIssueOutcome::Changed {
+            summary: stat.clone(),
+        },
+        work::WorkOutcome::NoChange { .. } => hooks::HookIssueOutcome::NoChange,
+        work::WorkOutcome::Failed { reason } => hooks::HookIssueOutcome::Failed {
+            reason: reason.clone(),
+        },
     }
 }
 
@@ -1334,6 +1407,7 @@ fn file_finding(
 
     if let backlog::Filed::New(key) = &outcome {
         st.add_seen(&stella_autonomy::finding_digest(title))?;
+        st.update_stats(|s| s.issues_created += 1);
         if format == QueryFormat::Json {
             println!(r#"{{"filed":"{key}"}}"#);
         } else {

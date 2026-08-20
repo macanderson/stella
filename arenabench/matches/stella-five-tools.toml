@@ -106,7 +106,7 @@ record_video = false
 id = "stella"
 name = "Stella (Sonnet 5, five tools, bare loop)"
 agent = "stella"
-color = "#FFB000"
+color = "#EFC53F"
 
   [contestant.engine]
   api = "openrouter"

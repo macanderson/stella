@@ -44,6 +44,8 @@ mod closure;
 mod convention;
 mod deliver;
 mod doctrine;
+pub mod priority;
+mod stats;
 mod step;
 mod surface;
 
@@ -52,7 +54,7 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub use attribution::{Attribution, DEFAULT_BRANCH_PREFIX, sign};
+pub use attribution::{Attribution, DEFAULT_BRANCH_PREFIX, DEFAULT_TITLE_PREFIX, SIGNATURE, sign};
 pub use closure::{
     Citation, Closure, ClosureRefusal, check as check_closure, receipt, resolution_of,
 };
@@ -68,6 +70,7 @@ pub use doctrine::{
     Contention, ContentionPolicy, ContentionVerdict, Doctrine, ForeignBreakage, QueueCriterion,
     contention_verdict,
 };
+pub use stats::SessionStats;
 pub use step::{
     BlockReason, CarriedPr, Clearance, IssueRef, LoopObservation, LoopState, LoopStep,
     PrDisposition, PrRef, UnblockAttempt, WakeCondition, step,
@@ -796,7 +799,12 @@ pub struct IssueLabel {
 }
 
 impl QueueIssue {
-    fn has_label(&self, name: &str) -> bool {
+    /// Whether this issue carries a label by that exact name.
+    ///
+    /// `pub(crate)` rather than private because [`crate::priority`] ranks by
+    /// label and must ask the same question the same way — a second copy of
+    /// "does it have this label" is how two rankers start disagreeing.
+    pub(crate) fn has_label(&self, name: &str) -> bool {
         self.labels.iter().any(|l| l.name == name)
     }
 

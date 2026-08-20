@@ -36,6 +36,89 @@ fn without_a_pending_gate_a_submission_is_still_an_ordinary_prompt() {
 }
 
 // ---------------------------------------------------------------------------
+// The index gate (#4043)
+// ---------------------------------------------------------------------------
+
+/// Readiness as the driver reports it mid-pass: `behind` files still to
+/// embed, nothing settled yet.
+fn indexing(behind: usize) -> crate::envelope::Inbound {
+    crate::envelope::Inbound::IndexReadiness(stella_tools::search::readiness::IndexReadiness {
+        total_files: 1_000,
+        unindexed_files: behind,
+        settled: false,
+    })
+}
+
+/// **The witness for #4043's prompt gate.** A first prompt typed while a cold
+/// workspace is still being indexed is not sent — and the typed text is still
+/// in the composer afterwards, which is the difference between holding a
+/// prompt and eating one.
+#[test]
+fn a_prompt_is_held_while_the_workspace_is_still_indexing() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&indexing(447), &mut model, &mut ui);
+
+    type_str("explain the retry policy", &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Handled,
+        "the submission must not leave the deck while the index is filling"
+    );
+    assert_eq!(
+        ui.composer.buffer(),
+        "explain the retry policy",
+        "a held prompt keeps the user's text"
+    );
+    let notice = ui.notice.entries().last().expect("the user is told why");
+    assert!(notice.contains("NOT sent"), "{notice}");
+    assert!(notice.contains("one-time"), "{notice}");
+}
+
+/// The release. Once the pass settles the same keystroke sends, however far
+/// behind the index was left — an embedder that is down must not lock anyone
+/// out of their own agent.
+#[test]
+fn a_settled_index_releases_the_prompt_however_far_behind_it_is() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&indexing(447), &mut model, &mut ui);
+    ingest_inbound(
+        &crate::envelope::Inbound::IndexReadiness(
+            stella_tools::search::readiness::IndexReadiness {
+                total_files: 1_000,
+                unindexed_files: 447,
+                settled: true,
+            },
+        ),
+        &mut model,
+        &mut ui,
+    );
+
+    type_str("explain the retry policy", &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Enqueue {
+            text: "explain the retry policy".into()
+        })
+    );
+}
+
+/// A workspace nobody has reported on holds nothing: the deck's default
+/// state must never gate a prompt on a fact it has not been told.
+#[test]
+fn an_unreported_index_never_holds_a_prompt() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+
+    type_str("go", &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Enqueue { text: "go".into() })
+    );
+}
+
+// ---------------------------------------------------------------------------
 // The STATE overlay (ctrl+s)
 // ---------------------------------------------------------------------------
 

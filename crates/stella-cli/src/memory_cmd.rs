@@ -212,7 +212,7 @@ pub fn run_memory_list(format: QueryFormat) -> Result<(), String> {
                 println!(
                     "\n{} {eligible} memory(ies) eligible for rule promotion — \
                      `stella memory promote <id>` writes .stella/rules/<slug>.md",
-                    "✦".magenta()
+                    "✦".white()
                 );
             }
             let quarantined = rows.iter().filter(|r| r.quarantined).count();
@@ -347,7 +347,7 @@ fn promote_in(workspace_root: &std::path::Path, id: &str) -> Result<(), String> 
             crate::context_records::write_record(&path, &set_id, &record)?;
             println!(
                 "  {} promoted memory {} → {}",
-                "✦".magenta().bold(),
+                "✦".white().bold(),
                 id.bright_magenta(),
                 path.display()
             );

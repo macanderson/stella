@@ -15,18 +15,38 @@
 //! `stella-plugin` must never pull in the engine. So the vocabulary moves
 //! *down* to the crate both may depend on, exactly as invariant #1 says a
 //! shared contract should. `stella-core::hooks` and `stella-plugin::manifest`
-//! re-export this type, so every existing path still resolves and a sixth
+//! re-export this type, so every existing path still resolves and another
 //! event is now one edit rather than two — the drift shape #3310 was filed
 //! against is no longer expressible.
 //!
 //! # Wire shape
 //!
-//! PascalCase, with no `rename_all`, because these five strings are not this
+//! PascalCase, with no `rename_all`, because these strings are not this
 //! crate's to choose: `"PreToolUse"` is already what a user types in
 //! `.stella/settings.json`. Per invariant #4 the type round-trips through
 //! `serde_json` byte-for-byte, and this module's `WIRE_STRINGS` test constant
 //! pins each spelling so a rename that would break a shipped settings file
 //! fails a test instead of a user's session.
+//!
+//! # Two families, one vocabulary
+//!
+//! The original five events name points **inside a turn**. [`HookEvent::PreIssueWork`]
+//! and [`HookEvent::PostIssueWork`] name points **around a turn**: the
+//! self-driving loop deciding to work an issue, and the outcome when it is
+//! done (#3599). They share this enum rather than getting one of their own for
+//! the reason this module exists at all — a user registers both in the same
+//! `hooks` block of the same settings file, and a plugin declares both in the
+//! same `[loop] hooks` list. A second enum would be a second vocabulary to
+//! keep identical, which is the drift shape #3310 removed.
+//!
+//! The naming rule for anything added here, so the set stays readable as one:
+//! **`Pre`/`Post` for a pair that brackets something, a past participle for a
+//! thing that happened, and no `ON_`/`BEFORE_` prefixes** — the tense lives in
+//! the name. The rest of the self-driving vocabulary (the tracker, pull-request
+//! and check events) is designed and deliberately **not** declared here yet:
+//! it needs the `deliver` verbs to have somewhere to fire from, and a hook
+//! point nothing dispatches is a declaration that quietly does nothing. See
+//! the issue tracking it.
 
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +68,32 @@ pub enum HookEvent {
     /// An overflow-summarization round is about to run
     /// (`driver::user_hooks`). Not tool-scoped: the matcher is ignored.
     PreCompact,
+    /// The self-driving loop is about to work an issue, before the worktree
+    /// exists and before any model call (#3599). Not tool-scoped.
+    ///
+    /// **A veto point**, on [`HookEvent::PreToolUse`]'s contract: a `deny`
+    /// decision means the loop skips this issue and moves to the next one. That
+    /// is the point of the event rather than a side effect of it — it is how a
+    /// person keeps an agent off work they have not finished thinking about
+    /// (an `agent-hold` label, an unresolved question, a release freeze), and
+    /// how two agents working one backlog avoid taking the same issue.
+    ///
+    /// A skip is not a failure: the loop continues. A hook that means "stop the
+    /// whole loop" should say so in its reason and let the operator act, since
+    /// nothing here can distinguish the two intents.
+    PreIssueWork,
+    /// The self-driving loop has finished working an issue, whatever the
+    /// outcome. Not tool-scoped, and **cannot veto** — the work is done.
+    ///
+    /// Fires for a failed attempt as well as a successful one, because the
+    /// consumers that most want it (a dashboard, a notifier, a second agent
+    /// waiting for the branch) need the failure at least as much.
+    ///
+    /// Does **not** fire when [`HookEvent::PreIssueWork`] denied: nothing was
+    /// worked, so there is no outcome to report, and a `Post` that fired
+    /// without its `Pre` having been allowed would make the pair useless for
+    /// exactly the bookkeeping it exists for.
+    PostIssueWork,
 }
 
 impl HookEvent {
@@ -57,12 +103,14 @@ impl HookEvent {
     /// variant without adding it here fails this module's
     /// `every_variant_is_listed` test, which is what makes "the whole
     /// vocabulary" a value a caller can iterate instead of a set it re-types.
-    pub const ALL: [HookEvent; 5] = [
+    pub const ALL: [HookEvent; 7] = [
         HookEvent::SessionStart,
         HookEvent::PreToolUse,
         HookEvent::PostToolUse,
         HookEvent::Stop,
         HookEvent::PreCompact,
+        HookEvent::PreIssueWork,
+        HookEvent::PostIssueWork,
     ];
 
     /// Whether this event fires for one specific tool call — the events
@@ -81,6 +129,8 @@ impl HookEvent {
             HookEvent::PostToolUse => "PostToolUse",
             HookEvent::Stop => "Stop",
             HookEvent::PreCompact => "PreCompact",
+            HookEvent::PreIssueWork => "PreIssueWork",
+            HookEvent::PostIssueWork => "PostIssueWork",
         }
     }
 }
@@ -98,16 +148,18 @@ mod tests {
     /// The pinned wire strings. A rename here is a break of every shipped
     /// `.stella/settings.json` and every plugin manifest, so it has to be a
     /// deliberate edit to this list.
-    const WIRE_STRINGS: [&str; 5] = [
+    const WIRE_STRINGS: [&str; 7] = [
         "SessionStart",
         "PreToolUse",
         "PostToolUse",
         "Stop",
         "PreCompact",
+        "PreIssueWork",
+        "PostIssueWork",
     ];
 
     /// Its position in [`HookEvent::ALL`], derived by a match so the compiler
-    /// forces a sixth variant to be placed rather than silently omitted.
+    /// forces a new variant to be placed rather than silently omitted.
     fn declared_index(event: HookEvent) -> usize {
         match event {
             HookEvent::SessionStart => 0,
@@ -115,6 +167,8 @@ mod tests {
             HookEvent::PostToolUse => 2,
             HookEvent::Stop => 3,
             HookEvent::PreCompact => 4,
+            HookEvent::PreIssueWork => 5,
+            HookEvent::PostIssueWork => 6,
         }
     }
 

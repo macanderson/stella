@@ -49,6 +49,57 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
+/// How many times one path may be read while its content does not change
+/// before `read_file` refuses (#4034).
+///
+/// # Why a ceiling exists at all
+///
+/// All four loop verdicts in `stella_core::loop_detect` are defined on
+/// byte-identical *output*: "identical input with identical output means the
+/// model gained no new information". A model paging linearly through one file
+/// defeats every one of them, because each read returns a genuinely different
+/// window — and yet the turn makes no progress. One observed turn spent
+/// **$7.83 and 18.8M input tokens** on 164 forty-line reads of a single
+/// 3,943-line file, ran off the end, wrapped back to offset 1 and started
+/// over. No verdict fired; `max_steps` was the only remaining backstop and had
+/// not been reached when the user killed it by hand.
+///
+/// # Why this number, and why it cannot fire on real work
+///
+/// `limit` defaults to — and is capped at — [`MAX_LINES`], so **two** reads
+/// cover any file under 4,000 lines and one covers almost every file anyone
+/// writes. Reaching a 25th read of bytes that have not moved is not paging; it
+/// is the sweep above. The two escape hatches that make this safe are both in
+/// the refusal text and both inside this same tool: raise `limit` (or drop it,
+/// which is the same thing), or use `search`.
+///
+/// Content change resets the tally ([`ReadState::reads_since_change`]), so the
+/// read → edit → read cycle that is most of an agent's working life never
+/// approaches it however long the session runs.
+const MAX_UNCHANGED_READS: u64 = 24;
+
+/// The refusal [`MAX_UNCHANGED_READS`] produces.
+///
+/// **Byte-identical across calls by construction** — it names the path and the
+/// file's size, never the running tally. That is load-bearing rather than
+/// tidy: this refusal is a `ToolOutput::error`, which loop comparison does not
+/// strip a footer from, so a tally inside it would make every refusal a
+/// different string and leave a model that ignores the ceiling exactly as
+/// undetectable as the sweep that earned it. Constant, it is caught by the
+/// existing rungs — `ExactRepeat` after three identical retries, `Stagnant`
+/// after six with the offsets still moving — which is how the ceiling and the
+/// detector cover each other rather than duplicating one guess.
+fn unchanged_read_ceiling(path: &str, total_lines: usize) -> String {
+    format!(
+        "`{path}` has already been read {MAX_UNCHANGED_READS} times without its content \
+         changing, and re-reading unchanged bytes cannot tell you anything new. The file \
+         is {total_lines} lines and `limit` defaults to {MAX_LINES}, so omitting `limit` \
+         shows you all of it at once — paging it in small windows is what exhausted this \
+         budget. If you are looking for something specific, use `search` instead; if you \
+         need a different view of the file, use `bash`."
+    )
+}
+
 /// The default window and the ceiling on an explicit `limit`. Private: it was
 /// `pub(crate)` for `read_symbol`, which read through this tool and named the
 /// cap in its own output, and that tool is retired
@@ -111,6 +162,15 @@ enum Loaded {
 #[derive(Debug, Clone, Default)]
 struct ReadState {
     reads: u64,
+    /// Reads of this path since its content last changed — the tally
+    /// [`MAX_UNCHANGED_READS`] is measured against.
+    ///
+    /// Separate from `reads` because `reads` can only ever grow, and a model
+    /// that reads a file, edits it, and reads it again is doing the most
+    /// ordinary thing there is. Resetting on every content change is what lets
+    /// a ceiling exist at all without ever standing in the way of that loop:
+    /// what it bounds is re-reading bytes that have not moved.
+    reads_since_change: u64,
     sha256: String,
     /// Whether the most recent read actually put the WHOLE file in front of
     /// the model — every line, uncapped and unclipped.
@@ -137,21 +197,46 @@ pub struct ReadLedger {
     states: Mutex<HashMap<String, ReadState>>,
 }
 
+/// What one recorded read tells the caller about the history of that path.
+///
+/// Two counts, not one, because they answer different questions: `reads` is
+/// the model-facing "you have looked at this file before" nudge that rides the
+/// footer, while `since_change` is the only one a *ceiling* may be measured
+/// against: it resets whenever the file's content changes, so a read → edit →
+/// read cycle can never accumulate against a ceiling. (`ReadState` holds it and
+/// is private, so this names it rather than linking to it.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadTally {
+    /// Reads of this path this session, under any spelling.
+    pub reads: u64,
+    /// Reads of this path since its content last changed, this one included.
+    pub since_change: u64,
+}
+
 impl ReadLedger {
     /// Record one successful read of `path` whose full content was `content`,
-    /// returning the new per-file read count.
-    pub fn record_read(&self, root: &std::path::Path, path: &str, content: &str) -> u64 {
+    /// returning the path's read counts including this one.
+    pub fn record_read(&self, root: &std::path::Path, path: &str, content: &str) -> ReadTally {
         let mut states = self.states.lock().unwrap_or_else(|p| p.into_inner());
         let state = states.entry(normalized_key(root, path)).or_default();
         state.reads += 1;
-        state.sha256 = crate::staleness::hex_sha256(content.as_bytes());
+        let sha256 = crate::staleness::hex_sha256(content.as_bytes());
+        if state.sha256 != sha256 {
+            state.reads_since_change = 0;
+        }
+
+        state.reads_since_change += 1;
+        state.sha256 = sha256;
         // Coverage is not known until the payload has been rendered, so it is
         // cleared here and set by `record_coverage` below. Clearing rather than
         // leaving the previous value standing means every path that returns
         // before rendering — a past-end offset, an early error — falls back to
         // "the model did not see all of it", which is the safe direction.
         state.whole_file = false;
-        state.reads
+        ReadTally {
+            reads: state.reads,
+            since_change: state.reads_since_change,
+        }
     }
 
     /// Record whether the read that just rendered showed the model the whole
@@ -401,20 +486,49 @@ impl Tool for ReadFile {
                 // of the FULL content (even for a ranged read): drift asks
                 // "has the file changed since the model looked", and the
                 // whole file was current at that moment.
-                let reads = self.ledger.record_read(&root, path, &content);
+                let tally = self.ledger.record_read(&root, path, &content);
                 let lines: Vec<&str> = content.lines().collect();
                 let start = offset.unwrap_or(1).saturating_sub(1);
                 let end = start.saturating_add(limit).min(lines.len());
 
+                // The ceiling targets the paging *sweep* that byte-identical
+                // loop detection cannot see — every window it returns differs,
+                // so no verdict fires. A whole-file read (offset at line 1, a
+                // `limit` that reaches the last line) is the opposite case: it
+                // returns the same bytes every time, so `ExactRepeat`/`Stagnant`
+                // already catch a spiral of them. Exempting it is what makes the
+                // refusal's advertised remedy reachable — "omitting `limit`
+                // shows you all of it at once". Without this exemption
+                // `record_read` above has already counted the refused read, so
+                // a model that follows the advice issues the (N+1)th unchanged
+                // read and trips the identical ceiling, and the message steers
+                // it toward an action that can never succeed via `read_file`.
+                let whole_file_read = start == 0 && end == lines.len();
+                if !whole_file_read && tally.since_change > MAX_UNCHANGED_READS {
+                    return ToolOutput::error(unchanged_read_ceiling(path, lines.len()));
+                }
+
                 if start >= lines.len() {
-                    // Report the offset the CALLER passed (1-based, as the
-                    // schema documents), not the 0-based index derived from
-                    // it — "offset 4 is past end" for a call that said 5 sent
-                    // the model hunting for an off-by-one that wasn't there.
+                    // The line count is the constant half and stays in the
+                    // payload; the offset the caller passed is the volatile
+                    // half and rides the footer, which loop comparison strips.
+                    // Embedding it in the payload gave a sweep running off the
+                    // end a DIFFERENT string on every call, so no two past-end
+                    // reads ever compared equal and the stagnation rung could
+                    // not fire on them (#4034).
+                    //
+                    // It is still reported 1-based, as the schema documents,
+                    // and never the 0-based index derived from it — "offset 4
+                    // is past end" for a call that said 5 sent the model
+                    // hunting for an off-by-one that wasn't there.
                     return ToolOutput::ok(format!(
-                        "(file has {} lines, offset {} is past end)",
-                        lines.len(),
-                        offset.unwrap_or(1)
+                        "(file has {total} lines; the requested offset is past the end)\
+                         {READ_FOOTER_OPEN}0/{total}{READ_FOOTER_TALLY_MID}{reads}\
+                         {READ_FOOTER_TALLY_END}{READ_FOOTER_CLAUSE_SEP}requested offset \
+                         {offset} is past the end{READ_FOOTER_CLOSE}",
+                        total = lines.len(),
+                        reads = tally.reads,
+                        offset = offset.unwrap_or(1),
                     ));
                 }
 
@@ -455,6 +569,7 @@ impl Tool for ReadFile {
                     shown += 1;
                 }
                 let total = lines.len();
+                let reads = tally.reads;
                 let _ = write!(
                     numbered,
                     "{READ_FOOTER_OPEN}{shown}/{total}{READ_FOOTER_TALLY_MID}{reads}\
@@ -830,6 +945,204 @@ mod tests {
         assert!(
             content.ends_with("(2/2 lines shown · read 1× this session)"),
             "{content}"
+        );
+    }
+
+    /// **The #4034 witness.** A monotonic paging sweep of one file is stopped
+    /// before it can spend a turn's whole budget.
+    ///
+    /// The observed turn made 164 forty-line reads of one 3,943-line file for
+    /// $7.83, ran off the end, wrapped to offset 1 and started over. Every
+    /// loop verdict stayed silent because each read returned a genuinely
+    /// different window — all four are defined on byte-identical *output*, and
+    /// this sweep never repeats one. On `main` this test's forty reads all
+    /// succeed and the turn is left to grind to `max_steps`.
+    #[tokio::test]
+    async fn a_monotonic_paging_sweep_is_refused_before_it_burns_a_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = (1..=4000)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(dir.path().join("deck_ui.rs"), &body).unwrap();
+        let tool = ReadFile::default();
+        let ctx = cx(dir.path());
+
+        let mut refused_at = None;
+        let mut refusals = Vec::new();
+        for step in 0..40u64 {
+            let out = tool
+                .execute(
+                    &serde_json::json!({
+                        "path": "deck_ui.rs",
+                        "offset": step * 40 + 1,
+                        "limit": 40,
+                    }),
+                    &ctx,
+                )
+                .await;
+            if let ToolOutput::Error { message, .. } = out {
+                refused_at.get_or_insert(step);
+                refusals.push(message);
+            }
+        }
+        let refused_at = refused_at.expect("the sweep must be refused, not run to the cap");
+        assert!(
+            refused_at < 40,
+            "the sweep has to be stopped before step 40, got {refused_at}"
+        );
+        assert_eq!(
+            refused_at, MAX_UNCHANGED_READS,
+            "the 25th read of unchanged bytes is the first refused"
+        );
+        // Constant by construction — a tally inside it would make every
+        // refusal a different string and leave a model that ignores the
+        // ceiling as undetectable as the sweep that earned it.
+        assert!(
+            refusals.windows(2).all(|w| w[0] == w[1]),
+            "every refusal must be byte-identical: {refusals:?}"
+        );
+        // The remedy has to be reachable from inside this same tool, or the
+        // ceiling is a wall rather than a redirection.
+        assert!(refusals[0].contains("omitting `limit`"), "{}", refusals[0]);
+        assert!(refusals[0].contains("`search`"), "{}", refusals[0]);
+    }
+
+    /// The remedy the refusal advertises has to actually work: once the
+    /// paging sweep has tripped the ceiling, the model is told that "omitting
+    /// `limit` shows you all of it at once". A whole-file read at that point
+    /// must be let through — otherwise `record_read` counts it as one more
+    /// unchanged read and the identical refusal comes back, steering the model
+    /// toward an action that can never succeed. Byte-identical whole-file
+    /// rereads stay caught by the loop detector, so nothing is lost.
+    #[tokio::test]
+    async fn a_whole_file_read_escapes_the_ceiling_the_refusal_advertises() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = (1..=200)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(dir.path().join("small.rs"), &body).unwrap();
+        let tool = ReadFile::default();
+        let ctx = cx(dir.path());
+
+        // Sweep it in small windows until the ceiling trips, exactly as the
+        // pathological turn did.
+        let mut tripped = false;
+        for step in 0..40u64 {
+            let out = tool
+                .execute(
+                    &serde_json::json!({
+                        "path": "small.rs",
+                        "offset": (step % 5) * 40 + 1,
+                        "limit": 40,
+                    }),
+                    &ctx,
+                )
+                .await;
+            if matches!(out, ToolOutput::Error { .. }) {
+                tripped = true;
+                break;
+            }
+        }
+        assert!(tripped, "the windowed sweep must trip the ceiling");
+
+        // Following the refusal's advice — a whole-file read — must succeed.
+        let out = tool
+            .execute(&serde_json::json!({"path": "small.rs"}), &ctx)
+            .await;
+        assert!(
+            matches!(out, ToolOutput::Ok { .. }),
+            "the whole-file read the refusal advertises must be reachable: {out:?}"
+        );
+
+        // A windowed read of the same unchanged bytes is still refused — the
+        // exemption is for whole-file reads only, not a hole in the ceiling.
+        let out = tool
+            .execute(
+                &serde_json::json!({"path": "small.rs", "offset": 1, "limit": 40}),
+                &ctx,
+            )
+            .await;
+        assert!(
+            matches!(out, ToolOutput::Error { .. }),
+            "a windowed sweep must still be refused after the ceiling: {out:?}"
+        );
+    }
+
+    /// The ceiling counts reads of bytes that have not moved, so the
+    /// read → edit → read cycle that is most of an agent's working life never
+    /// approaches it. Without the reset this would refuse the 25th pass of an
+    /// ordinary edit loop.
+    #[tokio::test]
+    async fn editing_the_file_resets_the_read_ceiling() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rs");
+        let tool = ReadFile::default();
+        let ctx = cx(dir.path());
+        for pass in 0..40 {
+            // A file long enough that the read below is a *window*, and a
+            // window on purpose: a whole-file read is exempt from the ceiling
+            // (it returns identical bytes, so the loop verdicts already catch a
+            // spiral of them), which would make this test pass even with the
+            // reset deleted. The reset is the whole safety argument for the
+            // ceiling, so it has to be exercised by a read the ceiling can
+            // actually refuse.
+            let body: String = (0..200)
+                .map(|line| format!("fn f{line}() {{}} // pass {pass}\n"))
+                .collect();
+            std::fs::write(&path, body).unwrap();
+            let out = tool
+                .execute(
+                    &serde_json::json!({"path": "a.rs", "offset": 1, "limit": 40}),
+                    &ctx,
+                )
+                .await;
+            assert!(
+                matches!(out, ToolOutput::Ok { .. }),
+                "pass {pass} of a read→edit→read cycle must never be refused: {out:?}"
+            );
+        }
+    }
+
+    /// A sweep that runs off the end of the file must stagnate like anything
+    /// else. The past-end reply embedded the caller's own offset in its
+    /// payload, so every call produced a different string, nothing ever
+    /// compared equal, and the stagnation rung could not fire on it (#4034).
+    /// The offset now rides the footer, which loop comparison strips.
+    #[tokio::test]
+    async fn past_end_reads_compare_equal_once_the_footer_is_stripped() {
+        use stella_core::driver::loop_evidence::comparable_output;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "one\ntwo\n").unwrap();
+        let tool = ReadFile::default();
+        let ctx = cx(dir.path());
+        let mut compared = Vec::new();
+        for offset in [10, 50, 900] {
+            let out = tool
+                .execute(&serde_json::json!({"path": "a.rs", "offset": offset}), &ctx)
+                .await;
+            assert!(matches!(out, ToolOutput::Ok { .. }), "{out:?}");
+            let ToolOutput::Ok { content, .. } = &*comparable_output(&out) else {
+                panic!("expected ok, got: {out:?}");
+            };
+            compared.push(content.clone());
+        }
+        assert!(
+            compared.windows(2).all(|w| w[0] == w[1]),
+            "three past-end reads at different offsets must normalize to one \
+             string, or stagnation can never fire on a sweep past EOF: {compared:?}"
+        );
+        assert!(
+            !compared[0].contains("900"),
+            "the caller's offset must not survive normalization: {}",
+            compared[0]
+        );
+        assert!(
+            compared[0].contains("past the end"),
+            "the reply still has to say what happened: {}",
+            compared[0]
         );
     }
 

@@ -1,6 +1,6 @@
 /* ==========================================================================
    stella — globals.css
-   shadcn/ui base for Tailwind v4 (oklch). Bronze Gold primary on cool
+   shadcn/ui base for Tailwind v4 (oklch). Gold primary on cool
    neutrals — v4.0 took the brand hue back to gold (hue 73) and kept v3.0's
    cool neutral ramp (hue ~250), so only the brand-derived entries below moved.
    For Tailwind v3, lift the raw values from css/tokens.css into your hsl()

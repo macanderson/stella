@@ -24,14 +24,14 @@
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 800; font-display: swap; src: url("brand/fonts/jetbrains-mono-latin-800-normal.woff2") format("woff2"); }
 
 :root {
-  --gold: #C58A32;
-  --gold-deep: #8B5E1A;
-  --gold-300: #DFB473;
-  --ink: #070B10;
-  --paper: #E9EDF2;
-  --surface: #12181d;
+  --gold: #EFC53F;
+  --gold-deep: #141416;
+  --gold-300: #F7D96B;
+  --ink: #0A0A0C;
+  --paper: #E8E8EC;
+  --surface: #0f0f12;
   --border: #1F262D;
-  --muted: #9299A1;
+  --muted: #777782;
   --pass: #54D14F;
   --fail: #E25DC2;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -67,7 +67,7 @@ svg { max-width: 100%; height: auto; }
   background-size: 48px 48px;
 }
 .starfield { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
-.starfield circle { fill: #E9EDF2; animation: twinkle 6s ease-in-out infinite; animation-delay: var(--td, 0s); }
+.starfield circle { fill: #E8E8EC; animation: twinkle 6s ease-in-out infinite; animation-delay: var(--td, 0s); }
 @keyframes twinkle { 0%, 100% { opacity: var(--o, 0.1); } 50% { opacity: calc(var(--o, 0.1) * 2.4); } }
 
 /* scroll progress hairline */
@@ -78,7 +78,7 @@ svg { max-width: 100%; height: auto; }
   position: fixed; top: 0; left: 0; right: 0; z-index: 50;
   display: flex; align-items: center; gap: 12px;
   padding: 14px 28px;
-  background: rgb(11 11 12 / 0.82); backdrop-filter: blur(8px);
+  background: rgb(10 10 12 / 0.82); backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
   font-size: 0.78rem; font-weight: 500; letter-spacing: 0.1em;
 }
@@ -193,7 +193,7 @@ figure.scrollable { overflow-x: auto; }
 figure.scrollable svg { min-width: 720px; }
 figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-height: 1.6; max-width: 90ch; }
 .dia .box { fill: var(--surface); stroke: var(--border); }
-.dia .boxg { fill: rgb(197 138 50 / 0.06); stroke: var(--gold); }
+.dia .boxg { fill: rgb(239 197 63 / 0.06); stroke: var(--gold); }
 .dia .boxd { fill: none; stroke: var(--border); stroke-dasharray: 5 5; }
 .dia .lbl { fill: var(--paper); font-family: var(--mono); font-size: 14px; font-weight: 700; }
 .dia .sm { fill: var(--muted); font-family: var(--mono); font-size: 11.5px; }
@@ -253,10 +253,10 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
 <header class="chrome">
   <a class="mark" href="#top" aria-label="stella, by oxagen — back to top">
     <svg width="26" height="26" viewBox="0 0 96 96" fill="none" aria-hidden="true">
-      <line x1="10" y1="48" x2="30" y2="48" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/>
-      <line x1="18" y1="34" x2="30" y2="34" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/>
-      <line x1="18" y1="62" x2="30" y2="62" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/>
-      <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#C58A32"/>
+      <line x1="10" y1="48" x2="30" y2="48" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
+      <line x1="18" y1="34" x2="30" y2="34" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
+      <line x1="18" y1="62" x2="30" y2="62" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
+      <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#EFC53F"/>
     </svg>
     <strong>stella</strong> <span>× oxagen</span>
   </a>
@@ -277,10 +277,10 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
 <section class="hero" aria-label="stella is the engine">
   <div class="lockup rise">
     <svg width="64" height="64" viewBox="0 0 96 96" fill="none" aria-hidden="true">
-      <line x1="10" y1="48" x2="30" y2="48" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/>
-      <line x1="18" y1="34" x2="30" y2="34" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/>
-      <line x1="18" y1="62" x2="30" y2="62" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/>
-      <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#C58A32"/>
+      <line x1="10" y1="48" x2="30" y2="48" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
+      <line x1="18" y1="34" x2="30" y2="34" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
+      <line x1="18" y1="62" x2="30" y2="62" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
+      <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#EFC53F"/>
     </svg>
   </div>
   <p class="overline rise" style="--d:1">oxagen <span class="idx">· the operating system for verified work</span></p>
@@ -337,10 +337,10 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
     <svg class="dia" viewBox="0 0 1080 330" role="img" aria-label="diagram: the stella-core kernel runs the deterministic task loop with no I/O; model providers, tools, and state connect only through ports; the witness gate sits on the only path to done">
       <defs>
         <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0 L10 5 L0 10 z" fill="#C58A32"/>
+          <path d="M0 0 L10 5 L0 10 z" fill="#EFC53F"/>
         </marker>
         <marker id="arm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0 L10 5 L0 10 z" fill="#9299A1"/>
+          <path d="M0 0 L10 5 L0 10 z" fill="#777782"/>
         </marker>
       </defs>
       <!-- kernel -->
@@ -348,7 +348,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
       <text class="lbl gd" x="540" y="102" text-anchor="middle">stella-core — the kernel</text>
       <text class="sm" x="540" y="124" text-anchor="middle">no I/O · pure decision logic · property-tested</text>
       <rect class="box" x="400" y="146" width="280" height="84" rx="10"/>
-      <text class="sm" x="540" y="172" text-anchor="middle" fill="#E9EDF2">the task loop</text>
+      <text class="sm" x="540" y="172" text-anchor="middle" fill="#E8E8EC">the task loop</text>
       <text class="sm" x="540" y="192" text-anchor="middle">plan → act → observe → compact</text>
       <text class="sm" x="540" y="212" text-anchor="middle">budget checked between steps, never mid-tool</text>
       <!-- providers port -->
@@ -372,7 +372,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
       <text class="sm" x="540" y="310" text-anchor="middle">local SQLite state — journaled, replayable</text>
       <path class="lnm" d="M540 260 V284" stroke-width="1.5" marker-end="url(#arm)"/>
       <!-- witness gate -->
-      <rect class="box" x="790" y="112" width="180" height="106" rx="10" stroke="#C58A32"/>
+      <rect class="box" x="790" y="112" width="180" height="106" rx="10" stroke="#EFC53F"/>
       <text class="lbl gd" x="880" y="144" text-anchor="middle">witness gate</text>
       <text class="sm" x="880" y="166" text-anchor="middle"><tspan class="fl">fail</tspan> → <tspan class="ps">pass</tspan>, or it is</text>
       <text class="sm" x="880" y="184" text-anchor="middle">not done · tamper voids</text>
@@ -422,7 +422,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
     <svg class="dia" viewBox="0 0 1080 250" role="img" aria-label="diagram: a hypothesis binds to a feature branch, dataset, and benchmark; preregistered runs produce traces; a verdict from the traces promotes or discards the change, and either way feeds the next hypothesis">
       <defs>
         <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0 L10 5 L0 10 z" fill="#C58A32"/>
+          <path d="M0 0 L10 5 L0 10 z" fill="#EFC53F"/>
         </marker>
       </defs>
       <rect class="box" x="0" y="60" width="180" height="96" rx="10"/>
@@ -448,7 +448,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
       <text class="sm" x="837" y="116" text-anchor="middle">the event log is</text>
       <text class="sm" x="837" y="134" text-anchor="middle">ground truth</text>
       <path class="ln" d="M922 108 H982" stroke-width="1.5" marker-end="url(#ar2)"/>
-      <rect class="box" x="986" y="60" width="94" height="96" rx="10" stroke="#C58A32"/>
+      <rect class="box" x="986" y="60" width="94" height="96" rx="10" stroke="#EFC53F"/>
       <text class="lbl gd" x="1033" y="99" text-anchor="middle">verdict</text>
       <text class="sm" x="1033" y="121" text-anchor="middle">promote</text>
       <text class="sm" x="1033" y="139" text-anchor="middle">or discard</text>
@@ -486,7 +486,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
     <svg class="dia" viewBox="0 0 1080 110" role="img" aria-label="diagram: work passes the witness, the lesson is promoted, and the next cycle starts better; the loop closes through the commit history">
       <defs>
         <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0 L10 5 L0 10 z" fill="#C58A32"/>
+          <path d="M0 0 L10 5 L0 10 z" fill="#EFC53F"/>
         </marker>
       </defs>
       <g text-anchor="middle" font-weight="700">
@@ -514,7 +514,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
     <svg class="dia" viewBox="0 0 1080 300" role="img" aria-label="diagram: goal, diff, and proof compose one labeled example; a curriculum of examples fine-tunes an open-weight baseline into a private model that serves inside the customer boundary and routes back into the engine">
       <defs>
         <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0 L10 5 L0 10 z" fill="#C58A32"/>
+          <path d="M0 0 L10 5 L0 10 z" fill="#EFC53F"/>
         </marker>
       </defs>
       <rect class="box" x="0" y="20" width="150" height="52" rx="10"/>
@@ -540,7 +540,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
       <text class="sm" x="646" y="126" text-anchor="middle">flips in · abstentions</text>
       <text class="sm" x="646" y="144" text-anchor="middle">and voided flips out</text>
       <path class="ln" d="M736 118 H790" stroke-width="1.5" marker-end="url(#ar4)"/>
-      <rect class="box" x="794" y="76" width="180" height="84" rx="10" stroke="#C58A32"/>
+      <rect class="box" x="794" y="76" width="180" height="84" rx="10" stroke="#EFC53F"/>
       <text class="lbl gd" x="884" y="106" text-anchor="middle">fine-tune</text>
       <text class="sm" x="884" y="126" text-anchor="middle">open-weight baseline</text>
       <text class="sm" x="884" y="144" text-anchor="middle">→ your private model</text>
@@ -571,37 +571,37 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
     <svg class="dia" viewBox="0 0 1080 300" role="img" aria-label="diagram: the customer boundary contains keys, compute, network, disk, traces, and the private model's serving; oxagen's boundary contains the protocol, curriculum recipes, training pipeline, and support; subscription and usage credits flow to oxagen, software and recipes flow back, and no data or serving crosses the boundary">
       <defs>
         <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0 L10 5 L0 10 z" fill="#C58A32"/>
+          <path d="M0 0 L10 5 L0 10 z" fill="#EFC53F"/>
         </marker>
         <marker id="arm5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0 L10 5 L0 10 z" fill="#9299A1"/>
+          <path d="M0 0 L10 5 L0 10 z" fill="#777782"/>
         </marker>
       </defs>
       <rect class="boxd" x="0" y="20" width="480" height="240" rx="14"/>
       <text class="lbl" x="24" y="52">your boundary</text>
       <rect class="box" x="24" y="70" width="208" height="76" rx="10"/>
-      <text class="sm" x="128" y="98" text-anchor="middle" fill="#E9EDF2">compute · network · disk</text>
+      <text class="sm" x="128" y="98" text-anchor="middle" fill="#E8E8EC">compute · network · disk</text>
       <text class="sm" x="128" y="118" text-anchor="middle">yours already — you pay</text>
       <text class="sm" x="128" y="134" text-anchor="middle">your cloud, not us</text>
       <rect class="box" x="248" y="70" width="208" height="76" rx="10"/>
-      <text class="sm" x="352" y="98" text-anchor="middle" fill="#E9EDF2">provider keys</text>
+      <text class="sm" x="352" y="98" text-anchor="middle" fill="#E8E8EC">provider keys</text>
       <text class="sm" x="352" y="118" text-anchor="middle">frontier spend goes to</text>
       <text class="sm" x="352" y="134" text-anchor="middle">your provider, direct</text>
-      <rect class="box" x="24" y="162" width="432" height="76" rx="10" stroke="#C58A32"/>
-      <text class="sm" x="240" y="190" text-anchor="middle" fill="#E9EDF2">traces · weights · the serving of your private model</text>
+      <rect class="box" x="24" y="162" width="432" height="76" rx="10" stroke="#EFC53F"/>
+      <text class="sm" x="240" y="190" text-anchor="middle" fill="#E8E8EC">traces · weights · the serving of your private model</text>
       <text class="sm gd" x="240" y="212" text-anchor="middle">never leaves — zero egress by default, enforced in CI</text>
       <rect class="boxg" x="640" y="20" width="440" height="240" rx="14" stroke-width="1.5"/>
       <text class="lbl gd" x="664" y="52">oxagen</text>
       <rect class="box" x="664" y="70" width="180" height="76" rx="10"/>
-      <text class="sm" x="754" y="98" text-anchor="middle" fill="#E9EDF2">the substrate</text>
+      <text class="sm" x="754" y="98" text-anchor="middle" fill="#E8E8EC">the substrate</text>
       <text class="sm" x="754" y="118" text-anchor="middle">protocol · oracles ·</text>
       <text class="sm" x="754" y="134" text-anchor="middle">curriculum recipes</text>
       <rect class="box" x="864" y="70" width="192" height="76" rx="10"/>
-      <text class="sm" x="960" y="98" text-anchor="middle" fill="#E9EDF2">training pipeline</text>
+      <text class="sm" x="960" y="98" text-anchor="middle" fill="#E8E8EC">training pipeline</text>
       <text class="sm" x="960" y="118" text-anchor="middle">runs inside your</text>
       <text class="sm" x="960" y="134" text-anchor="middle">boundary, licensed by us</text>
       <rect class="box" x="664" y="162" width="392" height="76" rx="10"/>
-      <text class="sm" x="860" y="190" text-anchor="middle" fill="#E9EDF2">support · governance · the control plane</text>
+      <text class="sm" x="860" y="190" text-anchor="middle" fill="#E8E8EC">support · governance · the control plane</text>
       <text class="sm" x="860" y="212" text-anchor="middle">people and software, no per-token cost underneath</text>
       <path class="ln" d="M480 100 H636" stroke-width="2" marker-end="url(#ar5)"/>
       <text class="sm gd" x="558" y="90" text-anchor="middle">support + credits</text>
@@ -674,10 +674,10 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
 <section class="close" aria-label="close">
   <div class="lockup rise">
     <svg width="56" height="56" viewBox="0 0 96 96" fill="none" aria-hidden="true">
-      <line x1="10" y1="48" x2="30" y2="48" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/>
-      <line x1="18" y1="34" x2="30" y2="34" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/>
-      <line x1="18" y1="62" x2="30" y2="62" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/>
-      <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#C58A32"/>
+      <line x1="10" y1="48" x2="30" y2="48" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
+      <line x1="18" y1="34" x2="30" y2="34" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
+      <line x1="18" y1="62" x2="30" y2="62" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
+      <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#EFC53F"/>
     </svg>
   </div>
   <h2 class="rise" style="--d:1"><em>verified done,</em><br>not claimed done.</h2>

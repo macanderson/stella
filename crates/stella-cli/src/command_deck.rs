@@ -726,6 +726,7 @@ pub async fn run_deck_session(
             // One of the two init legs the launch splash waits on.
             release_on_graph_ready();
         }),
+        Box::new(agent::deck_readiness_reporter(deck_tx.clone())),
     );
 
     // ── MCP connect, OFF the first prompt's critical path (#98 continued) ──

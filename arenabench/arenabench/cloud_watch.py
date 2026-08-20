@@ -240,15 +240,15 @@ def render_html(board: Scoreboard, *, refresh_seconds: int = 5) -> str:
 <title>{html.escape(board.run_id)} — arenabench</title>
 <style>
 :root {{ color-scheme: dark; }}
-body {{ background:#0B0B0C; color:#E8E8E8; font:14px/1.5 ui-monospace,monospace;
+body {{ background:#0A0A0C; color:#E8E8E8; font:14px/1.5 ui-monospace,monospace;
         margin:0; padding:2rem; }}
-h1 {{ font-size:1rem; font-weight:600; color:#FFB000; margin:0 0 .25rem; }}
+h1 {{ font-size:1rem; font-weight:600; color:#EFC53F; margin:0 0 .25rem; }}
 p.meta {{ color:#8A8A8A; margin:0 0 1.5rem; }}
 table {{ border-collapse:collapse; width:100%; max-width:60rem; }}
 th,td {{ text-align:left; padding:.4rem .75rem; border-bottom:1px solid #1E1E20; }}
 th {{ color:#8A8A8A; font-weight:500; }}
 td.t {{ color:#C8C8C8; }}
-td.tot {{ color:#FFB000; font-weight:600; }}
+td.tot {{ color:#EFC53F; font-weight:600; }}
 .s-won {{ color:#4ADE80; }} .s-lost {{ color:#F87171; }} .s-scored {{ color:#FBBF24; }}
 .s-running {{ color:#60A5FA; }} .s-queued,.s-unknown,.s-void {{ color:#6B7280; }}
 tr.totals td {{ border-top:2px solid #1E1E20; border-bottom:none; }}

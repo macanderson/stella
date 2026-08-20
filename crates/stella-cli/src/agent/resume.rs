@@ -90,6 +90,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         &cfg.workspace_root,
         Box::new(crate::agent::init::stderr_narrator()),
         Box::new(|| {}),
+        Box::new(|_| {}),
     );
     let mcp = connect_mcp(
         cfg,

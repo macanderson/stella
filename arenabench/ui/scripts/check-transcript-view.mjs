@@ -29,6 +29,7 @@ import {
   indexByCallId,
   isFailedResult,
   lineText,
+  mergeToolRows,
   rawExchange,
 } from "../lib/transcript-view.ts";
 
@@ -55,6 +56,78 @@ const entry = (seq, kind, extra = {}) => ({
   body: extra.body ?? "",
   meta: extra.meta ?? {},
 });
+
+// -- one row per call ------------------------------------------------------
+
+// The defect: a `tool` and its `tool_result` rendered as two rows, so the tool's
+// name was printed twice and the invocation up to three times, all the way down
+// the transcript. `crates/stella-transcript` makes this structurally impossible
+// by having a Call OWN its Output; over the wire's flat stream, this is where
+// the same shape is recovered.
+console.log("one row per call");
+{
+  const entries = [
+    entry(1, "text", { body: "planning" }),
+    entry(2, "tool", { title: "bash", body: "ls", meta: { call_id: "c1" } }),
+    entry(3, "tool_result", { title: "bash", body: "a.txt", meta: { call_id: "c1" } }),
+    entry(4, "tool", { title: "read_file", meta: { call_id: "c2" } }),
+    entry(5, "tool_result", { title: "read_file", meta: { call_id: "c2" } }),
+  ];
+
+  const rows = mergeToolRows(entries);
+  eq("two calls and a prose row make three rows, not five", rows.length, 3);
+  eq("the rows are anchored on the prose and the two CALLS", rows.map((r) => r.entry.seq), [1, 2, 4]);
+  check("no row is anchored on a result", rows.every((r) => r.entry.kind !== "tool_result"));
+  eq("each call carries its own result", rows.slice(1).map((r) => r.result?.seq), [3, 5]);
+  // The whole point, stated as the reader sees it: the tool's name appears once
+  // per exchange, on the call.
+  const named = rows.filter((r) => r.entry.title === "bash").length;
+  eq("the tool is named once per exchange", named, 1);
+}
+
+// A call still running has no result to fold, and must not be made to look like
+// one that returned nothing.
+{
+  const rows = mergeToolRows([entry(1, "tool", { title: "bash", meta: { call_id: "c1" } })]);
+  eq("a running call is one row", rows.length, 1);
+  check("with no result attached", rows[0].result === undefined);
+}
+
+// The orphan: a result whose call is not in the list — filtered off by kind, or
+// begun before the stream's cursor. It stands alone and keeps its name, which is
+// the one case where the name on a result is right.
+{
+  const rows = mergeToolRows([
+    entry(7, "tool_result", { title: "bash", body: "out", meta: { call_id: "gone" } }),
+  ]);
+  eq("an orphan result still renders", rows.length, 1);
+  eq("anchored on itself", rows[0].entry.seq, 7);
+  check("with nothing folded into it", rows[0].result === undefined);
+}
+
+// Pairing happens over the list it is GIVEN, so it composes with the page's
+// filters instead of fighting them: hiding calls must not silently hide results
+// too, and hiding results must leave the call rows intact.
+{
+  const call = entry(2, "tool", { title: "bash", meta: { call_id: "c1" } });
+  const result = entry(3, "tool_result", { title: "bash", meta: { call_id: "c1" } });
+  eq("results filtered off leaves the call alone", mergeToolRows([call]).length, 1);
+  const resultsOnly = mergeToolRows([result]);
+  eq("calls filtered off leaves the result alone", resultsOnly.length, 1);
+  eq("and it is still named", resultsOnly[0].entry.title, "bash");
+}
+
+// Order is the anchor's: a result joins a row, it never moves one.
+{
+  const rows = mergeToolRows([
+    entry(1, "tool", { title: "a", meta: { call_id: "c1" } }),
+    entry(2, "tool", { title: "b", meta: { call_id: "c2" } }),
+    entry(3, "tool_result", { title: "b", meta: { call_id: "c2" } }),
+    entry(4, "tool_result", { title: "a", meta: { call_id: "c1" } }),
+  ]);
+  eq("interleaved results do not reorder their calls", rows.map((r) => r.entry.seq), [1, 2]);
+  eq("each still finds its own result", rows.map((r) => r.result?.seq), [4, 3]);
+}
 
 // -- the errors-only filter ------------------------------------------------
 

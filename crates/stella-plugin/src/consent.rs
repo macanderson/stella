@@ -198,6 +198,7 @@ pub fn consent_text(manifest: &PluginManifest) -> String {
     lines.push(String::new());
     lines.extend(capability_grant(manifest));
     lines.extend(package_contributions(manifest));
+    lines.extend(configuration_changes(manifest));
     lines.push(String::new());
     lines.push(format!(
         "Every tool call `{}` makes is attributed to it, not to you: the \
@@ -622,6 +623,60 @@ fn package_contributions(manifest: &PluginManifest) -> Vec<String> {
     lines.push(
         "  None of it is copied into your own .stella/ — it is read from the package on \
          every load, so `stella plugin remove` takes all of it away."
+            .into(),
+    );
+    lines
+}
+
+/// The configuration this package changes — the `[[configure]]` table, shown
+/// as the literal keys and values the host will write (#3999).
+///
+/// # Why the value is rendered rather than described
+///
+/// Every other section of this document repeats an author's prose and labels it
+/// as the author's, because this crate cannot check a claim about what a program
+/// will do. A configuration change is the one thing here that is **not** a
+/// claim: the key and the value are the change, so they are shown exactly as
+/// they will land and the author's words sit beside them as the *reason* rather
+/// than as the description.
+///
+/// # The sentence about removal is a promise this crate cannot keep
+///
+/// It is the host that records the prior value and puts it back
+/// (`plugin_cmd::configure`), so this line describes behaviour that lives one
+/// crate away — the [`oracle_self_report`] situation inverted. It is stated
+/// anyway, and stated as a guarantee, because a user deciding whether to accept
+/// a config write is deciding almost entirely on whether it is reversible; a
+/// document that left it out would be asking for a permanent change while
+/// meaning a temporary one. The obligation that creates on the host is
+/// deliberate, and `plugin_cmd`'s revert tests are where it is discharged.
+fn configuration_changes(manifest: &PluginManifest) -> Vec<String> {
+    if manifest.configure.is_empty() {
+        return Vec::new();
+    }
+    let name = one_line(&manifest.name);
+    let mut lines = vec![
+        String::new(),
+        format!(
+            "`{name}` also changes this workspace's configuration, setting {} for as \
+             long as it is installed:",
+            count(manifest.configure.len(), "value")
+        ),
+    ];
+    // Manifest order, not sorted — `capability_grant`'s argument: the author's
+    // ordering is information, and a host diffing two versions of a consent
+    // document wants a stable rendering rather than a tidied one.
+    for entry in &manifest.configure {
+        lines.push(format!(
+            "      {} = {}",
+            one_line(&entry.key),
+            one_line(&entry.rendered_value())
+        ));
+        lines.push(format!("          why: {}", one_line(&entry.purpose)));
+    }
+    lines.push(
+        "  Whatever those keys hold now is recorded first, and `stella plugin remove` \
+         puts every one of them back."
             .into(),
     );
     lines

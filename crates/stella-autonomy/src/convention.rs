@@ -251,6 +251,30 @@ impl Conformance {
 /// `labels` is the set the loop proposes to apply. Duplicates are tolerated —
 /// a label applied twice is one label — but they are counted once, so
 /// `["P1", "P1"]` is not ambiguous.
+///
+/// # Examples
+///
+/// Both directions, because the function is a gate rather than advice: a
+/// filing that satisfies every axis passes, and one that does not is refused
+/// with every reason rather than degraded to a warning.
+///
+/// ```
+/// # use stella_autonomy::{BacklogConvention, Acceptance, AxisRequirement,
+/// #     ConventionSource, LabelAxis, conform};
+/// let convention = BacklogConvention {
+///     axes: vec![LabelAxis {
+///         name: "type".into(),
+///         members: vec!["bug".into(), "feature".into()],
+///         requirement: AxisRequirement::ExactlyOne,
+///         source: ConventionSource::Enforced,
+///     }],
+///     reserved: vec![],
+///     acceptance: Acceptance::Bound,
+/// };
+///
+/// assert!(conform(&convention, &["bug"]).is_conformant());
+/// assert!(!conform(&convention, &["P1"]).is_conformant());
+/// ```
 #[must_use]
 pub fn conform(convention: &BacklogConvention, labels: &[&str]) -> Conformance {
     if convention.acceptance == Acceptance::Proposed {

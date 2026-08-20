@@ -170,7 +170,7 @@ fn refresh(store: &ContextStore, workspace_root: &std::path::Path) -> Result<(),
     println!(
         "  {} {extracted} new observation(s), {} observation(s) total, \
          {} proposal(s) ({} new)",
-        "✦".magenta(),
+        "✦".white(),
         observations.len(),
         after,
         after.saturating_sub(before)
@@ -257,7 +257,7 @@ fn list(store: &ContextStore, all: bool, limit: usize) -> Result<(), String> {
         };
         println!(
             "\n{} {}  [{status}] [{}]",
-            "✦".magenta(),
+            "✦".white(),
             proposal.candidate_id.bold(),
             proposal.proposal_kind.as_str().dimmed()
         );
