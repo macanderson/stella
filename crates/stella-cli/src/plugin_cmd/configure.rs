@@ -400,25 +400,56 @@ pub(crate) struct Reverted {
 /// does not declare is ignored, so a planted file cannot turn `remove` into a
 /// primitive for rewriting arbitrary configuration.
 ///
-/// Takes no scope and no workspace root: the journal names the file the writes
-/// actually landed in, and re-resolving the tier could name a different one if
-/// the workspace migrated to TOML since the install.
-pub(crate) fn revert(plugin_dir: &Path, manifest: &PluginManifest) -> Reverted {
-    let mut done = Reverted::default();
+/// **The destination is re-derived, not read from the journal.** `expected`
+/// is the file this tier writes ([`ConfigTarget::resolve`]), and the journal's
+/// own `config` path is honoured only when it names exactly that. The journal
+/// is third-party data — it lives in the package's directory and a plugin runs
+/// as the user, so a hostile package can rewrite it after install to name any
+/// path on disk. Trusting `journal.config` as the write target would make
+/// `remove` an arbitrary-file write; gating it against `expected` keeps the
+/// worst a planted journal can do to a wrong value on a consented key in the
+/// file it was always going to touch. A mismatch — or a tier no longer
+/// resolvable to a `stella.toml` — leaves the keys unaccounted for the user to
+/// fix by hand rather than redirected.
+pub(crate) fn revert(
+    plugin_dir: &Path,
+    manifest: &PluginManifest,
+    expected: Option<&Path>,
+) -> Reverted {
     if manifest.configure.is_empty() {
-        return done;
+        return Reverted::default();
     }
 
-    let journal = read_journal(plugin_dir).filter(|journal| journal.plugin == manifest.name);
-    let Some(journal) = journal else {
-        done.unaccounted = manifest
+    let all_unaccounted = || Reverted {
+        unaccounted: manifest
             .configure
             .iter()
             .map(|entry| entry.key.clone())
-            .collect();
-        return done;
+            .collect(),
+        ..Reverted::default()
     };
-    undo(&journal, manifest)
+
+    let Some(journal) = read_journal(plugin_dir).filter(|journal| journal.plugin == manifest.name)
+    else {
+        return all_unaccounted();
+    };
+    match expected {
+        Some(expected) if same_config_file(&journal.config, expected) => undo(&journal, manifest),
+        _ => all_unaccounted(),
+    }
+}
+
+/// Whether two paths name the same config file, resolving symlinks and `..`
+/// where the files exist so a journal path dressed up to point at the real
+/// file still matches — and, more to the point, one dressed up to point
+/// *elsewhere* still does not. Falls back to a literal comparison when a path
+/// cannot be canonicalized (the destination need not exist yet); that fallback
+/// is strict, refusing anything but the exact expected path.
+fn same_config_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 /// Reverse one journal's writes, with the journal already in hand.
@@ -426,6 +457,13 @@ pub(crate) fn revert(plugin_dir: &Path, manifest: &PluginManifest) -> Reverted {
 /// The half of [`revert`] that an install's own failure path needs: it holds
 /// the plan it just committed and must undo it without going back to disk for
 /// a file it may not have written yet.
+///
+/// Writes to `journal.config` directly, so its two callers must have
+/// established that path is trustworthy: `install_configuration` holds a
+/// journal it just built from the resolved [`ConfigTarget`], and [`revert`]
+/// only reaches here once `journal.config` has matched the re-derived target.
+/// Do not call this with a journal read from disk without that check — the
+/// path is otherwise package-controlled.
 pub(crate) fn undo(journal: &ConfigJournal, manifest: &PluginManifest) -> Reverted {
     let mut done = Reverted::default();
     let path = journal.config.clone();

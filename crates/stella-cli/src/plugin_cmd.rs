@@ -505,10 +505,23 @@ fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
             // put back lives inside it (#3999). An uninstall that deleted first
             // could not restore at all — and the manifest, which is what the
             // keys are taken from, would be gone with it.
+            // The file the writes are allowed to land in is re-derived from
+            // the tier being removed, not read from the journal: the journal
+            // is package-controlled data, so trusting its `config` path would
+            // make `remove` an arbitrary-file write. A tier no longer
+            // resolvable to a `stella.toml` yields `None`, which `revert`
+            // treats as "nothing can be put back" rather than redirected.
+            let expected = configure::ConfigTarget::resolve(workspace_root, scope).ok();
             let reverted = installs
                 .iter()
                 .find(|plugin| plugin.dir == dir)
-                .map(|plugin| configure::revert(&dir, &plugin.manifest))
+                .map(|plugin| {
+                    configure::revert(
+                        &dir,
+                        &plugin.manifest,
+                        expected.as_ref().map(configure::ConfigTarget::path),
+                    )
+                })
                 .unwrap_or_default();
 
             remove_plugin_dir(&tier, &dir)?;
