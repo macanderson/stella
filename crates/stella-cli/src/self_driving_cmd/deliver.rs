@@ -237,6 +237,14 @@ pub(super) struct PrView {
     /// branch it actually merges into rather than an assumed `main`.
     #[serde(default, rename = "baseRefName")]
     pub base_ref_name: String,
+    /// `OPEN`, `MERGED`, `CLOSED`.
+    ///
+    /// Read because a pull request that has already reached its destination
+    /// needs no further transition, and the observation the pure machine
+    /// decides over cannot express that: a merged pull request reports
+    /// `mergeable: UNKNOWN`, which is `Wait` — forever.
+    #[serde(default)]
+    pub state: String,
 }
 
 /// Assemble the observation the pure machine decides over.
@@ -590,15 +598,31 @@ pub(super) fn open(
         .ok_or_else(|| format!("`gh pr create` printed no pull request number: {url:?}"))
 }
 
+/// What one read of the forge said about a pull request.
+///
+/// `settled` is carried beside the observation rather than inside it because
+/// it is not something the pure machine decides over — it is the question of
+/// whether there is anything left to decide. A merged pull request reports
+/// `mergeable: UNKNOWN`, which the machine correctly reads as `Wait`; without
+/// this flag the loop waits on it for the rest of the run. It did, on #4022,
+/// after merging it successfully.
+#[derive(Debug, Clone)]
+pub(super) struct Reading {
+    /// What the pure machine decides over.
+    pub observation: Observation,
+    /// Whether the pull request has already reached a terminal state.
+    pub settled: bool,
+}
+
 /// One read of the forge, plus the second read of the base its
 /// [`Observation::base_ci`] needs.
-pub(super) fn observe(pr: &str) -> Result<Observation, String> {
+pub(super) fn observe(pr: &str) -> Result<Reading, String> {
     let raw = gh(&[
         "pr",
         "view",
         pr,
         "--json",
-        "isDraft,mergeable,reviewDecision,statusCheckRollup,baseRefName",
+        "isDraft,mergeable,reviewDecision,statusCheckRollup,baseRefName,state",
     ])?;
     let view: PrView = serde_json::from_str(&raw).map_err(|error| {
         format!("`gh pr view` returned a payload this build cannot read: {error}")
@@ -615,7 +639,15 @@ pub(super) fn observe(pr: &str) -> Result<Observation, String> {
     let mut view = view;
     view.status_check_rollup = only_required(view.status_check_rollup, &required);
 
-    Ok(observation_from(&view, &base_checks))
+    let settled = matches!(
+        view.state.to_ascii_uppercase().as_str(),
+        "MERGED" | "CLOSED"
+    );
+
+    Ok(Reading {
+        observation: observation_from(&view, &base_checks),
+        settled,
+    })
 }
 
 /// Every open pull request on a branch with this workspace's prefix.
@@ -667,7 +699,26 @@ pub(super) fn mark_ready(pr: &str) -> Result<(), String> {
 /// [`stella_autonomy::Action::Merge`]; the caller enforces that, and the
 /// machine emits it from exactly one state.
 pub(super) fn merge(pr: &str) -> Result<(), String> {
-    gh(&["pr", "merge", pr, "--squash", "--delete-branch"]).map(|_| ())
+    // No `--delete-branch`. It deletes the *local* branch too, and this loop
+    // works inside git worktrees that hold exactly those branches — so the
+    // delete fails, `gh` exits non-zero, and a merge that already succeeded is
+    // reported as a failure. That is what it did: #4022 merged at 00:32:54 and
+    // the loop went on re-observing a merged pull request because the branch
+    // cleanup after it had failed.
+    //
+    // Cleanup is a separate concern from delivery, and the forge's own
+    // "automatically delete head branches" setting does it without a local
+    // side effect. Losing a branch is recoverable; losing the record of a
+    // merge strands the pull request forever.
+    let outcome = gh(&["pr", "merge", pr, "--squash"]).map(|_| ());
+
+    // A pull request that is already merged is the state this asked for, so it
+    // is a success. Racing a human who merged it by hand, or re-observing
+    // after a partial failure, must not read as an error.
+    match outcome {
+        Err(error) if error.to_ascii_lowercase().contains("already merged") => Ok(()),
+        other => other,
+    }
 }
 
 #[cfg(test)]
