@@ -3,7 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────✦ stella ┐
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
 │ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ? lead  ·  needs input   0:00:00
@@ -29,7 +29,7 @@
 │                                                                                                                      ││                                      │
 │── EXECUTE ───────────────────────────────────────────────────────────────────────────────────────────────────────────││                                      │
 │                                                                                                                      ││                                      │
-│● mcp__fs__read_file apps/app/automations/page.tsx                                                                    ││                                      │
+│ │ ● apps/app/automations/page.tsx                                                                                    ││                                      │
 │  ⎿ 312 lines                                                                                                     42ms││                                      │
 │                                                                                                                      ││                                      │
 │☰  plan  5/7  ·  Workflows canvas                  ┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐           ││                                      │

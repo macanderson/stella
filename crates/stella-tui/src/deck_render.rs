@@ -295,13 +295,13 @@ fn render_tab_bar(tab: DeckTab, area: Rect, buf: &mut Buffer) {
     // nothing but rule characters — zero rows of chrome spent. Dropped on
     // narrow frames rather than crowding the border.
     if area.width >= 44 {
-        block = block.title_top(
-            Line::from(vec![
-                Span::styled("✦ ", Style::new().fg(theme::GOLD)),
-                Span::styled("stella ", theme::muted()),
-            ])
-            .right_aligned(),
-        );
+        // SPEC 3.3: `stella*`, white word plus gold asterisk. The retired
+        // `✦ stella` lockup spent the four-pointed star on the brand, where
+        // SPEC 4 needs it for the `skill` event head — one glyph cannot be
+        // both an identity and a state.
+        let mut mark = stella_tui_theme::wordmark::spans().to_vec();
+        mark.push(Span::raw(" "));
+        block = block.title_top(Line::from(mark).right_aligned());
     }
     let tabs = Tabs::new(labels)
         .select(tab.index())

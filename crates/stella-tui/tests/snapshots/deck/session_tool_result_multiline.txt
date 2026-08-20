@@ -3,7 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────✦ stella ┐
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
 │ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ▶ lead  ·  running   0:00:00
@@ -26,7 +26,7 @@
 │    crates/stella-observatory/src/lib.rs:212                                                                          ││                                      │
 │    ⋯ 2 lines · ctrl+o                                                                                                ││                                      │
 │                                                                                                                      ││                                      │
-│● get_state    {"key":"verify"}                                                                                       ││                                      │
+│ │ ● get_state {"key":"verify"}                                                                                       ││                                      │
 │  ⎿                                                                                                                8ms││                                      │
 │    {                                                                                                                 ││                                      │
 │      "flip": true,                                                                                                   ││                                      │

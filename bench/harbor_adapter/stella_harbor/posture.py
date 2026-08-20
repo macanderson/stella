@@ -960,15 +960,28 @@ def resolve_posture_role_model(
 ) -> tuple[str, str]:
     """Resolve one role's model from a posture, and name the key it came from.
 
-    Mirrors ``AgentEngineConfig::model_for`` (``crates/stella-cli/src/settings.rs``)
-    key for key: ``agents.<role>.model`` outranks the flat ``pipeline_<role>_model``,
-    which outranks ``default_model`` — except for the two roles that inherit the
-    worker instead on that last rung (``_WORKER_INHERITING_ROLES``, which is the
-    engine's own split between ``model_spec_for`` and ``own_model_spec_for``, not
-    an approximation of it). Mirroring it *exactly* is the whole point —
-    a declaration that resolves roles by a different rule than the engine does is
-    free to disagree with the run it describes, which is the shape of #2134 and of
+    Mirrors ``AgentEngineConfig::model_for``
+    (``crates/stella-cli/src/settings/engine.rs``): ``agents.<role>.model``
+    outranks the flat ``pipeline_<role>_model``, which outranks
+    ``default_model`` — except for the two roles that inherit the worker
+    instead on that last rung (``_WORKER_INHERITING_ROLES``, which is the
+    engine's own split between ``model_spec_for`` and ``own_model_spec_for``,
+    not an approximation of it). Mirroring it is the whole point: a declaration
+    that resolves roles by a different rule than the engine does is free to
+    disagree with the run it describes, which is the shape of #2134 and of
     #1147 before it.
+
+    **The middle rung is knowingly ahead of the engine.** #3908 collapsed
+    ``agent_engine_config`` to the one role core has, so ``model_for`` now
+    reads ``agents.default.model`` > ``default_model`` and the five flat
+    ``pipeline_<role>_model`` keys are **retired** — recognized, ignored and
+    reported by name (``settings::unknown::RETIRED_ENGINE_ROOT``) rather than
+    removed, because this harness and ``arenabench`` still write them into
+    postures whose digests are registered in ``bench/READINESS.md`` §8.4.
+    Reading them here is therefore still correct for what this function
+    describes — the posture as written — and stops being correct when slice 6
+    (#3910) stops writing them. Both halves of that are pinned by
+    ``test_assurance_tiers.py``; do not narrow this ladder without it.
 
     Two of those rungs bit in the same match. ``cc00894779ff`` read only the
     host-side selector and so missed the flat key an ArenaBench roles config
