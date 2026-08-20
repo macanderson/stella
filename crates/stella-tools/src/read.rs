@@ -224,6 +224,7 @@ impl ReadLedger {
         if state.sha256 != sha256 {
             state.reads_since_change = 0;
         }
+
         state.reads_since_change += 1;
         state.sha256 = sha256;
         // Coverage is not known until the payload has been rendered, so it is
@@ -1080,9 +1081,22 @@ mod tests {
         let tool = ReadFile::default();
         let ctx = cx(dir.path());
         for pass in 0..40 {
-            std::fs::write(&path, format!("fn main() {{}} // pass {pass}\n")).unwrap();
+            // A file long enough that the read below is a *window*, and a
+            // window on purpose: a whole-file read is exempt from the ceiling
+            // (it returns identical bytes, so the loop verdicts already catch a
+            // spiral of them), which would make this test pass even with the
+            // reset deleted. The reset is the whole safety argument for the
+            // ceiling, so it has to be exercised by a read the ceiling can
+            // actually refuse.
+            let body: String = (0..200)
+                .map(|line| format!("fn f{line}() {{}} // pass {pass}\n"))
+                .collect();
+            std::fs::write(&path, body).unwrap();
             let out = tool
-                .execute(&serde_json::json!({"path": "a.rs"}), &ctx)
+                .execute(
+                    &serde_json::json!({"path": "a.rs", "offset": 1, "limit": 40}),
+                    &ctx,
+                )
                 .await;
             assert!(
                 matches!(out, ToolOutput::Ok { .. }),
