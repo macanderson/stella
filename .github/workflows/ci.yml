@@ -317,6 +317,47 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-gate-parity.sh
 
+      # The five below were in `GATE_GUARDS_FAST` and in no workflow at all
+      # (#4089). `gate-parity` above holds AGENTS.md and CONTRIBUTING.md to
+      # `GATE_STEPS`, which is a question about the prose — it says nothing
+      # about whether anything server-side runs a given step, and that is the
+      # gap these close.
+      #
+      # It is not theoretical. `tokens` was red on `main` from #4066 until
+      # #4086 — seven retired brand hexes and thirteen stray literals — and no
+      # workflow said so, on a tree whose every PR was otherwise green. The
+      # pre-push hook runs them, but it is advisory, per-clone, and bypassable
+      # (`SKIP_GATE=1`, `--no-verify`), and with `enforce_admins` off an
+      # auto-merge lands past it. AGENTS.md already says the hook "complements
+      # the required server-side checks rather than replacing them"; for these
+      # five there was no server-side check to complement.
+      #
+      # All toolchain-free (Python and shell over the tree), so they sit here
+      # with the other guards rather than after the cargo setup, and cost about
+      # a second each. Each carries the same `!cancelled()` as its neighbours,
+      # so a red one reports independently instead of masking the next.
+      - name: the colour system is the one in the tree
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: |
+          python3 ./scripts/gen-tokens.py --check
+          python3 ./scripts/check-tokens.py
+
+      - name: no library crate returns Result<_, String>
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-typed-errors.py
+
+      - name: every dead-code suppression says why
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-dead-code-allows.py
+
+      - name: every emitted diagnostic code is documented
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-diagnostic-codes.sh
+
+      - name: make bench-test runs every suite bench.yml runs
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-bench-suites.sh
+
       # Also toolchain-free (shellcheck ships preinstalled on ubuntu-latest).
       # install.sh is fetched over the network and piped into `sh` by
       # strangers before Stella is installed; the guard scripts are what the
