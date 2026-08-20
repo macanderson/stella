@@ -35,6 +35,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::configure::{ConfigureEntry, validate_configure};
 use crate::consent::{Capability, validate_capabilities};
 use crate::driver::DriverGrant;
 use crate::error::ManifestError;
@@ -444,7 +445,14 @@ pub struct Role {
 /// imported by reference there and join this struct when their slices land —
 /// `deny_unknown_fields` means a manifest using them before then fails
 /// loudly instead of half-loading.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// **`PartialEq` but not `Eq`, since #3999.** A `[[configure]]` value is a
+/// `toml::Value`, which can be a float, and no float type is `Eq`. The
+/// alternative was to refuse float-valued configuration so the derive could
+/// stay — an API limit imposed by a marker trait rather than by anything about
+/// configuration, which is the tail wagging the dog. Nothing used the stronger
+/// bound: a manifest is compared, never hashed or used as a map key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginManifest {
     /// The plugin's identity — what every grant, deck chip, and hold
@@ -539,6 +547,20 @@ pub struct PluginManifest {
     /// [`crate::RecordEnforcement`] for the governance argument.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub records: Vec<RecordContribution>,
+    /// The configuration this package sets for as long as it is installed
+    /// (#3999) — the `[[configure]]` table.
+    ///
+    /// Gated on **no** participation grade, for [`Self::capabilities`]'
+    /// reason: the ladder governs a plugin's say in the turn, and a
+    /// `none`-grade content bundle that changes how this workspace signs its
+    /// commits is reaching further into the world than an `observer` that only
+    /// watches.
+    ///
+    /// Declared, never applied here — this crate performs no I/O. The host
+    /// writes it at install and puts back what it found at removal. See
+    /// [`crate::ConfigureEntry`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configure: Vec<ConfigureEntry>,
 }
 
 /// `skip_serializing_if` needs a named predicate; "the grant is the default"
@@ -608,6 +630,12 @@ impl PluginManifest {
         for hook in &grant.hooks {
             if !seen_hooks.insert(*hook) {
                 return Err(ManifestError::DuplicateHook { hook: *hook });
+            }
+            // The loop-lifecycle pair is spellable here — it is one vocabulary
+            // — and not routable to a plugin, so it is refused by name rather
+            // than granted and never dispatched (#3599).
+            if matches!(hook, HookEvent::PreIssueWork | HookEvent::PostIssueWork) {
+                return Err(ManifestError::HookNotAvailableToPlugins { hook: *hook });
             }
         }
         if !grant.hooks.is_empty() && !participation.includes(Participation::Steering) {
@@ -809,6 +837,7 @@ impl PluginManifest {
 
         validate_capabilities(&self.capabilities)?;
         validate_contributions(self)?;
+        validate_configure(self)?;
 
         Ok(())
     }
@@ -873,6 +902,29 @@ mod tests {
                 hook: HookEvent::PreToolUse
             }
         ));
+    }
+
+    /// **The other half of "an undeclared hook is never invoked".** A plugin
+    /// may spell the loop-lifecycle events — they are one vocabulary — and may
+    /// not be routed at them: they are dispatched by the self-driving loop
+    /// from the operator's own hooks settings, outside any turn. Refused by
+    /// name, so an author learns it here rather than from a grant that
+    /// silently never fires (#3599).
+    #[test]
+    fn a_plugin_may_not_be_routed_at_a_loop_lifecycle_hook() {
+        for hook in ["PreIssueWork", "PostIssueWork"] {
+            let err = parse(&format!(
+                "name = \"x\"\n[loop]\nparticipation = \"steering\"\nhooks = [\"{hook}\"]"
+            ))
+            .unwrap_err();
+            assert!(
+                matches!(err, ManifestError::HookNotAvailableToPlugins { .. }),
+                "{hook} must be refused: {err:?}"
+            );
+            let text = err.to_string();
+            assert!(text.contains(hook), "{text}");
+            assert!(text.contains("outside any turn"), "{text}");
+        }
     }
 
     /// The set-based duplicate checks must name the same offender the prefix

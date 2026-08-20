@@ -411,6 +411,38 @@
       "status": "living",
       "title": "The journey of a prompt \u2014 full pipeline mode, in plain language"
     },
+    "plugin-completion-plan": {
+      "path": "docs/spec/plugin-completion-plan.md",
+      "sections": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "status": "proposed",
+      "title": "The five plugins that did not get built: an audit, a spec, and where each one ships"
+    },
+    "plugin-marketplace": {
+      "path": "docs/spec/plugin-marketplace.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "status": "proposed",
+      "title": "The plugin marketplace: an index is a repository, not a service"
+    },
     "plugin-transport-spike": {
       "path": "docs/spec/plugin-transport-spike.md",
       "sections": [

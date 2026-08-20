@@ -3,7 +3,7 @@
 //!
 //! Hooks are shell commands declared in workspace settings that fire on
 //! agent lifecycle events, receiving the event payload as JSON on stdin
-//! (Claude Code parity). Five events are wired, each with distinct,
+//! (Claude Code parity). Seven events are wired, each with distinct,
 //! load-bearing behavior:
 //!
 //!   - [`HookEvent::SessionStart`] — runs once before the turn. Anything a
@@ -23,10 +23,24 @@
 //!   - [`HookEvent::PreCompact`] — runs before an overflow-summarization
 //!     round. A `deny` decision vetoes the round; a `modify` decision may
 //!     inject summarization instructions.
+//!   - [`HookEvent::PreIssueWork`] — runs before the self-driving loop works
+//!     an issue, and outside any turn. A `deny` decision makes the loop skip
+//!     that issue and move on, which is how a person holds an agent off work
+//!     they are not ready to hand over (#3599).
+//!   - [`HookEvent::PostIssueWork`] — runs after that work unit, whatever the
+//!     outcome. Never blocks: the work is already done.
 //!
 //! Matchers are globs over the tool name for `PreToolUse`/`PostToolUse`;
-//! the non-tool-scoped events (`SessionStart`, `Stop`, `PreCompact`)
-//! ignore the matcher and run every action.
+//! every other event ignores the matcher and runs every action.
+//!
+//! # Two families, and why the second is here rather than in its own engine
+//!
+//! The first five name points *inside* a turn and are dispatched by the
+//! driver. The issue-work pair names points *around* a turn and is dispatched
+//! by the self-driving loop in `stella-cli`, which is a different caller
+//! entirely. They share this module because they share a settings file, a
+//! payload shape, and the `allow`/`deny` fold — see [`stella_protocol::hook`]
+//! for the argument against a second vocabulary.
 //!
 //! `PreToolUse` payloads carry the tool's advertised metadata — today the
 //! [`ToolSchema::read_only`](stella_protocol::ToolSchema) bit, so an
@@ -63,11 +77,11 @@ pub mod decision;
 /// plus the #2684 additions `Stop` and `PreCompact`).
 ///
 /// Defined in [`stella_protocol::hook`] and re-exported here, so this path
-/// keeps resolving. A plugin manifest grants the same five points
+/// keeps resolving. A plugin manifest grants the same points
 /// (`stella-plugin::manifest`), and before #3310 that was a second hand-kept
 /// copy of this enum: the engine may not depend on `stella-plugin` (#3245
 /// open question 3) and `stella-plugin` may not depend on the engine, so the
-/// vocabulary lives in the crate underneath both. A sixth event is now one
+/// vocabulary lives in the crate underneath both. Another event is now one
 /// edit; it used to be two, with nothing red if you made only one.
 pub use stella_protocol::hook::HookEvent;
 
@@ -117,8 +131,8 @@ impl HookAction {
 
 /// Groups hook actions under a tool-name pattern (TS: `HookMatcher`). For
 /// `PreToolUse`/`PostToolUse`, `matcher` is a glob over the tool name
-/// (e.g. `"task_create"`, `"mcp__*"`, `"*"`). The non-tool-scoped events
-/// (`SessionStart`, `Stop`, `PreCompact`) ignore it — every action runs.
+/// (e.g. `"task_create"`, `"mcp__*"`, `"*"`). Every other event ignores it —
+/// every action runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookMatcher {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -158,6 +172,18 @@ pub struct Hooks {
         skip_serializing_if = "Option::is_none"
     )]
     pub pre_compact: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "PreIssueWork",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pre_issue_work: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "PostIssueWork",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub post_issue_work: Option<Vec<HookMatcher>>,
 }
 
 impl Hooks {
@@ -170,6 +196,8 @@ impl Hooks {
             HookEvent::PostToolUse => &self.post_tool_use,
             HookEvent::Stop => &self.stop,
             HookEvent::PreCompact => &self.pre_compact,
+            HookEvent::PreIssueWork => &self.pre_issue_work,
+            HookEvent::PostIssueWork => &self.post_issue_work,
         };
         field.as_deref().unwrap_or(&[])
     }
@@ -211,6 +239,17 @@ pub struct HookPayload {
     /// same reason: what a hook can afford to read is the hook's call.
     #[serde(rename = "finalText", default, skip_serializing_if = "Option::is_none")]
     pub final_text: Option<String>,
+    /// Present for `PreIssueWork` / `PostIssueWork`: which issue the
+    /// self-driving loop is about to work, or has just worked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<HookIssueInfo>,
+    /// Present for `PostIssueWork`: how the work unit ended.
+    #[serde(
+        rename = "issueOutcome",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issue_outcome: Option<HookIssueOutcome>,
 }
 
 impl HookPayload {
@@ -223,6 +262,8 @@ impl HookPayload {
             tool: None,
             tool_result: None,
             final_text: None,
+            issue: None,
+            issue_outcome: None,
         }
     }
 
@@ -281,6 +322,92 @@ impl HookPayload {
     pub fn pre_compact(cwd: impl Into<String>) -> Self {
         Self::bare(HookEvent::PreCompact, cwd.into())
     }
+
+    /// A `PreIssueWork` payload — the issue the loop is about to work.
+    ///
+    /// No outcome, because nothing has happened yet: this is the payload a
+    /// hook reads to decide whether the work should happen at all.
+    pub fn pre_issue_work(cwd: impl Into<String>, issue: HookIssueInfo) -> Self {
+        Self {
+            issue: Some(issue),
+            ..Self::bare(HookEvent::PreIssueWork, cwd.into())
+        }
+    }
+
+    /// A `PostIssueWork` payload — the same issue, plus how it went.
+    pub fn post_issue_work(
+        cwd: impl Into<String>,
+        issue: HookIssueInfo,
+        outcome: HookIssueOutcome,
+    ) -> Self {
+        Self {
+            issue: Some(issue),
+            issue_outcome: Some(outcome),
+            ..Self::bare(HookEvent::PostIssueWork, cwd.into())
+        }
+    }
+}
+
+/// The issue a self-driving work unit is about, as a hook sees it.
+///
+/// # Why the identifier and nothing else is guaranteed
+///
+/// Only [`Self::number`] is always present. The rest is what the loop happened
+/// to have already read, and the loop reads the tracker lazily — so a hook that
+/// needs a field this does not carry should fetch it itself (`gh issue view`
+/// is one line in a shell hook) rather than have Stella fetch it on every
+/// dispatch for the hooks that do not.
+///
+/// That is a deliberate cost split: an extra tracker round trip per issue,
+/// paid by the hooks that want it, beats one paid by every loop whether a hook
+/// is registered or not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookIssueInfo {
+    /// The issue number, as the tracker spells it. Always present — it is the
+    /// identity everything else about the work unit hangs off.
+    pub number: String,
+    /// The issue's title, when the loop already had it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The branch the work would land on, when it is already decided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+impl HookIssueInfo {
+    /// The identifier alone — the shape a caller that has read nothing else
+    /// can always build.
+    pub fn new(number: impl Into<String>) -> Self {
+        Self {
+            number: number.into(),
+            title: None,
+            branch: None,
+        }
+    }
+}
+
+/// How a work unit ended, for [`HookEvent::PostIssueWork`].
+///
+/// Three arms rather than a boolean, because a consumer's next move differs
+/// for each: `Changed` means there is a branch to review, `NoChange` means the
+/// issue is still open and untouched, and `Failed` means something needs a
+/// human. Collapsing the last two into "not successful" is what makes a
+/// dashboard unable to tell a starved loop from a broken one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum HookIssueOutcome {
+    /// The turn ran and left committed or uncommitted work behind.
+    Changed {
+        /// What changed, as the loop summarized it.
+        summary: String,
+    },
+    /// The turn ran and changed nothing.
+    NoChange,
+    /// The work unit could not complete.
+    Failed {
+        /// Why, in the loop's own words.
+        reason: String,
+    },
 }
 
 /// One hook command's raw execution result — returned even on non-zero

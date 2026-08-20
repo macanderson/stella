@@ -47,6 +47,25 @@ pub enum ManifestError {
         participation: Participation,
     },
 
+    /// `[loop] hooks` named a hook a plugin cannot be routed at.
+    ///
+    /// The loop-lifecycle events (`PreIssueWork`, `PostIssueWork`, #3599) are
+    /// dispatched by the self-driving loop from the operator's own `hooks`
+    /// settings, outside any turn — a different caller and a different
+    /// transport than the plugin routing table feeds. A manifest may spell
+    /// them, because they are one vocabulary; it may not yet be routed at
+    /// them, and this is that refusal said out loud rather than discovered as
+    /// a grant that quietly does nothing.
+    #[error(
+        "[loop] hooks names {hook}, which a plugin cannot be routed at: it is a \
+         self-driving loop event dispatched outside any turn, from the \
+         operator's own hooks settings. Register it there instead."
+    )]
+    HookNotAvailableToPlugins {
+        /// The event a plugin may not be routed at.
+        hook: HookEvent,
+    },
+
     /// `[loop] points` listed the same wrapper point twice — the
     /// [`ManifestError::DuplicateHook`] rule, for the socket's points.
     #[error("[loop] points declares {point} more than once")]
@@ -565,6 +584,80 @@ pub enum ManifestError {
     PluginRecordCannotEnforce {
         /// The lineage that asked to enforce.
         lineage: String,
+    },
+
+    /// A `[[configure]]` entry named no key. The key is the whole change —
+    /// there is nothing left to consent to without it.
+    #[error("[[configure]] entry must name a key: `key` is empty")]
+    EmptyConfigureKey,
+
+    /// A `[[configure]]` entry stated no purpose. The key and value say
+    /// *what*; only the author can say *why*, and without it the consent line
+    /// is a diff rather than a request — the
+    /// [`Self::EmptyCapabilityPurpose`] rule on the configuration surface.
+    #[error(
+        "[[configure]] entry for \"{key}\" has an empty purpose: a configuration \
+         change with no stated reason is not something a user can consent to"
+    )]
+    EmptyConfigurePurpose {
+        /// The key whose purpose was blank.
+        key: String,
+    },
+
+    /// A `[[configure]]` key was not a dotted path of bare segments reaching
+    /// inside a section. Quoted keys, empty segments and bare roots are all
+    /// refused rather than sanitized, on [`crate::PluginManifest`]'s name
+    /// rule: a declaration that needs rewriting to be safe should be told, not
+    /// quietly rewritten into something the manifest does not say.
+    #[error(
+        "[[configure]] key \"{key}\" is not usable: a key must be a dotted path of \
+         plain segments (letters, digits, `_`, `-`) naming a value inside a \
+         section — `ui.theme`, not `ui` and not a quoted key"
+    )]
+    ConfigureKeyNotDotted {
+        /// The unusable key.
+        key: String,
+    },
+
+    /// A `[[configure]]` entry declared a table as its value. One entry is one
+    /// leaf: a table-valued entry would let a single consented line replace a
+    /// whole section including keys the human never read, and restoring a
+    /// section on uninstall means re-merging two trees rather than putting one
+    /// value back. See [`crate::ConfigureEntry`].
+    #[error(
+        "[[configure]] entry for \"{key}\" declares a table as its value: set one \
+         key at a time, so a human reads the literal change and removing the \
+         plugin can put exactly it back"
+    )]
+    ConfigureValueNotScalar {
+        /// The key whose value was a table.
+        key: String,
+    },
+
+    /// A `[[configure]]` entry named a section a package may never write.
+    /// Not "this setting is dangerous" — the narrower rule stated on
+    /// [`crate::REFUSED_SECTIONS`]: a section where a consent line cannot
+    /// honestly convey the effect, so asking a human is not a meaningful gate.
+    #[error(
+        "[[configure]] key \"{key}\" writes `{section}`, which a plugin may not \
+         configure: {reason}. Ask the user to set it themselves."
+    )]
+    ConfigureSectionRefused {
+        /// The offending key.
+        key: String,
+        /// Its top-level section.
+        section: String,
+        /// Why consent cannot be meaningful for it.
+        reason: String,
+    },
+
+    /// The same key was declared twice. The [`Self::DuplicateCapability`]
+    /// rule on this table: which of the two values wins would decide the
+    /// effective change, and a human read them as separate lines.
+    #[error("[[configure]] declares the key \"{key}\" more than once")]
+    DuplicateConfigureKey {
+        /// The key declared twice.
+        key: String,
     },
 
     /// `[wrapper]` was declared below `steering`. A wrapper intercepts the
