@@ -14,6 +14,15 @@
 //! (invariant #9), so the strategy ladder is chosen by the engine from what
 //! the workspace actually has, not by the model from what it guesses.
 //!
+//! # The index fills itself, off the query path
+//!
+//! Since #4043 a search performs exactly one embedder round trip — the
+//! query's — and never writes a vector. The index is filled by
+//! [`backfill`]'s background pass at session start and by `stella init`'s
+//! eager one; [`engine::dispatch`] carries the decision and what it gives up,
+//! and [`readiness`] is the policy that holds the first interactive prompt
+//! while that pass is still running.
+//!
 //! # The ladder degrades, it never fails
 //!
 //! [`engine::dispatch`] runs four rungs — exact symbol lookup, semantic
@@ -54,11 +63,13 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
+pub mod backfill;
 pub mod cache;
 pub mod codegraph;
 pub mod engine;
 pub mod enrich;
 pub mod names;
+pub mod readiness;
 pub mod scan;
 pub mod semantic;
 

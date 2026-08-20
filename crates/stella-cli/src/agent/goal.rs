@@ -178,6 +178,7 @@ pub(crate) async fn run_raw_one_shot(
         &cfg.workspace_root,
         Box::new(crate::agent::init::stderr_narrator()),
         Box::new(|| {}),
+        Box::new(|_| {}),
     );
     let process_free = crate::enterprise_telemetry::process_free_authority_active();
     let mcp = if process_free {
@@ -503,6 +504,7 @@ pub async fn run_goal_cmd(
         &cfg.workspace_root,
         Box::new(crate::agent::init::stderr_narrator()),
         Box::new(|| {}),
+        Box::new(|_| {}),
     );
     let mcp = connect_mcp(
         cfg,

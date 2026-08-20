@@ -39,6 +39,8 @@ use crate::envelope::{
 };
 use crate::graph::GraphSnapshot;
 use crate::input::UserInput;
+use stella_tools::search::readiness::IndexReadiness;
+
 use crate::notice::NoticeState;
 use crate::scroll::ScrollState;
 use crate::splash::SplashState;
@@ -570,6 +572,12 @@ pub struct DeckUi {
     /// Startup system notifications, shown as a transient dialog rather than
     /// as transcript rows (see [`crate::notice`]).
     pub notice: NoticeState,
+    /// How far behind the workspace's semantic index is, pushed by the driver
+    /// as its background pass fills it ([`Inbound::IndexReadiness`]).
+    ///
+    /// Out-of-band view state, never folded: it is a fact about the machine,
+    /// not about the session. It gates one thing — see [`gates::index_hold`].
+    pub index_readiness: IndexReadiness,
     pub help_open: bool,
     /// Vertical scroll for the help overlay (↑/↓, PageUp/Down, Home/End). Kept
     /// separate from the transcript scroll since the overlay is a different
@@ -791,6 +799,7 @@ impl Default for DeckUi {
             ask_before_spawn: AskBeforeSpawn::default(),
             splash: SplashState::new(),
             notice: NoticeState::new(),
+            index_readiness: IndexReadiness::unknown(),
             help_open: false,
             help_scroll: ScrollState::default(),
             focused: 0,
@@ -1056,6 +1065,10 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
         // the cursor on the new focus (index 0) rather than leaving it on a
         // stale row that render would merely clamp into range.
         ui.graph_cursor = 0;
+        return;
+    }
+    if let Inbound::IndexReadiness(readiness) = inbound {
+        ui.index_readiness = *readiness;
         return;
     }
     if let Inbound::SlashCommands(commands) = inbound {
@@ -3854,6 +3867,13 @@ fn handle_session_key(
 /// entirely; any other prompt ALWAYS enqueues — never blocks on a busy agent,
 /// though a held dispatch (see [`submit_prompt`]) jumps it to the front.
 fn dispatch_submission(ui: &mut DeckUi, model: &WorkspaceModel) -> DeckAction {
+    // Before anything is taken out of the composer: a workspace whose index
+    // is still being built for the first time holds the prompt and says so
+    // (#4043). Checked here rather than inside `submit_prompt` precisely so
+    // the text is still in the composer when the hold fires.
+    if let Some(held) = gates::index_hold(ui) {
+        return held;
+    }
     // The deck queue is text-shaped: attachments enter deck prompts as
     // pasted payload *paths* (extracted at dispatch by the driver), so the
     // submission's text is the whole content here.
