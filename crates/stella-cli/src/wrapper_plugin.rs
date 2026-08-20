@@ -136,7 +136,7 @@ use stella_core::ports::{ToolExecutor, TurnControls};
 use stella_core::router::Router;
 use stella_core::subagent::SubAgentDispatcher;
 use stella_model::provider::Provider;
-use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
+use stella_plugin::{HostCall, SignalValues, TurnOutcome as WrapperTurnOutcome};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
     CandidateFanoutSpend, CandidateFanouts, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS,
@@ -824,13 +824,31 @@ fn warn_narrowed_ceilings(manifest: &stella_plugin::PluginManifest, warn: &mut d
             DEFAULT_HOST_MAX_HOLDS + 1
         ));
     }
-    if let Some(asked) = manifest.loop_grant.max_calls
-        && asked > DEFAULT_HOST_MAX_CHILD_TURNS
-    {
-        warn(format!(
-            "plugin \"{name}\" asks for up to {asked} child turns for the whole run; \
-             this host funds {DEFAULT_HOST_MAX_CHILD_TURNS}"
-        ));
+    // `max_calls` feeds two *different* ceilings depending on what the plugin
+    // declared it may call, and the narrowing notice has to name the one that
+    // actually applies (`child_turn.rs` header: the child-turn bound "is a
+    // different bound from the host-call allowance, not a second copy of it").
+    // A plugin that declares `child_turn` spends `max_calls` as child turns for
+    // the whole run, clamped by `DEFAULT_HOST_MAX_CHILD_TURNS` (4) in
+    // `ChildTurns::declare`. A plugin that does not — e.g. a recall-only
+    // wrapper — spends it as host calls per point, clamped by
+    // `DEFAULT_HOST_MAX_CALLS` (8) in `serving`. Comparing every plugin against
+    // 4 and calling it "child turns" would fire a false, mislabelled narrowing
+    // notice for a recall wrapper asking for 5..=8 that this host funds in full.
+    if let Some(asked) = manifest.loop_grant.max_calls {
+        if manifest.loop_grant.calls.contains(&HostCall::ChildTurn) {
+            if asked > DEFAULT_HOST_MAX_CHILD_TURNS {
+                warn(format!(
+                    "plugin \"{name}\" asks for up to {asked} child turns for the whole run; \
+                     this host funds {DEFAULT_HOST_MAX_CHILD_TURNS}"
+                ));
+            }
+        } else if asked > DEFAULT_HOST_MAX_CALLS {
+            warn(format!(
+                "plugin \"{name}\" asks for up to {asked} host calls per point; \
+                 this host funds {DEFAULT_HOST_MAX_CALLS}"
+            ));
+        }
     }
 }
 
