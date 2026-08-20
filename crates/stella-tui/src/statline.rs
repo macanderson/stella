@@ -428,7 +428,7 @@ fn role_word(role: PipelineRole) -> &'static str {
 /// the model string already carries its vendor (`z-ai/glm-5.2`) that prefix
 /// IS the identity, so the provider is dropped; when it does not
 /// (`claude-fable-5`) the provider is the vendor (`anthropic`) and stays.
-fn vendor_slug(pin: &crate::deck::RolePin) -> String {
+pub(crate) fn vendor_slug(pin: &crate::deck::RolePin) -> String {
     if pin.model.contains('/') || pin.provider.is_empty() {
         pin.model.clone()
     } else {

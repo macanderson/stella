@@ -48,17 +48,19 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
             "queue",    // footer / queue status
             "plan",     // progress stage labels (§3)
             "execute", "verify", // progress stage labels (§3)
-            "MODEL",  // the statline's leading cell (§5)
+            "· ctx ", // the v2 status bar's context meter (SPEC 5)
+            "? help", // its pinned right-hand affordance
         ] {
             assert!(
                 text.contains(needle),
                 "deck @{w}×{h} missing {needle:?}:\n{text}"
             );
         }
-        // The full cell set needs the width; at 190 every cell renders, each
-        // as an uppercase micro-label over its value.
+        // The v2 bar drops cells from the right when the row is tight, so the
+        // full six only render once the width is there. `? help` is the pinned
+        // right-hand affordance and lands last.
         if w >= 120 {
-            for needle in ["CONTEXT", "CPU", "CACHE", "SPEND", "SAVED", "WARMTH"] {
+            for needle in ["ctx ", "saved ", "✉ ", "? help"] {
                 assert!(
                     text.contains(needle),
                     "deck @{w}×{h} missing statline cell {needle:?}:\n{text}"
@@ -696,7 +698,7 @@ fn a_panicking_deck_view_renders_an_error_card_and_the_session_survives() {
         text.contains("injected panic in band SESSION"),
         "the error card carries the panic message:\n{text}"
     );
-    for surviving in [">>>", "MODEL", "AGENTS"] {
+    for surviving in [">>>", "? help", "AGENTS"] {
         assert!(
             text.contains(surviving),
             "the surviving bands still rendered ({surviving:?} missing):\n{text}"
