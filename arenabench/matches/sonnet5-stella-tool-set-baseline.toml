@@ -91,7 +91,7 @@ color = "#4C8DFF"
 id = "lean"
 name = "Stella (four basics)"
 agent = "stella"
-color = "#FFB000"
+color = "#EFC53F"
 
   [contestant.engine]
   api = "openrouter"

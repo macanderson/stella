@@ -125,7 +125,7 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
             raw: "{}".into(),
             path: None,
         }),
-        Some(theme::ACCENT_DEEP),
+        Some(theme::ACCENT),
         "a tool call — the thing that happened — carries the deep-gold rail",
     );
     assert_eq!(

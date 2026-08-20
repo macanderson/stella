@@ -38,7 +38,6 @@
   border: 1px solid var(--eng-accent-dim);
   border-radius: 0.5rem;
   background: var(--eng-surface-warm);
-  box-shadow: var(--stella-glow-brand);
   max-width: 46rem;
 }
 .eng-goal-line {
@@ -74,12 +73,12 @@
   0%,
   100% {
     opacity: 1;
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--stella-brand) 55%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--stella-signal) 55%, transparent);
   }
   50% {
     opacity: 0.65;
     box-shadow: 0 0 0 0.35rem
-      color-mix(in srgb, var(--stella-brand) 0%, transparent);
+      color-mix(in srgb, var(--stella-signal) 0%, transparent);
   }
 }
 
@@ -118,7 +117,7 @@
   padding: 0.65rem 1.4rem;
   border-radius: 0.375rem;
   background: var(--eng-accent);
-  color: var(--stella-ink);
+  color: var(--stella-canvas);
   font-weight: 500;
   font-size: var(--stella-type-sm);
   text-decoration: none;
@@ -127,8 +126,8 @@
     box-shadow var(--stella-duration-base) var(--stella-ease-arrive);
 }
 .eng-cta:hover {
-  background: var(--stella-brand-400);
-  color: var(--stella-ink);
+  background: var(--stella-signal-live);
+  color: var(--stella-canvas);
   box-shadow: var(--stella-glow-brand);
   text-decoration: none;
 }
@@ -184,7 +183,6 @@
   margin-inline-start: -0.3rem;
   border-radius: 50%;
   background: var(--eng-accent);
-  box-shadow: var(--stella-glow-brand);
 }
 @keyframes eng-orbit {
   to {
@@ -475,12 +473,12 @@
   display: block;
   width: 3.5rem;
   height: 1px;
-  background: linear-gradient(
-    90deg,
-    var(--stella-danger),
-    var(--eng-accent),
-    var(--stella-success)
-  );
+  /* Flat gold, not a red-to-green ramp. The FAIL and PASS endpoints are text
+     labels, so the verdicts are already carried where a reader can read them;
+     smearing them along an aria-hidden connector was decorative red and green,
+     which rule 2 rations, in a gradient, which rule 5 retires. The arrow is
+     stella acting on the code between the two runs — that is gold. */
+  background: var(--eng-accent);
   position: relative;
 }
 .eng-flip-arrow::after {
@@ -880,12 +878,7 @@
   .eng-flip-arrow {
     width: 1px;
     height: 2.5rem;
-    background: linear-gradient(
-      180deg,
-      var(--stella-danger),
-      var(--eng-accent),
-      var(--stella-success)
-    );
+    background: var(--eng-accent);
   }
   .eng-flip-arrow::after {
     inset-inline-end: -0.2rem;

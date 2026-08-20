@@ -486,8 +486,8 @@ fn render_dashboard(
 
      The palette used to be interpolated from `stella_tui::theme`, which was
      right when the export's only sibling was the terminal. It is wrong now:
-     the TUI palette is accent-chromed by design (ACCENT == BRAND == its own
-     gold #FFB81A, and that hue marks a Running state), while a web
+     the TUI palette is accent-chromed by design (ACCENT == BRAND == the
+     gold #EFC53F, and that hue marks a Running state), while a web
      instrument's
      chrome must not carry a hue at all. Generating from the terminal guaranteed the
      export matched the one surface it should no longer match. The parity
@@ -521,19 +521,19 @@ fn render_dashboard(
      verdicts; the old block painted cost in --warn, which told every reader
      that spending money was a fault condition. */
   :root {{
-    --void: #010306; --ground: #070B10; --surface: #0D1319; --raised: #11171D;
-    --hairline: #1F262D; --hairline-strong: #333B43;
-    --identity: #C58A32; --identity-ink: #070B10;
-    --text: #E9EDF2; --text-2: #A4ABB3; --text-3: #737C88;
-    --ok: #3FD99B; --warn: #FF7A45; --bad: #F2687A;
-    --c1: #E9EDF2; --c2: #A4ABB3; --c3: #737C88; --c4: #4A535D;
-    --neutral-mark: #4A535D;
-    --ink: #070B10;
-    --accent: #E9EDF2;
-    --accent-wash: rgba(233,237,242,.08);
-    --accent-edge: rgba(233,237,242,.38);
-    --sunken: #0B1116;
-    --control-edge: #737C88;
+    --void: #050507; --ground: #0A0A0C; --surface: #0F0F12; --raised: #17171B;
+    --hairline: #26262C; --hairline-strong: #35353D;
+    --identity: #EFC53F; --identity-ink: #0A0A0C;
+    --text: #E8E8EC; --text-2: #A9AAB5; --text-3: #777782;
+    --ok: #74C991; --warn: #E78D54; --bad: #E0687A;
+    --c1: #E8E8EC; --c2: #A9AAB5; --c3: #777782; --c4: #4B4B56;
+    --neutral-mark: #4B4B56;
+    --ink: #0A0A0C;
+    --accent: #E8E8EC;
+    --accent-wash: rgba(232,232,236,.08);
+    --accent-edge: rgba(232,232,236,.38);
+    --sunken: #0A0A0C;
+    --control-edge: #777782;
 
     /* One face. The product lives in a terminal, so the brand speaks in
        monospace — and this artifact is a measurement, where a proportional
@@ -573,12 +573,12 @@ fn render_dashboard(
      black page on a white desktop.
 
      Contrast, computed against WCAG 2.1 relative luminance, worst case on
-     --surface (#F7F9FC):
+     --surface (#F7F7FA):
 
        --text 18.97:1  --text-2 7.49:1  --text-3 3.10:1
        --ok 5.91:1     --warn 5.99:1    --bad 6.74:1    --identity 8.33:1
 
-     and dark against --raised (#11171D):
+     and dark against --raised (#17171B):
 
        --text 16.13:1  --text-2 7.31:1  --text-3 3.70:1
        --ok 8.52:1     --warn 7.81:1    --bad 6.17:1    --identity 6.34:1
@@ -595,36 +595,36 @@ fn render_dashboard(
   @media (prefers-color-scheme: light) {{
     :root:not([data-theme="dark"]) {{
       color-scheme: light;
-      --void: #E9EDF2; --ground: #FFFFFF; --surface: #F7F9FC; --raised: #FFFFFF;
-      --hairline: #E7EBF0; --hairline-strong: #CFD6DD;
-      --identity: #674415; --identity-ink: #FFFFFF;
-      --text: #070B10; --text-2: #4D535A; --text-3: #828C97;
-      --ok: #0B6B3D; --warn: #913200; --bad: #A82036;
-      --c1: #070B10; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
-      --neutral-mark: #C2C9D1;
+      --void: #E8E8EC; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
+      --hairline: #E9E9EE; --hairline-strong: #D0D0D8;
+      --identity: #725a00; --identity-ink: #FFFFFF;
+      --text: #0A0A0C; --text-2: #4B4B56; --text-3: #777782;
+      --ok: #006933; --warn: #8a3f00; --bad: #96213C;
+      --c1: #0A0A0C; --c2: #4B4B56; --c3: #777782; --c4: #A9AAB5;
+      --neutral-mark: #A9AAB5;
       --ink: #FFFFFF;
-      --accent: #070B10;
-      --accent-wash: rgba(7,11,16,.06);
-      --accent-edge: rgba(7,11,16,.28);
-      --sunken: #F3F6F9;
-      --control-edge: #828C97;
+      --accent: #0A0A0C;
+      --accent-wash: rgba(10,10,12,.06);
+      --accent-edge: rgba(10,10,12,.28);
+      --sunken: #F7F7FA;
+      --control-edge: #777782;
     }}
   }}
   :root[data-theme="light"] {{
     color-scheme: light;
-    --void: #E9EDF2; --ground: #FFFFFF; --surface: #F7F9FC; --raised: #FFFFFF;
-    --hairline: #E7EBF0; --hairline-strong: #CFD6DD;
-    --identity: #674415; --identity-ink: #FFFFFF;
-    --text: #070B10; --text-2: #4D535A; --text-3: #828C97;
-    --ok: #0B6B3D; --warn: #913200; --bad: #A82036;
-    --c1: #070B10; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
-    --neutral-mark: #C2C9D1;
+    --void: #E8E8EC; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
+    --hairline: #E9E9EE; --hairline-strong: #D0D0D8;
+    --identity: #725a00; --identity-ink: #FFFFFF;
+    --text: #0A0A0C; --text-2: #4B4B56; --text-3: #777782;
+    --ok: #006933; --warn: #8a3f00; --bad: #96213C;
+    --c1: #0A0A0C; --c2: #4B4B56; --c3: #777782; --c4: #A9AAB5;
+    --neutral-mark: #A9AAB5;
     --ink: #FFFFFF;
-    --accent: #070B10;
-    --accent-wash: rgba(7,11,16,.06);
-    --accent-edge: rgba(7,11,16,.28);
-    --sunken: #F3F6F9;
-    --control-edge: #828C97;
+    --accent: #0A0A0C;
+    --accent-wash: rgba(10,10,12,.06);
+    --accent-edge: rgba(10,10,12,.28);
+    --sunken: #F7F7FA;
+    --control-edge: #777782;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   html {{ color-scheme: dark; }}
@@ -768,16 +768,16 @@ fn render_dashboard(
   .dx-line .no, .dx-line .nn {{ color: var(--text-3); text-align: right;
     font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; }}
   .dx-line .sg {{ text-align: center; -webkit-user-select: none; user-select: none; }}
-  .dx-line.add {{ background: rgba(74, 222, 128, .10); color: var(--text); }}
+  .dx-line.add {{ background: rgba(116, 201, 145, .10); color: var(--text); }}
   .dx-line.add .sg {{ color: var(--ok); }}
-  .dx-line.rem {{ background: rgba(255, 92, 122, .10); color: var(--text); }}
+  .dx-line.rem {{ background: rgba(224, 104, 122, .10); color: var(--text); }}
   .dx-line.rem .sg {{ color: var(--bad); }}
   /* Word-level highlight: the exact changed tokens inside a paired
      removal/addition, a stronger wash of the same hue the row already
      carries — never a third colour, so the rule stays "the row's tint says
      which side, the token's tint says which part". */
-  .dx-line.add .ww {{ background: rgba(74, 222, 128, .34); }}
-  .dx-line.rem .ww {{ background: rgba(255, 92, 122, .34); }}
+  .dx-line.add .ww {{ background: rgba(116, 201, 145, .34); }}
+  .dx-line.rem .ww {{ background: rgba(224, 104, 122, .34); }}
   /* The elision sits between the hunks it replaces, so it has to read as
      unmistakably not a line of the file: raised ground, centred, no gutter. */
   .dx-fold {{ color: var(--text-3); background: var(--raised); text-align: center;
@@ -808,9 +808,9 @@ fn render_dashboard(
   @media print {{
     :root {{
       --ground: #FFFFFF; --surface: #FFFFFF; --raised: #FFFFFF; --sunken: #FFFFFF;
-      --hairline: #CFD6DD; --hairline-strong: #828C97;
-      --text: #070B10; --text-2: #333333; --text-3: #555555;
-      --accent: #070B10; --ink: #FFFFFF; --identity: #674415;
+      --hairline: #D0D0D8; --hairline-strong: #777782;
+      --text: #0A0A0C; --text-2: #333333; --text-3: #555555;
+      --accent: #0A0A0C; --ink: #FFFFFF; --identity: #725a00;
       --accent-wash: transparent;
     }}
     body {{ padding: 0; }}

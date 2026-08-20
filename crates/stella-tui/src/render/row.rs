@@ -96,7 +96,7 @@ impl Rail {
     /// margin reads consistently even when content colors vary.
     pub(crate) fn style(self) -> Style {
         match self {
-            Rail::Call => Style::new().fg(theme::ACCENT_DEEP),
+            Rail::Call => Style::new().fg(theme::ACCENT),
             Rail::Result => Style::new().fg(theme::MUTED),
             Rail::Fail => Style::new().fg(theme::DANGER),
             Rail::User => Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
@@ -104,16 +104,6 @@ impl Rail {
         }
     }
 }
-
-/// The column a tab advances to: the next multiple of this from the current
-/// screen column.
-///
-/// Four rather than the terminal-conventional eight because the transcript
-/// pane is a fraction of the frame, and a tab-indented file three levels deep
-/// would spend half of a narrow pane on whitespace. Four still preserves the
-/// multiple-of-a-stop arithmetic every tab-using file assumes; it only makes
-/// each step cheaper.
-const TAB_STOP: usize = 4;
 
 /// Replace every tab in `line` with the spaces that reach the next tab stop.
 ///
@@ -134,35 +124,23 @@ const TAB_STOP: usize = 4;
 /// inherit the very hole this closes, and the deck's wrap arithmetic would
 /// disagree with what ratatui finally draws.
 ///
-/// The stop is counted from the true screen column — rail prefix and body
+/// The *stop* is [`stella_transcript::tabs`]'s, not this file's: the grid
+/// renderer had the same hole in its own width arithmetic (#4036), and one file
+/// must not indent differently in the deck and in an exported transcript. The
+/// column is counted from the true screen position — rail prefix and body
 /// indent included, since both are already spans on the line by the time this
-/// runs — so the expansion is the one a terminal would have performed. A file
-/// that uses tabs to *align* rather than to indent renders slightly off when
-/// its author's stop was not [`TAB_STOP`]; that is the same "degrades to
-/// slightly-off coloring, never a wrong render" contract [`crate::syntax`]
-/// already accepts for a line lexed out of context.
+/// runs.
 fn expand_tabs(line: &mut Line<'static>) {
     if !line.spans.iter().any(|s| s.content.contains('\t')) {
         return;
     }
     let mut col = 0usize;
     for span in &mut line.spans {
-        if !span.content.contains('\t') {
-            col += UnicodeWidthStr::width(span.content.as_ref());
-            continue;
+        let expanded = stella_transcript::tabs::expand(span.content.as_ref(), col);
+        col += UnicodeWidthStr::width(expanded.as_ref());
+        if let std::borrow::Cow::Owned(text) = expanded {
+            span.content = text.into();
         }
-        let mut expanded = String::with_capacity(span.content.len());
-        for ch in span.content.chars() {
-            if ch == '\t' {
-                let pad = TAB_STOP - (col % TAB_STOP);
-                expanded.extend(std::iter::repeat_n(' ', pad));
-                col += pad;
-            } else {
-                expanded.push(ch);
-                col += UnicodeWidthChar::width(ch).unwrap_or(0);
-            }
-        }
-        span.content = expanded.into();
     }
 }
 

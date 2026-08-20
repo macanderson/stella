@@ -42,9 +42,10 @@ fn trace_kind_color_covers_every_variant_without_panic() {
 /// derived) so this and [`every_named_token_has_a_fallback`] fail loudly the
 /// moment a new truecolor token lands without a [`FALLBACKS`] entry. Role
 /// aliases (`INK`, `OK`, `DANGER`, …) share a value with a palette token, so
-/// they are intentionally not re-listed — under the comet kit that includes
-/// `ACCENT_FILL` and `GOLD` (one Phosphor Gold with `ACCENT`) and
-/// `SYNTAX_COMMENT` (the caption tier, `TEXT_TERTIARY`).
+/// they are intentionally not re-listed — that includes `ACCENT_FILL` and
+/// `GOLD` (one gold with `ACCENT`), `GOLD_LIVE` (one value with
+/// `ACCENT_LIVE`), `SYNTAX_COMMENT` (the caption tier, `TEXT_TERTIARY`) and
+/// `SYNTAX_KEYWORD` (the bright neutral, `palette::TEXT_EMPHASIS`).
 const ALL_RGB_TOKENS: &[Color] = &[
     VOID,
     GROUND,
@@ -53,17 +54,16 @@ const ALL_RGB_TOKENS: &[Color] = &[
     HAIRLINE,
     HAIRLINE_STRONG,
     TEXT_PRIMARY,
+    palette::TEXT_EMPHASIS,
     TEXT_SECONDARY,
     TEXT_TERTIARY,
+    TEXT_DIM,
     ACCENT,
-    GOLD_BRIGHT,
-    ACCENT_DEEP,
-    GOLD_DEEP,
+    ACCENT_LIVE,
     SUCCESS,
     WARNING,
     DANGER,
     VIOLET,
-    AMBER,
     TEAL,
     MAGENTA,
     CITRON,
@@ -95,6 +95,7 @@ const LIGHT_ONLY_PALETTE_TOKENS: &[&str] = &[
     "ink",
     "muted",
     "ink-dim",
+    "ink-emphasis",
 ];
 
 /// `palette::ALL` is the brand kit's token list in Rust form; this is the
@@ -155,20 +156,19 @@ fn every_named_token_has_a_fallback() {
 #[test]
 fn role_aliases_track_their_palette_token() {
     // Brand roles resolve to the generated palette, not to a local literal.
-    // Under the comet kit the accent IS the gold: one Phosphor Gold serves
-    // text, rules and fills (11.36:1 on ground), so ACCENT, ACCENT_FILL and
-    // GOLD are one value on purpose.
+    // The accent IS the gold: one value serves text, rules and fills
+    // (11.99:1 on ground), so ACCENT, ACCENT_FILL and GOLD are one value on
+    // purpose, and ACCENT_LIVE/GOLD_LIVE are the one other gold there is.
     assert_eq!(ACCENT, palette::BRAND);
     assert_eq!(ACCENT_FILL, ACCENT);
     assert_eq!(GOLD, ACCENT);
     assert_eq!(palette::BRAND, palette::GOLD);
-    assert_eq!(palette::BRAND_BRIGHT, palette::GOLD_BRIGHT);
-    assert_eq!(ACCENT_DEEP, palette::BRAND_DEEP);
-    assert_eq!(GOLD_BRIGHT, palette::GOLD_BRIGHT);
-    assert_eq!(GOLD_DEEP, palette::GOLD_DEEP);
-    // The identity sweep and the progress fill lead with different deep
-    // stops on purpose: chrome may run quiet, the fill's tail must hold AA.
-    assert_ne!(GOLD_DEEP, ACCENT_DEEP);
+    assert_eq!(palette::BRAND_LIVE, palette::GOLD_LIVE);
+    assert_eq!(ACCENT_LIVE, palette::BRAND_LIVE);
+    assert_eq!(GOLD_LIVE, ACCENT_LIVE);
+    // Exactly two golds, and they are different: the resting mark and the
+    // live one. A third gold is what this palette exists to refuse.
+    assert_ne!(ACCENT, ACCENT_LIVE);
     assert_eq!(VOID, palette::VOID);
     assert_eq!(HAIRLINE_STRONG, palette::HAIRLINE_STRONG);
     assert_eq!(GROUND, palette::GROUND);
@@ -180,16 +180,21 @@ fn role_aliases_track_their_palette_token() {
     assert_eq!(BAD, DANGER);
     assert_eq!(HELD, VIOLET);
     assert_eq!(RUN, VIOLET);
-    // Syntax and process hues are categorical -- never the brand accent.
+    assert_eq!(TEXT_DIM, palette::TEXT_DIM);
+    // The dim tier is its own value, not an alias of the caption tier — that
+    // aliasing is what the palette's fourth neutral replaced.
+    assert_ne!(TEXT_DIM, TEXT_TERTIARY);
+    // Syntax hues: the keyword/type class rides the bright neutral (the
+    // palette's own instruction for a code body), literals stay categorical.
     assert_eq!(SYNTAX_NUMBER, VIOLET);
-    assert_eq!(SYNTAX_KEYWORD, AMBER);
+    assert_eq!(SYNTAX_KEYWORD, palette::TEXT_EMPHASIS);
     assert_eq!(SYNTAX_COMMENT, TEXT_TERTIARY);
-    // The categorical set is the observatory's data-mark palette verbatim,
-    // so a series in a chart and a chip in the deck are the same colour.
-    assert_eq!(AMBER, palette::DATA_1);
-    assert_eq!(VIOLET, palette::DATA_2);
-    assert_eq!(MAGENTA, palette::DATA_3);
-    assert_eq!(TEAL, palette::DATA_4);
+    // The categorical roles resolve to the palette's data marks in order.
+    assert_eq!(VIOLET, palette::DATA_1);
+    assert_eq!(MAGENTA, palette::DATA_2);
+    assert_eq!(TEAL, palette::DATA_3);
+    assert_eq!(CITRON, palette::DATA_4);
+    assert_eq!(ORCHID, palette::DATA_5);
 }
 
 /// The kit's one hard prohibition, restated for a gold accent: **gold never
@@ -205,7 +210,7 @@ fn role_aliases_track_their_palette_token() {
 fn gold_never_carries_a_verdict() {
     // Activity is gold — the one permitted (required, even) status use.
     assert_eq!(status_color(AgentStatus::Running), ACCENT);
-    for gold in [GOLD, GOLD_BRIGHT, GOLD_DEEP] {
+    for gold in [GOLD, GOLD_LIVE] {
         for (status, name) in [
             (OK, "OK"),
             (WARN, "WARN"),
@@ -265,38 +270,57 @@ fn gold_never_carries_a_verdict() {
     }
 }
 
-/// Hue angle in degrees `[0, 360)`, for the separation law below.
+/// Hue angle in degrees `[0, 360)`, for the separation law below — **OKLCH
+/// hue**, not sRGB's.
 ///
-/// The reservation used to be measured as squared euclidean RGB distance,
-/// which worked while the brand was green and every categorical hue was far
-/// from it in all three channels. With a blue brand it stops working: a
-/// violet and a blue can be 40° apart — plainly different colours in a
+/// The metric has moved twice, each time because the previous one stopped
+/// measuring the thing the law is about. It was squared euclidean RGB
+/// distance, which worked while the brand was green and every categorical
+/// hue was far from it in all three channels, and broke against a blue brand:
+/// a violet and a blue can be 40° apart — plainly different colours in a
 /// terminal cell — and still sit within 0x30 per channel, because blue is
-/// pinned at 0xFF in both. Hue separation measures the thing a reader
-/// actually uses, so the law is stated in the units it is really about.
+/// pinned at 0xFF in both. It became sRGB (HSV) hue, which fixed that.
+///
+/// sRGB hue in turn breaks against a *yellow* brand, because sRGB's hue
+/// circle is badly non-uniform through the warm quadrant. Measured on this
+/// palette's own values: the accent and the success green are 94.8° apart in
+/// sRGB but 63.1° in OKLCH, while the accent and the danger rose are 54.7°
+/// in sRGB but 78.0° in OKLCH — sRGB stretches yellow→green and compresses
+/// yellow→red by roughly 30° each. The consequence is not academic. It makes
+/// the 54.7° sRGB arc between the accent and danger too narrow to hold a
+/// warning at 30° from both, so the metric would have rejected the one hue
+/// that is *actually* 39.1° from each — an unbuildable law, not a strict one.
+///
+/// OKLCH is perceptually uniform by construction and is already the metric
+/// the Observatory reasons in (see its `--warn` derivation in
+/// `crates/stella-observatory/src/assets/index.html`), so this also puts the
+/// two surfaces on one ruler instead of two. Conversion is sRGB → linear →
+/// LMS → Oklab → hue, following Björn Ottosson's published matrices.
 fn hue_deg(color: Color) -> f64 {
     let Color::Rgb(r, g, b) = color else {
         panic!("{color:?} must be a truecolor token");
     };
-    let (r, g, b) = (
-        f64::from(r) / 255.0,
-        f64::from(g) / 255.0,
-        f64::from(b) / 255.0,
-    );
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let c = max - min;
-    if c == 0.0 {
+    // sRGB → linear light.
+    let lin = |c: u8| {
+        let c = f64::from(c) / 255.0;
+        if c <= 0.040_45 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let (r, g, b) = (lin(r), lin(g), lin(b));
+    // Linear sRGB → LMS, then the cube root that makes the space uniform.
+    let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
+    let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
+    let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
+    // LMS → Oklab's two chromatic axes; the hue is their angle.
+    let a_axis = 1.977_998_495_1 * l - 2.428_592_205_0 * m + 0.450_593_709_9 * s;
+    let b_axis = 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766_0 * s;
+    if a_axis.hypot(b_axis) < 1e-6 {
         return 0.0;
     }
-    let h = if max == r {
-        ((g - b) / c).rem_euclid(6.0)
-    } else if max == g {
-        (b - r) / c + 2.0
-    } else {
-        (r - g) / c + 4.0
-    };
-    (h * 60.0).rem_euclid(360.0)
+    b_axis.atan2(a_axis).to_degrees().rem_euclid(360.0)
 }
 
 /// The shortest angular distance between two hues, in degrees.
@@ -312,29 +336,42 @@ fn hue_separation(a: Color, b: Color) -> f64 {
 /// survived and only the hue it names changed. Keep rewriting it rather than
 /// deleting it.
 ///
-/// The comet recolour changed the law in three real ways. First, the exact
-/// values are load-bearing: Phosphor Gold `#FFB81A` and Ink `#0B0B0C` are
-/// the brand, so clause 1 pins the hex rather than merely the dominance.
-/// Second, the ground lost its cast: ink is a warm-neutral near-black, so
-/// the old "the canvas must carry the blue cast" clause inverts back into
-/// "the canvas may carry (almost) no cast" — and the same warmth law now
-/// covers the text ramp, because the owner banned cool grays outright.
-/// Third, the reservation has *named neighbours* again: a gold accent lives
-/// 4.0° from warning amber and 0.8° from the amber data mark, so instead of
-/// "no exceptions" the law says exactly which two hues may sit close and
-/// what confines each of them.
+/// This recolour changed the law in three real ways.
+///
+/// First, the temperature **inverted, and is now a hard rule in the other
+/// direction**. The previous palette banned cool grays and asserted every
+/// neutral was warm-dominant (`r >= g >= b`); this one requires the exact
+/// opposite of every neutral it ships — blue one or two points above red —
+/// because the accent is a yellow, and a warm neutral puts the ground and
+/// the one owned colour in the same family, which on a cheap panel reads as
+/// muddy brown. Clause 3 is therefore the inverse of the clause it replaces,
+/// and clause 2 retires the whole warm ramp by value so it cannot come back
+/// one token at a time.
+///
+/// Second, gold is **two values and no more**. The old ramp carried four
+/// (`ACCENT`, `ACCENT_DEEP`, `GOLD_BRIGHT`, `GOLD_DEEP`) plus an amber data
+/// mark 0.8° away from the accent, which is how a reserved colour stops
+/// being one. Clause 6 pins the pair and clause 5 admits no exception for a
+/// near-gold categorical hue, because there is no longer one.
+///
+/// Third, the reservation has **no named neighbours at all**. Warning used
+/// to sit 4.0° from the accent and be excused on the grounds that a status
+/// is always glyph-paired; it is derived now to sit 39.1° away (see
+/// `palette::WARNING`), so the excuse is retired along with the collision.
+/// The glyph pairing is still asserted — it is a good rule — but it is no
+/// longer load-bearing for telling a warning from the mark.
 ///
 /// What must hold now:
-///   1. The accent is the kit's Phosphor Gold, exactly; the ground is Ink,
-///      exactly. Brand and gold are one family (the collapse IS the
-///      rebrand).
-///   2. Every retired hue is gone — the whole electric-blue family, the old
-///      warm-tinted gold, and the cool gray text ramp with them.
-///   3. Grounds are near-neutral and never true black; text is warm.
+///   1. The accent is `#EFC53F`, exactly; the canvas is `#0A0A0C`, exactly.
+///      Brand and gold are one family (the collapse IS the identity).
+///   2. Every retired hue is gone — the electric-blue family, every gold
+///      this palette replaced, and the whole warm neutral ramp with them.
+///   3. Grounds and text are cool neutrals: near-neutral, never true black,
+///      and never warm-dominant. Warm grays are banned on the dark side.
 ///   4. Warning ramps warm, success ramps green, danger ramps red.
-///   5. Gold is reserved. Every chromatic role sits ≥ 30° of hue away,
-///      except the two named neighbours: WARN (always glyph-paired) and
-///      AMBER (confined to syntax keywords in code bodies).
+///   5. Gold is reserved. **Every** chromatic role sits ≥ 30° of hue away —
+///      no named neighbours, no carve-outs.
+///   6. There are exactly two golds, and the second one is the live stop.
 #[test]
 fn palette_law_gold_is_the_brand() {
     const RETIRED_AURORA_CYAN: Color = Color::Rgb(0x3F, 0xE0, 0xFF);
@@ -374,29 +411,67 @@ fn palette_law_gold_is_the_brand() {
     const RETIRED_COOL_TEXT: Color = Color::Rgb(0xF2, 0xF5, 0xFA);
     const RETIRED_COOL_TEXT_2: Color = Color::Rgb(0x8E, 0x97, 0xA8);
     const RETIRED_COOL_TEXT_3: Color = Color::Rgb(0x73, 0x7D, 0x92);
-    /// The blue-cast "deep space" ground the ink ramp replaces.
+    /// The blue-cast "deep space" ground an older ink ramp replaced. Kept
+    /// listed even though this palette is cool again: `#080A0F` is a
+    /// *blue-cast* near-black (b−r = 7 at hue 265°), not the neutral
+    /// blue-above-red this ramp specifies, and re-adopting it would trade a
+    /// warm cast for a blue one rather than removing the cast.
     const RETIRED_DEEP_SPACE: Color = Color::Rgb(0x08, 0x0A, 0x0F);
+    /// The four golds this palette replaces with two. Phosphor Gold and its
+    /// three ramp stops — a reserved colour that needs four values is not
+    /// reserved, and `#FFB81A` is also the one this tree shipped longest, so
+    /// it is the value most likely to be pasted back in from memory.
+    const RETIRED_PHOSPHOR_GOLD: Color = Color::Rgb(0xFF, 0xB8, 0x1A);
+    const RETIRED_PHOSPHOR_GOLD_BRIGHT: Color = Color::Rgb(0xFD, 0xC1, 0x54);
+    const RETIRED_PHOSPHOR_GOLD_DEEP: Color = Color::Rgb(0xE5, 0xA0, 0x00);
+    const RETIRED_PHOSPHOR_GOLD_TRAIL: Color = Color::Rgb(0xA3, 0x72, 0x00);
+    /// The amber data mark, retired for measuring 5.5° from this gold — the
+    /// same colour at a glance. It is the reason clause 5 has no carve-outs.
+    const RETIRED_AMBER_MARK: Color = Color::Rgb(0xE3, 0xB3, 0x41);
+    /// The **warm** neutral ramp this palette inverts: warm Paper text, its
+    /// two grays, the warm ink grounds, and the warm papers of the light
+    /// theme. Listed in full rather than by the ground alone, because the
+    /// drift this catches is a half-applied recolour — one token pasted back
+    /// from the old ramp is exactly what nobody notices.
+    const RETIRED_WARM_INK: Color = Color::Rgb(0x0B, 0x0B, 0x0C);
+    const RETIRED_WARM_VOID: Color = Color::Rgb(0x05, 0x05, 0x06);
+    const RETIRED_WARM_SURFACE: Color = Color::Rgb(0x13, 0x13, 0x15);
+    const RETIRED_WARM_RAISED: Color = Color::Rgb(0x1B, 0x1B, 0x1E);
+    const RETIRED_WARM_HAIRLINE: Color = Color::Rgb(0x23, 0x23, 0x27);
+    const RETIRED_WARM_TEXT: Color = Color::Rgb(0xF4, 0xF1, 0xEA);
+    const RETIRED_WARM_TEXT_2: Color = Color::Rgb(0x9B, 0x98, 0x90);
+    const RETIRED_WARM_TEXT_3: Color = Color::Rgb(0x8D, 0x8A, 0x82);
+    const RETIRED_WARM_PAPER: Color = Color::Rgb(0xF6, 0xF2, 0xE9);
+    const RETIRED_WARM_SNOW: Color = Color::Rgb(0xFC, 0xFA, 0xF4);
+    /// The previous status trio, all three of which sat outside this
+    /// palette's cool register.
+    const RETIRED_HOT_SUCCESS: Color = Color::Rgb(0x4A, 0xDE, 0x80);
+    const RETIRED_HOT_WARNING: Color = Color::Rgb(0xEA, 0xB3, 0x08);
+    const RETIRED_HOT_DANGER: Color = Color::Rgb(0xFF, 0x5C, 0x7A);
 
-    // 1. The accent is Phosphor Gold and the ground is Ink — the exact kit
-    //    values, pinned by hex so the brand cannot silently drift. This is
-    //    the one clause that names numbers: `#FFB81A` on `#0B0B0C` is the
-    //    identity.
+    // 1. The accent is the gold and the ground is the canvas — pinned by
+    //    hex so the identity cannot silently drift. This is the one clause
+    //    that names numbers: `#EFC53F` on `#0A0A0C`.
     assert_eq!(
         ACCENT,
-        Color::Rgb(0xFF, 0xB8, 0x1A),
-        "the accent must be Phosphor Gold #FFB81A, exactly"
+        Color::Rgb(0xEF, 0xC5, 0x3F),
+        "the accent must be gold #EFC53F, exactly"
     );
     assert_eq!(
         GROUND,
-        Color::Rgb(0x0B, 0x0B, 0x0C),
-        "the ground must be Ink #0B0B0C, exactly"
+        Color::Rgb(0x0A, 0x0A, 0x0C),
+        "the ground must be the canvas #0A0A0C, exactly"
     );
     assert_eq!(ACCENT, palette::BRAND, "the accent comes from the palette");
-    assert_eq!(
-        GOLD, ACCENT,
-        "brand and gold are one family under the comet"
-    );
-    for (gold, name) in [(ACCENT, "ACCENT"), (ACCENT_FILL, "ACCENT_FILL")] {
+    assert_eq!(GOLD, ACCENT, "brand and gold are one value");
+    // The accent itself is the one warm thing on the dark side, and has to
+    // be: it is a yellow, which is exactly why every neutral around it is
+    // pulled cool in clause 3.
+    for (gold, name) in [
+        (ACCENT, "ACCENT"),
+        (ACCENT_FILL, "ACCENT_FILL"),
+        (ACCENT_LIVE, "ACCENT_LIVE"),
+    ] {
         let Color::Rgb(r, g, b) = gold else {
             panic!("{name} must be a truecolor token");
         };
@@ -413,10 +488,16 @@ fn palette_law_gold_is_the_brand() {
         HELD,
         ACCENT,
         ACCENT_FILL,
+        ACCENT_LIVE,
         OK,
-        ACCENT_DEEP,
+        WARN,
+        BAD,
         CODE,
         GOLD,
+        GOLD_LIVE,
+        TEXT_DIM,
+        CITRON,
+        ORCHID,
     ]);
     all.extend(BRAND_STOPS);
     all.extend(LIGHT_REMAP.iter().map(|(_, to)| *to));
@@ -447,15 +528,40 @@ fn palette_law_gold_is_the_brand() {
             (RETIRED_COOL_TEXT_2, "the cool secondary gray"),
             (RETIRED_COOL_TEXT_3, "the cool tertiary gray"),
             (RETIRED_DEEP_SPACE, "the deep-space ground"),
+            (RETIRED_PHOSPHOR_GOLD, "phosphor gold"),
+            (RETIRED_PHOSPHOR_GOLD_BRIGHT, "bright phosphor gold"),
+            (RETIRED_PHOSPHOR_GOLD_DEEP, "deep phosphor gold"),
+            (RETIRED_PHOSPHOR_GOLD_TRAIL, "the phosphor gold trail stop"),
+            (RETIRED_AMBER_MARK, "the amber data mark"),
+            (RETIRED_WARM_INK, "the warm ink ground"),
+            (RETIRED_WARM_VOID, "the warm void"),
+            (RETIRED_WARM_SURFACE, "the warm surface"),
+            (RETIRED_WARM_RAISED, "the warm raised ground"),
+            (RETIRED_WARM_HAIRLINE, "the warm hairline"),
+            (RETIRED_WARM_TEXT, "the warm primary text"),
+            (RETIRED_WARM_TEXT_2, "the warm secondary text"),
+            (RETIRED_WARM_TEXT_3, "the warm tertiary text"),
+            (RETIRED_WARM_PAPER, "the warm paper ground"),
+            (RETIRED_WARM_SNOW, "the warm snow surface"),
+            (RETIRED_HOT_SUCCESS, "the uncooled success green"),
+            (RETIRED_HOT_WARNING, "the uncooled warning amber"),
+            (RETIRED_HOT_DANGER, "the uncooled danger red"),
         ] {
             assert_ne!(*token, retired, "a token still holds {name}");
         }
     }
 
-    // 3. The ground is ink: near-neutral (a whisper of cast at most, in
-    //    either temperature), and never true black — pure black makes the
-    //    accent scream; ink lets it speak. The text ramp is warm: the owner
-    //    banned cool grays, so no text tier may lean blue.
+    // 3. Every neutral — ground ramp and text ramp alike — is cool: blue at
+    //    or above red, never below it, and never by enough to read as a
+    //    blue *cast*. This is the inverse of the clause it replaces, and it
+    //    is the whole reason these values are specified rather than derived:
+    //    the accent is a yellow, so a warm neutral would sit in the accent's
+    //    own family and the screen would read muddy on a cheap panel. Never
+    //    true black either — pure black makes an accent scream.
+    //
+    //    The grounds are held to a tighter band (≤ 8) than the text tiers
+    //    (≤ 14) because a ground is a large field where any cast is visible,
+    //    while a text tier is a few thousand lit pixels.
     for (ground, name) in [
         (VOID, "VOID"),
         (GROUND, "GROUND"),
@@ -467,26 +573,55 @@ fn palette_law_gold_is_the_brand() {
         let Color::Rgb(r, g, b) = ground else {
             panic!("{name} must be a truecolor token");
         };
+        assert!(
+            b >= r,
+            "{name} ({ground:?}) must not be warm — blue sits above red on \
+             every ground in this palette"
+        );
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         assert!(
-            max - min <= 5,
-            "{name} ({ground:?}) must be near-neutral ink, not a cast"
+            max - min <= 8,
+            "{name} ({ground:?}) must be a near-neutral, not a blue cast"
         );
         assert_ne!(ground, Color::Rgb(0, 0, 0), "{name} must not be true black");
     }
     for (text, name) in [
         (TEXT_PRIMARY, "TEXT_PRIMARY"),
+        (palette::TEXT_EMPHASIS, "TEXT_EMPHASIS"),
         (TEXT_SECONDARY, "TEXT_SECONDARY"),
         (TEXT_TERTIARY, "TEXT_TERTIARY"),
+        (TEXT_DIM, "TEXT_DIM"),
     ] {
         let Color::Rgb(r, g, b) = text else {
             panic!("{name} must be a truecolor token");
         };
         assert!(
-            r >= g && g >= b,
-            "{name} ({text:?}) must be a warm neutral (r ≥ g ≥ b) — cool \
-             grays are banned"
+            b >= r && b >= g,
+            "{name} ({text:?}) must be a cool neutral (b ≥ r, b ≥ g) — warm \
+             grays are banned on the dark side"
         );
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        assert!(
+            max - min <= 14,
+            "{name} ({text:?}) must be a near-neutral, not a blue cast"
+        );
+    }
+    // The paper ramp is cooled to match, so a theme switch changes the
+    // lightness and not the temperature.
+    for (paper, name) in [
+        (palette::PAPER, "PAPER"),
+        (palette::SNOW, "SNOW"),
+        (palette::PAPER_RAISED, "PAPER_RAISED"),
+        (palette::PAPER_HAIRLINE, "PAPER_HAIRLINE"),
+        (palette::INK, "INK"),
+        (palette::MUTED, "MUTED"),
+        (palette::INK_DIM, "INK_DIM"),
+        (palette::INK_EMPHASIS, "INK_EMPHASIS"),
+    ] {
+        let Color::Rgb(r, _, b) = paper else {
+            panic!("{name} must be a truecolor token");
+        };
+        assert!(b >= r, "{name} ({paper:?}) must not be warm");
     }
 
     // 4. Warning ramps warm (r > g > b — amber, no longer the orange that
@@ -506,10 +641,13 @@ fn palette_law_gold_is_the_brand() {
 
     // 5. Gold is reserved for brand / active / focus / selection / progress.
     //    Every chromatic role sits ≥ 30° of hue away — which is how
-    //    `AGENT_ICE` died — except the two *named* neighbours below.
+    //    `AGENT_ICE` died, and now how the amber data mark died too. There
+    //    are no named neighbours any more: WARN is in this list rather than
+    //    excused from it.
     for (role, name) in [
         (BAD, "BAD"),
         (OK, "OK"),
+        (WARN, "WARN"),
         (RUN, "RUN"),
         (HELD, "HELD"),
         (VIOLET, "VIOLET"),
@@ -529,62 +667,55 @@ fn palette_law_gold_is_the_brand() {
              30° is the floor for two hues to be told apart in a cell"
         );
     }
-    // The named neighbours. WARN sits 4.0° from gold: permitted because a
-    // status never appears without its glyph (`status_glyph`), so the hue is
-    // never the only carrier. AMBER sits 0.8° away: permitted because it
-    // paints syntax keywords inside code bodies and nothing else — the
-    // observatory stands the same mark down from every plotted surface, and
-    // the deck stands it down from every chip, node and agent.
-    for (neighbour, name) in [(WARN, "WARN"), (AMBER, "AMBER")] {
-        assert_ne!(neighbour, ACCENT, "{name} may neighbour gold, not BE it");
-        let sep = hue_separation(neighbour, ACCENT);
-        assert!(
-            sep < 30.0,
-            "{name} is a *named* hue-neighbour of gold ({sep:.1}°); if it \
-             has moved ≥ 30° away, promote it to the reserved list above"
-        );
-    }
+    // The warning is the clause's own regression test. It sat 4.0° from the
+    // previous gold and was excused as "always glyph-paired"; the derivation
+    // in `palette::WARNING` puts it 39.1° away instead, and if it ever slid
+    // back under the floor the loop above would now catch it rather than a
+    // carve-out waving it through. The glyph pairing still holds — it is a
+    // good rule — it is simply no longer the only thing keeping a warning
+    // and the mark apart.
     assert!(
-        !AGENT_PALETTE.contains(&AMBER),
-        "the amber mark is stood down: no agent chip may wear it"
+        hue_separation(WARN, ACCENT) >= 30.0,
+        "warning must clear the same 30° floor as every other chromatic role"
     );
-    for kind in [
-        "function", "method", "struct", "enum", "trait", "file", "module", "?",
-    ] {
-        assert_ne!(
-            graph_kind_color(kind),
-            AMBER,
-            "the amber mark is stood down: no graph node may wear it"
-        );
-    }
-    for kind in [
-        TraceKind::Stage,
-        TraceKind::Text,
-        TraceKind::Reasoning,
-        TraceKind::Tool,
-        TraceKind::File,
-        TraceKind::Budget,
-        TraceKind::Context,
-        TraceKind::Verdict,
-        TraceKind::Media,
-        TraceKind::Vcs,
-        TraceKind::Error,
-        TraceKind::Complete,
-        TraceKind::Other,
-    ] {
-        assert_ne!(
-            trace_kind_color(kind),
-            AMBER,
-            "the amber mark is stood down: no trace chip may wear it"
-        );
-    }
 
-    // 6. The brand's own tones are the only things allowed near it, and the
-    //    accent/fill pair really is one value now.
+    // 6. There are exactly two golds, they are one hue, and nothing else is
+    //    allowed near them. The pair is what the palette permits: a resting
+    //    mark and a live one.
     assert_eq!(ACCENT_FILL, ACCENT);
-    assert!(hue_separation(ACCENT_DEEP, ACCENT) < 10.0);
-    assert!(hue_separation(GOLD_DEEP, ACCENT) < 10.0);
-    assert!(hue_separation(GOLD_BRIGHT, ACCENT) < 10.0);
+    assert_eq!(GOLD_LIVE, ACCENT_LIVE);
+    assert_ne!(ACCENT_LIVE, ACCENT, "the live stop must be visibly lifted");
+    assert!(
+        hue_separation(ACCENT_LIVE, ACCENT) < 10.0,
+        "the live stop is the same gold lit up, not a second hue"
+    );
+    // Two, and only two. Any *other* palette value landing inside gold's
+    // 30° exclusion zone is a third gold arriving by the back door, which is
+    // how the last one grew to four plus an amber.
+    for (name, value) in palette::ALL {
+        if value == ACCENT || value == ACCENT_LIVE {
+            continue;
+        }
+        // The light-ground golds are the same hue by construction; they are
+        // the paper theme's counterparts of the pair above, never a third
+        // stop on the dark canvas.
+        if matches!(name, "brand-ink" | "brand-ink-deep" | "gold-ink") {
+            continue;
+        }
+        let Color::Rgb(r, g, b) = value else { continue };
+        // Neutrals have no meaningful hue to separate; skip anything whose
+        // channels are within the ramp's own spread.
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        if max - min <= 14 {
+            continue;
+        }
+        let sep = hue_separation(value, ACCENT);
+        assert!(
+            sep >= 30.0,
+            "palette token `{name}` ({value:?}) sits {sep:.1}° from the gold \
+             accent — this palette ships two golds and no third"
+        );
+    }
 }
 
 #[test]
@@ -696,7 +827,7 @@ fn degrade_buffer_resolves_every_cell_when_degraded() {
     buf.content[0].fg = ACCENT; // → 214 (256) / 11 (16)
     buf.content[0].bg = VIOLET; // → 98 (256) / 13 (16)
     degrade_buffer(&mut buf, ColorMode::Ansi256);
-    assert_eq!(buf.content[0].fg, Color::Indexed(214));
+    assert_eq!(buf.content[0].fg, Color::Indexed(221));
     assert_eq!(buf.content[0].bg, Color::Indexed(98));
 }
 
@@ -731,23 +862,26 @@ fn degraded_paths_keep_meaningful_pairs_distinguishable() {
         }
         // Gold is brand chrome and warning is a status; they may never
         // become the same cell, at any depth.
-        for gold in [GOLD, GOLD_BRIGHT, GOLD_DEEP] {
+        for gold in [GOLD, GOLD_LIVE] {
             assert_ne!(
                 idx(gold, mode),
                 idx(WARN, mode),
                 "{mode:?}: {gold:?} collapsed onto warning"
             );
         }
-        // The progress fill keeps a head-to-tail ramp.
-        assert_ne!(
-            idx(ACCENT_DEEP, mode),
-            idx(ACCENT, mode),
-            "{mode:?}: the progress fill lost its ramp"
-        );
         // The ground ladder keeps at least ground/raised apart, so a
         // selected row still reads.
         assert_ne!(idx(GROUND, mode), idx(RAISED, mode), "{mode:?}: select bg");
     }
+    // The two golds stay distinct at 256 colours, so the progress fill keeps
+    // a head-to-tail ramp there. At 16 there is no second yellow to lift to
+    // and they share index 11 — which costs nothing, because `crate::progress`
+    // already paints a solid ACCENT whenever the terminal is not truecolor.
+    assert_ne!(
+        resolve(ACCENT, ColorMode::Ansi256),
+        resolve(ACCENT_LIVE, ColorMode::Ansi256),
+        "the live stop must stay distinct from the resting gold at 256 colours"
+    );
 }
 
 #[test]
@@ -757,15 +891,11 @@ fn apply_theme_is_identity_for_dark_and_remaps_for_light() {
     // process-global active theme (which other tests read).
     assert_eq!(remap_theme(ACCENT, LIGHT_REMAP), palette::BRAND_INK);
     assert_eq!(remap_theme(ACCENT_FILL, LIGHT_REMAP), palette::BRAND_INK);
-    assert_eq!(
-        remap_theme(ACCENT_DEEP, LIGHT_REMAP),
-        palette::BRAND_INK_DEEP
-    );
-    // Flat gold cells are accent cells now, so they take the accent's paper
-    // text tone; the kit's own light-ground gold (`gold-ink`) survives in the
-    // graphical `gold_stops` sweep only.
+    // Flat gold cells are accent cells, so they take the accent's paper text
+    // tone; the light-ground *graphical* gold is where the live stop lands,
+    // because a lifted gold cannot carry text on paper at all.
     assert_eq!(remap_theme(GOLD, LIGHT_REMAP), palette::BRAND_INK);
-    assert_eq!(remap_theme(GOLD_DEEP, LIGHT_REMAP), palette::GOLD_INK);
+    assert_eq!(remap_theme(ACCENT_LIVE, LIGHT_REMAP), palette::GOLD_INK);
     assert_eq!(remap_theme(VOID, LIGHT_REMAP), palette::PAPER);
     assert_eq!(remap_theme(GROUND, LIGHT_REMAP), palette::PAPER);
     assert_eq!(remap_theme(TEXT_PRIMARY, LIGHT_REMAP), palette::INK);
@@ -779,7 +909,7 @@ fn apply_theme_is_identity_for_dark_and_remaps_for_light() {
         );
     }
     // An unmapped colour (an interpolated gradient cell) passes through.
-    let mid = lerp_rgb(palette::BRAND_DEEP, palette::BRAND_BRIGHT, 0.5);
+    let mid = lerp_rgb(palette::BRAND, palette::BRAND_LIVE, 0.5);
     assert_eq!(remap_theme(mid, LIGHT_REMAP), mid);
     // Every LIGHT_REMAP key is a distinct value (aliases share one entry).
     for (i, (from, _)) in LIGHT_REMAP.iter().enumerate() {
@@ -823,33 +953,22 @@ fn degrade_buffer_strips_color_under_no_color() {
 }
 
 #[test]
-fn brand_gradient_spans_deep_to_bright_accent() {
-    // The default theme is `stella-dark`, so the stops are the gold accent
-    // pair; `primary_stops` swaps them for the deep paper golds under
+fn brand_gradient_spans_resting_to_live_accent() {
+    // The default theme is `stella-dark`, so the stops are the two golds;
+    // `primary_stops` swaps them for the deep paper pair under
     // `stella-light`.
-    assert_eq!(brand_gradient(0.0), ACCENT_DEEP);
-    assert_eq!(brand_gradient(1.0), ACCENT);
+    assert_eq!(brand_gradient(0.0), ACCENT);
+    assert_eq!(brand_gradient(1.0), ACCENT_LIVE);
     // Monotonic, clamped, never panics across the range.
     for i in 0..=20 {
         let _ = brand_gradient(f64::from(i) / 20.0);
     }
-    assert_eq!(brand_gradient(-1.0), ACCENT_DEEP);
-    assert_eq!(brand_gradient(2.0), ACCENT);
-    // The bright end is exactly what `crate::progress` falls back to when
-    // the terminal cannot render the gradient — the fill must not change
-    // colour with the terminal's depth.
-    assert_eq!(brand_gradient(1.0), ACCENT);
-}
-
-#[test]
-fn gold_gradient_spans_deep_to_bright_gold() {
-    assert_eq!(gold_gradient(0.0), GOLD_DEEP);
-    assert_eq!(gold_gradient(1.0), GOLD_BRIGHT);
-    for i in 0..=20 {
-        let _ = gold_gradient(f64::from(i) / 20.0);
-    }
-    assert_eq!(gold_gradient(-1.0), GOLD_DEEP);
-    assert_eq!(gold_gradient(2.0), GOLD_BRIGHT);
+    assert_eq!(brand_gradient(-1.0), ACCENT);
+    assert_eq!(brand_gradient(2.0), ACCENT_LIVE);
+    // The *resting* end is exactly what `crate::progress` falls back to when
+    // the terminal cannot render the gradient, so a degraded fill is the
+    // gradient's own tail rather than a value that appears nowhere in it.
+    assert_eq!(brand_gradient(0.0), ACCENT);
 }
 
 #[test]
@@ -861,13 +980,15 @@ fn lighten_moves_toward_white() {
 /// The transcript's tool-class hues are a *set*, and a set only works if
 /// every member is telling apart from every other one — not just from gold.
 ///
-/// This is the law behind `crate::tool_class`: six classes, six categorical
-/// hues, none of them the reserved brand accent, and at least 30° of hue
+/// This is the law behind `crate::tool_class`: one categorical hue per
+/// class, none of them the reserved brand accent, and at least 30° of hue
 /// between every pair (the same floor `palette_law_gold_is_the_brand`'s
 /// clause 5 applies against gold, and the floor that killed `AGENT_ICE`).
-/// A seventh class cannot be added without either finding a seventh gap or
+/// Another class cannot be added without either finding another gap or
 /// admitting the reader can no longer see the difference — which is a
-/// decision, and this test is where it gets made.
+/// decision, and this test is where it gets made. The count is deliberately
+/// not written here: `ToolClass::ALL` is the count, and a number in prose
+/// beside it is one more cell to drift (it already had, at "six").
 #[test]
 fn every_tool_class_is_categorical_and_distinct() {
     use crate::tool_class::ToolClass;

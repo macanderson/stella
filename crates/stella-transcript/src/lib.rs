@@ -43,6 +43,7 @@ pub mod grid;
 pub mod html;
 pub mod model;
 pub mod syntax;
+pub mod tabs;
 pub mod word;
 
 #[cfg(test)]

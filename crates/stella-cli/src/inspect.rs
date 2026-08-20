@@ -795,7 +795,7 @@ fn print_diff(computed: &Diff, baseline: &Baseline, target_label: &str, args: &I
         );
     }
     for hunk in &computed.hunks {
-        println!("{}", hunk.header().cyan());
+        println!("{}", hunk.header().bright_black());
         for line in &hunk.lines {
             let rendered = format!("{}{}", line.op.sigil(), line.text);
             match line.op {

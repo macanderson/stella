@@ -17,7 +17,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::{DeckUi, SkillPrompt, SkillsFocus};
-use crate::syntax;
+use crate::syntax::{self, HighlightSpans as _};
 use crate::theme;
 
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {

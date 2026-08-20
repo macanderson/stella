@@ -761,7 +761,7 @@ fn pr_spans(pr: &crate::deck::PrInfo) -> Vec<Span<'static>> {
     use stella_protocol::{CiStatus, PrStatus};
     let status_color = match pr.status {
         PrStatus::Draft => theme::WARNING,
-        PrStatus::Open => theme::ACCENT_DEEP,
+        PrStatus::Open => theme::ACCENT,
         PrStatus::Merged => theme::ACCENT,
         PrStatus::Closed => theme::DANGER,
     };

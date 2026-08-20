@@ -235,7 +235,7 @@ reaches the browser must be audited the same way before it lands.
 ### The palette is a mirror, and one data-mark step is deliberately unused
 
 The `:root` block at the top of `index.html` mirrors the comet brand kit
-(v4.0) — Bronze Gold `#C58A32` on Obsidian `#070B10` over cool graphite
+(v5.0) — Gold `#EFC53F` on `#0A0A0C` over a neutral graphite
 neutrals, set in JetBrains Mono. v4.0 took the brand hue back from v3.0's Ion
 and kept that release's cool neutral ramp and ground, so only the identity
 moved. [`../../docs/brand/`](../../docs/brand/README.md) is the normative

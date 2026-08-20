@@ -1,0 +1,25 @@
+# The commit of macanderson/stella-examples that this repository's example
+# plugin smoke check grades against (`doc:pipeline-as-plugins` §9 rule 4,
+# `doc:plugin-completion-plan` §4.5b, #3523).
+#
+# WHY A PIN AND NOT A BRANCH. The three `verify-{rs,py,ts}` plugins are the
+# public proof that a plugin can be written in any language against this
+# socket. Grading them against a moving `main` makes this check fail for
+# reasons that have nothing to do with the PR that turned it red, and — worse —
+# lets the examples drift green while the grammar underneath them changes.
+# A pinned SHA makes the bump a reviewable diff, which is the property that
+# makes the check mean something. Bump it in its own commit, with the
+# examples-side change it is following named in the message.
+#
+# HOW TO BUMP.
+#   gh api repos/macanderson/stella-examples/commits/main --jq .sha
+# then run the harness against the new checkout before pushing:
+#   STELLA_EXAMPLES_DIR=<checkout> cargo test -p stella-runtime \
+#       --test example_plugins_smoke
+#
+# Format: two lines, `repo` and `sha`, each `key = value`. Parsed by
+# `crates/stella-runtime/tests/example_plugins_smoke.rs` and by
+# `.github/workflows/example-plugins.yml`, so keep it boring.
+
+repo = macanderson/stella-examples
+sha = 110d8430ea1a1996ee4fa4e5213efc3e0f507601

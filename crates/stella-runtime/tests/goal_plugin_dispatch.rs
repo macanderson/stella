@@ -13,17 +13,26 @@
 //! for the generic mechanism, now driven for enough rounds to prove "who
 //! decides done?" as well.
 //!
-//! # The one gap this file makes concrete rather than theoretical
+//! # The seat this file binds by hand, and who binds it for real
 //!
 //! `ChildTurns::default_seats()` does not serve the `verifier` tier this
-//! plugin's `[roles.verifier]` names (`child_turn.rs`'s own module doc names
-//! the reason: attributing a plugin's child turn to `ModelCallRole::Verdict`
-//! would put a call on the receipt the pipeline itself did not make). No
-//! shipped host binds it today — see `plugins/stella-goal/README.md`'s
-//! "Known gaps" table. So this file's main witness binds the seat by hand
-//! with [`ChildTurns::with_seat`], exactly as `child_turn.rs`'s own
-//! `an_unserved_tier_names_the_tiers_that_are_served` test does, and a second
-//! test pins what happens on every host that does not: the plugin degrades
+//! plugin's `[roles.verifier]` names — that stays a deliberate default, and
+//! `ChildTurns::with_seat`'s contract is that a host wanting the tier says so
+//! and owns the claim.
+//!
+//! **`stella run`'s door now says so** (#3838):
+//! `stella_cli::wrapper_plugin::child_turn_plane` binds
+//! `verifier -> ModelCallRole::Verdict`, which is the same responsibility
+//! `stella_core::goal` books its own independent verifier call against. So
+//! this file's `.with_seat` call reproduces production wiring rather than
+//! standing in for wiring that does not exist, and the witness that the
+//! *shipped* door serves the *shipped* manifest lives with the door, in
+//! `crates/stella-cli/src/wrapper_plugin/tests.rs`
+//! (`the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane`).
+//!
+//! The second test below keeps its meaning unchanged and is not obsolete: it
+//! pins what a host that binds *no* seat does — a driver with no dispatcher of
+//! its own is still in exactly that state — namely that the plugin degrades
 //! honestly and the loop ends `Undecided` rather than crediting or blaming an
 //! assessment that was never made.
 //!

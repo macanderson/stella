@@ -666,19 +666,19 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
     // Dark: the instrument ramp, achromatic chrome, the brand hue only as
     // identity.
     for declaration in [
-        "--ground: #070B10;",
-        "--surface: #0D1319;",
-        "--raised: #11171D;",
-        "--hairline: #1F262D;",
-        "--text: #E9EDF2;",
-        "--text-2: #A4ABB3;",
-        "--text-3: #737C88;",
-        "--accent: #E9EDF2;",
-        "--identity: #C58A32;",
-        "--ok: #3FD99B;",
-        "--warn: #FF7A45;",
-        "--bad: #F2687A;",
-        "--c1: #E9EDF2;",
+        "--ground: #0A0A0C;",
+        "--surface: #0F0F12;",
+        "--raised: #17171B;",
+        "--hairline: #26262C;",
+        "--text: #E8E8EC;",
+        "--text-2: #A9AAB5;",
+        "--text-3: #777782;",
+        "--accent: #E8E8EC;",
+        "--identity: #EFC53F;",
+        "--ok: #74C991;",
+        "--warn: #E78D54;",
+        "--bad: #E0687A;",
+        "--c1: #E8E8EC;",
     ] {
         assert!(
             html.contains(declaration),
@@ -691,14 +691,28 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
     // block no longer defines.
     for retired in [
         "#7dd3fc", "#38bdf8", "#a78bfa", "#6c7b90", "#4d9fff", "--sky", "--azure",
-        // The pre-instrument bronze page. Its ground, ink and semantic marks
-        // stay retired; #C58A32 and #674415 do NOT appear here any more,
-        // because v4.0 took the brand hue back to that ramp and they are the
-        // live identity again. What was actually retired in v3.0 was the warm
-        // NEUTRAL page around the gold, and that is what this row still names.
+        // The pre-instrument bronze page's warm neutrals and semantic marks.
         "#0A0A0A", "#EDEDED", "#4CC38A", "#C9A227", "#E5715F",
-        // The v3.0 ion values, retired by v4.0's return to gold.
+        // The v3.0 ion values.
         "#00D1F9", "#00778F", "#D9A62E", "#7A5200",
+        // The obsidian instrument ramp this recolour replaces, ground to
+        // caption, plus its semantic trio. Listed in full rather than by the
+        // ground alone, because the drift this catches is a half-applied
+        // recolour — one token pasted back from the old ramp is exactly what
+        // nobody notices in an artifact users mail around.
+        "#070B10", "#0D1319", "#11171D", "#1F262D", "#333B43", "#010306", "#E9EDF2", "#A4ABB3",
+        "#737C88", "#4A535D", "#0B1116", "#3FD99B", "#FF7A45", "#F2687A",
+        // The bronze identity, on THIS surface. It is still the live value in
+        // docs/brand/ and on the marketing site — the kit's ramp is
+        // byte-parity-checked against ~60 generated binary assets and moves as
+        // its own change — but the instrument surfaces take the product
+        // palette's gold now, and a dashboard carrying both is the exact
+        // "two identities in one tree" failure that guard exists for.
+        "#C58A32", "#674415",
+        // The light instrument ramp it replaces, for the same reason: the
+        // dashboard ships both schemes in one document.
+        "#F7F9FC", "#E7EBF0", "#CFD6DD", "#4D535A", "#828C97", "#C2C9D1", "#F3F6F9", "#0B6B3D",
+        "#913200", "#A82036",
     ] {
         assert!(
             !html.contains(retired),

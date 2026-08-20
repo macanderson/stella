@@ -1,0 +1,411 @@
+{
+  "$comment": [
+    "The black-and-gold colour system, and the single upstream every stella-facing",
+    "surface generates from. Normative definition: SPEC-stella-tui-v2.md sections 2-4.",
+    "",
+    "Do not hand-edit a generated artifact. Edit this file, run `make tokens-update`,",
+    "and commit the regenerated files alongside it. `make tokens` fails the gate when",
+    "a generated file has drifted from this one, which is the mechanism replacing the",
+    "prose promise that four surfaces had been copying by hand.",
+    "",
+    "Every token declares a `clamp` role. The role decides which predicate the value",
+    "is held to, so a new hex cannot enter the palette without a human choosing the",
+    "kind of colour it is -- and the warm-drift predicates reject the choice that",
+    "kills a gold-on-black scheme. The predicates are defined once in",
+    "crates/stella-tui-theme/src/clamp.rs and mirrored by scripts/check-tokens.py;",
+    "both are held to this file's `clamps` block below."
+  ],
+  "version": "5.0.0",
+  "name": "stella black and gold",
+  "supersedes": {
+    "kit": "brand v4.0 (\"the comet\")",
+    "brand_hex": "#C58A32",
+    "ground_hex": "#070B10",
+    "reason": [
+      "Bronze Gold #C58A32 is r=197 g=138 b=50. The resting-gold clamp requires",
+      "g >= 0.78 r, i.e. g >= 154. At 138 it fails by 16 points, which places it",
+      "in exactly the orange band SPEC 3.2 names as the failure mode: orange on a",
+      "near-black ground reads brown on uncalibrated panels. v4.0's own ground",
+      "#070B10 is r=7 g=11 b=16, which fails the neutral-gray predicate's r == g",
+      "in the green-tipped direction. The kit is superseded rather than tuned",
+      "because both of its anchor values are outside the clamp this system is",
+      "built on."
+    ]
+  },
+  "clamps": {
+    "resting-gold": {
+      "predicate": "r > g > b AND 100*g >= 78*r AND 100*b <= 35*r",
+      "green_pct": 78,
+      "blue_pct": 35,
+      "why": "The green ratio is the load-bearing half: below it the hue is orange, and orange on a near-black ground reads brown on cheap panels."
+    },
+    "lifted-gold": {
+      "predicate": "r > g > b AND 100*g >= 78*r AND 100*b <= 44*r",
+      "green_pct": 78,
+      "blue_pct": 44,
+      "why": [
+        "A recorded exception, not a relaxation. SPEC 3.2 states one clamp for",
+        "'every color in the gold role', and SPEC 3.1's own gold_bright #F7D96B",
+        "does not satisfy it: b/r measures 107/247 = 0.433 against a stated",
+        "ceiling of 0.35. The spec contradicts itself. The canonical-token rule",
+        "forbids inventing a colour, so the value stands exactly as specified and",
+        "the ceiling that admits it is recorded here instead -- at 44, the",
+        "tightest whole percent that does (0.44 * 247 = 108.7, over the token's",
+        "107; 0.43 * 247 = 106.2, under it). The bound is tight enough that any",
+        "drift bluer than the one token it was measured from fails. A maintainer",
+        "who wants 0.35 to hold everywhere should re-cut gold_bright; the number",
+        "to beat is in this paragraph."
+      ]
+    },
+    "cool-silver": {
+      "predicate": "b > r AND g >= r",
+      "why": [
+        "SPEC 3.2's gray clamp is stated for the neutral ramp, and the two",
+        "silvers do not satisfy its r == g half by design -- they sit one to two",
+        "points off neutral, which is the tilt SPEC 3.1's opening sentence",
+        "describes. Left unclamped they would be the palette's one unguarded",
+        "warm-drift surface, the metal that appears on every read, skill and",
+        "memory row, so they carry the weaker predicate that still forbids the",
+        "failure mode: blue strictly above red, green never below it."
+      ]
+    },
+    "neutral-gray": {
+      "predicate": "r == g AND b >= g",
+      "why": "Neutral, or tipped toward blue; never toward red. A gray one point warm is what makes a black-and-gold scheme read as sepia."
+    },
+    "verdict": {
+      "predicate": "none",
+      "why": "Green and red are deliberately neither metal nor gray. SPEC 2 asks for them desaturated and cool; that is a review judgement, not a channel predicate, so no predicate is asserted rather than a decorative one being invented."
+    },
+    "surface": {
+      "predicate": "none",
+      "why": "Diff row backgrounds are tints carrying a sign column, not hues in a role. They are held by the diff renderer's contract (the + and - signs are mandatory), not by a channel test."
+    }
+  },
+  "tokens": [
+    {
+      "name": "bg",
+      "hex": "#0A0A0C",
+      "clamp": "neutral-gray",
+      "css": "--st-bg",
+      "rust": "BG",
+      "role": "canvas",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "panel",
+      "hex": "#0F0F12",
+      "clamp": "neutral-gray",
+      "css": "--st-panel",
+      "rust": "PANEL",
+      "role": "panels, cards, code blocks",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "hl",
+      "hex": "#17171B",
+      "clamp": "neutral-gray",
+      "css": "--st-hl",
+      "rust": "HL",
+      "role": "selected and hover rows",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "border",
+      "hex": "#26262C",
+      "clamp": "neutral-gray",
+      "css": "--st-border",
+      "rust": "BORDER",
+      "role": "hairlines, dividers, unfilled meter track",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "rule",
+      "hex": "#2C2C33",
+      "clamp": "neutral-gray",
+      "css": "--st-rule",
+      "rust": "RULE",
+      "role": "section rules, turn boundaries",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "gold",
+      "hex": "#EFC53F",
+      "clamp": "resting-gold",
+      "css": "--st-gold",
+      "rust": "GOLD",
+      "role": "the brand metal: actions, active states, money, the mark",
+      "surfaces": ["tui", "web-dark", "web-light", "asset"]
+    },
+    {
+      "name": "gold-bright",
+      "hex": "#F7D96B",
+      "clamp": "lifted-gold",
+      "css": "--st-gold-bright",
+      "rust": "GOLD_BRIGHT",
+      "role": "tiny live indicators only: spinner, hot marker, drift glyph",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "silver",
+      "hex": "#A9AAB5",
+      "clamp": "cool-silver",
+      "css": "--st-silver",
+      "rust": "SILVER",
+      "role": "secondary emphasis, incoming context, syntax strings",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "silver-type",
+      "hex": "#BFC1CC",
+      "clamp": "cool-silver",
+      "css": "--st-silver-type",
+      "rust": "SILVER_TYPE",
+      "role": "syntax types, tertiary labels",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "text",
+      "hex": "#E8E8EC",
+      "clamp": "neutral-gray",
+      "css": "--st-text",
+      "rust": "TEXT",
+      "role": "primary text on dark",
+      "surfaces": ["tui", "web-dark", "asset"]
+    },
+    {
+      "name": "muted",
+      "hex": "#777782",
+      "clamp": "neutral-gray",
+      "css": "--st-muted",
+      "rust": "MUTED",
+      "role": "secondary text",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "dim",
+      "hex": "#4B4B56",
+      "clamp": "neutral-gray",
+      "css": "--st-dim",
+      "rust": "DIM",
+      "role": "hints, captions, line numbers",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "comment",
+      "hex": "#565660",
+      "clamp": "neutral-gray",
+      "css": "--st-comment",
+      "rust": "COMMENT",
+      "role": "code comments",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "green",
+      "hex": "#74C991",
+      "clamp": "verdict",
+      "css": "--st-green",
+      "rust": "GREEN",
+      "role": "pass, additive diff sign",
+      "surfaces": ["tui", "web-dark", "web-light"]
+    },
+    {
+      "name": "red",
+      "hex": "#E0687A",
+      "clamp": "verdict",
+      "css": "--st-red",
+      "rust": "RED",
+      "role": "fail, destructive, removal diff sign",
+      "surfaces": ["tui", "web-dark", "web-light"]
+    },
+    {
+      "name": "diff-add-bg",
+      "hex": "#10201A",
+      "clamp": "surface",
+      "css": "--st-diff-add",
+      "rust": "DIFF_ADD_BG",
+      "role": "added diff row background",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "diff-del-bg",
+      "hex": "#241019",
+      "clamp": "surface",
+      "css": "--st-diff-del",
+      "rust": "DIFF_DEL_BG",
+      "role": "removed diff row background",
+      "surfaces": ["tui", "web-dark"]
+    },
+    {
+      "name": "ink",
+      "hex": "#141416",
+      "clamp": "neutral-gray",
+      "css": "--st-ink",
+      "rust": "INK",
+      "role": "primary text on light surfaces (web light mode only)",
+      "surfaces": ["web-light", "asset"]
+    },
+    {
+      "name": "paper",
+      "hex": "#FFFFFF",
+      "clamp": "neutral-gray",
+      "css": "--st-paper",
+      "rust": "PAPER",
+      "role": "light canvas",
+      "surfaces": ["web-light", "asset"]
+    },
+    {
+      "name": "paper-panel",
+      "hex": "#F6F6F8",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-panel",
+      "rust": "PAPER_PANEL",
+      "role": "light panel",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "paper-border",
+      "hex": "#E3E3E8",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-border",
+      "rust": "PAPER_BORDER",
+      "role": "light border",
+      "surfaces": ["web-light"]
+    },
+    {
+      "$comment": [
+        "Web-only stops. Every token below carries no `rust` name, because the",
+        "terminal never draws it and every entry in the generated `ALL` table",
+        "needs a 256-colour fallback -- an ANSI approximation of a paper tint",
+        "would be an assertion about nothing. `scripts/gen-tokens.py` skips",
+        "them, so `crates/stella-tui-theme/src/generated.rs` is unchanged.",
+        "",
+        "They are declared here rather than left in the site's stylesheet",
+        "because that is what puts them under a clamp. Until now the only file",
+        "that knew the site's warning hue was the site, and the 30-degree",
+        "separation law that governs it on the terminal was, on the web, a",
+        "sentence in a comment (#4071). The light ramp is the one #4072 records",
+        "as derived rather than specified; specifying it here is what closes",
+        "that gap.",
+        "",
+        "The values themselves are unchanged -- these are the stops the site",
+        "already ships, moved under the system rather than re-cut."
+      ],
+      "name": "void",
+      "hex": "#050507",
+      "clamp": "neutral-gray",
+      "css": "--st-void",
+      "role": "below the canvas: full-bleed backdrops",
+      "surfaces": ["web-dark"]
+    },
+    {
+      "name": "gold-ink",
+      "hex": "#725A00",
+      "clamp": "resting-gold",
+      "css": "--st-gold-ink",
+      "role": "gold as TEXT on the light ground, where the metal cannot clear AA",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "paper-ground",
+      "hex": "#F4F4F6",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-ground",
+      "role": "the cool paper page ground, one step under the panel",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "paper-raised",
+      "hex": "#FAFAFC",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-raised",
+      "role": "light surface raised above the page ground",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "paper-row",
+      "hex": "#E6E6EA",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-row",
+      "role": "light hover and selected rows",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "paper-seam",
+      "hex": "#DDDDE3",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-seam",
+      "role": "light seam: the hairline under a border",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "ink-muted",
+      "hex": "#5E5E69",
+      "clamp": "neutral-gray",
+      "css": "--st-ink-muted",
+      "role": "secondary text on light surfaces",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "green-ink",
+      "hex": "#006933",
+      "clamp": "verdict",
+      "css": "--st-green-ink",
+      "role": "pass, as text on the light ground",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "amber",
+      "hex": "#E78D54",
+      "clamp": "verdict",
+      "css": "--st-amber",
+      "role": "warning: the one status the core palette does not name",
+      "surfaces": ["web-dark"]
+    },
+    {
+      "name": "amber-ink",
+      "hex": "#8A3F00",
+      "clamp": "verdict",
+      "css": "--st-amber-ink",
+      "role": "warning, as text on the light ground",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "red-ink",
+      "hex": "#96213C",
+      "clamp": "verdict",
+      "css": "--st-red-ink",
+      "role": "fail, as text on the light ground",
+      "surfaces": ["web-light"]
+    }
+  ],
+  "banned": {
+    "$comment": [
+      "Hexes that may not appear anywhere outside this file and the generated",
+      "artifacts that carry the supersession note. Each entry names where it came",
+      "from, so a reader hitting the guard learns which retired system they are",
+      "looking at rather than only that they are wrong."
+    ],
+    "values": [
+      { "hex": "#FFB224", "was": "phosphor-era amber accent" },
+      { "hex": "#F5A623", "was": "phosphor-era amber accent" },
+      { "hex": "#FAC775", "was": "phosphor-era amber tint" },
+      { "hex": "#EF9F27", "was": "phosphor-era amber accent" },
+      { "hex": "#FFB000", "was": "brand v1.0 Phosphor Gold" },
+      { "hex": "#0B0B0C", "was": "brand v1.0 Ink ground" },
+      { "hex": "#C58A32", "was": "brand v4.0 Bronze Gold -- fails the resting-gold green ratio" },
+      { "hex": "#8B5E1A", "was": "brand v4.0 brand-deep" },
+      { "hex": "#070B10", "was": "brand v4.0 Obsidian ground -- green-tipped, fails neutral-gray" },
+      { "hex": "#12181D", "was": "brand v4.0 raised ground" },
+      { "hex": "#D39F50", "was": "brand v4.0 gold tint" },
+      { "hex": "#DFB473", "was": "brand v4.0 gold tint" },
+      { "hex": "#EBCB9D", "was": "brand v4.0 gold tint" },
+      { "hex": "#F3DEC0", "was": "brand v4.0 gold tint" },
+      { "hex": "#FBF3E3", "was": "brand v4.0 warm paper -- warm ground, banned outright" },
+      { "hex": "#A97227", "was": "brand v4.0 gold shade" },
+      { "hex": "#674415", "was": "brand v4.0 gold shade" },
+      { "hex": "#462E10", "was": "brand v4.0 gold shade" },
+      { "hex": "#291B0D", "was": "brand v4.0 gold shade" }
+    ]
+  }
+}

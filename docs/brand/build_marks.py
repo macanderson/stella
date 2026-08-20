@@ -178,35 +178,44 @@ _LINE = re.compile(
 _STAR = re.compile(r'<path d="(M64 26[^"]*)" fill="(#[0-9A-Fa-f]{6})"')
 
 
-def check_light_cut_colour() -> None:
-    """The light cuts paint the mark in `BRAND_ON_LIGHT`, not full `BRAND`.
+def check_mark_colours() -> None:
+    """The mark has exactly three colours, and every cut paints one of them.
 
-    v3.0 split the mark's colour by ground and v4.0 kept the split: the brand
-    measures 2.63:1 on paper, below the 3:1 non-text floor, so the light cuts
-    step down the ramp
-    while the dark and adaptive ones keep full strength. That is a *rule*, and
-    a rule the kit only writes down is a rule the next recolour silently
-    breaks — the bronze era's own drift (a bronze wordmark shipped beside
-    phosphor chrome for the life of a rebrand) is what this file exists to
-    stop happening again. So it is checked rather than documented.
+    v3.0 split the mark's colour by ground and v4.0 kept the split, stepping the
+    light cuts down a darker stop so the mark could clear the 3:1 non-text
+    floor on paper. v5.0 retires the split. Two reasons, and the second is the
+    one that matters: gold, `text` white and `ink` are the only three mark
+    colours the system admits, so a fourth stop is out of the palette by
+    construction — and the floor was never the right test anyway, because WCAG
+    1.4.3 and 1.4.11 both exempt logotypes by name. The gold mark on paper
+    measures 1.65:1 and is allowed to; `scripts/check-contrast.py` reports that
+    number as an exemption rather than hiding it.
 
-    The adaptive cuts are deliberately not checked here: they carry BOTH
-    values, the dark one as the fill and the light one behind a
-    `prefers-color-scheme` override, so a fill-colour assertion is the wrong
-    shape for them.
+    What replaces the split is the stronger claim: enumerate the mark's
+    colours, and fail on anything else. That is a *rule*, and a rule the kit
+    only writes down is a rule the next recolour silently breaks — the bronze
+    era's own drift (a bronze wordmark shipped beside phosphor chrome for the
+    life of a rebrand) is what this file exists to stop happening again. So it
+    is checked rather than documented.
+
+    A colour cut must additionally carry the brand gold: a cut with no brand
+    colour in it is a mono cut wearing the wrong name.
     """
-    for name in sorted(p.name for p in SVG_DIR.glob("*-color-light.svg")):
-        src = (SVG_DIR / name).read_text(encoding="utf-8")
-        for found in set(re.findall(r'(?:fill|stroke)="(#[0-9A-Fa-f]{6})"', src)):
-            if found.upper() == ck.BRAND:
-                raise SystemExit(
-                    f"{name} paints the mark in full BRAND ({ck.BRAND}), which "
-                    f"measures 2.63:1 on paper. Light cuts take BRAND_ON_LIGHT "
-                    f"({ck.BRAND_ON_LIGHT})."
-                )
-        if ck.BRAND_ON_LIGHT.upper() not in src.upper():
+    allowed = {ck.BRAND.upper(), ck.PAPER.upper(), ck.BRAND_DEEP.upper()}
+    for path in sorted(SVG_DIR.glob("*.svg")):
+        src = path.read_text(encoding="utf-8")
+        found = {c.upper() for c in re.findall(r"#[0-9A-Fa-f]{6}", src)}
+        stray = found - allowed
+        if stray:
             raise SystemExit(
-                f"{name} never paints {ck.BRAND_ON_LIGHT} — a colour cut with no "
+                f"{path.name} paints {', '.join(sorted(stray))}, which is not a "
+                f"mark colour. The mark has exactly three: {ck.BRAND} (gold), "
+                f"{ck.PAPER} (text, for dark placements) and {ck.BRAND_DEEP} "
+                f"(ink, for light placements)."
+            )
+        if "-color-" in path.name and ck.BRAND.upper() not in found:
+            raise SystemExit(
+                f"{path.name} never paints {ck.BRAND} — a colour cut with no "
                 f"brand colour in it is a mono cut wearing the wrong name."
             )
 
@@ -217,7 +226,7 @@ def check_svg_parity() -> None:
     The kit has been recoloured three times, and every time the SVGs and the
     Python copies had to move together. This is the test that they did.
     """
-    check_light_cut_colour()
+    check_mark_colours()
     src = (SVG_DIR / "logomark-color.svg").read_text(encoding="utf-8")
 
     star = _STAR.search(src)
@@ -241,6 +250,48 @@ def check_svg_parity() -> None:
         raise SystemExit(
             "TRAIL_RECTS drift: cometkit.py and logomark-color.svg disagree.\n"
             f"  from svg: {derived}\n  cometkit: {ck.TRAIL_RECTS}"
+        )
+
+
+def check_exported_gold() -> None:
+    """The gold in a rasterised mark is the gold in the token file, exactly.
+
+    A recolour is only as good as its exports. rsvg-convert honours an embedded
+    or system colour profile, and a profile that shifts the fill a few points
+    toward orange produces a file that looks right on the machine that made it
+    and reads brown on a cheap panel — the exact failure the hue clamp exists to
+    prevent, arriving through the one door the clamp cannot watch, because by
+    then the value is a pixel rather than a token.
+
+    So it is measured. Every colour export is decoded and its opaque pixels
+    counted; the mark's fill must be `BRAND` on the nose. Any drift at all
+    fails, because there is no such thing as an acceptable amount of it: a mark
+    one point off is a mark that will be two points off after the next tool
+    upgrade.
+    """
+    want = tuple(int(ck.BRAND[i : i + 2], 16) for i in (1, 3, 5))
+    checked = 0
+    for exp in LOGO_EXPORTS:
+        if "-color-" not in exp.stem and not exp.stem.startswith("logomark-color"):
+            continue
+        if not exp.out.exists():
+            continue
+        counts = ck.png_opaque_colours(exp.out)
+        if want not in counts:
+            found = ", ".join(
+                f"#{r:02X}{g:02X}{b:02X} ({n}px)"
+                for (r, g, b), n in sorted(counts.items(), key=lambda kv: -kv[1])[:4]
+            )
+            raise SystemExit(
+                f"{exp.out.relative_to(HERE)} carries no pixel of {ck.BRAND}. "
+                f"Most common opaque colours: {found}. This is colour-profile "
+                f"drift on export, not an artwork change."
+            )
+        checked += 1
+    if not checked:
+        raise SystemExit(
+            "check_exported_gold inspected nothing — the export list changed "
+            "shape and this guard is now watching an empty set."
         )
 
 
@@ -322,6 +373,7 @@ def main() -> int:
         if bad:
             print(f"\n{bad} export(s) wrong — run `python3 docs/brand/build_marks.py`")
             return 1
+        check_exported_gold()
         print(f"ok: {len(LOGO_EXPORTS)} logo exports, {len(ICONS)} icons, 1 ico")
         return 0
 
@@ -329,6 +381,7 @@ def main() -> int:
     build()
     if check_outputs():
         raise SystemExit("build wrote something the check rejects")
+    check_exported_gold()
     print(f"\n{len(LOGO_EXPORTS)} logo exports, {len(ICONS)} icons, 1 ico")
     return 0
 
