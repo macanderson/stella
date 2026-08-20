@@ -372,10 +372,36 @@ pub(super) fn run_turn(
 /// better in a log than a bare exit code, and pretending to understand it
 /// would be worse than either.
 fn turn_reason(summary: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(summary)
-        .ok()
-        .and_then(|v| {
-            let obj = v.as_object()?.clone();
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(summary) else {
+        return summary.lines().last().unwrap_or(summary).to_owned();
+    };
+
+    // What the turn *said* first, and only then the machine-readable status.
+    //
+    // The status alone is useless at exactly the moment it matters. A turn
+    // that runs for eleven minutes and leaves the tree untouched reports
+    // `completed`, and "the turn changed nothing (completed)" is not a
+    // diagnosis — it is the absence of one, and it left two issues looking
+    // identical to a model that had simply refused.
+    //
+    // The last thing the turn said is the closest thing to a reason it
+    // produced, and it costs nothing to keep.
+    if let Some(text) = last_text(&value) {
+        let text = text.trim();
+        if !text.is_empty() {
+            let condensed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let clipped = condensed.chars().take(600).collect::<String>();
+            return if condensed.chars().count() > 600 {
+                format!("{clipped}…")
+            } else {
+                clipped
+            };
+        }
+    }
+
+    value
+        .as_object()
+        .and_then(|obj| {
             for key in ["reason", "error", "status", "stop_reason"] {
                 if let Some(s) = obj.get(key).and_then(|x| x.as_str())
                     && !s.is_empty()
@@ -386,6 +412,32 @@ fn turn_reason(summary: &str) -> String {
             None
         })
         .unwrap_or_else(|| summary.lines().last().unwrap_or(summary).to_owned())
+}
+
+/// The last `text` field anywhere in a turn's JSON, which is what it said last.
+fn last_text(value: &serde_json::Value) -> Option<String> {
+    let mut found = None;
+    collect_last_text(value, &mut found);
+    found
+}
+
+fn collect_last_text(value: &serde_json::Value, found: &mut Option<String>) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            if let Some(serde_json::Value::String(text)) = fields.get("text") {
+                *found = Some(text.clone());
+            }
+            for item in fields.values() {
+                collect_last_text(item, found);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_last_text(item, found);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Classify what happened, from the tree.
