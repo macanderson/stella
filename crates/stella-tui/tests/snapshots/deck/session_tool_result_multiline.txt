@@ -26,7 +26,7 @@
 │    crates/stella-observatory/src/lib.rs:212                                                                          ││                                      │
 │    ⋯ 2 lines · ctrl+o                                                                                                ││                                      │
 │                                                                                                                      ││                                      │
-│● get_state    {"key":"verify"}                                                                                       ││                                      │
+│ │ ● get_state {"key":"verify"}                                                                                       ││                                      │
 │  ⎿                                                                                                                8ms││                                      │
 │    {                                                                                                                 ││                                      │
 │      "flip": true,                                                                                                   ││                                      │

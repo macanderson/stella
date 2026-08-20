@@ -125,8 +125,21 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
             raw: "{}".into(),
             path: None,
         }),
-        Some(theme::ACCENT),
-        "a tool call — the thing that happened — carries the deep-gold rail",
+        Some(stella_tui_theme::token::MUTED),
+        "a read is the world coming in, not stella acting, so SPEC 6.2 gives \
+         it the silver-dim rail and reserves gold for the calls that change \
+         something",
+    );
+    assert_eq!(
+        prefix_fg(&TranscriptEntry::ToolStart {
+            call_id: "c2".into(),
+            name: "edit_file".into(),
+            input: "x".into(),
+            raw: "{}".into(),
+            path: Some("src/lib.rs".into()),
+        }),
+        Some(stella_tui_theme::token::GOLD),
+        "a mutation is stella acting — the gold half of the two-metal rule",
     );
     assert_eq!(
         prefix_fg(&TranscriptEntry::ToolResult {
@@ -222,8 +235,9 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
             80,
             &mut out,
         );
-        // span 0 is the rail prefix; span 1 is the padded tool name.
-        out[0].spans[1].style.fg
+        // SPEC 6.2 head order: 0 is the rail, 1 the kind glyph, 2 the object of
+        // the verb — the tool name, for a tool v2 has no verb for.
+        out[0].spans[2].style.fg
     };
     for tool in [
         "get_state",
@@ -231,24 +245,48 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
         "mcp__github__create_pull_request",
         "delegate",
     ] {
-        assert_eq!(
-            name_fg(tool),
-            Some(crate::tool_class::classify(tool).color()),
-            "`{tool}` must render in its own class hue"
-        );
         assert_ne!(
             name_fg(tool),
             Some(theme::ACCENT),
             "`{tool}` must not wear the reserved gold — every name doing so is \
              what made the accent mean nothing"
         );
+        assert_eq!(
+            name_fg(tool),
+            Some(stella_tui_theme::token::TEXT),
+            "`{tool}` is the object of the verb and takes the text tone; the \
+             rail and glyph beside it are what carry the metal (SPEC 6.2)"
+        );
     }
+    // What replaced the class hue: the *kind* of action, carried by the rail
+    // and the glyph rather than by the name. A read is not an edit is not a
+    // delete, and that distinction survives a 16-colour terminal because the
+    // glyph carries it too (SPEC 13).
+    let rail_fg = |tool: &str| -> Option<Color> {
+        let mut out = Vec::new();
+        entry_lines(
+            &TranscriptEntry::ToolStart {
+                call_id: "c".into(),
+                name: tool.into(),
+                input: "x".into(),
+                raw: "{}".into(),
+                path: Some("src/lib.rs".into()),
+            },
+            &[],
+            false,
+            false,
+            false,
+            80,
+            &mut out,
+        );
+        out[0].spans[0].style.fg
+    };
     for (a, b) in [
-        ("get_state", "save_state"),
-        ("save_state", "mcp__github__create_pull_request"),
-        ("mcp__github__create_pull_request", "delegate"),
+        ("read_file", "edit_file"),
+        ("edit_file", "delete_file"),
+        ("read_file", "delete_file"),
     ] {
-        assert_ne!(name_fg(a), name_fg(b), "`{a}` and `{b}` must differ");
+        assert_ne!(rail_fg(a), rail_fg(b), "`{a}` and `{b}` must differ");
     }
 }
 

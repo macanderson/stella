@@ -15,3 +15,5 @@
 
 pub mod status_bar;
 pub mod status_source;
+pub mod transcript;
+pub mod transcript_source;
