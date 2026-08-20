@@ -3344,7 +3344,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tui-theme"
-version = "0.9.112"
+version = "0.9.114"
 dependencies = [
  "ratatui",
 ]
