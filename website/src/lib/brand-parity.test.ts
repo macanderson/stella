@@ -15,7 +15,7 @@ import { inflateSync } from "node:zlib";
  *
  * `src/app/tokens.css` carried the sentence "every value below is copied from
  * it verbatim — do not tune a hex here, change the kit and mirror it" while
- * sitting a whole brand version behind: the kit moved to Bronze Gold #EFC53F
+ * sitting a whole brand version behind: the kit moved to gold #EFC53F
  * on Ink #10100F in the 2026-08-11 rebrand and this site stayed on v1.0's
  * Phosphor Gold #EFC53F on Ink #0A0A0C. All thirteen SVGs under
  * `public/brand/` were stale with it, as were seven of the eight PWA icons,
@@ -239,7 +239,7 @@ test("no retired brand value survives anywhere in the site", () => {
   //
   // A value leaves this list only when a later version makes it **live
   // again**, which is not hypothetical: v4.0 took the brand hue back to v2.0's
-  // Bronze Gold ramp value-for-value, so #efc53f and its stops moved from this
+  // the gold ramp value-for-value, so #efc53f and its stops moved from this
   // list into `tokens.css`. What v4.0 did *not* take back is the warm neutral
   // page those stops used to sit on — v3.0's cool graphite ramp and Obsidian
   // ground are kept — so the warm values stay retired and are what this block

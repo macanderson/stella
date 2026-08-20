@@ -49,7 +49,7 @@ REPO = HERE.parents[2]
 # brand tokens — docs/brand/css/tokens.css is normative; these mirror it
 # ---------------------------------------------------------------------------
 
-BRAND = "#EFC53F"  # Bronze Gold — the comet, on every ground
+BRAND = "#EFC53F"  # gold — the comet, on every ground
 BRAND_DEEP = "#141416"  # small brand *text* on light surfaces only
 INK = "#0A0A0C"
 PAPER = "#E8E8EC"  # cool text on dark

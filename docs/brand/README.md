@@ -1,10 +1,10 @@
 ---
 id: brand
-title: "stella\* — brand kit v4.0"
+title: "stella\* — brand kit v5.0"
 status: living
 ---
 
-# stella\* — brand kit v4.0
+# stella\* — brand kit v5.0
 
 The comet: a four-point star moving fast enough to leave a trail.
 One shape, one color — Gold `#EFC53F` on `#0A0A0C`.

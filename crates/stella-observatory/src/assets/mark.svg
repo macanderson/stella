@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" fill="none" role="img" aria-label="stella">
   <!-- The comet logomark, from docs/brand/logo/svg/logomark-color.svg
-       (comet kit v1.0). Bronze Gold #EFC53F on transparent: reads on the
+       (comet kit v1.0). Gold #EFC53F on transparent: reads on the
        dashboard's Ink and on either browser-chrome theme as a favicon. -->
   <line x1="10" y1="48" x2="30" y2="48" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>
   <line x1="18" y1="34" x2="30" y2="34" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/>

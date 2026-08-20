@@ -1,5 +1,5 @@
 /**
- * The stella marks — brand kit v4.0, "the comet": a four-point star moving
+ * The stella marks — brand kit v5.0, "the comet": a four-point star moving
  * fast enough to leave a trail. Drawn inline so they paint from CSS rather
  * than from a per-mode asset file; the geometry is copied from
  * docs/brand/logo/svg/ (the normative source) and the SVG copies in

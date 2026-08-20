@@ -96,7 +96,7 @@ CANVASES = [
 class Ground:
     """One sky and everything that has to change with it.
 
-    The comet stays Bronze Gold on both, per the kit's rule that the mark is a
+    The comet stays full-strength gold on both, per the kit's rule that the mark is a
     shape and never drops to gold-deep. What inverts is the *field*: on dark the
     specks are light on a night sky, on light they are ink on warm paper, which
     reads as a fine texture rather than a washed-out photograph of stars.
