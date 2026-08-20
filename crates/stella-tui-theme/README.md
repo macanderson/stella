@@ -23,12 +23,13 @@ The palette is not a convention here; it is a set of assertions.
   black-and-gold terminal scheme dies. Grays must be neutral or blue-tipped
   (`r == g`, `b >= g`); one point warm is how the same scheme becomes sepia.
   Both ship as unit tests on the shipped table, exactly as SPEC 3.2 asks, and
-  and they are unweakenable: a change that turns one green by loosening a
-  bound has broken the design, not fixed a test.
-- **Role totality.** `token::ALL` pairs every token with a `token::Role`, and
-  the role picks the clamp. Adding a token means declaring what kind of colour
-  it is — and a warm hex has no honest declaration to pick. That is the whole
-  anti-drift mechanism; the individual assertions only cover today's set.
+  they are unweakenable: a change that turns one green by loosening a bound has
+  broken the design, not fixed a test.
+- **Role totality.** `token::ALL` pairs every token with a `token::Clamp`, and
+  the tag picks the predicate through `clamp::satisfies`. Adding a token means
+  declaring what kind of colour it is — and a warm hex has no honest
+  declaration to pick. That is the whole anti-drift mechanism; the individual
+  assertions only cover today's set.
 - **Fallback totality.** `fallback::ansi16` answers for every token, proven by
   walking the table, so a token added without a 16-color stand-in fails rather
   than quietly shipping a 24-bit value to a terminal that cannot show it.
@@ -110,9 +111,27 @@ naming all three. They agree now: v5.0 put the kit, the site, the Observatory
 and both TUI palettes on one gold, generated from
 `design/tokens/stella-tokens.json` by `scripts/gen-tokens.py` and checked by
 `make tokens`. So there is no longer a divergence to name — the values are one
-value, and `src/generated.rs` is where it lands for this crate. The v2 spec's
-scope is still the TUI; what changed is that the palette above it is shared
-rather than parallel.
+value. The v2 spec's scope is still the TUI; what changed is that the palette
+above it is shared rather than parallel.
+
+## What is generated and what is not
+
+`src/token.rs` is **generated** — values and role tags, emitted from the JSON.
+Edit the JSON and run `make tokens-update`; never edit that file.
+
+Everything else here is hand-written, and the split is where it is on purpose.
+`src/clamp.rs` holds the predicates, because the gold clamp is an argument with
+a geometric proof behind it rather than a templatable expression — a generator
+that emitted it would put the algorithm somewhere its proof could not follow.
+`clamp::satisfies` is the bridge between the two: the generator emits role
+*tags* and never predicates, which is also the only shape that can express an
+anchored clamp, since a lift is checked against another token's value and no
+per-row template can reach one.
+
+This was two files for a few hours. #4055 created this crate with a
+hand-written table; #4066 added the generator and emitted `generated.rs`
+beside it; the two landed 41 seconds apart with no textual conflict, leaving
+one palette defined twice (#4083, #4058).
 
 ## Consumers
 

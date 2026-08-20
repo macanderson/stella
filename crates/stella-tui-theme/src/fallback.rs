@@ -66,6 +66,14 @@ pub fn ansi16(color: Color) -> Color {
         token::MUTED | token::DIM | token::COMMENT => Color::DarkGray,
         token::GREEN => Color::Green,
         token::RED => Color::Red,
+        // The light-theme stops. They reach the terminal only when a paper
+        // theme is active, and at sixteen colours a paper ground *is* white —
+        // there is no lighter tier to distinguish panel from canvas, so they
+        // collapse together and `paper_border` takes the one gray that is
+        // left. `ink` is a dark ground like `bg` and degrades the same way.
+        token::INK => Color::Black,
+        token::PAPER | token::PAPER_PANEL => Color::White,
+        token::PAPER_BORDER => Color::Gray,
         // Not a palette token — a caller's own colour, or one this crate does
         // not own. Passing it through is the honest answer: this function
         // narrows the palette, it does not police what else reaches a cell.

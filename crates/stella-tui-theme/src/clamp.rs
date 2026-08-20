@@ -51,13 +51,19 @@
 
 use ratatui::style::Color;
 
+use crate::token;
+
 /// The green ratio every gold must clear, as a percentage of red (SPEC 3.2).
 /// Below this the colour is orange. Applies at every lightness.
-pub const GOLD_GREEN_PCT: u32 = 78;
+///
+/// Declared in `design/tokens/stella-tokens.json` and re-exported here so the
+/// bound and the predicate that reads it cannot drift apart — there is one
+/// number, generated, and this module is the only thing that consumes it.
+pub const GOLD_GREEN_PCT: u32 = token::GOLD_GREEN_PCT;
 
 /// The blue ceiling a *resting* gold must stay under, as a percentage of red
 /// (SPEC 3.2). See the module doc for why a lift is not held to it.
-pub const GOLD_BLUE_PCT: u32 = 35;
+pub const GOLD_BLUE_PCT: u32 = token::GOLD_BLUE_PCT;
 
 /// How far a lift's hue may sit from the gold it lifts, in degrees.
 ///
@@ -71,7 +77,35 @@ pub const GOLD_BLUE_PCT: u32 = 35;
 /// It discriminates in practice. `GOLD_BRIGHT` sits 1.46° from `GOLD` and
 /// passes; the v1 gold `#FFB81A` sits 4.3° away and fails; the orange
 /// `#EF8A1F` sits 14.8° away and fails.
-pub const LIFT_HUE_TOLERANCE_DEG: f64 = 3.0;
+pub const LIFT_HUE_TOLERANCE_DEG: f64 = token::GOLD_LIFT_HUE_TOLERANCE_DEG;
+
+/// Does `color` satisfy the clamp its row in [`token::ALL`] declares?
+///
+/// The bridge between the generated table and the predicates below, and the
+/// reason the generator emits role *tags* rather than an algorithm: a lift is
+/// checked against another token's value, which no per-row template can
+/// express.
+///
+/// [`token::Clamp::Verdict`] and [`token::Clamp::Surface`] assert
+/// nothing and hold for any 24-bit value — a verdict's job is to be
+/// unmistakable rather than on-brand, and a diff tint is held by the diff
+/// renderer's mandatory sign column, not by a channel test.
+#[must_use]
+pub fn satisfies(color: Color, clamp: token::Clamp) -> bool {
+    let Some((r, g, b)) = channels(color) else {
+        return false;
+    };
+    match clamp {
+        token::Clamp::RestingGold => is_resting_gold(r, g, b),
+        token::Clamp::GoldLift => match channels(token::GOLD) {
+            Some(anchor) => is_lift_of((r, g, b), anchor),
+            None => false,
+        },
+        token::Clamp::CoolSilver => is_cool_silver(r, g, b),
+        token::Clamp::NeutralGray => is_neutral_gray(r, g, b),
+        token::Clamp::Verdict | token::Clamp::Surface => true,
+    }
+}
 
 /// Split a colour into its channels, or `None` if it is not a 24-bit value.
 ///
