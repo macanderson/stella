@@ -202,7 +202,9 @@ pub struct ReadLedger {
 /// Two counts, not one, because they answer different questions: `reads` is
 /// the model-facing "you have looked at this file before" nudge that rides the
 /// footer, while `since_change` is the only one a *ceiling* may be measured
-/// against — see [`ReadState::reads_since_change`].
+/// against: it resets whenever the file's content changes, so a read → edit →
+/// read cycle can never accumulate against a ceiling. (`ReadState` holds it and
+/// is private, so this names it rather than linking to it.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadTally {
     /// Reads of this path this session, under any spelling.
