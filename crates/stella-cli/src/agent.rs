@@ -577,7 +577,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         set.close_all().await;
     }
     presence.finish(stella_store::SessionStatus::Complete, None);
-    println!("\n  {}", "Goodbye! ✦".magenta());
+    println!("\n  {}", "Goodbye! ✦".white());
     Ok(())
 }
 

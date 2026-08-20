@@ -236,7 +236,7 @@ pub(crate) fn install(
         );
         println!(
             "  preview what it would do: {}",
-            "stella daemon resume-all --dry-run".cyan()
+            "stella daemon resume-all --dry-run".yellow()
         );
     }
     println!(
@@ -245,7 +245,7 @@ pub(crate) fn install(
     );
     println!(
         "  remove with: {}",
-        format!("stella daemon uninstall {label}").cyan()
+        format!("stella daemon uninstall {label}").yellow()
     );
     Ok(())
 }

@@ -315,7 +315,7 @@ impl SessionMemory {
             if stored {
                 println!(
                     "  {} remembered {n} lesson(s) from this turn",
-                    "✦".magenta()
+                    "✦".white()
                 );
             } else if novel_logged == n {
                 println!(
@@ -651,7 +651,7 @@ impl SessionMemory {
                         if !quiet {
                             println!(
                                 "  {} new skill auto-created from recurring observations: {} ({})",
-                                "✦".magenta().bold(),
+                                "✦".white().bold(),
                                 candidate.name.bright_magenta(),
                                 path.display()
                             );
@@ -832,7 +832,7 @@ impl SessionMemory {
                 Ok(Some(path)) if !quiet => {
                     println!(
                         "  {} new advisory rule from recurring observations: {} ({})",
-                        "✦".magenta().bold(),
+                        "✦".white().bold(),
                         rule.candidate.id.bright_magenta(),
                         path.display()
                     );

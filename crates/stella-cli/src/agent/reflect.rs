@@ -114,7 +114,7 @@ pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat
                 } => eprintln!(
                     "  {} {:?} {provider}/{model}: {input_tokens} in, {output_tokens} out, \
                      ${cost_usd:.4}, {retries} retries, complete={complete}",
-                    "✦".magenta(),
+                    "✦".white(),
                     role
                 ),
                 AgentEvent::UsageIncomplete {
@@ -144,7 +144,7 @@ pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat
         let plural = if report.recorded == 1 { "" } else { "s" };
         eprintln!(
             "  {} reflection recorded {} lesson{plural}",
-            "✦".magenta(),
+            "✦".white(),
             report.recorded
         );
     }
