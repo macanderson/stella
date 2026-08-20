@@ -30,18 +30,25 @@
  *   error/warning marker — a build's first line is `Checking foo v0.1.0` and
  *   the line a reader came for is twenty lines down. A success shows one line
  *   from there; a failure shows six.
- * - **The rails are the deck's**: `●` opens a call, `⎿` its result, `✗` a
- *   failed one — a distinct glyph *and* column, so a failure is findable by
- *   margin-scan alone.
+ * - **A call and its result are ONE row.** The tool is named once, its output
+ *   nested under it — [`Call`] owns its `Output` in the shared model, and this
+ *   page reaches the same shape over the wire's flat stream via `mergeToolRows`.
+ *   The wire carries `tool` and `tool_result` as separate entries because that
+ *   is the *journal's* shape; rendering them as separate rows printed the tool's
+ *   name twice and the invocation up to three times down the whole transcript,
+ *   which is the defect `crates/stella-transcript` exists to end.
+ * - **The rails are the deck's**: `●` opens a call, `⎿` a result whose call is
+ *   not on screen, `✗` a failed one — a distinct glyph *and* column, so a
+ *   failure is findable by margin-scan alone.
  * - **Metadata rides as chips**, right-aligned and muted, never inline at the
  *   weight of the work it paid for.
  *
- * Two deliberate departures from the deck. It renders a call and its result as
- * one block nothing can split, so the result row need not repeat the tool's
- * name; here the kind filters can hide every call row, which would leave a
- * column of results naming nothing — so a result carries its tool's name,
- * subordinate to the call's. And every body on the wire here is
- * character-capped for the live stream's sake
+ * One deliberate departure from the deck, and one degradation. A result whose
+ * call is *not on screen* — filtered off by kind, or begun before the stream's
+ * cursor — renders alone and keeps its tool's name, because a column of outputs
+ * naming nothing is worse than a name that appears once; that is the orphan arm
+ * below, and it is not licence to print the name beside its own call. And every
+ * body on the wire here is character-capped for the live stream's sake
  * (`arenabench.transcript.TOOL_RESULT_BUDGET`) in a way the deck, reading a
  * session in memory, never has to be.
  */
@@ -566,24 +573,270 @@ function Inspect({ onOpen, open }: { onOpen: () => void; open: boolean }) {
   );
 }
 
+/**
+ * Everything a result contributes to the row it belongs to.
+ *
+ * Computed in one place because a merged call row and an orphan result row show
+ * the *same* result and must not be able to disagree about what it says — the
+ * shape of defect this whole change is about. The only thing that differs
+ * between the two is whether the row re-states the tool's name.
+ */
+type ResultParts = {
+  isError: boolean;
+  hasDiff: boolean;
+  diffAdded: number;
+  diffRemoved: number;
+  metrics: string[];
+  /** Output lines to print, already windowed on the salient line when folded. */
+  shown: string[];
+  diffShown: DiffRow[];
+  /** What the fold control says it is hiding. Empty means nothing is hidden. */
+  foldParts: string[];
+  /** Whether an expanded row has anything to collapse back down. */
+  collapsible: boolean;
+};
+
+function resultParts(result: TranscriptEntry, resultOpen: boolean): ResultParts {
+  const body = result.body || "";
+  const meta = (result.meta || {}) as Record<string, unknown>;
+  const isError = Boolean(meta.error);
+  const lines = body ? splitLines(body) : [];
+  const total = lines.length;
+  // The mutation's diff, inline under the result — correlated server-side
+  // (`arenabench.transcript`, the `tool_result` arm) and rendered in the deck's
+  // grammar (`crates/stella-tui/src/render/entry.rs`): the metric column states
+  // the emitter's own `+N −M` instead of a line count, the collapsed row
+  // suppresses the output preview (a prose "Applied edit to …" would restate
+  // the call row above it and the diff under it in the same breath), and the
+  // diff shows at most `INLINE_DIFF_CAP` lines until disclosed. Only a
+  // successful mutation carries one, so `isError` never coincides with a diff.
+  const diffText = typeof meta.diff === "string" ? meta.diff : "";
+  const hasDiff = diffText.length > 0;
+  const diffAll = hasDiff ? parseDiff(diffText) : [];
+  const diffPlan = resultOpen
+    ? { keep: diffAll.map(() => true), hidden: 0, foldBefore: -1 }
+    : selectDiffLines(
+        diffAll.map((row) => row.text),
+        INLINE_DIFF_CAP,
+      );
+  const diffKeep = diffPlan.keep;
+  // A lone hunk header is dropped (`diff.rs::body_lines_inline`): inline under
+  // a call row it restates what the gutter beside it already says, and a
+  // two-line change should not cost three rows. With several hunks the headers
+  // stay — there they are the boundary between two disjoint regions of the file.
+  const multiHunk = diffAll.filter((row) => row.tone === "hunk").length > 1;
+  const diffHidden = diffPlan.hidden;
+  // The elision is drawn WHERE the lines were, as a row of its own. Stated only
+  // in the fold summary below, a head-and-tail rendering would read as "the
+  // change continues past the bottom" under a row that is already the change's
+  // last line.
+  const elision = (): DiffRow => {
+    const text = `⋯ ${diffHidden} ${diffHidden === 1 ? "line" : "lines"} not shown`;
+    return { text, code: text, sign: "", tone: "meta", oldNo: null, newNo: null };
+  };
+  const diffShown: DiffRow[] = [];
+  diffAll.forEach((row, i) => {
+    if (i === diffPlan.foldBefore && diffHidden > 0) diffShown.push(elision());
+    if (diffKeep[i] && (multiHunk || row.tone !== "hunk")) diffShown.push(row);
+  });
+  if (diffPlan.foldBefore === diffAll.length && diffHidden > 0) {
+    diffShown.push(elision());
+  }
+  // The collapsed window anchors on the SALIENT line, not line 1 — see
+  // `salientLine`'s doc comment — and its size is the shared preview budget.
+  //
+  // The anchor is clamped so the window is never starved: a salient line near
+  // the *end* of the output would otherwise leave fewer than `budget` lines to
+  // take, and this surface would show one line where the deck and the export
+  // showed six. Sliding the window back keeps the salient line on screen as the
+  // last thing shown rather than the first. A port of the same clamp in
+  // `crates/stella-tui/src/render/entry.rs`.
+  const budget = isError ? FAIL_PREVIEW_LINES : OK_PREVIEW_LINES;
+  const anchor =
+    total > 0 ? Math.min(salientLine(body), Math.max(0, total - budget)) : 0;
+  const collapsedShown = hasDiff ? [] : lines.slice(anchor, anchor + budget);
+  const shown = resultOpen ? lines : collapsedShown;
+  const hidden = resultOpen ? 0 : total - collapsedShown.length;
+  const metrics = [
+    meta.duration_ms != null ? fmtDuration(meta.duration_ms) : null,
+    // A diff states its own size in `+N −M` — the honest unit for an edit;
+    // "12 lines" would describe the tool's chatter, not the change.
+    total > 1 && !hasDiff ? `${total} lines` : null,
+    // ⚡ marks a speculated result: its duration overlapped the model's own
+    // streaming instead of following it, so the number is not latency the run
+    // actually spent waiting.
+    meta.speculated ? "⚡ speculated" : null,
+    // The protocol grew a `ToolOutput` arm this page predates. Say so rather
+    // than presenting the JSON fallback as if it were output.
+    meta.unrecognized ? "unrecognized output shape" : null,
+  ].filter(Boolean) as string[];
+  const foldParts = [
+    // Not the diff's own hidden count: the `⋯ n lines not shown` row inside the
+    // diff already carries it, in the place it happened.
+    hidden > 0
+      ? hasDiff
+        ? `${hidden} output ${hidden === 1 ? "line" : "lines"}`
+        : `${hidden} more ${hidden === 1 ? "line" : "lines"}`
+      : null,
+  ].filter(Boolean) as string[];
+
+  return {
+    isError,
+    hasDiff,
+    diffAdded: Number(meta.diff_added ?? 0),
+    diffRemoved: Number(meta.diff_removed ?? 0),
+    metrics,
+    shown,
+    diffShown,
+    foldParts,
+    collapsible: total > budget || hasDiff,
+  };
+}
+
+/**
+ * A result's chips, for the header of whichever row carries it.
+ *
+ * `+N −M` first, from the counts the emitter measured
+ * (`meta.diff_added`/`diff_removed`) — never a recount of the rendered hunk,
+ * which is a bounded view of the changed region and reports a smaller number.
+ * Then the metrics, right-aligned and muted: the rule the transcript grammar is
+ * built on is that a duration and a cost are the accounting, and the output is
+ * the thing.
+ */
+function ResultChips({ parts }: { parts: ResultParts }) {
+  return (
+    <>
+      {parts.hasDiff && (
+        <span className="text-[10.5px] tabular-nums">
+          <span className="text-ok">+{parts.diffAdded}</span>{" "}
+          <span className="text-bad">−{parts.diffRemoved}</span>
+        </span>
+      )}
+      {parts.metrics.length > 0 && (
+        <span className="tx-chips">
+          {parts.metrics.map((metric) => (
+            <span
+              key={metric}
+              className={cn("tx-chip", parts.isError && "err")}
+            >
+              {metric}
+            </span>
+          ))}
+        </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * A result's body: the output window, the inline diff, and the fold control.
+ *
+ * Indented onto the row's spine (`ml-5`), which is the character grid's `│`
+ * carrying a call's output under the call — the same relationship
+ * `crates/stella-transcript`'s two renderers draw, in a browser's units.
+ */
+function ResultBody({
+  parts,
+  query,
+  resultOpen,
+  toggleResult,
+}: {
+  parts: ResultParts;
+  query: string;
+  resultOpen: boolean;
+  toggleResult: () => void;
+}) {
+  return (
+    <>
+      {parts.shown.length > 0 && (
+        <pre
+          className={cn(
+            "ml-5 overflow-x-auto whitespace-pre-wrap break-words",
+            parts.isError ? "text-bad/90" : "text-muted",
+          )}
+        >
+          <Highlight text={parts.shown.join("\n")} query={query} />
+        </pre>
+      )}
+      {/* Dual gutters and word-level highlight, from the shared policy — see
+          `DiffTable`. The old rendering carried one number column, which for a
+          removed line had to show a new-side number it does not have. */}
+      {parts.diffShown.length > 0 && (
+        <div className="ml-5 overflow-x-auto">
+          <DiffTable
+            rows={parts.diffShown}
+            query={query}
+            highlightText={(text, q) => <Highlight text={text} query={q} />}
+          />
+        </div>
+      )}
+      {/* The deck only earns this row for a failure — a successful result
+          already states its size in the metric column above. A mouse-driven
+          page has no ctrl+o, though, so a folded SUCCESS still gets a quiet way
+          to see the rest; it just does not compete for attention the way the
+          failure's does. With a diff, the fold names both of the things it
+          hides: the diff's overflow and the output the collapsed row
+          suppressed entirely. */}
+      {!resultOpen && parts.foldParts.length > 0 && (
+        <button
+          type="button"
+          onClick={toggleResult}
+          className={cn(
+            "ml-5 cursor-pointer text-[10.5px] hover:text-muted",
+            parts.isError ? "text-dim" : "text-dim/70",
+          )}
+        >
+          ⋯ {parts.foldParts.join(" · ")}
+        </button>
+      )}
+      {resultOpen && parts.collapsible && (
+        <button
+          type="button"
+          onClick={toggleResult}
+          className="ml-5 cursor-pointer text-[10.5px] text-dim hover:text-muted"
+        >
+          ⏶ collapse
+        </button>
+      )}
+    </>
+  );
+}
+
 /** One transcript entry, rendered in the transcript grammar. */
 export function Entry({
   entry,
+  result,
+  pending,
   query,
   thinkingOpen,
   toggleThinking,
   resultOpen,
   toggleResult,
+  argsOpen,
+  toggleArgs,
   onInspect,
   inspecting,
   isAnswer,
 }: {
   entry: TranscriptEntry;
+  /** The `tool_result` folded into this call's row. A call and its result are
+   *  ONE row — see `mergeToolRows`. Absent for every non-tool entry, and for a
+   *  call still running or whose result the reader filtered away. */
+  result?: TranscriptEntry;
+  /** Whether this call has no result anywhere in the transcript — it never
+   *  returned. Decided by the page, which can see the whole stream; the absence
+   *  of `result` above only says it is not in the current filtered view. */
+  pending?: boolean;
   query: string;
   thinkingOpen: boolean;
   toggleThinking: () => void;
   resultOpen: boolean;
   toggleResult: () => void;
+  /** The call's raw-argument disclosure, which is its own fold: the row's
+   *  primary fold belongs to the OUTPUT, exactly as `args` is a sub-fold of a
+   *  call in `crates/stella-transcript`. */
+  argsOpen?: boolean;
+  toggleArgs?: () => void;
   /** Absent for a row with no exchange behind it — which is how the icon
    *  stays rare enough to mean something. */
   onInspect?: () => void;
@@ -654,14 +907,22 @@ export function Entry({
     // rail here is undyed and the class colour is spent on the one place a
     // reader actually scans: the tool's own name.
     const cls = toolClassOf(meta);
+    // The result folded into this row. Its outcome outranks the call's class
+    // for the rail glyph and colour: a failure must be findable by margin-scan
+    // alone, the same precedence the deck gives an outcome over a category.
+    const parts = result ? resultParts(result, resultOpen) : null;
+    const failed = Boolean(parts?.isError);
+    const showArgs = Boolean(argsOpen);
     return (
       <div>
         <div className="flex items-baseline gap-2">
-          <span className="select-none text-dim">●</span>
+          <span className={cn("select-none", failed ? "text-bad" : "text-dim")}>
+            {failed ? "✗" : "●"}
+          </span>
           <span
             className={cn(
               "min-w-[8.5rem] shrink-0 font-semibold",
-              TOOL_CLASS_TEXT[cls],
+              failed ? "text-bad" : TOOL_CLASS_TEXT[cls],
             )}
           >
             <Highlight text={entry.title ?? "tool"} query={query} />
@@ -671,19 +932,31 @@ export function Entry({
               <Highlight text={body} query={query} />
             </span>
           )}
+          {parts && <ResultChips parts={parts} />}
+          {/* A call that never returned says so rather than looking like one
+              that returned nothing — a killed run leaves calls that genuinely
+              never came back, and the two must not look alike. Driven by
+              `pending` (the whole transcript) rather than by the absence of
+              `result` (this filtered view), because a reader who switched
+              results off has not made every call on screen start running. */}
+          {pending && (
+            <span className="tx-chips">
+              <span className="tx-chip">running…</span>
+            </span>
+          )}
           {onInspect && <Inspect onOpen={onInspect} open={Boolean(inspecting)} />}
-          {expandable && (
+          {expandable && toggleArgs && (
             <button
               type="button"
-              onClick={toggleResult}
-              aria-label={resultOpen ? "hide arguments" : "show arguments"}
+              onClick={toggleArgs}
+              aria-label={showArgs ? "hide arguments" : "show arguments"}
               className="shrink-0 cursor-pointer text-[10.5px] text-dim hover:text-muted"
             >
-              {resultOpen ? "⏶" : "⋯"}
+              {showArgs ? "⏶" : "⋯"}
             </button>
           )}
         </div>
-        {expandable && resultOpen &&
+        {expandable && showArgs &&
           (() => {
             // A file-mutating tool renders as a coloured diff; everything else
             // keeps the raw argument JSON. The diff is null-safe: a call whose
@@ -697,202 +970,57 @@ export function Entry({
               </pre>
             );
           })()}
+        {parts && (
+          <ResultBody
+            parts={parts}
+            query={query}
+            resultOpen={resultOpen}
+            toggleResult={toggleResult}
+          />
+        )}
       </div>
     );
   }
 
   if (entry.kind === "tool_result") {
-    // `⎿ name · 141ms · 12 lines`, then the body — the deck's result rail,
-    // subordinate to the call above it. A failure takes `✗` and its own
-    // colour so it is findable by margin-scan alone, overriding the class
-    // colour below: an outcome always outranks a category, the same
-    // precedence the deck gives a stage rule over its own hue.
+    // An ORPHAN result: one whose call is not on screen — it scrolled past the
+    // stream's cursor, or the reader filtered calls off. A paired result never
+    // reaches here; it is folded into its call's row by `mergeToolRows`, which
+    // is what stops the tool's name being printed twice down the transcript.
     //
-    // The name is on the row rather than left implicit in the call above,
-    // which is where this page departs from the deck on purpose: the deck
-    // renders a call and its result as one tight block that cannot be split,
-    // while here the kind filters can hide every call row and leave a column
-    // of results naming nothing. It carries the same class colour as its
-    // call for the same reason — a reader who has filtered down to "results"
-    // alone should not lose which kind of call produced each one.
-    const meta = (entry.meta || {}) as Record<string, unknown>;
-    const isError = Boolean(meta.error);
-    const cls = toolClassOf(meta);
-    const lines = body ? splitLines(body) : [];
-    const total = lines.length;
-    // The mutation's diff, inline under the result — correlated server-side
-    // (`arenabench.transcript`, the `tool_result` arm) and rendered in the
-    // deck's grammar (`crates/stella-tui/src/render/entry.rs`): the metric
-    // column states the emitter's own `+N −M` instead of a line count, the
-    // collapsed row suppresses the output preview (a prose "Applied edit to
-    // …" would restate the call row above it and the diff under it in the
-    // same breath), and the diff shows at most `INLINE_DIFF_CAP` lines until
-    // disclosed. Only a successful mutation carries one, so `isError` never
-    // coincides with a diff.
-    const diffText = typeof meta.diff === "string" ? meta.diff : "";
-    const hasDiff = diffText.length > 0;
-    const diffAll = hasDiff ? parseDiff(diffText) : [];
-    const diffPlan = resultOpen
-      ? { keep: diffAll.map(() => true), hidden: 0, foldBefore: -1 }
-      : selectDiffLines(
-          diffAll.map((row) => row.text),
-          INLINE_DIFF_CAP,
-        );
-    const diffKeep = diffPlan.keep;
-    // A lone hunk header is dropped (`diff.rs::body_lines_inline`): inline
-    // under a call row it restates what the gutter beside it already says,
-    // and a two-line change should not cost three rows. With several hunks
-    // the headers stay — there they are the boundary between two disjoint
-    // regions of the file.
-    const multiHunk = diffAll.filter((row) => row.tone === "hunk").length > 1;
-    const diffHidden = diffPlan.hidden;
-    // The elision is drawn WHERE the lines were, as a row of its own. Stated
-    // only in the fold summary below, a head-and-tail rendering would read as
-    // "the change continues past the bottom" under a row that is already the
-    // change's last line.
-    const elision = (): DiffRow => {
-      const text = `⋯ ${diffHidden} ${diffHidden === 1 ? "line" : "lines"} not shown`;
-      return { text, code: text, sign: "", tone: "meta", oldNo: null, newNo: null };
-    };
-    const diffShown: DiffRow[] = [];
-    diffAll.forEach((row, i) => {
-      if (i === diffPlan.foldBefore && diffHidden > 0) diffShown.push(elision());
-      if (diffKeep[i] && (multiHunk || row.tone !== "hunk")) diffShown.push(row);
-    });
-    if (diffPlan.foldBefore === diffAll.length && diffHidden > 0) {
-      diffShown.push(elision());
-    }
-    // The collapsed window anchors on the SALIENT line, not line 1 — see
-    // `salientLine`'s doc comment — and its size is the shared preview budget.
-    //
-    // The anchor is clamped so the window is never starved: a salient line near
-    // the *end* of the output would otherwise leave fewer than `budget` lines
-    // to take, and this surface would show one line where the deck and the
-    // export showed six. Sliding the window back keeps the salient line on
-    // screen as the last thing shown rather than the first. A port of the same
-    // clamp in `crates/stella-tui/src/render/entry.rs`.
-    const budget = isError ? FAIL_PREVIEW_LINES : OK_PREVIEW_LINES;
-    const anchor =
-      total > 0 ? Math.min(salientLine(body ?? ""), Math.max(0, total - budget)) : 0;
-    const collapsedShown = hasDiff ? [] : lines.slice(anchor, anchor + budget);
-    const shown = resultOpen ? lines : collapsedShown;
-    const hidden = resultOpen ? 0 : total - collapsedShown.length;
-    const metrics = [
-      meta.duration_ms != null ? fmtDuration(meta.duration_ms) : null,
-      // A diff states its own size in `+N −M` — the honest unit for an edit;
-      // "12 lines" would describe the tool's chatter, not the change.
-      total > 1 && !hasDiff ? `${total} lines` : null,
-      // ⚡ marks a speculated result: its duration overlapped the model's own
-      // streaming instead of following it, so the number is not latency the
-      // run actually spent waiting.
-      meta.speculated ? "⚡ speculated" : null,
-      // The protocol grew a `ToolOutput` arm this page predates. Say so
-      // rather than presenting the JSON fallback as if it were output.
-      meta.unrecognized ? "unrecognized output shape" : null,
-    ].filter(Boolean);
-    const foldParts = [
-      // Not the diff's own hidden count: the `⋯ n lines not shown` row inside
-      // the diff already carries it, in the place it happened.
-      null,
-      hidden > 0
-        ? hasDiff
-          ? `${hidden} output ${hidden === 1 ? "line" : "lines"}`
-          : `${hidden} more ${hidden === 1 ? "line" : "lines"}`
-        : null,
-    ].filter(Boolean);
+    // Here, and only here, the row keeps the tool's name: a bare column of
+    // outputs naming nothing is worse than a name that appears once. `⎿` marks
+    // it as the result half of a call whose header is elsewhere, and a failure
+    // takes `✗` and its own colour so it is findable by margin-scan alone —
+    // an outcome always outranks a category.
+    const parts = resultParts(entry, resultOpen);
+    const cls = toolClassOf(entry.meta || {});
     return (
       <div>
         <div className="flex items-baseline gap-2">
-          <span className={cn("select-none", isError ? "text-bad" : "text-dim")}>
-            {isError ? "✗" : "⎿"}
+          <span className={cn("select-none", parts.isError ? "text-bad" : "text-dim")}>
+            {parts.isError ? "✗" : "⎿"}
           </span>
           <span
-            className={cn("font-medium", isError ? "text-bad" : TOOL_CLASS_TEXT[cls])}
+            className={cn(
+              "font-medium",
+              parts.isError ? "text-bad" : TOOL_CLASS_TEXT[cls],
+            )}
           >
             <Highlight text={entry.title ?? "tool"} query={query} />
           </span>
-          {/* The deck's `+N −M`, first in the metric column, from the counts
-              the emitter measured (`meta.diff_added`/`diff_removed`) — never
-              a recount of the rendered hunk, which is a bounded view of the
-              changed region and reports a smaller number. */}
-          {hasDiff && (
-            <span className="text-[10.5px] tabular-nums">
-              <span className="text-ok">+{Number(meta.diff_added ?? 0)}</span>{" "}
-              <span className="text-bad">−{Number(meta.diff_removed ?? 0)}</span>
-            </span>
-          )}
-          {/* Metadata as chips, right-aligned and muted — never inline at the
-              weight of the work it paid for. The rule the transcript grammar
-              is built on: a duration and a cost are the accounting, and the
-              output is the thing. */}
-          {metrics.length > 0 && (
-            <span className="tx-chips">
-              {metrics.map((metric) => (
-                <span
-                  key={String(metric)}
-                  className={cn("tx-chip", isError && "err")}
-                >
-                  {metric}
-                </span>
-              ))}
-            </span>
-          )}
+          <ResultChips parts={parts} />
           {onInspect && <Inspect onOpen={onInspect} open={Boolean(inspecting)} />}
         </div>
-        {shown.length > 0 && (
-          <pre
-            className={cn(
-              "ml-5 overflow-x-auto whitespace-pre-wrap break-words",
-              isError ? "text-bad/90" : "text-muted",
-            )}
-          >
-            <Highlight text={shown.join("\n")} query={query} />
-          </pre>
-        )}
-        {/* Dual gutters and word-level highlight, from the shared policy — see
-            `DiffTable`. The old rendering carried one number column, which for
-            a removed line had to show a new-side number it does not have. */}
-        {diffShown.length > 0 && (
-          <div className="ml-5 overflow-x-auto">
-            <DiffTable
-              rows={diffShown}
-              query={query}
-              highlightText={(text, q) => <Highlight text={text} query={q} />}
-            />
-          </div>
-        )}
-        {/* The deck only earns this row for a failure — a successful result
-            already states its size in the metric column above. A mouse-driven
-            page has no ctrl+o, though, so a folded SUCCESS still gets a quiet
-            way to see the rest; it just does not compete for attention the
-            way the failure's does. With a diff, the fold names both of the
-            things it hides: the diff's overflow and the output the collapsed
-            row suppressed entirely. */}
-        {!resultOpen && foldParts.length > 0 && (
-          <button
-            type="button"
-            onClick={toggleResult}
-            className={cn(
-              "ml-5 cursor-pointer text-[10.5px] hover:text-muted",
-              isError ? "text-dim" : "text-dim/70",
-            )}
-          >
-            ⋯ {foldParts.join(" · ")}
-          </button>
-        )}
-        {resultOpen && (total > budget || hasDiff) && (
-          <button
-            type="button"
-            onClick={toggleResult}
-            className="ml-5 cursor-pointer text-[10.5px] text-dim hover:text-muted"
-          >
-            ⏶ collapse
-          </button>
-        )}
+        <ResultBody
+          parts={parts}
+          query={query}
+          resultOpen={resultOpen}
+          toggleResult={toggleResult}
+        />
       </div>
     );
   }
-
   if (entry.kind === "usage") {
     return <div className="text-[10.5px] text-dim">{usageLine(entry)}</div>;
   }

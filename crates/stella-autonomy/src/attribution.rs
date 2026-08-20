@@ -5,15 +5,28 @@
 //! reading any of them a month later needs to know whether a human wrote it,
 //! and that is not a thing to leave to a reader's guess about tone.
 //!
-//! # The rule is exact, because "roughly one blank line" is not a contract
+//! # The rule is exact, because "roughly a footer" is not a contract
 //!
-//! [`sign`] appends the signature **exactly one line break after the last
-//! character of the body**. Not two, not "a blank line", not "whatever the
-//! caller already had". Trailing whitespace on the body is removed first, so
-//! the result does not depend on whether the caller happened to end with a
-//! newline — which is precisely the kind of difference that produces two
-//! near-identical formats across four surfaces and no way to tell which is
-//! right. `exactly_one_line_break_separates_body_and_signature` is the witness.
+//! [`sign`] appends the signature as a **horizontal rule footer**: a blank
+//! line, `---`, a newline, then the text. So a signed body always ends
+//!
+//! ```text
+//! <body>
+//!
+//! ---
+//! created by stella*
+//! ```
+//!
+//! Trailing whitespace on the body is removed first, so the result does not
+//! depend on whether the caller happened to end with a newline — precisely the
+//! difference that would otherwise produce two near-identical formats across
+//! four surfaces with no way to tell which is right.
+//! `the_signature_is_a_horizontal_rule_footer` is the witness.
+//!
+//! **The separator is fixed and the text is not.** A distribution changes what
+//! the footer *says*; it does not get to change whether there is a rule above
+//! it, because that is what makes a signed body recognisable at a glance
+//! across every surface and every deployment.
 //!
 //! # Configurable per surface, and separately
 //!
@@ -28,6 +41,19 @@
 
 use serde::{Deserialize, Serialize};
 
+/// What the footer says, unless a workspace changes it.
+///
+/// One string for all four surfaces by default: a reader should recognise the
+/// same mark on a commit, a pull request, an issue and a comment without
+/// having to learn four phrasings. A deployment that wants them to differ sets
+/// them separately.
+pub const SIGNATURE: &str = "created by stella*";
+
+/// What separates a body from its signature: a blank line, then a rule.
+///
+/// Fixed rather than configurable — see the module docs.
+const SEPARATOR: &str = "\n\n---\n";
+
 /// The default branch prefix.
 ///
 /// Every branch the loop opens is namespaced, so a human scanning `git branch`
@@ -35,6 +61,13 @@ use serde::{Deserialize, Serialize};
 /// branches out of the fleet's namespace, where `stella fleet gc` would believe
 /// it owned them.
 pub const DEFAULT_BRANCH_PREFIX: &str = "stella/";
+
+/// What a pull request the loop opens is titled with, unless configured.
+///
+/// Names the *thing that did it* rather than the crate it touched. A
+/// maintainer scanning a pull request list wants to know which entries nobody
+/// wrote by hand; which crate a change lands in is already in the diff.
+pub const DEFAULT_TITLE_PREFIX: &str = "stella self-driving:";
 
 /// What the loop appends to each thing it writes, and how it names branches.
 ///
@@ -58,21 +91,52 @@ pub struct Attribution {
     /// corrected: some teams namespace with `-`, and silently rewriting an
     /// operator's choice is worse than honouring an unusual one.
     pub branch_prefix: String,
+    /// Prefix for the title of every pull request it opens.
+    ///
+    /// The footer says who wrote a pull request once you open it; this says so
+    /// in the list, which is where a maintainer actually triages. Without it an
+    /// autonomous pull request inherits its issue's title verbatim and is
+    /// indistinguishable from a human's at a glance.
+    ///
+    /// Deliberately **not** applied to commit messages. Those follow
+    /// Conventional Commits (`fix(stella-cli): …`), the scope is load-bearing,
+    /// and a prefix in front of it would break the convention the repository
+    /// enforces. The commit identifies its author through the footer instead.
+    pub title_prefix: String,
 }
 
 impl Default for Attribution {
     fn default() -> Self {
         Self {
-            commit: "Created by stella.".to_owned(),
-            pull_request: "Created by stella.".to_owned(),
-            issue: "Filed by stella.".to_owned(),
-            issue_comment: "Posted by stella.".to_owned(),
+            commit: SIGNATURE.to_owned(),
+            pull_request: SIGNATURE.to_owned(),
+            issue: SIGNATURE.to_owned(),
+            issue_comment: SIGNATURE.to_owned(),
             branch_prefix: DEFAULT_BRANCH_PREFIX.to_owned(),
+            title_prefix: DEFAULT_TITLE_PREFIX.to_owned(),
         }
     }
 }
 
 impl Attribution {
+    /// Put the title prefix in front of a summary.
+    ///
+    /// An empty prefix is honoured as "no prefix" here, unlike
+    /// [`Self::branch_prefix`] — an unprefixed title is merely
+    /// indistinguishable, while an unprefixed branch collides with a human's
+    /// refs. One is cosmetic and one is operational.
+    ///
+    /// Already-prefixed titles are left alone, so re-opening a pull request
+    /// for the same issue cannot stack the prefix twice.
+    #[must_use]
+    pub fn title(&self, summary: &str) -> String {
+        let prefix = self.title_prefix.trim();
+        if prefix.is_empty() || summary.starts_with(prefix) {
+            return summary.to_owned();
+        }
+        format!("{prefix} {summary}")
+    }
+
     /// The branch prefix, falling back to the default when unset.
     ///
     /// An empty prefix is treated as unset rather than as "no prefix": an
@@ -89,12 +153,42 @@ impl Attribution {
     }
 }
 
-/// Append `signature` exactly one line break after the last character of
-/// `body`.
+/// Append `signature` to `body` as a horizontal rule footer.
+///
+/// The result ends `<body>\n\n---\n<signature>`. Trailing whitespace on the
+/// body is normalized first, so two callers whose bodies differ only in how
+/// they terminated produce identical output.
 ///
 /// An empty signature returns the body untouched — including its own trailing
 /// whitespace, because a caller that signs nothing has not asked for its text
 /// to be reformatted.
+///
+/// # Examples
+///
+/// The join is exactly one blank line and a horizontal rule, whatever the body
+/// ended with — so two callers that differ only in trailing whitespace produce
+/// the identical result:
+///
+/// ```
+/// use stella_autonomy::sign;
+///
+/// assert_eq!(
+///     sign("body", "created by stella*"),
+///     "body\n\n---\ncreated by stella*"
+/// );
+/// assert_eq!(
+///     sign("body\n\n", "created by stella*"),
+///     "body\n\n---\ncreated by stella*"
+/// );
+/// ```
+///
+/// An empty body gets the rule with nothing above it:
+///
+/// ```
+/// use stella_autonomy::sign;
+///
+/// assert_eq!(sign("", "created by stella*"), "---\ncreated by stella*");
+/// ```
 #[must_use]
 pub fn sign(body: &str, signature: &str) -> String {
     if signature.trim().is_empty() {
@@ -102,23 +196,65 @@ pub fn sign(body: &str, signature: &str) -> String {
     }
     let trimmed = body.trim_end();
     if trimmed.is_empty() {
-        // A body that is entirely empty gets the signature alone rather than a
-        // leading blank line.
-        return signature.trim().to_owned();
+        // An empty body gets the footer without a leading blank line: a rule
+        // with nothing above it is a rule separating nothing.
+        return format!("---\n{}", signature.trim());
     }
-    format!("{trimmed}\n{}", signature.trim())
+    format!("{trimmed}{SEPARATOR}{}", signature.trim())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// **The witness.** Exactly one line break, whatever the body ended with —
-    /// so the four surfaces cannot drift into four near-identical formats.
+    /// A pull request the loop opened says so in the list, not just inside it.
+    ///
+    /// The footer identifies an autonomous pull request once it is open; the
+    /// title is what a maintainer reads while triaging twenty of them. Before
+    /// this, the title was the issue's verbatim — `stella-autonomy: sign() has
+    /// no doctest …` — indistinguishable from something a person wrote.
     #[test]
-    fn exactly_one_line_break_separates_body_and_signature() {
-        let sig = "Created by stella.";
+    fn a_title_says_what_opened_the_pull_request() {
+        let attribution = Attribution::default();
+        assert_eq!(
+            attribution.title("stella-autonomy: sign() has no doctest (#4006)"),
+            "stella self-driving: stella-autonomy: sign() has no doctest (#4006)"
+        );
+    }
 
+    /// Re-opening for the same issue cannot stack the prefix.
+    #[test]
+    fn an_already_prefixed_title_is_left_alone() {
+        let attribution = Attribution::default();
+        let once = attribution.title("fix the thing");
+        assert_eq!(attribution.title(&once), once);
+    }
+
+    /// The prefix is the operator's, and an empty one means none.
+    ///
+    /// Unlike `branch_prefix`, where empty falls back to the default: an
+    /// unprefixed title is merely indistinguishable, while an unprefixed
+    /// branch collides with a human's refs. Cosmetic versus operational.
+    #[test]
+    fn an_empty_title_prefix_is_honoured_as_no_prefix() {
+        let attribution = Attribution {
+            title_prefix: String::new(),
+            ..Attribution::default()
+        };
+        assert_eq!(attribution.title("fix the thing"), "fix the thing");
+
+        let oxagen = Attribution {
+            title_prefix: "oxagen:".to_owned(),
+            ..Attribution::default()
+        };
+        assert_eq!(oxagen.title("fix the thing"), "oxagen: fix the thing");
+    }
+
+    /// **The witness.** A blank line, a rule, then the text — whatever the body
+    /// ended with, so the four surfaces cannot drift into four near-identical
+    /// formats.
+    #[test]
+    fn the_signature_is_a_horizontal_rule_footer() {
         for body in [
             "the body",
             "the body\n",
@@ -127,9 +263,9 @@ mod tests {
             "the body   ",
         ] {
             assert_eq!(
-                sign(body, sig),
-                "the body\nCreated by stella.",
-                "body {body:?} must produce exactly one line break"
+                sign(body, SIGNATURE),
+                "the body\n\n---\ncreated by stella*",
+                "body {body:?} must produce the same footer"
             );
         }
     }
@@ -138,7 +274,10 @@ mod tests {
     /// normalized.
     #[test]
     fn interior_line_breaks_are_left_alone() {
-        assert_eq!(sign("first\n\nsecond\n", "sig"), "first\n\nsecond\nsig");
+        assert_eq!(
+            sign("first\n\nsecond\n", "sig"),
+            "first\n\nsecond\n\n---\nsig"
+        );
     }
 
     /// An operator who clears a surface's signature gets silence on it, not a
@@ -149,10 +288,12 @@ mod tests {
         assert_eq!(sign("the body", "   "), "the body");
     }
 
+    /// A rule with nothing above it separates nothing, so an empty body gets
+    /// the footer without a leading blank line.
     #[test]
-    fn an_empty_body_gets_the_signature_alone() {
-        assert_eq!(sign("", "sig"), "sig");
-        assert_eq!(sign("  \n ", "sig"), "sig");
+    fn an_empty_body_gets_the_footer_without_a_leading_blank_line() {
+        assert_eq!(sign("", "sig"), "---\nsig");
+        assert_eq!(sign("  \n ", "sig"), "---\nsig");
     }
 
     /// The default is `stella/`, and it is what an unset prefix falls back to.
@@ -177,6 +318,15 @@ mod tests {
         assert_eq!(theirs.branch_prefix(), "oxagen-");
     }
 
+    /// A distribution changes what the footer says; it does not change that
+    /// there is a rule above it. That is what makes a signed body recognisable
+    /// across every surface and every deployment.
+    #[test]
+    fn the_separator_is_fixed_even_when_the_text_is_not() {
+        assert!(sign("body", "Created by oxagen.").starts_with("body\n\n---\n"));
+        assert!(sign("body", "anything at all").starts_with("body\n\n---\n"));
+    }
+
     /// The four surfaces are independent: changing one does not move another.
     #[test]
     fn each_surface_signs_separately() {
@@ -187,10 +337,10 @@ mod tests {
             issue_comment: "n".into(),
             ..Attribution::default()
         };
-        assert_eq!(sign("x", &a.commit), "x\nc");
-        assert_eq!(sign("x", &a.pull_request), "x\np");
-        assert_eq!(sign("x", &a.issue), "x\ni");
-        assert_eq!(sign("x", &a.issue_comment), "x\nn");
+        assert_eq!(sign("x", &a.commit), "x\n\n---\nc");
+        assert_eq!(sign("x", &a.pull_request), "x\n\n---\np");
+        assert_eq!(sign("x", &a.issue), "x\n\n---\ni");
+        assert_eq!(sign("x", &a.issue_comment), "x\n\n---\nn");
     }
 
     /// A partial manifest fills in the defaults for what it did not mention —
@@ -200,7 +350,7 @@ mod tests {
         let parsed: Attribution =
             serde_json::from_str(r#"{"commit":"Created by oxagen."}"#).expect("deserialize");
         assert_eq!(parsed.commit, "Created by oxagen.");
-        assert_eq!(parsed.issue, "Filed by stella.");
+        assert_eq!(parsed.issue, SIGNATURE);
         assert_eq!(parsed.branch_prefix(), "stella/");
     }
 

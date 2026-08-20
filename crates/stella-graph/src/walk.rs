@@ -59,15 +59,40 @@ fn is_denied_dir(name: &str) -> bool {
     name.starts_with('.') || DENY_DIRS.contains(&name)
 }
 
+/// Whether `dir` is a checkout of its own — a nested repository, a submodule,
+/// or a linked git worktree (where `.git` is a *file* pointing at the real
+/// gitdir, which is why this tests existence rather than directory-ness).
+///
+/// Such a directory is never walked. It belongs to a different workspace: its
+/// ignore rules are its own and this walk resolved somebody else's
+/// ([`WorkspaceIgnore`] is resolved once, at `root`), and `stella` launched
+/// inside it indexes it into its *own* `.stella/private/codegraph.db`. Walking
+/// it here would copy every one of its files into the parent's index — a
+/// second, stale, unowned copy of a tree that already has an index, and on a
+/// machine with several worktrees checked out under one directory, one copy
+/// per worktree.
+///
+/// The hidden-directory rule above already covers the common layout
+/// (`.claude/worktrees/…`, `.git/…`); this covers a worktree parked at a
+/// visible path, which is the layout `git worktree add ../feature-x` produces
+/// when someone puts it inside the tree instead of beside it.
+fn is_other_checkout(dir: &Path) -> bool {
+    dir.join(".git").exists()
+}
+
 /// Whether a path *below `root`* is one the index should not hold — excluded
-/// by the repository's own rules (`ignore`), or on the deny-list the walk
-/// applies. Used to filter live watcher events. Only the portion under `root`
-/// is examined, so a workspace that itself lives inside a hidden or vendor
-/// directory (e.g. `~/.cache/proj`) is not wrongly excluded. A path outside
-/// `root` is treated as ignored.
+/// by the repository's own rules (`ignore`), on the deny-list the walk
+/// applies, or living inside a nested checkout the walk would refuse to
+/// descend into. Used to filter live watcher events. Only the portion under
+/// `root` is examined, so a workspace that itself lives inside a hidden or
+/// vendor directory (e.g. `~/.cache/proj`) is not wrongly excluded. A path
+/// outside `root` is treated as ignored.
 ///
 /// `ignore` is passed in rather than resolved here because this runs once per
-/// watcher event: resolving would be one `git` invocation per saved file.
+/// watcher event: resolving would be one `git` invocation per saved file. The
+/// nested-checkout guard costs one `stat` per ancestor directory instead — no
+/// subprocess — which is the same discipline: keep the per-event cost to the
+/// filesystem, never to `git`.
 pub(crate) fn rel_is_ignored(root: &Path, path: &Path, ignore: &WorkspaceIgnore) -> bool {
     let Ok(rel) = path.strip_prefix(root) else {
         return true;
@@ -78,13 +103,40 @@ pub(crate) fn rel_is_ignored(root: &Path, path: &Path, ignore: &WorkspaceIgnore)
     {
         return true;
     }
-    rel.components().any(|component| match component {
+    if rel.components().any(|component| match component {
         std::path::Component::Normal(name) => {
             let name = name.to_string_lossy();
             name.starts_with('.') || DENY_DIRS.contains(&name.as_ref())
         }
         _ => false,
-    })
+    }) {
+        return true;
+    }
+    // Reject a path that lives inside a nested checkout — a linked worktree,
+    // submodule, or nested clone parked at a visible path. The build-time walk
+    // refuses to descend into such a directory ([`is_other_checkout`]); the
+    // live watcher must agree, or a save inside one gets indexed into the
+    // parent's database — a second, stale, unowned copy of a tree that already
+    // owns its own index. Each ancestor directory *strictly between* `root`
+    // and `path` is checked; `root` itself is skipped, since it is the very
+    // checkout this walk owns and carries its own `.git`.
+    let mut ancestor = root.to_path_buf();
+    let mut components = rel.components().peekable();
+    while let Some(component) = components.next() {
+        // The final component is the event's own path (the file, or a
+        // directory event): its own `.git`, if any, does not place it *inside*
+        // a nested checkout, so only interior components are tested.
+        if components.peek().is_none() {
+            break;
+        }
+        if let std::path::Component::Normal(name) = component {
+            ancestor.push(name);
+            if is_other_checkout(&ancestor) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Walk `root` and return every indexable source file (absolute paths).
@@ -124,8 +176,12 @@ fn walk_indexable_with(root: &Path, ignore: &WorkspaceIgnore) -> Vec<PathBuf> {
             // Symlinks report as neither is_dir nor is_file here, so they are
             // ignored — no symlink-cycle risk, no double-indexing.
             if file_type.is_dir() {
-                if !is_denied_dir(&name) && !ignore.excludes_dir(&rel_child) {
-                    stack.push((entry.path(), rel_child));
+                let child = entry.path();
+                if !is_denied_dir(&name)
+                    && !ignore.excludes_dir(&rel_child)
+                    && !is_other_checkout(&child)
+                {
+                    stack.push((child, rel_child));
                 }
             } else if file_type.is_file() {
                 if ignore.excludes(&rel_child) {
@@ -175,6 +231,44 @@ mod tests {
         let files = walk_indexable(root);
         assert_eq!(files.len(), 1, "only real source is walked: {files:?}");
         assert!(files[0].ends_with("apps/cli/src/main.rs"));
+    }
+
+    /// **The worktree witness.** A checkout parked at a visible path inside
+    /// the workspace — a linked git worktree (`.git` is a *file* there), a
+    /// nested clone, a submodule — is not walked into the parent's index.
+    ///
+    /// Without this, launching `stella` in a repository that keeps its
+    /// worktrees inside itself indexes every worktree's copy of every file
+    /// into the one index, and a search then ranks the same function five
+    /// times over, in five trees, four of which the user is not in.
+    #[test]
+    fn a_nested_checkout_or_worktree_is_never_walked() {
+        let ws = TempDir::new().unwrap();
+        let root = ws.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        // A linked worktree: `.git` is a file pointing at the real gitdir.
+        fs::create_dir_all(root.join("worktrees/feature/src")).unwrap();
+        fs::write(
+            root.join("worktrees/feature/.git"),
+            "gitdir: /elsewhere/.git/worktrees/feature\n",
+        )
+        .unwrap();
+        fs::write(root.join("worktrees/feature/src/main.rs"), "fn main() {}\n").unwrap();
+
+        // A nested clone: `.git` is a directory.
+        fs::create_dir_all(root.join("nested/.git")).unwrap();
+        fs::create_dir_all(root.join("nested/src")).unwrap();
+        fs::write(root.join("nested/src/lib.rs"), "pub fn nested() {}\n").unwrap();
+
+        let files = walk_indexable_with(root, &WorkspaceIgnore::none());
+        assert_eq!(
+            files.len(),
+            1,
+            "only this checkout's own source is walked: {files:?}"
+        );
+        assert!(files[0].ends_with("src/main.rs"));
     }
 
     /// The gap this module documented for two releases: a `.gitignore` rule
@@ -267,6 +361,46 @@ mod tests {
             &root.join("generated-sdk/client.rs"),
             &ignore
         ));
+        assert!(!rel_is_ignored(root, &root.join("src/main.rs"), &ignore));
+    }
+
+    /// The watcher counterpart of `a_nested_checkout_or_worktree_is_never_walked`.
+    /// A live save inside a nested checkout parked at a visible path must be
+    /// treated as ignored, exactly as the build-time walk refuses to descend
+    /// into it — otherwise the watcher indexes a second, stale, unowned copy
+    /// of a tree that already owns its own index.
+    #[test]
+    fn a_watcher_event_inside_a_nested_checkout_is_ignored() {
+        let ws = TempDir::new().unwrap();
+        let root = ws.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        // A linked worktree: `.git` is a file pointing at the real gitdir.
+        fs::create_dir_all(root.join("feature-x/src")).unwrap();
+        fs::write(
+            root.join("feature-x/.git"),
+            "gitdir: /elsewhere/.git/worktrees/feature-x\n",
+        )
+        .unwrap();
+        fs::write(root.join("feature-x/src/main.rs"), "fn main() {}\n").unwrap();
+
+        // A nested clone: `.git` is a directory.
+        fs::create_dir_all(root.join("nested/.git")).unwrap();
+        fs::create_dir_all(root.join("nested/src")).unwrap();
+        fs::write(root.join("nested/src/lib.rs"), "pub fn nested() {}\n").unwrap();
+
+        let ignore = WorkspaceIgnore::none();
+        assert!(
+            rel_is_ignored(root, &root.join("feature-x/src/main.rs"), &ignore),
+            "a save inside a linked worktree must be ignored"
+        );
+        assert!(
+            rel_is_ignored(root, &root.join("nested/src/lib.rs"), &ignore),
+            "a save inside a nested clone must be ignored"
+        );
+        // The parent checkout's own `.git` at `root` must not exclude its
+        // own source.
         assert!(!rel_is_ignored(root, &root.join("src/main.rs"), &ignore));
     }
 

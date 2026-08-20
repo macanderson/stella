@@ -226,26 +226,121 @@ fn marking_interrupted_settles_running_calls_and_dates_from_the_log() {
     assert!(store.unfinished_executions().unwrap().is_empty());
 }
 
-/// One `call_id` is one call however often the stream announces it. A second
-/// row would double the count *and* split the result across two rows.
+/// **The #4033 witness.** Two steps that each announce `read_file:0` are two
+/// calls, and must project two rows.
+///
+/// `call_id` is only unique within one model *response*: several providers
+/// mint it as `{tool_name}:{index_within_response}`, so the first read of
+/// every response carries the same id. Keyed on `(execution_id, call_id)` this
+/// projection read the second announcement as a re-announcement of the first
+/// and updated that row in place — one observed execution projected 4 rows
+/// from 176 calls, and 12.2% of a workspace's calls were erased.
+///
+/// Fails against the pre-v28 key, which projects one row here.
 #[test]
-fn a_re_announced_call_folds_into_one_row_keeping_its_position() {
+fn two_steps_announcing_one_call_id_project_two_rows() {
+    let (store, id) = fixture();
+    let read = |offset: i64| AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "read_file:0".into(),
+            name: "read_file".into(),
+            input: serde_json::json!({ "path": "deck_ui.rs", "offset": offset }),
+        },
+    };
+    // Step 1 reads a window and gets its result; step 2 reads the next one.
+    store.record_event(id, 0, &read(1)).unwrap();
+    store
+        .record_event(id, 1, &ok_result("read_file:0", "lines 1-40", 5))
+        .unwrap();
+    store.record_event(id, 2, &read(41)).unwrap();
+    store
+        .record_event(id, 3, &ok_result("read_file:0", "lines 41-80", 7))
+        .unwrap();
+
+    let folded = rows(&store, id);
+    assert_eq!(
+        folded.len(),
+        2,
+        "two announcements are two calls, not one re-announcement: {folded:?}"
+    );
+    let args: Vec<String> = {
+        let conn = store.lock();
+        let mut stmt = conn
+            .prepare("SELECT args_json FROM tool_calls WHERE execution_id = ?1 ORDER BY seq ASC")
+            .expect("prepare");
+        let mapped = stmt
+            .query_map(params![id], |r| r.get::<_, String>(0))
+            .expect("query");
+        mapped.map(|r| r.expect("row")).collect()
+    };
+    assert!(args[0].contains("\"offset\":1"), "{args:?}");
+    assert!(args[1].contains("\"offset\":41"), "{args:?}");
+    // Each result settled its own call rather than overwriting the other's.
+    let sizes: Vec<i64> = {
+        let conn = store.lock();
+        let mut stmt = conn
+            .prepare("SELECT bytes_out FROM tool_calls WHERE execution_id = ?1 ORDER BY seq ASC")
+            .expect("prepare");
+        let mapped = stmt
+            .query_map(params![id], |r| r.get::<_, i64>(0))
+            .expect("query");
+        mapped.map(|r| r.expect("row")).collect()
+    };
+    assert_eq!(sizes, vec![10, 11], "each result settled its own row");
+}
+
+/// Two calls sharing an id *within one response* are also two calls — the
+/// engine's dispatch loop answers them separately ("an id-keyed set would let
+/// one answered duplicate silently absorb the other"), and the projection must
+/// not re-merge what dispatch kept apart.
+///
+/// Their results are indistinguishable by id, so they settle oldest-open
+/// first. That is the only available pairing, and it never erases either call.
+#[test]
+fn duplicate_ids_within_one_response_stay_two_rows() {
+    let (store, id) = fixture();
+    store
+        .record_event(id, 0, &start("dup", "read_file"))
+        .unwrap();
+    store
+        .record_event(id, 1, &start("dup", "read_file"))
+        .unwrap();
+    store
+        .record_event(id, 2, &ok_result("dup", "first", 3))
+        .unwrap();
+    store
+        .record_event(id, 3, &err_result("dup", "second"))
+        .unwrap();
+
+    let folded = rows(&store, id);
+    assert_eq!(
+        folded.len(),
+        2,
+        "neither duplicate absorbed the other: {folded:?}"
+    );
+    assert_eq!(folded[0].2, "ok", "the first result settled the older call");
+    assert_eq!(folded[1].2, "error", "the second settled the younger");
+}
+
+/// The *same* announcement folded twice is still one call: the row is keyed on
+/// the event's own `seq`, so a re-fold refreshes it in place rather than
+/// minting a second. This is what keeps the repair path idempotent.
+#[test]
+fn re_folding_one_announcement_keeps_its_single_row() {
     let (store, id) = fixture();
     store
         .record_event(id, 0, &start("c1", "read_file"))
         .unwrap();
     store.record_event(id, 1, &start("c2", "bash")).unwrap();
-    // c1 re-announced under a corrected name, after c2 took position 1.
-    store
-        .record_event(id, 2, &start("c1", "read_file_v2"))
-        .unwrap();
-    store.record_event(id, 3, &ok_result("c1", "x", 9)).unwrap();
+    store.record_event(id, 2, &ok_result("c1", "x", 9)).unwrap();
+    store.record_event(id, 3, &ok_result("c2", "y", 4)).unwrap();
+    let live = rows(&store, id);
 
-    let folded = rows(&store, id);
-    assert_eq!(folded.len(), 2, "no second row for c1: {folded:?}");
-    assert_eq!(folded[0].0, 0, "c1 keeps its original position");
-    assert_eq!(folded[0].1, "read_file_v2", "the latest payload wins");
-    assert_eq!(folded[0].2, "ok", "its result still attaches");
+    store.materialize_tool_calls(id).unwrap();
+    store.materialize_tool_calls(id).unwrap();
+
+    assert_eq!(rows(&store, id), live, "re-folding twice changes nothing");
+    assert_eq!(live.len(), 2);
 }
 
 /// The live fold and the repair fold must agree, or turn-end re-materialization
@@ -468,5 +563,92 @@ fn rollup_bucket_counts_errors_but_not_abandonment() {
         (bucket.calls, bucket.errors),
         (2, 1),
         "abandonment is a fact about the turn, not the tool (#3146)"
+    );
+}
+
+/// The repair fold keeps them apart too, or a turn-end re-materialization
+/// would silently re-collapse what the live fold recorded correctly. Moved
+/// here from `store::tests` with #4033: it is a projection test, and it
+/// belongs beside the projection.
+#[test]
+fn materialize_keeps_two_announcements_sharing_a_call_id_apart() {
+    let store = Store::in_memory().unwrap();
+    let id = store
+        .begin_execution("deck", "add a feature", "zai", "glm-5.2")
+        .unwrap();
+
+    // The same call_id announced twice by two different events: two calls.
+    // `call_id` is unique only within one model response, so the repair fold
+    // must key on the announcing event and keep them apart — folding them
+    // erased 12.2% of one workspace's calls (#4033).
+    store
+        .record_event(
+            id,
+            0,
+            &AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "c1".into(),
+                    name: "grep".into(),
+                    input: serde_json::json!({"pattern": "first"}),
+                },
+            },
+        )
+        .unwrap();
+    store
+        .record_event(
+            id,
+            1,
+            &AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "c1".into(),
+                    name: "grep".into(),
+                    input: serde_json::json!({"pattern": "final"}),
+                },
+            },
+        )
+        .unwrap();
+    store
+        .record_event(
+            id,
+            2,
+            &AgentEvent::ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::Ok {
+                    content: "hit\n".into(),
+                    data: None,
+                },
+                duration_ms: 12,
+                speculated: false,
+            },
+        )
+        .unwrap();
+
+    let n = store.materialize_tool_calls(id).unwrap();
+    assert_eq!(n, 2, "two announcements are two calls (#4033)");
+    assert_eq!(store.count("tool_calls").unwrap(), 2);
+    let calls: Vec<(String, i64, String)> = {
+        let conn = store.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT args_json, ok, state FROM tool_calls \
+                 WHERE execution_id = ?1 ORDER BY seq ASC",
+            )
+            .unwrap();
+        let mapped = stmt
+            .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        mapped.map(|r| r.unwrap()).collect()
+    };
+    assert_eq!(
+        calls[0].0, r#"{"pattern":"first"}"#,
+        "each announcement keeps its own arguments"
+    );
+    assert_eq!(calls[1].0, r#"{"pattern":"final"}"#);
+    // Only one result was delivered, and it settles the older open call; the
+    // younger one is still outstanding, which is what abandonment means.
+    assert_eq!(calls[0].1, 1, "the result attached to the call it answers");
+    assert_eq!(
+        calls[1].2, "abandoned",
+        "an unanswered announcement is not silently merged away"
     );
 }

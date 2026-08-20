@@ -108,9 +108,9 @@
 use std::path::{Path, PathBuf};
 
 use stella_embed::{Embedder, Resolution, SimilarityPosture};
-use stella_graph::{ChunkVector, CodeGraph, MAX_FILES_PER_CHUNK_PASS};
+use stella_graph::CodeGraph;
+use stella_tools::search::backfill::backfill_opened;
 use stella_tools::search::engine::{Answer, dispatch};
-use stella_tools::search::semantic::{EMBED_BATCH, catch_up_embeddings};
 
 /// Named in the `#[ignore]` reason and in the panic below, so the missing
 /// piece is stated the same way whichever path the reader arrives on.
@@ -145,96 +145,6 @@ fn workspace_root() -> PathBuf {
     );
     root.canonicalize()
         .expect("canonicalize the workspace root")
-}
-
-/// Embed every file vector still pending, to exhaustion.
-///
-/// `catch_up_embeddings` is the search ladder's own lazy pass and is capped at
-/// `stella_graph::MAX_FILES_PER_PASS` files per call — right for a query,
-/// wrong for a witness, which must rank against the whole workspace or its
-/// miss means nothing. Looping it here keeps one implementation of "embed a
-/// file vector" rather than a second one written for the test.
-async fn warm_file_vectors(graph: &CodeGraph, embedder: &dyn Embedder, fingerprint: &str) {
-    let total = graph.file_count().expect("file count");
-    let mut last = usize::MAX;
-    loop {
-        catch_up_embeddings(graph, embedder, fingerprint)
-            .await
-            .expect("embed the pending file vectors");
-        let embedded = graph
-            .embedded_file_count(fingerprint)
-            .expect("embedded count");
-        // Two exits, and both are needed: the pass is done, or it stopped
-        // making progress (an unreadable file is stepped over every round, so
-        // a count that did not move cannot be made to move by another round —
-        // the same termination argument `warm_chunks_opened` makes).
-        if embedded >= total || embedded == last {
-            break;
-        }
-        last = embedded;
-    }
-}
-
-/// Embed every chunk vector still pending, to exhaustion.
-///
-/// Mirrors `search::engine::embed_and_store_chunk_file`, which is private:
-/// one `store_chunk_vectors` call per file, because the sweep keys on the
-/// file's content hash and a file split across two writes would have the
-/// second delete the first's rows. A chunk arriving with `text: None` already
-/// has a vector at this exact `(file, chunk_sha256, fingerprint)` and is
-/// passed back with `vector: None` to be re-stamped rather than re-embedded.
-async fn warm_chunk_vectors(graph: &CodeGraph, embedder: &dyn Embedder, fingerprint: &str) {
-    loop {
-        let scan = graph
-            .chunks_pending_embedding(fingerprint, MAX_FILES_PER_CHUNK_PASS)
-            .expect("scan for pending chunks");
-        if scan.files.is_empty() {
-            break;
-        }
-        let mut progressed = false;
-        for file in &scan.files {
-            if file.to_embed() > 0 {
-                progressed = true;
-            }
-            let mut vectors: Vec<Option<Vec<f32>>> = vec![None; file.chunks.len()];
-            let needed: Vec<(usize, &str)> = file
-                .chunks
-                .iter()
-                .enumerate()
-                .filter_map(|(index, chunk)| chunk.text.as_deref().map(|text| (index, text)))
-                .collect();
-            for batch in needed.chunks(EMBED_BATCH) {
-                let texts: Vec<String> =
-                    batch.iter().map(|(_, text)| (*text).to_string()).collect();
-                let embeddings = embedder.embed(&texts).await.expect("embed a chunk batch");
-                for ((index, _), embedding) in batch.iter().zip(embeddings) {
-                    vectors[*index] = Some(embedding.vector);
-                }
-            }
-            let rows: Vec<ChunkVector> = file
-                .chunks
-                .iter()
-                .zip(vectors)
-                .map(|(chunk, vector)| ChunkVector {
-                    chunk_sha256: chunk.chunk_sha256.clone(),
-                    name: chunk.name.clone(),
-                    kind: chunk.kind.clone(),
-                    start_line: chunk.start_line,
-                    end_line: chunk.end_line,
-                    vector,
-                })
-                .collect();
-            graph
-                .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
-                .expect("store a file's chunk vectors");
-        }
-        // A window that embedded nothing cannot be made to progress by
-        // another window. Without this the loop spins forever on a file the
-        // pending predicate keeps selecting (the shape of #3128).
-        if !progressed {
-            break;
-        }
-    }
 }
 
 /// The admission floor `search` itself applies, from the backend's own
@@ -334,8 +244,10 @@ async fn chunk_search_answers_the_three_questions_file_vectors_could_not() {
     );
 
     let fingerprint = embedder.fingerprint().id();
-    warm_file_vectors(&graph, embedder, &fingerprint).await;
-    warm_chunk_vectors(&graph, embedder, &fingerprint).await;
+    // The production pass, not a copy of it written for the test. Both halves
+    // run to exhaustion, which is what a witness needs: a ranking over part of
+    // the workspace makes its miss mean nothing.
+    backfill_opened(&graph, embedder, &mut |_| {}).await;
 
     let chunks = graph
         .embedded_chunk_count(&fingerprint)
