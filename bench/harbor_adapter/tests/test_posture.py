@@ -928,8 +928,14 @@ _UNKNOWN_RS = _REPO_ROOT / "crates" / "stella-cli" / "src" / "settings" / "unkno
 
 def _parse_rust_str_slice(source: str, const_name: str) -> frozenset[str]:
     """Every string literal in a ``const NAME: &[&str] = &[ ... ];`` table."""
+    # `=\s*&\[` rather than `= &\[`: rustfmt wraps the initialiser onto the
+    # next line once the declaration is long enough, which is a formatting
+    # accident this reader must not be sensitive to. It was —
+    # `RETIRED_ENGINE_AGENT_NAMES` is wrapped that way, and a reader that
+    # cannot see a table reports it missing rather than empty, which reads as
+    # "the constant was renamed" and sends the next person to the wrong file.
     match = re.search(
-        rf"const {const_name}: &\[&str\] = &\[(.*?)\];", source, re.DOTALL
+        rf"const {const_name}: &\[&str\] =\s*&\[(.*?)\];", source, re.DOTALL
     )
     assert match is not None, (
         f"could not find `{const_name}` in {_UNKNOWN_RS} — the constant moved "
@@ -962,7 +968,26 @@ def _engine_root_fields() -> frozenset[str]:
         ) from exc
     fields = _parse_rust_str_slice(source, "ENGINE_ROOT_FIELDS")
     assert fields, "ENGINE_ROOT_FIELDS parsed to zero entries"
-    return fields
+    # `RETIRED_ENGINE_ROOT` is the other half of the seam's vocabulary, and
+    # leaving it out made this helper answer a different question than its
+    # callers ask. They assert "the trusted launcher would not refuse this
+    # posture"; the launcher recognizes both tables, so a posture naming a
+    # retired key passes the seam and failed here — the assertion was simply
+    # false about the code it names.
+    #
+    # #3908 retired those five keys and #3944 finished the collapse, and
+    # `unknown.rs` is explicit that they are *deliberately* still recognized
+    # rather than dropped: this file and `arenabench/harbor_agent.py` still
+    # write them into hashed postures, so refusing them would invalidate every
+    # digest registered in `bench/READINESS.md` §8.4 — a published-numbers
+    # decision #3870 reserves for a maintainer. Recognized, ignored, reported.
+    #
+    # So the union is not a loosening; it is this helper finally describing the
+    # seam. When the Python stops writing the retired keys (#3910 slice 6) the
+    # Rust table empties, and this union collapses back to one set on its own
+    # without anyone editing this line.
+    retired = _parse_rust_str_slice(source, "RETIRED_ENGINE_ROOT")
+    return fields | retired
 
 
 def _engine_agent_names() -> frozenset[str]:
@@ -985,7 +1010,16 @@ def _engine_agent_names() -> frozenset[str]:
         ) from exc
     names = _parse_rust_str_slice(source, "ENGINE_AGENT_NAMES")
     assert names, "ENGINE_AGENT_NAMES parsed to zero entries"
-    return names
+    # The same union, one level down, for the same stated reason: `unknown.rs`
+    # keeps `RETIRED_ENGINE_AGENT_NAMES` recognized rather than dropping it,
+    # explicitly citing `RETIRED_ENGINE_ROOT`'s argument. Core knows one role
+    # name now (`default`, #3903), but a hashed posture written before the
+    # collapse still carries the five personas, and the seam still accepts
+    # them — so a caller asking "would the launcher refuse this?" has to read
+    # both tables or it is asking a question about a stricter launcher than
+    # the one that exists.
+    retired = _parse_rust_str_slice(source, "RETIRED_ENGINE_AGENT_NAMES")
+    return names | retired
 
 
 def _parse_output_ceilings(source: str) -> dict[str, int]:
