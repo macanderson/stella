@@ -42,36 +42,97 @@ use stella_autonomy::{CiConclusion, Mergeability, Observation, ReviewState};
 use super::state::git;
 
 /// One check as the forge reports it, reduced to what the mapping reads.
-#[derive(Debug, Clone, serde::Deserialize)]
+///
+/// # There are two kinds of check and they do not share a spelling
+///
+/// A pull request's rollup mixes **check runs** (GitHub Actions: `name`,
+/// `status`, `conclusion`) with **commit statuses** (the older API that
+/// third-party services still post to: `context`, `state`, and no `status`
+/// field at all). Deserializing only the first shape does not fail — every
+/// field is `#[serde(default)]` — it silently produces a check with no name
+/// and no conclusion.
+///
+/// Which reads as *pending forever*: `status` is not `COMPLETED`, so
+/// [`Self::pending`] is true on every poll, for a check that concluded before
+/// the loop ever looked. That is what it did. This repository carries a Vercel
+/// commit status that has been failing on every pull request, and the loop sat
+/// on #4022 re-reading `ci=Pending` for twenty-five minutes after all three
+/// required checks had gone green.
+///
+/// The empty `name` is the same bug's other half: [`base_conclusion`] joins by
+/// name, and every commit status would have joined against every other.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub(super) struct Check {
-    /// The check's name — the join key against the base branch.
+    /// A check run's name.
     #[serde(default)]
     pub name: String,
-    /// `SUCCESS`, `FAILURE`, `""` while running, and the rest of the forge's
-    /// vocabulary.
+    /// A commit status's name. GitHub calls the same thing `context` here.
+    #[serde(default)]
+    pub context: String,
+    /// A check run's outcome: `SUCCESS`, `FAILURE`, `SKIPPED`, `""` while
+    /// running.
     #[serde(default)]
     pub conclusion: String,
-    /// `COMPLETED`, `IN_PROGRESS`, `QUEUED`.
+    /// A commit status's outcome: `SUCCESS`, `FAILURE`, `ERROR`, `PENDING`,
+    /// `EXPECTED`.
+    #[serde(default)]
+    pub state: String,
+    /// A check run's progress: `COMPLETED`, `IN_PROGRESS`, `QUEUED`. **Absent
+    /// on a commit status**, which is how the two are told apart.
     #[serde(default)]
     pub status: String,
 }
 
 impl Check {
+    /// The join key, whichever shape reported it.
+    pub(super) fn name(&self) -> &str {
+        if self.name.is_empty() {
+            &self.context
+        } else {
+            &self.name
+        }
+    }
+
+    /// The outcome, whichever shape reported it.
+    fn outcome(&self) -> String {
+        let raw = if self.conclusion.is_empty() {
+            &self.state
+        } else {
+            &self.conclusion
+        };
+        raw.trim().to_ascii_uppercase()
+    }
+
+    /// Whether this is a commit status rather than a check run.
+    ///
+    /// The absence of `status` is the discriminator, because it is the one
+    /// field the older API has no equivalent for.
+    fn is_commit_status(&self) -> bool {
+        self.status.trim().is_empty()
+    }
+
     /// Whether this check has concluded and concluded badly.
+    ///
+    /// `ERROR` is a commit status's way of saying the service itself broke,
+    /// which is a failure for every purpose this loop has.
     fn failed(&self) -> bool {
         matches!(
-            self.conclusion.to_ascii_uppercase().as_str(),
-            "FAILURE" | "TIMED_OUT" | "STARTUP_FAILURE" | "ACTION_REQUIRED"
+            self.outcome().as_str(),
+            "FAILURE" | "ERROR" | "TIMED_OUT" | "STARTUP_FAILURE" | "ACTION_REQUIRED"
         )
     }
 
     /// Whether it has not finished.
     fn pending(&self) -> bool {
+        if self.is_commit_status() {
+            // No progress field exists, so the outcome is the whole story.
+            return matches!(self.outcome().as_str(), "PENDING" | "EXPECTED" | "");
+        }
         !self.status.eq_ignore_ascii_case("COMPLETED")
             // A completed check with no conclusion is a forge quirk, not a
             // pass: treated as still-unknown rather than green, on the same
             // reasoning as `Mergeability::Unknown`.
-            || self.conclusion.trim().is_empty()
+            || self.outcome().is_empty()
     }
 
     /// Whether it should be ignored entirely.
@@ -81,10 +142,7 @@ impl Check {
     /// is skipped by design (this repository skips several on a docs-only
     /// diff).
     fn inert(&self) -> bool {
-        matches!(
-            self.conclusion.to_ascii_uppercase().as_str(),
-            "SKIPPED" | "NEUTRAL" | "CANCELLED"
-        )
+        matches!(self.outcome().as_str(), "SKIPPED" | "NEUTRAL" | "CANCELLED")
     }
 }
 
@@ -117,18 +175,14 @@ pub(super) fn ci_from(checks: &[Check]) -> CiConclusion {
 /// fault*, not *is the base perfect*.
 #[must_use]
 pub(super) fn base_conclusion(pr: &[Check], base: &[Check]) -> CiConclusion {
-    let failing_here: Vec<&str> = pr
-        .iter()
-        .filter(|c| c.failed())
-        .map(|c| c.name.as_str())
-        .collect();
+    let failing_here: Vec<&str> = pr.iter().filter(|c| c.failed()).map(Check::name).collect();
 
     if failing_here.is_empty() {
         // Nothing failed here, so there is nothing for the base to excuse.
         return CiConclusion::Green;
     }
 
-    let failing_there = |name: &str| base.iter().any(|c| c.name == name && c.failed());
+    let failing_there = |name: &str| base.iter().any(|c| c.name() == name && c.failed());
 
     if failing_here.iter().all(|name| failing_there(name)) {
         CiConclusion::Red
@@ -352,14 +406,41 @@ pub(super) fn checks_for_branch(branch: &str) -> Vec<Check> {
     if branch.is_empty() {
         return Vec::new();
     }
+    let mut checks = read_jq(
+        &check_runs_endpoint(branch),
+        ".check_runs[] | {name: .name, conclusion: (.conclusion // \"\"), status: .status}",
+    );
+
+    // Commit statuses live behind a different endpoint and speak a different
+    // dialect. Read separately and appended, because a pull request's rollup
+    // contains both — and a base showing only half of it would fail to excuse
+    // exactly the checks most likely to be broken repository-wide, since a
+    // third-party service is what posts a commit status.
+    checks.extend(read_jq(
+        &statuses_endpoint(branch),
+        ".statuses[] | {context: .context, state: .state}",
+    ));
+    checks
+}
+
+/// The forge endpoint carrying a ref's commit statuses.
+///
+/// A second endpoint rather than a second field: GitHub never merged the two
+/// APIs, and `check-runs` genuinely does not contain a commit status.
+#[must_use]
+fn statuses_endpoint(branch: &str) -> String {
+    format!("repos/{{owner}}/{{repo}}/commits/{branch}/status")
+}
+
+/// Run one `gh api` read and parse a [`Check`] per line.
+///
+/// An unreachable forge yields no checks, which `base_conclusion` reads as
+/// "excuses nothing" — the direction that blames the pull request, and so the
+/// one that must never be reached by accident. It is reached only when `gh`
+/// itself cannot run.
+fn read_jq(endpoint: &str, jq: &str) -> Vec<Check> {
     let out = std::process::Command::new("gh")
-        .args([
-            "api",
-            &check_runs_endpoint(branch),
-            "--paginate",
-            "--jq",
-            ".check_runs[] | {name: .name, conclusion: (.conclusion // \"\"), status: .status}",
-        ])
+        .args(["api", endpoint, "--paginate", "--jq", jq])
         .env("NO_COLOR", "1")
         .output();
     let Ok(out) = out else {
@@ -517,6 +598,97 @@ mod tests {
         );
     }
 
+    /// A commit status is a concluded check, not a pending one.
+    ///
+    /// **The witness for the bug that stalled the loop.** GitHub's rollup
+    /// mixes two dialects: a check run carries `name`/`status`/`conclusion`,
+    /// a commit status carries `context`/`state` and no `status` at all.
+    /// Reading only the first shape does not fail — every field defaults — it
+    /// yields a nameless check with no conclusion, which `pending()` reports
+    /// as unfinished on every poll forever.
+    ///
+    /// That is what happened: this repository's Vercel commit status had
+    /// already concluded `FAILURE`, and the loop re-read `ci=Pending` on #4022
+    /// for twenty-five minutes after all three required checks went green.
+    #[test]
+    fn a_commit_status_is_read_as_concluded_not_as_pending() {
+        let vercel = Check {
+            context: "Vercel".into(),
+            state: "FAILURE".into(),
+            ..Check::default()
+        };
+
+        assert!(
+            !vercel.pending(),
+            "it concluded — before the loop ever looked"
+        );
+        assert!(vercel.failed());
+        assert_eq!(vercel.name(), "Vercel", "and it must join by its context");
+        assert_eq!(ci_from(&[vercel]), CiConclusion::Red);
+    }
+
+    /// A commit status that really is pending still reads as pending.
+    ///
+    /// The other direction, so the fix above cannot be "call every commit
+    /// status finished".
+    #[test]
+    fn a_pending_commit_status_still_reads_as_pending() {
+        let waiting = Check {
+            context: "Vercel".into(),
+            state: "PENDING".into(),
+            ..Check::default()
+        };
+        assert!(waiting.pending());
+        assert!(!waiting.failed());
+        assert_eq!(ci_from(&[waiting]), CiConclusion::Pending);
+    }
+
+    /// A commit status failing on both sides is the base's fault, not ours.
+    ///
+    /// This only works because the base is read from *two* endpoints. A base
+    /// read that saw check runs alone would show no `Vercel` row, the join
+    /// would find nothing, and a service broken account-wide would be charged
+    /// to every pull request the loop opened.
+    #[test]
+    fn a_commit_status_broken_on_the_base_excuses_the_pull_request() {
+        let failing = |context: &str| Check {
+            context: context.into(),
+            state: "FAILURE".into(),
+            ..Check::default()
+        };
+
+        assert_eq!(
+            base_conclusion(&[failing("Vercel")], &[failing("Vercel")]),
+            CiConclusion::Red,
+            "the base is broken in the same way, so this is not ours to fix"
+        );
+        assert_eq!(
+            base_conclusion(&[failing("Vercel")], &[]),
+            CiConclusion::Green,
+            "and a base that does not share the failure excuses nothing"
+        );
+    }
+
+    /// A check run and a commit status of the same name are one check.
+    ///
+    /// Neither dialect is privileged: the join key is whichever field carried
+    /// the name.
+    #[test]
+    fn the_two_dialects_join_on_one_name() {
+        let run = Check {
+            name: "build".into(),
+            status: "COMPLETED".into(),
+            conclusion: "FAILURE".into(),
+            ..Check::default()
+        };
+        let status = Check {
+            context: "build".into(),
+            state: "FAILURE".into(),
+            ..Check::default()
+        };
+        assert_eq!(base_conclusion(&[run], &[status]), CiConclusion::Red);
+    }
+
     /// A check link yields a run id, or nothing — never a guess.
     ///
     /// The re-run is the loop's one remedy for a red the base already
@@ -558,6 +730,7 @@ mod tests {
             name: name.into(),
             conclusion: conclusion.into(),
             status: "COMPLETED".into(),
+            ..Check::default()
         }
     }
 
@@ -566,6 +739,7 @@ mod tests {
             name: name.into(),
             conclusion: String::new(),
             status: "IN_PROGRESS".into(),
+            ..Check::default()
         }
     }
 
@@ -647,6 +821,7 @@ mod tests {
             name: "a".into(),
             conclusion: String::new(),
             status: "COMPLETED".into(),
+            ..Check::default()
         };
         assert_eq!(ci_from(&[odd]), CiConclusion::Pending);
     }
