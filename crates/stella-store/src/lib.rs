@@ -866,7 +866,7 @@ impl Store {
             "INSERT INTO events (execution_id, seq, event_type, payload) VALUES (?, ?, ?, ?)",
             params![execution_id, seq, event_type, payload],
         )?;
-        tool_calls::project_event(&tx, execution_id, event)?;
+        tool_calls::project_event(&tx, execution_id, seq, event)?;
         tx.commit()?;
         Ok(())
     }

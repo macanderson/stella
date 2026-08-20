@@ -24,7 +24,7 @@
 //! | [`execution_plane`] | v7 → v10, v21 → v23 | new columns on `executions` and its per-execution facts |
 //! | [`receipts`] | v10 → v13, v14 → v16 | the `context_blocks`/`step_manifest`/`step_receipt` plane |
 //! | [`schema_removal`] | v16 → v17 | the one pure removal |
-//! | [`live_tool_calls`], [`abandoned_state`], [`error_class`] | v17 → v18, v23 → v25 | `tool_calls` as a live projection and its `state`/`error_class` columns |
+//! | [`live_tool_calls`], [`abandoned_state`], [`error_class`], [`call_identity`] | v17 → v18, v23 → v25, v27 → v28 | `tool_calls` as a live projection, its `state`/`error_class` columns, and what identifies one of its rows |
 //! | [`token_unit`] | v18 → v19 | the one-token-rule reconciliation |
 //! | [`pipeline_variant`] | v25 → v26 | the door/wrapper split |
 //! | [`execution_role`] | v26 → v27 | the door/role split |
@@ -47,6 +47,7 @@ use crate::{Result, StoreError};
 
 mod abandoned_state;
 mod additive_tables;
+mod call_identity;
 mod error_class;
 mod execution_plane;
 mod execution_role;
@@ -94,7 +95,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 27] = [
+pub(crate) const MIGRATIONS: [Migration; 28] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -225,6 +226,13 @@ pub(crate) const MIGRATIONS: [Migration; 27] = [
     // system-call ROLE values, which move to `executions.role` (#3395). The
     // same defect as v25 → v26 from the third direction; see the module doc.
     migrate_v26_to_v27,
+    // v27 → v28: a `tool_calls` row is identified by the event that announced
+    // it (`event_seq`), not by its `call_id` — which is only unique within one
+    // model response, so every later announcement folded into the first and
+    // 12.2% of one workspace's calls were erased (#4033). Additive column, the
+    // uniqueness assumption dropped from the index, and a re-fold of every
+    // history the old key collapsed; see the module's own doc.
+    call_identity::migrate_v27_to_v28,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -262,7 +270,9 @@ pub(crate) const MIGRATIONS: [Migration; 27] = [
     //   v25 → v26: CLAIMED above by the door/wrapper split (#3388).
     //
     //   v26 → v27: CLAIMED above by the door/role split (#3395).
-    // Nothing is reserved now: take v27 → v28 and add your own line here.
+    //
+    //   v27 → v28: CLAIMED above by the tool-call identity fix (#4033).
+    // Nothing is reserved now: take v28 → v29 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

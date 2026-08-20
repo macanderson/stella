@@ -738,10 +738,124 @@ async fn catch_up_chunk_embeddings(
         .chunks_pending_embedding(fingerprint, stella_graph::MAX_FILES_PER_CHUNK_PASS)
         .map_err(|error| format!("the code graph could not be read: {error}"))?;
 
-    for file in &scan.files {
-        embed_and_store_chunk_file(graph, embedder, fingerprint, file).await?;
+    embed_and_store_chunk_files(graph, embedder, fingerprint, &scan.files).await
+}
+
+/// The same work as [`embed_and_store_chunk_file`], batched **across** files
+/// instead of within one — the lazy per-query path only (#4035).
+///
+/// # Why this exists as a second shape
+///
+/// Storing is per-file and must stay that way: the store's sweep keys on the
+/// file's content hash, so writing half a file's chunks and then the other
+/// half would have the second write delete the first's rows. *Embedding* is
+/// under no such constraint, and the per-file loop conflated the two — it
+/// issued one round-trip per file because it stored per file.
+///
+/// The cost was measured rather than guessed
+/// (`a_search_keeps_its_embedder_round_trips_within_budget`): one
+/// `search` over a behind index made **72 embedder round-trips, of which 1 was
+/// the query**. Sixty-four of the other 71 were this pass, one per file, each
+/// carrying two texts against a batch size of 32 — sequential network latency
+/// paid ~30 times over for no reason, on every call, for as long as the index
+/// stayed behind. `search` averaged 46.9 seconds a call on the workspace that
+/// reported it.
+///
+/// Batching across files collapses those 64 into 4 and changes nothing else:
+/// the same texts, the same vectors, the same per-file writes in the same
+/// order. The eager `stella init` pass deliberately keeps the per-file loop —
+/// it narrates file-by-file progress to a watching human and is not on a
+/// query's critical path.
+///
+/// **Partial progress survives a failure**, as it did before: every file whose
+/// chunks were all embedded before the embedder gave out is still stored, so a
+/// backfill that dies halfway does not have to start over. What it no longer
+/// does is keep going after a store failure — that was never recoverable, and
+/// is unchanged.
+async fn embed_and_store_chunk_files(
+    graph: &CodeGraph,
+    embedder: &dyn Embedder,
+    fingerprint: &str,
+    files: &[stella_graph::PendingChunkFile],
+) -> Result<(), String> {
+    // `(file, chunk)` coordinates of every chunk that needs a request. A chunk
+    // arriving with no `text` is unchanged: it keeps its stored vector and is
+    // re-stamped by the write, which is what makes editing one function in a
+    // sixty-symbol file cost one embedding rather than sixty.
+    let needed: Vec<(usize, usize)> = files
+        .iter()
+        .enumerate()
+        .flat_map(|(file, pending)| {
+            pending
+                .chunks
+                .iter()
+                .enumerate()
+                .filter(|(_, chunk)| chunk.text.is_some())
+                .map(move |(chunk, _)| (file, chunk))
+        })
+        .collect();
+
+    let mut vectors: Vec<Vec<Option<Vec<f32>>>> = files
+        .iter()
+        .map(|file| vec![None; file.chunks.len()])
+        .collect();
+
+    let mut failure = None;
+    for batch in needed.chunks(EMBED_BATCH) {
+        let texts: Vec<String> = batch
+            .iter()
+            .filter_map(|(file, chunk)| files[*file].chunks[*chunk].text.clone())
+            .collect();
+        match embedder.embed(&texts).await {
+            Ok(embeddings) => {
+                for ((file, chunk), embedding) in batch.iter().zip(embeddings) {
+                    vectors[*file][*chunk] = Some(embedding.vector);
+                }
+            }
+            Err(error) => {
+                failure = Some(format!("the embedder failed: {error}"));
+                break;
+            }
+        }
     }
-    Ok(())
+
+    for (file, pending) in files.iter().enumerate() {
+        // Only a file whose every requested chunk came back may be written: a
+        // partial file would be stored as the file's complete state and the
+        // chunks still missing would look permanently embedded.
+        let complete = pending
+            .chunks
+            .iter()
+            .zip(&vectors[file])
+            .all(|(chunk, vector)| chunk.text.is_none() || vector.is_some());
+        if !complete {
+            continue;
+        }
+        let rows: Vec<stella_graph::ChunkVector> = pending
+            .chunks
+            .iter()
+            .zip(&vectors[file])
+            .map(|(chunk, vector)| stella_graph::ChunkVector {
+                chunk_sha256: chunk.chunk_sha256.clone(),
+                name: chunk.name.clone(),
+                kind: chunk.kind.clone(),
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                vector: vector.clone(),
+            })
+            .collect();
+        graph
+            .store_chunk_vectors(fingerprint, &pending.path, &pending.file_sha256, &rows)
+            // Not recoverable by continuing: the next file would be written
+            // into the same broken store and the pass would report success
+            // having stored nothing.
+            .map_err(|error| format!("the chunk index could not be written: {error}"))?;
+    }
+
+    match failure {
+        Some(reason) => Err(reason),
+        None => Ok(()),
+    }
 }
 
 /// Embed one file's pending chunks and store them — the single place a chunk
