@@ -27,13 +27,13 @@ mod drive;
 mod hooks;
 mod lifecycle;
 pub(crate) mod probes;
+mod run_lifecycle;
 pub(crate) mod state;
 mod stats;
 mod surface;
 mod triage;
 mod work;
 
-use std::collections::BTreeMap;
 use std::process::Command;
 
 use clap::Subcommand;
@@ -623,14 +623,14 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), 
             remaining,
         }),
         SelfDrivingCmd::Run { cmd } => match cmd {
-            RunCmd::Start => run_start(&st),
-            RunCmd::End { status, reason } => run_end(&st, status, reason),
-            RunCmd::Cancel { reason } => run_end_as(
+            RunCmd::Start => run_lifecycle::run_start(&st),
+            RunCmd::End { status, reason } => run_lifecycle::run_end(&st, status, reason),
+            RunCmd::Cancel { reason } => run_lifecycle::run_end_as(
                 &st,
                 "cancelled",
                 reason.as_deref().unwrap_or("stopped by hand"),
             ),
-            RunCmd::List => runs_report(&st),
+            RunCmd::List => run_lifecycle::runs_report(&st),
             RunCmd::StampCyclePid { pid } => {
                 st.update_run_doc(|doc| match pid {
                     Some(p) => {
@@ -643,7 +643,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), 
                 Ok(())
             }
         },
-        SelfDrivingCmd::Runs => runs_report(&st),
+        SelfDrivingCmd::Runs => run_lifecycle::runs_report(&st),
         SelfDrivingCmd::Phase { name } => {
             st.run_write(name, None, None);
             println!("phase: {name}");
@@ -1417,85 +1417,4 @@ fn file_finding(
     }
 
     backlog::render_not_filed(&outcome, &bound, format)
-}
-
-// ---------------------------------------------------------------------------
-// run lifecycle
-// ---------------------------------------------------------------------------
-
-fn run_start(st: &LoopState) -> Result<(), String> {
-    let rid = state::new_run_id();
-    let driver = std::env::var("SELF_DRIVING_DRIVER").unwrap_or_else(|_| "interactive".to_string());
-    let mut fields = BTreeMap::new();
-    fields.insert("run_id".to_string(), Value::String(rid.clone()));
-    fields.insert("status".to_string(), Value::String("running".to_string()));
-    fields.insert("driver".to_string(), Value::String(driver));
-    fields.insert(
-        "slug".to_string(),
-        Value::String(state::repo_slug(&st.repo_root)),
-    );
-    fields.insert(
-        "workspace_root".to_string(),
-        Value::String(st.repo_root.to_string_lossy().into_owned()),
-    );
-    fields.insert("pid".to_string(), u64::from(std::process::id()).into());
-    st.append_run_record(fields)?;
-
-    let started = rfc3339_utc_now();
-    st.update_run_doc(|doc| {
-        doc.insert("run_id".into(), rid.clone().into());
-        doc.entry("started_at".to_string())
-            .or_insert_with(|| Value::String(started));
-    });
-    // Stamp the first heartbeat through the SAME writer every other phase
-    // uses — the record must be complete from its first byte, not completed
-    // by whatever happens next.
-    st.run_write("idle", None, None);
-
-    say(&format!("run {rid} started"));
-    println!("SELF_DRIVING_RUN_ID={rid}");
-    Ok(())
-}
-
-fn run_end(st: &LoopState, status: &str, reason: &str) -> Result<(), String> {
-    run_end_as(st, status, reason)
-}
-
-fn run_end_as(st: &LoopState, status: &str, reason: &str) -> Result<(), String> {
-    let rid = st
-        .current_run_id()
-        .ok_or_else(|| "run end: no run in progress".to_string())?;
-    let mut fields = BTreeMap::new();
-    fields.insert("run_id".to_string(), Value::String(rid.clone()));
-    fields.insert("status".to_string(), Value::String(status.to_string()));
-    fields.insert("reason".to_string(), Value::String(reason.to_string()));
-    st.append_run_record(fields)?;
-    st.clear_run_doc();
-    say(&format!("run {rid} -> {status}"));
-    Ok(())
-}
-
-fn runs_report(st: &LoopState) -> Result<(), String> {
-    let rows = stella_autonomy::fold_runs(
-        &st.run_records(),
-        &st.cycles(),
-        st.run_doc().as_ref(),
-        now_unix(),
-        state::stale_after_secs(),
-    );
-    if rows.is_empty() {
-        println!("no self-driving runs recorded yet");
-        return Ok(());
-    }
-    println!(
-        "{:<28} {:<10} {:>3} {:>5} {:>5} {:>4}  phase",
-        "run", "status", "cyc", "fixed", "filed", "new"
-    );
-    for r in rows {
-        println!(
-            "{:<28} {:<10} {:>3} {:>5} {:>5} {:>4}  {}",
-            r.run_id, r.status, r.cycles, r.fixed, r.filed, r.new_findings, r.phase
-        );
-    }
-    Ok(())
 }
