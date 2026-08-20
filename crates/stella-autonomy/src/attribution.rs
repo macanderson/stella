@@ -62,6 +62,13 @@ const SEPARATOR: &str = "\n\n---\n";
 /// it owned them.
 pub const DEFAULT_BRANCH_PREFIX: &str = "stella/";
 
+/// What a pull request the loop opens is titled with, unless configured.
+///
+/// Names the *thing that did it* rather than the crate it touched. A
+/// maintainer scanning a pull request list wants to know which entries nobody
+/// wrote by hand; which crate a change lands in is already in the diff.
+pub const DEFAULT_TITLE_PREFIX: &str = "stella self-driving:";
+
 /// What the loop appends to each thing it writes, and how it names branches.
 ///
 /// Source-tracked so it travels with the repository, and rewritable by an
@@ -84,6 +91,18 @@ pub struct Attribution {
     /// corrected: some teams namespace with `-`, and silently rewriting an
     /// operator's choice is worse than honouring an unusual one.
     pub branch_prefix: String,
+    /// Prefix for the title of every pull request it opens.
+    ///
+    /// The footer says who wrote a pull request once you open it; this says so
+    /// in the list, which is where a maintainer actually triages. Without it an
+    /// autonomous pull request inherits its issue's title verbatim and is
+    /// indistinguishable from a human's at a glance.
+    ///
+    /// Deliberately **not** applied to commit messages. Those follow
+    /// Conventional Commits (`fix(stella-cli): …`), the scope is load-bearing,
+    /// and a prefix in front of it would break the convention the repository
+    /// enforces. The commit identifies its author through the footer instead.
+    pub title_prefix: String,
 }
 
 impl Default for Attribution {
@@ -94,11 +113,30 @@ impl Default for Attribution {
             issue: SIGNATURE.to_owned(),
             issue_comment: SIGNATURE.to_owned(),
             branch_prefix: DEFAULT_BRANCH_PREFIX.to_owned(),
+            title_prefix: DEFAULT_TITLE_PREFIX.to_owned(),
         }
     }
 }
 
 impl Attribution {
+    /// Put the title prefix in front of a summary.
+    ///
+    /// An empty prefix is honoured as "no prefix" here, unlike
+    /// [`Self::branch_prefix`] — an unprefixed title is merely
+    /// indistinguishable, while an unprefixed branch collides with a human's
+    /// refs. One is cosmetic and one is operational.
+    ///
+    /// Already-prefixed titles are left alone, so re-opening a pull request
+    /// for the same issue cannot stack the prefix twice.
+    #[must_use]
+    pub fn title(&self, summary: &str) -> String {
+        let prefix = self.title_prefix.trim();
+        if prefix.is_empty() || summary.starts_with(prefix) {
+            return summary.to_owned();
+        }
+        format!("{prefix} {summary}")
+    }
+
     /// The branch prefix, falling back to the default when unset.
     ///
     /// An empty prefix is treated as unset rather than as "no prefix": an
@@ -168,6 +206,49 @@ pub fn sign(body: &str, signature: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pull request the loop opened says so in the list, not just inside it.
+    ///
+    /// The footer identifies an autonomous pull request once it is open; the
+    /// title is what a maintainer reads while triaging twenty of them. Before
+    /// this, the title was the issue's verbatim — `stella-autonomy: sign() has
+    /// no doctest …` — indistinguishable from something a person wrote.
+    #[test]
+    fn a_title_says_what_opened_the_pull_request() {
+        let attribution = Attribution::default();
+        assert_eq!(
+            attribution.title("stella-autonomy: sign() has no doctest (#4006)"),
+            "stella self-driving: stella-autonomy: sign() has no doctest (#4006)"
+        );
+    }
+
+    /// Re-opening for the same issue cannot stack the prefix.
+    #[test]
+    fn an_already_prefixed_title_is_left_alone() {
+        let attribution = Attribution::default();
+        let once = attribution.title("fix the thing");
+        assert_eq!(attribution.title(&once), once);
+    }
+
+    /// The prefix is the operator's, and an empty one means none.
+    ///
+    /// Unlike `branch_prefix`, where empty falls back to the default: an
+    /// unprefixed title is merely indistinguishable, while an unprefixed
+    /// branch collides with a human's refs. Cosmetic versus operational.
+    #[test]
+    fn an_empty_title_prefix_is_honoured_as_no_prefix() {
+        let attribution = Attribution {
+            title_prefix: String::new(),
+            ..Attribution::default()
+        };
+        assert_eq!(attribution.title("fix the thing"), "fix the thing");
+
+        let oxagen = Attribution {
+            title_prefix: "oxagen:".to_owned(),
+            ..Attribution::default()
+        };
+        assert_eq!(oxagen.title("fix the thing"), "oxagen: fix the thing");
+    }
 
     /// **The witness.** A blank line, a rule, then the text — whatever the body
     /// ended with, so the four surfaces cannot drift into four near-identical

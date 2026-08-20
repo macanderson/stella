@@ -299,7 +299,9 @@ pub(super) fn drive(
                         );
                         durable.update_stats(|s| s.issues_changed += 1);
 
-                        let title = format!("{} (#{})", resolved.title, issue.0);
+                        let title = cfg
+                            .attribution
+                            .title(&format!("{} (#{})", resolved.title, issue.0));
                         let pr = match super::deliver::open(
                             &root,
                             &branch,
@@ -629,7 +631,20 @@ fn advance(
     durable: &Durable,
 ) -> Result<bool, String> {
     let entry = spent.entry(pr.to_owned()).or_default();
-    let obs = super::deliver::observe(pr)?;
+    let reading = super::deliver::observe(pr)?;
+    if reading.settled {
+        // Nothing left to decide. Reached either because the merge below
+        // succeeded and the cleanup after it did not, or because a human got
+        // there first — both are this pull request being done.
+        audit::record(
+            durable,
+            Audit::PrMerged,
+            Some(pr),
+            "already settled on the forge — carrying it no further",
+        );
+        return Ok(true);
+    }
+    let obs = reading.observation;
     let policy = DeliverPolicy {
         require_approval: !no_review,
         ..DeliverPolicy::default()

@@ -111,13 +111,58 @@ pub(super) fn prompt(issue: &Unassessed, body: &str, policy: &TriagePolicy) -> S
     )
 }
 
+/// Everything a turn said, whatever envelope it arrived in.
+///
+/// `work::run_turn` spawns `stella run --output-format json`, so the answer
+/// arrives **inside a JSON document** with its newlines escaped — no line of
+/// that text ever begins with `ASSESSMENT:`. Scanning it line by line found
+/// nothing, every assessment read as a refusal, and the first four issues the
+/// loop triaged were escalated to a human with the turn's actual answer sitting
+/// in the string it had just been handed.
+///
+/// Every string value is collected rather than one named field, because which
+/// field carries the answer is `stella run`'s business and a name copied here
+/// is a second definition waiting to drift. Non-JSON output is returned
+/// unchanged, so a plain-text turn still works.
+#[must_use]
+fn answer_text(output: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(output) else {
+        return output.to_owned();
+    };
+    let mut collected = String::new();
+    collect_strings(&value, &mut collected);
+    collected
+}
+
+/// Append every string in a JSON document, one per line.
+fn collect_strings(value: &serde_json::Value, out: &mut String) {
+    match value {
+        serde_json::Value::String(text) => {
+            out.push_str(text);
+            out.push('\n');
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_strings(item, out);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for item in fields.values() {
+                collect_strings(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Read a turn's answer, accepting only the declared vocabulary.
 ///
 /// The last `ASSESSMENT:` line wins, so a turn that thinks out loud and then
 /// commits does not trip over its own reasoning.
 #[must_use]
 pub(super) fn parse(output: &str, policy: &TriagePolicy) -> Option<Assessment> {
-    let line = output
+    let text = answer_text(output);
+    let line = text
         .lines()
         .rev()
         .find_map(|line| line.trim().strip_prefix(MARKER))?
@@ -218,6 +263,48 @@ mod tests {
             Some(Assessment::Place {
                 kind: "bug".into(),
                 priority: "P0".into()
+            })
+        );
+    }
+
+    /// The answer survives the JSON envelope it arrives in.
+    ///
+    /// **The witness for a feature that was decorative without it.**
+    /// `run_turn` spawns `stella run --output-format json`, so the turn's text
+    /// arrives inside a JSON string with its newlines escaped. Scanning that
+    /// document line by line finds no `ASSESSMENT:` line, every answer reads
+    /// as a refusal, and the loop escalates issues it had in fact placed — it
+    /// did exactly that to the first four it triaged.
+    #[test]
+    fn an_answer_inside_the_json_envelope_is_still_an_answer() {
+        let envelope = serde_json::json!({
+            "status": "ok",
+            "result": "Looking at the context records, this blocks a release.\nASSESSMENT: kind=bug; priority=P0",
+        })
+        .to_string();
+
+        assert!(
+            !envelope
+                .lines()
+                .any(|l| l.trim().starts_with("ASSESSMENT:")),
+            "the envelope must genuinely hide the marker, or this proves nothing"
+        );
+        assert_eq!(
+            parse(&envelope, &policy()),
+            Some(Assessment::Place {
+                kind: "bug".into(),
+                priority: "P0".into()
+            })
+        );
+    }
+
+    /// Plain text still works, so the envelope handling is additive.
+    #[test]
+    fn a_plain_text_answer_still_parses() {
+        assert_eq!(
+            parse("ASSESSMENT: exclude=documentation", &policy()),
+            Some(Assessment::Exclude {
+                kind: "documentation".into()
             })
         );
     }
