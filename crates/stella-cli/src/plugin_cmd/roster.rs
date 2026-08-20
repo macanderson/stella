@@ -60,10 +60,22 @@ use crate::settings::{Settings, Toggle};
 /// the file and `the_manifest_filename_is_the_specified_one` pins it here.
 pub(crate) const MANIFEST_FILE: &str = "plugin.toml";
 
-/// Every hook event, in the fixed order routes are emitted in. Exhaustive by
-/// construction: [`HookEvent`] is `stella-protocol`'s, and a sixth event
-/// added there without a line here would be silently unroutable, so the
-/// `event_order_is_exhaustive` test destructures the enum against this list.
+/// Every hook event a **plugin** can be routed at, in the fixed order routes
+/// are emitted in.
+///
+/// Deliberately not every [`HookEvent`]. The loop-lifecycle pair
+/// (`PreIssueWork`/`PostIssueWork`, #3599) is dispatched by the self-driving
+/// loop from the user's own `hooks` settings, outside any turn and through a
+/// different transport than this table feeds — so a route here would be one
+/// nothing dispatches, the silent half of "an undeclared hook is never
+/// invoked" wearing the other face. A plugin manifest that declares one is
+/// refused by name (`ManifestError::HookNotAvailableToPlugins`) rather than
+/// left to discover it at run time.
+///
+/// Exhaustive by construction for the events it does cover: the
+/// `event_order_is_exhaustive` test destructures the enum against this list,
+/// so a new in-turn event added to `stella-protocol` without a line here
+/// stops it compiling.
 const EVENT_ORDER: [HookEvent; 5] = [
     HookEvent::SessionStart,
     HookEvent::PreToolUse,
@@ -532,15 +544,21 @@ mod tests {
             HookEvent::PostToolUse,
             HookEvent::Stop,
             HookEvent::PreCompact,
+            HookEvent::PreIssueWork,
+            HookEvent::PostIssueWork,
         ] {
-            // The match is the assertion: adding a sixth variant to
-            // `HookEvent` stops this compiling until it is added above too.
+            // The match is the assertion: adding an in-turn variant to
+            // `HookEvent` stops this compiling until it is placed here too.
+            // The loop-lifecycle pair is routed by the self-driving loop
+            // rather than by this table, and is refused in a plugin manifest —
+            // so it is named here as excluded, not forgotten.
             let named = match event {
                 HookEvent::SessionStart
                 | HookEvent::PreToolUse
                 | HookEvent::PostToolUse
                 | HookEvent::Stop
                 | HookEvent::PreCompact => EVENT_ORDER.contains(&event),
+                HookEvent::PreIssueWork | HookEvent::PostIssueWork => !EVENT_ORDER.contains(&event),
             };
             assert!(named, "{event} is declarable but unroutable");
         }

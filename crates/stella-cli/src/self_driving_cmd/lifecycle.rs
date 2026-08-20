@@ -220,6 +220,13 @@ pub(super) fn close_issue(req: CloseRequest<'_>) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
     }
 
+    // Counted by canonical resolution through `record_closure`, so the three
+    // kinds cannot drift from the total — the balance a dashboard shows beside
+    // them is true by construction rather than by every call site remembering.
+    state::LoopState::open()
+        .map(|st| st.update_stats(|s| s.record_closure(canonical)))
+        .unwrap_or_default();
+
     println!("closed #{key} as {spelled}");
     Ok(())
 }

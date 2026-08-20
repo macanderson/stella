@@ -140,6 +140,71 @@ export function rawExchange(
   };
 }
 
+/**
+ * One rendered row. A tool call and its result are ONE row, never two.
+ *
+ * This is `crates/stella-transcript`'s model expressed over the wire's flat
+ * stream: there a [`Call`] owns its `Output`, so there is no way to render one
+ * without the other and no second place for the tool's name to live. This page
+ * reads `tool` and `tool_result` as separate entries — the journal's shape, not
+ * the transcript's — and folding them here is what stops the name being printed
+ * twice down the whole transcript.
+ */
+export type TranscriptRow = {
+  /** The entry the row is anchored on — the CALL for a paired exchange, so the
+   *  clock reads when the call was made and the duration rides as a chip. */
+  entry: TranscriptEntry;
+  /** The result folded into this row. Absent for every non-tool row, and for a
+   *  call whose result has not arrived (or was filtered away). */
+  result?: TranscriptEntry;
+};
+
+/**
+ * Fold each `tool_result` into the `tool` row that produced it.
+ *
+ * Pairs strictly **within the list it is given**, which is what makes it
+ * composable with the page's filters rather than fighting them. Three cases,
+ * all of them honest:
+ *
+ * - **Call and result both present** — one row, the tool named once. The
+ *   overwhelmingly common case, and the defect this function exists to end.
+ * - **Call alone** (still running, or the reader filtered results off) — the
+ *   call row renders with no body, marked pending by the caller.
+ * - **Result alone** (the call scrolled past the stream's cursor, or the reader
+ *   filtered calls off) — it renders on its own and *keeps* its tool's name,
+ *   because a bare column of outputs naming nothing is worse than a name
+ *   appearing once. That fallback is the whole reason the name survives on
+ *   `tool_result` at all; it is not licence to print it beside its own call.
+ *
+ * Order is the anchor's: a result never moves a row, it only joins one.
+ */
+export function mergeToolRows(entries: readonly TranscriptEntry[]): TranscriptRow[] {
+  /** call_id → the result to fold in, for calls present in this same list. */
+  const results = new Map<string, TranscriptEntry>();
+  const callIds = new Set<string>();
+  for (const entry of entries) {
+    const callId = entry.meta?.call_id;
+    if (typeof callId !== "string" || !callId) continue;
+    if (entry.kind === "tool") callIds.add(callId);
+    else if (entry.kind === "tool_result") results.set(callId, entry);
+  }
+
+  const rows: TranscriptRow[] = [];
+  for (const entry of entries) {
+    const callId =
+      typeof entry.meta?.call_id === "string" ? entry.meta.call_id : "";
+    // A result whose call is in this list has already been rendered as part of
+    // that call's row. Without a call to join, it stands alone.
+    if (entry.kind === "tool_result" && callId && callIds.has(callId)) continue;
+    if (entry.kind === "tool" && callId) {
+      rows.push({ entry, result: results.get(callId) });
+      continue;
+    }
+    rows.push({ entry });
+  }
+  return rows;
+}
+
 /** Index every tool call and result by the `call_id` the two share. */
 export function indexByCallId(
   entries: readonly TranscriptEntry[],

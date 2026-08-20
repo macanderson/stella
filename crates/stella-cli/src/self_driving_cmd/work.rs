@@ -233,7 +233,11 @@ fn tree_change(dir: &Path, base: &str) -> Option<String> {
 /// `PATH` may be an older release — the staleness trap #1753 already cost a
 /// session, and a work unit measured against the wrong binary is worse than
 /// one that did not run.
-fn run_turn(dir: &Path, prompt: &str, spend_limit: Option<f64>) -> Result<String, String> {
+pub(super) fn run_turn(
+    dir: &Path,
+    prompt: &str,
+    spend_limit: Option<f64>,
+) -> Result<String, String> {
     let exe = std::env::current_exe()
         .map_err(|error| format!("cannot resolve this binary to run the turn: {error}"))?;
 
@@ -427,7 +431,7 @@ pub(super) fn start(
 /// It refuses only when there is something to lose: a workspace with no records
 /// has no steering to miss, and demanding a trust flag from it would be
 /// ceremony.
-fn refuse_if_unsteered(root: &Path) -> Result<(), String> {
+pub(super) fn refuse_if_unsteered(root: &Path) -> Result<(), String> {
     let records = root.join(".stella").join("rules");
     let count = std::fs::read_dir(&records)
         .map(|entries| {

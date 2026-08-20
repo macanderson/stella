@@ -42,11 +42,13 @@ use crate::settings::toml_config::{IssuesSection, TomlConfig};
 
 /// Everything the self-driving verbs read out of configuration.
 #[derive(Debug, Clone, Default)]
-pub(super) struct LoopConfig {
+pub(crate) struct LoopConfig {
     /// What the loop appends to what it writes, and how it names branches.
     pub attribution: Attribution,
     /// How the active tracker spells the concepts every tracker has.
     pub vocabulary: Vocabulary,
+    /// Which labels mean urgent, which mean "ours", which mean "not ours".
+    pub triage: stella_autonomy::priority::TriagePolicy,
 }
 
 /// Read the loop's configuration for a workspace.
@@ -56,7 +58,7 @@ pub(super) struct LoopConfig {
 /// then keep working, rather than refuse to run because of a typo in a section
 /// it might not even use.
 #[must_use]
-pub(super) fn load(root: &Path) -> LoopConfig {
+pub(crate) fn load(root: &Path) -> LoopConfig {
     let Some(parsed) = read_toml(root) else {
         return LoopConfig::default();
     };
@@ -64,6 +66,7 @@ pub(super) fn load(root: &Path) -> LoopConfig {
     LoopConfig {
         attribution: parsed.self_driving.attribution.clone(),
         vocabulary: vocabulary_for(root, &parsed.issues),
+        triage: parsed.self_driving.triage.policy(),
     }
 }
 
@@ -183,7 +186,7 @@ branch_prefix = "oxagen/"
         assert_eq!(cfg.attribution.commit, "Created by oxagen.");
         assert_eq!(cfg.attribution.branch_prefix(), "oxagen/");
         // Unmentioned surfaces keep identifying the loop rather than blanking.
-        assert_eq!(cfg.attribution.issue, "Filed by stella.");
+        assert_eq!(cfg.attribution.issue, stella_autonomy::SIGNATURE);
     }
 
     /// **The portability witness.** `stella.toml` says *which* tracker; the
