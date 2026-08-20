@@ -571,7 +571,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-five crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-six crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -586,7 +586,8 @@ the files you must plan around (see below).
 | Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](crates/stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
 | Add/fix a built-in tool (`bash`, `read_file`, `edit_file`, `search`, `task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`, declare one line in `catalog.rs`. |
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](crates/stella-cli/README.md) | This is the shipping binary. |
-| Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
+| Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. The v2 redesign lands under `src/v2/`, beside the v1 modules rather than through them. |
+| Change a **v2 colour, state glyph, or the wordmark** | [`stella-tui-theme`](crates/stella-tui-theme/README.md) | **A near-leaf: `ratatui` is its only dependency**, so every v2 surface can take it without cost. The v2 palette plus the hue clamp that holds it — gold must clear `g >= 0.78 r` or it is orange, grays must be neutral or blue-tipped or the scheme reads sepia — enforced as unit tests on the shipped table. Deliberately **not** a superset of `stella-tui::palette`: v1 is warm-neutral by design and v2's clamp rejects a warm gray outright, so the two coexist until each surface migrates. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](crates/stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
 | Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store`, `stella-observatory`, `stella-cli`, `stella-model` and `stella-tools` all share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
 | Parse/validate a plugin's manifest, or change the wrapper socket's **wire contract** — the request/response types a non-Rust plugin speaks (`before_turn`/`after_turn`, `EvidenceSet`, `VerdictRule`) | [`stella-plugin`](crates/stella-plugin/README.md) | **Near-leaf: `stella-protocol` is its only workspace dependency** (#3245 slice A; #3310) — pure parsing/validation over borrowed text, plus `src/wire.rs`'s serialized shapes (#3380, `doc:wrapper-socket` §2). The engine never learns plugins exist: the host binds these grants to the engine's gates, and `stella-core` must never depend on it. The one edge it does take is what lets it share `HookEvent` with the engine instead of mirroring it by hand. |
@@ -672,7 +673,7 @@ a plan needs and the part that rarely changes:
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
-The other twenty crates carry no god files — keep it that way. Each crate's
+The other twenty-one crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 

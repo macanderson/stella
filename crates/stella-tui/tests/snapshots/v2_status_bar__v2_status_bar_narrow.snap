@@ -1,0 +1,8 @@
+---
+source: crates/stella-tui/tests/v2_status_bar.rs
+expression: "frame(StatusBar(demo()), 46, 1)"
+---
+kimi-k3 · execute                       ? help
+──────────────────────────────────────────────
+metal map: G gold · B gold_bright · s silver · w text · m muted · d dim · b border · R red · n green
+wwwwwwwdddwwwwwww-----------------------dddddd

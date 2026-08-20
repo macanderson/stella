@@ -1,6 +1,6 @@
 [package]
 name = "stella-tui-theme"
-description = "The stella black-and-gold palette and its hue clamp — generated from design/tokens/stella-tokens.json, so the TUI and every web surface cannot drift apart."
+description = "The stella TUI v2 palette: fourteen tokens, the hue clamp that keeps gold from drifting orange and the grays from drifting warm, the glyph vocabulary every panel shares, the `stella*` wordmark, and the 16-color fallback for terminals without truecolor."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,10 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# `ratatui` is the only dependency, and only for `Color::Rgb` — the type the
-# clamp predicates speak about. Keeping this crate at one edge is what lets the
-# TUI depend on it without the palette acquiring the TUI's dependency graph, so
-# a later surface (an asset generator, a docs renderer) can link the tokens
-# alone.
+# `ratatui` alone, for `Color`, `Style` and `Span`. This crate is a leaf by
+# contract — the stella-tty / stella-diff shape (#3036, #1511): every surface
+# that paints a v2 cell depends on it, so it may depend on nothing that could
+# ever want to paint one. A palette that pulls in the widgets it colours is a
+# cycle waiting for its second consumer.
 [dependencies]
 ratatui.workspace = true

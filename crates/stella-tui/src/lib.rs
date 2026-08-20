@@ -87,6 +87,7 @@ pub mod theme;
 pub mod tool_class;
 pub mod transcript_build;
 pub mod transcript_nav;
+pub mod v2;
 pub mod views;
 
 pub use accessible::{FlushBlock, NOTICE_MARKER, Scrollback};

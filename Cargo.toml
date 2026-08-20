@@ -145,6 +145,14 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 hmac = "0.13"
 sha2 = "0.11"
 tempfile = "3"
+# Snapshot review for the TUI v2 golden frames. The v1 deck's own golden
+# harness (`crates/stella-tui/tests/deck_render_snapshots.rs`) deliberately
+# strips styling, which the v2 design cannot accept: the two-metal rule and
+# the red-scarcity assertion are claims about *colour*, and a golden blind to
+# colour cannot carry them. `insta` is named in the v2 implementation plan's
+# dependency table, and buys the review workflow a hand-rolled differ does not
+# (`cargo insta review`, inline diffs, pending-snapshot files).
+insta = "1"
 tree-sitter = "0.26"
 tree-sitter-javascript = "0.25"
 tree-sitter-python = "0.25"

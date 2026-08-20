@@ -1,0 +1,77 @@
+<svg viewBox="0 0 680 508" width="680" height="508" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
+<rect x="0" y="0" width="680" height="508" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
+<line x1="20" y1="20" x2="20" y2="176" stroke="#EFC53F" stroke-width="2"/>
+<text x="32" y="32" font-size="12" fill="#EFC53F">＋ write</text>
+<text x="100" y="32" font-size="11" fill="#E8E8EC">crates/stella-cli/src/dedup.rs</text>
+<text x="342" y="32" font-size="11" fill="#74C991">new file · 34 lines</text>
+<text x="600" y="32" font-size="11" fill="#777782">⚡1ms</text>
+<rect x="32" y="40" width="632" height="112" fill="#0F0F12"/>
+<text x="40" y="58" font-size="11" fill="#4B4B56">1</text>
+<text x="64" y="58" font-size="11" fill="#EFC53F">use</text>
+<text x="94" y="58" font-size="11" fill="#E8E8EC">std::collections::</text>
+<text x="238" y="58" font-size="11" fill="#BFC1CC">BTreeSet</text>
+<text x="302" y="58" font-size="11" fill="#E8E8EC">;</text>
+<text x="40" y="76" font-size="11" fill="#4B4B56">2</text>
+<text x="64" y="76" font-size="11" fill="#565660">/// Stable dedup key for findings.</text>
+<text x="40" y="94" font-size="11" fill="#4B4B56">3</text>
+<text x="64" y="94" font-size="11" fill="#EFC53F">pub struct</text>
+<text x="150" y="94" font-size="11" fill="#BFC1CC">DigestKey</text>
+<text x="222" y="94" font-size="11" fill="#E8E8EC">(</text>
+<text x="230" y="94" font-size="11" fill="#EFC53F">pub</text>
+<text x="260" y="94" font-size="11" fill="#BFC1CC">u64</text>
+<text x="286" y="94" font-size="11" fill="#E8E8EC">);</text>
+<text x="40" y="112" font-size="11" fill="#4B4B56">4</text>
+<text x="64" y="112" font-size="11" fill="#EFC53F">impl</text>
+<text x="100" y="112" font-size="11" fill="#BFC1CC">DigestKey</text>
+<text x="172" y="112" font-size="11" fill="#E8E8EC">{</text>
+<text x="40" y="130" font-size="11" fill="#4B4B56">5</text>
+<text x="64" y="130" font-size="11" fill="#EFC53F">  pub fn</text>
+<text x="128" y="130" font-size="11" fill="#E8E8EC">of(text: &amp;</text>
+<text x="208" y="130" font-size="11" fill="#BFC1CC">str</text>
+<text x="232" y="130" font-size="11" fill="#E8E8EC">) -&gt; </text>
+<text x="270" y="130" font-size="11" fill="#BFC1CC">Self</text>
+<text x="302" y="130" font-size="11" fill="#E8E8EC"> {</text>
+<text x="40" y="148" font-size="11" fill="#4B4B56">⋯ 29 more · ↵ expand</text>
+<text x="32" y="170" font-size="11" fill="#4B4B56">→ task 4 · registered in graph as module node</text>
+<line x1="20" y1="192" x2="20" y2="222" stroke="#E0687A" stroke-width="2"/>
+<text x="32" y="204" font-size="12" fill="#E0687A">✗ delete</text>
+<text x="102" y="204" font-size="11" fill="#E8E8EC">src/old_digest.rs</text>
+<text x="242" y="204" font-size="11" fill="#E0687A">-118 lines</text>
+<text x="528" y="204" font-size="11" fill="#777782">git-backed · u undo</text>
+<text x="32" y="222" font-size="11" fill="#777782">graph check</text>
+<text x="122" y="222" font-size="11" fill="#A9AAB5">0 inbound refs · det</text>
+<text x="286" y="222" font-size="11" fill="#4B4B56">safe to remove, verified before the tool ran</text>
+<line x1="20" y1="238" x2="20" y2="300" stroke="#A9AAB5" stroke-width="2"/>
+<text x="32" y="250" font-size="12" fill="#A9AAB5">◆ memory</text>
+<text x="112" y="250" font-size="11" fill="#E8E8EC">logged</text>
+<text x="566" y="250" font-size="11" fill="#4B4B56">mem_83b3…d29a</text>
+<text x="32" y="268" font-size="11" fill="#E8E8EC">"dedup keys must be stable across runs; hash finding text only"</text>
+<text x="32" y="286" font-size="11" fill="#E8E8EC">OBSERVATION</text>
+<text x="126" y="286" font-size="11" fill="#4B4B56">▸ RULE ▸ FACT</text>
+<text x="240" y="286" font-size="11" fill="#777782">conf 0.62 · kind PERFORMANCE · decays</text>
+<text x="32" y="302" font-size="11" fill="#4B4B56">promotes to RULE at 0.85 · e edit · x reject</text>
+<line x1="20" y1="318" x2="20" y2="330" stroke="#A9AAB5" stroke-width="2"/>
+<text x="32" y="330" font-size="12" fill="#A9AAB5">◆ memory</text>
+<text x="112" y="330" font-size="11" fill="#E8E8EC">promoted</text>
+<text x="186" y="330" font-size="11" fill="#777782">OBSERVATION → RULE</text>
+<text x="342" y="330" font-size="11" fill="#74C991">conf 0.87</text>
+<text x="420" y="330" font-size="11" fill="#4B4B56">· audit event mem_evt_112 · now prompt-injected</text>
+<text x="32" y="360" font-size="11" fill="#4B4B56">↓ compacted 74k→69k · 0 evicted · 0 deduped</text>
+<line x1="16" y1="384" x2="664" y2="384" stroke="#2C2C33" stroke-width="1"/>
+<rect x="24" y="376" width="340" height="14" fill="#0A0A0C"/>
+<text x="28" y="388" font-size="11" fill="#EFC53F">turn 16</text>
+<text x="82" y="388" font-size="11" fill="#777782">execute · queued: "also persist across CI runs"</text>
+<line x1="20" y1="402" x2="20" y2="432" stroke="#F7D96B" stroke-width="2"/>
+<text x="32" y="414" font-size="12" fill="#F7D96B">◐ model</text>
+<text x="102" y="414" font-size="11" fill="#E8E8EC">applying queued steer to task 4</text>
+<text x="588" y="414" font-size="11" fill="#777782">6 tok/s</text>
+<text x="32" y="432" font-size="11" fill="#4B4B56">irreducible generation · 1 of 2 budgeted model calls this turn</text>
+<text x="16" y="464" font-size="12" fill="#EFC53F" font-weight="500">&gt;&gt;&gt;</text>
+<rect x="46" y="454" width="7" height="13" fill="#E8E8EC"/>
+<text x="16" y="490" font-size="11" fill="#4B4B56">rails:</text>
+<text x="62" y="490" font-size="11" fill="#EFC53F">gold = stella acting</text>
+<text x="220" y="490" font-size="11" fill="#A9AAB5">silver = world in</text>
+<text x="356" y="490" font-size="11" fill="#E0687A">red fail</text>
+<text x="424" y="490" font-size="11" fill="#74C991">green pass</text>
+<text x="510" y="490" font-size="11" fill="#4B4B56">· one glance, no reading</text>
+</svg>
