@@ -313,10 +313,7 @@ impl SessionMemory {
         if !quiet && !novel.is_empty() {
             let n = novel.len();
             if stored {
-                println!(
-                    "  {} remembered {n} lesson(s) from this turn",
-                    "✦".white()
-                );
+                println!("  {} remembered {n} lesson(s) from this turn", "✦".white());
             } else if novel_logged == n {
                 println!(
                     "  {} could not persist {n} lesson(s) to the context store \

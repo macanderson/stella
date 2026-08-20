@@ -244,8 +244,17 @@ mod tests {
     /// one point bluer than `gold_bright` still fails it.
     #[test]
     fn the_gold_lift_is_bounded() {
-        assert!(is_lifted_gold(0xF7, 0xD9, 0x6B), "gold_bright must pass the lift");
-        assert!(!is_resting_gold(0xF7, 0xD9, 0x6B), "and must fail the resting clamp");
-        assert!(!is_lifted_gold(0xF7, 0xD9, 0x6D), "two points bluer must fail");
+        assert!(
+            is_lifted_gold(0xF7, 0xD9, 0x6B),
+            "gold_bright must pass the lift"
+        );
+        assert!(
+            !is_resting_gold(0xF7, 0xD9, 0x6B),
+            "and must fail the resting clamp"
+        );
+        assert!(
+            !is_lifted_gold(0xF7, 0xD9, 0x6D),
+            "two points bluer must fail"
+        );
     }
 }

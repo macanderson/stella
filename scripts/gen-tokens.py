@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -337,9 +339,18 @@ def render_rust(doc: dict) -> str:
         "    /// one point bluer than `gold_bright` still fails it.",
         "    #[test]",
         "    fn the_gold_lift_is_bounded() {",
-        "        assert!(is_lifted_gold(0xF7, 0xD9, 0x6B), \"gold_bright must pass the lift\");",
-        "        assert!(!is_resting_gold(0xF7, 0xD9, 0x6B), \"and must fail the resting clamp\");",
-        "        assert!(!is_lifted_gold(0xF7, 0xD9, 0x6D), \"two points bluer must fail\");",
+        "        assert!(",
+        "            is_lifted_gold(0xF7, 0xD9, 0x6B),",
+        '            "gold_bright must pass the lift"',
+        "        );",
+        "        assert!(",
+        "            !is_resting_gold(0xF7, 0xD9, 0x6B),",
+        '            "and must fail the resting clamp"',
+        "        );",
+        "        assert!(",
+        "            !is_lifted_gold(0xF7, 0xD9, 0x6D),",
+        '            "two points bluer must fail"',
+        "        );",
         "    }",
         "}",
         "",
@@ -379,6 +390,31 @@ def main() -> int:
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
+
+    # The emitted Rust must already be rustfmt-clean. Nothing else enforces the
+    # coupling, and getting it wrong is quiet in the worst way: `make
+    # tokens-update` would write a file that `format-check` then rejects, so the
+    # only way to a green gate would be to hand-edit a generated file — which is
+    # precisely what the "do not edit" banner forbids, and the tree would have
+    # taught the next author to ignore it. Checked rather than remembered.
+    if shutil.which("rustfmt"):
+        probe = subprocess.run(
+            ["rustfmt", "--edition", "2024", "--emit", "stdout", "--quiet"],
+            input=outputs[RUST_OUT],
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode != 0:
+            print(f"rustfmt refused the generated Rust:\n{probe.stderr}", file=sys.stderr)
+            return 1
+        if probe.stdout != outputs[RUST_OUT]:
+            print(
+                f"the generated Rust is not rustfmt-clean. Fix the emitter in "
+                f"{Path(__file__).name} — do not format {RUST_OUT} by hand, it is "
+                f"overwritten on every run.",
+                file=sys.stderr,
+            )
+            return 1
 
     if args.check:
         if stale:
