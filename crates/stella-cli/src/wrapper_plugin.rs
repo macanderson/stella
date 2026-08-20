@@ -62,10 +62,12 @@
 //!    holds a provider, an `Engine` or a credential (invariant 3,
 //!    `doc:turn-loop-wrappers` §9.3). The seat it resolves to is the receipt's
 //!    attribution, the child is read-only, the allowance is the host's, and
-//!    what it spent is printed beside what it was refused. Two limits stated
-//!    rather than implied: the `verifier` tier is bound to no seat here, so a
-//!    plugin naming it is answered `Unavailable`
-//!    ([`child_turn_plane`] argues why); and a point runs between the parent's
+//!    what it spent is printed beside what it was refused. Two things stated
+//!    rather than implied: the `verifier` tier **is** bound here, to
+//!    `ModelCallRole::Verdict`, so an arbiter plugin's assessment turn runs
+//!    and is booked as what it is (#3838 — [`child_turn_plane`] argues why,
+//!    including why the refusal that stood here before was right when it was
+//!    written and is not any more); and a point runs between the parent's
 //!    turns, where the tool registry's event slot is empty — so the spend
 //!    reaches the session's guard and this run's report, but not the store's
 //!    receipt (#3802). The turn's boundary controls **do** cross (#3803):
@@ -138,8 +140,8 @@ use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
     CandidateFanoutSpend, CandidateFanouts, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS,
-    DispatchReport, DrivenTurn, HostCallGate, HostPlanes, RoundInput, SubprocessWrapper,
-    TurnDriver, TurnPrelude, WrapperDispatch,
+    DEFAULT_HOST_MAX_CHILD_TURNS, DEFAULT_HOST_MAX_HOLDS, DispatchReport, DrivenTurn, HostCallGate,
+    HostPlanes, RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -789,6 +791,49 @@ pub(crate) fn resolve(
 /// dispatcher. [`ResolvedWrapper::serving`] is the other half, and every
 /// wrapper reaches it — a plugin that asks through a transport with *no* gate
 /// has its stdin shut and waits for an answer that never comes (#3561).
+/// Say so when this host will fund less than the manifest asked for (#3841).
+///
+/// `[loop] max_holds` and `max_calls` are **asks, never authorities** — the
+/// host's own ceilings are what actually bound the spend, and that is the
+/// right way round: a plugin that could raise its own ceiling by declaring a
+/// bigger number would be setting the user's budget for them.
+///
+/// The defect is not the clamp, it is the *silence*. A user installing
+/// `stella-goal` reads "asks for up to 7 correction rounds" in the consent
+/// text and gets 2, with nothing naming the difference as a host default
+/// rather than something they chose. `again`'s
+/// `StopReason::AllowanceSpent { spent, allowed }` reports it honestly, but
+/// only at the end of a run that already hit the wall.
+///
+/// So the narrowing is announced before the first round, in the same
+/// one-line-notice shape invariant 8 uses for a pinned effort a provider
+/// cannot honour: never a silent drop.
+///
+/// Deliberately **not** a refusal. A plugin capped below its ask still does
+/// its job, just fewer times, and refusing to run it would turn a visible
+/// narrowing back into an unusable door.
+fn warn_narrowed_ceilings(manifest: &stella_plugin::PluginManifest, warn: &mut dyn FnMut(String)) {
+    let name = manifest.name.as_str();
+    if let Some(asked) = manifest.loop_grant.max_holds
+        && asked > DEFAULT_HOST_MAX_HOLDS
+    {
+        warn(format!(
+            "plugin \"{name}\" asks to hold a turn open for up to {asked} correction \
+             rounds; this host funds {DEFAULT_HOST_MAX_HOLDS} (a host default, not a \
+             setting you chose), so the run stops after {} rounds",
+            DEFAULT_HOST_MAX_HOLDS + 1
+        ));
+    }
+    if let Some(asked) = manifest.loop_grant.max_calls
+        && asked > DEFAULT_HOST_MAX_CHILD_TURNS
+    {
+        warn(format!(
+            "plugin \"{name}\" asks for up to {asked} child turns for the whole run; \
+             this host funds {DEFAULT_HOST_MAX_CHILD_TURNS}"
+        ));
+    }
+}
+
 pub(crate) fn bind_installed(
     roster: &PluginRoster,
     variant: &str,
@@ -833,6 +878,8 @@ pub(crate) fn bind_installed(
             installed.manifest.name
         )
     })?;
+
+    warn_narrowed_ceilings(&installed.manifest, warn);
 
     // `${plugin_dir}` is the host's substitution — this crate is where the
     // install directory is known, exactly as `PluginRoster::hook_routes` does

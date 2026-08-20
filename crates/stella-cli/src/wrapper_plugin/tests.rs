@@ -1003,6 +1003,59 @@ async fn the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane()
     );
 }
 
+/// **Witness (#3841).** Binding a plugin whose manifest asks for more
+/// rounds than this host funds says so, before the first round.
+///
+/// Fails before this change because nothing said anything: the clamp was
+/// real (`DEFAULT_HOST_MAX_HOLDS = 2` against the shipped manifest's
+/// `max_holds = 7`) and entirely silent until a run ended early on
+/// `StopReason::AllowanceSpent`. A user reading the consent text saw
+/// "up to 7 correction rounds" and got 2, with nothing naming the
+/// difference as a host default rather than a setting they chose.
+///
+/// Uses the shipped manifest rather than a fixture for the same reason
+/// the seat witness does — if `plugins/stella-goal` stops over-asking,
+/// this test should stop being about anything and say so loudly.
+#[test]
+fn a_plugin_asking_for_more_rounds_than_this_host_funds_is_told_before_the_run() {
+    let manifest = shipped_goal_manifest();
+    let asked_holds = manifest
+        .loop_grant
+        .max_holds
+        .expect("the shipped manifest declares max_holds");
+    assert!(
+        asked_holds > stella_runtime::wrapper::DEFAULT_HOST_MAX_HOLDS,
+        "this witness only means something while the plugin asks for more \
+         than the host funds; asked {asked_holds}"
+    );
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../plugins/stella-goal/plugin.toml"),
+    )
+    .expect("the shipped manifest");
+    let roster = roster(vec![installed(&text, dir.path().to_str().expect("utf-8"))]);
+
+    let mut notices = Vec::new();
+    let _ = bind_installed(&roster, "goal-v1", &mut |notice| notices.push(notice));
+
+    let holds = notices
+        .iter()
+        .find(|notice| notice.contains("correction rounds"))
+        .unwrap_or_else(|| {
+            panic!("the narrowing must be announced, not discovered; got {notices:?}")
+        });
+    assert!(
+        holds.contains(&asked_holds.to_string()),
+        "the notice names what the plugin asked for: {holds}"
+    );
+    assert!(
+        holds.contains("host default, not a setting you chose"),
+        "and names the clamp as a host default, which is the whole point: {holds}"
+    );
+}
+
 /// The same plugin against a host that installs no plane is answered
 /// `Unavailable` — the state every driver was in before this change, and
 /// the one a driver with no dispatcher of its own is still in.
