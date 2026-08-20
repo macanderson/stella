@@ -365,17 +365,40 @@ def test_the_engine_still_resolves_a_role_in_the_order_this_module_mirrors() -> 
     `resolve_posture_role_model` re-opens #2134 in a new place, and nothing
     else in either tree would notice — the two live in different languages,
     different test suites, and different CI jobs.
+
+    **The engine lost a rung, and this test now says so out loud.** `model_for`
+    read `agents.<kind>.model` > the flat `pipeline_<role>_model` > `default_model`
+    until the config collapse (#3944, #3903). It is two rungs now, with no
+    `kind` argument at all, because core knows one role. So the middle rung
+    below is asserted **absent** rather than ordered — a re-introduction of a
+    flat per-role key in the engine is exactly as interesting as a reorder, and
+    would otherwise land silently.
+
+    What this deliberately does NOT assert any more is that
+    `resolve_posture_role_model` matches rung for rung, because it does not:
+    it still resolves the flat key and still carries the worker-inheritance
+    arm. That divergence is real and is tracked in **#4103** — it cannot be
+    closed here, because that function decides the assurance tier a recorded
+    run is characterised by, so collapsing it re-characterises published
+    numbers (the decision #3870 reserves for a maintainer). Narrowing this
+    test to what is still true is the honest half; the other half is an open
+    issue rather than a passing assertion.
     """
     source = _model_for_source()
     start = source.index(_MODEL_FOR_DECL)
     body = source[start : source.index("\n    }\n", start)]
-    rungs = [
-        body.index("self.agent(kind).and_then(|a| a.model"),
-        body.index("pipeline_verifier_model"),
-        body.index("self.default_model"),
-    ]
-    assert rungs == sorted(rungs), (
-        "`model_for` no longer reads `agents.<kind>.model` > the flat per-role "
-        "key > `default_model`; `resolve_posture_role_model` mirrors that order "
-        "and has to change with it (#2134)"
+
+    agent_rung = body.index("self.agent()")
+    default_rung = body.index("self.default_model")
+    assert agent_rung < default_rung, (
+        "`model_for` no longer reads `agents.<…>.model` before `default_model`; "
+        "`resolve_posture_role_model` mirrors that order and has to change with "
+        "it (#2134)"
+    )
+
+    assert "pipeline_" not in body, (
+        "`model_for` reads a flat per-role key again. The collapse (#3944) "
+        "removed that rung and the bench mirror was left resolving it anyway "
+        "(#4103) — if the engine is bringing it back, the two have to be "
+        "reconciled deliberately rather than drifting back into agreement"
     )
