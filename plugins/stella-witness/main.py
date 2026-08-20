@@ -276,6 +276,14 @@ def run_test(program, args, cwd):
     unobservable one. It comes back with `exit_code = None`, which the caller
     turns into `unobservable` rather than feeding the oracle a `False` it
     would read as red.
+
+    A process killed by a signal reports a negative `returncode` in Python
+    (`-N` for signal `N`). The reported exit code is normalised to the shell
+    `128+N` convention the rest of the codebase uses (see `CmdOutcome.exit_code`
+    in `crates/stella-plugin/src/candidate_grant.rs`) so it is always
+    non-negative: the wire measurement type is `u64`, and a negative value would
+    fail to decode on the host, turning a genuine red/crashed test into an
+    unparseable response.
     """
     started = time.monotonic()
     try:
@@ -290,7 +298,9 @@ def run_test(program, args, cwd):
         report("the invocation could not be started: {}".format(error))
         return (False, None, int((time.monotonic() - started) * 1000))
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    return (finished.returncode == 0, finished.returncode, elapsed_ms)
+    returncode = finished.returncode
+    exit_code = returncode if returncode >= 0 else 128 - returncode
+    return (returncode == 0, exit_code, elapsed_ms)
 
 
 def evidence(flip, measurements):
