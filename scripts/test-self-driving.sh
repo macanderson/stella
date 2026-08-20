@@ -420,10 +420,28 @@ queue_numbers() { # queue_numbers <limit>
     | python3 -c 'import json,sys;print(" ".join(str(i["number"]) for i in json.load(sys.stdin)["rows"]))'
 }
 
-# 104 is oldest of all yet ranks last, and 105 never appears: rank beats age
-# across ranks, an untriaged issue counts as a defect, a feature does not.
-check_eq "103 102 101 104" "$(queue_numbers 10)" \
-  "P0 first, age breaks ties inside a rank, triage counts, features do not"
+queue_awaiting() { # how many the queue reports as awaiting triage
+  env PATH="$STUB_BIN:$PATH" GH_FIX_QUEUE="$QFIX" SELF_DRIVING_STATE_DIR="$ROOT/qr" \
+    "$SD_SH" queue --limit 10 2>&1 >/dev/null \
+    | sed -n 's/.*, \([0-9][0-9]*\) awaiting triage.*/\1/p'
+}
+
+# Neither 104 nor 105 is ranked, for two different reasons, and the difference
+# is the point. 105 is `enhancement` — an excluded kind, judged and dropped
+# silently. 104 carries `triage` and no rung: a defect nobody has placed yet,
+# which is a question for the loop rather than the bottom of its work queue.
+#
+# It used to rank last, because "no rung" mapped to one past the ladder and so
+# read as "deliberately least urgent" — indistinguishable from a real P3. That
+# is the read `stella_autonomy::priority::triage` stopped making; the property
+# is owned by `backlog.rs`'s `a_defect_with_no_rung_surfaces_as_a_question`,
+# and this case is the end-to-end half of it. Asserting the ranked list alone
+# would pass just as well if 104 were dropped on the floor, so the count of
+# what is awaiting triage is checked too.
+check_eq "103 102 101" "$(queue_numbers 10)" \
+  "P0 first, age breaks ties inside a rank, unrunged and excluded both stay out"
+check_eq "1" "$(queue_awaiting)" \
+  "the unrunged defect is surfaced as a question, not silently dropped"
 check_eq "103" "$(queue_numbers 1)" "--limit truncates after ranking, not before"
 
 # ---------------------------------------------------------------------------
