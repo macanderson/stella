@@ -23,8 +23,8 @@
    the wordmark, the favicon mark, and at most one primary action per page. It
    may never encode a state.
 
-   The v4.0 return to gold makes that carve-out load-bearing again, because
-   gold and an amber `--warn` are the pair that collides. It was diagnosed
+   A gold identity makes that carve-out load-bearing, because gold and an
+   amber `--warn` are the pair that collides. It was diagnosed
    with the wrong instrument for two releases: `--identity` #C58A32 against
    `--warn` #C9A227 measured 1.23:1 and was called unreadable, and when v3.0
    moved to a cyan the same measurement read 1.22:1 and was waved through as
@@ -33,9 +33,10 @@
    near 1:1 no matter how different they look, so it never distinguished the
    cyan case from the gold one and never could.
 
-   The metric that does is OKLCH hue distance, and `--warn` was moved on it:
-   from 10.7° off the identity to 32.0° (see the palette block). So the
-   carve-out now stands on both its own reasoning AND a measured separation:
+   The metric that does is OKLCH hue distance, and `--warn` is derived on it
+   rather than picked — 39.1° off the identity under the current palette (see
+   the palette block), where the amber it replaced was 10.7°. So the
+   carve-out stands on both its own reasoning AND a measured separation:
    three jobs, three channels, no overlap. `--identity` says whose instrument
    this is, `--accent` says what is selected, `--ok`/`--warn`/`--bad` say what
    happened.
@@ -43,7 +44,11 @@
    What that costs: the product no longer matches the marketing site, which
    fills its nav, buttons and active states with the brand hue. That is the
    intended trade — a marketing page has no data for its chrome to compete
-   with, and this page is nothing but data.
+   with, and this page is nothing but data. The product palette is also held
+   apart from the marketing *values* now: this page and the terminal share the
+   ramp in crates/stella-tui/src/palette.rs, while docs/brand/ and the website
+   stay on kit v4.0's Bronze Gold, whose ramp is byte-parity-checked against
+   ~60 generated binary assets and therefore moves as its own change.
 
    Token names were unchanged through the previous recolour on purpose: four
    hundred lines of component CSS below reference them, and re-pointing values
@@ -55,28 +60,46 @@
    self-contained document — see `dashboard_html_has_no_external_references`
    in ../../tests.rs. */
 :root{
-  /* BEGIN palette — dark: obsidian ground, cool paper text, graphite ramp.
-     The surfaces step #070B10 → #0D1319 → #11171D so a card reads as raised
-     by a value step of 1–2 rather than by a shadow. Do not prune this block
-     to the tokens currently referenced; it carries the full set. */
-  --void:#010306; --ground:#070B10; --surface:#0D1319; --raised:#11171D;
-  --hairline:#1F262D; --hairline-strong:#333B43;
+  /* BEGIN palette — dark: four specified blacks, a cool neutral text ramp,
+     one gold, two semantics. Every ground is neutral with blue one or two
+     points above red (measured: OKLCH hue 285.6–285.9 at chroma
+     0.004–0.011), which is what keeps a large field of near-black from
+     reading warm on a cheap panel — and matters doubly here because the
+     identity is a yellow, so a warm ground would sit in the identity's own
+     family. The surfaces step #0A0A0C → #0F0F12 → #17171B so a card reads as
+     raised by a value step rather than by a shadow. Shared with the terminal
+     (crates/stella-tui/src/palette.rs), which carries the full derivation for
+     each value. Do not prune this block to the tokens currently referenced;
+     it carries the full set. */
+  --void:#050507; --ground:#0A0A0C; --surface:#0F0F12; --raised:#17171B;
+  --hairline:#26262C; --hairline-strong:#35353D;
   /* The accent ramp is the text ramp: "active" is an inversion, not a hue.
      These were `--mark*` until the v3.0 recolour, which is the naming bug the
      brand kit warns about — a hue in a token name, on tokens that had not
      been a hue for two releases. */
-  --mark:#E9EDF2; --mark-bright:#FFFFFF; --mark-deep:#A4ABB3;
-  --text:#E9EDF2; --text-2:#A4ABB3; --text-3:#737C88;
+  --mark:#E8E8EC; --mark-bright:#FFFFFF; --mark-deep:#A9AAB5;
+  /* The text ramp, and the one caveat worth stating rather than rounding
+     away: --text-3 measures 4.47:1 on --ground and 4.04:1 on --raised, just
+     under the 4.5:1 AA body floor on both. It is the caption/label/UI tier —
+     anything a reader must actually read at 13px takes --text-2 (8.58:1). */
+  --text:#E8E8EC; --text-2:#A9AAB5; --text-3:#777782;
+  /* The one neutral above --text-2, and it has exactly one job: the token
+     classes in a code body (see highlightCode() below). The palette names it
+     for syntax types, and putting code tokens on a neutral rather than a hue
+     is the same rule this page already applies to its chart series. */
+  --text-emph:#BFC1CC;
   /* Identity. The one hue outside --ok/--warn/--bad, and the header comment's
      carve-out: wordmark, favicon mark, one primary action. Never a state.
-     Both values are taken from docs/brand/css/tokens.css rather than mixed
-     here — --stella-brand-500 on obsidian, --stella-brand-800 on paper. The
-     light value stays one stop below the dark one for the reason #2591 first
-     chose a deeper stop: identity has to clear contrast on --surface, not
-     only on the page ground. Gold's brand-800 measures 8.25:1 there and
-     8.70:1 as the fill pair against white. Which ramp step identity takes is
-     a brand decision, not a follow-on edit. */
-  --identity:#C58A32; --identity-ink:#070B10;
+     Both values come from the product palette (crates/stella-tui's `brand`
+     and `brand-ink`), NOT from docs/brand/css/tokens.css, which is still on
+     kit v4.0's Bronze Gold #C58A32 — the kit's ramp is byte-parity-checked
+     against ~60 generated binary assets and moves on its own schedule. The
+     light value stays a deeper stop for the reason #2591 first chose one:
+     identity has to clear contrast on --surface, not only on the page
+     ground. The dark value measures 11.99:1 on --ground and 11.60:1 on
+     --surface; the light one 6.61:1 on white, 6.18:1 on --surface, and
+     6.61:1 as the fill pair against --identity-ink. */
+  --identity:#EFC53F; --identity-ink:#0A0A0C;
   /* The three semantic colours, and the only colour anywhere besides the
      identity. Held in the reference's own register so they read as marks on
      an instrument rather than as UI chrome — but lifted with the rest of the
@@ -85,28 +108,25 @@
      neutral: it is a distinct state, and dropping it to grey would throw the
      signal away to satisfy the palette.
 
-     --warn is what MOVED when the brand went back to gold, and it had to.
-     The identity carve-out says gold may never encode a state, and the reason
-     is that a reader has to be able to tell the mark from the state at a
-     glance. The old #D9A62E sat 10.7° from the identity in OKLCH hue — the
-     same colour, for that purpose. Note the metric: WCAG contrast is a
-     LUMINANCE ratio and cannot answer this question at all (every candidate
-     scored between 1.0 and 1.6 against the identity, including ones nobody
-     would confuse), which is why the earlier "1.32:1, indistinguishable"
-     reading was the right conclusion from the wrong instrument.
-
-     So --warn takes hue 41.2°, which is not a taste call either: --bad sits
-     at 14.7° and the identity at 73.2°, and 44° is the point that maximises
-     the SMALLER of the two gaps. The shipped value lands 32.0° from the
-     identity and 26.5° from --bad, and clears AA on all three dark grounds
-     (7.63 / 7.22 / 6.98 on ground / surface / raised). */
-  --ok:#3FD99B; --warn:#FF7A45; --bad:#F2687A;
+     --warn is the one this palette does not name, so it is derived by the
+     same rule the previous one was, against the new neighbours. Note the
+     metric: WCAG contrast is a LUMINANCE ratio and cannot answer "can a
+     reader tell these apart" at all — every chromatic pair of similar
+     lightness scores near 1:1 no matter how different they look. OKLCH hue
+     distance can. --bad sits at 12.8° and the identity at 90.8°, and 51.8°
+     is the point that maximises the SMALLER of the two gaps; the shipped
+     value lands 39.1° from the identity and 38.9° from --bad, and clears AA
+     on all three dark grounds (7.85 / 7.60 / 7.10 on ground / surface /
+     raised). --ok and --bad come straight from the palette (9.90:1 and
+     6.06:1 on ground, 63.1° and 78.0° from the identity), both pulled cool
+     so they sit inside the scheme rather than fighting it. */
+  --ok:#74C991; --warn:#E78D54; --bad:#E0687A;
   /* Categorical data marks — a value ramp, not a hue wheel. Series are
      separated by lightness alone, which is the one channel that survives
      greyscale printing, colour-vision deficiency, and a projector. Ordered
      light → dark so --c1 is the most prominent series. */
-  --c1:#E9EDF2; --c2:#A4ABB3; --c3:#737C88; --c4:#4A535D;
-  --neutral-mark:#4A535D;          /* the "everything else" mark — recedes */
+  --c1:#E8E8EC; --c2:#A9AAB5; --c3:#777782; --c4:#4B4B56;
+  --neutral-mark:#4B4B56;          /* the "everything else" mark — recedes */
   /* END palette */
 
   /* Semantic alias. One alias, for accent/active/focus. The accent is the
@@ -117,11 +137,17 @@
      stays a token of its own rather than reusing --ground: a selector that
      paints text in the page-background token is the coupling
      tests/light_mode.rs exists to forbid. */
-  --ink:#070B10;
+  --ink:#0A0A0C;
   --accent:var(--mark);
-  --accent-wash:rgba(233,237,242,.08); /* paper @8%  — hover / selected fill  */
-  --accent-edge:rgba(233,237,242,.38); /* paper @38% — chip + badge edges     */
-  --sunken:#0B1116;                    /* inset wells — the reference's --code */
+  --accent-wash:rgba(232,232,236,.08); /* text @8%  — hover / selected fill   */
+  --accent-edge:rgba(232,232,236,.38); /* text @38% — chip + badge edges      */
+  /* Inset wells return to the canvas rather than taking a step of their own.
+     The palette ships four blacks and names the second one "code blocks",
+     which is --surface here — the card a code block sits in — so a well
+     *inside* that card has to recede below it, not above. Every consumer
+     (pre.cfg, #gwrap, .jrnl-body, .dx) carries a --hairline border, so the
+     well is delimited by its edge even where it sits directly on --ground. */
+  --sunken:#0A0A0C;
   /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
      an interactive component; no token in the ground ramp reaches it —
      --hairline-strong measures 1.48:1 on --surface. --text-3 does, so every
@@ -243,21 +269,31 @@
 }
 :root[data-theme="light"]{
   color-scheme:light;
-  --void:#E9EDF2; --ground:#FFFFFF; --surface:#F7F9FC; --raised:#FFFFFF;
-  --hairline:#E7EBF0; --hairline-strong:#CFD6DD;
-  --mark:#070B10; --mark-bright:#000000; --mark-deep:#4D535A;
-  --identity:#674415; --identity-ink:#FFFFFF;
-  --text:#070B10; --text-2:#4D535A; --text-3:#828C97;
-  /* --warn keeps the dark scheme's hue (41.2°) rather than its lightness:
-     28.9° from the light identity, 22.7° from --bad, 7.89:1 on paper and
-     7.48:1 on --surface. */
-  --ok:#0B6B3D; --warn:#913200; --bad:#A82036;
-  --c1:#070B10; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
-  --neutral-mark:#C2C9D1;
+  /* The light scheme reads the SAME neutral ramp from the other end: --text-2
+     and --text-3 are the palette's own dim and muted values, so a theme
+     switch changes the lightness and not the temperature (every neutral here
+     holds OKLCH hue 285.6–286.4, the same band as the dark block above).
+     --text-3 is 4.43:1 on white — the same just-under-AA caption tier its
+     dark twin is, stated rather than rounded up. */
+  --void:#E8E8EC; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
+  --hairline:#E9E9EE; --hairline-strong:#D0D0D8;
+  --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#4B4B56;
+  --identity:#725A00; --identity-ink:#FFFFFF;
+  --text:#0A0A0C; --text-2:#4B4B56; --text-3:#777782;
+  --text-emph:#3C3C46;
+  /* The three semantics keep the dark scheme's hues (152.0° / 50.7° / 13.1°,
+     each within 2° of its dark twin) and take the lightness the paper ground
+     needs: 6.84 / 7.52 / 8.14 on white, 6.40 / 7.04 / 7.61 on --surface.
+     --warn stays 40.0° from the light identity and 37.6° from --bad, so the
+     dark block's derivation survives the theme switch rather than being
+     re-argued on paper. */
+  --ok:#006933; --warn:#8A3F00; --bad:#96213C;
+  --c1:#0A0A0C; --c2:#4B4B56; --c3:#777782; --c4:#A9AAB5;
+  --neutral-mark:#A9AAB5;
   --ink:#FFFFFF;
-  --accent-wash:rgba(7,11,16,.06);
-  --accent-edge:rgba(7,11,16,.28);
-  --sunken:#F3F6F9;
+  --accent-wash:rgba(10,10,12,.06);
+  --accent-edge:rgba(10,10,12,.28);
+  --sunken:#F7F7FA;
 }
 
 /* ── Reset & base ─────────────────────────────────────────────────────── */
@@ -466,9 +502,9 @@ tr:hover td.go{text-decoration:underline}
 /* Status is always glyph-paired; hue alone never carries meaning (BRAND.md). */
 .badge{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:var(--radius-sm);
        font:var(--fs-micro)/1.6 var(--mono);border:1px solid;white-space:nowrap}
-.badge.ok{color:var(--ok);border-color:rgba(74,222,128,.42)}
-.badge.bad{color:var(--bad);border-color:rgba(255,92,122,.42)}
-.badge.warn{color:var(--warn);border-color:rgba(234,179,8,.42)}
+.badge.ok{color:var(--ok);border-color:rgba(116,201,145,.42)}
+.badge.bad{color:var(--bad);border-color:rgba(224,104,122,.42)}
+.badge.warn{color:var(--warn);border-color:rgba(231,141,84,.42)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline-strong)}
 .badge.accent{color:var(--mark);border-color:var(--accent-edge)}
 /* self-driving: the run list is a control, so it says so on hover and keeps a
@@ -609,7 +645,7 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 /* ── Inline syntax highlighting ───────────────────────────────────────────
    Weight and style on the existing grey ramp, deliberately not a new hue —
    see highlightCode()'s comment in the script for why. */
-.hl-kw{color:var(--text);font-weight:600}
+.hl-kw{color:var(--text-emph);font-weight:600}
 .hl-str,.hl-num{color:var(--text-2)}
 .hl-com{color:var(--text-3);font-style:italic}
 
@@ -684,9 +720,9 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
   font-variant-numeric:tabular-nums;-webkit-user-select:none;user-select:none}
 .dx-line .sg{text-align:center;-webkit-user-select:none;user-select:none}
 .dx-line .tx{padding-right:var(--sp2)}
-.dx-line.add{background:rgba(74,222,128,.10);color:var(--text)}
+.dx-line.add{background:rgba(116,201,145,.10);color:var(--text)}
 .dx-line.add .sg{color:var(--ok)}
-.dx-line.rem{background:rgba(255,92,122,.10);color:var(--text)}
+.dx-line.rem{background:rgba(224,104,122,.10);color:var(--text)}
 .dx-line.rem .sg{color:var(--bad)}
 /* The elision. A row, not a footnote: it sits between the hunks it replaces,
    so its job is to be unmistakably NOT a line of the file — hence the raised

@@ -96,7 +96,7 @@ impl Rail {
     /// margin reads consistently even when content colors vary.
     pub(crate) fn style(self) -> Style {
         match self {
-            Rail::Call => Style::new().fg(theme::ACCENT_DEEP),
+            Rail::Call => Style::new().fg(theme::ACCENT),
             Rail::Result => Style::new().fg(theme::MUTED),
             Rail::Fail => Style::new().fg(theme::DANGER),
             Rail::User => Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),

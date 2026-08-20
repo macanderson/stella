@@ -691,29 +691,62 @@ fn the_observatory_defines_every_token_it_references() {
     );
 }
 
-/// The identity hue is the brand's own value, not one mixed at the call site.
+/// The identity hue is a named palette value, not one mixed at the call site.
 ///
-/// The rule permits the brand hue on identity; it does not permit *a* cyan.
-/// Both values have to come from `docs/brand/css/tokens.css`, or the system
-/// grows a fourth accent the way it grew a fourth look. The marketing mock the
-/// bronze system was drawn from had already invented `#C99A22`, which was
-/// 1.07:1 against `--warn` — indistinguishable from it, and the reason the
-/// shipped value was not that.
+/// The rule permits the brand hue on identity; it does not permit *a* gold.
+/// Both values have to come from a palette file, or the system grows a fourth
+/// accent the way it grew a fourth look. The marketing mock the bronze system
+/// was drawn from had already invented `#C99A22`, which was 1.07:1 against
+/// `--warn` — indistinguishable from it, and the reason the shipped value was
+/// not that.
 ///
-/// The token family is `--stella-brand-*` since the v3.0 ion recolour; it was
-/// `--stella-gold-*` before, which is why this test reads role names rather
-/// than hue names now.
+/// **The source moved, and that is the point of this rewrite.** It used to be
+/// `docs/brand/css/tokens.css`'s `--stella-brand-500`/`-800`. The product
+/// palette is now held apart from the marketing kit: the kit's ramp is
+/// byte-parity-checked against ~60 generated binary assets (logo PNGs,
+/// `favicon.ico`, PWA icons, wallpapers, spinner GIFs) that need
+/// `rsvg-convert` and `ffmpeg` to rebuild, so it moves as its own change
+/// while the instrument surfaces move with the terminal. So this now binds to
+/// `crates/stella-tui/src/palette.rs`, which is the file the Observatory's
+/// own palette block names as its source — and the binding is what stops
+/// "held apart" from decaying into "nobody is holding it to anything".
+///
+/// Read as Rust rather than CSS, and by *role name* (`BRAND`, `BRAND_INK`)
+/// rather than by hue, for the same reason the CSS ramp is role-named: a hue
+/// in a name falsifies itself the first time the hue moves.
 #[test]
-fn identity_comes_from_the_brand_ramp() {
-    let brand = read("docs/brand/css/tokens.css");
-    let ramp = declarations(&brand);
+fn identity_comes_from_the_product_palette() {
+    let palette = read("crates/stella-tui/src/palette.rs");
 
-    let ion = ramp
-        .get("--stella-brand-500")
-        .expect("brand tokens define --stella-brand-500");
-    let deep = ramp
-        .get("--stella-brand-800")
-        .expect("brand tokens define --stella-brand-800");
+    /// `pub const NAME: Color = Color::Rgb(0xRR, 0xGG, 0xBB);` → `#rrggbb`.
+    fn constant(src: &str, name: &str) -> String {
+        let decl = format!("pub const {name}: Color = Color::Rgb(");
+        let from = src
+            .find(&decl)
+            .unwrap_or_else(|| panic!("palette.rs declares no {name}"))
+            + decl.len();
+        let to = from
+            + src[from..]
+                .find(')')
+                .unwrap_or_else(|| panic!("{name} declaration is unterminated"));
+        let channels: Vec<u8> = src[from..to]
+            .split(',')
+            .map(|c| {
+                let c = c.trim();
+                u8::from_str_radix(
+                    c.strip_prefix("0x")
+                        .unwrap_or_else(|| panic!("{name} channel `{c}` is not hex")),
+                    16,
+                )
+                .unwrap_or_else(|e| panic!("{name} channel `{c}`: {e}"))
+            })
+            .collect();
+        assert_eq!(channels.len(), 3, "{name} must have three channels");
+        format!("#{:02x}{:02x}{:02x}", channels[0], channels[1], channels[2])
+    }
+
+    let brand = constant(&palette, "BRAND");
+    let brand_ink = constant(&palette, "BRAND_INK");
 
     let observatory = read("crates/stella-observatory/src/assets/index.html");
     let dark = declarations(between(&observatory, "BEGIN palette", "END palette"));
@@ -721,17 +754,17 @@ fn identity_comes_from_the_brand_ramp() {
 
     assert_eq!(
         dark.get("--identity"),
-        Some(ion),
-        "dark identity must be the brand's Ion (--stella-brand-500)"
+        Some(&brand),
+        "dark identity must be the product palette's BRAND"
     );
     assert_eq!(
         light.get("--identity"),
-        Some(deep),
-        "light identity must be --stella-brand-800. NOT --stella-brand-deep, \
-         which is documented for small brand text on light surfaces: identity \
-         has to clear contrast on --surface, not only on the page ground, and \
-         brand-800 measures 4.93:1 there and 5.20:1 as the identity fill pair \
-         (#2591)."
+        Some(&brand_ink),
+        "light identity must be the product palette's BRAND_INK. Identity has \
+         to clear contrast on --surface, not only on the page ground: this \
+         value measures 6.18:1 there and 6.61:1 as the identity fill pair \
+         against --identity-ink (#2591's reasoning, re-derived on the current \
+         ramp)."
     );
 }
 

@@ -456,7 +456,7 @@ fn sample(t: u64, x: f64, y: f64) -> Option<Color> {
             if dx.powf(2.0 / 3.0) + dy.powf(2.0 / 3.0) <= 1.0 {
                 // Flash bright while the pop is still moving, settle to gold.
                 return Some(if pop < 1.0 {
-                    theme::GOLD_BRIGHT
+                    theme::GOLD_LIVE
                 } else {
                     theme::GOLD
                 });

@@ -28,7 +28,7 @@
 //!   never progress. It rides *on top of* the determinate fill and never
 //!   advances it; it is a scrubbed `theme::lighten` toward white, gated on
 //!   `no_anim`.
-//! - The fill rides the brand **gold** gradient (deep gold → Phosphor Gold)
+//! - The fill rides the brand **gold** gradient (the resting gold → the live gold)
 //!   — activity is the accent, so the deck's sole activity indicator is
 //!   unmistakable against the quiet warm-neutral chrome everywhere else.
 //! - **tok/s** is the focused agent's *live turn* rate — output tokens since
@@ -254,15 +254,19 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
 }
 
 /// One stepper element: `✓ plan` done (success), `▸ execute` active (accent,
-/// bold — `✗` on error), `· verify` pending (dim). The unified stepper row
-/// interleaves these with the track (D2).
+/// bold — `✗` on error), `· verify` pending (the caption tier). The unified
+/// stepper row interleaves these with the track (D2).
+///
+/// Pending takes `TEXT_TERTIARY` rather than `TEXT_DIM`: the dim tier is
+/// 2.30:1 on ground and is chrome only — the unfilled groove below — so a
+/// stage *name* may not wear it.
 fn stepper_span(state: &ProgressState, i: usize) -> (Span<'static>, usize) {
     let name = PHASE_LABELS[i];
     let (glyph, color, bold) = match state.segments[i] {
         SegState::Done => ("✓", theme::SUCCESS_BRIGHT, false),
         SegState::Active if state.phase == RunPhase::Error => ("✗", theme::DANGER, true),
         SegState::Active => ("▸", theme::ACCENT, true),
-        SegState::Pending => ("·", theme::TEXT_DIM, false),
+        SegState::Pending => ("·", theme::TEXT_TERTIARY, false),
     };
     let mut style = Style::default().fg(color);
     if bold {
@@ -280,7 +284,7 @@ fn stepper_span(state: &ProgressState, i: usize) -> (Span<'static>, usize) {
 fn telemetry_line(state: &ProgressState, combined: bool) -> (Vec<Span<'static>>, usize) {
     match state.phase {
         RunPhase::Idle => (
-            vec![Span::styled("idle", Style::default().fg(theme::TEXT_DIM))],
+            vec![Span::styled("idle", Style::default().fg(theme::TEXT_TERTIARY))],
             4,
         ),
         RunPhase::Complete => (
@@ -308,7 +312,10 @@ fn telemetry_line(state: &ProgressState, combined: bool) -> (Vec<Span<'static>>,
                 };
                 let w = text.chars().count();
                 (
-                    vec![Span::styled(text, Style::default().fg(theme::TEXT_DIM))],
+                    vec![Span::styled(
+                        text,
+                        Style::default().fg(theme::TEXT_TERTIARY),
+                    )],
                     w,
                 )
             }

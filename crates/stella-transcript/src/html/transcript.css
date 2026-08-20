@@ -19,7 +19,7 @@
  * test carries a row for this file, so a value drifting from the Observatory's
  * fails the gate. Standing it up found the claim had already been false for as
  * long as it had been written: the ground was `#0a0a0a` against the
- * instrument's `#070B10`, and all three semantic colours differed. A one-time
+ * instrument's `#0A0A0C`, and all three semantic colours differed. A one-time
  * hand-sync is not a system — this is what #3630 meant by asking for the row
  * rather than for another alignment pass.
  *
@@ -71,22 +71,22 @@
   color-scheme: dark light;
   /* Instrument ground / neutral ramp — the Observatory's `BEGIN palette`
      block, value for value. Checked by the design-token parity test. */
-  --bg: #070b10;
-  --panel: #0d1319;
-  --raised: #11171d;
-  --line: #1f262d;
-  --line2: #333b43;
-  --ink: #e9edf2;
-  --dim: #a4abb3;
-  --faint: #737c88;
+  --bg: #0a0a0c;
+  --panel: #0f0f12;
+  --raised: #17171b;
+  --line: #26262c;
+  --line2: #35353d;
+  --ink: #e8e8ec;
+  --dim: #a9aab5;
+  --faint: #777782;
   /* Categorical — see the header note; deliberately not instrument values,
      and deliberately outside the parity matrix. */
   --cyan: #4ed6e0;
   --violet: #a8a3f5;
   /* The three semantic colours: instrument `--ok` / `--bad` / `--warn`. */
-  --green: #3fd99b;
-  --red: #f2687a;
-  --amber: #ff7a45;
+  --green: #74c991;
+  --red: #e0687a;
+  --amber: #e78d54;
   /* Diff washes, derived from the semantic pair above at the same alphas.
      Derived, not picked: change `--green`/`--red` and these follow, which is
      why they are spelled as the same channels rather than as new hex. */
@@ -106,7 +106,7 @@
 
      `--sunken` is the instrument's `--void`: an output well is *below* the
      page, not another card on it. */
-  --sunken: #010306;
+  --sunken: #050507;
   --sunken-2: #0a1015;
   --hover: #10161c;
   --hover-raised: #151c23;
@@ -146,16 +146,16 @@
 @media (prefers-color-scheme: light) {
   :root {
     --bg: #ffffff;
-    --panel: #f7f9fc;
+    --panel: #f7f7fa;
     --raised: #ffffff;
-    --line: #e7ebf0;
-    --line2: #cfd6dd;
-    --ink: #070b10;
-    --dim: #4d535a;
-    --faint: #828c97;
-    --green: #0b6b3d;
-    --red: #a82036;
-    --amber: #913200;
+    --line: #e9e9ee;
+    --line2: #d0d0d8;
+    --ink: #0a0a0c;
+    --dim: #4b4b56;
+    --faint: #777782;
+    --green: #006933;
+    --red: #96213c;
+    --amber: #8a3f00;
     --del-line: rgba(168, 32, 54, 0.1);
     --del-word: rgba(168, 32, 54, 0.28);
     --add-line: rgba(11, 107, 61, 0.09);

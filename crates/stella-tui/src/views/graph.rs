@@ -288,7 +288,7 @@ fn render_sketch(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut 
                 {
                     let touches_cursor = edge.from == cursor || edge.to == cursor;
                     let color = if touches_cursor {
-                        theme::ACCENT_DEEP
+                        theme::ACCENT
                     } else {
                         theme::RULE
                     };
