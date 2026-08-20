@@ -500,8 +500,7 @@ fn fold_tool_stream(events: &[(i64, String, String)]) -> Vec<FoldedCall> {
         };
         match event {
             AgentEvent::ToolStart { call } => {
-                let args_json =
-                    serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".into());
+                let args_json = serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".into());
                 // The same announcement seen twice is one call: its `seq` is
                 // the identity, so refresh in place rather than minting a
                 // second row beside it.
@@ -606,7 +605,9 @@ pub(crate) fn refold_tool_calls(tx: &Connection, execution_id: i64) -> rusqlite:
                 call.args_json,
                 fnv_hex(&call.args_json),
                 i64::from(settled.is_some_and(|s| s.state.is_ok())),
-                settled.map_or(ToolCallState::Abandoned, |s| s.state).as_str(),
+                settled
+                    .map_or(ToolCallState::Abandoned, |s| s.state)
+                    .as_str(),
                 settled.map_or(ABANDONED, |s| s.error.as_str()),
                 class_token(settled.and_then(|s| s.error_class)),
                 settled.map_or(0, |s| s.bytes_out),

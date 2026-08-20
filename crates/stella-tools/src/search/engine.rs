@@ -753,7 +753,7 @@ async fn catch_up_chunk_embeddings(
 /// issued one round-trip per file because it stored per file.
 ///
 /// The cost was measured rather than guessed
-/// (`a_search_spends_its_round_trips_on_backfill_not_on_the_query`): one
+/// (`a_search_keeps_its_embedder_round_trips_within_budget`): one
 /// `search` over a behind index made **72 embedder round-trips, of which 1 was
 /// the query**. Sixty-four of the other 71 were this pass, one per file, each
 /// carrying two texts against a batch size of 32 — sequential network latency

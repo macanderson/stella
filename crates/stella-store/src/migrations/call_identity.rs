@@ -46,7 +46,9 @@ use crate::{Result, tool_calls::refold_tool_calls};
 /// nothing to mark which ones.
 pub(super) fn migrate_v27_to_v28(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     if !column_exists(tx, "tool_calls", "event_seq")? {
-        tx.execute_batch("ALTER TABLE tool_calls ADD COLUMN event_seq INTEGER NOT NULL DEFAULT -1;")?;
+        tx.execute_batch(
+            "ALTER TABLE tool_calls ADD COLUMN event_seq INTEGER NOT NULL DEFAULT -1;",
+        )?;
     }
     tx.execute_batch(
         "DROP INDEX IF EXISTS tool_calls_by_call_id;
