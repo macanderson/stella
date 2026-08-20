@@ -127,15 +127,21 @@ impl Attribution {
 ///
 /// # Examples
 ///
-/// The join is exactly one line break, whatever the body ended with — so two
-/// callers that differ only in trailing whitespace produce the identical
-/// result:
+/// The join is a blank line and then the rule, whatever the body ended with —
+/// so two callers that differ only in trailing whitespace produce the
+/// identical result:
 ///
 /// ```
 /// use stella_autonomy::sign;
 ///
-/// assert_eq!(sign("body", "Created by stella."), "body\nCreated by stella.");
-/// assert_eq!(sign("body\n\n", "Created by stella."), "body\nCreated by stella.");
+/// assert_eq!(
+///     sign("body", "Created by stella."),
+///     "body\n\n---\nCreated by stella."
+/// );
+/// assert_eq!(
+///     sign("body\n\n", "Created by stella."),
+///     "body\n\n---\nCreated by stella."
+/// );
 /// ```
 #[must_use]
 pub fn sign(body: &str, signature: &str) -> String {
