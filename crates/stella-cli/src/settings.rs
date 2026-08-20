@@ -52,6 +52,24 @@ pub(crate) mod toml_config;
 pub(crate) mod toml_io;
 mod unknown;
 mod withheld;
+/// Persist a rendered config file through this module's own write discipline —
+/// the one door for a writer that lives outside it.
+///
+/// `plugin_cmd::configure` writes `stella.toml` when a package's `[[configure]]`
+/// table is applied or reverted (#3999). It could not simply call
+/// `std::fs::write`: the symlink refusal and the atomic, mode-preserving write
+/// are the properties that make a settings write safe, and a second writer that
+/// re-derived them would be free to get one wrong. Exposed as one function
+/// rather than by widening [`private`]'s two, so the pair cannot be used apart.
+pub(crate) fn write_config_file(
+    path: &std::path::Path,
+    bytes: &[u8],
+    user_private: bool,
+) -> Result<(), String> {
+    private::reject_symlink(path)?;
+    private::write_settings(path, bytes, user_private)
+}
+
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 pub use toml_config::ConfigScope;
 pub(crate) use unknown::{
