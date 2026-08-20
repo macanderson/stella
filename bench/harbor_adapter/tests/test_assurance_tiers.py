@@ -18,16 +18,27 @@ Two questions are covered here, and they are different:
   so every channel into it — the host selector, a harness's overridden builder —
   is honored by construction rather than one at a time.
 - **How a role resolves inside that posture.** The engine reads
-  `agents.<role>.model` > the flat `pipeline_<role>_model` > `default_model`
-  (`AgentEngineConfig::model_for`). A declaration that resolves roles by any
-  other rule is free to disagree with the run it describes, which is the whole
-  defect class.
+  `agents.default.model` > `default_model` (`AgentEngineConfig::model_for`). A
+  declaration that resolves roles by any other rule is free to disagree with
+  the run it describes, which is the whole defect class.
+
+  That ladder used to carry a middle rung — the flat `pipeline_<role>_model` —
+  and this module still reads it. The divergence is deliberate and bounded:
+  #3908 collapsed the engine to the one role core has and **retired** the five
+  flat keys rather than removing them, precisely because this harness and
+  `arenabench` still write them into hashed postures, and refusing them would
+  re-hash every digest registered in `bench/READINESS.md` §8.4. The Python
+  stops writing them in slice 6 (#3910). Until then the two sides are
+  knowingly out of step, so the mirror tests below pin the order of the rungs
+  that *survive* and assert the extra rung is exactly the retired set — a
+  named divergence rather than a drift nobody noticed.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -45,6 +56,7 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     assurance_tiers_from_posture,
 )
 from stella_harbor.posture import (  # noqa: E402 - after importorskip by design
+    _FLAT_ROLE_MODEL_KEY,
     resolve_posture_role_model,
 )
 
@@ -330,7 +342,9 @@ _SETTINGS_MODULE = [
     _SETTINGS_SRC / "settings.rs",
     *sorted((_SETTINGS_SRC / "settings").glob("*.rs")),
 ]
+_BENCH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "bench.yml"
 _MODEL_FOR_DECL = "pub fn model_for("
+_RETIRED_ROOT_DECL = "pub(crate) const RETIRED_ENGINE_ROOT: &[&str] = &["
 
 
 def _model_for_source() -> str:
@@ -357,25 +371,129 @@ def _model_for_source() -> str:
     return holders[0].read_text()
 
 
+def _model_for_body() -> str:
+    """The body of `AgentEngineConfig::model_for`, brace to matching brace."""
+    source = _model_for_source()
+    start = source.index(_MODEL_FOR_DECL)
+    return source[start : source.index("\n    }\n", start)]
+
+
+def _retired_engine_root() -> set[str]:
+    """The flat role keys the engine still *recognizes* after #3908.
+
+    Parsed rather than copied: a list duplicated into this file is a second
+    cell that drifts, and it would drift in exactly the direction that costs —
+    this harness still writing a key the trusted launcher has begun refusing,
+    discovered at launch with the posture already hashed.
+    """
+    holders = [
+        f for f in _SETTINGS_MODULE if f.exists() and _RETIRED_ROOT_DECL in f.read_text()
+    ]
+    assert len(holders) == 1, (
+        f"`RETIRED_ENGINE_ROOT` is declared in {len(holders)} settings files "
+        f"({[str(f) for f in holders]}); this mirror needs exactly one to name "
+        "the vocabulary the launcher still accepts"
+    )
+    source = holders[0].read_text()
+    start = source.index(_RETIRED_ROOT_DECL) + len(_RETIRED_ROOT_DECL)
+    return set(re.findall(r'"([^"]+)"', source[start : source.index("];", start)]))
+
+
 def test_the_engine_still_resolves_a_role_in_the_order_this_module_mirrors() -> None:
     """Pin the mirror to its original: `AgentEngineConfig::model_for`.
 
-    The declaration is only trustworthy while it resolves roles the way the
+    The declaration is only trustworthy while it resolves a role the way the
     engine does. Reordering `model_for` without reordering
     `resolve_posture_role_model` re-opens #2134 in a new place, and nothing
     else in either tree would notice — the two live in different languages,
     different test suites, and different CI jobs.
+
+    Only the rungs both sides still share are pinned here. #3908 removed the
+    engine's middle rung; that this module still reads it is asserted as a
+    named, tracked divergence by the test below, rather than silently
+    tolerated by weakening this one.
     """
-    source = _model_for_source()
-    start = source.index(_MODEL_FOR_DECL)
-    body = source[start : source.index("\n    }\n", start)]
+    body = _model_for_body()
     rungs = [
-        body.index("self.agent(kind).and_then(|a| a.model"),
-        body.index("pipeline_verifier_model"),
+        body.index(".and_then(|a| a.model"),
         body.index("self.default_model"),
     ]
     assert rungs == sorted(rungs), (
-        "`model_for` no longer reads `agents.<kind>.model` > the flat per-role "
-        "key > `default_model`; `resolve_posture_role_model` mirrors that order "
-        "and has to change with it (#2134)"
+        "`model_for` no longer reads `agents.default.model` > `default_model`; "
+        "`resolve_posture_role_model` mirrors that order and has to change "
+        "with it (#2134)"
+    )
+
+
+def test_the_flat_role_keys_this_module_reads_are_retired_by_the_engine() -> None:
+    """The one rung this mirror has and the engine does not is the retired set.
+
+    #3908 collapsed `agent_engine_config` to the one role core has and dropped
+    the flat `pipeline_<role>_model` keys out of `model_for`. It deliberately
+    did not drop them out of the settings *vocabulary*: they are recognized,
+    ignored and reported by name in `RETIRED_ENGINE_ROOT`, because this harness
+    and `arenabench` still write them into postures whose digests are
+    registered in `bench/READINESS.md` §8.4, and refusing them would re-hash
+    every one of those — the published-numbers call #3870 reserves for a
+    maintainer.
+
+    So the divergence is legitimate exactly while both halves hold: the engine
+    reads none of these keys, and it still recognizes all of them. Slice 6
+    (#3910) closes it from this side. If either half moves first, this is where
+    a maintainer finds out — rather than a benchmark launch being refused with
+    the posture already hashed, or a rung growing back under a mirror that no
+    longer checks it.
+    """
+    body = _model_for_body()
+    flat_keys = set(_FLAT_ROLE_MODEL_KEY.values())
+
+    read_again = sorted(key for key in flat_keys if key in body)
+    assert not read_again, (
+        f"`model_for` reads {read_again} again — the engine grew back a rung "
+        "this module mirrors, so `resolve_posture_role_model`'s order is no "
+        "longer a mirror of it but a guess (#2134)"
+    )
+
+    dropped = sorted(flat_keys - _retired_engine_root())
+    assert not dropped, (
+        f"{dropped} are still written into postures by this harness but are no "
+        "longer named in `RETIRED_ENGINE_ROOT`, so the trusted-launcher seam "
+        "refuses them and every digest in `bench/READINESS.md` §8.4 needs "
+        "re-hashing; slice 6 (#3910) has to land on this side first"
+    )
+
+
+def test_the_bench_workflow_runs_when_the_settings_module_changes() -> None:
+    """A ratchet that reads a file must be triggered by that file.
+
+    `test_posture.py`'s catalog assertion, made for the second Rust path a
+    bench suite reads. The two mirrors above parse
+    `crates/stella-cli/src/settings/` — the engine's ladder and its retired-key
+    vocabulary — and that directory was not named in `bench.yml`'s change
+    filter, so a PR touching only it set `changed=false` and skipped the whole
+    suite. #3908 was exactly that PR: green on its own branch, and red on
+    `main` from the merge onward, because a push to `main` runs the suites
+    unconditionally. The filter is a hand-written literal on both sides, so the
+    two are compared here rather than trusted to stay in step.
+
+    Matched against the filter *expression* rather than the file, deliberately:
+    the whole file includes the paragraph of comment explaining the pattern, so
+    a whole-file search goes green on prose alone — it would still pass for
+    someone who wrote the rationale and deleted the alternative.
+    """
+    relative = (_SETTINGS_SRC / "settings").relative_to(_REPO_ROOT).as_posix()
+    lines = _BENCH_WORKFLOW.read_text(encoding="utf-8").splitlines()
+    filters = [line for line in lines if "grep -Eq" in line]
+    assert len(filters) == 1, (
+        f"expected exactly one `grep -Eq` change filter in "
+        f"{_BENCH_WORKFLOW.name}, found {len(filters)}; this assertion can no "
+        "longer name which one gates the suites"
+    )
+    # The filter is a POSIX ERE, so its literals carry escaped dots; compare
+    # against the unescaped text.
+    assert relative in filters[0].replace("\\", ""), (
+        f"{_BENCH_WORKFLOW.name}'s change filter does not name {relative}, so "
+        "a PR touching only the engine's settings module skips this suite — "
+        "including the two mirror checks above, whose only input is that "
+        "module."
     )
