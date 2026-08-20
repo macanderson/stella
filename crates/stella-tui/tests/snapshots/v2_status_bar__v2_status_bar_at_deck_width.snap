@@ -2,7 +2,7 @@
 source: crates/stella-tui/tests/v2_status_bar.rs
 expression: "frame(StatusBar(demo()), 100, 1)"
 ---
-kimi-k3 · execute · ctx ████▎░░░░░░░ 35% · $0.45 · saved $0.69 · det 86% · ✉ 21               ? help
+kimi-k3 · execute · ctx ████▎░░░░░░░ 35% · $0.45 · saved $0.69 · ✉ 21                         ? help
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 metal map: G gold · B gold_bright · s silver · w text · m muted · d dim · b border · R red · n green
-wwwwwwwdddwwwwwwwdddmmmmGGGGGbbbbbbbwwwwdddGGGGGdddmmmmmmGGGGGdddmmmmwwwdddssww---------------dddddd
+wwwwwwwdddwwwwwwwdddmmmmGGGGGbbbbbbbwwwwdddGGGGGdddmmmmmmGGGGGdddssww-------------------------dddddd

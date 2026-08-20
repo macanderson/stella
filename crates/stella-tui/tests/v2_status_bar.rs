@@ -106,7 +106,7 @@ fn frame<W: Widget>(widget: W, width: u16, height: u16) -> String {
 ///
 /// SPEC 2: red is the rarest colour on screen, and it never appears in a
 /// healthy frame. This is the count that makes that a test rather than an
-/// intention — `prompt.md` rule 5 asks for it on every healthy-frame snapshot.
+/// intention. Every healthy-frame snapshot carries it.
 fn red_cells<W: Widget>(widget: W, width: u16, height: u16) -> usize {
     let area = Rect::new(0, 0, width, height);
     let mut buf = Buffer::empty(area);
@@ -128,7 +128,6 @@ fn demo() -> Status<'static> {
         ctx_used: 0.35,
         spend_usd: 0.45,
         saved_usd: 0.69,
-        det: 0.86,
         inbox: 21,
     }
 }
@@ -154,7 +153,6 @@ fn v2_status_bar_at_the_extremes() {
             ctx_used: 0.0,
             spend_usd: 0.0,
             saved_usd: 0.0,
-            det: 1.0,
             inbox: 0,
             ..demo()
         }),
@@ -252,17 +250,16 @@ fn the_bar_says_what_spec_5_says_it_says() {
         .map(|cell| cell.iter().map(|s| s.content.to_string()).collect())
         .collect();
     // SPEC 5's order, exactly: worker · stage · ctx [bar] % · $spend ·
-    // saved $x · det % · ✉ n. (`? help` is pinned right by the renderer, not
-    // a cell, so it is asserted in the golden instead.)
-    assert_eq!(flat.len(), 7);
+    // saved $x · ✉ n. (`? help` is pinned right by the renderer, not a cell,
+    // so it is asserted in the golden instead.)
+    assert_eq!(flat.len(), 6);
     assert_eq!(flat[0], "kimi-k3");
     assert_eq!(flat[1], "execute");
     assert!(flat[2].starts_with("ctx "), "{}", flat[2]);
     assert!(flat[2].ends_with(" 35%"), "{}", flat[2]);
     assert_eq!(flat[3], "$0.45");
     assert_eq!(flat[4], "saved $0.69");
-    assert_eq!(flat[5], "det 86%");
-    assert_eq!(flat[6], "✉ 21");
+    assert_eq!(flat[5], "✉ 21");
 }
 
 #[test]

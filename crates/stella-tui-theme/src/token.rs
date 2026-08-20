@@ -47,11 +47,15 @@ pub const GOLD: Color = Color::Rgb(0xEF, 0xC5, 0x3F);
 /// Tiny live indicators only: the spinner, the hot marker, the drift glyph.
 /// Single cells that must read as *moving* against resting gold beside them.
 ///
-/// This is the one token SPEC 3.2's blue ceiling does not admit — see
-/// [`crate::clamp::GOLD_LIFT_BLUE_PCT`] for the arithmetic and why the value
-/// stands rather than the clamp. Because it is a lift, its licence is narrow:
-/// a whole row, a bar fill or a border in this colour is a bug, not a style
-/// choice.
+/// **A lift of [`GOLD`], not a second authored gold.** It carries the same hue
+/// (1.46° apart) at greater lightness, and `gold_bright_is_a_lift_of_gold`
+/// proves exactly that rather than checking it against a channel ceiling — see
+/// [`crate::clamp::is_lift_of`] for why an anchor is the stronger and more
+/// durable constraint. Recolouring [`GOLD`] without carrying this along is a
+/// red test, which is the point.
+///
+/// Because it is a lift, its licence is narrow: a whole row, a bar fill or a
+/// border in this colour is a bug, not a style choice.
 pub const GOLD_BRIGHT: Color = Color::Rgb(0xF7, 0xD9, 0x6B);
 
 /// The world coming in: read, skill, memory, secondary emphasis.
@@ -110,8 +114,9 @@ pub enum Role {
     Gray,
     /// The resting gold. [`crate::clamp::is_resting_gold`].
     Gold,
-    /// The lifted gold, for single-cell live indicators only.
-    /// [`crate::clamp::is_lifted_gold`].
+    /// A lift of the resting gold, for single-cell live indicators only —
+    /// same hue, greater lightness, proven against [`GOLD`] itself by
+    /// [`crate::clamp::is_lift_of`] rather than against a channel ceiling.
     GoldLift,
     /// The second metal. [`crate::clamp::is_cool_silver`].
     Silver,

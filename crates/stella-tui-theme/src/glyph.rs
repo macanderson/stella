@@ -73,7 +73,7 @@ pub const NODE_TYPE: char = '▢';
 pub const NODE_FN: char = 'ƒ';
 
 /// The eighth-block ramp, empty through full — the only sub-cell precision
-/// this design allows itself (SPEC 2: cell-grid honest; `prompt.md` rule 6).
+/// this design allows itself (SPEC 2: cell-grid honest).
 ///
 /// Indexed by eighths, so `BLOCK_EIGHTHS[3]` is three eighths of a cell.
 pub const BLOCK_EIGHTHS: [char; 9] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];

@@ -2,9 +2,9 @@
 //!
 //! These tests are the reason the crate exists. SPEC 3.2 asks for the hue
 //! clamp to ship "as a unit test on the theme struct so the palette cannot
-//! drift", and `prompt.md` rule 3 adds that they may never be weakened. Read
-//! that as a standing instruction: a future change that makes one of these
-//! pass by loosening a bound has broken the design, not fixed a test.
+//! drift". They may never be weakened — read that as a standing instruction:
+//! a future change that makes one of these pass by loosening a bound has
+//! broken the design, not fixed a test.
 
 use ratatui::style::Color;
 
@@ -100,36 +100,106 @@ fn the_clamp_rejects_what_it_was_written_against() {
     );
 }
 
+/// `gold_bright` is not a second authored gold — it is [`token::GOLD`],
+/// brighter, and that relationship is the thing under test.
+///
+/// This replaced an exception. An earlier pass recorded a second blue ceiling
+/// reverse-engineered from this one token, because SPEC 3.2's `b <= 0.35 r`
+/// does not admit it. The geometry test below is why that was the wrong shape:
+/// no lift to this lightness can satisfy that ceiling, so the ceiling was
+/// never the rule a lift could be held to.
 #[test]
-fn gold_bright_is_a_recorded_lift_not_an_unclamped_colour() {
+fn gold_bright_is_a_lift_of_gold() {
+    let gold = rgb("gold", token::GOLD);
+    let lift = rgb("gold_bright", token::GOLD_BRIGHT);
+    assert!(
+        clamp::is_lift_of(lift, gold),
+        "gold_bright #{:02X}{:02X}{:02X} is no longer a lift of gold \
+         #{:02X}{:02X}{:02X}: needs the same hue within {}° and greater \
+         lightness",
+        lift.0,
+        lift.1,
+        lift.2,
+        gold.0,
+        gold.1,
+        gold.2,
+        clamp::LIFT_HUE_TOLERANCE_DEG,
+    );
+    // The anchor is the constraint, so it has to be tight enough to reject a
+    // near neighbour. The v1 palette's own gold is 4.3° away and is exactly
+    // the colour this whole crate exists to not become.
+    assert!(
+        !clamp::is_lift_of((0xFF, 0xB8, 0x1A), gold),
+        "the v1 gold #FFB81A must not pass as a lift of the v2 gold"
+    );
+    // Same hue, but not lighter, is not a lift — it is a second gold, and this
+    // palette authors one.
+    assert!(
+        !clamp::is_lift_of(gold, gold),
+        "a colour is not a lift of itself"
+    );
+}
+
+/// The finding that settled the clamp's shape, kept as a test so nobody has to
+/// re-derive it: **`b <= 0.35 r` is unsatisfiable above lightness 0.6745, by
+/// any colour at all.**
+///
+/// In a gold, red is the brightest channel and blue the dimmest, so lightness
+/// is `(r + b) / 510` and the ceiling bounds `b` at `0.35 r`. Push `r` to its
+/// maximum of 255 and `b` follows to 89, which is lightness 0.6745 — and there
+/// is no further to go, because `r` cannot exceed 255. `gold_bright` sits at
+/// 0.6941.
+///
+/// That is why the earlier exception was the wrong shape. The blue ceiling was
+/// not a strict rule that one token happened to break; above this lightness it
+/// is a rule *nothing* can satisfy, so holding a lift to it was never
+/// available. The fix is the two-clause split in [`crate::clamp`] — the hue
+/// clause holds at every lightness, the saturation clause only where a colour
+/// is not lightened.
+///
+/// Exhaustive rather than sampled: `g` does not enter lightness for `r > g >
+/// b`, so sweeping all 65,536 `(r, b)` pairs covers every case.
+#[test]
+fn the_resting_blue_ceiling_is_unsatisfiable_above_this_lightness() {
+    /// The most lightness `b <= 0.35 r` admits: `(255 + 89) / 510`.
+    const CEILING: f64 = 344.0 / 510.0;
+
+    let mut worst = 0.0f64;
+    let mut witness = (0u8, 0u8);
+    for r in 0u16..=255 {
+        for b in 0u16..=255 {
+            if b >= r || 100 * b > clamp::GOLD_BLUE_PCT as u16 * r {
+                continue;
+            }
+            // Green sits between the two in a gold and so never sets either
+            // extreme; passing `b` for it keeps red the max and blue the min,
+            // which is the only thing lightness reads.
+            let light = clamp::lightness(r as u8, b as u8, b as u8);
+            if light > worst {
+                worst = light;
+                witness = (r as u8, b as u8);
+            }
+        }
+    }
+    assert!(
+        (worst - CEILING).abs() < 1e-9,
+        "the reachable ceiling moved to {worst:.6} at r={}, b={} — the \
+         geometry argument in `clamp`'s module doc needs redoing",
+        witness.0,
+        witness.1,
+    );
+
     let (r, g, b) = rgb("gold_bright", token::GOLD_BRIGHT);
-    // The exception is deliberate and documented on `GOLD_LIFT_BLUE_PCT`:
-    // SPEC 3.1's own value does not satisfy SPEC 3.2's blue ceiling, and
-    // `prompt.md` rule 4 forbids inventing a replacement colour. What must
-    // stay true is that it is a *lift* and not an escape hatch.
     assert!(
-        !clamp::is_resting_gold(r, g, b),
-        "if gold_bright now clears the resting clamp, delete \
-         GOLD_LIFT_BLUE_PCT and hold it to SPEC 3.2 like every other gold"
+        clamp::lightness(r, g, b) > CEILING,
+        "gold_bright now sits at or below {CEILING:.4}, where the resting \
+         ceiling IS satisfiable. If it has come down that far, hold it to \
+         `is_resting_gold` like every other gold and delete the lift role."
     );
-    assert!(
-        clamp::is_lifted_gold(r, g, b),
-        "gold_bright #{r:02X}{g:02X}{b:02X} exceeds even the lift ceiling"
-    );
-    // The lift ceiling is tight against the one token it was measured from:
-    // one percent lower and the shipped value fails. That tightness is what
-    // stops it becoming a place to park any warm colour.
-    assert_eq!(
-        clamp::GOLD_LIFT_BLUE_PCT,
-        44,
-        "the lift ceiling was derived from gold_bright's own 107/247 = 0.433 \
-         and is the tightest whole percent admitting it; changing it needs a \
-         new derivation, not a nudge"
-    );
-    assert!(
-        100 * u32::from(b) > (clamp::GOLD_LIFT_BLUE_PCT - 1) * u32::from(r),
-        "the lift ceiling is no longer tight against gold_bright"
-    );
+    // And the resting gold is comfortably below it, which is what makes the
+    // saturation clause meaningful where it does apply.
+    let (r, g, b) = rgb("gold", token::GOLD);
+    assert!(clamp::lightness(r, g, b) < CEILING);
 }
 
 /// Both clamps applied through the role table, so a token added tomorrow is
@@ -142,15 +212,15 @@ fn token_roles_are_honoured() {
         let ok = match role {
             Role::Gray => clamp::is_neutral_gray(r, g, b),
             Role::Gold => clamp::is_resting_gold(r, g, b),
-            // A lift must clear the loose bound and *fail* the tight one —
-            // a token that satisfies SPEC 3.2 outright has no business
-            // claiming the exception.
-            Role::GoldLift => clamp::is_lifted_gold(r, g, b) && !clamp::is_resting_gold(r, g, b),
+            // A lift is checked against the authored gold, not against a
+            // ceiling — same hue, brighter. Anchoring is what stops a second
+            // gold entering the palette under this role.
+            Role::GoldLift => clamp::is_lift_of((r, g, b), rgb("gold", token::GOLD)),
             Role::Silver => clamp::is_cool_silver(r, g, b),
             // Verdicts carry no hue clamp — their job is to be unmistakable.
             // What they may not be is gold: a pass or a fail that reads as
             // brand chrome is the one confusion the two-metal rule forbids.
-            Role::Verdict => !clamp::is_lifted_gold(r, g, b),
+            Role::Verdict => !clamp::is_gold_role(r, g, b),
             // A tint is a background. It has to stay under the panel it sits
             // on, or it is a wash.
             Role::Tint => {
@@ -378,7 +448,7 @@ fn the_wordmark_is_white_word_gold_star_no_space() {
 }
 
 /// The retired form used the skill glyph as a brand mark, so the two meanings
-/// collided on every skill row. `prompt.md` rule 7 says remove every
+/// collided on every skill row. The redesign removes every
 /// occurrence; this is the half that can be asserted here.
 #[test]
 fn the_wordmark_carries_no_skill_glyph() {

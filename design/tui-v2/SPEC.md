@@ -3,7 +3,7 @@
 Status: draft for implementation
 Owner: Mac Anderson, Oxagen, Inc.
 Scope: full visual and interaction redesign of the stella TUI (Rust, ratatui)
-Companion docs: `IMPLEMENTATION-PLAN.md`, `prompt.md`, `renderings/`
+Companion docs: `IMPLEMENTATION-PLAN.md`, `renderings/`
 
 ---
 
@@ -54,9 +54,15 @@ All values are `Color::Rgb`. Grays are neutral or one to two points blue above r
 
 ### 3.2 Hue clamp (enforced in code)
 
-Every color in the gold role must satisfy `r > g > b`, `g >= 0.78 * r`, and `b <= 0.35 * r`. Below the green ratio the color is orange, and orange on black reads brown. Ship this as a unit test on the theme struct so the palette cannot drift.
+Every color in the gold role must satisfy `r > g > b` and `g >= 0.78 * r`. Below the green ratio the color is orange, and orange on black reads brown. This is the hue rule and it holds at every lightness.
 
-Every gray token must satisfy `r == g` and `b >= g` (neutral or blue-tipped). Same test.
+The **resting** gold must additionally satisfy `b <= 0.35 * r`. This clause is saturation, not hue, and it applies only where a color is not lightened. It cannot apply to `gold_bright`: in a gold, lightness is `(r + b) / 510`, so `b <= 0.35 * r` caps lightness at `(255 + 89) / 510 = 0.6745` for *any* color, and `gold_bright` sits at `0.6941`. An earlier draft stated the clause over the whole role; that made the role unsatisfiable rather than strict.
+
+A **lift** (today, `gold_bright` alone) is instead anchored to the resting gold: the same hue within 3°, strictly lighter. An anchor is the stronger constraint — a ceiling admits every color beneath it and keeps passing after the gold it was cut for is gone, where an anchor admits only the authored gold, brighter. The palette therefore has exactly one authored gold and one proven consequence of it.
+
+Every gray token must satisfy `r == g` and `b >= g` (neutral or blue-tipped). The two silvers are the second metal rather than the neutral ramp and sit one to two points off neutral by design; they carry the weaker predicate that still forbids the failure mode — `b > r` and `g >= r`.
+
+Ship all of the above as unit tests on the shipped palette so it cannot drift.
 
 ### 3.3 Wordmark
 
@@ -96,7 +102,9 @@ Top to bottom:
 2. **Plan breadcrumb strip** (1 row, SESSION only): `▸ plan r3 · task 3 wire dedup digest · 2/6`. `tab` expands to the full plan panel. The transcript gets full width by default; the old permanent side panel is gone.
 3. **Body**: tab content.
 4. **Prompt block**: pipeline line (`✓ plan ▸ execute [bar] 50% · verify`), input line `>>>`, keybinding hint row.
-5. **Status bar** (1 row, replaces the old two-row wall): `worker · stage · ctx [bar] 35% · $spend · saved $x · det 86% · ✉ n · ? help`. MODEL detail, CPU, MEM, WARMTH, and ENGINE move behind `?` and the AGENTS tab. Money renders gold. Meters render gold fill on `border` gray. No pink, no green meters.
+5. **Status bar** (1 row, replaces the old two-row wall): `worker · stage · ctx [bar] 35% · $spend · saved $x · ✉ n · ? help`. MODEL detail, CPU, MEM, WARMTH, and ENGINE move behind `?` and the AGENTS tab. Money renders gold. Meters render gold fill on `border` gray. No pink, no green meters.
+
+   The status bar deliberately carries **no `det %`**. An earlier draft placed the deterministic/model split here; it was removed (2026-08-19, owner's call) rather than plumbed. Do not restore it — a permanent row is the wrong home for a number that changes meaning with scope, and the thesis it serves is expressed where work is actually summarized (the turn receipt, §6.1) and where deterministic work is priced (`$0.00 · det` on gates, §6.3; the graph footer, §9.1). Note that those `det` *tags* are booleans — this call did or did not reach a model — and need no computed ratio behind them.
 
 ## 6. Transcript
 

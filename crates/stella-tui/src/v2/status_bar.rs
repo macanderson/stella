@@ -1,7 +1,7 @@
 //! The status bar — SPEC 5, one row:
 //!
 //! ```text
-//! kimi-k3 · execute · ctx ████▎░░░░░░░ 35% · $0.45 · saved $0.69 · det 86% · ✉ 21    ? help
+//! kimi-k3 · execute · ctx ████▎░░░░░░░ 35% · $0.45 · saved $0.69 · ✉ 21    ? help
 //! ```
 //!
 //! ## Why one row and not two
@@ -16,27 +16,35 @@
 //! v2 changes the set, and the argument does not survive the change. CPU, MEM,
 //! WARMTH and ENGINE move behind `?` and the AGENTS tab (SPEC 5) because none
 //! of them is a fact about the *work*; CACHE collapses into the one number a
-//! reader acts on, `saved`. What is left is seven values, six of which are two
+//! reader acts on, `saved`. What is left is six values, five of which are two
 //! or three glyphs wide and need no label at all — `$0.45` is money, `✉ 21` is
-//! an inbox, and the two that do take a word (`ctx`, `det`) fit it inline for
-//! four cells. A label row above *that* set would be a row of chrome
-//! explaining values that explain themselves, and permanent chrome has to earn
-//! its row on every frame.
+//! an inbox, and the one that does take a word (`ctx`) fits it inline for four
+//! cells. A label row above *that* set would be a row of chrome explaining
+//! values that explain themselves, and permanent chrome has to earn its row on
+//! every frame.
 //!
 //! The row it gives back is not free floor space either: it is the row the
 //! keybinding hint line and the pipeline line above the prompt now occupy.
 //!
+//! ## What is deliberately NOT here
+//!
+//! A `det %` cell — the deterministic/model split. An earlier draft of SPEC 5
+//! placed it on this row and it was removed rather than plumbed (owner's call,
+//! 2026-08-19). Do not restore it: a permanent row is the wrong home for a
+//! number whose meaning changes with scope, and the thesis it served is
+//! expressed where work is actually summarized — the turn receipt (SPEC 6.1)
+//! and the `$0.00 · det` tag on a deterministic gate (SPEC 6.3). Those tags
+//! are booleans, not a computed ratio: a call either reached a model or it did
+//! not.
+//!
 //! ## What this module is not
 //!
-//! Not wired to the live deck. [`Status`] is an explicit input struct rather
-//! than a projection of `WorkspaceModel`, because one of the seven values —
-//! `det`, the deterministic/model split — has no source in the workspace yet
-//! (nothing in any crate computes it). Rendering the bar live today would mean
-//! inventing that number, and pricing deterministic work at `$0.00` is the
-//! first of the four theses this whole redesign exists to make visible; a
-//! fabricated `det 86%` would falsify it on every frame. The bar is built,
-//! tested and ready against a real input; the projection lands with the
-//! det/model split.
+//! Not wired to the live deck yet. Every value here has a live source — the v1
+//! statline already projects all six off `WorkspaceModel` — so this is a
+//! sequencing question, not a data one. The v2 shell that owns this row lands
+//! in P1; wiring a v2 bar under v1 chrome before then would put the only
+//! cool-gray element on a warm screen, and churn the deck's nineteen goldens
+//! twice.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -66,17 +74,14 @@ pub struct Status<'a> {
     pub spend_usd: f64,
     /// Saved against the un-cached price of the same work, USD.
     pub saved_usd: f64,
-    /// Share of this session's work that never reached a model, `0.0..=1.0`.
-    /// The first thesis, priced: deterministic work costs `$0.00`.
-    pub det: f64,
     /// Queued inbound messages.
     pub inbox: u32,
 }
 
 /// A ratio computed upstream, made safe to draw with.
 ///
-/// `ctx_used` and `det` are quotients of counts that have been wrong before,
-/// and a status bar is the one widget that must never take the screen down.
+/// `ctx_used` is a quotient of counts that have been wrong before, and a
+/// status bar is the one widget that must never take the screen down.
 /// Non-finite reads as zero rather than as a saturating cast nobody chose:
 /// `f64::clamp` propagates `NaN`, and every arithmetic path downstream would
 /// then land on whatever `as usize` happens to do with it.
@@ -173,10 +178,6 @@ pub fn cells(status: &Status<'_>) -> Vec<Vec<Span<'static>>> {
         vec![
             Span::styled("saved ", label),
             Span::styled(format!("${:.2}", status.saved_usd), money),
-        ],
-        vec![
-            Span::styled("det ", label),
-            Span::styled(format!("{}%", pct(status.det)), text),
         ],
         vec![
             // The world coming in takes silver (SPEC 2) — a queued message is

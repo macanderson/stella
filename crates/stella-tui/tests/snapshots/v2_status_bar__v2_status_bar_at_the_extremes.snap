@@ -1,8 +1,8 @@
 ---
 source: crates/stella-tui/tests/v2_status_bar.rs
-expression: "frame(StatusBar(Status\n{\n    ctx_used: 0.0, spend_usd: 0.0, saved_usd: 0.0, det: 1.0, inbox: 0,\n    ..demo()\n}), 100, 1)"
+expression: "frame(StatusBar(Status\n{ ctx_used: 0.0, spend_usd: 0.0, saved_usd: 0.0, inbox: 0, ..demo() }), 100,\n1)"
 ---
-kimi-k3 · execute · ctx ░░░░░░░░░░░░ 0% · $0.00 · saved $0.00 · det 100% · ✉ 0                ? help
+kimi-k3 · execute · ctx ░░░░░░░░░░░░ 0% · $0.00 · saved $0.00 · ✉ 0                           ? help
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 metal map: G gold · B gold_bright · s silver · w text · m muted · d dim · b border · R red · n green
-wwwwwwwdddwwwwwwwdddmmmmbbbbbbbbbbbbwwwdddGGGGGdddmmmmmmGGGGGdddmmmmwwwwdddssw----------------dddddd
+wwwwwwwdddwwwwwwwdddmmmmbbbbbbbbbbbbwwwdddGGGGGdddmmmmmmGGGGGdddssw---------------------------dddddd

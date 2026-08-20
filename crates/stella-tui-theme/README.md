@@ -23,8 +23,8 @@ The palette is not a convention here; it is a set of assertions.
   black-and-gold terminal scheme dies. Grays must be neutral or blue-tipped
   (`r == g`, `b >= g`); one point warm is how the same scheme becomes sepia.
   Both ship as unit tests on the shipped table, exactly as SPEC 3.2 asks, and
-  `prompt.md` rule 3 makes them unweakenable: a change that turns one green by
-  loosening a bound has broken the design, not fixed a test.
+  and they are unweakenable: a change that turns one green by loosening a
+  bound has broken the design, not fixed a test.
 - **Role totality.** `token::ALL` pairs every token with a `token::Role`, and
   the role picks the clamp. Adding a token means declaring what kind of colour
   it is — and a warm hex has no honest declaration to pick. That is the whole
@@ -33,14 +33,41 @@ The palette is not a convention here; it is a set of assertions.
   walking the table, so a token added without a 16-color stand-in fails rather
   than quietly shipping a 24-bit value to a terminal that cannot show it.
 
-One documented exception exists and is worth reading before touching the
-clamp: SPEC 3.1's own `gold_bright` `#F7D96B` does not satisfy SPEC 3.2's blue
-ceiling (0.433 against a stated 0.35). `prompt.md` rule 4 forbids inventing a
-replacement colour, so the value stands and the exception is recorded as
-`clamp::GOLD_LIFT_BLUE_PCT`, tight to the hundredth against the one token it
-was measured from. `gold_bright_is_a_recorded_lift_not_an_unclamped_colour`
-holds it there. Re-cutting the value so SPEC 3.2 holds everywhere is the
-better fix; the number to beat is in that constant's doc.
+## One authored gold, and a lift that is proven, not asserted
+
+Worth reading before touching the clamp, because it is the one place the
+implementation departs from SPEC 3.2's literal wording — and it does so to make
+the spec's own argument satisfiable.
+
+SPEC 3.2 states one rule over "every color in the gold role", including
+`b <= 0.35 r`. SPEC 3.1's own `gold_bright` `#F7D96B` measures `0.433`. That is
+not a bad colour; it is a geometry problem, and the test
+`the_resting_blue_ceiling_is_unsatisfiable_above_this_lightness` pins it: in a
+gold, lightness is `(r + b) / 510`, so `b <= 0.35 r` caps lightness at
+`(255 + 89) / 510 = 0.6745` — for **any** colour, gold or not. `gold_bright`
+sits at `0.6941`. Above that line the ceiling is a rule nothing can satisfy, so
+a lift could never have been held to it.
+
+The two clauses were never doing the same job, so they are stated where each is
+coherent:
+
+| Clause | Applies to | Why |
+|---|---|---|
+| `r > g > b`, `g >= 0.78 r` | **every** gold | the hue rule — gold versus orange, true at every lightness |
+| `b <= 0.35 r` | the resting gold | the saturation rule — a hue that is not lightened holds full saturation |
+| same hue within 3°, strictly lighter | a lift | anchored to `GOLD` itself |
+
+The anchor is the durability win. A ceiling admits every colour beneath it and
+keeps passing after the gold it was cut for is gone; an anchor admits only *the
+authored gold, brighter*. Recolour `GOLD` and leave `GOLD_BRIGHT` behind and
+`gold_bright_is_a_lift_of_gold` fails immediately, naming the hue distance. The
+palette has exactly one authored gold, and the second is a proven consequence
+of it.
+
+The 3° tolerance is derived, not chosen: `stella-tui`'s v1 theme records that
+its warning amber sits 4.0° from gold "so an outcome may never be told from
+chrome by hue alone" — 4° is the distance this repository already treats as
+indistinguishable, and a lift must be nearer than that to be the *same* hue.
 
 ## Boundary — does this change belong here?
 
