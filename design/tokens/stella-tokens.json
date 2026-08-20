@@ -271,6 +271,112 @@
       "rust": "PAPER_BORDER",
       "role": "light border",
       "surfaces": ["web-light"]
+    },
+    {
+      "$comment": [
+        "Web-only stops. Every token below carries no `rust` name, because the",
+        "terminal never draws it and every entry in the generated `ALL` table",
+        "needs a 256-colour fallback -- an ANSI approximation of a paper tint",
+        "would be an assertion about nothing. `scripts/gen-tokens.py` skips",
+        "them, so `crates/stella-tui-theme/src/generated.rs` is unchanged.",
+        "",
+        "They are declared here rather than left in the site's stylesheet",
+        "because that is what puts them under a clamp. Until now the only file",
+        "that knew the site's warning hue was the site, and the 30-degree",
+        "separation law that governs it on the terminal was, on the web, a",
+        "sentence in a comment (#4071). The light ramp is the one #4072 records",
+        "as derived rather than specified; specifying it here is what closes",
+        "that gap.",
+        "",
+        "The values themselves are unchanged -- these are the stops the site",
+        "already ships, moved under the system rather than re-cut."
+      ],
+      "name": "void",
+      "hex": "#050507",
+      "clamp": "neutral-gray",
+      "css": "--st-void",
+      "role": "below the canvas: full-bleed backdrops",
+      "surfaces": ["web-dark"]
+    },
+    {
+      "name": "gold-ink",
+      "hex": "#725A00",
+      "clamp": "resting-gold",
+      "css": "--st-gold-ink",
+      "role": "gold as TEXT on the light ground, where the metal cannot clear AA",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "paper-ground",
+      "hex": "#F4F4F6",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-ground",
+      "role": "the cool paper page ground, one step under the panel",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "paper-raised",
+      "hex": "#FAFAFC",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-raised",
+      "role": "light surface raised above the page ground",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "paper-row",
+      "hex": "#E6E6EA",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-row",
+      "role": "light hover and selected rows",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "paper-seam",
+      "hex": "#DDDDE3",
+      "clamp": "neutral-gray",
+      "css": "--st-paper-seam",
+      "role": "light seam: the hairline under a border",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "ink-muted",
+      "hex": "#5E5E69",
+      "clamp": "neutral-gray",
+      "css": "--st-ink-muted",
+      "role": "secondary text on light surfaces",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "green-ink",
+      "hex": "#006933",
+      "clamp": "verdict",
+      "css": "--st-green-ink",
+      "role": "pass, as text on the light ground",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "amber",
+      "hex": "#E78D54",
+      "clamp": "verdict",
+      "css": "--st-amber",
+      "role": "warning: the one status the core palette does not name",
+      "surfaces": ["web-dark"]
+    },
+    {
+      "name": "amber-ink",
+      "hex": "#8A3F00",
+      "clamp": "verdict",
+      "css": "--st-amber-ink",
+      "role": "warning, as text on the light ground",
+      "surfaces": ["web-light"]
+    },
+    {
+      "name": "red-ink",
+      "hex": "#96213C",
+      "clamp": "verdict",
+      "css": "--st-red-ink",
+      "role": "fail, as text on the light ground",
+      "surfaces": ["web-light"]
     }
   ],
   "banned": {

@@ -88,27 +88,26 @@
    *
    * The ramp the terminal and the Observatory render
    * (crates/stella-tui/src/palette.rs, which carries the measured derivation
-   * of every value). It is a SEPARATE system from the kit ramp above, and
-   * the split is deliberate and bounded:
+   * of every value).
    *
    *  - The **chrome** of this site — grounds, text, seams, the accent on a
    *    button or an active nav item — takes these values, so a reader
    *    crossing from here to the Observatory or the terminal sees one
    *    product.
    *  - The **mark** — the wordmark, the logomark, the favicon, the PWA
-   *    icons — stays on the kit ramp above (`--stella-mark-shape`,
-   *    `--stella-brand-*`). Those are cut assets: thirteen SVGs, eight PWA
-   *    icons and a favicon.ico, byte-parity-checked against docs/brand/ by
-   *    brand_parity, and rebuilt only by docs/brand/build_marks.py under
-   *    rsvg-convert. Repointing a CSS variable cannot recolour a PNG, and a
-   *    kit that is half-recoloured is the failure this file's header
-   *    already records twice.
+   *    icons — takes the kit ramp above. Those are cut assets: thirteen SVGs,
+   *    eight PWA icons and a favicon.ico, byte-parity-checked against
+   *    docs/brand/ by brand_parity, rebuilt by docs/brand/build_marks.py and
+   *    mirrored here by scripts/mirror-brand-icons.py. Repointing a CSS
+   *    variable cannot recolour a PNG, which is why the mark moves as its own
+   *    step rather than with this file.
    *
-   * So this page does carry two golds until the kit moves: #efc53f in the
-   * chrome and #c58a32 in the mark. That is a known, bounded cost of taking
-   * the product palette now, not an oversight — and it is bounded precisely
-   * because the two live in different tokens rather than being mixed by
-   * hand at call sites.
+   * This paragraph used to end by recording that the page carried TWO golds —
+   * the product gold in the chrome and kit v4.0's bronze in the mark — as a
+   * bounded cost of taking the product palette before the kit could follow.
+   * It no longer does: v5.0 moved the kit onto the same gold, and
+   * design/tokens/stella-tokens.json is upstream of both, so the two ramps
+   * below are one system expressed twice rather than two systems held apart.
    *
    * Every neutral here is blue-above-red (OKLCH hue 285.6–286.4 at chroma
    * 0.004–0.018). The gold is two values and no more: `--stella-signal` for
@@ -140,8 +139,8 @@
    *
    *    `--stella-warning` MOVED in v4.0, and had to. Under v3.0's Ion the
    *    warning sat 136.4° from the identity in OKLCH hue, so an amber was
-   *    free. Gold is at hue 73.2°, which put the old #f2b100 **8.7°** away
-   *    and its ink #865400 **2.3°** from brand-deep — the same colour, for
+   *    free. Gold is at hue 73.2°, which put the old amber **8.7°** away
+   *    and its ink **2.3°** from brand-deep — the same colour, for
    *    the purpose of telling a state from the mark. Note the metric: WCAG
    *    contrast is a LUMINANCE ratio and cannot answer this question (the old
    *    pair scored 1.57:1 and 1.13:1 against the brand, which says nothing
