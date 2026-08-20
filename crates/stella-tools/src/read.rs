@@ -488,7 +488,20 @@ impl Tool for ReadFile {
                 let start = offset.unwrap_or(1).saturating_sub(1);
                 let end = start.saturating_add(limit).min(lines.len());
 
-                if tally.since_change > MAX_UNCHANGED_READS {
+                // The ceiling targets the paging *sweep* that byte-identical
+                // loop detection cannot see — every window it returns differs,
+                // so no verdict fires. A whole-file read (offset at line 1, a
+                // `limit` that reaches the last line) is the opposite case: it
+                // returns the same bytes every time, so `ExactRepeat`/`Stagnant`
+                // already catch a spiral of them. Exempting it is what makes the
+                // refusal's advertised remedy reachable — "omitting `limit`
+                // shows you all of it at once". Without this exemption
+                // `record_read` above has already counted the refused read, so
+                // a model that follows the advice issues the (N+1)th unchanged
+                // read and trips the identical ceiling, and the message steers
+                // it toward an action that can never succeed via `read_file`.
+                let whole_file_read = start == 0 && end == lines.len();
+                if !whole_file_read && tally.since_change > MAX_UNCHANGED_READS {
                     return ToolOutput::error(unchanged_read_ceiling(path, lines.len()));
                 }
 
@@ -990,6 +1003,68 @@ mod tests {
         // ceiling is a wall rather than a redirection.
         assert!(refusals[0].contains("omitting `limit`"), "{}", refusals[0]);
         assert!(refusals[0].contains("`search`"), "{}", refusals[0]);
+    }
+
+    /// The remedy the refusal advertises has to actually work: once the
+    /// paging sweep has tripped the ceiling, the model is told that "omitting
+    /// `limit` shows you all of it at once". A whole-file read at that point
+    /// must be let through — otherwise `record_read` counts it as one more
+    /// unchanged read and the identical refusal comes back, steering the model
+    /// toward an action that can never succeed. Byte-identical whole-file
+    /// rereads stay caught by the loop detector, so nothing is lost.
+    #[tokio::test]
+    async fn a_whole_file_read_escapes_the_ceiling_the_refusal_advertises() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = (1..=200)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(dir.path().join("small.rs"), &body).unwrap();
+        let tool = ReadFile::default();
+        let ctx = cx(dir.path());
+
+        // Sweep it in small windows until the ceiling trips, exactly as the
+        // pathological turn did.
+        let mut tripped = false;
+        for step in 0..40u64 {
+            let out = tool
+                .execute(
+                    &serde_json::json!({
+                        "path": "small.rs",
+                        "offset": (step % 5) * 40 + 1,
+                        "limit": 40,
+                    }),
+                    &ctx,
+                )
+                .await;
+            if matches!(out, ToolOutput::Error { .. }) {
+                tripped = true;
+                break;
+            }
+        }
+        assert!(tripped, "the windowed sweep must trip the ceiling");
+
+        // Following the refusal's advice — a whole-file read — must succeed.
+        let out = tool
+            .execute(&serde_json::json!({"path": "small.rs"}), &ctx)
+            .await;
+        assert!(
+            matches!(out, ToolOutput::Ok { .. }),
+            "the whole-file read the refusal advertises must be reachable: {out:?}"
+        );
+
+        // A windowed read of the same unchanged bytes is still refused — the
+        // exemption is for whole-file reads only, not a hole in the ceiling.
+        let out = tool
+            .execute(
+                &serde_json::json!({"path": "small.rs", "offset": 1, "limit": 40}),
+                &ctx,
+            )
+            .await;
+        assert!(
+            matches!(out, ToolOutput::Error { .. }),
+            "a windowed sweep must still be refused after the ceiling: {out:?}"
+        );
     }
 
     /// The ceiling counts reads of bytes that have not moved, so the
