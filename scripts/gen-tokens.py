@@ -97,6 +97,26 @@ def check_clamp(name: str, hexv: str, clamp: str, spec: dict) -> str | None:
     return f"{name}: unknown clamp role {clamp!r}"
 
 
+def rust_tokens(doc: dict) -> list[dict]:
+    """The tokens that reach the terminal, in declaration order.
+
+    A token declares a `rust` name when the TUI renders it. The web-only ones
+    -- the below-canvas backdrop, the gold-on-paper text stop, the five-step
+    light ramp and the four status inks -- do not, and must not: every entry in
+    the generated `ALL` table needs a 256-colour fallback pinned by
+    `stella-tui-theme`'s tests, and inventing an ANSI approximation of a paper
+    tint the terminal never draws would be an assertion about nothing.
+
+    The alternative was to leave those values out of the system entirely, which
+    is what `main` does -- and it means the only file that knows the site's
+    warning hue is the site, unclamped and uncheckable. Declaring them here
+    puts them under the same hue predicates as everything else while leaving
+    `generated.rs` byte-identical, because every token that had a `rust` name
+    before this still has one.
+    """
+    return [tok for tok in doc["tokens"] if tok.get("rust")]
+
+
 def validate(doc: dict) -> list[str]:
     """Every token against its declared clamp. Returns the failures."""
     errors: list[str] = []
@@ -198,7 +218,7 @@ def render_rust(doc: dict) -> str:
         "// ── Tokens ─────────────────────────────────────────────────────────",
         "",
     ]
-    for tok in doc["tokens"]:
+    for tok in rust_tokens(doc):
         r, g, b = channels(tok["hex"])
         out += [
             f"/// {tok['role'][0].upper()}{tok['role'][1:]}. `{tok['hex']}`",
@@ -240,7 +260,7 @@ def render_rust(doc: dict) -> str:
         "verdict": "Clamp::Verdict",
         "surface": "Clamp::Surface",
     }
-    for tok in doc["tokens"]:
+    for tok in rust_tokens(doc):
         out.append(f'    ("{tok["name"]}", {tok["rust"]}, {variant[tok["clamp"]]}),')
     out += [
         "];",
