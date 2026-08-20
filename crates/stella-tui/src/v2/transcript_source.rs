@@ -1,12 +1,12 @@
 //! The live projection behind [`super::transcript`] — SPEC 6 over the deck's
-//! own [`TranscriptEntry`] stream.
+//! own [`crate::TranscriptEntry`] stream.
 //!
 //! ## Why the pair maps to two calls, not one
 //!
 //! SPEC 6.2 describes an event as one thing: a head, a body, a footer, all
 //! sharing a rail. The deck's transcript records it as two entries — a
-//! [`TranscriptEntry::ToolStart`] when the call is dispatched and a
-//! [`TranscriptEntry::ToolResult`] when it returns — because the head has to
+//! [`crate::TranscriptEntry::ToolStart`] when the call is dispatched and a
+//! [`crate::TranscriptEntry::ToolResult`] when it returns — because the head has to
 //! render before the result exists, and a transcript that waited for the
 //! result would show nothing at all while a two-minute `cargo test` ran.
 //!
