@@ -197,6 +197,13 @@ stella-bench-handoff/
 # results from aws hosted bench runs get dropped here
 arenabench/arenabench-cloud/
 
+# A checkout of macanderson/stella-examples, which `example-plugins.yml` clones
+# to this path to grade the three verify-{rs,py,ts} plugins. It is another
+# repository's tree living under this one for the length of a job, and
+# reproducing that job locally is the documented way to debug it — so the
+# directory has to be ignorable rather than merely absent.
+.stella-examples/
+
 # Private key material, anywhere in the tree. scripts/check-no-secrets.sh
 # enforces the same rule against what is already tracked, since .gitignore has
 # no opinion about a file that is staged explicitly.
