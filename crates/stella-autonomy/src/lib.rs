@@ -824,9 +824,7 @@ impl QueueIssue {
 pub fn rank_defects(issues: Vec<QueueIssue>) -> Vec<QueueIssue> {
     let mut defects: Vec<QueueIssue> = issues
         .into_iter()
-        .filter(|i| {
-            (i.has_label("bug") || i.has_label("triage")) && !i.has_label(ESCALATION_LABEL)
-        })
+        .filter(|i| (i.has_label("bug") || i.has_label("triage")) && !i.has_label(ESCALATION_LABEL))
         .collect();
     defects.sort_by(|a, b| {
         a.priority_rank()
