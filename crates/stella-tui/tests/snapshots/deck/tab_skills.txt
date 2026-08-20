@@ -34,6 +34,7 @@
 │                                                                                      ││                                                                      │
 │                                                                                      ││                                                                      │
 │                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────┘
  space on/off · ctrl+o preview · ctrl+x×2 delete · e edit · p pin · n new · → search
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -41,5 +42,4 @@
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- MODEL                   │ EXECUTE     │ CPU         │ CONTEXT          │ SPEND          │ CACHE                 │ ENGINE   │ LANES              │ PR
- worker: zai/glm-5.2-air │ Step 6 of 7 │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50 │ 63% (18.0K rd · 0 wr) │ 3 active │ ✦ 1 lead · ◆ 2 sub │ ⇢ #981 open …
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

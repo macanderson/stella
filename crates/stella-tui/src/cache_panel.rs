@@ -489,11 +489,11 @@ mod tests {
             a.largest_prompt_tokens = 40_000;
         }
         let ui = DeckUi::default();
-        // Three rows: the label/value pair, then the earned diagnosis — the
-        // same band `render_deck` reserves for a diagnosed agent.
-        let area = Rect::new(0, 0, 200, 3);
+        // One row: the diagnosis alone. `render_deck` gives it the row under
+        // the status bar, and only when an agent has earned one.
+        let area = Rect::new(0, 0, 200, 1);
         let mut buf = Buffer::empty(area);
-        crate::statline::render(&m, &ui, area, &mut buf);
+        crate::statline::render_diagnosis(&m, &ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(
             text.contains("cache opt-in never engaged"),
@@ -504,7 +504,7 @@ mod tests {
         let mut healthy = WorkspaceModel::new();
         healthy.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
         let mut buf = Buffer::empty(area);
-        crate::statline::render(&healthy, &ui, area, &mut buf);
+        crate::statline::render_diagnosis(&healthy, &ui, area, &mut buf);
         assert!(!buffer_text(&buf).contains("engaged"));
     }
 }

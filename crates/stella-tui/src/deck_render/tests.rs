@@ -48,20 +48,26 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
             "queue",    // footer / queue status
             "plan",     // progress stage labels (§3)
             "execute", "verify", // progress stage labels (§3)
-            "MODEL",  // the statline's leading cell (§5)
+            "? help", // the status bar's right-pinned affordance (SPEC 5)
         ] {
             assert!(
                 text.contains(needle),
                 "deck @{w}×{h} missing {needle:?}:\n{text}"
             );
         }
-        // The full cell set needs the width; at 190 every cell renders, each
-        // as an uppercase micro-label over its value.
+        // The full value set needs the width; below it the bar drops cells from
+        // the right, keeping only the worker and the stage.
+        //
+        // These are values, not labels. SPEC 5 retires the uppercase
+        // micro-label row this used to assert (MODEL / CONTEXT / CPU / CACHE /
+        // SPEND / SAVED / WARMTH): six self-describing values do not need a row
+        // of chrome explaining them, and CPU, CACHE and WARMTH have left the row
+        // entirely, behind `?` and the AGENTS tab.
         if w >= 120 {
-            for needle in ["CONTEXT", "CPU", "CACHE", "SPEND", "SAVED", "WARMTH"] {
+            for needle in ["ctx ", "saved ", "✉ "] {
                 assert!(
                     text.contains(needle),
-                    "deck @{w}×{h} missing statline cell {needle:?}:\n{text}"
+                    "deck @{w}×{h} missing status-bar cell {needle:?}:\n{text}"
                 );
             }
         }
@@ -696,7 +702,9 @@ fn a_panicking_deck_view_renders_an_error_card_and_the_session_survives() {
         text.contains("injected panic in band SESSION"),
         "the error card carries the panic message:\n{text}"
     );
-    for surviving in [">>>", "MODEL", "AGENTS"] {
+    // `ctx ` is the status bar band (SPEC 5), which replaced the statline's
+    // `MODEL` micro-label — the marker this used to look for.
+    for surviving in [">>>", "ctx ", "AGENTS"] {
         assert!(
             text.contains(surviving),
             "the surviving bands still rendered ({surviving:?} missing):\n{text}"

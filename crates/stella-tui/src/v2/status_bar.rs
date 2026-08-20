@@ -200,6 +200,29 @@ fn help() -> Vec<Span<'static>> {
     vec![Span::styled("? help", Style::new().fg(token::DIM))]
 }
 
+/// Draw the deck's bottom band: the status bar, and the diagnosis row under it
+/// when the caller reserved one.
+///
+/// Lives here rather than in `deck_render` because `deck_render.rs` is a
+/// grandfathered god file and closed to growth (AGENTS.md, "God files — plan
+/// around them, never into them"), and because the decision of what the band
+/// contains is this module's, not the frame's. The frame's job is to hand it a
+/// `Rect`.
+pub fn render_band(
+    model: &crate::deck::WorkspaceModel,
+    ui: &crate::deck_ui::DeckUi,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let worker = super::project::worker(model);
+    StatusBar(super::project::status(model, ui, &worker)).render(Rect { height: 1, ..area }, buf);
+    // The low-hit-rate diagnosis is prose, so it keeps a row of its own rather
+    // than a cell on a row of glanceable values.
+    if let Some(rest) = area.rows().nth(1) {
+        crate::statline::render_diagnosis(model, ui, rest, buf);
+    }
+}
+
 /// The status bar as a `ratatui` widget.
 ///
 /// Draws exactly one row: the top row of `area`, whatever height it is given,
