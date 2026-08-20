@@ -518,7 +518,7 @@ const PLUGIN_CANDIDATE_FANOUT_SLOT: u32 = 2;
 /// Three deliberate decisions live here rather than at the call site, because
 /// each is a claim about the user's money or the receipt it lands on (#3576):
 ///
-/// - **The `verifier` seat is bound here, to [`ModelCallRole::Verdict`]**
+/// - **The `verifier` seat is bound here, to `ModelCallRole::Verdict`**
 ///   (#3838). [`ChildTurns`] serves `worker`, `triage`, `research` and `plan`
 ///   by default and deliberately not `verifier`; `ChildTurns::with_seat`'s
 ///   contract is that a host wanting one *says so and owns the claim*. This
