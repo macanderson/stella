@@ -346,6 +346,7 @@ mod tests {
         TranscriptEntry::ToolResult {
             call_id: "c".into(),
             name: "cmd".into(),
+            path: None,
             ok,
             summary: "s".into(),
             full: "f".into(),
@@ -359,6 +360,7 @@ mod tests {
         TranscriptEntry::ToolResult {
             call_id: "c".into(),
             name: "edit_file".into(),
+            path: None,
             ok: true,
             summary: "s".into(),
             full: "f".into(),
@@ -431,6 +433,7 @@ mod tests {
             TranscriptEntry::ToolResult {
                 call_id: "c".into(),
                 name: "cmd".into(),
+                path: None,
                 ok: true,
                 summary: "Compiling".into(),
                 full: "line one\nDEADLOCK detected\nline three".into(),

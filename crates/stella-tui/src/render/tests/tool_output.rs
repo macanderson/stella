@@ -14,9 +14,26 @@ use crate::theme;
 
 /// A successful, non-mutating tool result carrying `body`.
 fn result(body: &str) -> TranscriptEntry {
+    result_for(None, body)
+}
+
+/// [`result`] for a call that targeted `path` — a file read, whose body is
+/// that file's source and whose extension is the only evidence of its
+/// language.
+fn read_result(path: &str, body: &str) -> TranscriptEntry {
+    result_for(Some(path), body)
+}
+
+fn result_for(path: Option<&str>, body: &str) -> TranscriptEntry {
     TranscriptEntry::ToolResult {
         call_id: "c1".into(),
-        name: "search".into(),
+        name: if path.is_some() {
+            "read_file"
+        } else {
+            "search"
+        }
+        .into(),
+        path: path.map(str::to_owned),
         ok: true,
         summary: "ok".into(),
         full: body.into(),
@@ -24,6 +41,18 @@ fn result(body: &str) -> TranscriptEntry {
         speculated: false,
         diff: None,
     }
+}
+
+/// One line of `read_file`'s output: a right-aligned line number, a tab, the
+/// source. Built from the emitter's own format string
+/// (`stella-tools`' `{line_num:>6}\t{line}`) so a test cannot drift from the
+/// shape it is meant to be reading.
+fn numbered(first: usize, source: &[&str]) -> String {
+    source
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("{:>6}\t{l}\n", first + i))
+        .collect()
 }
 
 fn collapsed(entry: &TranscriptEntry) -> Vec<Line<'static>> {
@@ -265,4 +294,169 @@ fn a_salient_line_near_the_end_still_shows_the_full_preview() {
             "the salient line at index {marker_at} fell outside the window it anchors"
         );
     }
+}
+
+// ── A file read is source, and now reads as source (#4019, #4020) ───────────
+
+/// A `read_file` result is coloured in the language of the file it read.
+///
+/// The witness: colouring used to be gated on `reads_as_json(full)` — does the
+/// body's first non-blank character open a JSON document — and a numbered
+/// listing's first character is a *digit*, so a file read fell through to one
+/// flat muted tone for every language. The lexer was present and wired to
+/// diffs, markdown fences and the definition editors the whole time; nothing
+/// reached it from a tool result.
+#[test]
+fn a_read_result_is_coloured_in_its_files_language() {
+    let body = numbered(
+        780,
+        &["#[test]", "fn a_verb_is_named() {", "    let x = 1;", "}"],
+    );
+    let spans = colors(&collapsed(&read_result(
+        "crates/stella-autonomy/src/tests.rs",
+        &body,
+    )));
+
+    let keyword = syntax::tok_style(syntax::Tok::Keyword).fg;
+    assert!(
+        spans.iter().any(|(t, c)| t == "fn" && *c == keyword),
+        "a Rust keyword in a read_file body was not coloured: {spans:?}"
+    );
+    assert!(
+        spans.iter().any(|(t, c)| t == "let" && *c == keyword),
+        "only the first line was coloured: {spans:?}"
+    );
+}
+
+/// The same read, of a JSON file, is coloured too.
+///
+/// Kept apart from the case above because it is the sharper half of the bug:
+/// the deck already *had* a JSON path, and the gutter defeated it just as
+/// thoroughly as it defeated everything else. A reader could reasonably have
+/// concluded the deck simply did not highlight source; it did not highlight
+/// the one format it was built to highlight either.
+#[test]
+fn a_read_of_a_json_file_is_coloured_despite_its_gutter() {
+    let body = numbered(1, &["{", "  \"name\": \"stella\",", "  \"count\": 12", "}"]);
+    let spans = colors(&collapsed(&read_result(".stella/settings.json", &body)));
+
+    assert!(
+        spans
+            .iter()
+            .any(|(t, c)| t == "\"name\"" && *c == syntax::tok_style(syntax::Tok::Keyword).fg),
+        "a JSON key read through read_file was not coloured: {spans:?}"
+    );
+    assert!(
+        spans
+            .iter()
+            .any(|(t, c)| t == "\"stella\"" && *c == syntax::tok_style(syntax::Tok::Str).fg),
+        "a JSON string read through read_file was not coloured: {spans:?}"
+    );
+}
+
+/// The line-number gutter is chrome, and is never lexed with the source.
+///
+/// Without the split it is the leading run of every line, so the lexer would
+/// take each line number for a numeric literal and paint the gutter in the hue
+/// that means "a value in this code" — the brightest column on screen, saying
+/// nothing.
+#[test]
+fn the_line_number_gutter_is_not_lexed_as_source() {
+    let body = numbered(780, &["fn f() {}"]);
+    let spans = colors(&collapsed(&read_result("src/lib.rs", &body)));
+
+    let number = syntax::tok_style(syntax::Tok::Number).fg;
+    assert!(
+        !spans.iter().any(|(t, c)| t.contains("780") && *c == number),
+        "the line number was coloured as a numeric literal: {spans:?}"
+    );
+    assert!(
+        spans
+            .iter()
+            .any(|(t, c)| t.contains("780") && *c == Some(theme::TEXT_TERTIARY)),
+        "the gutter lost its subordinate tone: {spans:?}"
+    );
+}
+
+/// A body line with no gutter — `read_file`'s own footer, a cap notice — is not
+/// source and is not lexed as any.
+#[test]
+fn a_body_line_without_a_gutter_stays_plain() {
+    let body = format!("{}(read 1/1 lines)", numbered(1, &["const X: u8 = 1;"]));
+    let spans = colors(&collapsed(&read_result("src/lib.rs", &body)));
+
+    // The source line still colours...
+    assert!(
+        spans
+            .iter()
+            .any(|(t, c)| t == "const" && *c == syntax::tok_style(syntax::Tok::Keyword).fg),
+        "the numbered line stopped colouring: {spans:?}"
+    );
+    // ...and the footer beside it carries no token hue at all.
+    let footer: Vec<_> = spans
+        .iter()
+        .filter(|(t, _)| t.contains("read 1/1 lines"))
+        .collect();
+    assert!(!footer.is_empty(), "the footer vanished: {spans:?}");
+    assert!(
+        footer.iter().all(|(_, c)| *c == Some(theme::MUTED)),
+        "the footer was lexed as source: {footer:?}"
+    );
+}
+
+/// An extension the deck has no lexer for renders exactly as it did before —
+/// plain, never wrong. [`crate::syntax`]'s contract is that an unknown language
+/// degrades to no colouring rather than to the wrong one.
+#[test]
+fn a_read_of_an_unknown_extension_stays_plain() {
+    let body = numbered(1, &["fn this is not any language we lex"]);
+    let spans = colors(&collapsed(&read_result("notes/scratch.xyz", &body)));
+    assert!(
+        !spans
+            .iter()
+            .any(|(_, c)| *c == syntax::tok_style(syntax::Tok::Keyword).fg),
+        "an unlexed extension picked up keyword colouring: {spans:?}"
+    );
+}
+
+/// No tab reaches a drawn span.
+///
+/// ratatui's `Span::styled_graphemes` filters control characters out of the
+/// grapheme stream, so a tab is not narrowed and not drawn zero-width — it is
+/// **deleted**. `read_file` separates its gutter from the source with one, so
+/// an unindented source line arrived on screen as `780#[test]`, while an
+/// indented one looked correct by accident: its own leading spaces stood in for
+/// the missing separator (#4020).
+///
+/// Asserted at the span layer rather than against a rendered buffer because
+/// that is also where the deck's own wrap arithmetic reads the width — a tab is
+/// width 0 to `UnicodeWidthChar` as well, so leaving it in place would have the
+/// deck measuring one thing and ratatui drawing another.
+#[test]
+fn no_tab_survives_into_a_drawn_span() {
+    let body = numbered(780, &["#[test]", "\tfn tab_indented() {}"]);
+    let lines = collapsed(&read_result("src/tests.rs", &body));
+
+    for line in &lines {
+        for span in &line.spans {
+            assert!(
+                !span.content.contains('\t'),
+                "a tab survived into a drawn span ({:?}); ratatui will delete it",
+                span.content
+            );
+        }
+    }
+
+    let rendered = text_of(&lines);
+    let row = rendered
+        .lines()
+        .find(|l| l.contains("#[test]"))
+        .unwrap_or_else(|| panic!("the source line was not rendered:\n{rendered}"));
+    let (_, after) = row
+        .split_once("780")
+        .unwrap_or_else(|| panic!("the gutter was not rendered: {row:?}"));
+    assert!(
+        after.starts_with(' '),
+        "the line number is glued to the source it numbers: {row:?}"
+    );
 }
