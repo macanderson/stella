@@ -41,7 +41,7 @@
 //! # Ordering
 //!
 //! Whole-file vectors first, then chunks. Both rungs are merged into one
-//! ranking ([`super::engine::semantic_hits`]), but file vectors give coarse
+//! ranking (`engine::semantic_hits`), but file vectors give coarse
 //! coverage of the *whole* tree for the cost of one row a file, so a pass
 //! interrupted halfway leaves an index that can answer roughly about
 //! everything rather than precisely about a tenth of it.
@@ -142,8 +142,14 @@ pub async fn backfill_opened<P: FnMut(IndexReadiness) + ?Sized>(
     progress(measure(graph, &fingerprint, false));
 
     // One file, one row: the file count is exactly how many files a pass can
-    // embed, so this cap can only ever be reached by finishing.
-    let limit = graph.file_count().unwrap_or(0);
+    // embed, so this cap can only ever be reached by finishing. A count that
+    // cannot be read falls back to no cap at all rather than to zero — the
+    // real termination condition is an empty pending scan, and letting an
+    // unreadable counter turn the whole pass into a silent no-op is the one
+    // direction this must not fail in.
+    let limit = graph
+        .file_count()
+        .unwrap_or(super::semantic::NO_FILE_CEILING);
     let files = warm_opened(graph, embedder, limit, &mut |_| {
         progress(measure(graph, &fingerprint, false));
     })

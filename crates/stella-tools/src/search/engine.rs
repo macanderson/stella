@@ -415,7 +415,7 @@ fn worker_failure(what: &str, error: tokio::task::JoinError) -> String {
 /// so a workspace whose index nothing else fills stays behind forever, and a
 /// one-shot `stella search` in a cold checkout ranks over an empty index
 /// rather than embedding 200 files first. It still answers — the name and
-/// scan rungs need no index at all — and [`coverage_note`] still says exactly
+/// scan rungs need no index at all — and `coverage_note` still says exactly
 /// how much of the tree the ranking saw.
 ///
 /// Refusing outright (the fourth option #4043 weighed) was rejected for the
@@ -558,9 +558,8 @@ fn lead_with(exact: Vec<Hit>, ranked: Vec<Hit>) -> Vec<Hit> {
 /// **One embedder round trip, always: the query's.** Nothing here fills the
 /// index — that is [`super::backfill`]'s pass, off this path entirely (#4043).
 /// A search ranks over what the index holds and discloses how much that was
-/// ([`coverage_note`]); it never buys coverage with the caller's latency.
+/// (`coverage_note`); it never buys coverage with the caller's latency.
 ///
-
 /// **Both rungs, merged — not chunks-then-files.** Ranking chunks and
 /// returning early whenever they produced anything lets a *partially filled*
 /// chunk index shadow a better-covered file index: the chunk pass fills in
@@ -882,7 +881,7 @@ pub async fn warm_chunk_vectors(
 /// Display-only — the callback cannot affect the pass.
 ///
 /// Generic over the callback for the `Send`-ness reason
-/// [`super::semantic::warm_opened`] documents: `stella init` narrates through
+/// `super::semantic::warm_opened` documents: `stella init` narrates through
 /// a closure borrowing a non-`Send` emitter, while the background pass runs
 /// inside a spawned task whose whole future must be `Send`, and a trait
 /// object would force one answer on both.

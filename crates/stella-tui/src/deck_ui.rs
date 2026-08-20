@@ -576,7 +576,7 @@ pub struct DeckUi {
     /// as its background pass fills it ([`Inbound::IndexReadiness`]).
     ///
     /// Out-of-band view state, never folded: it is a fact about the machine,
-    /// not about the session. It gates one thing — see [`gates::index_hold`].
+    /// not about the session. It gates one thing — see `gates::index_hold`.
     pub index_readiness: IndexReadiness,
     pub help_open: bool,
     /// Vertical scroll for the help overlay (↑/↓, PageUp/Down, Home/End). Kept
