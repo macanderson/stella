@@ -47,6 +47,23 @@
 
 pub mod clamp;
 pub mod fallback;
+// The palette as `design/tokens/stella-tokens.json` states it, emitted by
+// `scripts/gen-tokens.py`. It is NOT what this crate renders: [`token`] and
+// [`clamp`] are hand-written and are what every consumer imports.
+//
+// It arrived undeclared. #4055 created this crate with the hand-written pair;
+// #4066 added the generator and its output beside them and never wrote this
+// line, so the file was invisible to rustc, rustfmt and clippy at once — and
+// `make tokens`, which checks that it is in sync with the JSON, was proving a
+// property of a file nothing compiled (#1750 is the guard that caught it).
+//
+// Declaring it makes the generator load-bearing rather than decorative: with
+// the module reachable, `the_hand_written_palette_agrees_with_the_generated_one`
+// holds the two tables to each other, so a value edited in the JSON without
+// being carried into `token.rs` — or the reverse — is now a red test instead of
+// a silent second palette. Consolidating the two into one file is the right end
+// state and is tracked separately; it is a design change, not a build fix.
+pub mod generated;
 pub mod glyph;
 pub mod token;
 pub mod wordmark;

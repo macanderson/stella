@@ -25,8 +25,9 @@
 
    A gold identity makes that carve-out load-bearing, because gold and an
    amber `--warn` are the pair that collides. It was diagnosed
-   with the wrong instrument for two releases: `--identity` #C58A32 against
-   `--warn` #C9A227 measured 1.23:1 and was called unreadable, and when v3.0
+   with the wrong instrument for two releases: `--identity`, then kit v4.0's
+   Bronze Gold, against `--warn` #C9A227 measured 1.23:1 and was called
+   unreadable, and when v3.0
    moved to a cyan the same measurement read 1.22:1 and was waved through as
    "separated by hue, not by weight". Both numbers are WCAG contrast, which is
    a LUMINANCE ratio — it scores any two chromatic marks of equal lightness
@@ -91,9 +92,10 @@
   /* Identity. The one hue outside --ok/--warn/--bad, and the header comment's
      carve-out: wordmark, favicon mark, one primary action. Never a state.
      Both values come from the product palette (crates/stella-tui's `brand`
-     and `brand-ink`), NOT from docs/brand/css/tokens.css, which is still on
-     kit v4.0's Bronze Gold #C58A32 — the kit's ramp is byte-parity-checked
-     against ~60 generated binary assets and moves on its own schedule. The
+     and `brand-ink`). That used to be a divergence worth naming, because the
+     kit was a whole brand version behind on v4.0's Bronze Gold; v5.0 moved
+     docs/brand/css/tokens.css onto this same gold, so the two agree by value
+     now and design/tokens/stella-tokens.json is upstream of both. The
      light value stays a deeper stop for the reason #2591 first chose one:
      identity has to clear contrast on --surface, not only on the page
      ground. The dark value measures 11.99:1 on --ground and 11.60:1 on

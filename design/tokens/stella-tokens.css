@@ -32,4 +32,15 @@
   --st-paper: #FFFFFF; /* light canvas */
   --st-paper-panel: #F6F6F8; /* light panel */
   --st-paper-border: #E3E3E8; /* light border */
+  --st-void: #050507; /* below the canvas: full-bleed backdrops */
+  --st-gold-ink: #725A00; /* gold as TEXT on the light ground, where the metal cannot clear AA */
+  --st-paper-ground: #F4F4F6; /* the cool paper page ground, one step under the panel */
+  --st-paper-raised: #FAFAFC; /* light surface raised above the page ground */
+  --st-paper-row: #E6E6EA; /* light hover and selected rows */
+  --st-paper-seam: #DDDDE3; /* light seam: the hairline under a border */
+  --st-ink-muted: #5E5E69; /* secondary text on light surfaces */
+  --st-green-ink: #006933; /* pass, as text on the light ground */
+  --st-amber: #E78D54; /* warning: the one status the core palette does not name */
+  --st-amber-ink: #8A3F00; /* warning, as text on the light ground */
+  --st-red-ink: #96213C; /* fail, as text on the light ground */
 }

@@ -136,7 +136,7 @@ use stella_core::ports::{ToolExecutor, TurnControls};
 use stella_core::router::Router;
 use stella_core::subagent::SubAgentDispatcher;
 use stella_model::provider::Provider;
-use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
+use stella_plugin::{HostCall, SignalValues, TurnOutcome as WrapperTurnOutcome};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
     CandidateFanoutSpend, CandidateFanouts, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS,
