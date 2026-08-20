@@ -54,7 +54,7 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub use attribution::{Attribution, DEFAULT_BRANCH_PREFIX, SIGNATURE, sign};
+pub use attribution::{Attribution, DEFAULT_BRANCH_PREFIX, DEFAULT_TITLE_PREFIX, SIGNATURE, sign};
 pub use closure::{
     Citation, Closure, ClosureRefusal, check as check_closure, receipt, resolution_of,
 };

@@ -299,7 +299,9 @@ pub(super) fn drive(
                         );
                         durable.update_stats(|s| s.issues_changed += 1);
 
-                        let title = format!("{} (#{})", resolved.title, issue.0);
+                        let title = cfg
+                            .attribution
+                            .title(&format!("{} (#{})", resolved.title, issue.0));
                         let pr = match super::deliver::open(
                             &root,
                             &branch,
