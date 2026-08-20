@@ -132,12 +132,31 @@ pub struct Doctrine {
 }
 
 impl Default for Doctrine {
-    /// Conservative on every axis where the aggressive choice is the one an
-    /// operator should have to opt into: file breakage but do not adopt it,
-    /// defer on any contention, and park on an escalation.
+    /// Fix a broken base; defer to anyone already fixing it; park on an
+    /// escalation.
+    ///
+    /// # Why adopting is the default and waiting is the opt-in
+    ///
+    /// A red base blocks this loop exactly as hard as it blocks its author, so
+    /// a loop that files and waits has handed its own throughput to somebody
+    /// else's response time — and in the meantime every pull request it opens
+    /// fails for a reason no diff of its caused. That is not caution, it is a
+    /// loop that stops working the moment the repository needs it most.
+    ///
+    /// This default was [`ForeignBreakage::FileAndWait`] on the reasoning that
+    /// the aggressive choice should be opted into. The reasoning was wrong
+    /// about which choice is aggressive: **filing a ticket about a fire and
+    /// walking away is the surprising behaviour**, not putting it out. An
+    /// operator who genuinely wants a loop that only reports still has
+    /// `FileAndWait`, one line of `stella.toml` away.
+    ///
+    /// The other two axes stay conservative, and for a reason that does not
+    /// apply to the first: deferring on contention and parking on an
+    /// escalation both avoid *duplicating or overriding another actor*, which
+    /// is a different question from whether to act at all.
     fn default() -> Self {
         Self {
-            foreign_breakage: ForeignBreakage::FileAndWait,
+            foreign_breakage: ForeignBreakage::FileAndAdopt,
             contention: ContentionPolicy::Defer,
             abandon_escalated: false,
         }
@@ -241,10 +260,21 @@ pub fn contention_verdict(policy: ContentionPolicy, seen: &Contention) -> Conten
 mod tests {
     use super::*;
 
+    /// The default fixes a broken base rather than reporting it and stopping.
+    ///
+    /// This asserted `FileAndWait` until it was put in front of an operator,
+    /// whose response was that fixing a repository somebody broke is the
+    /// entire point. The reversal is deliberate and the reasoning is on
+    /// [`Doctrine::default`]: filing a ticket about a fire and walking away is
+    /// the surprising behaviour, not putting it out.
+    ///
+    /// The other two axes stay conservative, and this pins that too — they
+    /// answer a different question (*is another actor already on it*), and
+    /// moving them would be a separate argument nobody has made.
     #[test]
-    fn the_default_files_breakage_but_does_not_adopt_it() {
+    fn the_default_fixes_a_broken_base_rather_than_only_reporting_it() {
         let d = Doctrine::default();
-        assert_eq!(d.foreign_breakage, ForeignBreakage::FileAndWait);
+        assert_eq!(d.foreign_breakage, ForeignBreakage::FileAndAdopt);
         assert_eq!(d.contention, ContentionPolicy::Defer);
         assert!(!d.abandon_escalated);
     }

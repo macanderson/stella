@@ -180,7 +180,7 @@ fn fence_for(body: &str) -> String {
 /// repository's real default rather than from wherever the operator's checkout
 /// happens to be standing — a worktree cut from a half-finished feature branch
 /// would produce a pull request full of somebody else's commits.
-fn base_ref(root: &Path) -> String {
+pub(super) fn base_ref(root: &Path) -> String {
     super::state::git(
         root,
         &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],

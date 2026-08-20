@@ -49,6 +49,8 @@ pub(crate) struct LoopConfig {
     pub vocabulary: Vocabulary,
     /// Which labels mean urgent, which mean "ours", which mean "not ours".
     pub triage: stella_autonomy::priority::TriagePolicy,
+    /// How the loop decides where two operators would decide differently.
+    pub doctrine: stella_autonomy::Doctrine,
 }
 
 /// Read the loop's configuration for a workspace.
@@ -67,6 +69,7 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
         attribution: parsed.self_driving.attribution.clone(),
         vocabulary: vocabulary_for(root, &parsed.issues),
         triage: parsed.self_driving.triage.policy(),
+        doctrine: parsed.self_driving.doctrine,
     }
 }
 

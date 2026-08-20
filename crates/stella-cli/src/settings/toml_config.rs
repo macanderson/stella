@@ -336,6 +336,15 @@ pub struct SelfDrivingSection {
     /// `[self_driving.attribution]` — what the loop appends to what it writes,
     /// and how it names branches.
     pub attribution: stella_autonomy::Attribution,
+    /// `[self_driving.doctrine]` — how the loop decides, where two operators
+    /// would decide differently.
+    ///
+    /// Whether to fix a base somebody else broke, whether to defer when
+    /// another actor looks busy on it, and whether an escalation parks the
+    /// loop. These are judgement calls about *this* team's norms, not facts
+    /// about the code, which is why they are declared rather than compiled in.
+    #[serde(default)]
+    pub doctrine: stella_autonomy::Doctrine,
     /// `[self_driving.triage]` — the vocabulary the loop places issues in.
     ///
     /// Here rather than in the tracker manifest because these are *this

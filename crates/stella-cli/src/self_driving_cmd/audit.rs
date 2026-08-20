@@ -61,6 +61,8 @@ pub(super) enum Action {
     Deferred,
     /// An issue was marked as attempted and unresolved.
     Escalated,
+    /// The base branch was found broken with no issue open, so one was filed.
+    FiledBaseBreakage,
     /// A turn was asked to place an issue nobody had judged.
     TriageStarted,
     /// An issue was placed, and the labels written.
@@ -97,6 +99,7 @@ impl Action {
             Self::WorkFailed => "failed",
             Self::Deferred => "deferred",
             Self::Escalated => "escalated",
+            Self::FiledBaseBreakage => "filed",
             Self::TriageStarted => "triaging",
             Self::Triaged => "triaged",
             Self::PrOpened => "pr opened",

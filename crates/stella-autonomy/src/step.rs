@@ -390,7 +390,7 @@ pub fn step(state: &LoopState, obs: &LoopObservation, doctrine: &Doctrine) -> Lo
     // 4. Exhaust the permitted channels on the loop's own blockage before
     //    making more work that the same blockage will stall.
     if obs.base_broken
-        && let Some(attempt) = unblock_base(obs, doctrine)
+        && let Some(attempt) = unblock_base(state, obs, doctrine)
     {
         return LoopStep::Unblock { attempt };
     }
@@ -452,7 +452,11 @@ pub fn step(state: &LoopState, obs: &LoopObservation, doctrine: &Doctrine) -> Lo
 /// 2. **Then check contention**, before adopting. Two workers on one broken
 ///    `main` produce a merge conflict on top of the outage.
 /// 3. **Then adopt**, only if doctrine says to.
-fn unblock_base(obs: &LoopObservation, doctrine: &Doctrine) -> Option<UnblockAttempt> {
+fn unblock_base(
+    state: &LoopState,
+    obs: &LoopObservation,
+    doctrine: &Doctrine,
+) -> Option<UnblockAttempt> {
     if doctrine.foreign_breakage == ForeignBreakage::Ignore {
         return None;
     }
@@ -473,10 +477,21 @@ fn unblock_base(obs: &LoopObservation, doctrine: &Doctrine) -> Option<UnblockAtt
         return Some(UnblockAttempt::DeferToExistingFix { evidence });
     }
 
-    // 3. Adopt it, attributed to the filing.
-    obs.base_breakage_issue
-        .clone()
-        .map(|issue| UnblockAttempt::AdoptBaseBreakage { issue })
+    // 3. Adopt it, attributed to the filing — unless it is already adopted.
+    //
+    // Adoption is not idempotent from the machine's side: it puts the issue in
+    // `claimed`, and the base stays red for as long as the fix takes. Without
+    // this check the next call sees the same red, still-filed, uncontended
+    // base and adopts it again — forever, claiming a duplicate every poll and
+    // never reaching `Work`, because unblocking outranks working. The loop
+    // would look busy and fix nothing.
+    let issue = obs.base_breakage_issue.clone()?;
+    let already_mine = state.claimed.contains(&issue)
+        || state.carrying.iter().any(|carried| carried.pr.0 == issue.0);
+    if already_mine {
+        return None;
+    }
+    Some(UnblockAttempt::AdoptBaseBreakage { issue })
 }
 
 fn blocked(reason: BlockReason) -> LoopStep {
@@ -490,6 +505,111 @@ fn blocked(reason: BlockReason) -> LoopStep {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A broken base becomes a filing, then a fix — with nobody asked.
+    ///
+    /// **The witness for "I should be able to break the repository and have
+    /// the loop fix it."** The whole path is three moves, and each one has to
+    /// follow from the last without a human in between:
+    ///
+    /// 1. the base is red and unfiled → file it, because a breakage nobody
+    ///    recorded is one nobody can attribute;
+    /// 2. it is filed and nothing else is working on it → adopt it, because a
+    ///    red base blocks this loop as hard as it blocks its author;
+    /// 3. adopting puts the issue in `claimed`, and `Work` is what the machine
+    ///    returns next — which is the ordinary path that authors a fix and
+    ///    opens a pull request.
+    ///
+    /// It failed at step 1 for as long as the driver hardcoded
+    /// `base_broken: false`, and would have failed at step 2 while the default
+    /// doctrine was `FileAndWait`.
+    #[test]
+    fn a_broken_base_is_filed_then_adopted_then_worked() {
+        let doctrine = Doctrine::default();
+        let state = LoopState {
+            planned: true,
+            batch: 3,
+            ..LoopState::default()
+        };
+
+        // 1. Red and unfiled.
+        let mut observation = LoopObservation {
+            base_broken: true,
+            queue_depth: 5,
+            ..obs()
+        };
+        assert_eq!(
+            step(&state, &observation, &doctrine),
+            LoopStep::Unblock {
+                attempt: UnblockAttempt::FileBaseBreakage
+            },
+            "a breakage nobody recorded is one nobody can attribute"
+        );
+
+        // 2. Filed, uncontended.
+        observation.base_breakage_filed = true;
+        observation.base_breakage_issue = Some(IssueRef("991".to_owned()));
+        let adopted = step(&state, &observation, &doctrine);
+        assert_eq!(
+            adopted,
+            LoopStep::Unblock {
+                attempt: UnblockAttempt::AdoptBaseBreakage {
+                    issue: IssueRef("991".to_owned())
+                }
+            },
+            "the default doctrine must FIX a broken base, not merely report it"
+        );
+
+        // 3. Adopting claims it, and the very next move is to work it.
+        let claimed = LoopState {
+            claimed: vec![IssueRef("991".to_owned())],
+            ..state.clone()
+        };
+        assert_eq!(
+            step(&claimed, &observation, &doctrine),
+            LoopStep::Work {
+                issue: IssueRef("991".to_owned())
+            },
+            "an adopted breakage must reach the ordinary work path, which is \
+             what authors the fix and opens the pull request"
+        );
+    }
+
+    /// Somebody else already fixing it stops the loop duplicating the work.
+    ///
+    /// The half that keeps step 2 from being reckless — and `local_worktrees`
+    /// is the signal that catches the loop's *own* second session, which no
+    /// forge-only check would see.
+    #[test]
+    fn a_fix_already_in_flight_is_deferred_to_not_duplicated() {
+        let doctrine = Doctrine::default();
+        let state = LoopState {
+            planned: true,
+            batch: 3,
+            ..LoopState::default()
+        };
+        let observation = LoopObservation {
+            base_broken: true,
+            base_breakage_filed: true,
+            base_breakage_issue: Some(IssueRef("991".to_owned())),
+            base_fix_contention: Contention {
+                local_worktrees: vec!["/tmp/wt/991-abc".to_owned()],
+                ..Contention::default()
+            },
+            queue_depth: 5,
+            ..obs()
+        };
+
+        match step(&state, &observation, &doctrine) {
+            LoopStep::Unblock {
+                attempt: UnblockAttempt::DeferToExistingFix { evidence },
+            } => assert!(
+                evidence.iter().any(|e| e.contains("991-abc")),
+                "the deferral must name what it saw: {evidence:?}"
+            ),
+            other => panic!("expected a deferral, got {other:?}"),
+        }
+    }
 
     fn obs() -> LoopObservation {
         LoopObservation {
@@ -772,8 +892,16 @@ mod tests {
         // FileAndWait: filed already, so nothing more to try — and the loop
         // carries on with ordinary work rather than parking, because a red base
         // stops merges, not authoring.
+        //
+        // Named explicitly rather than taken from `Doctrine::default()`, which
+        // now adopts: this asserts what *this policy* does, and must not
+        // silently change meaning the next time the default moves.
+        let waiting = Doctrine {
+            foreign_breakage: ForeignBreakage::FileAndWait,
+            ..Doctrine::default()
+        };
         assert_eq!(
-            step(&planned(), &base_red_filed(), &Doctrine::default()),
+            step(&planned(), &base_red_filed(), &waiting),
             LoopStep::Claim { batch: 3 }
         );
     }

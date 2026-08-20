@@ -20,7 +20,7 @@
 //! ways.
 
 use stella_autonomy::{BacklogConvention, Conformance, Demand, Violation, conform, finding_digest};
-use stella_protocol::issue::{IssueDraft, IssueError, IssueKey, IssueProvider};
+use stella_protocol::issue::{IssueDraft, IssueError, IssueKey, IssueLabel, IssueProvider};
 
 use crate::query_format::{QueryFormat, Rows};
 
@@ -237,6 +237,105 @@ pub(super) fn unassessed(
 ) -> Result<Vec<stella_autonomy::priority::Unassessed>, String> {
     let (queue, _) = ranked(provider, policy)?;
     Ok(queue.unassessed)
+}
+
+/// The label that marks an issue as *the base branch is broken*.
+///
+/// A label rather than a title convention, because the title is prose a human
+/// may rewrite and the label is the thing both this loop and the next one
+/// match on. It is how a restarted process — or a second process entirely —
+/// discovers that the emergency is already filed instead of filing it again.
+pub(super) const BASE_BREAKAGE_LABEL: &str = "main-red";
+
+/// The open base-breakage issue, if one exists.
+///
+/// Read through the port like everything else, and matched on
+/// [`BASE_BREAKAGE_LABEL`] rather than on words in the title. An unreachable
+/// tracker answers `None`, which reads as *nobody has filed it* — the loop
+/// then tries to file, the filing fails too, and it waits. That is the right
+/// shape: a forge outage should make it wait, not make it act on a guess.
+#[must_use]
+pub(super) fn open_base_breakage(provider: &dyn IssueProvider) -> Option<String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    let issues = runtime
+        .block_on(provider.list_open(QUEUE_READ_LIMIT))
+        .ok()?;
+
+    issues
+        .into_iter()
+        .find(|issue| {
+            issue
+                .labels
+                .iter()
+                .any(|label| label.name == BASE_BREAKAGE_LABEL)
+        })
+        .map(|issue| issue.key.as_str().to_owned())
+}
+
+/// File the report that the base branch is broken.
+///
+/// Deliberately **not** routed through [`file_finding`]. That path dedups on a
+/// content digest and conforms the draft to the workspace's convention, both
+/// of which are right for a defect the loop discovered by looking at code. A
+/// base outage is neither: there is exactly one of them at a time, the dedup
+/// key is "is one already open" (which [`open_base_breakage`] answers), and a
+/// convention refusal here would leave `main` broken because a label was
+/// spelled wrong.
+///
+/// The body names what a fresh reader needs and nothing this loop cannot
+/// actually know: which branch, which checks, and how to reproduce. It does
+/// not guess at a cause — the turn that adopts this issue will read the run.
+pub(super) fn file_base_breakage(
+    provider: &dyn IssueProvider,
+    base: &str,
+    attribution: &stella_autonomy::Attribution,
+) -> Result<String, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
+
+    let body = stella_autonomy::sign(
+        &format!(
+            "`{base}` is red on at least one **required** check, so every pull request \
+             opened against it inherits the failure.\n\n\
+             This blocks the whole repository, not one branch: a contributor whose own \
+             diff is clean still sees a red build and cannot tell their failure from \
+             this one.\n\n\
+             ## Reproduce\n\n\
+             ```\n\
+             gh run list --branch {base} --workflow ci.yml --limit 3\n\
+             ```\n\n\
+             Read the newest failing run, then run the failing step locally. \
+             `make gate` covers the required checks.\n\n\
+             ## Done when\n\n\
+             The required checks are green on `{base}`, and the fix names which run \
+             it was diagnosed from.\n\n\
+             Filed automatically on noticing the base was red and no issue was open. \
+             The label `{BASE_BREAKAGE_LABEL}` is what marks it as this — removing the \
+             label makes the loop file a second one."
+        ),
+        &attribution.issue,
+    );
+
+    let draft = IssueDraft {
+        title: format!("{base} is red — required checks failing on the base branch"),
+        body,
+        labels: vec![
+            IssueLabel::from(BASE_BREAKAGE_LABEL),
+            IssueLabel::from("bug"),
+            IssueLabel::from("P0"),
+        ],
+        parent: None,
+    };
+
+    runtime
+        .block_on(provider.file(&draft))
+        .map(|key| key.as_str().to_owned())
+        .map_err(|error| error.to_string())
 }
 
 /// Mark an issue as one the loop tried and could not resolve, and say why.
