@@ -47,6 +47,25 @@ pub enum ManifestError {
         participation: Participation,
     },
 
+    /// `[loop] hooks` named a hook a plugin cannot be routed at.
+    ///
+    /// The loop-lifecycle events (`PreIssueWork`, `PostIssueWork`, #3599) are
+    /// dispatched by the self-driving loop from the operator's own `hooks`
+    /// settings, outside any turn — a different caller and a different
+    /// transport than the plugin routing table feeds. A manifest may spell
+    /// them, because they are one vocabulary; it may not yet be routed at
+    /// them, and this is that refusal said out loud rather than discovered as
+    /// a grant that quietly does nothing.
+    #[error(
+        "[loop] hooks names {hook}, which a plugin cannot be routed at: it is a \
+         self-driving loop event dispatched outside any turn, from the \
+         operator's own hooks settings. Register it there instead."
+    )]
+    HookNotAvailableToPlugins {
+        /// The event a plugin may not be routed at.
+        hook: HookEvent,
+    },
+
     /// `[loop] points` listed the same wrapper point twice — the
     /// [`ManifestError::DuplicateHook`] rule, for the socket's points.
     #[error("[loop] points declares {point} more than once")]

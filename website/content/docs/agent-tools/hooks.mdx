@@ -1,6 +1,6 @@
 ---
 title: Hooks
-description: Run shell commands on stella's agent lifecycle events — SessionStart, PreToolUse, PostToolUse, Stop, and PreCompact — configured under the hooks key in settings.json.
+description: Run shell commands on stella's agent lifecycle events — SessionStart, PreToolUse, PostToolUse, Stop, PreCompact, PreIssueWork, and PostIssueWork — configured under the hooks key in settings.json.
 ---
 
 Hooks are shell commands that fire on agent lifecycle events. They are configured under the `hooks` key in your `settings.json` and follow Claude Code parity, so existing hook knowledge carries over.
@@ -16,7 +16,9 @@ Each hook receives the event payload as **JSON on stdin**, so your command can r
 
 ## Events
 
-stella fires hooks on five lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
+stella fires hooks on seven lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
+
+Five of them name points **inside a turn**. The last two name points **around a work unit of the [self-driving loop](/docs/self-improvement)** — the loop deciding to work an issue, and the outcome once it has. They live in the same `hooks` block and speak the same decision vocabulary.
 
 <HookLifecycleDiagram />
 
@@ -40,6 +42,14 @@ stella fires hooks on five lifecycle events. Each behaves differently, and each 
   <OptionCard name="PreCompact">
     Runs before an overflow-summarization round. A `deny` decision vetoes the round; a
     `modify` decision can steer the summarizer. The matcher is ignored.
+  </OptionCard>
+  <OptionCard name="PreIssueWork">
+    Runs before the self-driving loop works an issue. **Blocking**: a `deny` makes the
+    loop skip that issue and move on. The matcher is ignored.
+  </OptionCard>
+  <OptionCard name="PostIssueWork">
+    Runs after that work unit, whatever the outcome. **Never blocks** — the work is done.
+    The matcher is ignored.
   </OptionCard>
 </CardGrid>
 
@@ -65,6 +75,27 @@ Runs when a turn is about to complete, with the would-be final text in the paylo
 
 Runs before each overflow-summarization round (the model-written summary that replaces the oldest span when the conversation outgrows its context budget). Printing `{"action":"deny","reason":"…"}` vetoes the round — the transcript is left intact, at the risk of a later hard overflow — and `{"action":"modify","payload":{"instructions":"…"}}` appends your instructions to the summarizer's prompt (for example, "keep every file path verbatim"). A failing `PreCompact` hook proceeds un-vetoed, so a broken hook cannot starve compaction. The matcher is **ignored**.
 
+### `PreIssueWork`
+
+Runs before the self-driving loop works an issue — **before the worktree exists and before any model call**, so a skip costs nothing and leaves nothing behind. The payload carries the issue under `issue`. Printing `{"action":"deny","reason":"…"}` makes the loop **skip that issue and continue to the next one**; the reason is printed for the operator. The matcher is **ignored**.
+
+This is the hook to reach for when you want a person to be able to hold an agent off specific work — an issue that is still being specified, one a colleague has started, or anything under a release freeze. See [Holding an agent off an issue](#holding-an-agent-off-an-issue).
+
+A skip is **not a failure**: the verb exits 0, because a driver working through a backlog should step over a held item rather than stop at it. Nothing distinguishes "skip this one" from "stop everything" in a `deny` alone, so a hook that means the latter has to say so to its operator.
+
+<Callout type="warn">
+  **`PreIssueWork` fails closed**, unlike most gates here. A hook that never ran, timed out,
+  or exited non-zero **skips the issue**. The two outcomes are not symmetric: skipping an
+  issue that was in fact free costs one cycle and corrects itself next run, while working an
+  issue that was in fact held leaves a branch, a pull request, and a comment on something
+  somebody deliberately fenced off. `require_approval` also skips — an unattended loop has
+  nobody at the keyboard to answer it.
+</Callout>
+
+### `PostIssueWork`
+
+Runs after the loop has finished a work unit, whatever happened. **Never blocks**: the work is already done and there is nothing left to veto. The payload carries the same `issue` plus an `issueOutcome`. It fires for a failed attempt as well as a successful one — a dashboard, a notifier, or a second agent waiting on the branch needs the failure at least as much. It does **not** fire when `PreIssueWork` denied, because nothing was worked. The matcher is **ignored**.
+
 ## The stdin payload
 
 Every hook receives one JSON document on stdin. Its shape:
@@ -83,8 +114,9 @@ Every hook receives one JSON document on stdin. Its shape:
 
 <CardGrid size="md">
   <OptionCard name="event">
-    String, always present. `"SessionStart"`, `"PreToolUse"`, `"PostToolUse"`, `"Stop"`, or
-    `"PreCompact"` — the same PascalCase names as the config keys.
+    String, always present. `"SessionStart"`, `"PreToolUse"`, `"PostToolUse"`, `"Stop"`,
+    `"PreCompact"`, `"PreIssueWork"`, or `"PostIssueWork"` — the same PascalCase names as
+    the config keys.
   </OptionCard>
   <OptionCard name="cwd">
     String, always present. The workspace root — also the hook's working directory.
@@ -104,6 +136,18 @@ Every hook receives one JSON document on stdin. Its shape:
   <OptionCard name="finalText">
     String, on `Stop` only. The text the turn is about to complete with — whole, same
     unclipped posture as `toolResult`.
+  </OptionCard>
+  <OptionCard name="issue">
+    Object, on `PreIssueWork` and `PostIssueWork`. `{ "number": …, "title": …, "branch": … }`.
+    Only `number` is guaranteed — the rest is whatever the loop had already read. A hook
+    that needs more should fetch it itself (`gh issue view` is one line), rather than have
+    every loop pay a tracker round trip for the hooks that do not.
+  </OptionCard>
+  <OptionCard name="issueOutcome">
+    Object, on `PostIssueWork` only. `{"status":"changed","summary":…}`,
+    `{"status":"no_change"}`, or `{"status":"failed","reason":…}`. Three states rather
+    than a boolean: *nothing to do* and *needs a human* are the two a dashboard most needs
+    to tell apart.
   </OptionCard>
 </CardGrid>
 
@@ -227,6 +271,63 @@ Wire it to every tool with a `"*"` matcher:
   }
 }
 ```
+
+### Holding an agent off an issue
+
+The self-driving loop works whatever the backlog hands it. `PreIssueWork` is where a person gets a say — and the cleanest way to express that is a label on the issue itself, because the tracker is where the intent already lives and anyone on the team can set it without touching a config file.
+
+This hook holds the loop off any issue labelled `agent-hold`:
+
+```bash title="scripts/agent-hold.sh"
+#!/usr/bin/env bash
+# PreIssueWork gate: refuse any issue labelled `agent-hold`.
+# The event payload arrives as one JSON document on stdin.
+set -euo pipefail
+
+payload=$(cat)
+number=$(printf '%s' "$payload" | jq -r '.issue.number')
+
+labels=$(gh issue view "$number" --json labels --jq '.labels[].name')
+
+if grep -qx 'agent-hold' <<<"$labels"; then
+  printf '{"action":"deny","reason":"issue #%s is labelled agent-hold"}\n' "$number"
+  exit 0
+fi
+
+echo '{"action":"allow"}'
+```
+
+Register it in your user-scope settings:
+
+```json title="~/.stella/settings.json"
+{
+  "hooks": {
+    "PreIssueWork": [
+      {
+        "hooks": [
+          { "type": "command", "command": "./scripts/agent-hold.sh", "timeoutMs": 10000 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Now `gh issue edit 123 --add-label agent-hold` is all it takes to fence an issue off, and removing the label hands it back. The loop prints `skipped #123 — issue #123 is labelled agent-hold` and moves on to the next item.
+
+<Callout type="warn">
+  Note the exit status: the script exits **0** and expresses its decision on stdout. A
+  non-zero exit also skips the issue — `PreIssueWork` fails closed — but it reports as
+  *"the hook could not be evaluated"* rather than as your reason, which is much harder to
+  read six issues later. Decide on stdout; reserve a non-zero exit for genuinely broken.
+</Callout>
+
+The same shape gives you several other things, with no change to stella:
+
+- **Two agents, one backlog.** Have the hook claim the issue (assign it, or add an `agent-claimed-$HOSTNAME` label) and deny when it is already claimed by someone else.
+- **A release freeze.** Deny everything while a `freeze` milestone is open.
+- **Working hours.** Deny outside a window, so an unattended loop does not open pull requests at 3am.
+- **Scope limits.** Deny anything not labelled `good-first-issue`, or anything whose estimate exceeds what you want an agent attempting unattended.
 
 <Callout type="warn">
 **Project-scope hooks are a trust boundary.** Hooks declared in a repository's project-scope file (`<workspace>/.stella/settings.json`) do **not** load unless the repo is trusted — set `STELLA_TRUST_PROJECT=1`, or the legacy hooks-scoped `STELLA_PROJECT_HOOKS=1`. Either flag unlocks them; without one, the merged hook set is rebuilt from the user and org-managed scopes alone and a stderr notice names what was skipped. This stops a cloned repo from running arbitrary commands on your machine. Hooks in the user scope (`~/.stella/settings.json`) always load. See [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).

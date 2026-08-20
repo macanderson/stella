@@ -23,6 +23,7 @@ pub(crate) mod config;
 mod convention;
 mod deliver;
 mod drive;
+mod hooks;
 mod lifecycle;
 pub(crate) mod probes;
 pub(crate) mod state;
@@ -37,6 +38,7 @@ use serde_json::Value;
 use stella_autonomy::{CycleOutcome, CycleRecord, Demand, Tooling};
 
 use crate::query_format::{QueryFormat, Rows};
+use crate::settings::Settings;
 use crate::timefmt::{now_unix, rfc3339_utc_now};
 use state::LoopState;
 
@@ -1265,7 +1267,34 @@ fn work_issue(
     let issue = backlog::resolve(&crate::issue_provider::GhIssueProvider, key)?;
 
     let attribution = config::load(&root).attribution;
+
+    // The `PreIssueWork` gate (#3599), before the worktree exists and before
+    // any model call — so a skip costs nothing and leaves nothing behind.
+    let settings = Settings::load(&root).unwrap_or_default();
+    let hook_issue = hooks::HookIssueInfo {
+        number: key.to_string(),
+        title: Some(issue.title.clone()),
+        branch: None,
+    };
+    if let hooks::WorkGate::Skip { reason } =
+        hooks::before_issue_work(&root, &settings, &hook_issue)
+    {
+        // Exit 0: a held issue is the loop being steered, not the loop
+        // failing, and a driver that treated it as an error would stop the
+        // sweep at the first fenced-off item.
+        if format == QueryFormat::Json {
+            println!(
+                "{}",
+                serde_json::json!({ "outcome": "skipped", "why": reason })
+            );
+        } else {
+            println!("skipped #{key} — {reason}");
+        }
+        return Ok(());
+    }
+
     let outcome = work::start(&root, &issue, spend_limit, &attribution)?;
+    hooks::after_issue_work(&root, &settings, &hook_issue, hook_outcome(&outcome));
 
     match &outcome {
         work::WorkOutcome::Changed { branch, stat, .. } => {
@@ -1294,6 +1323,23 @@ fn work_issue(
         // A failure exits non-zero: a caller that scripted this must not read
         // "the command returned" as "the issue was worked".
         work::WorkOutcome::Failed { reason } => Err(format!("#{key} was not worked: {reason}")),
+    }
+}
+
+/// The work unit's outcome, in the vocabulary a `PostIssueWork` hook reads.
+///
+/// Three arms rather than a boolean, and the mapping is total by `match` so a
+/// fourth `WorkOutcome` cannot silently become "no change" — which is the arm
+/// a subscriber acts on least and would notice missing last.
+fn hook_outcome(outcome: &work::WorkOutcome) -> hooks::HookIssueOutcome {
+    match outcome {
+        work::WorkOutcome::Changed { stat, .. } => hooks::HookIssueOutcome::Changed {
+            summary: stat.clone(),
+        },
+        work::WorkOutcome::NoChange { .. } => hooks::HookIssueOutcome::NoChange,
+        work::WorkOutcome::Failed { reason } => hooks::HookIssueOutcome::Failed {
+            reason: reason.clone(),
+        },
     }
 }
 
