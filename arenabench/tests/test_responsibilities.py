@@ -33,30 +33,6 @@ from arenabench.model import (
     ResponsibilityConfig,
 )
 
-#: Stella's normative home for the role vocabulary, relative to a checkout.
-#: ``scripts/check-role-names.sh`` names this same function as "the truth" and
-#: reads its match arms the same way, so the two halves of the contract are
-#: anchored to one file rather than to each other.
-_ROLE_KEY_RS = Path("crates") / "stella-cli" / "src" / "config_wiring.rs"
-
-#: One match arm of ``role_key()``: ``EngineAgentKind::Verifier => "verifier",``
-_ROLE_ARM = re.compile(r'EngineAgentKind::\w+\s*=>\s*"([a-z_]+)"')
-
-
-def _role_key_names(source: str) -> frozenset[str]:
-    """Every role spelling ``role_key()`` returns, read out of the Rust.
-
-    Scoped to that function's body — a bare sweep for the arm shape would also
-    collect every other ``match kind`` in the file, and those are legitimately
-    partial (``model_source`` skips ``Default``). The body ends at the first
-    column-zero ``}``, which is how ``check-role-names.sh``'s awk delimits it.
-    """
-    body = re.search(r"pub fn role_key\b.*?\n\}", source, re.DOTALL)
-    if body is None:
-        return frozenset()
-    return frozenset(_ROLE_ARM.findall(body.group()))
-
-
 HEADER = """
 [match]
 id = "ablation"
