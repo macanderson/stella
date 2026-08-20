@@ -69,8 +69,16 @@ fn the_reflection_opt_out_still_wins_over_a_machine_format() {
     let _restore = crate::test_env::EnvRestore::capture(&[DISABLE_REFLECTION_ENV]);
     unsafe { std::env::set_var(DISABLE_REFLECTION_ENV, "1") };
 
-    assert!(!should_reflect_after_one_shot(OutputFormat::Json, true, true));
-    assert!(!should_reflect_after_one_shot(OutputFormat::Text, true, true));
+    assert!(!should_reflect_after_one_shot(
+        OutputFormat::Json,
+        true,
+        true
+    ));
+    assert!(!should_reflect_after_one_shot(
+        OutputFormat::Text,
+        true,
+        true
+    ));
 }
 
 #[test]
