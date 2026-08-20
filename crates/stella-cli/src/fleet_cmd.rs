@@ -961,13 +961,16 @@ async fn run_task(
     // The staged pipeline that used to write `classic` here (#3381) is gone
     // (#3865), so the only non-NULL value this build can record is an
     // installed plugin's own variant id (#3695).
+    // Bound before the call: a composition's variant id is assembled on demand
+    // (#3801), so the borrow below needs something that outlives the argument.
+    let variant = wrapped.as_ref().map(wrapped::AttemptWrapper::variant);
     let execution = agent::begin_execution(
         &store,
         "fleet",
         &task.prompt,
         &cfg,
         None,
-        wrapped.as_ref().map(wrapped::AttemptWrapper::variant),
+        variant.as_deref(),
     );
     // From here on this attempt's spend is durable in the store even if this
     // thread never lives to report it — publish the handle that makes it

@@ -399,7 +399,10 @@ pub(crate) struct BoundWrapper {
 
 impl BoundWrapper {
     /// The variant id this wrapper runs under.
-    pub(crate) fn variant(&self) -> &str {
+    ///
+    /// Owned rather than borrowed since #3801: a composition's id is its
+    /// members' ids joined, which is assembled on demand rather than stored.
+    pub(crate) fn variant(&self) -> String {
         self.dispatch.variant()
     }
 

@@ -66,9 +66,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use stella_plugin::{
     AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceProvenance,
-    EvidenceSet, ObservedEvidence, Outcome, PROTOCOL_VERSION, PluginManifest, PublishedSignal,
-    RoundState, SignalValues, StageName, TamperFinding, TurnOutcome, Verdict, VerdictRule,
-    WrapperPoint,
+    EvidenceSet, FlipObservation, LoopGrant, ObservedEvidence, Outcome, PROTOCOL_VERSION,
+    PluginManifest, PublishedSignal, RoundState, SignalValues, StageName, StageProgram,
+    TamperFinding, TurnOutcome, Verdict, VerdictRule, WrapperPoint,
 };
 use stella_protocol::completion::CompletionMessage;
 
@@ -228,10 +228,119 @@ pub struct DispatchReport {
 /// process that answers. A host that held the transport alone could dispatch a
 /// point the manifest never declared.
 pub struct WrapperDispatch {
+    /// The composed members, in the order the selection named them (#3801).
+    ///
+    /// One entry is the ordinary case and the shape every caller had before
+    /// composition existed; several is a `--pipeline` selection naming several
+    /// plugins, whose declarations were reconciled once at bind time by
+    /// [`super::compose`].
+    members: Vec<Member>,
+    /// Every stage any member declares, in the one order they all agree with.
+    stage_order: Vec<StageName>,
+    rule: VerdictRule,
+    /// The grant `again` consults — the arbiter's, or a non-arbiter's that
+    /// cannot hold. See [`super::compose::Composition::hold_grant`].
+    hold_grant: LoopGrant,
+    host_max_holds: u32,
+}
+
+/// One plugin inside a composition: what it declared, and the process that
+/// answers for it.
+///
+/// The two travel together for [`WrapperDispatch`]'s own reason — a transport
+/// held without its manifest could be asked a point the manifest never
+/// declared — and composition does not weaken that, it just means there are
+/// several such pairs and each is filtered by its *own* grants.
+struct Member {
     manifest: PluginManifest,
     wrapper: Arc<dyn TurnWrapper>,
-    rule: VerdictRule,
-    host_max_holds: u32,
+}
+
+/// What one round actually runs: the merged stage list, plus which member
+/// resolved which stage.
+///
+/// Held together rather than passed as two arguments because the second is
+/// only meaningful against the first — "member 2 runs `plan`" is a claim about
+/// this round's resolution, not about the manifest.
+struct RunningProgram {
+    /// Every stage some member resolved this round, in the agreed order.
+    stages: Vec<StageName>,
+    /// Per member, in selection order, the stages that member resolved.
+    per_member: Vec<Vec<StageName>>,
+}
+
+impl RunningProgram {
+    /// Whether the member at `index` runs `stage` this round.
+    fn runs(&self, index: usize, stage: &StageName) -> bool {
+        self.per_member
+            .get(index)
+            .is_some_and(|stages| stages.iter().any(|resolved| resolved == stage))
+    }
+}
+
+/// Merge one member's observed evidence into what the composition has so far.
+///
+/// Two rules, and both follow from what the pieces mean rather than from
+/// convenience:
+///
+/// - **Measurements union, and a later member does not overwrite an earlier
+///   one's number.** A measurement name belongs to the oracle that declared
+///   it, and `compose` already refused a second oracle — so two members
+///   reporting the same name means one of them is reporting a number nothing
+///   asked it for, and the declaring member's is the one the check reads.
+/// - **The flip is whichever member actually observed one.** A flip is a
+///   statement about a witness that ran; `NotAttempted` is the honest answer
+///   from every member that has no witness, and a composition of "no witness"
+///   and "red before, green after" observed a flip. Two members both
+///   observing a flip cannot happen while only one oracle may exist, and if it
+///   somehow does, the first observation stands rather than the last — a later
+///   silence must never erase an earlier observation.
+fn fold_evidence(into: Option<ObservedEvidence>, next: ObservedEvidence) -> ObservedEvidence {
+    let Some(mut merged) = into else {
+        return next;
+    };
+    for (name, value) in next.measurements {
+        merged.measurements.entry(name).or_insert(value);
+    }
+    if merged.flip == FlipObservation::NotAttempted {
+        merged.flip = next.flip;
+    }
+    merged
+}
+
+impl Member {
+    /// This member's own `[wrapper] id`.
+    fn variant(&self) -> &str {
+        // `bind_composed` refused a manifest without one, so the fallback is
+        // unreachable — written as a fallback rather than an `expect` because
+        // invariant 5 does not make an exception for "I checked earlier".
+        self.manifest
+            .wrapper
+            .as_ref()
+            .map_or(self.manifest.name.as_str(), |wrapper| wrapper.id.as_str())
+    }
+
+    /// The stages this member runs *this* round, its own conditions answered
+    /// against its own signals.
+    ///
+    /// Resolved per member rather than once for the composition because a
+    /// condition is a statement about the manifest that declared it — two
+    /// members can name the same stage and disagree about when it runs, and
+    /// each is right about itself.
+    fn program(&self, signals: &SignalValues) -> Result<StageProgram, WrapperError> {
+        match &self.manifest.wrapper {
+            Some(wrapper) => wrapper.resolve(signals),
+            None => {
+                return Err(WrapperError::NotAWrapper {
+                    plugin: self.manifest.name.clone(),
+                });
+            }
+        }
+        .map_err(|source| WrapperError::Unresolvable {
+            wrapper: self.variant().to_string(),
+            source: Box::new(source),
+        })
+    }
 }
 
 impl std::fmt::Debug for WrapperDispatch {
@@ -256,16 +365,57 @@ impl WrapperDispatch {
         manifest: PluginManifest,
         wrapper: Arc<dyn TurnWrapper>,
     ) -> Result<Self, WrapperError> {
-        if manifest.wrapper.is_none() {
-            return Err(WrapperError::NotAWrapper {
-                plugin: manifest.name.clone(),
-            });
+        Self::bind_composed(vec![(manifest, wrapper)])
+    }
+
+    /// Bind several validated manifests to serve one selection together
+    /// (#3801).
+    ///
+    /// The members are asked in the order given, which is the order the
+    /// selection named them — a user writing `--pipeline research-v1,plan-v1`
+    /// is stating that grounding comes before planning, and nothing else in
+    /// the system knows that. Within one stage their contributions concatenate
+    /// in that order; across stages they follow the merged stage order
+    /// [`super::compose`] computed.
+    ///
+    /// Each member keeps its **own** grants. A member that did not declare
+    /// `before_turn` is not asked it because another member did; composition
+    /// unions what plugins *contribute*, never what they are *permitted*.
+    ///
+    /// # Errors
+    ///
+    /// [`WrapperError::NotAWrapper`] when any member declares no `[wrapper]`
+    /// block — a composition of a wrapper and a non-wrapper is a caller
+    /// mistake, not a degraded composition. [`WrapperError::EmptyComposition`]
+    /// for no members. Otherwise one of the four conflict variants
+    /// [`super::compose`] documents: contradictory stage order, two oracles,
+    /// two arbiters, or one requirement name meaning two things.
+    pub fn bind_composed(
+        members: Vec<(PluginManifest, Arc<dyn TurnWrapper>)>,
+    ) -> Result<Self, WrapperError> {
+        if members.is_empty() {
+            return Err(WrapperError::EmptyComposition);
         }
-        let rule = VerdictRule::from_manifest(&manifest);
+        for (manifest, _) in &members {
+            if manifest.wrapper.is_none() {
+                return Err(WrapperError::NotAWrapper {
+                    plugin: manifest.name.clone(),
+                });
+            }
+        }
+        let manifests: Vec<PluginManifest> = members
+            .iter()
+            .map(|(manifest, _)| manifest.clone())
+            .collect();
+        let composition = super::compose::compose(&manifests)?;
         Ok(Self {
-            manifest,
-            wrapper,
-            rule,
+            members: members
+                .into_iter()
+                .map(|(manifest, wrapper)| Member { manifest, wrapper })
+                .collect(),
+            stage_order: composition.stage_order,
+            rule: composition.rule,
+            hold_grant: composition.hold_grant,
             host_max_holds: DEFAULT_HOST_MAX_HOLDS,
         })
     }
@@ -279,21 +429,31 @@ impl WrapperDispatch {
     }
 
     /// The variant id this wrapper runs under.
+    ///
+    /// For a composition it is the members' ids joined with `,` — the same
+    /// text the selection named — so the store's `pipeline_variant` column
+    /// records what actually ran rather than whichever member happened to be
+    /// first (#3801). A single member is unchanged.
     #[must_use]
-    pub fn variant(&self) -> &str {
-        // `bind` refused a manifest without one, so the fallback is unreachable
-        // — written as a fallback rather than an `expect` because invariant 5
-        // does not make an exception for "I checked earlier".
-        self.manifest
-            .wrapper
-            .as_ref()
-            .map_or(self.manifest.name.as_str(), |wrapper| wrapper.id.as_str())
+    pub fn variant(&self) -> String {
+        self.members
+            .iter()
+            .map(Member::variant)
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
-    /// The manifest that was consented to at install.
-    #[must_use]
-    pub fn manifest(&self) -> &PluginManifest {
-        &self.manifest
+    /// Every composed member's manifest, in the order the selection named them.
+    ///
+    /// This replaces the old `manifest()` accessor, which returned the one
+    /// manifest a dispatch was bound to. A composition has no *one* manifest,
+    /// and an accessor handing back the first member's would read as "the
+    /// manifest that was consented to" while silently omitting the rest —
+    /// which is the precise misreading this whole change exists to prevent.
+    /// Callers wanting the single-member case take `.manifests().next()` and
+    /// handle the `Option` honestly.
+    pub fn manifests(&self) -> impl Iterator<Item = &PluginManifest> {
+        self.members.iter().map(|member| &member.manifest)
     }
 
     /// Drive the four points around as many turns as the verdict asks for.
@@ -315,20 +475,33 @@ impl WrapperDispatch {
         input: RoundInput,
         driver: &mut dyn TurnDriver,
     ) -> Result<DispatchReport, WrapperError> {
-        let variant = self.variant().to_string();
-        let program = match &self.manifest.wrapper {
-            Some(wrapper) => wrapper.resolve(&input.signals),
-            // Unreachable: `bind` refused a manifest with no `[wrapper]`.
-            None => {
-                return Err(WrapperError::NotAWrapper {
-                    plugin: self.manifest.name.clone(),
-                });
+        let variant = self.variant();
+        // Every member resolves its own conditions, then the union is walked in
+        // the order they all agreed to at bind time. A stage no member resolved
+        // this round simply does not appear.
+        let mut running: Vec<StageName> = Vec::new();
+        let mut per_member: Vec<Vec<StageName>> = Vec::with_capacity(self.members.len());
+        for member in &self.members {
+            let resolved = member.program(&input.signals)?.stages().to_vec();
+            for stage in &resolved {
+                if !running.iter().any(|seen| seen == stage) {
+                    running.push(stage.clone());
+                }
             }
+            per_member.push(resolved);
         }
-        .map_err(|source| WrapperError::Unresolvable {
-            wrapper: variant.clone(),
-            source: Box::new(source),
-        })?;
+        running.sort_by_key(|stage| {
+            self.stage_order
+                .iter()
+                .position(|declared| declared == stage)
+                // A stage no member declared cannot be one a member resolved,
+                // so this is unreachable; sorting it last is the inert answer.
+                .unwrap_or(usize::MAX)
+        });
+        let program = RunningProgram {
+            stages: running,
+            per_member,
+        };
 
         let mut faults = Vec::new();
         let mut holds_spent = 0u32;
@@ -340,7 +513,7 @@ impl WrapperDispatch {
             rounds += 1;
 
             let mut prelude = self
-                .open_round(round, &input, program.stages(), &mut faults)
+                .open_round(round, &input, &program, &mut faults)
                 .await;
             // The correction rides last, after this round's own contributions:
             // it is the most recent thing the host has to say, and it is the
@@ -351,7 +524,7 @@ impl WrapperDispatch {
 
             let driven = driver.run_turn(prelude).await;
             let observed = self
-                .close_round(round, &input, program.stages(), driven.outcome, &mut faults)
+                .close_round(round, &input, &program, driven.outcome, &mut faults)
                 .await;
             // `None` is the host's own conclusion about a plugin that did not
             // answer — an undeclared point, or a fault already on `faults` —
@@ -371,7 +544,7 @@ impl WrapperDispatch {
                 holds_spent,
                 host_max_holds: self.host_max_holds,
             };
-            match again(&verdict, &state, &self.manifest.loop_grant) {
+            match again(&verdict, &state, &self.hold_grant) {
                 Continuation::Stop { outcome } => {
                     return Ok(DispatchReport {
                         variant,
@@ -404,66 +577,86 @@ impl WrapperDispatch {
         &self,
         round: u32,
         input: &RoundInput,
-        stages: &[StageName],
+        program: &RunningProgram,
         faults: &mut Vec<WrapperError>,
     ) -> TurnPrelude {
         let mut prelude = TurnPrelude {
             round,
-            stages: stages.to_vec(),
+            stages: program.stages.clone(),
             messages: Vec::new(),
             role: None,
             scope: Vec::new(),
         };
-        // An undeclared point is never dispatched — the authoritative filter,
-        // asked before the process is, so a plugin that would happily answer
-        // one it never declared is simply never asked (#3501).
-        if !self
-            .manifest
-            .loop_grant
-            .permits_point(WrapperPoint::BeforeTurn)
-        {
-            return prelude;
-        }
 
         let mut published: Vec<PublishedSignal> = Vec::new();
-        for stage in stages {
-            let request = BeforeTurnRequest {
-                protocol_version: PROTOCOL_VERSION,
-                wrapper: self.variant().to_string(),
-                stage: stage.clone(),
-                round,
-                goal: input.goal.clone(),
-                candidate: input.candidate.clone(),
-                published: published.clone(),
-            };
-            let admitted = match self.wrapper.before_turn(request).await {
-                Ok(response) => match admissible(&self.manifest, response) {
-                    Ok(admitted) => admitted,
+        // Stage-major, then member within a stage: a later stage must see what
+        // an earlier one published *from every member*, which is the whole
+        // reason a composition needs one agreed stage order. Walking
+        // member-major instead would hand the second member the first
+        // member's whole turn as history and the third member's grounding not
+        // at all.
+        for stage in &program.stages {
+            for (index, member) in self.members.iter().enumerate() {
+                // Each member is filtered by its OWN grants. Composition unions
+                // what plugins contribute, never what they are permitted: a
+                // member that did not declare `before_turn` is not asked it
+                // because a sibling did (#3501's filter, per member).
+                if !member
+                    .manifest
+                    .loop_grant
+                    .permits_point(WrapperPoint::BeforeTurn)
+                {
+                    continue;
+                }
+                // Nor is it asked about a stage its own conditions did not
+                // resolve this round.
+                if !program.runs(index, stage) {
+                    continue;
+                }
+                let request = BeforeTurnRequest {
+                    protocol_version: PROTOCOL_VERSION,
+                    // Its own id, not the composition's: the plugin is being
+                    // asked as itself, and a manifest that keys behaviour on
+                    // the wrapper id would otherwise see a name it never
+                    // declared.
+                    wrapper: member.variant().to_string(),
+                    stage: stage.clone(),
+                    round,
+                    goal: input.goal.clone(),
+                    candidate: input.candidate.clone(),
+                    published: published.clone(),
+                };
+                let admitted = match member.wrapper.before_turn(request).await {
+                    Ok(response) => match admissible(&member.manifest, response) {
+                        Ok(admitted) => admitted,
+                        Err(error) => {
+                            faults.push(error);
+                            continue;
+                        }
+                    },
                     Err(error) => {
                         faults.push(error);
                         continue;
                     }
-                },
-                Err(error) => {
-                    faults.push(error);
-                    continue;
+                };
+                // Last contribution wins the role intent, members included:
+                // stages run in the agreed order and members within a stage in
+                // selection order, so the nearest declaration to the turn is
+                // still the one that meant it.
+                if let Some(role) = admitted.role() {
+                    prelude.role = Some(role.to_string());
                 }
-            };
-            // Last stage wins the role intent: stages run in declared order, so
-            // the nearest declaration to the turn is the one that meant it.
-            if let Some(role) = admitted.role() {
-                prelude.role = Some(role.to_string());
-            }
-            // The union of what the stages asked for, in first-seen order. Two
-            // stages naming the same path are asking for one narrowing, and a
-            // list that repeats it says nothing extra to the host that reads it.
-            for path in admitted.scope() {
-                if !prelude.scope.iter().any(|seen| seen == path) {
-                    prelude.scope.push(path.clone());
+                // The union of what was asked for, in first-seen order. Two
+                // contributions naming the same path are asking for one
+                // narrowing, and a list that repeats it says nothing extra.
+                for path in admitted.scope() {
+                    if !prelude.scope.iter().any(|seen| seen == path) {
+                        prelude.scope.push(path.clone());
+                    }
                 }
+                published.extend(admitted.published().iter().copied());
+                prelude.messages.extend(admitted.into_messages());
             }
-            published.extend(admitted.published().iter().copied());
-            prelude.messages.extend(admitted.into_messages());
         }
         prelude
     }
@@ -478,33 +671,34 @@ impl WrapperDispatch {
         &self,
         round: u32,
         input: &RoundInput,
-        stages: &[StageName],
+        program: &RunningProgram,
         outcome: TurnOutcome,
         faults: &mut Vec<WrapperError>,
     ) -> Option<ObservedEvidence> {
-        if !self
-            .manifest
-            .loop_grant
-            .permits_point(WrapperPoint::AfterTurn)
-        {
-            return None;
-        }
-        let request = AfterTurnRequest {
-            protocol_version: PROTOCOL_VERSION,
-            wrapper: self.variant().to_string(),
-            stage: stages.last().cloned(),
-            round,
-            goal: input.goal.clone(),
-            candidate: input.candidate.clone(),
-            turn: outcome,
-        };
-        match self.wrapper.after_turn(request).await {
-            Ok(response) => Some(response.evidence),
-            Err(error) => {
-                faults.push(error);
-                None
+        let mut merged: Option<ObservedEvidence> = None;
+        for member in &self.members {
+            if !member
+                .manifest
+                .loop_grant
+                .permits_point(WrapperPoint::AfterTurn)
+            {
+                continue;
+            }
+            let request = AfterTurnRequest {
+                protocol_version: PROTOCOL_VERSION,
+                wrapper: member.variant().to_string(),
+                stage: program.stages.last().cloned(),
+                round,
+                goal: input.goal.clone(),
+                candidate: input.candidate.clone(),
+                turn: outcome.clone(),
+            };
+            match member.wrapper.after_turn(request).await {
+                Ok(response) => merged = Some(fold_evidence(merged, response.evidence)),
+                Err(error) => faults.push(error),
             }
         }
+        merged
     }
 }
 

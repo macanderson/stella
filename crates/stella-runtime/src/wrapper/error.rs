@@ -323,6 +323,96 @@ pub enum WrapperError {
         /// Why.
         detail: String,
     },
+
+    /// A composition was bound with no members at all.
+    ///
+    /// Distinct from "the variant names nothing installed", which the host
+    /// answers before it reaches here: this is a caller handing the dispatcher
+    /// an empty list, which has no variant id and no stage order and would
+    /// otherwise drive a turn with nothing wrapping it.
+    #[error("a wrapper composition must name at least one plugin")]
+    EmptyComposition,
+
+    /// Two composed manifests order the same pair of stages differently.
+    ///
+    /// Refused rather than resolved. The merged order is what decides which
+    /// contribution a later stage can read — that is the whole point of
+    /// `BeforeTurnRequest::published` — so picking one plugin's order over the
+    /// other's would silently decide whose grounding the other one plans
+    /// against. A composition is only well-defined when every pair of stages
+    /// two members share appears in the same relative order in both.
+    #[error(
+        "plugins `{wrapper}` and `{other}` order the stages \"{first}\" and \"{second}\" \
+         differently, so composing them has no one stage order — a composition needs the \
+         members to agree on the order of every stage they share"
+    )]
+    ConflictingStageOrder {
+        /// The member declaring `first` before `second`.
+        wrapper: String,
+        /// The member declaring `second` before `first`.
+        other: String,
+        /// The earlier stage in `wrapper`'s order.
+        first: String,
+        /// The later stage in `wrapper`'s order.
+        second: String,
+    },
+
+    /// Two composed manifests each declare an `[oracle]`.
+    ///
+    /// One turn has one definition of done. Two oracles is the same defect the
+    /// arbiter rule already names one layer up — two things deciding whether
+    /// the same round is finished — and merging them would mean inventing a
+    /// precedence rule that no manifest declared and no user consented to.
+    #[error(
+        "plugins `{wrapper}` and `{other}` each declare an [oracle], so a composition of them \
+         has two definitions of done — at most one member of a composition may decide when a \
+         turn is finished"
+    )]
+    TwoOracles {
+        /// The first member declaring an oracle.
+        wrapper: String,
+        /// The second.
+        other: String,
+    },
+
+    /// Two composed manifests are both arbiter-grade.
+    ///
+    /// Checked separately from [`Self::TwoOracles`] because the grade and the
+    /// oracle are independent declarations: only an arbiter may hold a
+    /// completion open, so two of them is two hold loops over one round even
+    /// when only one of them carries an oracle.
+    #[error(
+        "plugins `{wrapper}` and `{other}` are both arbiter-grade, so a composition of them \
+         has two things holding one turn open — at most one member of a composition may be \
+         an arbiter"
+    )]
+    TwoArbiters {
+        /// The first arbiter-grade member.
+        wrapper: String,
+        /// The second.
+        other: String,
+    },
+
+    /// Two composed manifests declare the same requirement name with different
+    /// statements.
+    ///
+    /// The name is what a hold cites, so two members meaning different things
+    /// by one name would make the citation ambiguous exactly when it matters —
+    /// in the sentence explaining why a turn is being held open. Identical
+    /// statements are not a conflict: two plugins agreeing on a requirement is
+    /// a composition working.
+    #[error(
+        "plugins `{wrapper}` and `{other}` both declare the requirement \"{requirement}\" and \
+         mean different things by it, so a hold citing it would be ambiguous"
+    )]
+    ConflictingRequirement {
+        /// The requirement name declared twice.
+        requirement: String,
+        /// The first member declaring it.
+        wrapper: String,
+        /// The second.
+        other: String,
+    },
 }
 
 /// A driver session could not be opened, or its answer could not be used.
