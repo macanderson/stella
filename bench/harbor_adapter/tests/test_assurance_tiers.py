@@ -45,6 +45,7 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     assurance_tiers_from_posture,
 )
 from stella_harbor.posture import (  # noqa: E402 - after importorskip by design
+    _FLAT_ROLE_MODEL_KEY,
     resolve_posture_role_model,
 )
 
@@ -357,25 +358,72 @@ def _model_for_source() -> str:
     return holders[0].read_text()
 
 
-def test_the_engine_still_resolves_a_role_in_the_order_this_module_mirrors() -> None:
+def test_the_engine_still_resolves_a_model_in_the_order_this_module_mirrors() -> None:
     """Pin the mirror to its original: `AgentEngineConfig::model_for`.
 
-    The declaration is only trustworthy while it resolves roles the way the
-    engine does. Reordering `model_for` without reordering
+    The declaration is only trustworthy while it resolves the way the engine
+    does. Reordering `model_for` without reordering
     `resolve_posture_role_model` re-opens #2134 in a new place, and nothing
     else in either tree would notice — the two live in different languages,
     different test suites, and different CI jobs.
+
+    **The engine has one role now.** `model_for` used to take a `kind` and
+    read `agents.<kind>.model` > the flat `pipeline_<kind>_model` >
+    `default_model`. #3908/#3944 (`doc:roleless-core` §6 slice 4) collapsed
+    the six personas to the one role core actually has, so the signature lost
+    its parameter and the middle rung went with it — four of those five flat
+    keys were already inert before the collapse, read by nothing at all.
+
+    What that leaves is asserted in two halves below, because
+    ``resolve_posture_role_model`` still ranks the flat key and this test is
+    the only thing that would notice the day that stops being deliberate:
+
+    1. the two rungs the engine really has, in order;
+    2. that the flat keys are *declared* retired rather than quietly dropped.
+
+    Half 2 is what keeps this honest. The mirror's middle rung is dead, and
+    `RETIRED_ENGINE_ROOT`'s own comment says the fail-closed tightening lands
+    with **slice 6 (#3910), once the Python stops writing them** — so the
+    harness writing them today is a tracked interim state, not drift. When
+    #3910 lands, this assertion is what fails and sends the next reader to
+    `resolve_posture_role_model`.
     """
     source = _model_for_source()
     start = source.index(_MODEL_FOR_DECL)
     body = source[start : source.index("\n    }\n", start)]
     rungs = [
-        body.index("self.agent(kind).and_then(|a| a.model"),
-        body.index("pipeline_verifier_model"),
+        body.index("self.agent()"),
         body.index("self.default_model"),
     ]
     assert rungs == sorted(rungs), (
-        "`model_for` no longer reads `agents.<kind>.model` > the flat per-role "
-        "key > `default_model`; `resolve_posture_role_model` mirrors that order "
-        "and has to change with it (#2134)"
+        "`model_for` no longer reads `agents.default.model` > `default_model`; "
+        "`resolve_posture_role_model` mirrors that order and has to change "
+        "with it (#2134)"
+    )
+    assert "pipeline_verifier_model" not in body, (
+        "`model_for` reads a flat `pipeline_<role>_model` key again — if the "
+        "per-role rung is back, `resolve_posture_role_model`'s middle rung is "
+        "live again too and this test should assert its position, not its "
+        "absence (#3908)"
+    )
+
+    retired = (_SETTINGS_SRC / "settings" / "unknown.rs").read_text()
+    # Anchor on the declaration, not the first mention — the name appears in a
+    # doc comment above it, and slicing from there reads the wrong span.
+    decl = "const RETIRED_ENGINE_ROOT"
+    assert decl in retired, (
+        "the retired engine-root keys are no longer declared in "
+        "`settings/unknown.rs`; `resolve_posture_role_model` still writes and "
+        "ranks them, so their status has to be readable from the engine (#3910)"
+    )
+    declared = retired[retired.index(decl) :]
+    declared = declared[: declared.index("];")]
+    missing = [
+        key for key in _FLAT_ROLE_MODEL_KEY.values() if f'"{key}"' not in declared
+    ]
+    assert not missing, (
+        f"the harness writes {missing} but the engine no longer recognizes "
+        "them even to report them — slice 6 (#3910) tightened this to "
+        "fail-closed, so `resolve_posture_role_model` must stop writing the "
+        "flat keys now"
     )
