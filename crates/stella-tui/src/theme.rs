@@ -598,7 +598,7 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     // already paints deliberately when truecolor is absent. The family stays
     // on the *yellow* side: the nearest entry to the live stop on the orange
     // side is 215, and orange is the one thing this identity may not render.
-    (ACCENT, 221, 11), // also ACCENT_FILL and GOLD (one value, one entry)
+    (ACCENT, 221, 11),      // also ACCENT_FILL and GOLD (one value, one entry)
     (ACCENT_LIVE, 222, 11), // also GOLD_LIVE
     (SUCCESS, 114, 10),
     (WARNING, 173, 3),

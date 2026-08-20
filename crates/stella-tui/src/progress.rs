@@ -284,7 +284,10 @@ fn stepper_span(state: &ProgressState, i: usize) -> (Span<'static>, usize) {
 fn telemetry_line(state: &ProgressState, combined: bool) -> (Vec<Span<'static>>, usize) {
     match state.phase {
         RunPhase::Idle => (
-            vec![Span::styled("idle", Style::default().fg(theme::TEXT_TERTIARY))],
+            vec![Span::styled(
+                "idle",
+                Style::default().fg(theme::TEXT_TERTIARY),
+            )],
             4,
         ),
         RunPhase::Complete => (

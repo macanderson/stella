@@ -700,9 +700,8 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         // ground alone, because the drift this catches is a half-applied
         // recolour — one token pasted back from the old ramp is exactly what
         // nobody notices in an artifact users mail around.
-        "#070B10", "#0D1319", "#11171D", "#1F262D", "#333B43", "#010306",
-        "#E9EDF2", "#A4ABB3", "#737C88", "#4A535D", "#0B1116",
-        "#3FD99B", "#FF7A45", "#F2687A",
+        "#070B10", "#0D1319", "#11171D", "#1F262D", "#333B43", "#010306", "#E9EDF2", "#A4ABB3",
+        "#737C88", "#4A535D", "#0B1116", "#3FD99B", "#FF7A45", "#F2687A",
         // The bronze identity, on THIS surface. It is still the live value in
         // docs/brand/ and on the marketing site — the kit's ramp is
         // byte-parity-checked against ~60 generated binary assets and moves as
@@ -712,8 +711,8 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         "#C58A32", "#674415",
         // The light instrument ramp it replaces, for the same reason: the
         // dashboard ships both schemes in one document.
-        "#F7F9FC", "#E7EBF0", "#CFD6DD", "#4D535A", "#828C97", "#C2C9D1",
-        "#F3F6F9", "#0B6B3D", "#913200", "#A82036",
+        "#F7F9FC", "#E7EBF0", "#CFD6DD", "#4D535A", "#828C97", "#C2C9D1", "#F3F6F9", "#0B6B3D",
+        "#913200", "#A82036",
     ] {
         assert!(
             !html.contains(retired),

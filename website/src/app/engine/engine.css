@@ -32,39 +32,39 @@
 
 .eng-tour {
   /* Ink ground, paper text — pinned, not theme-derived (see the header). */
-  --eng-bg: var(--stella-ink);
-  --eng-fg: var(--stella-paper);
+  --eng-bg: var(--stella-canvas);
+  --eng-fg: var(--stella-text);
 
   /* Text ramp on ink. neutral-400 lands ~7.5:1, neutral-500 ~5.8:1 — both
    * clear AA for body text; neutral-600 (~4:1) is reserved for seams and
    * large type, never for prose. */
   --eng-muted: var(--stella-neutral-400);
-  --eng-faint: var(--stella-neutral-500);
+  --eng-faint: var(--stella-text-3);
 
   /* Structure. `--eng-rule` is decorative; `--eng-rule-strong` is the one
    * allowed to carry structure alone. */
-  --eng-rule: color-mix(in srgb, var(--stella-paper) 12%, var(--stella-ink));
+  --eng-rule: color-mix(in srgb, var(--stella-text) 12%, var(--stella-canvas));
   --eng-rule-strong: var(--stella-neutral-700);
 
   /* Lifted surfaces, warm rather than grey — ink with paper mixed in. */
-  --eng-surface: color-mix(in srgb, var(--stella-paper) 4%, var(--stella-ink));
+  --eng-surface: color-mix(in srgb, var(--stella-text) 4%, var(--stella-canvas));
   --eng-surface-high: color-mix(
     in srgb,
-    var(--stella-paper) 7%,
-    var(--stella-ink)
+    var(--stella-text) 7%,
+    var(--stella-canvas)
   );
   /* Ink warmed with gold — the hover/attention ground, as in global.css. */
   --eng-surface-warm: color-mix(
     in srgb,
-    var(--stella-brand) 8%,
-    var(--stella-ink)
+    var(--stella-signal) 8%,
+    var(--stella-canvas)
   );
 
-  --eng-accent: var(--stella-brand);
+  --eng-accent: var(--stella-signal);
   --eng-accent-dim: color-mix(
     in srgb,
-    var(--stella-brand) 45%,
-    var(--stella-ink)
+    var(--stella-signal) 45%,
+    var(--stella-canvas)
   );
 
   /* Layout constants the stations and the HUD both measure against. */
@@ -88,7 +88,7 @@
    * body text. Opacity has to ride the element, not the colour. */
   background-image: radial-gradient(
     ellipse 80% 50% at 50% 0%,
-    color-mix(in srgb, var(--stella-brand) 6%, transparent),
+    color-mix(in srgb, var(--stella-signal) 6%, transparent),
     transparent 70%
   );
   background-attachment: fixed;
@@ -154,7 +154,7 @@
   gap: 1rem;
   padding: 0 var(--eng-gutter);
   border-bottom: 1px solid var(--eng-rule);
-  background: color-mix(in srgb, var(--stella-ink) 82%, transparent);
+  background: color-mix(in srgb, var(--stella-canvas) 82%, transparent);
 }
 @supports (backdrop-filter: blur(1px)) {
   .eng-hud-top {
@@ -222,7 +222,7 @@
   gap: 1.25rem;
   padding: 0 var(--eng-gutter);
   border-top: 1px solid var(--eng-rule);
-  background: color-mix(in srgb, var(--stella-ink) 82%, transparent);
+  background: color-mix(in srgb, var(--stella-canvas) 82%, transparent);
 }
 @supports (backdrop-filter: blur(1px)) {
   .eng-rail {
@@ -280,11 +280,11 @@
  * here, same law as the docs sidebar's active pill. */
 .eng-rail-stop[aria-current="true"] {
   background: var(--eng-accent);
-  color: var(--stella-ink);
+  color: var(--stella-canvas);
 }
 .eng-rail-stop[aria-current="true"]:hover {
-  background: var(--stella-brand-400);
-  color: var(--stella-ink);
+  background: var(--stella-signal-live);
+  color: var(--stella-canvas);
 }
 
 .eng-rail-code {
@@ -340,7 +340,7 @@
   background:
     radial-gradient(
       ellipse 70% 60% at 50% 45%,
-      color-mix(in srgb, var(--stella-brand) 7%, transparent),
+      color-mix(in srgb, var(--stella-signal) 7%, transparent),
       transparent 72%
     );
 }
