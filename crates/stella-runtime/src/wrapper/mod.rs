@@ -80,6 +80,7 @@
 
 mod candidate_fanout;
 mod child_turn;
+mod compose;
 mod dispatch;
 mod driver_call;
 mod driver_subprocess;

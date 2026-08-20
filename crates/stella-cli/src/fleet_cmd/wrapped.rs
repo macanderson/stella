@@ -93,7 +93,10 @@ pub(super) struct AttemptWrapper {
 
 impl AttemptWrapper {
     /// The variant id this attempt's execution row records.
-    pub(super) fn variant(&self) -> &str {
+    ///
+    /// Owned since #3801: a composition's id is its members' ids joined, so it
+    /// is assembled on demand rather than stored.
+    pub(super) fn variant(&self) -> String {
         self.bound.variant()
     }
 
