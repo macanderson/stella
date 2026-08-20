@@ -1,8 +1,8 @@
 //! Which checks are allowed to block a merge, and which have stopped earning
 //! that right.
 //!
-//! `doc:backlog-self-driving` §3.3 (#3599). [`deliver_next`](crate::deliver_next)
-//! decides what to do about a red build; this decides *which reds count*. They are separate
+//! `doc:backlog-self-driving` §3.3 (#3599). `crate::deliver` decides what to
+//! do about a red build; this decides *which reds count*. They are separate
 //! questions and were previously the same one, which is how a loop ends up
 //! permanently blocked by something no pull request could ever fix.
 //!
