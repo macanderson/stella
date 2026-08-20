@@ -21,7 +21,7 @@
 //! not want them and something still does:
 //!
 //! - [`CTX_WINDOW`], the divisor the context meter reads.
-//! - [`vendor_slug`], which answers "whose model is this" for the bar's worker
+//! - `vendor_slug`, which answers "whose model is this" for the bar's worker
 //!   cell — the model's own vendor, not whoever proxied the call.
 //! - [`render_diagnosis`], the low-hit-rate sentence, which is prose and so has
 //!   nowhere to sit on a row of glanceable values.
