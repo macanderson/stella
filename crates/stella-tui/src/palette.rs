@@ -3,6 +3,45 @@
 //! [`crate::theme`], which is the only module that should reference these
 //! directly.
 //!
+//! ## What is a hex here, and what is not
+//!
+//! Sixteen of these constants are **not values at all** -- they are the
+//! generated tokens under another name:
+//!
+//! ```text
+//! GROUND SURFACE RAISED HAIRLINE  ->  token::BG PANEL HL BORDER
+//! BRAND BRAND_LIVE GOLD GOLD_LIVE ->  token::GOLD GOLD_BRIGHT
+//! TEXT_PRIMARY TEXT_EMPHASIS      ->  token::TEXT SILVER_TYPE
+//! TEXT_SECONDARY TEXT_TERTIARY    ->  token::SILVER MUTED
+//! TEXT_DIM SUCCESS DANGER INK     ->  token::DIM GREEN RED BG
+//! ```
+//!
+//! They were hand-typed copies of `design/tokens/stella-tokens.json`,
+//! byte-identical to it and held there by nothing. That is the shape this
+//! repository loses limits to -- a number in two places, with a comment
+//! asking the next author to copy carefully. They are re-exports now, so
+//! editing the JSON moves the deck and there is no second value to forget.
+//!
+//! The rest still carry their own hex, and each is a colour the token system
+//! has no home for yet rather than an oversight (#4058):
+//!
+//! - **The light theme.** `PAPER`, `SNOW`, `PAPER_RAISED`, `PAPER_HAIRLINE`,
+//!   `MUTED`, `INK_DIM`, `INK_EMPHASIS`, and the three ink golds
+//!   (`BRAND_INK`, `BRAND_INK_DEEP`, `GOLD_INK`). The JSON declares four
+//!   `web-light` stops and they disagree with these: its `paper` is pure
+//!   white where the deck paints `#F4F4F6`, and its `ink` is `#141416`
+//!   where this file means the dark ground. Reconciling them is a design
+//!   decision about what the paper theme *is*, not a remap.
+//! - **`WARNING` and the three status inks.** `#E78D54` fails the gold hue
+//!   clamp (`g/r = 0.61`, against `0.78`) and is not a verdict either, so it
+//!   has no clamp role to declare -- and the clamp is exactly the guard that
+//!   should be deciding whether an amber this close to the accent may exist.
+//! - **`VOID` and `HAIRLINE_STRONG`,** derived steps either side of the
+//!   declared ramp.
+//!
+//! Until those land in the JSON, `scripts/check-tokens.py` keeps
+//! `crates/stella-tui/` on its migration ledger.
+//!
 //! The identity is **Gold on a cool near-black**: one colour, owned. Gold
 //! `#EFC53F` is the signal -- the mark, the prompt, active/selected, focus --
 //! and never the surface; the ground is a four-step neutral ramp from
@@ -48,6 +87,7 @@
 //! Both are computed, not estimated.
 
 use ratatui::style::Color;
+use stella_tui_theme::token;
 
 // -- Ground (dark) -----------------------------------------------
 //
@@ -65,19 +105,19 @@ pub const VOID: Color = Color::Rgb(0x05, 0x05, 0x07);
 
 /// App background -- the canvas `#0A0A0C`, painted as a real frame fill by
 /// the deck, so every contrast figure below is measured against it.
-pub const GROUND: Color = Color::Rgb(0x0A, 0x0A, 0x0C);
+pub const GROUND: Color = token::BG;
 
 /// Card / panel surface, and the ground a **code block** sits on -- one step
 /// above the canvas (1.03:1, a value step rather than a shadow).
-pub const SURFACE: Color = Color::Rgb(0x0F, 0x0F, 0x12);
+pub const SURFACE: Color = token::PANEL;
 
 /// Raised surface -- **highlight rows**, popovers, selected rows, hovered
 /// cells. 1.11:1 on the canvas: visible as a band, invisible as a colour.
-pub const RAISED: Color = Color::Rgb(0x17, 0x17, 0x1B);
+pub const RAISED: Color = token::HL;
 
 /// Seam / rule -- the **border** value. Deliberately low-contrast on ground
 /// (1.31:1): decorative only, never the sole carrier of structure.
-pub const HAIRLINE: Color = Color::Rgb(0x26, 0x26, 0x2C);
+pub const HAIRLINE: Color = token::BORDER;
 
 /// Seam where a boundary must actually read -- panel edges, focused borders.
 /// The derived fifth step of the ground ramp (1.63:1 on ground), still below
@@ -95,14 +135,14 @@ pub const HAIRLINE_STRONG: Color = Color::Rgb(0x35, 0x35, 0x3D);
 /// Gold `#EFC53F` -- the mark. 11.99:1 on ground, 11.60:1 on surface,
 /// 10.83:1 on raised, so the same value is safe on a glyph, a one-cell rule
 /// and a fill on every dark ground. OKLCH hue 90.8.
-pub const BRAND: Color = Color::Rgb(0xEF, 0xC5, 0x3F);
+pub const BRAND: Color = token::GOLD;
 
 /// The live stop `#F7D96B` -- **reserved for small things that are moving**:
 /// the running spinner, the progress fill's leading edge. 14.22:1 on ground,
 /// 3.5 deg from [`BRAND`] in hue, so it reads as the same gold lit up rather
 /// than as a second colour. Never a resting mark: chrome that is not moving
 /// takes [`BRAND`].
-pub const BRAND_LIVE: Color = Color::Rgb(0xF7, 0xD9, 0x6B);
+pub const BRAND_LIVE: Color = token::GOLD_BRIGHT;
 
 // -- Brand (light: gold on paper) --------------------------------
 //
@@ -132,11 +172,11 @@ pub const BRAND_INK_DEEP: Color = Color::Rgb(0x4E, 0x3D, 0x00);
 // Activity is the one status gold does carry: active/running IS the accent.
 
 /// The mark's gold -- the same value as [`BRAND`].
-pub const GOLD: Color = Color::Rgb(0xEF, 0xC5, 0x3F);
+pub const GOLD: Color = token::GOLD;
 
 /// The live stop of the identity sweep -- the same value as [`BRAND_LIVE`],
 /// and under the same reservation: small, and moving.
-pub const GOLD_LIVE: Color = Color::Rgb(0xF7, 0xD9, 0x6B);
+pub const GOLD_LIVE: Color = token::GOLD_BRIGHT;
 
 /// Gold chrome on a light ground. 3.37:1 on [`PAPER`]: a *graphical* tone
 /// (splash rules, the identity sweep) that clears the 3:1 floor, while
@@ -150,29 +190,29 @@ pub const GOLD_INK: Color = Color::Rgb(0xA2, 0x81, 0x00);
 // which only works if the default voice carries no hue at all.
 
 /// Primary text -- the transcript's default voice. 16.19:1 on [`GROUND`].
-pub const TEXT_PRIMARY: Color = Color::Rgb(0xE8, 0xE8, 0xEC);
+pub const TEXT_PRIMARY: Color = token::TEXT;
 
 /// The bright neutral, one step under primary -- emphasis *inside* a body of
 /// secondary text, which in practice means the token classes in a code body
 /// (`theme::SYNTAX_KEYWORD`). 11.04:1 on ground, 9.97:1 on [`RAISED`].
-pub const TEXT_EMPHASIS: Color = Color::Rgb(0xBF, 0xC1, 0xCC);
+pub const TEXT_EMPHASIS: Color = token::SILVER_TYPE;
 
 /// Secondary text, and the tone context events take. 8.58:1 on ground,
 /// 7.75:1 on [`RAISED`] -- the safe small-text tone on every dark ground.
-pub const TEXT_SECONDARY: Color = Color::Rgb(0xA9, 0xAA, 0xB5);
+pub const TEXT_SECONDARY: Color = token::SILVER;
 
 /// Labels and captions. 4.47:1 on ground, 4.32:1 on surface, 4.04:1 on
 /// raised -- **just under the 4.5:1 AA body floor on all three**, which is
 /// stated rather than rounded away: this is a UI/large-text tier and a
 /// caption tier, and anything a reader must actually read at 13px takes
 /// [`TEXT_SECONDARY`] instead.
-pub const TEXT_TERTIARY: Color = Color::Rgb(0x77, 0x77, 0x82);
+pub const TEXT_TERTIARY: Color = token::MUTED;
 
 /// The dim tier -- 2.30:1 on ground, below every text floor and below the
 /// 3:1 graphical floor too. **Chrome only, never words**: the unfilled
 /// progress groove and nothing else. It is a real token rather than a fifth
 /// ground because it has to stay legible-as-texture against [`HAIRLINE`].
-pub const TEXT_DIM: Color = Color::Rgb(0x4B, 0x4B, 0x56);
+pub const TEXT_DIM: Color = token::DIM;
 
 // -- Status ------------------------------------------------------
 //
@@ -184,7 +224,7 @@ pub const TEXT_DIM: Color = Color::Rgb(0x4B, 0x4B, 0x56);
 /// Success / done / added. 9.90:1 on ground, OKLCH hue 153.9 (63.1 deg from
 /// the gold accent). Also the settled cost of a finished turn -- money spent
 /// is a fact, and a fact reads green.
-pub const SUCCESS: Color = Color::Rgb(0x74, 0xC9, 0x91);
+pub const SUCCESS: Color = token::GREEN;
 
 /// Warning / needs-input. 7.85:1 on ground, OKLCH hue 51.7.
 ///
@@ -198,7 +238,7 @@ pub const WARNING: Color = Color::Rgb(0xE7, 0x8D, 0x54);
 
 /// Error / failed / removed. 6.06:1 on ground, OKLCH hue 12.8 (78.0 deg from
 /// the gold accent).
-pub const DANGER: Color = Color::Rgb(0xE0, 0x68, 0x7A);
+pub const DANGER: Color = token::RED;
 
 // -- Status (light ground) ---------------------------------------
 //
@@ -240,7 +280,7 @@ pub const PAPER_HAIRLINE: Color = Color::Rgb(0xDD, 0xDD, 0xE3);
 /// Primary text on paper -- 18.01:1. The same value as [`GROUND`]: the
 /// canvas black serves as both the dark ground and the light text, which is
 /// the point of an identity this small.
-pub const INK: Color = Color::Rgb(0x0A, 0x0A, 0x0C);
+pub const INK: Color = token::BG;
 
 /// Secondary text on paper -- 5.83:1, the paper counterpart of
 /// [`TEXT_SECONDARY`].

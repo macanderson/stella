@@ -342,7 +342,6 @@ _SETTINGS_MODULE = [
     _SETTINGS_SRC / "settings.rs",
     *sorted((_SETTINGS_SRC / "settings").glob("*.rs")),
 ]
-_BENCH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "bench.yml"
 _MODEL_FOR_DECL = "pub fn model_for("
 _RETIRED_ROOT_DECL = "pub(crate) const RETIRED_ENGINE_ROOT: &[&str] = &["
 
@@ -369,6 +368,23 @@ def _model_for_source() -> str:
         "one the engine resolves through"
     )
     return holders[0].read_text()
+
+
+def _model_for_body() -> str:
+    """Just `model_for`'s body, sliced out of the file that declares it.
+
+    Scoped deliberately. The assertions below ask whether the *function*
+    reads a rung, and `settings/engine.rs` is a large file that mentions
+    `default_model` and the retired flat keys in several other places — a
+    whole-file search would answer a different question and pass for the
+    wrong reason.
+
+    The end anchor is the first column-4 `}`, which is where a method in an
+    `impl` block closes.
+    """
+    source = _model_for_source()
+    start = source.index(_MODEL_FOR_DECL)
+    return source[start : source.index("\n    }\n", start)]
 
 
 def test_the_engine_still_resolves_a_model_in_the_order_this_module_mirrors() -> None:
@@ -421,7 +437,7 @@ def test_the_engine_still_resolves_a_model_in_the_order_this_module_mirrors() ->
     retired = (_SETTINGS_SRC / "settings" / "unknown.rs").read_text()
     # Anchor on the declaration, not the first mention — the name appears in a
     # doc comment above it, and slicing from there reads the wrong span.
-    decl = "const RETIRED_ENGINE_ROOT"
+    decl = _RETIRED_ROOT_DECL
     assert decl in retired, (
         "the retired engine-root keys are no longer declared in "
         "`settings/unknown.rs`; `resolve_posture_role_model` still writes and "
