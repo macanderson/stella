@@ -1,81 +1,137 @@
 /**
- * stella's raw palette — brand kit v4.0 ("the comet").
+ * stella's raw palette — the black-and-gold system, v5.0.
  *
- * One color, owned: Bronze Gold #c58a32 on Obsidian #070b10, cool Paper for
- * the light ground, and a cool graphite ramp between them. The normative
- * source is docs/brand/ (css/tokens.css and brand-guidelines.html); every
- * value below is copied from it verbatim — do not tune a hex here, change the
- * kit and mirror it.
+ * The normative source is `design/tokens/stella-tokens.json`, and
+ * `design/tokens/stella-tokens.css` is generated from it. The `--st-*` block
+ * below is that generated file's content, and `scripts/check-tokens.py` fails
+ * the gate on any hex here that is not a live token — so "this file mirrors the
+ * system" is a checked property rather than a promise in a comment.
  *
- * That "verbatim" is now enforced rather than promised. This file sat on the
- * v1.0 ramp (Phosphor Gold #ffb000 on Ink #0b0b0c) for the whole life of the
- * 2026-08-11 bronze rebrand while still carrying the sentence above, and the
- * thirteen logo SVGs under public/brand/ were stale with it — so the site
- * served a bronze wordmark beside phosphor chrome, and the paragraph claiming
- * they matched was the only thing anyone had to go on. The kit is a shared
- * cell that four surfaces copy; a comment cannot hold one. `brand_parity` in
- * website/src/lib/brand-parity.test.ts diffs this ramp and those assets
- * against docs/brand/ and fails when they part.
+ * It had to become one. This file sat on the v1.0 phosphor ramp for the whole
+ * life of the v4.0 bronze rebrand while carrying a paragraph claiming it was
+ * copied verbatim from the kit, and the logo SVGs under public/brand/ were
+ * stale with it — so the site served a bronze wordmark beside phosphor chrome,
+ * and the paragraph was the only thing anyone had to go on. Then it happened
+ * again in the other direction, with the product surfaces on gold and the
+ * marketing surfaces left on Ion, so a reader crossing from this site to the
+ * Observatory watched the brand change hue (#3968). A comment cannot hold a
+ * shared cell. The generator and the guard can.
  *
- * It happened a second time, and that is why this file is a rewrite rather
- * than a patch. v4.0 took the brand hue back to gold across the product
- * surfaces and the kit itself, and left every marketing surface on v3.0's Ion
- * — so for a while the tree shipped two identities and a reader crossing from
- * this site to the Observatory watched the brand change hue (#3968). The
- * guard above holds this file to the kit; nothing held the *rest* of the site
- * to it, which is what the retired-value sweep in that test now covers.
+ * WHAT CHANGED IN v5.0, and why it is a supersession rather than a tune. The
+ * brand hue moves to #efc53f and the ground to #0a0a0c because v4.0's own
+ * anchors fall outside the system's hue clamp. Bronze Gold measured
+ * r=197 g=138 b=50, and a gold must satisfy g >= 0.78r — so g >= 154. At 138 it
+ * missed by 16 points and sat in the orange band that reads brown on an
+ * uncalibrated panel. Obsidian measured r=7 g=11 b=16, green-tipped, failing
+ * the neutral-gray rule (r == g, b >= g) as well. Both anchors were outside, so
+ * the kit is replaced rather than adjusted.
  *
- * The token family is `--stella-brand-*`. It was `--stella-gold-*` until v3.0,
- * and it stays role-named through v4.0's return to gold — which is the rule
- * proving itself rather than an exception to it. A hue in a token name
- * falsifies itself the first time the hue moves, and this one has moved four
- * times. Name the role; put the hue in the value.
+ * The retired values are named by NAME here and not by hex on purpose: they are
+ * on the ban list in design/tokens/stella-tokens.json, and this file is one of
+ * the token-only paths, so writing one would fail the guard that the rest of
+ * this comment is describing.
  *
- * Quick rules from the kit that this site enforces downstream:
- *  - Gold is the signal, never the surface.
- *  - Small gold text on light grounds uses brand-deep (#8b5e1a); full-strength
- *    gold text is a dark-ground privilege.
- *  - The comet flies left→right; lowercase always.
+ * WHAT WAS DELETED, and why nothing replaces it:
+ *  - The brand and neutral 50–950 ramps. The system is flat by design: two
+ *    metals, a text ramp, two verdicts. A ramp invents stops, and an invented
+ *    stop is how a palette drifts warm one reasonable step at a time. Their
+ *    only consumers outside this file were `--stella-brand-400` and
+ *    `--stella-neutral-600`, both repointed.
+ *  - `--stella-glow-brand`. Rule 5 retires gradients, glows and coloured
+ *    shadows on every surface; a glow is a gradient with a soft edge.
  *
- * The semantic aliases at the bottom flip on `.dark` because that is the class
- * fumadocs' theme provider toggles. The kit also ships `[data-theme]` and
- * media-query variants; they are intentionally NOT reproduced here — two
- * authorities over the same tokens is how a theme forks.
+ * WHAT IS AN OPEN EXCEPTION. `--stella-warning` has no token. The system ships
+ * two verdicts, pass and fail, and a warning is neither — and the colour a
+ * warning wants is an amber, which is precisely the hue the clamp exists to
+ * reject. It is aliased to gold here so nothing renders an undefined value, and
+ * that choice needs a human: see the note at its definition.
+ *
+ * The token family stays role-named. A hue in a token name falsifies itself the
+ * first time the hue moves, and this one has moved five times.
  */
 
 :root {
-  /* ── brand core ─────────────────────────────────────────────────────── */
-  --stella-brand: #c58a32; /* Bronze Gold — CRT amber, the gold star */
-  --stella-brand-deep: #8b5e1a; /* small brand text on light surfaces */
-  --stella-ink: #070b10; /* Obsidian — the terminal, not pure black */
-  --stella-paper: #e9edf2; /* Paper — cool text on dark */
-  --stella-paper-bg: #eef1f5; /* Paper — light-mode surface */
+  /* ── the system, generated ──────────────────────────────────────────── */
+  --st-bg: #0a0a0c; /* canvas */
+  --st-panel: #0f0f12; /* panels, cards, code blocks */
+  --st-hl: #17171b; /* selected and hover rows */
+  --st-border: #26262c; /* hairlines, dividers, unfilled meter track */
+  --st-rule: #2c2c33; /* section rules, turn boundaries */
+  --st-gold: #efc53f; /* the brand metal: actions, active states, money, the mark */
+  --st-gold-bright: #f7d96b; /* tiny live indicators only */
+  --st-silver: #a9aab5; /* secondary emphasis, incoming context */
+  --st-silver-type: #bfc1cc; /* syntax types, tertiary labels */
+  --st-text: #e8e8ec; /* primary text on dark */
+  --st-muted: #777782; /* secondary text */
+  --st-dim: #4b4b56; /* hints, captions, line numbers */
+  --st-comment: #565660; /* code comments */
+  --st-green: #74c991; /* pass, additive diff sign */
+  --st-red: #e0687a; /* fail, destructive, removal diff sign */
+  --st-diff-add: #10201a; /* added diff row background */
+  --st-diff-del: #241019; /* removed diff row background */
+  --st-ink: #141416; /* primary text on light surfaces */
+  --st-paper: #ffffff; /* light canvas */
+  --st-paper-panel: #f6f6f8; /* light panel */
+  --st-paper-border: #e3e3e8; /* light border */
 
-  /* ── brand ramp ─────────────────────────────────────────────────────── */
-  --stella-brand-50: #fbf3e3;
-  --stella-brand-100: #f3dec0;
-  --stella-brand-200: #ebcb9d;
-  --stella-brand-300: #dfb473;
-  --stella-brand-400: #d39f50;
-  --stella-brand-500: #c58a32; /* oklch(0.677 0.124 73.16) */
-  --stella-brand-600: #a97227;
-  --stella-brand-700: #8b5e1a;
-  --stella-brand-800: #674415;
-  --stella-brand-900: #462e10;
-  --stella-brand-950: #291b0d;
+  /* ── brand core, named by role ──────────────────────────────────────── */
+  --stella-brand: var(--st-gold);
+  /* Brand *text* on a light ground is not gold. Rule 6 forbids it and the
+     measurement agrees: gold on paper is 1.65:1. The mark is exempt as a
+     logotype; a word is not. */
+  --stella-brand-deep: var(--st-ink);
+  --stella-ink: var(--st-bg);
+  --stella-paper: var(--st-text);
+  --stella-paper-bg: var(--st-paper);
 
-  /* ── cool neutrals ──────────────────────────────────────────────────── */
-  --stella-neutral-50: #f1f8ff;
-  --stella-neutral-100: #dbe2ea;
-  --stella-neutral-200: #c0c8d0;
-  --stella-neutral-300: #a7aeb6;
-  --stella-neutral-400: #90979e;
-  --stella-neutral-500: #7a8088;
-  --stella-neutral-600: #60666d;
-  --stella-neutral-700: #474d54;
-  --stella-neutral-800: #2f353b;
-  --stella-neutral-900: #1a1f25;
-  --stella-neutral-950: #070b10;
+  /* ── product palette ────────────────────────────────────────────────
+   *
+   * The ramp the terminal and the Observatory render
+   * (crates/stella-tui/src/palette.rs, which carries the measured derivation
+   * of every value). It is a SEPARATE system from the kit ramp above, and
+   * the split is deliberate and bounded:
+   *
+   *  - The **chrome** of this site — grounds, text, seams, the accent on a
+   *    button or an active nav item — takes these values, so a reader
+   *    crossing from here to the Observatory or the terminal sees one
+   *    product.
+   *  - The **mark** — the wordmark, the logomark, the favicon, the PWA
+   *    icons — stays on the kit ramp above (`--stella-mark-shape`,
+   *    `--stella-brand-*`). Those are cut assets: thirteen SVGs, eight PWA
+   *    icons and a favicon.ico, byte-parity-checked against docs/brand/ by
+   *    brand_parity, and rebuilt only by docs/brand/build_marks.py under
+   *    rsvg-convert. Repointing a CSS variable cannot recolour a PNG, and a
+   *    kit that is half-recoloured is the failure this file's header
+   *    already records twice.
+   *
+   * So this page does carry two golds until the kit moves: #efc53f in the
+   * chrome and #c58a32 in the mark. That is a known, bounded cost of taking
+   * the product palette now, not an oversight — and it is bounded precisely
+   * because the two live in different tokens rather than being mixed by
+   * hand at call sites.
+   *
+   * Every neutral here is blue-above-red (OKLCH hue 285.6–286.4 at chroma
+   * 0.004–0.018). The gold is two values and no more: `--stella-signal` for
+   * every resting mark, `--stella-signal-live` for small things that are
+   * moving. Role names, not hue names, for the same reason the ramp above
+   * uses them. */
+  --stella-void: #050507; /* below the canvas — full-bleed backdrops */
+  --stella-canvas: #0a0a0c; /* the page ground */
+  --stella-canvas-code: #0f0f12; /* cards, code blocks */
+  --stella-canvas-row: #17171b; /* highlight rows, hover surfaces */
+  --stella-canvas-edge: #26262c; /* borders */
+  --stella-signal: #efc53f; /* 11.99:1 on canvas */
+  --stella-signal-live: #f7d96b; /* 14.22:1 — small, and moving */
+  --stella-signal-ink: #725a00; /* gold TEXT on the paper ground, 6.02:1 */
+  --stella-text: #e8e8ec; /* 16.19:1 on canvas */
+  --stella-text-2: #a9aab5; /* 8.58:1 — the safe small-text tone */
+  --stella-text-3: #777782; /* 4.47:1 — caption/UI tier, under AA body */
+  --stella-text-dim: #4b4b56; /* 2.30:1 — chrome only, never words */
+  --stella-paper-2: #f4f4f6; /* the cool paper ground */
+  --stella-paper-3: #fafafc; /* paper surface */
+  --stella-paper-row: #e6e6ea; /* paper hover / raised */
+  --stella-paper-edge: #dddde3; /* paper seam */
+  --stella-ink-2: #5e5e69; /* paper secondary text, 5.83:1 */
 
   /* ── status. Not part of the brand kit's one-color law: these are
    *    FUNCTIONAL hues (a warning must not read as decoration), and each has
@@ -92,15 +148,22 @@
    *    about confusability). It takes the product palette's hue-41.2° pair,
    *    the values the Observatory reasoned to in
    *    crates/stella-observatory/src/assets/index.html, so the surfaces agree:
-   *    32.0° from the identity, and AA on both grounds (7.63:1 on ink,
-   *    6.97:1 on paper). Success and danger needed no move — they sit 81.8°
-   *    and 68.5° from gold. */
-  --stella-success: #00e786;
-  --stella-success-ink: #007541;
-  --stella-warning: #ff7a45;
-  --stella-warning-ink: #913200;
-  --stella-danger: #ff749b;
-  --stella-danger-ink: #a8004c;
+   *    32.0° from the identity, and AA on both grounds. That reasoning
+   *    survives the move to the product palette; only the neighbours it is
+   *    measured against changed. The signal is now at OKLCH hue 90.8 and
+   *    danger at 12.8, so 51.8 is the point that maximises the smaller of
+   *    the two gaps: `--stella-warning` lands 39.1° from the signal and
+   *    38.9° from danger. Success and danger come straight from the product
+   *    palette, both pulled cool (chroma 0.116 and 0.150 against the
+   *    signal's 0.152) so no status ever out-saturates the one owned colour;
+   *    they sit 63.1° and 78.0° from it. Each `-ink` variant holds its dark
+   *    twin's hue to within 2° and clears AA on the paper ground. */
+  --stella-success: #74c991;
+  --stella-success-ink: #006933;
+  --stella-warning: #e78d54;
+  --stella-warning-ink: #8a3f00;
+  --stella-danger: #e0687a;
+  --stella-danger-ink: #96213c;
 
   /* ── motion — assemble, don't spin ──────────────────────────────────── */
   --stella-ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);
@@ -114,23 +177,23 @@
   --stella-grid-opacity: 0.05; /* terminal grid lines */
   --stella-starfield-opacity: 0.16; /* max star opacity */
 
-  /* ── elevation / glow ───────────────────────────────────────────────── */
-  --stella-glow-brand: 0 0 24px rgb(197 138 50 / 0.28),
-    0 0 96px rgb(197 138 50 / 0.12);
-  --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25),
-    0 8px 28px rgb(0 0 0 / 0.35);
+  /* ── elevation ──────────────────────────────────────────────────────── */
+  /* Neutral only. A coloured shadow is a gradient wearing a blur, and rule 5
+     retires those everywhere. */
+  --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 28px rgb(0 0 0 / 0.35);
 }
 
 /* ── semantic aliases — light (paper) is the default ─────────────────── */
 :root {
-  --stella-bg: var(--stella-paper-bg);
-  --stella-fg: var(--stella-ink);
-  --stella-surface: #f7f9fc;
-  --stella-border: #cfd6dd;
-  --stella-muted-fg: #61676f;
-  --stella-accent: var(--stella-brand);
-  /* the gold stop that holds its edge as TEXT on the light ground (kit rule) */
-  --stella-accent-text: var(--stella-brand-deep);
+  --stella-bg: var(--stella-paper-2);
+  --stella-fg: var(--stella-canvas);
+  --stella-surface: var(--stella-paper-3);
+  --stella-border: var(--stella-paper-edge);
+  --stella-muted-fg: var(--stella-ink-2);
+  --stella-accent: var(--stella-signal);
+  /* the gold stop that holds its edge as TEXT on the light ground: the
+     full-strength signal is 1.32:1 on paper, this stop is 6.02:1 */
+  --stella-accent-text: var(--stella-signal-ink);
   /* the stop the MARK takes on a light ground — shapes, not text. v3.0
      retired the kit's "full strength on both grounds" rule because ion was
      1.61:1 on paper, a logotype nobody can see. v4.0 keeps the split: gold is
@@ -141,12 +204,14 @@
 
 /* ── semantic aliases — dark (ink) ───────────────────────────────────── */
 .dark {
-  --stella-bg: var(--stella-ink);
-  --stella-fg: var(--stella-paper);
-  --stella-surface: #12181d;
-  --stella-border: #2a3036;
-  --stella-muted-fg: #9299a1;
-  --stella-accent: var(--stella-brand);
-  --stella-accent-text: var(--stella-brand);
+  --stella-bg: var(--stella-canvas);
+  --stella-fg: var(--stella-text);
+  --stella-surface: var(--stella-canvas-code);
+  --stella-border: var(--stella-canvas-edge);
+  --stella-muted-fg: var(--stella-text-2);
+  --stella-accent: var(--stella-signal);
+  --stella-accent-text: var(--stella-signal);
+  /* The mark keeps the kit ramp on both grounds — see the product-palette
+     block above for why a CSS variable cannot follow the cut assets. */
   --stella-mark-shape: var(--stella-brand);
 }

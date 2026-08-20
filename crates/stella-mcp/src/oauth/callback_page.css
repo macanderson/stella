@@ -21,11 +21,11 @@
    `data-theme` gate because there is no toggle: nothing here for a reader to
    click. */
 :root{color-scheme:dark light;
-  --ground:#070B10;--text:#E9EDF2;--text-2:#A4ABB3;
-  --ok:#3FD99B;--bad:#F2687A;--identity:#C58A32}
+  --ground:#0A0A0C;--text:#E8E8EC;--text-2:#A9AAB5;
+  --ok:#74C991;--bad:#E0687A;--identity:#EFC53F}
 @media (prefers-color-scheme:light){:root{
-  --ground:#FFFFFF;--text:#070B10;--text-2:#4D535A;
-  --ok:#0B6B3D;--bad:#A82036;--identity:#674415}}
+  --ground:#FFFFFF;--text:#0A0A0C;--text-2:#4B4B56;
+  --ok:#006933;--bad:#96213C;--identity:#725a00}}
 body{margin:0;padding:48px;background:var(--ground);color:var(--text);
   font:13px/1.55 "JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
 h2{margin:0 0 8px;font-size:15px;font-weight:600;letter-spacing:.02em}

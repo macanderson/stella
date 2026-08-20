@@ -17,7 +17,7 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Widget, Wrap
 use crate::composer;
 use crate::deck_ui::{DeckUi, InstalledMode, InstalledPanel};
 use crate::envelope::InstalledAgentEntry;
-use crate::syntax;
+use crate::syntax::{self, HighlightSpans as _};
 use crate::theme;
 
 /// Column headers for the browse list, matching `widths` in [`render_list`].

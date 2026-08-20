@@ -638,7 +638,7 @@ mod tests {
     #[test]
     fn h1_is_a_high_contrast_gold_pill() {
         // The exact fix the user asked for: the H1 must be a bold, filled,
-        // high-contrast bar — ink on Phosphor Gold — never washed-out or a
+        // high-contrast bar — ink on gold — never washed-out or a
         // light-text-on-pale-background combination (white on gold is
         // 1.83:1; ink on gold is 10.74:1).
         let lines = render("# Rust Async Patterns");

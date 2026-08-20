@@ -1,28 +1,33 @@
-//! The JSON lexer every transcript surface colours with.
+//! The lexers every transcript surface colours with, and the one decision about
+//! *which* lexer a tool-result body earns.
 //!
 //! ## Why this lives here and not in `stella-tui`
 //!
-//! It used to live there, beside the deck's Rust/Python/Markdown/TOML lexers,
-//! and it was the only one of them the *export* surfaces also needed: a tool's
-//! arguments and most tool results are JSON, and JSON is the one language in
-//! that set which is read far more than it is edited. So the Observatory and an
-//! exported transcript rendered it as flat grey while the deck coloured it —
-//! two renderings of one information model, which is the drift this crate
-//! exists to prevent (#3644).
+//! The JSON lexer came down first, in #3644. It lived beside the deck's
+//! Rust/Python/Markdown/TOML lexers and was the only one of them the *export*
+//! surfaces also needed, so the Observatory and an exported transcript rendered
+//! JSON as flat grey while the deck coloured it — two renderings of one
+//! information model, which is the drift this crate exists to prevent.
 //!
-//! `stella-transcript` is a near-leaf by contract and could not take an edge on
-//! `stella-tui` to fix that; the edge had to go the other way. So the *lexing*
-//! moved down here, where both the grid and the HTML renderer can reach it, and
-//! `stella-tui` now depends on this crate and re-exports [`Tok`] and [`Runs`]
-//! so its other lexers keep compiling unchanged. What stayed up there is
-//! [`tok_style`-shaped colour resolution][crate::grid::Color]: turning a token
-//! class into a `ratatui::Style` needs ratatui and the terminal theme, and this
-//! crate has neither and wants neither. One lexer, three palettes.
+//! The others followed in #4036, for the same reason one step later. They
+//! stayed behind on the argument that "only the deck reads them", and that
+//! stopped being true the moment a `read_file` result had to render as *source*
+//! rather than as flat grey: #4019 taught the deck to do it, and the export
+//! surfaces had no way to follow without reaching up into `stella-tui`.
+//! `stella-transcript` is a near-leaf by contract and cannot take that edge; it
+//! had to go the other way, so those lexers now sit at the bottom with the
+//! JSON one, behind [`tokenize`].
+//!
+//! What stayed up in `stella-tui` is the half that genuinely needs ratatui and
+//! the terminal theme: `tok_style`, turning a [`Tok`] into a `Style`. The grid
+//! and HTML renderers keep their own `tok_color` / `tok_class` mappings. One
+//! lexer, three palettes — and no surface can differ on *classification* any
+//! more, only on hue.
 //!
 //! ## Contract
 //!
-//! Carried over verbatim from the original, because two surfaces now depend on
-//! it and a middle-elided tool result is the normal input, not the edge case:
+//! Carried over verbatim from the original, because three surfaces now depend
+//! on it and a middle-elided tool result is the normal input, not the edge case:
 //!
 //! - **Lossless.** Concatenating the run texts reproduces the input exactly.
 //! - **Stateless.** One left-to-right scan per line, no carry between lines, so
@@ -30,6 +35,10 @@
 //!   than mis-colouring the rest of the render.
 //! - **Panic-free.** An unterminated string runs to end of line; a trailing
 //!   lone backslash cannot step past the end.
+
+mod lang;
+
+pub use lang::{Highlighter, Lang, lang_from_ext, lang_from_fence, lang_from_path, tokenize};
 
 /// A token class given a syntax colour; `None` runs stay the base colour.
 ///
@@ -86,6 +95,202 @@ pub fn body_reads_as_json(lines: &[String]) -> bool {
         .iter()
         .find(|l| !l.trim().is_empty())
         .is_some_and(|l| reads_as_json(l))
+}
+
+/// `read_file`'s line-number gutter, split off one body line.
+///
+/// The emitter's shape is `stella-tools`' `{line_num:>6}\t{line}`: padding
+/// spaces, ASCII digits, one tab. Parsed rather than assumed, so the lines of
+/// the same body that carry no gutter — the read footer, a payload-cap notice —
+/// say so by yielding `None` instead of having six characters of their own text
+/// amputated.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Gutter<'a> {
+    /// The gutter exactly as it appeared, its tab included. What a surface
+    /// re-renders when it wants the emitter's own column back.
+    pub text: &'a str,
+    /// The line number the gutter states — the number *in the file*, which is
+    /// not the line's index in the body whenever the read carried an offset.
+    pub number: usize,
+    /// Everything after the tab: the file's actual source for this line.
+    pub source: &'a str,
+}
+
+/// Split [`Gutter`] off a body line, or `None` when the line carries none.
+///
+/// The *first* tab is the separator; a source line may contain more, and those
+/// belong to the source.
+#[must_use]
+pub fn split_gutter(line: &str) -> Option<Gutter<'_>> {
+    let tab = line.find('\t')?;
+    let digits = line[..tab].trim_start_matches(' ');
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (text, source) = line.split_at(tab + 1);
+    Some(Gutter {
+        text,
+        // A gutter too long to be a line number is not a gutter. Refusing here
+        // rather than saturating keeps the line whole: it renders plain, which
+        // is right for whatever it actually was.
+        number: digits.parse().ok()?,
+        source,
+    })
+}
+
+/// How a tool-result body is coloured, and whether it is a numbered listing.
+///
+/// This replaces the bare "is it JSON" bool all three surfaces used to ask.
+/// That question was the one they could answer cheaply rather than the one they
+/// wanted: a body earned colouring only when it opened with `{` or `[`, and a
+/// `read_file` result never does, because every line starts with a digit from
+/// the gutter. The consequence was wider than "source is not highlighted" —
+/// reading a `.json` file through `read_file` was not highlighted either
+/// (#4019).
+///
+/// Deciding it once, here, is the point: the deck, the grid and the HTML
+/// renderer previously each held their own copy of the predicate, and #3644
+/// exists because copies of a rendering decision drift.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct BodyPaint {
+    /// The language each source line lexes as, or `None` for one flat tone.
+    ///
+    /// `None` with `numbered` set is a real combination and not a
+    /// contradiction: a read of an extension no lexer covers still has a gutter
+    /// to separate from its text, it just has no colouring to apply to the rest.
+    pub lang: Option<Lang>,
+    /// Whether this body's lines carry [`Gutter`]s.
+    ///
+    /// A surface that draws its own line numbers must consult this before doing
+    /// so, or it stacks a second gutter on the emitter's — which is exactly what
+    /// both export renderers did, and with the *wrong* number: they counted
+    /// position in the fold, so a read at offset 780 was labelled line 1.
+    pub numbered: bool,
+}
+
+impl BodyPaint {
+    /// The paint for a body the caller already knows is a JSON document.
+    ///
+    /// For the one input that needs no sniffing: a tool call's *arguments*,
+    /// which the deck pretty-prints from a `serde_json::Value` and so cannot be
+    /// anything else. Asking [`body_paint`] would work and would be a lie about
+    /// where the knowledge came from.
+    #[must_use]
+    pub fn json() -> Self {
+        Self {
+            lang: Some(Lang::Json),
+            numbered: false,
+        }
+    }
+
+    /// Whether this body carries syntax colour.
+    ///
+    /// A surface that flattens a line into a single style — the deck promoting
+    /// a body's first line onto its result row — must not do so for a coloured
+    /// body, or it strips exactly the colouring this exists to produce.
+    #[must_use]
+    pub fn colored(self) -> bool {
+        self.lang.is_some()
+    }
+}
+
+/// Decide how to paint a body held as one string (the deck's shape).
+///
+/// Order matters. A body that opens as a JSON document is JSON whatever tool
+/// produced it — that is a fact about the bytes, and it settles the question
+/// before the path is consulted. Only then does the path get a say, and only
+/// for a body that actually *is* a numbered listing: the same `read_file` can
+/// answer `(file has 3 lines, offset 9 is past end)`, and lexing that as Rust
+/// because the path ended in `.rs` would colour a sentence.
+#[must_use]
+pub fn body_paint(path: Option<&str>, text: &str) -> BodyPaint {
+    paint(path, text.lines().find(|l| !l.trim().is_empty()))
+}
+
+/// [`body_paint`] for a body already split into lines (the export's shape).
+///
+/// Equivalent by construction — both hand the same first non-blank line to the
+/// same decision — and kept beside its sibling for the reason
+/// [`body_reads_as_json`] is kept beside [`reads_as_json`]: two surfaces asking
+/// one question must not be able to drift into two answers.
+#[must_use]
+pub fn lines_body_paint(path: Option<&str>, lines: &[String]) -> BodyPaint {
+    paint(
+        path,
+        lines
+            .iter()
+            .map(String::as_str)
+            .find(|l| !l.trim().is_empty()),
+    )
+}
+
+/// One body line, split into the parts a renderer paints separately.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PaintedLine<'a> {
+    /// The emitter's line-number gutter, when this line carries one. A surface
+    /// draws it as its own number column and never lexes it — otherwise every
+    /// line number is painted as a numeric literal, the brightest column on
+    /// screen and the one saying least.
+    pub gutter: Option<Gutter<'a>>,
+    /// The text to lex: the source after the gutter, or the whole line.
+    pub source: &'a str,
+    /// The language to lex `source` as, or `None` for one flat tone.
+    pub lang: Option<Lang>,
+}
+
+/// Split one body line the way every surface must split it.
+///
+/// The third and last thing that was about to exist in three copies. The deck,
+/// the grid and the HTML renderer each need the same three-way answer — is
+/// there a gutter, what is the source, what lexes it — and each had its own
+/// reason to get it subtly wrong: the deck by lexing a footer as Rust, the two
+/// export renderers by stacking their own line numbers on top of the emitter's.
+///
+/// The rule: a `numbered` body's line is source *only* when it actually carries
+/// a gutter. A line without one is the read footer or a payload-cap notice —
+/// prose, not code — so it lexes as nothing at all rather than as the file's
+/// language.
+#[must_use]
+pub fn paint_line(paint: BodyPaint, line: &str) -> PaintedLine<'_> {
+    if !paint.numbered {
+        return PaintedLine {
+            gutter: None,
+            source: line,
+            lang: paint.lang,
+        };
+    }
+    match split_gutter(line) {
+        Some(gutter) => PaintedLine {
+            source: gutter.source,
+            gutter: Some(gutter),
+            lang: paint.lang,
+        },
+        None => PaintedLine {
+            gutter: None,
+            source: line,
+            lang: None,
+        },
+    }
+}
+
+/// The shared decision, over whichever line came first.
+fn paint(path: Option<&str>, first: Option<&str>) -> BodyPaint {
+    let Some(first) = first else {
+        return BodyPaint::default();
+    };
+    if reads_as_json(first) {
+        return BodyPaint {
+            lang: Some(Lang::Json),
+            numbered: false,
+        };
+    }
+    if split_gutter(first).is_none() {
+        return BodyPaint::default();
+    }
+    BodyPaint {
+        lang: path.and_then(lang_from_path),
+        numbered: true,
+    }
 }
 
 /// One line of JSON, tokenized left to right.

@@ -1,0 +1,63 @@
+<svg viewBox="0 0 680 520" width="680" height="520" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
+<rect x="0" y="0" width="680" height="520" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="22" font-size="11" fill="#EFC53F" font-weight="500">SESSION</text>
+<text x="80" y="22" font-size="11" fill="#777782">▸ plan r3 · task 6 verify · 5/6</text>
+<text x="600" y="22" font-size="12" fill="#E8E8EC" font-weight="500">stella</text>
+<text x="645" y="22" font-size="12" fill="#EFC53F" font-weight="500">*</text>
+<line x1="0" y1="32" x2="680" y2="32" stroke="#26262C" stroke-width="1"/>
+<line x1="16" y1="52" x2="664" y2="52" stroke="#2C2C33" stroke-width="1"/>
+<rect x="24" y="44" width="290" height="14" fill="#0A0A0C"/>
+<text x="28" y="56" font-size="11" fill="#EFC53F">turn 15</text>
+<text x="82" y="56" font-size="11" fill="#777782">verify · gates · det only · $0.00</text>
+<line x1="20" y1="70" x2="20" y2="196" stroke="#EFC53F" stroke-width="2"/>
+<text x="32" y="82" font-size="12" fill="#EFC53F">◇ gate board</text>
+<text x="146" y="82" font-size="11" fill="#777782">patch-7 · 4/5 green</text>
+<text x="588" y="82" font-size="11" fill="#4B4B56">$0.00</text>
+<text x="32" y="106" font-size="12" fill="#74C991">✓</text>
+<text x="48" y="106" font-size="12" fill="#777782">types</text>
+<text x="588" y="106" font-size="11" fill="#74C991">pass</text>
+<text x="32" y="126" font-size="12" fill="#74C991">✓</text>
+<text x="48" y="126" font-size="12" fill="#777782">lint + format</text>
+<text x="588" y="126" font-size="11" fill="#74C991">pass</text>
+<text x="32" y="146" font-size="12" fill="#74C991">✓</text>
+<text x="48" y="146" font-size="12" fill="#777782">unit 214/214</text>
+<text x="588" y="146" font-size="11" fill="#74C991">pass</text>
+<text x="32" y="166" font-size="12" fill="#74C991">✓</text>
+<text x="48" y="166" font-size="12" fill="#777782">graph parity</text>
+<text x="588" y="166" font-size="11" fill="#74C991">pass</text>
+<rect x="26" y="174" width="638" height="18" fill="#241019"/>
+<text x="32" y="187" font-size="12" fill="#E0687A">✗</text>
+<text x="48" y="187" font-size="12" fill="#E8E8EC" font-weight="500">e2e smoke</text>
+<text x="140" y="187" font-size="11" fill="#E0687A">failed · 1/3 cases · 41s</text>
+<text x="560" y="187" font-size="11" fill="#E0687A">blocking</text>
+<line x1="20" y1="204" x2="20" y2="278" stroke="#E0687A" stroke-width="2"/>
+<rect x="32" y="208" width="632" height="72" fill="#0F0F12" stroke="#E0687A" stroke-width="1"/>
+<text x="44" y="228" font-size="11" fill="#E0687A">✗ case auth_refresh_parallel</text>
+<text x="44" y="248" font-size="11" fill="#565660">assertion failed: findings.len() == 1</text>
+<text x="44" y="264" font-size="11" fill="#565660">expected 1 finding, got 2 (duplicate digest)</text>
+<text x="380" y="228" font-size="11" fill="#4B4B56">^N jump · l full log · r rerun gate</text>
+<line x1="20" y1="292" x2="20" y2="384" stroke="#F7D96B" stroke-width="2"/>
+<rect x="32" y="296" width="632" height="92" fill="#0F0F12" stroke="#EFC53F" stroke-width="1"/>
+<text x="44" y="316" font-size="12" fill="#F7D96B">↯ propose r4</text>
+<text x="156" y="316" font-size="11" fill="#E8E8EC">add task 3b "stabilize auth fixture; assert single writer"</text>
+<text x="44" y="338" font-size="11" fill="#777782">cause: duplicate digest under parallel refresh</text>
+<text x="404" y="338" font-size="11" fill="#777782">linked OXA-142</text>
+<text x="44" y="360" font-size="11" fill="#EFC53F">a approve r4</text>
+<text x="152" y="360" font-size="11" fill="#A9AAB5">e edit</text>
+<text x="212" y="360" font-size="11" fill="#A9AAB5">x dismiss</text>
+<text x="44" y="380" font-size="11" fill="#4B4B56">nothing runs until approval · the model cannot argue with a red gate</text>
+<rect x="16" y="400" width="648" height="34" fill="#17171B" stroke="#EFC53F" stroke-width="1"/>
+<text x="28" y="422" font-size="12" fill="#EFC53F" font-weight="500">◇ merge blocked</text>
+<text x="164" y="422" font-size="11" fill="#777782">unblocks on green · verify remains $0.00 · det</text>
+<text x="16" y="460" font-size="12" fill="#EFC53F" font-weight="500">&gt;&gt;&gt;</text>
+<rect x="46" y="450" width="7" height="13" fill="#E8E8EC"/>
+<line x1="0" y1="472" x2="680" y2="472" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="494" font-size="11" fill="#777782">kimi-k3 · verify · ctx</text>
+<text x="182" y="494" font-size="12" fill="#EFC53F">████▏</text>
+<text x="232" y="494" font-size="12" fill="#26262C">░░░░░</text>
+<text x="284" y="494" font-size="11" fill="#E8E8EC">42%</text>
+<text x="324" y="494" font-size="11" fill="#EFC53F">$0.45</text>
+<text x="382" y="494" font-size="11" fill="#A9AAB5">det 87%</text>
+<text x="456" y="494" font-size="11" fill="#E0687A">1 gate red</text>
+<text x="606" y="494" font-size="11" fill="#777782">? help</text>
+</svg>

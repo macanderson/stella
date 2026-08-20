@@ -96,7 +96,7 @@ CANVASES = [
 class Ground:
     """One sky and everything that has to change with it.
 
-    The comet stays Bronze Gold on both, per the kit's rule that the mark is a
+    The comet stays full-strength gold on both, per the kit's rule that the mark is a
     shape and never drops to gold-deep. What inverts is the *field*: on dark the
     specks are light on a night sky, on light they are ink on warm paper, which
     reads as a fine texture rather than a washed-out photograph of stars.
@@ -122,15 +122,15 @@ DARK = Ground(
     name="dark",
     sky_top="#04070B",
     sky_bottom="#101821",
-    haze="#C58A32",
+    haze="#EFC53F",
     haze_op=0.11,
     bloom="#F0C070",
     bloom_op=0.30,
-    speck="#E9EDF2",
+    speck="#E8E8EC",
     speck_op=0.55,
-    warm_speck="#C58A32",
+    warm_speck="#EFC53F",
     streak_core="#FFE9C2",
-    grid="#E9EDF2",
+    grid="#E8E8EC",
     grid_op=0.022,
     vignette_op=0.55,
 )
@@ -139,18 +139,18 @@ LIGHT = Ground(
     name="light",
     sky_top="#F7FAFD",
     sky_bottom="#E3EAF2",
-    haze="#C58A32",
+    haze="#EFC53F",
     haze_op=0.12,
     bloom="#E0A44A",
     bloom_op=0.20,
     speck="#7A8492",
     speck_op=0.34,
-    warm_speck="#8B5E1A",
+    warm_speck="#141416",
     # On paper the head cannot be the *lightest* point — white on warm white is
     # nothing, and the trail loses its direction of travel. It deepens instead:
     # the same ramp, run toward saturation rather than toward light.
-    streak_core="#8B5E1A",
-    grid="#070B10",
+    streak_core="#141416",
+    grid="#0A0A0C",
     grid_op=0.030,
     vignette_op=0.16,
 )

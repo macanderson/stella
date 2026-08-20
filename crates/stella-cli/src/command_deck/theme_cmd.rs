@@ -3,9 +3,9 @@
 //! the already-large `command_deck` dispatcher: the parser, the live switch,
 //! and the settings write live here; `command_deck` only wires them to `say`.
 //!
-//! Two themes ship. `stella-dark` (Phosphor Gold on Ink — the comet kit at
-//! `docs/brand/README.md`) is the default; `stella-light` is the same gold
-//! darkened onto warm paper. [`blurb`] is the user-visible naming of both,
+//! Two themes ship. `stella-dark` (gold on the cool near-black ramp — the
+//! product palette at `crates/stella-tui/src/palette.rs`) is the default;
+//! `stella-light` is the same gold darkened onto cool paper. [`blurb`] is the user-visible naming of both,
 //! and it has drifted behind the identity before (it once named a terminal
 //! green and an ember red-orange two recolours dead) — keep it telling the
 //! truth. The switch itself is a per-frame buffer remap in
@@ -57,11 +57,11 @@ fn theme_menu() -> String {
 ///
 /// Printed to users by `/theme`, which has made it the most visible piece of
 /// retired-identity prose in the product more than once. Both themes carry
-/// the same Phosphor Gold brand hue; the ground is what differs.
+/// the same gold brand hue; the ground is what differs.
 fn blurb(theme: ThemeName) -> &'static str {
     match theme {
-        ThemeName::StellaDark => "phosphor gold on ink (default)",
-        ThemeName::StellaLight => "phosphor gold on paper",
+        ThemeName::StellaDark => "gold on near-black (default)",
+        ThemeName::StellaLight => "gold on paper",
     }
 }
 

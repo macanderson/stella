@@ -145,11 +145,11 @@ pub(crate) fn release(run: Supervised, format: OutputFormat) -> Result<(), Strin
     );
     eprintln!(
         "  follow it with {}",
-        format!("stella daemon attach {}", run.id).cyan()
+        format!("stella daemon attach {}", run.id).yellow()
     );
     eprintln!(
         "  stop it with   {}",
-        format!("stella daemon stop {}", run.id).cyan()
+        format!("stella daemon stop {}", run.id).yellow()
     );
     drop(run);
     Ok(())
