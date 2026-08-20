@@ -181,6 +181,7 @@ async fn a_fleet_worker_dispatches_its_attempt_through_the_bound_wrapper() {
             VARIANT,
         ])
         .current_dir(workspace.path())
+        .env("STELLA_HOME", data.path())
         .env("STELLA_DATA_DIR", data.path())
         // Same hermeticity discipline as `goal_wrapped_dispatch_cli.rs`: no
         // `.env`, no inherited real key, and the project plugin tier trusted

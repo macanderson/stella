@@ -30,6 +30,7 @@ fn run_stella(workspace: &Path, data: &Path, args: &[&str]) -> Output {
         ])
         .args(args)
         .current_dir(workspace)
+        .env("STELLA_HOME", data)
         .env("STELLA_DATA_DIR", data)
         // Never read the developer's project env, and never inherit a real
         // key: this test must not be able to reach a provider.
@@ -118,6 +119,7 @@ fn a_bare_raw_run_never_prints_the_verification_refusal() {
             "say hi",
         ])
         .current_dir(workspace.path())
+        .env("STELLA_HOME", data.path())
         .env("STELLA_DATA_DIR", data.path())
         .env("STELLA_NO_ENV_FILE", "1")
         .env_remove("OPENROUTER_API_KEY")

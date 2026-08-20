@@ -53,6 +53,7 @@ fn time_to_exit(workspace: &Path, data: &Path, format: &str) -> Duration {
             "say hi and stop",
         ])
         .current_dir(workspace)
+        .env("STELLA_HOME", data)
         .env("STELLA_DATA_DIR", data)
         // Never read the developer's project env, and never inherit a real
         // key: this test must not be able to reach a provider.
