@@ -47,12 +47,28 @@ TOKEN_ONLY = (
 
 # Files that define the system itself, and so must be able to name retired
 # values in order to ban them.
+#
+# The last two are **ban sites**: tests whose whole job is asserting that a
+# retired value does not ship, on a surface this script cannot see. A hex sweep
+# reads them as offenders, and that is exactly backwards -- the list *is* the
+# enforcement. Leaving them out is not a theoretical hazard: the v5.0 migration
+# swept both, rewriting `#ffb000`/`#0b0b0c` into the live gold and canvas, so
+# `brand-parity.test.ts` spent one merge banning the brand it exists to protect
+# and reported nineteen offenders that were all correct (#4066). They earn the
+# exemption for the same reason the four above do, and they need it more,
+# because they are the only files here a sweep would happily "fix".
+#
+# The exemption is narrow by construction: it suppresses the *ban* check, and
+# neither file is a TOKEN_ONLY path, so nothing here lets a live surface carry
+# a retired hex.
 SELF = (
     "design/tokens/stella-tokens.json",
     "scripts/check-tokens.py",
     "scripts/gen-tokens.py",
     "crates/stella-tui-theme/src/generated.rs",
     "design/tokens/stella-tokens.css",
+    "website/src/lib/brand-parity.test.ts",
+    "crates/stella-cli/src/export/tests.rs",
 )
 
 # Surfaces this system has not reached yet. Each entry names the issue that

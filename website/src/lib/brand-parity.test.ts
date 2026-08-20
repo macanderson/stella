@@ -15,9 +15,9 @@ import { inflateSync } from "node:zlib";
  *
  * `src/app/tokens.css` carried the sentence "every value below is copied from
  * it verbatim — do not tune a hex here, change the kit and mirror it" while
- * sitting a whole brand version behind: the kit moved to gold #EFC53F
+ * sitting a whole brand version behind: the kit moved to Bronze Gold #C58A32
  * on Ink #10100F in the 2026-08-11 rebrand and this site stayed on v1.0's
- * Phosphor Gold #EFC53F on Ink #0A0A0C. All thirteen SVGs under
+ * Phosphor Gold #FFB000 on Ink #0B0B0C. All thirteen SVGs under
  * `public/brand/` were stale with it, as were seven of the eight PWA icons,
  * `src/app/icon.svg`, the favicon and the OG card's literals — so the site
  * served a **bronze wordmark beside phosphor chrome**, and the paragraph
@@ -185,17 +185,22 @@ function rgbaPixels(png: Buffer): {
 }
 
 /**
- * Every `--stella-*: <value>;` declaration in a CSS file, lowercased.
+ * Every `--stella-*` and `--st-*` declaration in a CSS file, lowercased.
  *
  * Parsed rather than string-matched so a reordering of the kit cannot fail
  * this test and a changed value cannot pass it. Only the first definition of
  * a name is kept: both files define the semantic aliases twice (light then
  * dark), and this matrix is about the raw ramp above them.
+ *
+ * `--st-*` is the generated ramp (`design/tokens/stella-tokens.json` ->
+ * `scripts/gen-tokens.py`). It was outside this parse until v5.0 made it the
+ * thing the roles are defined *in terms of*, at which point a matrix that read
+ * only `--stella-*` could no longer see the values it was checking.
  */
 function tokens(css: string): Map<string, string> {
   const found = new Map<string, string>();
   for (const [, name, value] of css.matchAll(
-    /(--stella-[a-z0-9-]+)\s*:\s*([^;]+);/g,
+    /(--st(?:ella)?-[a-z0-9-]+)\s*:\s*([^;]+);/g,
   )) {
     const key = name.toLowerCase();
     if (!found.has(key)) found.set(key, value.trim().toLowerCase());
@@ -203,31 +208,76 @@ function tokens(css: string): Map<string, string> {
   return found;
 }
 
-/** The tokens the kit owns and the site must mirror exactly. */
-const MIRRORED = [
+/**
+ * The brand-core roles the kit owns. Spelled out because they are a *contract*
+ * — the five names every surface reaches for — rather than whatever the kit
+ * happens to contain.
+ *
+ * The eleven-stop `--stella-brand-*` and `--stella-neutral-*` ramps used to be
+ * listed here too. v5.0 replaced both with the flat generated `--st-*` ramp
+ * (#4066) and left the names behind, so this matrix spent a merge asserting
+ * that the kit defines twenty-two properties it had just deleted. The ramp
+ * half is now read *from the kit* below, which is what stops that recurring:
+ * a stop the kit drops leaves the matrix by itself, and one it adds joins
+ * without anyone remembering to.
+ */
+const MIRRORED_CORE = [
   "--stella-brand",
   "--stella-brand-deep",
   "--stella-ink",
   "--stella-paper",
   "--stella-paper-bg",
-  ...[50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map(
-    (stop) => `--stella-brand-${stop}`,
-  ),
-  ...[50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map(
-    (stop) => `--stella-neutral-${stop}`,
-  ),
 ];
+
+/**
+ * One level of `var(--x)` indirection, resolved against the file's own map.
+ *
+ * The site writes `--stella-brand: var(--st-gold)` where the kit writes
+ * `#EFC53F`, and that difference is not drift — it is the site declining to
+ * repeat a value the generated ramp above it already carries. Comparing the
+ * raw declarations would fail on it, and "fixing" that by pasting the hex back
+ * into the site is precisely the duplication `design/tokens/` exists to end.
+ *
+ * So both sides are resolved before comparison. This does not weaken the
+ * check: the `--st-*` ramp the site resolves *through* is itself in the matrix
+ * below, so a site that mirrored the role correctly but tuned the underlying
+ * stop still fails — on the stop.
+ *
+ * Deliberately not a general CSS resolver: a chain longer than the eight steps
+ * below, or a `var()` with a fallback, throws rather than silently comparing
+ * an unresolved string, because a guard that quietly gives up is the failure
+ * this whole file exists to prevent.
+ */
+function resolve(value: string, map: Map<string, string>): string {
+  let current = value;
+  for (let step = 0; step < 8; step++) {
+    const match = /^var\(\s*(--[a-z0-9-]+)\s*\)$/.exec(current);
+    if (!match) return current;
+    const next = map.get(match[1]);
+    assert.ok(next, `${current} refers to ${match[1]}, which is not defined`);
+    current = next;
+  }
+  throw new Error(`var() chain from ${value} did not terminate in 8 steps`);
+}
 
 test("the site's brand tokens are the kit's, value for value", () => {
   const kit = tokens(read(join(KIT, "css", "tokens.css")));
   const site = tokens(read(join(SITE, "app", "tokens.css")));
 
-  for (const name of MIRRORED) {
+  // The generated ramp, taken from the kit rather than restated here.
+  const ramp = [...kit.keys()].filter((name) => name.startsWith("--st-"));
+  assert.ok(
+    ramp.length >= 21,
+    `docs/brand/css/tokens.css defines the generated --st-* ramp ` +
+      `(found ${ramp.length})`,
+  );
+
+  for (const name of [...MIRRORED_CORE, ...ramp]) {
     const expected = kit.get(name);
     assert.ok(expected, `docs/brand/css/tokens.css defines ${name}`);
     assert.equal(
-      site.get(name),
-      expected,
+      resolve(site.get(name) ?? "", site),
+      resolve(expected, kit),
       `${name} has drifted from docs/brand/css/tokens.css — change the kit ` +
         `and mirror it, never tune a hex here`,
     );
@@ -247,8 +297,14 @@ test("no retired brand value survives anywhere in the site", () => {
   // split for the same reason; the two must move together.
   const RETIRED = [
     // v1.0 — phosphor gold on ink
-    "#efc53f",
-    "#0a0a0c",
+    //
+    // These two were swept into `#efc53f`/`#0a0a0c` — the *live* v5.0 gold and
+    // canvas — by the v5.0 hex migration (#4066), which turned this block into
+    // a ban on the current brand and made every correct surface an offender.
+    // `scripts/check-tokens.py` now lists this file as a ban site so a sweep
+    // skips it; the values below are the v1.0 ones they were before.
+    "#ffb000",
+    "#0b0b0c",
     "#f4f1ea",
     "#f6f2e9",
     "#a37200",
