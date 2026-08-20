@@ -1,0 +1,125 @@
+# stella-candidates — best-of-N, as a plugin (#4029 P3.1,
+# `doc:plugin-completion-plan` §4.2).
+#
+# The capability landed with #3844 and nothing consumed it: `candidate_fanout`,
+# `run_test` and `adopt_candidate` were on the wire with no plugin asking for
+# any of them. This is the consumer, and it is the only thing in the tree that
+# exercises the `again?` point — the half of the wrapper socket that decides
+# whether a turn gets another round.
+#
+# READ THIS BEFORE INSTALLING. Every candidate is a **writing** worker turn in
+# an isolated worktree, and this plugin asks for up to `max_fanout_width` of
+# them per round. That is N times a worker turn's spend, on your key, bought by
+# a plugin rather than by you asking. The host clamps the width against its own
+# ceiling and reports what it actually ran, so the number below is an ask and
+# never an authority — but read it as "this may spend N turns", because it may.
+#
+# Stella does not score the candidates. It mints the worktrees, runs the turns,
+# and reports what each did; the choosing is this plugin's whole job, and the
+# rule it chooses by is declared in `[oracle]` below as data a human can read
+# before installing.
+
+name = "stella-candidates"
+description = "Try the work N ways in isolated worktrees, keep the one that does the least damage, and throw the rest away. Reports what it scored; Stella applies the declared rule."
+
+# Arbiter: this plugin decides whether the round is finished and may hold it
+# open for another attempt. `Stop` comes with the grade
+# (`ManifestError::ArbiterMustDeclareStop`).
+[loop]
+participation = "arbiter"
+hooks = ["Stop"]
+# `after_turn` ONLY, and this is a deliberate departure from
+# `doc:plugin-completion-plan` §4.2, which puts the fan-out at `before_turn`.
+#
+# A plugin is a fresh process per point — `SubprocessWrapper::exchange` spawns
+# per call — so a `before_turn` fan-out exits before `after_turn` runs and has
+# nothing left to report. `ObservedEvidence` is an `after_turn` value, and
+# nothing carries across the boundary (`BeforeTurnRequest::published`
+# propagates only within one `before_turn` sweep). A plugin that fanned out at
+# `before_turn` would have to fan out AGAIN to report, buying N worker turns
+# twice.
+#
+# So: the host's own turn is attempt 0, and this plugin buys N-1 alternatives
+# at `after_turn` when the outcome warrants it. Same best-of-N, one process,
+# and one fewer turn. See README.md.
+points = ["after_turn"]
+# The three capabilities #3844 built and nothing consumed until now,
+# exhaustively — an undeclared call is refused before this host performs
+# anything.
+#
+# `run_test` is declared even though every host answers it `unsupported`
+# (#3580). That is the decision, not an oversight: it is the designed way to
+# ask, and reading the grant's own `TestPlan` and running the tests here
+# instead would route around #3580 permanently rather than inheriting its fix.
+calls = ["candidate_fanout", "run_test", "adopt_candidate"]
+# Two corrections. A fan-out is expensive enough that "try again with a wider
+# net" needs a reason, not a reflex.
+max_holds = 2
+# Per-point conversation ceiling (#3839): one `candidate_fanout`, one
+# `run_test` per candidate, one `adopt_candidate`.
+max_calls = 8
+# The ask. `DEFAULT_HOST_MAX_FANOUT_WIDTH` is the authority and clamps it; the
+# answer reports both, so this plugin can say honestly that it scored three of
+# the four it wanted.
+max_fanout_width = 4
+
+# ---------------------------------------------------------------------------
+# The definition of done.
+#
+# One requirement, and deliberately not "the best candidate was chosen" — that
+# is not a thing a check over reported numbers can decide, and a requirement
+# no oracle can settle is `ManifestError::UndecidableRequirement`. What CAN be
+# decided is that a candidate was adopted at all, which is the honest bar for
+# a plugin whose job is to leave exactly one attempt on the tree.
+# ---------------------------------------------------------------------------
+[requirements]
+a-candidate-was-adopted = "one candidate's changes were applied to the real tree, and its siblings were discarded"
+
+[oracle]
+# Not a flip. This plugin's evidence is a count, not a red-to-green transition
+# — the same shape `plugins/stella-witness` declares the opposite of, and the
+# reason `flip = "not-applicable"` exists.
+flip = "not-applicable"
+measurements = [
+  "candidates-scored",
+  "candidate-adopted",
+  "winner-lines-changed",
+  "test-signal-available",
+]
+
+[[oracle.checks]]
+requirement = "a-candidate-was-adopted"
+check = "candidate-adopted >= 1"
+
+# The role intent every candidate turn runs at.
+#
+# `tier = "worker"` is not a preference: `CandidateFanoutArgs::role` is judged
+# by the OPPOSITE rule to `child_turn`'s. A child turn may not resolve to the
+# worker's seat, because a plugin must not grade work with the model that did
+# it. A fan-out candidate is not evidence about the work — it IS the work — so
+# it must resolve to the worker's seat and nothing else. Booking a writing turn
+# against `triage` would put spend on the receipt under a responsibility that
+# did no writing.
+[roles.builder]
+tier = "worker"
+
+# Declared only because `[roles]` requires it (#3496). This plugin spends its
+# turns over the host-call channel, not through `[subloop]`'s own bounded
+# dispatch — the same declaration-to-satisfy-the-validator that
+# `plugins/stella-goal` and `plugins/stella-plan` both carry.
+[subloop]
+stages = ["execute"]
+
+[runtime]
+argv = ["python3", "${plugin_dir}/main.py"]
+# Generous, and it has to be: one point of this plugin may run N writing worker
+# turns end to end. `SubprocessWrapper`'s timeout covers the whole conversation
+# rather than each message, by contract.
+timeout_secs = 1800
+env = ["PATH"]
+
+[wrapper]
+id = "candidates-v1"
+
+[[wrapper.stages]]
+name = "execute"
