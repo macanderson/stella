@@ -460,6 +460,17 @@ const TOML_ROOT_FIELDS: &[&str] = &[
     "reward",
     "authority",
     "enterprise_telemetry",
+    // `[self_driving]` and `[issues]` — the autonomous loop's own
+    // configuration (`toml_config::SelfDrivingSection`, `IssuesSection`).
+    //
+    // The identical omission `[seats]` had above, with the identical symptom:
+    // a `stella.toml` configuring the loop had its whole block reported as an
+    // unrecognized key, advising the operator to check the spelling of a
+    // section serde was reading correctly the entire time. Twice is a pattern —
+    // a root section added to `TomlConfig` must be added here in the same
+    // change, or this walker tells people their working config is a typo.
+    "self_driving",
+    "issues",
 ];
 
 const META_FIELDS: &[&str] = &["schema_version", "scope"];
