@@ -336,6 +336,53 @@ pub struct SelfDrivingSection {
     /// `[self_driving.attribution]` — what the loop appends to what it writes,
     /// and how it names branches.
     pub attribution: stella_autonomy::Attribution,
+    /// `[self_driving.triage]` — the vocabulary the loop places issues in.
+    ///
+    /// Here rather than in the tracker manifest because these are *this
+    /// operator's* judgements about their own backlog — which labels mean
+    /// urgent, which mean "not ours" — not how the tracker spells a concept
+    /// every tracker has. Two teams on one GitHub can want different ladders.
+    #[serde(default)]
+    pub triage: TriageSection,
+}
+
+/// `[self_driving.triage]` — how the loop places an issue.
+///
+/// Every field defaults, so an operator who writes none of it gets a working
+/// loop on GitHub's common conventions. Declaring any one of them replaces
+/// that list wholesale rather than adding to it: a partial override would
+/// leave the operator unable to *remove* a built-in they disagree with.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriageSection {
+    /// Priority labels, most urgent first. Empty means "use the default".
+    #[serde(default)]
+    pub priorities: Vec<String>,
+    /// Labels meaning "this loop works this".
+    #[serde(default)]
+    pub defect_kinds: Vec<String>,
+    /// Labels meaning "this loop does not work this".
+    #[serde(default)]
+    pub excluded_kinds: Vec<String>,
+}
+
+impl TriageSection {
+    /// Resolve to the policy the ranker reads, filling each unset list from
+    /// the default independently.
+    #[must_use]
+    pub fn policy(&self) -> stella_autonomy::priority::TriagePolicy {
+        let mut policy = stella_autonomy::priority::TriagePolicy::default();
+        if !self.priorities.is_empty() {
+            policy.ladder = stella_autonomy::priority::PriorityLadder::new(self.priorities.clone());
+        }
+        if !self.defect_kinds.is_empty() {
+            policy.defect_kinds = self.defect_kinds.clone();
+        }
+        if !self.excluded_kinds.is_empty() {
+            policy.excluded_kinds = self.excluded_kinds.clone();
+        }
+        policy
+    }
 }
 
 /// `[issues]` — the active tracker.

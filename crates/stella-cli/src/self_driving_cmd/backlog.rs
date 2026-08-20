@@ -43,7 +43,8 @@ pub(super) const QUEUE_READ_LIMIT: usize = 200;
 /// a single awaited call.
 fn ranked(
     provider: &dyn IssueProvider,
-) -> Result<(Vec<stella_autonomy::QueueIssue>, usize), String> {
+    policy: &stella_autonomy::priority::TriagePolicy,
+) -> Result<(stella_autonomy::priority::Queue, usize), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -52,23 +53,31 @@ fn ranked(
         .block_on(provider.list_open(QUEUE_READ_LIMIT))
         .map_err(|error| error.to_string())?;
     let total = issues.len();
-    let defects = stella_autonomy::rank_defects(
+    let queue = stella_autonomy::priority::triage(
         issues
             .iter()
             .map(crate::issue_provider::to_queue_issue)
             .collect(),
+        policy,
     );
-    Ok((defects, total))
+
+    // Escalated issues, excluded kinds and the unassessed split all happen
+    // inside `triage`, in the one read. The renderer and the driver must not
+    // be able to disagree about what the queue holds — that is exactly the
+    // two-definitions defect B1 removed from `demand`.
+    Ok((queue, total))
 }
 
 /// The ranked defect batch this cycle draws from.
 pub(super) fn render_queue(
     _st: &LoopState,
     provider: &dyn IssueProvider,
+    policy: &stella_autonomy::priority::TriagePolicy,
     limit: usize,
     format: QueryFormat,
 ) -> Result<(), String> {
-    let (defects, total_issues) = ranked(provider)?;
+    let (queue, total_issues) = ranked(provider, policy)?;
+    let defects = queue.ranked;
     let picked = &defects[..limit.min(defects.len())];
 
     if format == QueryFormat::Json {
@@ -79,10 +88,14 @@ pub(super) fn render_queue(
         return Ok(());
     }
     for i in picked {
-        let prio = ["P0", "P1", "P2"]
-            .into_iter()
-            .find(|p| i.labels.iter().any(|l| l.name == *p))
-            .unwrap_or("--");
+        // The operator's rungs, not a built-in list — a tracker spelling
+        // urgency `Sev1` must render its own word.
+        let prio = policy
+            .ladder
+            .rungs
+            .iter()
+            .find(|rung| i.labels.iter().any(|l| &l.name == *rung))
+            .map_or("--", String::as_str);
         let area = i
             .labels
             .iter()
@@ -92,10 +105,11 @@ pub(super) fn render_queue(
         println!("{prio:>2}  #{:<6} {area:<18} {}", i.number, i.title);
     }
     eprintln!(
-        "\n{} of {} open defects ({} open issues total)",
+        "\n{} of {} ranked defects ({} open issues total, {} awaiting triage)",
         picked.len(),
         defects.len(),
-        total_issues
+        total_issues,
+        queue.unassessed.len()
     );
     Ok(())
 }
@@ -107,16 +121,22 @@ pub(super) fn render_queue(
 /// the backlog were empty is a survivable answer where a refusal to plan is
 /// not. That degradation is inherited from the `gh_available()` check this
 /// replaces, not introduced here.
-pub(super) fn demand_from(provider: &dyn IssueProvider) -> Demand {
-    let Ok((defects, _)) = ranked(provider) else {
+pub(super) fn demand_from(
+    provider: &dyn IssueProvider,
+    policy: &stella_autonomy::priority::TriagePolicy,
+) -> Demand {
+    let Ok((queue, _)) = ranked(provider, policy) else {
         return Demand::default();
     };
-    let p0 = defects
+    // The most urgent rung the operator declared, whatever they call it.
+    let urgent = policy.ladder.most_urgent().unwrap_or_default();
+    let p0 = queue
+        .ranked
         .iter()
-        .filter(|issue| issue.labels.iter().any(|label| label.name == "P0"))
+        .filter(|issue| issue.labels.iter().any(|label| label.name == urgent))
         .count();
     Demand {
-        open_defects: u32::try_from(defects.len()).unwrap_or(u32::MAX),
+        open_defects: u32::try_from(queue.ranked.len()).unwrap_or(u32::MAX),
         p0: u32::try_from(p0).unwrap_or(u32::MAX),
     }
 }
@@ -194,12 +214,29 @@ pub(super) async fn file_finding(
 /// The same read and the same ranking `queue` renders — one definition of
 /// "defect", folded a third way. A driver that filtered the queue itself would
 /// be the second definition B1 removed.
-pub(super) fn ranked_keys(provider: &dyn IssueProvider) -> Result<Vec<String>, String> {
-    let (defects, _) = ranked(provider)?;
-    Ok(defects
+pub(super) fn ranked_keys(
+    provider: &dyn IssueProvider,
+    policy: &stella_autonomy::priority::TriagePolicy,
+) -> Result<Vec<String>, String> {
+    let (queue, _) = ranked(provider, policy)?;
+    Ok(queue
+        .ranked
         .into_iter()
         .map(|issue| issue.number.to_string())
         .collect())
+}
+
+/// Issues nobody has placed, oldest first.
+///
+/// Read through the **same** `ranked` call the driver claims from, so the two
+/// cannot disagree about which issues are still questions. A driver that ran
+/// its own read would be the second definition this module exists to prevent.
+pub(super) fn unassessed(
+    provider: &dyn IssueProvider,
+    policy: &stella_autonomy::priority::TriagePolicy,
+) -> Result<Vec<stella_autonomy::priority::Unassessed>, String> {
+    let (queue, _) = ranked(provider, policy)?;
+    Ok(queue.unassessed)
 }
 
 /// Mark an issue as one the loop tried and could not resolve, and say why.
@@ -209,6 +246,26 @@ pub(super) fn ranked_keys(provider: &dyn IssueProvider) -> Result<Vec<String>, S
 /// reads, and without it the label is an accusation with no evidence — an
 /// issue sitting there marked unresolvable by a machine that did not say what
 /// went wrong is worse than one that was never attempted.
+/// [`escalate`] for a synchronous caller.
+///
+/// The driver's arms are synchronous and each awaited port call would
+/// otherwise make one runtime inline at the call site — which is how two of
+/// them end up spelled differently. One wrapper, one spelling.
+pub(super) fn escalate_blocking(
+    provider: &dyn IssueProvider,
+    key: &str,
+    why: &str,
+    signature: &str,
+) -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
+    runtime
+        .block_on(escalate(provider, &IssueKey::from(key), why, signature))
+        .map_err(|error| error.to_string())
+}
+
 pub(super) async fn escalate(
     provider: &dyn IssueProvider,
     key: &IssueKey,
@@ -732,30 +789,71 @@ mod tests {
     /// ranking no longer requires GitHub to exist.
     #[test]
     fn a_ranked_queue_needs_no_github_at_all() {
-        let (defects, total) = ranked(&backlog()).expect("fixture read");
-        let order: Vec<u64> = defects.iter().map(|issue| issue.number).collect();
+        let policy = stella_autonomy::priority::TriagePolicy::default();
+        let (queue, total) = ranked(&backlog(), &policy).expect("fixture read");
+        let order: Vec<u64> = queue.ranked.iter().map(|issue| issue.number).collect();
         assert_eq!(
             order,
-            vec![3, 5, 7, 9],
-            "P0 first, then P1 aged-before-fresh, then triage — and no feature"
+            vec![3, 5, 7],
+            "P0 first, then P1 aged-before-fresh — and no feature"
         );
         assert_eq!(total, 5, "the total counts every open issue, defect or not");
+    }
+
+    /// A defect nobody gave a rung is a question, not the bottom of the queue.
+    ///
+    /// #9 carries `triage` and no priority label. It used to rank *last*,
+    /// below every `P2`, because the old `priority_rank` mapped "no rung" to
+    /// the number one past the ladder — so an unjudged issue was
+    /// indistinguishable from one somebody had deliberately ranked least
+    /// urgent. It now surfaces as unassessed, which is what lets the loop go
+    /// and place it instead of burying it.
+    #[test]
+    fn a_defect_with_no_rung_surfaces_as_a_question() {
+        let policy = stella_autonomy::priority::TriagePolicy::default();
+        let (queue, _) = ranked(&backlog(), &policy).expect("fixture read");
+        assert_eq!(
+            queue
+                .unassessed
+                .iter()
+                .map(|u| u.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["9"],
+            "the untriaged defect is a question the loop must answer"
+        );
+        assert!(
+            !queue.ranked.iter().any(|i| i.number == 9),
+            "and it must not also be sitting at the bottom of the ranked work"
+        );
     }
 
     /// The governor's two numbers are folds of that one ranking, so they cannot
     /// disagree with the batch the same cycle draws.
     #[test]
     fn demand_is_a_fold_of_the_same_ranking() {
-        let demand = demand_from(&backlog());
-        assert_eq!(demand.open_defects, 4, "the feature is not a defect");
-        assert_eq!(demand.p0, 1, "and its P0 label does not make it one");
+        let policy = stella_autonomy::priority::TriagePolicy::default();
+        let demand = demand_from(&backlog(), &policy);
+        assert_eq!(
+            demand.open_defects, 3,
+            "the feature is not a defect, and the unranked one is not yet work"
+        );
+        assert_eq!(
+            demand.p0, 1,
+            "and the feature's P0 label does not make it one"
+        );
     }
 
     /// An unreachable tracker sizes a cycle as though the backlog were empty,
     /// rather than refusing to plan.
     #[test]
     fn an_unreachable_tracker_degrades_rather_than_failing() {
-        assert_eq!(demand_from(&DeadProvider), Demand::default());
+        assert_eq!(
+            demand_from(
+                &DeadProvider,
+                &stella_autonomy::priority::TriagePolicy::default()
+            ),
+            Demand::default()
+        );
     }
 
     /// The limit bounds what crosses the port, not what the ranker discards

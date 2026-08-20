@@ -47,6 +47,8 @@ pub(crate) struct LoopConfig {
     pub attribution: Attribution,
     /// How the active tracker spells the concepts every tracker has.
     pub vocabulary: Vocabulary,
+    /// Which labels mean urgent, which mean "ours", which mean "not ours".
+    pub triage: stella_autonomy::priority::TriagePolicy,
 }
 
 /// Read the loop's configuration for a workspace.
@@ -64,6 +66,7 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
     LoopConfig {
         attribution: parsed.self_driving.attribution.clone(),
         vocabulary: vocabulary_for(root, &parsed.issues),
+        triage: parsed.self_driving.triage.policy(),
     }
 }
 
@@ -183,7 +186,7 @@ branch_prefix = "oxagen/"
         assert_eq!(cfg.attribution.commit, "Created by oxagen.");
         assert_eq!(cfg.attribution.branch_prefix(), "oxagen/");
         // Unmentioned surfaces keep identifying the loop rather than blanking.
-        assert_eq!(cfg.attribution.issue, "Filed by stella.");
+        assert_eq!(cfg.attribution.issue, stella_autonomy::SIGNATURE);
     }
 
     /// **The portability witness.** `stella.toml` says *which* tracker; the
