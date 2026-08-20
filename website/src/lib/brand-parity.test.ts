@@ -15,9 +15,9 @@ import { inflateSync } from "node:zlib";
  *
  * `src/app/tokens.css` carried the sentence "every value below is copied from
  * it verbatim — do not tune a hex here, change the kit and mirror it" while
- * sitting a whole brand version behind: the kit moved to Bronze Gold #C58A32
+ * sitting a whole brand version behind: the kit moved to Bronze Gold #EFC53F
  * on Ink #10100F in the 2026-08-11 rebrand and this site stayed on v1.0's
- * Phosphor Gold #FFB000 on Ink #0B0B0C. All thirteen SVGs under
+ * Phosphor Gold #EFC53F on Ink #0A0A0C. All thirteen SVGs under
  * `public/brand/` were stale with it, as were seven of the eight PWA icons,
  * `src/app/icon.svg`, the favicon and the OG card's literals — so the site
  * served a **bronze wordmark beside phosphor chrome**, and the paragraph
@@ -69,7 +69,7 @@ import { inflateSync } from "node:zlib";
  * about a copy rather than about a design.
  *
  * The comparison is textual and case-insensitive because the kit writes
- * `#C58A32` and CSS convention here writes `#c58a32`. That is the one
+ * `#EFC53F` and CSS convention here writes `#efc53f`. That is the one
  * difference allowed between the two files.
  */
 
@@ -239,7 +239,7 @@ test("no retired brand value survives anywhere in the site", () => {
   //
   // A value leaves this list only when a later version makes it **live
   // again**, which is not hypothetical: v4.0 took the brand hue back to v2.0's
-  // Bronze Gold ramp value-for-value, so #c58a32 and its stops moved from this
+  // Bronze Gold ramp value-for-value, so #efc53f and its stops moved from this
   // list into `tokens.css`. What v4.0 did *not* take back is the warm neutral
   // page those stops used to sit on — v3.0's cool graphite ramp and Obsidian
   // ground are kept — so the warm values stay retired and are what this block
@@ -247,8 +247,8 @@ test("no retired brand value survives anywhere in the site", () => {
   // split for the same reason; the two must move together.
   const RETIRED = [
     // v1.0 — phosphor gold on ink
-    "#ffb000",
-    "#0b0b0c",
+    "#efc53f",
+    "#0a0a0c",
     "#f4f1ea",
     "#f6f2e9",
     "#a37200",
@@ -312,7 +312,7 @@ test("no retired brand value survives anywhere in the site", () => {
       // inline favicons. Normalising rather than listing every encoded twin
       // keeps one entry per retired value: `vision.html` sat on v1.0's
       // `%23FFB000` on `%230B0B0C` through three rebrands because a sweep for
-      // `#ffb000` cannot see it, the same blind spot the channel-triple
+      // `#efc53f` cannot see it, the same blind spot the channel-triple
       // entries above exist for.
       const text = read(path).toLowerCase().replaceAll("%23", "#");
       for (const value of RETIRED) {

@@ -51,6 +51,7 @@ SELF = (
     "scripts/check-tokens.py",
     "scripts/gen-tokens.py",
     "crates/stella-tui-theme/src/generated.rs",
+    "design/tokens/stella-tokens.css",
 )
 
 # Surfaces this system has not reached yet. Each entry names the issue that

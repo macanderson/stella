@@ -38,7 +38,6 @@
   border: 1px solid var(--eng-accent-dim);
   border-radius: 0.5rem;
   background: var(--eng-surface-warm);
-  box-shadow: var(--stella-glow-brand);
   max-width: 46rem;
 }
 .eng-goal-line {
@@ -127,9 +126,8 @@
     box-shadow var(--stella-duration-base) var(--stella-ease-arrive);
 }
 .eng-cta:hover {
-  background: var(--stella-brand-400);
+  background: var(--st-gold-bright);
   color: var(--stella-ink);
-  box-shadow: var(--stella-glow-brand);
   text-decoration: none;
 }
 
@@ -184,7 +182,6 @@
   margin-inline-start: -0.3rem;
   border-radius: 50%;
   background: var(--eng-accent);
-  box-shadow: var(--stella-glow-brand);
 }
 @keyframes eng-orbit {
   to {

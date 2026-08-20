@@ -21,13 +21,13 @@
    `identity` among them. */
 :root {
   color-scheme: dark;
-  --bg: #070B10;
+  --bg: #0A0A0C;
   --panel: #11171D;
   --line: #1F262D;
-  --text: #E9EDF2;
+  --text: #E8E8EC;
   --dim: #737C88;
-  --accent: #E9EDF2;
-  --on-accent: #070B10;
+  --accent: #E8E8EC;
+  --on-accent: #0A0A0C;
   --ok: #3FD99B;
   --bad: #F2687A;
 }
@@ -36,11 +36,11 @@
   :root {
     color-scheme: light;
     --bg: #ffffff;
-    --panel: #F7F9FC;
+    --panel: #F6F6F8;
     --line: #E7EBF0;
-    --text: #070B10;
+    --text: #0A0A0C;
     --dim: #828C97;
-    --accent: #070B10;
+    --accent: #0A0A0C;
     --on-accent: #ffffff;
     --ok: #0B6B3D;
     --bad: #A82036;

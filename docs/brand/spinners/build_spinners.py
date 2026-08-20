@@ -12,7 +12,7 @@ librsvg does not evaluate CSS animation — it renders the initial state — so 
 GIF has to be built frame by frame, and the tempting shortcut is to reimplement
 the timeline in Python. The kit already paid for a version of that mistake:
 commit 10781aa31 recoloured the four spinner SVGs to Bronze Gold and left the
-four GIFs untouched, so the kit once shipped `#C58A32` vector art beside `#FFB000`
+four GIFs untouched, so the kit once shipped `#EFC53F` vector art beside `#EFC53F`
 animations for as long as nobody opened them side by side. Anything restated is
 something that can drift; here the SVG is parsed, evaluated, and re-emitted per
 frame with the geometry untouched.
@@ -369,7 +369,7 @@ def gold_matches(raw: bytes, tol: int = 26) -> bool:
     """True if some colour table entry is close to Bronze Gold.
 
     Close rather than exact because the GIF is palettised and dithered, so the
-    quantiser is free to move the swatch a little. The old amber `#FFB000` is
+    quantiser is free to move the swatch a little. The old amber `#EFC53F` is
     58 away in the red-blue difference alone, which no tolerance this size
     admits — which is precisely the drift this has to catch.
     """

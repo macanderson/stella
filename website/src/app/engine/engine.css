@@ -38,13 +38,13 @@
   /* Text ramp on ink. neutral-400 lands ~7.5:1, neutral-500 ~5.8:1 — both
    * clear AA for body text; neutral-600 (~4:1) is reserved for seams and
    * large type, never for prose. */
-  --eng-muted: var(--stella-neutral-400);
-  --eng-faint: var(--stella-neutral-500);
+  --eng-muted: var(--st-muted);
+  --eng-faint: var(--st-dim);
 
   /* Structure. `--eng-rule` is decorative; `--eng-rule-strong` is the one
    * allowed to carry structure alone. */
   --eng-rule: color-mix(in srgb, var(--stella-paper) 12%, var(--stella-ink));
-  --eng-rule-strong: var(--stella-neutral-700);
+  --eng-rule-strong: var(--st-rule);
 
   /* Lifted surfaces, warm rather than grey — ink with paper mixed in. */
   --eng-surface: color-mix(in srgb, var(--stella-paper) 4%, var(--stella-ink));
@@ -283,7 +283,7 @@
   color: var(--stella-ink);
 }
 .eng-rail-stop[aria-current="true"]:hover {
-  background: var(--stella-brand-400);
+  background: var(--st-gold-bright);
   color: var(--stella-ink);
 }
 

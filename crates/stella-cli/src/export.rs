@@ -521,15 +521,15 @@ fn render_dashboard(
      verdicts; the old block painted cost in --warn, which told every reader
      that spending money was a fault condition. */
   :root {{
-    --void: #010306; --ground: #070B10; --surface: #0D1319; --raised: #11171D;
+    --void: #010306; --ground: #0A0A0C; --surface: #0D1319; --raised: #11171D;
     --hairline: #1F262D; --hairline-strong: #333B43;
-    --identity: #C58A32; --identity-ink: #070B10;
-    --text: #E9EDF2; --text-2: #A4ABB3; --text-3: #737C88;
+    --identity: #EFC53F; --identity-ink: #0A0A0C;
+    --text: #E8E8EC; --text-2: #A4ABB3; --text-3: #737C88;
     --ok: #3FD99B; --warn: #FF7A45; --bad: #F2687A;
-    --c1: #E9EDF2; --c2: #A4ABB3; --c3: #737C88; --c4: #4A535D;
+    --c1: #E8E8EC; --c2: #A4ABB3; --c3: #737C88; --c4: #4A535D;
     --neutral-mark: #4A535D;
-    --ink: #070B10;
-    --accent: #E9EDF2;
+    --ink: #0A0A0C;
+    --accent: #E8E8EC;
     --accent-wash: rgba(233,237,242,.08);
     --accent-edge: rgba(233,237,242,.38);
     --sunken: #0B1116;
@@ -573,7 +573,7 @@ fn render_dashboard(
      black page on a white desktop.
 
      Contrast, computed against WCAG 2.1 relative luminance, worst case on
-     --surface (#F7F9FC):
+     --surface (#F6F6F8):
 
        --text 18.97:1  --text-2 7.49:1  --text-3 3.10:1
        --ok 5.91:1     --warn 5.99:1    --bad 6.74:1    --identity 8.33:1
@@ -595,15 +595,15 @@ fn render_dashboard(
   @media (prefers-color-scheme: light) {{
     :root:not([data-theme="dark"]) {{
       color-scheme: light;
-      --void: #E9EDF2; --ground: #FFFFFF; --surface: #F7F9FC; --raised: #FFFFFF;
-      --hairline: #E7EBF0; --hairline-strong: #CFD6DD;
-      --identity: #674415; --identity-ink: #FFFFFF;
-      --text: #070B10; --text-2: #4D535A; --text-3: #828C97;
+      --void: #E8E8EC; --ground: #FFFFFF; --surface: #F6F6F8; --raised: #FFFFFF;
+      --hairline: #E7EBF0; --hairline-strong: #E3E3E8;
+      --identity: #EFC53F; --identity-ink: #FFFFFF;
+      --text: #0A0A0C; --text-2: #4D535A; --text-3: #828C97;
       --ok: #0B6B3D; --warn: #913200; --bad: #A82036;
-      --c1: #070B10; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
+      --c1: #0A0A0C; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
       --neutral-mark: #C2C9D1;
       --ink: #FFFFFF;
-      --accent: #070B10;
+      --accent: #0A0A0C;
       --accent-wash: rgba(7,11,16,.06);
       --accent-edge: rgba(7,11,16,.28);
       --sunken: #F3F6F9;
@@ -612,15 +612,15 @@ fn render_dashboard(
   }}
   :root[data-theme="light"] {{
     color-scheme: light;
-    --void: #E9EDF2; --ground: #FFFFFF; --surface: #F7F9FC; --raised: #FFFFFF;
-    --hairline: #E7EBF0; --hairline-strong: #CFD6DD;
-    --identity: #674415; --identity-ink: #FFFFFF;
-    --text: #070B10; --text-2: #4D535A; --text-3: #828C97;
+    --void: #E8E8EC; --ground: #FFFFFF; --surface: #F6F6F8; --raised: #FFFFFF;
+    --hairline: #E7EBF0; --hairline-strong: #E3E3E8;
+    --identity: #EFC53F; --identity-ink: #FFFFFF;
+    --text: #0A0A0C; --text-2: #4D535A; --text-3: #828C97;
     --ok: #0B6B3D; --warn: #913200; --bad: #A82036;
-    --c1: #070B10; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
+    --c1: #0A0A0C; --c2: #4D535A; --c3: #828C97; --c4: #C2C9D1;
     --neutral-mark: #C2C9D1;
     --ink: #FFFFFF;
-    --accent: #070B10;
+    --accent: #0A0A0C;
     --accent-wash: rgba(7,11,16,.06);
     --accent-edge: rgba(7,11,16,.28);
     --sunken: #F3F6F9;
@@ -808,9 +808,9 @@ fn render_dashboard(
   @media print {{
     :root {{
       --ground: #FFFFFF; --surface: #FFFFFF; --raised: #FFFFFF; --sunken: #FFFFFF;
-      --hairline: #CFD6DD; --hairline-strong: #828C97;
-      --text: #070B10; --text-2: #333333; --text-3: #555555;
-      --accent: #070B10; --ink: #FFFFFF; --identity: #674415;
+      --hairline: #E3E3E8; --hairline-strong: #828C97;
+      --text: #0A0A0C; --text-2: #333333; --text-3: #555555;
+      --accent: #0A0A0C; --ink: #FFFFFF; --identity: #EFC53F;
       --accent-wash: transparent;
     }}
     body {{ padding: 0; }}

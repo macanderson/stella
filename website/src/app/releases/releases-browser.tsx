@@ -36,9 +36,9 @@ import { REPO_URL } from "@/lib/site";
  */
 const KIND_TOKEN: Record<ChangeKind, string> = {
   Added: "var(--stella-brand)",
-  Changed: "var(--stella-brand-600)",
+  Changed: "var(--st-gold)",
   Fixed: "var(--stella-success)",
-  Removed: "var(--stella-neutral-500)",
+  Removed: "var(--st-dim)",
   Security: "var(--stella-danger)",
 };
 
