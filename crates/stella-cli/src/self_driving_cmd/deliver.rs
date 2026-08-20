@@ -834,6 +834,33 @@ pub(super) fn base_fix_contention(root: &std::path::Path, key: &str) -> Contenti
     contention
 }
 
+/// Open pull requests that say they close `key`.
+///
+/// Asked before a leftover branch is discarded: an attempt that delivered has
+/// a pull request, and one that does not has nothing worth keeping. Searched
+/// rather than listed-and-filtered because the forge already indexes the body
+/// text, and the loop writes `Closes #key` into every one it opens.
+pub(super) fn open_prs_for_issue(key: &str) -> Result<Vec<String>, String> {
+    let raw = gh(&[
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--search",
+        &format!("Closes #{key}"),
+        "--json",
+        "number",
+    ])?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&raw).map_err(|error| {
+        format!("`gh pr list` returned a payload this build cannot read: {error}")
+    })?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| row.get("number").and_then(serde_json::Value::as_u64))
+        .map(|n| n.to_string())
+        .collect())
+}
+
 /// Every open pull request on a branch with this workspace's prefix.
 ///
 /// How a restarted loop finds what it was carrying. It **asks the forge**

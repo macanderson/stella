@@ -448,9 +448,27 @@ pub(super) fn start(
 
     let base = base_ref(root);
 
-    let created = runtime
-        .block_on(manager.create(issue.key.as_str(), &base))
-        .map_err(|error| stale_attempt_hint(root, issue.key.as_str(), &error.to_string()))?;
+    let created = match runtime.block_on(manager.create(issue.key.as_str(), &base)) {
+        Ok(created) => created,
+        Err(error) => {
+            // A branch left by an attempt that died is in the way. Whether it
+            // is precious is a question with an answer: if it had delivered,
+            // there would be a pull request open for this issue.
+            //
+            // There is not, so it delivered nothing, and the loop clears it and
+            // starts over rather than deferring the issue forever. An operator
+            // is not always there to sweep up — and this loop is meant to run
+            // for days — so "nothing here will discard it for you" was a rule
+            // that quietly retired an issue on every crash.
+            let text = error.to_string();
+            if !discard_undelivered_attempt(root, issue.key.as_str(), &text) {
+                return Err(stale_attempt_hint(root, issue.key.as_str(), &text));
+            }
+            runtime
+                .block_on(manager.create(issue.key.as_str(), &base))
+                .map_err(|again| stale_attempt_hint(root, issue.key.as_str(), &again.to_string()))?
+        }
+    };
 
     let wt = Worktree {
         branch: created.branch.clone(),
@@ -542,6 +560,62 @@ pub(super) fn refuse_if_unsteered(root: &Path) -> Result<(), String> {
 /// the way. That is worth saying plainly rather than reporting raw git: the
 /// remedy depends on whether the leftover holds work, and only the operator can
 /// decide to throw it away.
+/// Clear a leftover branch and worktree for `key`, when it delivered nothing.
+///
+/// Returns whether anything was cleared, so the caller knows a retry is worth
+/// making.
+///
+/// # Why this is safe to do unattended
+///
+/// The question "does this leftover hold work worth keeping" has an
+/// observable answer rather than a judgement: **if the attempt had delivered,
+/// there would be an open pull request for the issue.** The loop opens one the
+/// moment a turn leaves changes, so a branch with no pull request is a turn
+/// that died before it produced anything — or produced something nobody can
+/// see, which is the same thing from here.
+///
+/// An open pull request stops this cold. So does an unreadable forge: `gh`
+/// failing is not evidence that nothing was delivered, and discarding on a
+/// network blip would throw away real work.
+fn discard_undelivered_attempt(root: &Path, key: &str, error: &str) -> bool {
+    if !error.contains("already exists") {
+        return false;
+    }
+
+    // Ask the forge before touching anything. An error here is a refusal, not
+    // a licence.
+    let Ok(open) = super::deliver::open_prs_for_issue(key) else {
+        return false;
+    };
+    if !open.is_empty() {
+        return false;
+    }
+
+    let branches =
+        super::state::git(root, &["branch", "--list", &format!("*{key}-*")]).unwrap_or_default();
+
+    let mut cleared = false;
+    for branch in branches.lines() {
+        let branch = branch.trim_start_matches(['*', '+', ' ']).trim();
+        if branch.is_empty() {
+            continue;
+        }
+        // The worktree first: git refuses to delete a branch one holds.
+        let path = root
+            .join(WORKTREES_DIR)
+            .join(branch.rsplit('/').next().unwrap_or(branch));
+        let _ = super::state::git(
+            root,
+            &["worktree", "remove", &path.to_string_lossy(), "--force"],
+        );
+        let _ = super::state::git(root, &["worktree", "prune"]);
+        if super::state::git(root, &["branch", "-D", branch]).is_some() {
+            cleared = true;
+        }
+    }
+    cleared
+}
+
 fn stale_attempt_hint(root: &Path, key: &str, error: &str) -> String {
     if !error.contains("already exists") {
         return format!("could not create the worktree: {error}");
