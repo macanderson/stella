@@ -317,7 +317,15 @@ fn rerun_failed(pr: &str) -> Result<(), String> {
     // `gh pr checks --json` names the run each check belongs to only through
     // its URL, so the run id is recovered from there. A pull request whose
     // checks all pass yields nothing to re-run, which is not an error.
-    let raw = gh(&["pr", "checks", pr, "--json", "state,link"])?;
+    //
+    // `gh pr checks` exits non-zero whenever the checks are not all green —
+    // exit 1 on a failure, exit 8 while any are still pending — and does so
+    // *while still writing the requested JSON to stdout*. The plain `gh`
+    // helper reads that as an error and throws the payload away, so it cannot
+    // be used here: this fallback only ever runs on a red pull request, i.e.
+    // exactly when the exit code is non-zero. Read stdout regardless of exit
+    // status and let the JSON parse below be the arbiter instead.
+    let raw = gh_stdout(&["pr", "checks", pr, "--json", "state,link"])?;
 
     #[derive(serde::Deserialize)]
     struct Row {
@@ -465,6 +473,29 @@ fn gh(args: &[&str]) -> Result<String, String> {
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
     }
+}
+
+/// Run `gh` and return stdout even when the command exits non-zero.
+///
+/// Some `gh` subcommands report their result through the exit code while still
+/// emitting the requested payload on stdout — `gh pr checks` exits 1 on a
+/// failing check and 8 on a pending one, yet writes its `--json` output either
+/// way. For those, a non-zero exit is a verdict about the checks, not a
+/// failure of the command, so the payload must survive it. stderr is only
+/// surfaced when stdout came back empty, which is the one case that signals
+/// the command itself could not run.
+fn gh_stdout(args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("gh")
+        .args(args)
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR_FORCE", "0")
+        .output()
+        .map_err(|error| format!("could not run `gh`: {error} — is the GitHub CLI installed?"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    if stdout.is_empty() && !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
+    }
+    Ok(stdout)
 }
 
 /// Push `branch` and open a draft pull request that closes `issue_key`.
