@@ -277,6 +277,9 @@ pub(crate) async fn run_raw_one_shot(
         // pairs are unreachable; matching the tuple keeps that visible instead
         // of unwrapping a grant on the strength of having checked the wrapper.
         (Some(bound), Some(candidate)) => {
+            // Bound once: a composition's variant id is assembled on demand
+            // (#3801), so the driver borrows this rather than a temporary.
+            let variant = bound.variant();
             crate::wrapper_plugin::run_wrapped(
                 bound,
                 prompt,
@@ -299,7 +302,7 @@ pub(crate) async fn run_raw_one_shot(
                     store: &store,
                     prompt,
                     session: presence.id(),
-                    variant: bound.variant(),
+                    variant: variant.as_str(),
                     recall_event,
                     memory: memory.as_mut(),
                     watch: &candidate.watch,

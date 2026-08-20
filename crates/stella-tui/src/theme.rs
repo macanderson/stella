@@ -10,76 +10,86 @@ use crate::deck::TraceKind;
 use crate::envelope::AgentStatus;
 use crate::palette;
 
-// ── stella palette — "Phosphor Gold on Ink" (brand kit v1.0, the comet) ─────
+// ── stella palette — "Gold on a cool near-black" ────────────────────────────
 //
-// One colour, owned. The ground is Ink, a warm-neutral near-black; Phosphor
-// Gold is the signal — reserved for brand, the prompt, active/running,
+// One colour, owned. The ground is a four-step neutral ramp from `#0A0A0C`,
+// every step of it blue-above-red so the screen never reads warm on a cheap
+// panel; Gold is the signal — reserved for brand, the prompt, active/running,
 // selection and focus, and for nothing else. Gold is the signal, never the
 // surface: if everything is gold, nothing is, so a general-purpose highlight
-// is exactly what this hue must not become. The one sanctioned gold *fill*
-// is a pill that owns attention (the H1 title bar, a selected tab), and a
-// gold fill always carries INK text — white on gold is 1.83:1. (Gold is the
-// *default* accent; `stella-light` swaps it for the deep gold ramp on warm
-// paper — see [`apply_theme`].)
+// is exactly what this hue must not become. The one sanctioned gold *fill* is
+// a pill that owns attention (the H1 title bar, a selected tab), and a gold
+// fill always carries GROUND-dark text — white on this gold is 1.35:1.
+// (Gold is the *default* accent; `stella-light` swaps it for the deep gold
+// ramp on cool paper — see [`apply_theme`].)
 //
-// The old blue/gold split is collapsed: the identity chrome (the logo's
-// block cursor, splash rules, section markers) and the interactive accent
-// are the same gold now. What survives of the old law: **gold never carries
-// a verdict.** Warning amber sits 4.0° from gold in hue, so an outcome may
-// never be told from chrome by hue alone — status is always glyph-paired,
-// and activity (running) is the only status that takes the accent. Enforced
-// by `gold_never_carries_a_verdict`.
+// The gold is **two values and no more**: [`ACCENT`] for every resting mark,
+// [`ACCENT_LIVE`] for the small things that are moving right now — the
+// running spinner, the progress fill's leading edge. There is no third gold,
+// which is why the deep stops the previous palette carried (`ACCENT_DEEP`,
+// `GOLD_DEEP`) are gone rather than re-pointed: a gold nobody can name the
+// job of is how an owned colour becomes a family.
 //
-// The corollary the transcript actually depends on: **prose is paper.** The
+// **Gold never carries a verdict.** [`WARN`] sits 39.1° away in OKLCH hue —
+// far enough to tell apart — and the rule holds regardless, because a reader
+// must never be asked to tell an outcome from chrome by hue alone: status is
+// always glyph-paired, and activity (running) is the only status that takes
+// the accent. Enforced by `gold_never_carries_a_verdict`.
+//
+// The corollary the transcript actually depends on: **prose is neutral.** The
 // accent buys attention, so it may only be spent where attention is owed — on
 // the deck that means the tool being called, the active tab, and the progress
-// fill. Everything else is [`INK`] (warm paper) or [`MUTED`], and a row that
-// wants to be scannable does it with a glyph and a column, not with a hue.
+// fill. Everything else is [`INK`] or [`MUTED`], and a row that wants to be
+// scannable does it with a glyph and a column, not with a hue.
 //
 // Status always pairs colour with a glyph (see [`status_glyph`]) so hue never
 // carries meaning alone — active ▶ vs done ✓ — which is also what keeps the
 // deck readable under `NO_COLOR` and for red/green colour blindness.
 //
-// Every value below comes from [`crate::palette`] — the same source the brand
-// kit's tokens are cut from. This module is the *semantic* layer over it:
-// call sites reference roles (accent, ink, rule, ok) rather than hues, so a
-// recolour is a palette edit rather than a hunt through the crate. Add a
+// Every value below comes from [`crate::palette`], which carries the measured
+// contrast and hue figures for each. This module is the *semantic* layer over
+// it: call sites reference roles (accent, ink, rule, ok) rather than hues, so
+// a recolour is a palette edit rather than a hunt through the crate. Add a
 // colour here only as a role; add a *value* in `palette`.
 //
 // Every token is 24-bit; [`degrade_buffer`] narrows it to 256- or 16-color, or
 // strips it for `NO_COLOR`, once per frame for terminals that can't render
 // truecolor. A theme switch is a second per-frame pass ([`apply_theme`]).
 
-// Grounds (dark → light lift).
+// Grounds (dark → light lift) — the four specified blacks, plus the two
+// derived steps at either end (see `palette`'s ground section).
 /// Deepest ground — full-bleed backdrops and the splash.
 pub const VOID: Color = palette::VOID;
-/// App background — Ink, the terminal's warm-neutral near-black. Applied as
-/// a real frame fill by `render_deck`, not just assumed from the terminal.
+/// App background — the canvas. Applied as a real frame fill by
+/// `render_deck`, not just assumed from the terminal.
 pub const GROUND: Color = palette::GROUND;
-/// Card / panel surface.
+/// Card / panel surface, and the ground a code block sits on.
 pub const SURFACE: Color = palette::SURFACE;
-/// Raised panel (one step above surface).
+/// Raised panel — the highlight-row value, one step above surface.
 pub const RAISED: Color = palette::RAISED;
-/// Hairline border / rule — a warm charcoal seam. Deliberately below 3.0
-/// contrast (1.26:1): it may never be the only thing conveying structure.
+/// Hairline border / rule — the border value. Deliberately below 3.0
+/// contrast (1.31:1): it may never be the only thing conveying structure.
 pub const HAIRLINE: Color = palette::HAIRLINE;
-/// The louder seam, for a boundary that must actually read (1.57:1). Still
+/// The louder seam, for a boundary that must actually read (1.63:1). Still
 /// decoration — a stronger rule, not a substitute for a glyph or a gap.
 pub const HAIRLINE_STRONG: Color = palette::HAIRLINE_STRONG;
 
-// Text tiers (primary → dim) — warm paper over the kit's warm neutral ramp;
-// no cool grays anywhere on the dark side.
+// Text tiers (primary → dim) — four cool neutrals on the same hue ramp as
+// the grounds, so nothing on the dark side reads warm.
 /// Primary text.
 pub const TEXT_PRIMARY: Color = palette::TEXT_PRIMARY;
-/// Secondary text. The safe small-text tone on every ground.
+/// Secondary text, and the tone context events take. The safe small-text tone
+/// on every dark ground (8.58:1).
 pub const TEXT_SECONDARY: Color = palette::TEXT_SECONDARY;
-/// Tertiary text (labels, captions). AA body on [`GROUND`]/[`SURFACE`]
-/// (5.71:1 / 5.38:1); on [`RAISED`] (4.98:1) it sits right at the floor.
+/// Tertiary text (labels, captions). 4.47:1 on [`GROUND`] — just under the
+/// AA body floor, so this is the caption/UI tier and anything a reader must
+/// read at 13px takes [`TEXT_SECONDARY`].
 pub const TEXT_TERTIARY: Color = palette::TEXT_TERTIARY;
-/// Dim text (the quietest legible tier) — the same tone as [`TEXT_TERTIARY`].
-/// Kept as a distinct role name for the progress track and other chrome that
-/// means "quietest", not "caption".
-pub const TEXT_DIM: Color = palette::TEXT_TERTIARY;
+/// The dim tier — 2.30:1, below every text floor. **Chrome only, never
+/// words**: the unfilled progress groove. It has its own value now rather
+/// than aliasing [`TEXT_TERTIARY`], which is why the three progress call
+/// sites that painted *words* with it moved up a tier.
+pub const TEXT_DIM: Color = palette::TEXT_DIM;
 
 // Semantic (base + bright). The palette carries one value per status; the
 // `_BRIGHT` names remain as roles for call sites that mean "the text tone".
@@ -87,9 +97,10 @@ pub const TEXT_DIM: Color = palette::TEXT_TERTIARY;
 pub const SUCCESS: Color = palette::SUCCESS;
 /// Success (bright — text / completed fills).
 pub const SUCCESS_BRIGHT: Color = palette::SUCCESS;
-/// Warning (base). Amber — a hue-neighbour of the gold accent (4.0° apart),
-/// which is exactly why a warning never appears without its glyph: the
-/// glyph, not the hue, is the status carrier.
+/// Warning (base). Derived to sit 39.1° from the gold accent and 38.9° from
+/// [`DANGER`] — the point that maximises the smaller of the two gaps — so a
+/// warning is tellable from the mark *and* from a failure by hue. The glyph
+/// stays the status carrier regardless.
 pub const WARNING: Color = palette::WARNING;
 /// Warning (bright — text).
 pub const WARNING_BRIGHT: Color = palette::WARNING;
@@ -109,84 +120,76 @@ pub const DANGER_BRIGHT: Color = palette::DANGER;
 // ── Categorical hues (deliberately NOT brand) ───────────────────────────────
 //
 // A few surfaces need more mutually-distinguishable colours than a one-hue
-// brand palette provides: syntax tokens, graph node kinds, and one colour per
+// palette provides: graph node kinds, tool classes, and one colour per
 // concurrent agent. Making those the brand hue would violate the reservation
-// above, so they are a categorical set — the *same four values* the
-// observatory paints its data marks with, so a series in a chart and a chip in
-// the deck agree. All are complements of gold that stay warm/rich on ink —
-// muted violet (215° from gold), deep teal (134°), warm rose (70°) — and every
-// one clears AA body (5.09:1 or better) on [`GROUND`]. They carry no brand
-// meaning and must never be used for brand, status, or "active".
+// above, so they are a categorical set. Every one clears **30° of OKLCH hue
+// from [`ACCENT`]** — the floor for two hues to be told apart in a single
+// terminal cell — and AA body on [`GROUND`]. They carry no brand meaning and
+// must never be used for brand, status, or "active".
+//
+// The amber mark that used to lead this set is **gone**, not stood down: at
+// OKLCH hue 85.2 it measured 5.5° from this gold, the same colour at a
+// glance. Its one surviving job — the syntax keyword tone inside code
+// bodies — went to [`SYNTAX_KEYWORD`], which the palette puts on the bright
+// neutral anyway.
 
 /// Violet — process/structural events (links, diff hunk headers, graph
 /// relations, trace stages, the user's own prompt). Categorical, not the brand
-/// accent. `data-2`, 5.29:1 on ground.
-pub const VIOLET: Color = palette::DATA_2;
-/// Amber — the stood-down categorical hue. `data-1` measures 1.06:1 against
-/// the gold accent — the same brass at a glance — so with gold as THE accent
-/// it may no longer colour a chip, a node, or an agent (the observatory
-/// stands the same mark down from every plotted surface). It survives in one
-/// context only: syntax keywords inside code bodies, where gold chrome never
-/// reaches and the neighbouring tones are the diff washes and the other
-/// syntax hues. 10.11:1 on ground.
-pub const AMBER: Color = palette::DATA_1;
-/// Teal — media traces and one slot of the per-agent palette. `data-4`,
-/// 10.54:1 on ground. Deep blue-green: 134° from the gold accent and far
-/// from the success green, and emphatically not the retired ice blue — it
-/// replaced a glacier blue (`AGENT_ICE`) that drifted confusable with the
-/// old accent, and it reads rich, not icy, on ink.
-pub const TEAL: Color = palette::DATA_4;
+/// accent. `data-1`, 5.32:1 on ground, 158.2° from gold.
+pub const VIOLET: Color = palette::DATA_1;
+/// Teal — media traces and one slot of the per-agent palette. `data-3`,
+/// 10.60:1 on ground, 95.9° from gold. Deep blue-green, emphatically not the
+/// retired ice blue — it replaced a glacier blue (`AGENT_ICE`) that drifted
+/// confusable with an older accent.
+pub const TEAL: Color = palette::DATA_3;
 /// Warm rose — file artifacts (trace chips, graph file/module nodes) and the
-/// fourth chart series. `data-3`, 5.09:1 on ground. 70° from gold; 1.30:1
+/// fourth chart series. `data-2`, 5.11:1 on ground, 95.2° from gold. 1.14:1
 /// against [`DANGER`]'s red-pink, so it never carries an error meaning and
 /// never appears without a neutral label or glyph beside it.
-pub const MAGENTA: Color = palette::DATA_3;
-/// Citron — the repository/VCS tool class in the transcript. `data-5`,
-/// 11.08:1 on ground, 39° from gold and 61° from the success green.
-pub const CITRON: Color = palette::DATA_5;
+pub const MAGENTA: Color = palette::DATA_2;
+/// Citron — the repository/VCS tool class in the transcript. `data-4`,
+/// 11.10:1 on ground, and 35.4° from gold: the tightest clearance in the set,
+/// and it clears.
+pub const CITRON: Color = palette::DATA_4;
 /// Orchid — the delegation/orchestration tool class in the transcript.
-/// `data-6`, 6.76:1 on ground, 34° from the violet and 41° from the rose.
-pub const ORCHID: Color = palette::DATA_6;
+/// `data-5`, 6.82:1 on ground, 130.0° from gold and 28.2° from the violet.
+pub const ORCHID: Color = palette::DATA_5;
 
 // ── Role aliases (what the rest of the crate references) ─────────────────────
 // Role names remap onto the palette so call sites read as intent (accent,
 // ink, rule) rather than as a hue that a future recolor would falsify.
 
-/// stella's brand accent — Phosphor Gold `#FFB81A`, the kit value lifted 10%
-/// in lightness (11.36:1 on [`GROUND`]). Brand, active/running, focus, selection, and
-/// progress only. In the transcript, the tool name and nothing else. The
-/// active theme's actual hue is applied per-frame by [`apply_theme`]; this is
-/// the canonical dark value every call site renders.
+/// stella's brand accent — Gold `#EFC53F` (11.99:1 on [`GROUND`]). Brand,
+/// active/running, focus, selection, and progress only. In the transcript,
+/// the tool name and nothing else. The active theme's actual hue is applied
+/// per-frame by [`apply_theme`]; this is the canonical dark value every call
+/// site renders.
 ///
-/// Unlike the blue it replaced, gold needs no separate text tone: the same
-/// value clears AA on a glyph, a one-cell rule, and a fill on every dark
-/// ground. When it is a *fill*, the text on it must be [`GROUND`]-dark —
-/// ink on gold is 11.36:1 where white on gold is 1.73:1.
+/// The same value clears AA on a glyph, a one-cell rule, and a fill on every
+/// dark ground. When it is a *fill*, the text on it must be [`GROUND`]-dark —
+/// ink on gold is 11.99:1 where white on gold is 1.35:1.
 pub const ACCENT: Color = palette::BRAND;
 /// The brand hue for *fills* — a pill, a bar body, a selected-tab wash. The
-/// same Phosphor Gold: one owned colour means the stroke and the fill agree,
-/// and the fill's legibility comes from pairing it with ink text, never from
-/// a second hue.
+/// same gold: one owned colour means the stroke and the fill agree, and the
+/// fill's legibility comes from pairing it with ink text, never from a second
+/// hue.
 pub const ACCENT_FILL: Color = palette::BRAND;
-/// A deeper accent (gradient / pressed) — kit `gold-600` lifted 10% with the
-/// brand, the leading stop of the progress fill (8.77:1 on ground, so the
-/// fill's tail clears AA).
-pub const ACCENT_DEEP: Color = palette::BRAND_DEEP;
+/// The **live** accent — the one lifted gold, reserved for small things that
+/// are moving: the running spinner, the leading edge of the progress fill.
+/// 3.5° from [`ACCENT`] in hue, so it reads as the same gold lit up rather
+/// than as a second colour. A resting mark never takes it.
+pub const ACCENT_LIVE: Color = palette::BRAND_LIVE;
 
 /// The identity gold — the logo's block cursor, splash rules, section
-/// markers, and brand chrome generally. The same Phosphor Gold as [`ACCENT`]:
-/// under the comet kit, chrome and accent are one colour. **Never a
-/// verdict**: it sits 4.0° from [`WARN`] in hue, and
-/// `gold_never_carries_a_verdict` proves no outcome mapping can return it —
-/// activity (running/active) is the one status that takes gold, by kit rule.
+/// markers, and brand chrome generally. The same value as [`ACCENT`]: chrome
+/// and accent are one colour. **Never a verdict** —
+/// `gold_never_carries_a_verdict` proves no outcome mapping can return it;
+/// activity (running/active) is the one status that takes gold.
 pub const GOLD: Color = palette::GOLD;
-/// The bright stop of the gold sweep (headlines, the splash rule's leading
-/// edge). Kit `gold-400`.
-pub const GOLD_BRIGHT: Color = palette::GOLD_BRIGHT;
-/// The trailing stop of the gold sweep. Kit `gold-700` — the identity sweep
-/// runs wider and quieter than the progress fill's ([`ACCENT_DEEP`]).
-pub const GOLD_DEEP: Color = palette::GOLD_DEEP;
-/// Warm-paper primary text.
+/// The live stop of the identity sweep — the same value as [`ACCENT_LIVE`],
+/// under the same reservation: small, and moving.
+pub const GOLD_LIVE: Color = palette::GOLD_LIVE;
+/// Primary text.
 pub const INK: Color = TEXT_PRIMARY;
 /// Dimmed secondary text.
 pub const MUTED: Color = TEXT_SECONDARY;
@@ -194,10 +197,10 @@ pub const MUTED: Color = TEXT_SECONDARY;
 pub const RULE: Color = HAIRLINE;
 
 /// Background tint for the transcript entry selected with the arrow keys —
-/// a barely-there warm lift so the highlight reads without shouting. A full
-/// gold wash would make the selection a surface, which gold may not be; the
-/// gold *pill* treatment is reserved for single-line attention (the H1 bar,
-/// an active tab), where ink-on-gold text keeps it legible.
+/// the highlight-row value, a barely-there lift that reads without shouting.
+/// A full gold wash would make the selection a surface, which gold may not
+/// be; the gold *pill* treatment is reserved for single-line attention (the
+/// H1 bar, an active tab), where ink-on-gold text keeps it legible.
 pub const SELECT_BG: Color = palette::RAISED;
 
 /// Success / positive / added lines.
@@ -222,7 +225,7 @@ pub const SUBAGENT: Color = TEAL;
 // ── Runtime theme (the `/theme` switch) ──────────────────────────────────────
 //
 // Colours above are compile-time constants: the canonical **dark** palette
-// (Phosphor Gold on Ink), which is what every view renders and
+// (gold on the cool near-black ramp), which is what every view renders and
 // what ships as the default. A theme switch is applied *after* the widgets draw, as a
 // per-frame value→value remap over the finished buffer ([`apply_theme`]) —
 // the exact mechanism [`degrade_buffer`] already uses for colour-depth. That
@@ -233,16 +236,16 @@ pub const SUBAGENT: Color = TEAL;
 // whose interpolated cells are never equal to a token; so its source
 // ([`brand_gradient`] via [`primary_stops`]) is theme-aware directly.
 
-/// The shipped themes. `stella-dark` (Phosphor Gold on Ink) is the default;
-/// `stella-light` (the deep gold ramp on warm paper) is its complement. The
-/// names match the `/theme` argument and the `ui.theme` settings value
-/// verbatim.
+/// The shipped themes. `stella-dark` (gold on the cool near-black ramp) is
+/// the default; `stella-light` (the deep gold ramp on cool paper) is its
+/// complement. The names match the `/theme` argument and the `ui.theme`
+/// settings value verbatim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThemeName {
-    /// Phosphor Gold on Ink. Default.
+    /// Gold on the cool near-black ramp. Default.
     #[default]
     StellaDark,
-    /// The same gold darkened onto warm paper.
+    /// The same gold darkened onto cool paper.
     StellaLight,
 }
 
@@ -298,55 +301,41 @@ pub fn set_active_theme(theme: ThemeName) {
     ACTIVE_THEME.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The active theme's brand gradient stops, deep → bright: `brand-deep` →
-/// `brand` (Phosphor Gold) on `stella-dark`, `brand-ink-deep` → `brand-ink`
-/// on `stella-light`. Feeds [`brand_gradient`] so the progress fill and
-/// wordmark sweep recolour with the theme.
+/// The active theme's brand gradient stops, resting → live: `brand` →
+/// `brand-live` on `stella-dark`, `brand-ink-deep` → `brand-ink` on
+/// `stella-light`. Feeds [`brand_gradient`] so the progress fill and wordmark
+/// sweep recolour with the theme.
 ///
-/// The bright end is [`ACCENT`] (the gold itself, not `brand-bright`), so
-/// that the truecolor gradient lands on the same value a degraded terminal
-/// falls back to — `crate::progress` paints a solid [`ACCENT`] when
-/// [`ColorMode::is_truecolor`] is false, and a fill whose colour jumped
-/// between depths would be a downgrade-path bug. (`brand-bright` belongs to
-/// the identity sweep's high end, [`gold_stops`].)
+/// The palette allows exactly two golds, so the sweep IS those two: the fill
+/// rests on [`ACCENT`] and lights up to [`ACCENT_LIVE`] at its head, which is
+/// precisely the job the live stop is reserved for. This also removes the
+/// downgrade-path hazard the previous three-gold ramp had to reason around —
+/// `crate::progress` paints a solid [`ACCENT`] when [`ColorMode::is_truecolor`]
+/// is false, and that is now the gradient's own resting stop rather than a
+/// third value.
+///
+/// There is deliberately no second, wider "identity" sweep any more. It
+/// existed to let chrome run quieter than the progress fill across four gold
+/// stops; with two, a second gradient over the same pair would be a
+/// distinction that renders identically — and `gold_stops`/`gold_gradient`,
+/// which had no caller outside this module, are gone with it.
 pub fn primary_stops() -> [Color; 2] {
     match active_theme() {
-        ThemeName::StellaDark => [palette::BRAND_DEEP, palette::BRAND],
+        ThemeName::StellaDark => [palette::BRAND, palette::BRAND_LIVE],
         ThemeName::StellaLight => [palette::BRAND_INK_DEEP, palette::BRAND_INK],
     }
 }
 
-/// The active theme's gold gradient stops, deep → bright. Gold is identity
-/// chrome: the splash rule, section markers, the wordmark's cursor block. It
-/// is never a verdict and never a data mark, so nothing that resolves an
-/// *outcome* may call this.
-pub fn gold_stops() -> [Color; 2] {
-    match active_theme() {
-        ThemeName::StellaDark => [palette::GOLD_DEEP, palette::GOLD_BRIGHT],
-        // One gold on paper: `gold-ink` (the kit's `gold-deep`, its one
-        // light-ground gold) holds the 3:1 graphical floor on paper, so the
-        // light sweep is flat by design. Gold *text* on paper is darker
-        // still — the flat-token remap sends it to `brand-ink`.
-        ThemeName::StellaLight => [palette::GOLD_INK, palette::GOLD_INK],
-    }
-}
-
-/// The gold gradient sampled at `t ∈ [0, 1]` — the counterpart of
-/// [`brand_gradient`] for identity chrome.
-pub fn gold_gradient(t: f64) -> Color {
-    gradient_at(&gold_stops(), t)
-}
-
 /// The active theme's bright primary. Same value the flat
-/// [`ACCENT`] remaps to, but resolved eagerly — use this only where a colour is
+/// [`ACCENT_LIVE`] remaps to, but resolved eagerly — use this only where a colour is
 /// *interpolated* (lightened, swept), since [`apply_theme`]'s value remap can't
 /// reach an interpolated cell. Flat fills should keep using [`ACCENT`].
 pub fn primary() -> Color {
     primary_stops()[1]
 }
 
-/// The active theme's deep primary — the interpolation counterpart of
-/// [`primary`] (see its note on when to reach for these over [`ACCENT_DEEP`]).
+/// The active theme's resting primary — the interpolation counterpart of
+/// [`primary`] (see its note on when to reach for these over [`ACCENT`]).
 pub fn primary_deep() -> Color {
     primary_stops()[0]
 }
@@ -354,81 +343,85 @@ pub fn primary_deep() -> Color {
 // ── Diff panel ──────────────────────────────────────────────────────────────
 
 /// Subtle background tint behind added diff lines (the GitHub-PR reading —
-/// pair with [`OK`] foreground).
-pub const DIFF_ADD_BG: Color = Color::Rgb(20, 44, 26);
-/// Subtle background tint behind removed diff lines (pair with [`BAD`]).
-pub const DIFF_DEL_BG: Color = Color::Rgb(52, 24, 26);
+/// pair with [`OK`] foreground). [`SUCCESS`] mixed 16% over [`GROUND`], so
+/// the wash is the semantic hue diluted rather than an unrelated green:
+/// 1.31:1 on ground, and [`INK`] on it is 12.40:1.
+pub const DIFF_ADD_BG: Color = Color::Rgb(0x1B, 0x29, 0x21);
+/// Subtle background tint behind removed diff lines (pair with [`BAD`]) —
+/// [`DANGER`] at the same 16%. [`INK`] on it is 13.59:1.
+pub const DIFF_DEL_BG: Color = Color::Rgb(0x2C, 0x19, 0x1E);
 
 /// Background behind the bytes of an added line that actually changed, when a
 /// `-`/`+` pair is close enough to word-diff. Two steps brighter than
 /// [`DIFF_ADD_BG`]: the whole line is already "added", so this has to read as
 /// a second level of emphasis *within* it rather than a different category.
-pub const DIFF_ADD_BG_EMPH: Color = Color::Rgb(26, 82, 44);
+pub const DIFF_ADD_BG_EMPH: Color = Color::Rgb(0x2E, 0x4B, 0x39);
 /// Background behind a live search match. Warm enough to find by eye while
 /// scrolling, muted enough not to outshout the `✗` rail beside it — a match is
 /// something you asked for, not something that went wrong.
-pub const MATCH_BG: Color = Color::Rgb(92, 74, 0);
+pub const MATCH_BG: Color = Color::Rgb(0x46, 0x3B, 0x19);
 
 /// The removed-line counterpart of [`DIFF_ADD_BG_EMPH`].
-pub const DIFF_DEL_BG_EMPH: Color = Color::Rgb(102, 34, 42);
+pub const DIFF_DEL_BG_EMPH: Color = Color::Rgb(0x53, 0x2A, 0x31);
 
 // ── Syntax highlighting (diff bodies) ───────────────────────────────────────
 //
-// A four-color code palette layered *under* the add/remove diff semantics:
-// the `+`/`-` background always wins (add/remove is never lost — see
-// `crate::diff`), while a recognized token overrides only the foreground.
-// Every color is chosen to read on all three diff backdrops (add green, del
-// red, and the plain panel), and every one is *categorical*: syntax is not
-// brand, not status, and not activity. Keyword takes [`AMBER`] — the one
-// surviving home of the amber mark, legitimate here because gold chrome
-// never enters a code body, so nothing nearby can be confused for "active" —
-// strings a soft spring green, numbers the [`VIOLET`] anchor, and comments
-// dim toward the caption tier.
+// A code palette layered *under* the add/remove diff semantics: the `+`/`-`
+// background always wins (add/remove is never lost — see `crate::diff`),
+// while a recognized token overrides only the foreground. Every colour reads
+// on all three diff backdrops (add green, del red, and the plain panel), and
+// none of them is brand, status, or activity.
+//
+// The keyword tone is the palette's own instruction for a code body: token
+// classes ride the **bright neutral**, not a hue. That replaces an amber that
+// measured 5.5° from this gold — a keyword the reader could mistake for the
+// running mark, in the one place gold chrome never reaches to disambiguate
+// it. Literals keep a hue so a value still stands out from the shape of the
+// code around it, and both are pulled into the scheme's own register.
 
-/// Language keyword (`fn`/`let`/`def`/`import`/`return`…).
-pub const SYNTAX_KEYWORD: Color = AMBER;
-/// String / char literal.
-pub const SYNTAX_STRING: Color = Color::Rgb(126, 231, 135);
-/// Numeric literal — violet, the counterpoint to the amber keyword stop.
+/// Language keyword (`fn`/`let`/`def`/`import`/`return`…), and in JSON an
+/// object key — the palette's "syntax types" slot. [`palette::TEXT_EMPHASIS`],
+/// 11.04:1 on ground.
+pub const SYNTAX_KEYWORD: Color = palette::TEXT_EMPHASIS;
+/// String / char literal — a soft green at the scheme's own chroma (0.115,
+/// against the retired tone's 0.164), 11.78:1 on ground. 8.4° from
+/// [`SUCCESS`] in hue, which is deliberate rather than sloppy: inside a diff
+/// body the *background* already says added-or-removed, so a literal that
+/// sits near the success hue cannot be read as a verdict.
+pub const SYNTAX_STRING: Color = Color::Rgb(0x93, 0xD8, 0x96);
+/// Numeric literal — violet, the categorical counterpoint to the neutral
+/// keyword stop.
 pub const SYNTAX_NUMBER: Color = VIOLET;
-/// Line comment (rendered dimmed + italic). The same warm neutral as
-/// [`TEXT_TERTIARY`] — "comments dim toward the caption tier" made literal,
-/// and the cool gray it replaces is banned from the dark side outright.
+/// Line comment (rendered dimmed + italic) — the caption tier, which is
+/// "comments dim toward the caption tier" made literal.
 pub const SYNTAX_COMMENT: Color = palette::TEXT_TERTIARY;
 
 /// Inline code spans and fenced-code plain runs (`crate::markdown`). A calm
 /// sage green — quiet enough that a backticked word reads as *technical*
-/// rather than as emphasis, and 105° of hue away from [`ACCENT`] so it never
-/// reads as *active* (8.94:1 on ground). This replaces the warning-orange the
+/// rather than as emphasis, and 67.2° of hue away from [`ACCENT`] so it never
+/// reads as *active* (8.99:1 on ground). This replaces the warning-orange the
 /// transcript used to paint every `identifier` with: code is not a warning,
 /// and an alarm hue on every backticked word was the single loudest thing on
-/// the deck. Not a brand value — it is TUI-only and has no entry in
-/// `palette`.
+/// the deck. Not a palette value — it is TUI-only.
 pub const CODE: Color = Color::Rgb(0x6F, 0xBF, 0x92);
 
 // ── Brand gradient (the wordmark sweep and the progress-bar fill) ───────────
 //
-// Two stops, not three: the sweep runs deep → bright, left to right. An
-// earlier generation ran two separate gradients — one for brand chrome and a
-// second for the progress bar — which is precisely the split this palette
-// collapses. Progress *is* activity, activity is the brand hue, so one
-// gradient serves both. The stops track the ACTIVE theme (gold on ink, the
-// deep gold ramp on paper) via [`primary_stops`]: the progress fill
-// interpolates non-token cells the per-frame [`apply_theme`] remap can't see,
-// so its source has to be theme-aware directly.
-//
-// The identity chrome keeps its own wider two-stop sweep ([`gold_stops`] /
-// [`gold_gradient`]) — the splash rule and section markers. Same family now
-// (gold-700 → gold-400 around the same hue), but a separate gradient: chrome
-// may sweep quiet-to-bright while the progress fill's tail must hold AA on
-// its own, and the progress bar's degraded fallback is a solid [`ACCENT`].
+// Two stops, and there are only two golds to make them from: the sweep runs
+// resting → live, left to right. An earlier generation ran two separate
+// gradients — one for brand chrome and a second for the progress bar — which
+// is precisely the split this palette collapses. Progress *is* activity,
+// activity is the brand hue, so one gradient serves both. The stops track the
+// ACTIVE theme via [`primary_stops`]: the progress fill interpolates non-token
+// cells the per-frame [`apply_theme`] remap can't see, so its source has to be
+// theme-aware directly.
 
-/// The brand gradient's stops for the *default* (dark) theme, deep → bright.
+/// The brand gradient's stops for the *default* (dark) theme, resting → live.
 /// [`primary_stops`] returns these for `stella-dark` and the paper pair for
 /// `stella-light`; prefer that accessor. The determinate progress fill
 /// interpolates across the active stops per cell (truecolor only; lesser
 /// terminals collapse to a solid [`ACCENT`] fill).
-pub const BRAND_STOPS: [Color; 2] = [ACCENT_DEEP, ACCENT];
+pub const BRAND_STOPS: [Color; 2] = [ACCENT, ACCENT_LIVE];
 
 /// Linear-interpolate two RGB colors at `t ∈ [0, 1]`. Non-RGB inputs return
 /// `a` unchanged (the gradient only ever feeds it `Color::Rgb` stops).
@@ -587,52 +580,52 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (SURFACE, 233, 0),
     (RAISED, 234, 8),
     (HAIRLINE, 235, 8),
-    (HAIRLINE_STRONG, 236, 8),
+    (HAIRLINE_STRONG, 237, 8),
     (TEXT_PRIMARY, 255, 15),
-    (TEXT_SECONDARY, 246, 7),
-    (TEXT_TERTIARY, 245, 8),
-    // Phosphor Gold `#FFB81A` sits one unit from cube entry 214 (255,175,0) —
-    // for once the terminal cube holds the brand almost exactly. The family
-    // stays on the *yellow* side everywhere: the nearest entry to
-    // `gold-bright` is 215 (255,175,95), an orange, and orange is the one
-    // thing this identity may not render, so it takes 221 (255,215,95)
-    // instead; `gold-deep` likewise skips orange 130 for 136 (175,135,0).
-    // The progress ramp's deep stop takes 178 rather than nearest-entry 172
-    // (215,135,0, again orange) — it shares that dark yellow with `warning`,
-    // which is acceptable because a degraded terminal never paints the
-    // gradient at all (`crate::progress` collapses to solid ACCENT), while
-    // ACCENT vs ACCENT_DEEP staying distinct keeps the head-to-tail ramp
-    // honest. At 16 colours the accent family takes bright yellow (11) and
-    // the deep stop plain yellow's darker sibling is unavailable, so it
-    // shares 3 with warning under the same never-painted reasoning; GOLD
-    // family values stay on 11 so chrome never collapses onto `warning`'s
-    // plain yellow — gold is chrome, warning is a verdict, and the two may
-    // not become the same cell.
-    (ACCENT, 214, 11), // also ACCENT_FILL and GOLD (one value, one entry)
-    (GOLD_BRIGHT, 221, 11),
-    (ACCENT_DEEP, 178, 3),
-    (GOLD_DEEP, 136, 11),
-    (SUCCESS, 78, 10),
-    (WARNING, 178, 3),
+    // The bright neutral shares 15 with primary at 16 colours — the two are
+    // one value step apart and there is no third white to give it. It keeps
+    // its own 256 entry, which is where the code body actually reads.
+    (palette::TEXT_EMPHASIS, 251, 15),
+    (TEXT_SECONDARY, 145, 7),
+    (TEXT_TERTIARY, 243, 8),
+    (TEXT_DIM, 239, 8),
+    // The two golds. `#EFC53F` sits on cube entry 221 (255,215,95) almost
+    // exactly; the live stop takes 222 (255,215,135) rather than sharing it,
+    // because the whole point of that value is being visibly lit. At 16
+    // colours both collapse to bright yellow (11): there is no second yellow
+    // to lift to, so the live head is a truecolor/256 affordance and the
+    // degraded terminal simply sees a solid gold — which `crate::progress`
+    // already paints deliberately when truecolor is absent. The family stays
+    // on the *yellow* side: the nearest entry to the live stop on the orange
+    // side is 215, and orange is the one thing this identity may not render.
+    (ACCENT, 221, 11),      // also ACCENT_FILL and GOLD (one value, one entry)
+    (ACCENT_LIVE, 222, 11), // also GOLD_LIVE
+    (SUCCESS, 114, 10),
+    (WARNING, 173, 3),
+    // Nearest for danger is 168, which the rose data mark takes below; 204
+    // (255,95,135) is a hair further and keeps the two apart, and a red-pink
+    // is what an error must still read as.
     (DANGER, 204, 9),
     (VIOLET, 98, 13),
-    (AMBER, 179, 3),
     (TEAL, 44, 6),
     (MAGENTA, 168, 5),
-    // The tool-class pair. 149 (175,215,95) and 171 (215,95,255) are the
+    // The tool-class pair. 149 (175,215,95) and 170 (215,95,215) are the
     // nearest cube entries; at 16 colours they share green/magenta with their
     // hue neighbours, which is the ordinary collapse every categorical hue
     // takes there — the tool NAME is always beside the colour, so the class is
     // never carried by hue alone.
     (CITRON, 149, 10),
-    (ORCHID, 171, 13),
+    (ORCHID, 170, 13),
     (CODE, 72, 2),
+    // The five washes keep green/red/yellow cube entries rather than their
+    // nearest neighbours, which are all greys: a wash that no longer reads as
+    // added/removed/found has lost the only thing it was doing.
     (DIFF_ADD_BG, 22, 2),
     (DIFF_DEL_BG, 52, 1),
     (DIFF_ADD_BG_EMPH, 28, 2),
     (DIFF_DEL_BG_EMPH, 88, 1),
     (MATCH_BG, 58, 3),
-    (SYNTAX_STRING, 114, 10),
+    (SYNTAX_STRING, 157, 10),
 ];
 
 /// Resolve one color for the mode actually in use. Truecolor passes through;
@@ -686,7 +679,8 @@ pub fn degrade_buffer(buf: &mut ratatui::buffer::Buffer, mode: ColorMode) {
 // ── Theme remap (the `stella-light` value substitution) ──────────────────────
 //
 // `stella-dark` is the canonical palette the widgets render, so its remap is
-// the identity. `stella-light` maps every dark token to its paper counterpart,
+// the identity. `stella-light` maps every dark token to its cool-paper
+// counterpart,
 // keyed by value exactly like [`FALLBACKS`]. Role aliases share a value with a
 // palette token (INK==TEXT_PRIMARY, OK==SUCCESS, SELECT_BG==RAISED, …), so one
 // entry per distinct value covers every alias — the same property that makes
@@ -696,55 +690,56 @@ pub fn degrade_buffer(buf: &mut ratatui::buffer::Buffer, mode: ColorMode) {
 
 /// `stella-light`: every canonical (dark) token value → its paper counterpart.
 const LIGHT_REMAP: &[(Color, Color)] = &[
-    // Grounds → paper.
+    // Grounds → paper. The paper ramp is cooled to the same 285-286° neutral
+    // hue the dark ramp holds, so switching theme changes the lightness and
+    // not the temperature.
     (VOID, palette::PAPER),
     (GROUND, palette::PAPER),
     (SURFACE, palette::SNOW),
     (RAISED, palette::PAPER_RAISED),            // also SELECT_BG
     (HAIRLINE, palette::PAPER_HAIRLINE),        // also RULE
     (HAIRLINE_STRONG, palette::PAPER_HAIRLINE), // one paper seam serves both
-    // Text → ink (INK==TEXT_PRIMARY, MUTED==TEXT_SECONDARY, DIM==TERTIARY;
-    // SYNTAX_COMMENT rides the tertiary entry too).
+    // Text → ink (INK==TEXT_PRIMARY, MUTED==TEXT_SECONDARY; SYNTAX_COMMENT
+    // rides the tertiary entry, SYNTAX_KEYWORD the emphasis one).
     (TEXT_PRIMARY, palette::INK),
+    (palette::TEXT_EMPHASIS, palette::INK_EMPHASIS),
     (TEXT_SECONDARY, palette::MUTED),
     (TEXT_TERTIARY, palette::INK_DIM),
-    // Brand → the deep gold ramp. ACCENT, ACCENT_FILL and GOLD are one
-    // Phosphor Gold value, so one entry sends every flat gold cell to
-    // `brand-ink` (kit gold-800 lifted 10%, 5.22:1 on paper) — the kit's `gold-deep`
-    // is reserved for *graphical* chrome via `gold_stops`, because at
-    // 3.79:1 it cannot carry terminal-cell text on paper.
+    // The dim tier is chrome, and on paper the groove has to darken rather
+    // than lighten to stay visible; the tertiary ink is the quietest tone
+    // that still reads as texture on `snow`.
+    (TEXT_DIM, palette::INK_DIM),
+    // Brand → the deep gold ramp. ACCENT, ACCENT_FILL and GOLD are one value,
+    // so one entry sends every flat gold cell to `brand-ink` (6.02:1 on
+    // paper) — `gold-ink` is reserved for *graphical* chrome, because at
+    // 3.37:1 it cannot carry terminal-cell text on paper.
     (ACCENT, palette::BRAND_INK),
-    (GOLD_BRIGHT, palette::GOLD_INK),
-    (ACCENT_DEEP, palette::BRAND_INK_DEEP),
-    // `gold-deep` already IS the kit's light-ground gold; its entry is the
-    // identity so the sweep's trailing stop needs no second value.
-    (GOLD_DEEP, palette::GOLD_INK),
+    (ACCENT_LIVE, palette::GOLD_INK),
     // Status → ink variants (OK/BRIGHT share the base value).
     (SUCCESS, palette::SUCCESS_INK),
     (WARNING, palette::WARNING_INK),
     (DANGER, palette::DANGER_INK),
     // Inline code — a darker sage, 5.26:1 on paper.
     (CODE, Color::Rgb(0x2A, 0x71, 0x50)),
-    // Categorical hues, darkened for AA on the warm paper (RUN/HELD/NUMBER==
-    // VIOLET, KEYWORD==AMBER). Teal drops to teal-700: the old teal-600
-    // measured 3.35:1 on the kit's paper, under the 4.5:1 text floor.
+    // Categorical hues, darkened for AA on the paper ground (RUN/HELD/NUMBER
+    // == VIOLET). Teal drops to teal-700: teal-600 measured 3.35:1, under the
+    // 4.5:1 text floor.
     (VIOLET, Color::Rgb(0x6D, 0x28, 0xD9)),
-    (AMBER, Color::Rgb(0x92, 0x40, 0x0E)),
     (TEAL, Color::Rgb(0x0F, 0x76, 0x6E)),
     (MAGENTA, Color::Rgb(0xA6, 0x18, 0x5C)),
-    // The tool-class pair, darkened for AA on the warm paper: citron drops to
-    // an olive (5.49:1), orchid to a deep purple (6.24:1).
+    // The tool-class pair, darkened for AA on the paper: citron drops to an
+    // olive, orchid to a deep purple.
     (CITRON, Color::Rgb(0x4D, 0x6B, 0x12)),
     (ORCHID, Color::Rgb(0x8B, 0x2B, 0xA8)),
-    // Syntax bodies. Strings take green-800 (6.38:1 — green-700 sat at
-    // 4.49:1 on the warm paper).
+    // Syntax bodies. Strings take green-800 (green-700 sat at 4.49:1).
     (SYNTAX_STRING, Color::Rgb(0x16, 0x65, 0x34)),
-    // Diff tints → light washes.
-    (DIFF_ADD_BG, Color::Rgb(0xDC, 0xFC, 0xE7)),
-    (DIFF_DEL_BG, Color::Rgb(0xFE, 0xE2, 0xE2)),
-    (DIFF_ADD_BG_EMPH, Color::Rgb(0xA7, 0xF3, 0xC6)),
-    (DIFF_DEL_BG_EMPH, Color::Rgb(0xFB, 0xB4, 0xBD)),
-    (MATCH_BG, Color::Rgb(0xFE, 0xF0, 0x8A)),
+    // Diff tints → light washes, mixed from the same paper ground and the
+    // same status inks the dark washes are mixed from.
+    (DIFF_ADD_BG, Color::Rgb(0xD4, 0xE2, 0xDD)),
+    (DIFF_DEL_BG, Color::Rgb(0xE8, 0xD9, 0xDE)),
+    (DIFF_ADD_BG_EMPH, Color::Rgb(0xB0, 0xCD, 0xBF)),
+    (DIFF_DEL_BG_EMPH, Color::Rgb(0xDA, 0xB9, 0xC2)),
+    (MATCH_BG, Color::Rgb(0xD7, 0xD2, 0xC0)),
 ];
 
 /// Remap one colour through a theme table; unmapped colours pass through (the
@@ -870,11 +865,11 @@ pub fn stage_color(stage: &stella_protocol::StageName) -> Color {
 /// The categorical hues a contributed stage is hashed into.
 ///
 /// Excludes, deliberately: [`ACCENT`] (brand, and the one hue that means
-/// "active" — a plugin's stage is not the brand and is not a status), [`OK`],
-/// [`WARN`] and [`BAD`] (a contributed stage would read as a verdict it never
-/// reported), and [`AMBER`], which the palette stands down at 1.06:1 against
-/// the gold accent. What remains is five categorical hues that all clear AA on
-/// [`GROUND`] and none of which can be mistaken for an outcome.
+/// "active" — a plugin's stage is not the brand and is not a status), and
+/// [`OK`], [`WARN`] and [`BAD`] (a contributed stage would read as a verdict
+/// it never reported). What remains is the whole categorical set — five hues
+/// that all clear AA on [`GROUND`] and 30° of hue from the accent, and none
+/// of which can be mistaken for an outcome.
 const CONTRIBUTED_STAGE_PALETTE: [Color; 5] = [VIOLET, TEAL, MAGENTA, CITRON, ORCHID];
 
 /// A deterministic colour for a stage this host did not define.
@@ -986,8 +981,7 @@ pub fn spark_glyph(intensity: u8) -> char {
 /// stability, not per-color meaning: the same id always lands on the same
 /// slot, so an agent reads as one consistent color everywhere it appears.
 /// Five distinct categorical hues — violet, rose, green, teal, secondary —
-/// none of them the reserved brand hue (an agent is not "the brand"; the
-/// amber slot the rose replaces was 1.06:1 against the gold accent, and a
+/// none of them the reserved brand hue (an agent is not "the brand", and a
 /// chip that can be mistaken for "running" is worse than no chip) and none
 /// of them danger (which reads as failure elsewhere, so it never brands a
 /// healthy agent).
@@ -1020,19 +1014,22 @@ fn fnv1a(s: &str) -> u64 {
 /// `MAGENTA`/`TEAL` for produced artifacts (file, media) — categorical, so
 /// an artifact never reads as "running"; the file chip's warm rose sits
 /// 1.30:1 from [`BAD`], which is tolerable exactly because a chip is always
-/// a coloured *word* and an error is always glyph-paired — a dim neutral for
+/// a coloured *word* and an error is always glyph-paired — a neutral for
 /// quiet memory/context events, and the shared `OK`/`WARN`/`BAD` semantics
-/// for verdicts, spend, and errors. Memory drops to `TEXT_TERTIARY` rather
-/// than reuse violet — the process group already owns that anchor.
+/// for verdicts, spend, and errors. Context takes `TEXT_SECONDARY`, which is
+/// the palette's own instruction for a context event; reasoning drops to
+/// `TEXT_TERTIARY` beneath it, so the two quiet kinds stay one value step
+/// apart instead of collapsing onto the same neutral, and neither reuses
+/// violet — the process group already owns that anchor.
 pub fn trace_kind_color(kind: TraceKind) -> Color {
     match kind {
         TraceKind::Stage => RUN,
         TraceKind::Text => INK,
-        TraceKind::Reasoning => MUTED,
+        TraceKind::Reasoning => TEXT_TERTIARY,
         TraceKind::Tool => RUN,
         TraceKind::File => MAGENTA,
         TraceKind::Budget => WARN,
-        TraceKind::Context => TEXT_TERTIARY,
+        TraceKind::Context => TEXT_SECONDARY,
         TraceKind::Verdict => OK,
         TraceKind::Media => TEAL,
         TraceKind::Vcs => RUN,

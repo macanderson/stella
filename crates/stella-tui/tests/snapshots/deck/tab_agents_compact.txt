@@ -3,7 +3,7 @@
 # viewport 120×24 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────✦ stella ┐
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
 │ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                         │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   EXECUTIONS  │  INSTALLED AGENTS   ←/→
@@ -19,11 +19,11 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
+│                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands              turn $0.0110  ·  1 line  ·  queue empty
- MODEL                   │ EXECUTE │ CPU         │ CONTEXT          │ SPEND          │ ENGINE   │ PR
- worker: zai/glm-5.2-air │ —       │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 5.1k/200k │ $0.05 of $7.50 │ 3 active │ ⇢ #981 open …
+zai/glm-5.2-air · execute · ctx ▎░░░░░░░░░░░ 3% · $0.05 · saved $0.00 · ✉ 0                                       ? help

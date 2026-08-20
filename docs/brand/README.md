@@ -1,13 +1,13 @@
 ---
 id: brand
-title: "stella\* — brand kit v4.0"
+title: "stella\* — brand kit v5.0"
 status: living
 ---
 
-# stella\* — brand kit v4.0
+# stella\* — brand kit v5.0
 
 The comet: a four-point star moving fast enough to leave a trail.
-One shape, one color — Gold `#C58A32` on Obsidian `#070B10`.
+One shape, one color — Gold `#EFC53F` on `#0A0A0C`.
 
 **Start with `brand-guidelines.html`** — it explains everything below,
 adapts to light/dark, and works offline.
@@ -55,7 +55,8 @@ whatever renderer was to hand — and commit 10781aa31 reached for a broken one,
 committing 52 PNGs of torn scanlines and channel-separated garbage to the
 remote. Nothing caught it, because nothing was watching: there was no `--check`
 to fail and no reviewer opens fifty binaries. The same commit recoloured the
-four spinner *SVGs* to Bronze Gold and left their *GIFs* on the old `#FFB000`,
+four spinner *SVGs* to the then-current gold and left their *GIFs* on the
+previous one,
 which is the quieter half of the same failure — an asset with no builder does
 not get rebuilt when its source moves.
 
@@ -68,9 +69,10 @@ geometry still matches the committed SVGs; that the three wallpaper tiers draw
 the same picture; and that the spinner GIFs carry the current brand hue.
 
 Quick rules: lowercase always. Comet flies left→right. Gold is the signal,
-never the surface. On light backgrounds use brand-deep `#8B5E1A` for small
-gold text and brand-700 `#8B5E1A` for the mark itself — v3.0 retired the "full
-strength on both grounds" rule because Ion measured 1.61:1 on paper, and v4.0
+never the surface. On light backgrounds small brand text is **ink** `#141416`,
+never gold — gold on paper measures 1.65:1. The *mark* stays full-strength gold
+on both grounds: v3.0 and v4.0 each stepped it down a darker stop to clear a
+3:1 graphical floor, and v5.0
 keeps it: gold is better at 2.63:1 but still under the 3:1 graphical floor,
 which brand-700 clears at 4.99:1. Assemble, don't spin.
 

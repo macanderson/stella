@@ -1,0 +1,23 @@
+{
+  "point": "after_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "witness-v1",
+    "round": 0,
+    "goal": "make the failing test pass",
+    "candidate": {
+      "handle": "candidate-1",
+      "root": "/tmp",
+      "test": {
+        "program": "false",
+        "args": [],
+        "baseline": "failed"
+      }
+    },
+    "turn": {
+      "completed": true,
+      "answer": "I could not fix it",
+      "changed_files": []
+    }
+  }
+}

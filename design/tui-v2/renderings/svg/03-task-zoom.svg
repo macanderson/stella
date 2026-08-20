@@ -1,0 +1,90 @@
+<svg viewBox="0 0 680 520" width="680" height="520" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
+<rect x="0" y="0" width="680" height="520" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="24" font-size="11" fill="#777782">SESSION › plan r3 ›</text>
+<text x="168" y="24" font-size="11" fill="#E8E8EC">task 3</text>
+<text x="600" y="24" font-size="12" fill="#E8E8EC" font-weight="500">stella</text>
+<text x="645" y="24" font-size="12" fill="#EFC53F" font-weight="500">*</text>
+<line x1="0" y1="34" x2="680" y2="34" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="60" font-size="13" fill="#F7D96B">◐</text>
+<text x="34" y="60" font-size="13" fill="#E8E8EC" font-weight="500">3 wire dedup digest</text>
+<text x="216" y="60" font-size="11" fill="#777782">owner lead · kimi-k3 · execute · 0:01:12</text>
+<text x="560" y="60" font-size="11" fill="#EFC53F">esc back</text>
+<rect x="16" y="76" width="322" height="128" rx="6" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="28" y="96" font-size="11" fill="#E8E8EC" font-weight="500">done means</text>
+<text x="120" y="96" font-size="11" fill="#4B4B56">the contract, checked not vibed</text>
+<line x1="16" y1="104" x2="338" y2="104" stroke="#26262C" stroke-width="1"/>
+<text x="28" y="124" font-size="12" fill="#74C991">✓</text>
+<text x="44" y="124" font-size="12" fill="#E8E8EC">digest() exists, typed</text>
+<text x="252" y="124" font-size="11" fill="#A9AAB5">graph · det</text>
+<text x="28" y="146" font-size="12" fill="#F7D96B">◐</text>
+<text x="44" y="146" font-size="12" fill="#E8E8EC">unit digest_* green</text>
+<text x="252" y="146" font-size="11" fill="#F7D96B">2/4 · det</text>
+<text x="28" y="168" font-size="12" fill="#4B4B56">○</text>
+<text x="44" y="168" font-size="12" fill="#777782">no dup findings, 3 runs</text>
+<text x="252" y="168" font-size="11" fill="#4B4B56">harness</text>
+<text x="28" y="192" font-size="11" fill="#4B4B56">3 checks · 2 deterministic · 0 model-judged</text>
+<rect x="348" y="76" width="320" height="128" rx="6" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="360" y="96" font-size="11" fill="#E8E8EC" font-weight="500">evidence</text>
+<text x="432" y="96" font-size="11" fill="#4B4B56">every event tagged task:3</text>
+<line x1="348" y1="104" x2="668" y2="104" stroke="#26262C" stroke-width="1"/>
+<text x="360" y="124" font-size="12" fill="#EFC53F">edit</text>
+<text x="404" y="124" font-size="11" fill="#E8E8EC">self_driving_cmd.rs</text>
+<text x="576" y="124" font-size="11" fill="#74C991">+41</text>
+<text x="608" y="124" font-size="11" fill="#E0687A">-6</text>
+<text x="360" y="146" font-size="12" fill="#EFC53F">run</text>
+<text x="404" y="146" font-size="11" fill="#E8E8EC">cargo test digest</text>
+<text x="576" y="146" font-size="11" fill="#F7D96B">2/4</text>
+<text x="360" y="168" font-size="12" fill="#EFC53F">graph</text>
+<text x="404" y="168" font-size="11" fill="#E8E8EC">3 nodes · Seen, dedup key</text>
+<text x="576" y="168" font-size="11" fill="#777782">wr</text>
+<text x="360" y="192" font-size="11" fill="#4B4B56">↵ open event · f follow live</text>
+<rect x="16" y="216" width="652" height="132" rx="6" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="28" y="236" font-size="11" fill="#E8E8EC" font-weight="500">planned vs actual</text>
+<text x="164" y="236" font-size="11" fill="#4B4B56">[:NEXT] is the plan · [:THEN] is what happened</text>
+<line x1="16" y1="244" x2="668" y2="244" stroke="#26262C" stroke-width="1"/>
+<text x="28" y="268" font-size="11" fill="#777782">planned</text>
+<rect x="96" y="256" width="104" height="20" rx="4" fill="#17171B" stroke="#26262C" stroke-width="1"/>
+<text x="110" y="270" font-size="11" fill="#E8E8EC">read sources</text>
+<line x1="200" y1="266" x2="228" y2="266" stroke="#4B4B56" stroke-width="1"/>
+<rect x="228" y="256" width="96" height="20" rx="4" fill="#17171B" stroke="#26262C" stroke-width="1"/>
+<text x="242" y="270" font-size="11" fill="#E8E8EC">implement</text>
+<line x1="324" y1="266" x2="352" y2="266" stroke="#4B4B56" stroke-width="1"/>
+<rect x="352" y="256" width="72" height="20" rx="4" fill="#17171B" stroke="#26262C" stroke-width="1"/>
+<text x="366" y="270" font-size="11" fill="#E8E8EC">test</text>
+<text x="28" y="306" font-size="11" fill="#777782">actual</text>
+<rect x="96" y="294" width="104" height="20" rx="4" fill="#17171B" stroke="#26262C" stroke-width="1"/>
+<text x="110" y="308" font-size="11" fill="#E8E8EC">read sources</text>
+<line x1="200" y1="304" x2="228" y2="304" stroke="#4B4B56" stroke-width="1"/>
+<rect x="228" y="294" width="96" height="20" rx="4" fill="#17171B" stroke="#26262C" stroke-width="1"/>
+<text x="242" y="308" font-size="11" fill="#E8E8EC">implement</text>
+<line x1="324" y1="304" x2="352" y2="304" stroke="#F7D96B" stroke-width="1"/>
+<rect x="352" y="294" width="128" height="20" rx="4" fill="#17171B" stroke="#F7D96B" stroke-width="1"/>
+<text x="366" y="308" font-size="11" fill="#F7D96B">↯ fix borrow err</text>
+<line x1="480" y1="304" x2="508" y2="304" stroke="#4B4B56" stroke-width="1"/>
+<rect x="508" y="294" width="72" height="20" rx="4" fill="#17171B" stroke="#26262C" stroke-width="1"/>
+<text x="522" y="308" font-size="11" fill="#E8E8EC">test</text>
+<text x="28" y="338" font-size="11" fill="#F7D96B">1 divergence · cause: E0502 borrow</text>
+<text x="316" y="338" font-size="11" fill="#4B4B56">recorded as a trace outcome · feeds learn</text>
+<rect x="16" y="360" width="652" height="52" rx="6" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="28" y="380" font-size="11" fill="#777782">SPEND</text>
+<text x="28" y="398" font-size="12" fill="#EFC53F">$0.12</text>
+<text x="112" y="380" font-size="11" fill="#777782">TOKENS</text>
+<text x="112" y="398" font-size="12" fill="#E8E8EC">41k</text>
+<text x="196" y="380" font-size="11" fill="#777782">CACHE RD</text>
+<text x="196" y="398" font-size="12" fill="#E8E8EC">71%</text>
+<text x="292" y="380" font-size="11" fill="#777782">DET / MODEL</text>
+<text x="292" y="398" font-size="12" fill="#A9AAB5">88 / 12</text>
+<text x="400" y="380" font-size="11" fill="#777782">MODEL CALLS</text>
+<text x="400" y="398" font-size="12" fill="#E8E8EC">2</text>
+<text x="508" y="380" font-size="11" fill="#777782">EST REMAIN</text>
+<text x="508" y="398" font-size="12" fill="#E8E8EC">~$0.05</text>
+<line x1="0" y1="428" x2="680" y2="428" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="450" font-size="11" fill="#777782">r re-run checks · s split task · b hand to worker · i promote to issue · ↯ diff plan</text>
+<text x="16" y="472" font-size="11" fill="#4B4B56">a task closes when its checks pass, not when the model says so.</text>
+<line x1="0" y1="486" x2="680" y2="486" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="506" font-size="11" fill="#A9AAB5">det 88%</text>
+<text x="96" y="506" font-size="11" fill="#4B4B56">CONTEXT 70k/200k · SPEND</text>
+<text x="290" y="506" font-size="11" fill="#EFC53F">$0.45</text>
+<text x="342" y="506" font-size="11" fill="#4B4B56">· SAVED</text>
+<text x="404" y="506" font-size="11" fill="#EFC53F">$0.69</text>
+</svg>

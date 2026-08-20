@@ -24,14 +24,29 @@ members = [
   "crates/stella-observatory",
   "crates/stella-serve",
   "crates/stella-parity",
+  "crates/stella-tui-theme",
   "crates/stella-tui",
   "crates/stella-cli",
   "bench/loop-bench",
   "bench/request-bench",
 ]
+# `example-plugins.yml` clones macanderson/stella-examples into
+# `.stella-examples/` *inside this checkout* and builds `verify-rs` there. A
+# Cargo.toml anywhere under a workspace root is assumed to be a member, so
+# cargo refuses it outright:
+#
+#   error: current package believes it's in a workspace when it's not
+#
+# Excluding the path is the remedy cargo itself names, and it is the right one
+# here: those plugins are a separate repository's crates that happen to be
+# checked out under this one. They must not inherit this workspace's lockfile,
+# profiles or `[workspace.dependencies]` — a plugin is supposed to build the
+# way a third party's would, and silently linking it against our resolution
+# would make the grading run prove something about a tree nobody else has.
+exclude = [".stella-examples"]
 
 [workspace.package]
-version = "0.9.112"
+version = "0.9.117"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
@@ -144,6 +159,14 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 hmac = "0.13"
 sha2 = "0.11"
 tempfile = "3"
+# Snapshot review for the TUI v2 golden frames. The v1 deck's own golden
+# harness (`crates/stella-tui/tests/deck_render_snapshots.rs`) deliberately
+# strips styling, which the v2 design cannot accept: the two-metal rule and
+# the red-scarcity assertion are claims about *colour*, and a golden blind to
+# colour cannot carry them. `insta` is named in the v2 implementation plan's
+# dependency table, and buys the review workflow a hand-rolled differ does not
+# (`cargo insta review`, inline diffs, pending-snapshot files).
+insta = "1"
 tree-sitter = "0.26"
 tree-sitter-javascript = "0.25"
 tree-sitter-python = "0.25"

@@ -1,0 +1,29 @@
+{
+  "point": "after_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "witness-v1",
+    "round": 0,
+    "goal": "make the failing test pass",
+    "candidate": {
+      "handle": "candidate-1",
+      "root": "/tmp",
+      "test": {
+        "program": "test",
+        "args": [
+          "1",
+          "=",
+          "1"
+        ],
+        "baseline": "failed"
+      }
+    },
+    "turn": {
+      "completed": true,
+      "answer": "done",
+      "changed_files": [
+        "src/lib.rs"
+      ]
+    }
+  }
+}

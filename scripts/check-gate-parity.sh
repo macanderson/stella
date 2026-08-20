@@ -117,11 +117,12 @@ fi
 contributing_alias() {
   case "$1" in
   shellcheck) echo 'shellcheck ' ;;
-  # Four Python guards, so the `.sh` default below does not fit them.
+  # Five Python guards, so the `.sh` default below does not fit them.
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
   typed-errors) echo 'check-typed-errors' ;;
   dead-code-allows) echo 'check-dead-code-allows' ;;
+  tokens) echo 'check-tokens' ;;
   doc-warnings) echo 'cargo doc' ;;
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;

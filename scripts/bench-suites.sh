@@ -181,12 +181,22 @@ run_suites() {
     printf '\033[36m▸ bench suite: %s (%s)%s\033[0m\n' \
       "$workdir" "$mode" "${args:+ $args}" >&2
 
+    # `${argv[@]+"${argv[@]}"}` rather than a plain `"${argv[@]}"`: under
+    # `set -u`, bash 3.2 — which is the `/bin/bash` every macOS ships, and so
+    # the one the pre-push hook actually runs — treats an EMPTY array's `[@]`
+    # expansion as an unbound variable and kills the shell outright. Two of
+    # the seven suites take no extra pytest arguments, and the first of them
+    # is the first suite in the list, so `make bench-test` died on line one
+    # with `argv[@]: unbound variable` on every Mac. The guard reports the
+    # array as absent when it is empty and expands it normally otherwise,
+    # which is well-defined on 3.2 and on 5.x alike. Fixed in bash 4.4; the
+    # repository does not get to require it.
     case "$mode" in
     sync)
-      (cd "$workdir" && uv sync --locked --extra dev && uv run --no-sync pytest -q "${argv[@]}")
+      (cd "$workdir" && uv sync --locked --extra dev && uv run --no-sync pytest -q ${argv[@]+"${argv[@]}"})
       ;;
     no-project)
-      (cd "$workdir" && uv run --with pytest --no-project pytest -q "${argv[@]}")
+      (cd "$workdir" && uv run --with pytest --no-project pytest -q ${argv[@]+"${argv[@]}"})
       ;;
     *)
       die "unknown suite mode '$mode' — scripts/bench-suites.sh is out of date."

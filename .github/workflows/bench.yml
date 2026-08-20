@@ -79,8 +79,19 @@ jobs:
           # pinning that let #2182 through one level up — the sweep asserts
           # this pattern covers every caller it reads, so the next one cannot
           # land outside the filter unnoticed.
+          #
+          # `crates/stella-cli/src/settings/` is the second Rust path in scope
+          # for the catalog's reason, added after it cost a red `main`.
+          # `test_assurance_tiers.py` parses `AgentEngineConfig::model_for` and
+          # `RETIRED_ENGINE_ROOT` out of that module, because the posture
+          # module mirrors the engine's model-resolution ladder and a mirror
+          # that drifts is #2134. #3908 collapsed the ladder to one role,
+          # touched no path named here, and so ran none of these suites on its
+          # own PR — then reddened every push to `main` from the merge onward,
+          # since a push runs them unconditionally. The tests assert this
+          # pattern still names the module they read.
           if git diff --name-only "$BASE_SHA"...HEAD \
-            | grep -Eq '^(bench/|arenabench/|crates/stella-model/src/catalog\.rs$|\.github/workflows/bench\.yml$)'; then
+            | grep -Eq '^(bench/|arenabench/|crates/stella-model/src/catalog\.rs$|crates/stella-cli/src/settings(\.rs$|/)|\.github/workflows/bench\.yml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"

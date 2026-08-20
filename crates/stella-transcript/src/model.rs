@@ -403,6 +403,21 @@ pub struct Call {
 }
 
 impl Call {
+    /// The file this call read, for choosing the lexer its body is written in.
+    ///
+    /// Only a read. [`Call::header_object`] is the *object of the verb*, so for
+    /// `bash` it is a command line and for `search` a query — neither names a
+    /// file whose extension should pick a language, and `cargo build --lib.rs`
+    /// is exactly the sort of command that would otherwise pick one.
+    ///
+    /// A mutation names a file too, but its body is a diff rather than a
+    /// listing and never reaches this path (`is_mutation` short-circuits both
+    /// renderers), so including it would be scope with no consumer.
+    #[must_use]
+    pub fn read_path(&self) -> Option<&str> {
+        matches!(self.tool, ToolKind::ReadFile).then_some(self.header_object.as_str())
+    }
+
     /// The arguments that are *not* already visible in the header.
     ///
     /// Deduplication rule 1 in code: an `args` row whose value is the string the

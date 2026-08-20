@@ -5,7 +5,7 @@
    no build step required. Pair with globals.css for shadcn/ui + Tailwind v4.
 
    v4.0 returns the brand hue to gold, reversing v3.0's Ion recolour (#3658)
-   and restoring v2.0's Bronze Gold ramp value-for-value. The cool neutral
+   and restoring v2.0's bronze ramp value-for-value. The cool neutral
    ramp and the Obsidian ground that v3.0 introduced are kept: the complaint
    the recolour answered was the *neutrals*, which were warm and muddy, and
    only the brand hue is being taken back. Gold on a cool black is the
@@ -24,37 +24,34 @@
 
 :root {
   /* ---- brand core ------------------------------------------------------ */
-  --stella-brand: #C58A32;       /* Bronze Gold — CRT amber, the gold star */
-  --stella-brand-deep: #8B5E1A;  /* small brand text on light surfaces */
-  --stella-ink: #070B10;         /* Obsidian — the terminal, not pure black */
-  --stella-paper: #E9EDF2;       /* Paper — cool text on dark */
-  --stella-paper-bg: #EEF1F5;    /* Paper — light-mode surface */
+  --stella-brand: #EFC53F;       /* gold — the brand metal */
+  --stella-brand-deep: #141416;  /* ink — brand *text* on light is never gold */
+  --stella-ink: #0A0A0C;         /* bg — the canvas */
+  --stella-paper: #E8E8EC;       /* text — primary text on dark */
+  --stella-paper-bg: #FFFFFF;    /* paper — light-mode surface */
 
   /* ---- brand ramp ------------------------------------------------------ */
-  --stella-brand-50: #FBF3E3;
-  --stella-brand-100: #F3DEC0;
-  --stella-brand-200: #EBCB9D;
-  --stella-brand-300: #DFB473;
-  --stella-brand-400: #D39F50;
-  --stella-brand-500: #C58A32;  /* oklch(0.677 0.124 73.16) */
-  --stella-brand-600: #A97227;
-  --stella-brand-700: #8B5E1A;
-  --stella-brand-800: #674415;
-  --stella-brand-900: #462E10;
-  --stella-brand-950: #291B0D;
-
-  /* ---- cool neutrals --------------------------------------------------- */
-  --stella-neutral-50: #F1F8FF;
-  --stella-neutral-100: #DBE2EA;
-  --stella-neutral-200: #C0C8D0;
-  --stella-neutral-300: #A7AEB6;
-  --stella-neutral-400: #90979E;
-  --stella-neutral-500: #7A8088;
-  --stella-neutral-600: #60666D;
-  --stella-neutral-700: #474D54;
-  --stella-neutral-800: #2F353B;
-  --stella-neutral-900: #1A1F25;
-  --stella-neutral-950: #070B10;
+  --st-bg: #0A0A0C;
+  --st-panel: #0F0F12;
+  --st-hl: #17171B;
+  --st-border: #26262C;
+  --st-rule: #2C2C33;
+  --st-gold: #EFC53F;
+  --st-gold-bright: #F7D96B;
+  --st-silver: #A9AAB5;
+  --st-silver-type: #BFC1CC;
+  --st-text: #E8E8EC;
+  --st-muted: #777782;
+  --st-dim: #4B4B56;
+  --st-comment: #565660;
+  --st-green: #74C991;
+  --st-red: #E0687A;
+  --st-diff-add: #10201A;
+  --st-diff-del: #241019;
+  --st-ink: #141416;
+  --st-paper: #FFFFFF;
+  --st-paper-panel: #F6F6F8;
+  --st-paper-border: #E3E3E8;
 
   /* ---- typography ------------------------------------------------------ */
   /* JetBrains Mono is the brand voice — the product lives in a terminal,
@@ -105,8 +102,8 @@
   --stella-grain-opacity: 0.045;     /* film grain overlay */
 
   /* ---- elevation / glow ------------------------------------------------ */
-  --stella-glow-brand: 0 0 24px rgb(197 138 50 / 0.28),
-      0 0 96px rgb(197 138 50 / 0.12);
+  --stella-glow-brand: 0 0 24px rgb(239 197 63 / 0.28),
+      0 0 96px rgb(239 197 63 / 0.12);
   --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25),
       0 8px 28px rgb(0 0 0 / 0.35);
 }
@@ -115,9 +112,9 @@
 :root {
   --stella-bg: var(--stella-paper-bg);
   --stella-fg: var(--stella-ink);
-  --stella-surface: #F7F9FC;
-  --stella-border: #CFD6DD;
-  --stella-muted-fg: #61676F;
+  --stella-surface: #F6F6F8;
+  --stella-border: #E3E3E8;
+  --stella-muted-fg: #4B4B56;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand-deep); /* gold that passes on light */
   /* The mark itself — shapes, not text. v3.0 retired the "full strength on
@@ -131,9 +128,9 @@
 .dark, [data-theme="dark"] {
   --stella-bg: var(--stella-ink);
   --stella-fg: var(--stella-paper);
-  --stella-surface: #12181D;
-  --stella-border: #2A3036;
-  --stella-muted-fg: #9299A1;
+  --stella-surface: #0F0F12;
+  --stella-border: #26262C;
+  --stella-muted-fg: #777782;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand);
   --stella-mark-shape: var(--stella-brand);
@@ -142,9 +139,9 @@
   :root:not([data-theme="light"]) {
     --stella-bg: var(--stella-ink);
     --stella-fg: var(--stella-paper);
-    --stella-surface: #12181D;
-    --stella-border: #2A3036;
-    --stella-muted-fg: #9299A1;
+    --stella-surface: #0F0F12;
+    --stella-border: #26262C;
+    --stella-muted-fg: #777782;
     --stella-accent: var(--stella-brand);
     --stella-accent-text: var(--stella-brand);
     --stella-mark-shape: var(--stella-brand);

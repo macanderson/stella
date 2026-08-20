@@ -3,7 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────✦ stella ┐
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
 │ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ? lead  ·  needs input   0:00:00
@@ -19,16 +19,17 @@
 │stage execute   model —   turn $3.7700  ·  off                                                                                                                │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│                                                                                                                      ││Refactor the automations store into a…│
-│── PLAN ──────────────────────────────────────────────────────────────────────────────────────────────────────────────││○ 1. extract types                    │
-│                                                                                                                      ││○ 2. move hooks                       │
-│  Planning the automations cluster: list, editor, triggers, workflows.                                                ││○ 3. update 9 imports                 │
+│    ⋯ ctrl+o for provenance and budget                                                                                ││Refactor the automations store into a…│
+│                                                                                                                      ││○ 1. extract types                    │
+│── PLAN ──────────────────────────────────────────────────────────────────────────────────────────────────────────────││○ 2. move hooks                       │
+│                                                                                                                      ││○ 3. update 9 imports                 │
+│  Planning the automations cluster: list, editor, triggers, workflows.                                                ││                                      │
 │                                                                                                                      ││                                      │
 │☰  plan  4/7  ·  Wire the triggers API                                                                                ││                                      │
 │                                                                                                                      ││                                      │
 │── EXECUTE ───────────────────────────────────────────────────────────────────────────────────────────────────────────││                                      │
 │                                                                                                                      ││                                      │
-│● mcp__fs__read_file apps/app/automations/page.tsx                                                                    ││                                      │
+│ │ ● apps/app/automations/page.tsx                                                                                    ││                                      │
 │  ⎿ 312 lines                                                                                                     42ms││                                      │
 │                                                                                                                      ││                                      │
 │☰  plan  5/7  ·  Workflows canvas                                                                                     ││                                      │
@@ -41,5 +42,4 @@
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $3.7700  ·  1 line  ·  queue empty
- MODEL                   │ EXECUTE     │ CPU         │ CONTEXT          │ SPEND          │ CACHE                 │ ENGINE   │ CLOCK   │ PR
- worker: zai/glm-5.2-air │ Step 6 of 7 │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $3.79 of $7.50 │ 63% (18.0K rd · 0 wr) │ 3 active │ 12m 34s │ ⇢ #981 open …
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $3.79 · saved $0.00 · ✉ 0                                                                               ? help

@@ -1172,8 +1172,8 @@ fn report(
             );
         }
     }
-    println!("  {}", dataset_path.display().to_string().cyan());
-    println!("  {}", manifest_path.display().to_string().cyan());
+    println!("  {}", dataset_path.display().to_string().white());
+    println!("  {}", manifest_path.display().to_string().white());
     if records.is_empty() {
         if filter.include_unverified_transcripts {
             println!(

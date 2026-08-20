@@ -111,7 +111,7 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 // only — `/color` exists so several terminal windows running stella can be told
 // apart at a glance, which needs hues that are *distinct* rather than on-brand.
 // `colored`'s named ANSI colors are the portable stand-ins, and the nearest one
-// to the brand's Phosphor Gold (`theme::ACCENT`, `#FFB81A`) is bright-yellow.
+// to the brand's gold (`theme::ACCENT`, `#EFC53F`) is bright-yellow.
 //
 // The default used to be bright-blue (and bright-cyan before that): the
 // accent trailed the identity through recolour after recolour because
@@ -641,8 +641,8 @@ pub(crate) const fn token_rgb(color: ratatui::style::Color) -> (u8, u8, u8) {
 /// writes raw truecolor and so cannot use ratatui `Color`s directly, but it can
 /// read them, which is the difference between a copy and a reference.
 const STELLAR_STOPS: [(u8, u8, u8); 2] = [
-    token_rgb(stella_tui::theme::ACCENT_DEEP),
     token_rgb(stella_tui::theme::ACCENT),
+    token_rgb(stella_tui::theme::ACCENT_LIVE),
 ];
 
 /// Color at horizontal position `t` ∈ `[0,1]` along the stellar gradient.
@@ -937,13 +937,13 @@ mod tests {
     fn stellar_stops_are_the_live_brand_tokens_not_a_copy_of_them() {
         assert_eq!(
             STELLAR_STOPS[0],
-            token_rgb(stella_tui::theme::ACCENT_DEEP),
-            "the gradient's deep stop must BE theme::ACCENT_DEEP"
+            token_rgb(stella_tui::theme::ACCENT),
+            "the gradient's resting stop must BE theme::ACCENT"
         );
         assert_eq!(
             STELLAR_STOPS[1],
-            token_rgb(stella_tui::theme::ACCENT),
-            "the gradient's bright stop must BE theme::ACCENT"
+            token_rgb(stella_tui::theme::ACCENT_LIVE),
+            "the gradient's live stop must BE theme::ACCENT_LIVE"
         );
         // And the conversion has to actually convert — a token silently
         // falling through to the neutral grey would satisfy the equalities
@@ -966,7 +966,7 @@ mod tests {
         // default trailed the identity through recolour after recolour
         // because nothing asserted which colour the default slug actually
         // resolves to. Bright-yellow is the nearest named ANSI stand-in for
-        // `theme::ACCENT` (Phosphor Gold `#FFB81A`).
+        // `theme::ACCENT` (gold `#EFC53F`).
         assert_eq!(PALETTE[0].1, Color::BrightYellow);
         assert_eq!(accent(), Color::BrightYellow);
         // The old brand slug survives as personalisation, then the process

@@ -1,0 +1,20 @@
+{
+  "point": "after_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "witness-v1",
+    "round": 0,
+    "goal": "make a change with no test named",
+    "candidate": {
+      "handle": "candidate-1",
+      "root": "/tmp"
+    },
+    "turn": {
+      "completed": true,
+      "answer": "done",
+      "changed_files": [
+        "src/lib.rs"
+      ]
+    }
+  }
+}
