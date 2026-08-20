@@ -499,27 +499,25 @@ fn body_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, call: &Call, shown: &str, ti: 
         return;
     }
 
-    let numbered = matches!(call.tool, ToolKind::ReadFile);
     let fold = digest::fold_output(&call.output, &call.header_object);
     if fold.echo_hidden {
         out.push(vec![body_gutter(), Cell::new("echo hidden", Color::Faint)]);
     }
     let output_open = ctx.open(NodeId::Output { turn: ti, step: si });
     // Decided once from the whole body, not per line: a JSON object's inner
-    // lines do not start with a delimiter. Same predicate the HTML renderer and
-    // the Command Deck ask (#3644).
-    let json = syntax::body_reads_as_json(&fold.body);
+    // lines do not start with a delimiter, and a listing's gutter is only
+    // legible as one when you know the body is a listing. The same decision the
+    // HTML renderer and the Command Deck make, from the same function, over the
+    // same inputs (#3644, #4036).
+    let paint = syntax::lines_body_paint(call.read_path(), &fold.body);
     let body = if output_open {
         fold.body.clone()
     } else {
         fold.head.clone()
     };
-    for (i, text) in body.iter().enumerate() {
+    for text in &body {
         let mut line = vec![body_gutter()];
-        if numbered {
-            line.push(Cell::new(format!("{:>4}  ", i + 1), Color::Faint));
-        }
-        push_output_text(&mut line, text, json);
+        push_output_text(&mut line, text, paint);
         out.push(line);
     }
     if !output_open && fold.has_more() {
@@ -529,31 +527,59 @@ fn body_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, call: &Call, shown: &str, ti: 
         ]);
         for text in &fold.tail {
             let mut line = vec![body_gutter()];
-            push_output_text(&mut line, text, json);
+            push_output_text(&mut line, text, paint);
             out.push(line);
         }
     }
 }
 
-/// Append one result-body line to a row, as syntax-coloured cells when `json`.
+/// Append one result-body line to a row, as syntax-coloured cells.
 ///
 /// A terminal cell carries one foreground, so a coloured line becomes several
 /// cells rather than one — which is exactly why the *lexer* is what this shares
-/// with the HTML renderer and not the paint (`syntax::json_runs`). Both split a
-/// line into the same runs and classify them identically; one wraps each in a
-/// class, the other gives each its own cell.
+/// with the HTML renderer and not the paint. Both split a line into the same
+/// runs and classify them identically; one wraps each in a class, the other
+/// gives each its own cell.
 ///
-/// A plain line stays a single cell, so nothing about the non-JSON path — and
+/// A plain line stays a single cell, so nothing about the uncoloured path — and
 /// nothing about the row widths the grid pads to — changes.
-fn push_output_text(line: &mut Vec<Cell>, text: &str, json: bool) {
-    if !json {
-        line.push(Cell::new(text, output_color(text)));
-        return;
+fn push_output_text(line: &mut Vec<Cell>, text: &str, paint: syntax::BodyPaint) {
+    let painted = syntax::paint_line(paint, text);
+    // The emitter's own gutter *is* this renderer's number column. It used to
+    // draw a second one from the line's index in the fold, which both stacked
+    // two gutters on one line and stated the wrong number — a read at offset
+    // 780 was labelled line 1, because the index is a position in the body and
+    // not a position in the file (#4036).
+    if paint.numbered {
+        let label = painted
+            .gutter
+            .map_or_else(|| " ".repeat(NUM_COL), |g| format!("{:>4}  ", g.number));
+        line.push(Cell::new(label, Color::Faint));
     }
-    for (run, tok) in syntax::json_runs(text) {
-        line.push(Cell::new(run, tok.map_or(Color::Ink, tok_color)));
+    // Expanded against the running column, before anything measures: a tab is
+    // zero columns to `unicode-width` and a real stop to the terminal, so a row
+    // holding one is drawn wider than `line_width` reports it (`crate::tabs`).
+    let mut col = line_width(line);
+    let mut push = |line: &mut Vec<Cell>, text: &str, color: Color| {
+        let expanded = crate::tabs::expand(text, col);
+        col += cells(&expanded);
+        line.push(Cell::new(expanded, color));
+    };
+    let Some(lang) = painted.lang else {
+        push(line, painted.source, output_color(painted.source));
+        return;
+    };
+    for (run, tok) in syntax::tokenize(painted.source, lang) {
+        push(line, &run, tok.map_or(Color::Ink, tok_color));
     }
 }
+
+/// Width of the line-number column: four digits and two spaces.
+///
+/// A body line without a gutter — the read footer — still pays for it, so the
+/// source above it stays in one straight column instead of stepping left at the
+/// end of every read.
+const NUM_COL: usize = 6;
 
 /// The grid colour for a token class.
 ///

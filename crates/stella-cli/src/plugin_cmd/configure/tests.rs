@@ -254,7 +254,10 @@ fn a_journal_naming_a_foreign_destination_writes_nothing_there() {
     // Removal re-derives the destination as the tier's own `stella.toml`, sees
     // the journal names something else, and refuses the whole replay.
     let reverted = revert(&plugin_dir, &manifest, Some(&config));
-    assert!(reverted.keys.is_empty(), "nothing was put back: {reverted:?}");
+    assert!(
+        reverted.keys.is_empty(),
+        "nothing was put back: {reverted:?}"
+    );
     assert_eq!(
         reverted.unaccounted,
         ["self_driving.attribution.commit"],
