@@ -60,7 +60,7 @@
 use std::collections::HashMap;
 
 use stella_autonomy::{
-    Action, Attempts, CarriedPr, CiConclusion, Contention, DeliverPolicy, Doctrine, IssueRef,
+    Action, Attempts, CarriedPr, CiConclusion, Contention, DeliverPolicy, IssueRef,
     LoopObservation, LoopState, LoopStep, PrDisposition, PrRef, PrState, UnblockAttempt,
     deliver_next, step,
 };
@@ -103,8 +103,18 @@ pub(super) fn drive(
 ) -> Result<(), String> {
     let root = super::state::repo_root();
     let cfg = super::config::load(&root);
-    let doctrine = Doctrine::default();
+    let doctrine = cfg.doctrine;
     let provider = crate::issue_provider::GhIssueProvider;
+    // The branch every pull request targets, and the one whose health
+    // decides whether there is any point opening more.
+    // `base_ref` yields `origin/<branch>`; the forge wants the branch
+    // itself — see `deliver::checks_for_branch` on why a remote-tracking
+    // spelling must never reach it.
+    let base_branch = super::work::base_ref(&root)
+        .rsplit('/')
+        .next()
+        .unwrap_or("main")
+        .to_owned();
 
     audit::record(
         durable,
@@ -146,7 +156,7 @@ pub(super) fn drive(
     resume(durable, &cfg, &mut state);
 
     loop {
-        let obs = observe(max_issues, tally.opened);
+        let obs = observe(&root, &provider, &base_branch, max_issues, tally.opened);
 
         match step(&state, &obs, &doctrine) {
             LoopStep::Blocked {
@@ -401,15 +411,36 @@ pub(super) fn drive(
 
             LoopStep::Unblock { attempt } => match attempt {
                 UnblockAttempt::FileBaseBreakage => {
-                    audit::record(
-                        durable,
-                        Audit::SessionStopped,
-                        None,
-                        "the base is broken and unfiled, and this build cannot compose the \
-                         report — that is `sweep` (B4, #3599). Stopping rather than opening \
-                         pull requests that would all fail ci.",
-                    );
-                    return report(durable, &tally);
+                    // Filing is the half worth doing under every doctrine that
+                    // files at all: the ticket makes the breakage visible and
+                    // attributable even if this loop never fixes it. It is
+                    // also what makes the next step possible — `step` will
+                    // return `AdoptBaseBreakage` once an issue exists, and the
+                    // ordinary work path takes it from there.
+                    match super::backlog::file_base_breakage(
+                        &provider,
+                        &base_branch,
+                        &cfg.attribution,
+                    ) {
+                        Ok(key) => audit::record(
+                            durable,
+                            Audit::FiledBaseBreakage,
+                            Some(&key),
+                            "the base is broken and nobody had filed it",
+                        ),
+                        Err(error) => {
+                            audit::record(
+                                durable,
+                                Audit::Transient,
+                                None,
+                                &format!(
+                                    "the base is broken and this could not file it ({error}); \
+                                     re-asking in {poll_secs}s"
+                                ),
+                            );
+                            sleep(poll_secs);
+                        }
+                    }
                 }
                 UnblockAttempt::AdoptBaseBreakage { issue } => {
                     audit::record(
@@ -791,16 +822,48 @@ fn advance(
 /// in the machine: "there is no more work for me" is something it already knows
 /// how to handle, and a second way to stop would be a second definition of
 /// stopping.
-fn observe(max_issues: u32, opened: u32) -> LoopObservation {
+fn observe(
+    root: &std::path::Path,
+    provider: &crate::issue_provider::GhIssueProvider,
+    base: &str,
+    max_issues: u32,
+    opened: u32,
+) -> LoopObservation {
+    // The base is read on every poll rather than cached, because "somebody
+    // repaired main" is exactly the event this loop must notice without being
+    // told. A latch here would be the thing that stops it self-resuming.
+    let base_broken = super::deliver::base_is_broken(base);
+
+    // Nothing else is worth asking while the base is fine, and each of these
+    // is a network call.
+    if !base_broken {
+        return LoopObservation {
+            grant_valid: true,
+            stop_requested: false,
+            budget_exhausted: false,
+            queue_depth: max_issues.saturating_sub(opened),
+            base_broken: false,
+            base_breakage_filed: false,
+            base_breakage_issue: None,
+            base_fix_contention: Contention::default(),
+        };
+    }
+
+    let filed = super::backlog::open_base_breakage(provider);
+    let contention = filed
+        .as_ref()
+        .map(|key| super::deliver::base_fix_contention(root, key))
+        .unwrap_or_default();
+
     LoopObservation {
         grant_valid: true,
         stop_requested: false,
         budget_exhausted: false,
         queue_depth: max_issues.saturating_sub(opened),
-        base_broken: false,
-        base_breakage_filed: false,
-        base_breakage_issue: None,
-        base_fix_contention: Contention::default(),
+        base_broken: true,
+        base_breakage_filed: filed.is_some(),
+        base_breakage_issue: filed.map(IssueRef),
+        base_fix_contention: contention,
     }
 }
 

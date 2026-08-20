@@ -37,7 +37,7 @@
 //! a silent single point of failure whose failure mode is invisible until
 //! someone audits the backlog.
 
-use stella_autonomy::{CiConclusion, Mergeability, Observation, ReviewState};
+use stella_autonomy::{CiConclusion, Contention, Mergeability, Observation, ReviewState};
 
 use super::state::git;
 
@@ -648,6 +648,83 @@ pub(super) fn observe(pr: &str) -> Result<Reading, String> {
         observation: observation_from(&view, &base_checks),
         settled,
     })
+}
+
+/// Is the base branch itself broken right now?
+///
+/// The loop's own pull requests are judged against the base by
+/// [`base_conclusion`], which asks a narrower question: *does the base excuse
+/// **this** failure*. This asks the blunt one — is `main` red at all — because
+/// a broken base is not a property of any one pull request. It blocks
+/// everybody, and the loop is supposed to go and fix it rather than open work
+/// that will fail for a reason nobody's diff caused.
+///
+/// Only **required** checks count, on exactly the reasoning `only_required`
+/// documents: an advisory check that fails forever would otherwise convince
+/// the loop the repository is permanently on fire.
+///
+/// A base that cannot be read is reported healthy. That is the conservative
+/// direction here and the opposite of the one `base_conclusion` takes, and
+/// deliberately: an unreadable forge would otherwise make the loop file a
+/// breakage report about nothing and adopt an imaginary emergency.
+#[must_use]
+pub(super) fn base_is_broken(branch: &str) -> bool {
+    let required = required_contexts(branch);
+    let checks = only_required(checks_for_branch(branch), &required);
+    if checks.is_empty() {
+        return false;
+    }
+    ci_from(&checks) == CiConclusion::Red
+}
+
+/// What else on this machine or this forge looks like a fix already in flight.
+///
+/// Four signals, and the doctrine decides what they mean — this only gathers
+/// them. Cheap reads, all of them, because this runs on every poll while the
+/// base is red.
+///
+/// `local_worktrees` is the one nobody checks, and the one most likely to
+/// matter: two self-driving processes against one clone each see the other's
+/// worktree here, and without it they would both adopt the same breakage and
+/// race to fix it.
+#[must_use]
+pub(super) fn base_fix_contention(root: &std::path::Path, key: &str) -> Contention {
+    let mut contention = Contention::default();
+
+    // A branch whose name carries the issue key. Remote only: a local branch
+    // of the loop's own is not another actor.
+    if let Some(out) = git(root, &["ls-remote", "--heads", "origin"]) {
+        contention.remote_branches = out
+            .lines()
+            .filter(|line| line.contains(key))
+            .filter_map(|line| line.split("refs/heads/").nth(1))
+            .map(str::to_owned)
+            .collect();
+    }
+
+    // An open pull request that says it closes the issue, or names it.
+    if let Ok(raw) = gh(&[
+        "pr", "list", "--state", "open", "--search", key, "--json", "number",
+    ]) && let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(&raw)
+    {
+        contention.open_prs = rows
+            .iter()
+            .filter_map(|row| row.get("number").and_then(serde_json::Value::as_u64))
+            .map(|n| n.to_string())
+            .collect();
+    }
+
+    // Worktrees on this machine holding a branch for the same key.
+    if let Some(out) = git(root, &["worktree", "list", "--porcelain"]) {
+        contention.local_worktrees = out
+            .lines()
+            .filter(|line| line.starts_with("worktree "))
+            .filter(|line| line.contains(key))
+            .map(|line| line.trim_start_matches("worktree ").to_owned())
+            .collect();
+    }
+
+    contention
 }
 
 /// Every open pull request on a branch with this workspace's prefix.
