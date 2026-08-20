@@ -49,13 +49,13 @@ REPO = HERE.parents[2]
 # brand tokens — docs/brand/css/tokens.css is normative; these mirror it
 # ---------------------------------------------------------------------------
 
-BRAND = "#C58A32"  # Bronze Gold — the comet, on every ground
-BRAND_DEEP = "#8B5E1A"  # small brand *text* on light surfaces only
-INK = "#070B10"
-PAPER = "#E9EDF2"  # cool text on dark
-PAPER_BG = "#EEF1F5"  # light-mode surface
-MUTED_ON_DARK = "#9299A1"
-MUTED_ON_LIGHT = "#61676F"
+BRAND = "#EFC53F"  # gold — the comet, on every ground
+BRAND_DEEP = "#141416"  # small brand *text* on light surfaces only
+INK = "#0A0A0C"
+PAPER = "#E8E8EC"  # cool text on dark
+PAPER_BG = "#FFFFFF"  # light-mode surface
+MUTED_ON_DARK = "#777782"
+MUTED_ON_LIGHT = "#4B4B56"
 
 # The repo this art advertises, and the one command that installs it.
 REPO_SLUG = "macanderson/stella"
@@ -144,15 +144,15 @@ GITHUB_BOX = 24.0
 class Theme:
     """One ground and everything that has to change with it.
 
-    Note what does *not* change: the comet stays #C58A32 on both grounds.
+    Note what does *not* change: the comet stays #EFC53F on both grounds.
     Only brand-coloured *lettering* drops, and only on light.
 
     That carve-out is inherited, and its stated reason never held. The kit's
     light-mark rule (tokens.css `--stella-mark-shape`, cometkit's
     `BRAND_ON_LIGHT`) exists *because* the mark sits on paper, so "a social
-    canvas paints its own ground, and this one is #EEF1F5" is the condition
+    canvas paints its own ground, and this one is #FFFFFF" is the condition
     that triggers the rule rather than one that exempts it. Measured on
-    #EEF1F5: ion was 1.83:1, gold is 2.63:1, brand-700 is 4.99:1 — v4.0's
+    #FFFFFF: ion was 1.83:1, gold is 2.63:1, brand-700 is 4.99:1 — v4.0's
     return to gold improves the number without reaching the 3:1 graphical
     floor. Which stop the social mark takes is a brand decision, not a
     follow-on edit to a recolour, so it is left as it was and tracked in
@@ -188,7 +188,7 @@ DARK = Theme(
     brand_text=BRAND,
     surface="#0D1319",
     surface_top="#141B22",
-    border="#2A3036",
+    border="#26262C",
     grid="#FFFFFF",
     grid_op=0.045,
     sweep_dark="#000000",
@@ -204,10 +204,10 @@ LIGHT = Theme(
     fg=INK,
     muted=MUTED_ON_LIGHT,
     brand_text=BRAND_DEEP,
-    surface="#F7F9FC",
+    surface="#F6F6F8",
     surface_top="#E3E8EE",
-    border="#CFD6DD",
-    grid="#070B10",
+    border="#E3E3E8",
+    grid="#0A0A0C",
     grid_op=0.05,
     sweep_dark="#B4BCC6",
     sweep_dark_op=0.22,
@@ -509,7 +509,7 @@ def starfield(lo: Layout, th: Theme, keep_out: tuple[float, float, float, float]
         if kx - pad < x < kx + kw + pad and ky - pad < y < ky + kh + pad:
             continue
         warm = rng.random() < 0.42
-        fill = BRAND if warm else (PAPER if th.is_dark else "#61676F")
+        fill = BRAND if warm else (PAPER if th.is_dark else "#4B4B56")
         # Gold reads quieter than paper on ink, so it carries the higher cap;
         # a paper speck at full strength competes with the wordmark.
         top = 0.42 if warm else 0.26

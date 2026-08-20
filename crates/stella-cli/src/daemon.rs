@@ -651,11 +651,11 @@ fn announcement(id: &str) -> [String; 3] {
         ),
         format!(
             "  reattach with {}",
-            format!("stella daemon attach {id}").cyan()
+            format!("stella daemon attach {id}").yellow()
         ),
         format!(
             "  stella is running in the background — {} runs it in this terminal instead",
-            "--foreground".cyan()
+            "--foreground".yellow()
         ),
     ]
 }
@@ -1324,7 +1324,7 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
     if any_resumable {
         println!(
             "\n↩ killed mid-turn with a resume point — {} continues it",
-            "stella daemon resume <id>".cyan()
+            "stella daemon resume <id>".yellow()
         );
     }
     Ok(())

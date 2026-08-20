@@ -70,7 +70,7 @@ color = "#FF6B9D"
 id = "stella"
 name = "Stella (pipeline)"
 agent = "stella"
-color = "#FFB000"
+color = "#EFC53F"
 
   [contestant.engine]
   api = "zai"

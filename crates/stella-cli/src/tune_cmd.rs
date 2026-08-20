@@ -161,14 +161,14 @@ fn run_effort(
                          (restored on rollback)."
                     );
                 }
-                println!("  revert with: {}", "stella tune rollback".cyan());
+                println!("  revert with: {}", "stella tune rollback".yellow());
             } else {
                 println!(
                     "\n{}: candidate `{}` beats baseline `{}`. Re-run with {} to apply.",
                     "winner".green().bold(),
                     p.winner.value.bold(),
                     p.baseline.value,
-                    "--promote".cyan(),
+                    "--promote".yellow(),
                 );
             }
         }

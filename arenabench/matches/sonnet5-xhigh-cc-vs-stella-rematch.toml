@@ -166,7 +166,7 @@ color = "#FF6B9D"
 id = "stella"
 name = "Stella (Sonnet 5 pipeline, xhigh)"
 agent = "stella"
-color = "#FFB000"
+color = "#EFC53F"
 
   [contestant.engine]
   api = "openrouter"

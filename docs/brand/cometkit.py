@@ -43,24 +43,36 @@ REPO = HERE.parents[1]
 
 # These were `GOLD`/`GOLD_DEEP` through the bronze era. They are role-named now
 # for the same reason the CSS ramp was renamed: a hue in a name falsifies
-# itself the first time the hue moves, and this one has moved four times — the
-# fourth being v4.0, which took the hue back to gold and left these names
-# correct exactly because they never encoded it.
-BRAND = "#C58A32"  # Bronze Gold — the comet, on a dark ground
-# The mark on a LIGHT ground. v3.0 retired the kit's "shapes and marks stay
-# full strength on both grounds" rule because ion measured 1.61:1 on
-# `PAPER_BG`, a logotype nobody can see. v4.0 keeps the split rather than
-# reinstating the old rule: gold is not in ion's position, but at 2.63:1
-# BRAND is still under the 3:1 graphical floor on `PAPER_BG`, while this stop
-# clears it at 4.99:1. Enforced by `check_svg_parity` in build_marks.py, not
-# merely written down here.
-BRAND_ON_LIGHT = "#8B5E1A"
-BRAND_DEEP = "#8B5E1A"  # small brand *text* on light surfaces only
-INK = "#070B10"
-PAPER = "#E9EDF2"  # cool text on dark
-PAPER_BG = "#EEF1F5"  # light-mode surface
-MUTED_ON_DARK = "#9299A1"
-MUTED_ON_LIGHT = "#61676F"
+# itself the first time the hue moves, and this one has moved five times — the
+# fifth being v5.0, which left these names correct exactly because they never
+# encoded a hue.
+#
+# Every value below is a token from `design/tokens/stella-tokens.json`, which is
+# upstream of this file and of `css/tokens.css` alike. `check-tokens.py` fails
+# the gate on any hex here that is not one, so the "mirror" this block used to
+# promise is now a checked property.
+BRAND = "#EFC53F"  # gold — the comet, on either ground
+# The mark on a LIGHT ground is the SAME gold. v3.0 and v4.0 each kept a
+# separate darker stop here so the mark could clear the 3:1 graphical floor on
+# paper, and v5.0 retires that split for two reasons. The first is the system's
+# own rule: gold, `text` white and `ink` are the only three mark colours that
+# exist, so a fourth stop is out of the palette by construction. The second is
+# that the floor was never the right test — WCAG 1.4.3 and 1.4.11 both exempt
+# logotypes by name, which is exactly what lets rule 6 permit a gold mark on
+# paper while forbidding gold body text there. `scripts/check-contrast.py`
+# records this pairing at 1.65:1 as an exemption rather than hiding it: the
+# number is stated, and the reason it does not fail is stated beside it.
+BRAND_ON_LIGHT = BRAND
+# Small brand *text* on light surfaces is not gold at all — rule 6 forbids it,
+# and at 1.65:1 the measurement agrees. Brand text on paper is `ink`.
+BRAND_DEEP = "#141416"  # ink
+INK = "#0A0A0C"  # bg — the canvas
+PAPER = "#E8E8EC"  # text — primary text on dark
+PAPER_BG = "#FFFFFF"  # paper — the light-mode surface
+MUTED_ON_DARK = "#777782"  # muted
+# `dim` rather than `muted` on light. Both are tokens; this one is the pairing
+# that measures — 8.61:1 on paper against muted's 4.42:1, which is under AA.
+MUTED_ON_LIGHT = "#4B4B56"  # dim
 
 # JetBrains Mono advances 0.6em per glyph, which is what lets every string's
 # width be known before it is drawn.
@@ -371,4 +383,76 @@ def verify_png(path: Path) -> None:
         zlib.decompress(bytes(idat))
     except zlib.error as exc:  # pragma: no cover - only on a broken writer
         raise SystemExit(f"{path}: pixel data will not inflate ({exc})") from exc
+
+
+def png_opaque_colours(path: Path) -> dict[tuple[int, int, int], int]:
+    """Every fully-opaque RGB value in an 8-bit RGBA PNG, with its pixel count.
+
+    The half `verify_png` deliberately could not do. Its docstring called
+    judging the pixels "the reviewer's job", which was honest about the gap and
+    wrong about who could close it: a colour-profile drift moves the gold by a
+    few points in a direction no reviewer can see on an uncalibrated panel, and
+    that is precisely the failure this kit's recolour has to rule out.
+
+    Semi-transparent pixels are skipped rather than un-multiplied. Every edge
+    pixel of an antialiased mark is a blend between the fill and the ground, so
+    including them would report hundreds of intermediate colours and prove
+    nothing; the interior pixels are where the fill either survived or did not.
+    """
+    raw = path.read_bytes()
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"{path}: not a PNG")
+    width, height, depth, colour_type = struct.unpack(">IIBB", raw[16:26])
+    if (depth, colour_type) != (8, 6):
+        raise SystemExit(
+            f"{path}: expected 8-bit RGBA (depth 8, colour type 6), "
+            f"got depth {depth}, colour type {colour_type}"
+        )
+    idat = bytearray()
+    off = 8
+    while off + 8 <= len(raw):
+        (length,) = struct.unpack(">I", raw[off : off + 4])
+        if raw[off + 4 : off + 8] == b"IDAT":
+            idat += raw[off + 8 : off + 8 + length]
+        off += 12 + length
+
+    data = zlib.decompress(bytes(idat))
+    stride, bpp = width * 4, 4
+    counts: dict[tuple[int, int, int], int] = {}
+    prev = bytearray(stride)
+    pos = 0
+    for _ in range(height):
+        filter_type = data[pos]
+        pos += 1
+        line = bytearray(data[pos : pos + stride])
+        pos += stride
+        # PNG's five per-scanline filters, undone in place (RFC 2083 §6).
+        for x in range(stride):
+            left = line[x - bpp] if x >= bpp else 0
+            up = prev[x]
+            up_left = prev[x - bpp] if x >= bpp else 0
+            if filter_type == 1:
+                line[x] = (line[x] + left) & 0xFF
+            elif filter_type == 2:
+                line[x] = (line[x] + up) & 0xFF
+            elif filter_type == 3:
+                line[x] = (line[x] + (left + up) // 2) & 0xFF
+            elif filter_type == 4:
+                estimate = left + up - up_left
+                d_left, d_up = abs(estimate - left), abs(estimate - up)
+                d_up_left = abs(estimate - up_left)
+                if d_left <= d_up and d_left <= d_up_left:
+                    predictor = left
+                elif d_up <= d_up_left:
+                    predictor = up
+                else:
+                    predictor = up_left
+                line[x] = (line[x] + predictor) & 0xFF
+        for x in range(width):
+            r, g, b, a = line[x * 4 : x * 4 + 4]
+            if a == 0xFF:
+                key = (r, g, b)
+                counts[key] = counts.get(key, 0) + 1
+        prev = line
+    return counts
 

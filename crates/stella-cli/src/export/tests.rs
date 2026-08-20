@@ -666,19 +666,19 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
     // Dark: the instrument ramp, achromatic chrome, the brand hue only as
     // identity.
     for declaration in [
-        "--ground: #070B10;",
+        "--ground: #0A0A0C;",
         "--surface: #0D1319;",
         "--raised: #11171D;",
         "--hairline: #1F262D;",
-        "--text: #E9EDF2;",
+        "--text: #E8E8EC;",
         "--text-2: #A4ABB3;",
         "--text-3: #737C88;",
-        "--accent: #E9EDF2;",
-        "--identity: #C58A32;",
+        "--accent: #E8E8EC;",
+        "--identity: #EFC53F;",
         "--ok: #3FD99B;",
         "--warn: #FF7A45;",
         "--bad: #F2687A;",
-        "--c1: #E9EDF2;",
+        "--c1: #E8E8EC;",
     ] {
         assert!(
             html.contains(declaration),
@@ -692,7 +692,7 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
     for retired in [
         "#7dd3fc", "#38bdf8", "#a78bfa", "#6c7b90", "#4d9fff", "--sky", "--azure",
         // The pre-instrument bronze page. Its ground, ink and semantic marks
-        // stay retired; #C58A32 and #674415 do NOT appear here any more,
+        // stay retired; #EFC53F and #EFC53F do NOT appear here any more,
         // because v4.0 took the brand hue back to that ramp and they are the
         // live identity again. What was actually retired in v3.0 was the warm
         // NEUTRAL page around the gold, and that is what this row still names.

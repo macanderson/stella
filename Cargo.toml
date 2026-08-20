@@ -24,6 +24,7 @@ members = [
   "crates/stella-observatory",
   "crates/stella-serve",
   "crates/stella-parity",
+  "crates/stella-tui-theme",
   "crates/stella-tui",
   "crates/stella-cli",
   "bench/loop-bench",

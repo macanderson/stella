@@ -1,0 +1,17 @@
+[package]
+name = "stella-tui-theme"
+description = "The stella black-and-gold palette and its hue clamp — generated from design/tokens/stella-tokens.json, so the TUI and every web surface cannot drift apart."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# `ratatui` is the only dependency, and only for `Color::Rgb` — the type the
+# clamp predicates speak about. Keeping this crate at one edge is what lets the
+# TUI depend on it without the palette acquiring the TUI's dependency graph, so
+# a later surface (an asset generator, a docs renderer) can link the tokens
+# alone.
+[dependencies]
+ratatui.workspace = true

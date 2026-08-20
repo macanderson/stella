@@ -136,7 +136,7 @@ def rgb(r: int, g: int, b: int) -> str:
     return f"\x1b[38;2;{r};{g};{b}m"
 
 
-AMBER = rgb(255, 176, 0)
+AMBER = rgb(239, 197, 63)
 CYAN = rgb(55, 213, 242)
 VIOLET = rgb(199, 125, 255)
 MINT = rgb(92, 230, 138)
