@@ -37,14 +37,18 @@
 //! are booleans, not a computed ratio: a call either reached a model or it did
 //! not.
 //!
-//! ## What this module is not
+//! ## Wiring
 //!
-//! Not wired to the live deck yet. Every value here has a live source — the v1
-//! statline already projects all six off `WorkspaceModel` — so this is a
-//! sequencing question, not a data one. The v2 shell that owns this row lands
-//! in P1; wiring a v2 bar under v1 chrome before then would put the only
-//! cool-gray element on a warm screen, and churn the deck's nineteen goldens
-//! twice.
+//! [`render_band`] is the deck's bottom band: `render_deck` reserves one row
+//! for it and two only when a cache diagnosis is showing.
+//!
+//! This section used to say the module was "not wired to the live deck yet",
+//! and give the reason — that a v2 bar under v1 chrome would be "the only
+//! cool-gray element on a warm screen". That argument was already spent when it
+//! was written: the recolour that made v1 cool landed four minutes after the
+//! module did, and the two palettes agree on every token this row uses. The
+//! note outlived the condition it described by a day, which is the whole reason
+//! this repo treats a stale comment as a defect rather than as harmless prose.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
