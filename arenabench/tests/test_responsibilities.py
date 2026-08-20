@@ -33,28 +33,25 @@ from arenabench.model import (
     ResponsibilityConfig,
 )
 
-#: Stella's normative home for the role vocabulary, relative to a checkout.
-#: ``scripts/check-role-names.sh`` names this same function as "the truth" and
-#: reads its match arms the same way, so the two halves of the contract are
-#: anchored to one file rather than to each other.
-_ROLE_KEY_RS = Path("crates") / "stella-cli" / "src" / "config_wiring.rs"
-
-#: One match arm of ``role_key()``: ``EngineAgentKind::Verifier => "verifier",``
-_ROLE_ARM = re.compile(r'EngineAgentKind::\w+\s*=>\s*"([a-z_]+)"')
-
-
-def _role_key_names(source: str) -> frozenset[str]:
-    """Every role spelling ``role_key()`` returns, read out of the Rust.
-
-    Scoped to that function's body — a bare sweep for the arm shape would also
-    collect every other ``match kind`` in the file, and those are legitimately
-    partial (``model_source`` skips ``Default``). The body ends at the first
-    column-zero ``}``, which is how ``check-role-names.sh``'s awk delimits it.
-    """
-    body = re.search(r"pub fn role_key\b.*?\n\}", source, re.DOTALL)
-    if body is None:
-        return frozenset()
-    return frozenset(_ROLE_ARM.findall(body.group()))
+# The reader that used to live here — `_ROLE_KEY_RS`, `_ROLE_ARM` and
+# `_role_key_names()`, which parsed `role_key()`'s match arms out of
+# `crates/stella-cli/src/config_wiring.rs` — is deleted, finishing what #3950
+# started. That PR removed the assertion those three existed to serve and the
+# `re`/`pathlib` imports they needed, but left the three behind, so importing
+# this module raised `NameError: name 'Path' is not defined` and NOTHING in
+# `arenabench/tests/` could be collected. It went unseen because the bench
+# workflow's arenabench step never ran: the `harbor_adapter` step above it had
+# been failing since #3944, and one red step masks every step after it.
+#
+# They are deleted rather than repaired, for #3950's own two reasons plus a
+# third it could not have known. The property is still enforced by a gate step
+# (`scripts/check-role-names.sh`), so repointing would be a fourth copy of a
+# passing check; re-creating a role roster for core to publish pulls against
+# `doc:roleless-core` (#3903); and the subject itself is gone — #3908 deleted
+# `role_key()` and `EngineAgentKind`, and repointed that gate at
+# `ENGINE_AGENT_NAMES`/`RETIRED_ENGINE_AGENT_NAMES` in `settings::unknown`. A
+# repaired reader would parse a function that no longer exists and silently
+# return the empty set.
 
 
 HEADER = """
