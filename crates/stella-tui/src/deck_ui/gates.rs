@@ -12,8 +12,37 @@
 //! whole keyboard and was answered with a single keypress. It was removed in
 //! #3861 — nothing has raised its card since the staged pipeline was deleted
 //! (#3865), so its keys answered a question no door asked.
+//!
+//! [`index_hold`] is a different kind again: it belongs to no agent and
+//! answers no question. It holds the very first prompt of a cold workspace
+//! while the one-time embedding pass runs.
 
 use super::*;
+
+/// Hold a submission while the workspace's semantic index is still being
+/// built for the first time (#4043).
+///
+/// `Some` means the keystroke is spent and **the composer is untouched** —
+/// the user's text survives, which is the whole difference between holding a
+/// prompt and eating one. `None` means submit normally.
+///
+/// Why hold at all: since #4043 a search no longer fills the index on the
+/// query path, so a turn started against a cold workspace does not wait for
+/// coverage — it silently gets none. Ten seconds of "still indexing" is
+/// cheaper than a turn's worth of tool calls ranked over 3% of the tree.
+///
+/// The release condition lives in [`IndexReadiness::holds_prompts`] and is
+/// bounded by the *pass*, not by the count: an embedder that is down settles
+/// behind and holds nothing. This can therefore never lock a user out.
+pub(super) fn index_hold(ui: &mut DeckUi) -> Option<DeckAction> {
+    let message = ui.index_readiness.hold_message()?;
+    // `demand`, not `push`: a dismissed notice dialog must not swallow the
+    // one explanation for a keystroke that just deliberately did nothing.
+    ui.notice.demand(message.clone());
+    ui.scrollback
+        .announce(format!("{}{message}", crate::accessible::NOTICE_MARKER));
+    Some(DeckAction::Handled)
+}
 
 /// A reviewer's in-progress marks on one hunk-review card.
 #[derive(Debug, Clone, PartialEq, Eq)]

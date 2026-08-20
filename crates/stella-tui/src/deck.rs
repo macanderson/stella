@@ -725,6 +725,7 @@ impl WorkspaceModel {
             // of the event-log fold — the view state owns them, applied in
             // `ingest_inbound`, so the model deliberately ignores them here.
             Inbound::GraphSnapshot(_)
+            | Inbound::IndexReadiness(_)
             | Inbound::SlashCommands(_)
             | Inbound::AgentsList { .. }
             | Inbound::Skills(_)

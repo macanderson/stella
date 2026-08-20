@@ -205,7 +205,8 @@ async fn spawn_session_graph_eagerly_builds_the_index_in_the_background() {
 
     assert!(!graph_index_exists(&root), "no index on disk yet");
 
-    let (session_graph, build) = spawn_session_graph(&root, Box::new(|_| {}), Box::new(|| {}));
+    let (session_graph, build) =
+        spawn_session_graph(&root, Box::new(|_| {}), Box::new(|| {}), Box::new(|_| {}));
     build.await.expect("background build task");
 
     assert!(
@@ -234,7 +235,8 @@ async fn session_graph_live_refreshes_after_a_file_is_added() {
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("lib.rs"), "pub fn original() {}\n").unwrap();
 
-    let (session_graph, build) = spawn_session_graph(&root, Box::new(|_| {}), Box::new(|| {}));
+    let (session_graph, build) =
+        spawn_session_graph(&root, Box::new(|_| {}), Box::new(|| {}), Box::new(|_| {}));
     build.await.expect("background build task");
 
     assert!(

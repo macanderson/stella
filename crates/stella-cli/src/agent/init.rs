@@ -349,6 +349,21 @@ pub(crate) fn deck_notice_narrator(
     }
 }
 
+/// The deck's index-readiness reporter: every coverage measurement the
+/// background embedding pass takes, forwarded as out-of-band view state so the
+/// deck can hold a first prompt while a cold workspace fills (#4043).
+///
+/// A function here rather than a closure written at the call site because
+/// `command_deck.rs` is a god file closed to growth (AGENTS.md), and this is
+/// the module its three sibling narrators already live in.
+pub(crate) fn deck_readiness_reporter(
+    tx: tokio::sync::mpsc::UnboundedSender<stella_tui::Inbound>,
+) -> impl FnMut(crate::search_cmd::readiness::IndexReadiness) + Send {
+    move |readiness| {
+        let _ = tx.send(stella_tui::Inbound::IndexReadiness(readiness));
+    }
+}
+
 fn narrator(to_stderr: bool) -> impl FnMut(InitLine) + Send {
     use std::io::IsTerminal;
 
