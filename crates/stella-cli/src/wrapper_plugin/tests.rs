@@ -372,7 +372,16 @@ fn an_installed_wrapper_is_bound_by_its_variant_id() {
     let wrapper = bound(&roster, "budget-v1", &mut |line| warnings.push(line))
         .expect("the installed plugin declares this variant");
     assert_eq!(wrapper.variant(), "budget-v1");
-    assert_eq!(wrapper.dispatch.manifest().name, "budget-keeper");
+    // `.manifests()` since #3801: a dispatch holds a composition, so there is
+    // no one manifest to ask for. This door binds exactly one member, and the
+    // count is asserted alongside the name so that stays true rather than
+    // being assumed by taking the first of an unknown number.
+    let bound_manifests: Vec<&str> = wrapper
+        .dispatch
+        .manifests()
+        .map(|manifest| manifest.name.as_str())
+        .collect();
+    assert_eq!(bound_manifests, vec!["budget-keeper"]);
     assert_eq!(
         warnings.len(),
         1,

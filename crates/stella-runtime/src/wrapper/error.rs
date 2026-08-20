@@ -323,6 +323,64 @@ pub enum WrapperError {
         /// Why.
         detail: String,
     },
+
+    /// A composition was bound with no members at all.
+    ///
+    /// Distinct from "the variant names nothing installed", which the host
+    /// answers before it reaches here: this is a caller handing the dispatcher
+    /// an empty list, which has no variant id and no stage order and would
+    /// otherwise drive a turn with nothing wrapping it.
+    #[error("a wrapper composition must name at least one plugin")]
+    EmptyComposition,
+
+    /// Two composed manifests order the same pair of stages differently.
+    ///
+    /// Refused rather than resolved. The merged order is what decides which
+    /// contribution a later stage can read — that is the whole point of
+    /// `BeforeTurnRequest::published` — so picking one plugin's order over the
+    /// other's would silently decide whose grounding the other one plans
+    /// against. A composition is only well-defined when every pair of stages
+    /// two members share appears in the same relative order in both.
+    #[error(
+        "plugins `{wrapper}` and `{other}` order the stages \"{first}\" and \"{second}\" \
+         differently, so composing them has no one stage order — a composition needs the \
+         members to agree on the order of every stage they share"
+    )]
+    ConflictingStageOrder {
+        /// The member declaring `first` before `second`.
+        wrapper: String,
+        /// The member declaring `second` before `first`.
+        other: String,
+        /// The earlier stage in `wrapper`'s order.
+        first: String,
+        /// The later stage in `wrapper`'s order.
+        second: String,
+    },
+
+    /// Two composed manifests are both arbiter-grade.
+    ///
+    /// One turn has one thing deciding when it is finished. This is the only
+    /// grade conflict a composition can have, and it is deliberately the only
+    /// one checked, because the manifest schema makes it subsume the two that
+    /// look like siblings: `ManifestError::OracleRequiresArbiter` and
+    /// `RequirementsRequireArbiter` both refuse their block below arbiter
+    /// grade, so two oracles or two requirement sets are *already* two
+    /// arbiters and are refused here rather than by rules of their own.
+    ///
+    /// Writing those rules anyway was the first shape of this check, and they
+    /// were unreachable — an error that cannot fire is worse than no error,
+    /// because it reads as a guarantee somebody tested.
+    #[error(
+        "plugins `{wrapper}` and `{other}` are both arbiter-grade, so a composition of them \
+         has two things holding one turn open and two definitions of done — at most one \
+         member of a composition may be an arbiter"
+    )]
+    TwoArbiters {
+        /// The first arbiter-grade member.
+        wrapper: String,
+        /// The second.
+        other: String,
+    },
 }
 
 /// A driver session could not be opened, or its answer could not be used.

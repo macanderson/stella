@@ -155,7 +155,8 @@ pub(crate) async fn run_goal_wrapped_turn(
     // `pipeline.plugin()` is `Some` — so the row names the wrapper that
     // actually drove every round under it, the same honesty rule #3388/#3684
     // already hold the classic arm to.
-    let execution = begin_execution(store, "goal", goal, cfg, session, Some(bound.variant()));
+    let variant = bound.variant();
+    let execution = begin_execution(store, "goal", goal, cfg, session, Some(variant.as_str()));
     stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
 
     let configured = crate::config::discover_configured_providers();
