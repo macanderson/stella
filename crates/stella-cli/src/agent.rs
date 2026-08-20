@@ -67,7 +67,9 @@ pub(crate) use graph::spawn_session_graph;
 #[cfg(test)]
 use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
 pub use init::run_init;
-pub(crate) use init::{InitIo, InitLine, deck_narrator, deck_notice_narrator, init_workspace};
+pub(crate) use init::{
+    InitIo, InitLine, deck_narrator, deck_notice_narrator, deck_readiness_reporter, init_workspace,
+};
 pub(crate) use outcome::settled_cost_since;
 pub(crate) use output::reflection_explicitly_disabled;
 use output::*;
@@ -207,6 +209,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         &cfg.workspace_root,
         Box::new(init::stderr_narrator()),
         Box::new(|| {}),
+        Box::new(|_| {}),
     );
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set.as_ref(),
@@ -577,7 +580,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         set.close_all().await;
     }
     presence.finish(stella_store::SessionStatus::Complete, None);
-    println!("\n  {}", "Goodbye! ✦".magenta());
+    println!("\n  {}", "Goodbye! ✦".white());
     Ok(())
 }
 

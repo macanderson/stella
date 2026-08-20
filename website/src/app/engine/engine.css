@@ -38,13 +38,13 @@
   /* Text ramp on ink. neutral-400 lands ~7.5:1, neutral-500 ~5.8:1 — both
    * clear AA for body text; neutral-600 (~4:1) is reserved for seams and
    * large type, never for prose. */
-  --eng-muted: var(--stella-neutral-400);
-  --eng-faint: var(--stella-neutral-500);
+  --eng-muted: var(--st-muted);
+  --eng-faint: var(--st-dim);
 
   /* Structure. `--eng-rule` is decorative; `--eng-rule-strong` is the one
    * allowed to carry structure alone. */
   --eng-rule: color-mix(in srgb, var(--stella-paper) 12%, var(--stella-ink));
-  --eng-rule-strong: var(--stella-neutral-700);
+  --eng-rule-strong: var(--st-rule);
 
   /* Lifted surfaces, warm rather than grey — ink with paper mixed in. */
   --eng-surface: color-mix(in srgb, var(--stella-paper) 4%, var(--stella-ink));
@@ -86,12 +86,10 @@
    * was a real defect: a background layer has no opacity of its own, so the
    * grid drew at full-strength paper and cut visibly through every line of
    * body text. Opacity has to ride the element, not the colour. */
-  background-image: radial-gradient(
-    ellipse 80% 50% at 50% 0%,
-    color-mix(in srgb, var(--stella-brand) 6%, transparent),
-    transparent 70%
-  );
-  background-attachment: fixed;
+  /* The gold bloom is gone. A radial ramp is a gradient, and rule 5 retires
+   * them on every surface — 6% of the brand hue fading to nothing is a smudge
+   * on the uncalibrated panels this recolour exists to survive. The ground is
+   * flat; the grid overlay below is the only decoration the tour keeps. */
 }
 
 /* The kit's terminal grid, at the kit's 5% — decoration behind every station
@@ -283,7 +281,7 @@
   color: var(--stella-ink);
 }
 .eng-rail-stop[aria-current="true"]:hover {
-  background: var(--stella-brand-400);
+  background: var(--st-gold-bright);
   color: var(--stella-ink);
 }
 
@@ -337,12 +335,10 @@
 /* vera's chamber runs warmer — the one station with its own light, because it
  * is the one the whole product argument rests on. */
 .eng-station[data-tone="chamber"] {
-  background:
-    radial-gradient(
-      ellipse 70% 60% at 50% 45%,
-      color-mix(in srgb, var(--stella-brand) 7%, transparent),
-      transparent 72%
-    );
+  /* This station used to run warmer via a gold radial wash. Rule 5 retires it;
+   * the station keeps its distinction through its content and its border, not
+   * through a hue smeared under the text. */
+  background: var(--eng-surface-high);
 }
 
 .eng-station-inner {

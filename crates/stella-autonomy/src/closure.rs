@@ -108,6 +108,25 @@ impl Citation {
     }
 
     /// How the citation reads in a comment.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use stella_autonomy::Citation;
+    /// let pr = Citation::PullRequest { key: "3985".into() };
+    /// assert_eq!(pr.render(), "#3985");
+    ///
+    /// // A key already carrying its `#` renders the same — the leading
+    /// // `#` is stripped so it is never doubled.
+    /// let same = Citation::PullRequest { key: "#3985".into() };
+    /// assert_eq!(same.render(), "#3985");
+    ///
+    /// let commit = Citation::Commit { sha: "f8935f2".into() };
+    /// assert_eq!(commit.render(), "commit f8935f2");
+    ///
+    /// let record = Citation::ContextRecord { lineage_id: "lin-42".into() };
+    /// assert_eq!(record.render(), "context record `lin-42`");
+    /// ```
     #[must_use]
     pub fn render(&self) -> String {
         match self {

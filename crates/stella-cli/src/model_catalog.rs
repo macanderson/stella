@@ -1131,7 +1131,7 @@ pub fn run_list(provider: Option<&str>, all: bool) -> Result<(), String> {
             rate(l.pricing.cached_input_usd_per_mtok),
             ctx,
             l.model_provider.dimmed(),
-            thinks.cyan(),
+            thinks.white(),
             l.version,
         );
     }

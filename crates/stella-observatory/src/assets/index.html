@@ -25,7 +25,7 @@
 
    The v4.0 return to gold makes that carve-out load-bearing again, because
    gold and an amber `--warn` are the pair that collides. It was diagnosed
-   with the wrong instrument for two releases: `--identity` #C58A32 against
+   with the wrong instrument for two releases: `--identity` #EFC53F against
    `--warn` #C9A227 measured 1.23:1 and was called unreadable, and when v3.0
    moved to a cyan the same measurement read 1.22:1 and was waved through as
    "separated by hue, not by weight". Both numbers are WCAG contrast, which is
@@ -56,17 +56,17 @@
    in ../../tests.rs. */
 :root{
   /* BEGIN palette — dark: obsidian ground, cool paper text, graphite ramp.
-     The surfaces step #070B10 → #0D1319 → #11171D so a card reads as raised
+     The surfaces step #0A0A0C → #0D1319 → #11171D so a card reads as raised
      by a value step of 1–2 rather than by a shadow. Do not prune this block
      to the tokens currently referenced; it carries the full set. */
-  --void:#010306; --ground:#070B10; --surface:#0D1319; --raised:#11171D;
+  --void:#010306; --ground:#0A0A0C; --surface:#0D1319; --raised:#11171D;
   --hairline:#1F262D; --hairline-strong:#333B43;
   /* The accent ramp is the text ramp: "active" is an inversion, not a hue.
      These were `--mark*` until the v3.0 recolour, which is the naming bug the
      brand kit warns about — a hue in a token name, on tokens that had not
      been a hue for two releases. */
-  --mark:#E9EDF2; --mark-bright:#FFFFFF; --mark-deep:#A4ABB3;
-  --text:#E9EDF2; --text-2:#A4ABB3; --text-3:#737C88;
+  --mark:#E8E8EC; --mark-bright:#FFFFFF; --mark-deep:#A4ABB3;
+  --text:#E8E8EC; --text-2:#A4ABB3; --text-3:#737C88;
   /* Identity. The one hue outside --ok/--warn/--bad, and the header comment's
      carve-out: wordmark, favicon mark, one primary action. Never a state.
      Both values are taken from docs/brand/css/tokens.css rather than mixed
@@ -76,7 +76,7 @@
      only on the page ground. Gold's brand-800 measures 8.25:1 there and
      8.70:1 as the fill pair against white. Which ramp step identity takes is
      a brand decision, not a follow-on edit. */
-  --identity:#C58A32; --identity-ink:#070B10;
+  --identity:#EFC53F; --identity-ink:#0A0A0C;
   /* The three semantic colours, and the only colour anywhere besides the
      identity. Held in the reference's own register so they read as marks on
      an instrument rather than as UI chrome — but lifted with the rest of the
@@ -105,7 +105,7 @@
      separated by lightness alone, which is the one channel that survives
      greyscale printing, colour-vision deficiency, and a projector. Ordered
      light → dark so --c1 is the most prominent series. */
-  --c1:#E9EDF2; --c2:#A4ABB3; --c3:#737C88; --c4:#4A535D;
+  --c1:#E8E8EC; --c2:#A4ABB3; --c3:#737C88; --c4:#4A535D;
   --neutral-mark:#4A535D;          /* the "everything else" mark — recedes */
   /* END palette */
 
@@ -117,7 +117,7 @@
      stays a token of its own rather than reusing --ground: a selector that
      paints text in the page-background token is the coupling
      tests/light_mode.rs exists to forbid. */
-  --ink:#070B10;
+  --ink:#0A0A0C;
   --accent:var(--mark);
   --accent-wash:rgba(233,237,242,.08); /* paper @8%  — hover / selected fill  */
   --accent-edge:rgba(233,237,242,.38); /* paper @38% — chip + badge edges     */
@@ -191,18 +191,18 @@
    bug in whichever moved last.
 
    Contrast, computed against WCAG 2.1 relative luminance rather than
-   estimated, worst case on --surface (#F7F9FC — the lightest surface a mark
+   estimated, worst case on --surface (#F6F6F8 — the lightest surface a mark
    can land on, so the binding constraint):
 
      --text 18.71:1   --text-2 7.37:1   --text-3 3.24:1
      --ok    6.25:1   --warn   7.48:1   --bad    6.81:1
-     --identity 8.25:1 (#674415)
+     --identity 8.25:1 (#EFC53F)
 
    and on the dark side against --raised (#11171D):
 
      --text 15.34:1   --text-2 7.78:1   --text-3 4.27:1
      --ok    9.97:1   --warn   6.98:1   --bad    6.04:1
-     --identity 6.06:1 (#C58A32)
+     --identity 6.06:1 (#EFC53F)
 
    Text and --text-2 clear AAA (7:1) on both; the three semantic colours clear
    AA (4.5:1) on both. --text-3 clears AAA on neither and is not meant to,
@@ -227,36 +227,42 @@
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     color-scheme:light;
-    --void:#E9EDF2; --ground:#FFFFFF; --surface:#F7F9FC; --raised:#FFFFFF;
-    --hairline:#E7EBF0; --hairline-strong:#CFD6DD;
-    --mark:#070B10; --mark-bright:#000000; --mark-deep:#4D535A;
-    --identity:#674415; --identity-ink:#FFFFFF;
-    --text:#070B10; --text-2:#4D535A; --text-3:#828C97;
+    --void:#E8E8EC; --ground:#FFFFFF; --surface:#F6F6F8; --raised:#FFFFFF;
+    --hairline:#E7EBF0; --hairline-strong:#E3E3E8;
+    --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#4D535A;
+    /* Gold fill, INK label: the light theme carried a white label, which the
+     v5.0 recolour turned into white-on-gold at 1.65:1. Rule 6 is explicit
+     that a gold fill on a light ground carries ink text — 11.15:1. */
+  --identity:#EFC53F; --identity-ink:#141416;
+    --text:#0A0A0C; --text-2:#4D535A; --text-3:#828C97;
     --ok:#0B6B3D; --warn:#913200; --bad:#A82036;
-    --c1:#070B10; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
+    --c1:#0A0A0C; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
     --neutral-mark:#C2C9D1;
     --ink:#FFFFFF;                      /* the inversion flips with the page */
-    --accent-wash:rgba(7,11,16,.06);
-    --accent-edge:rgba(7,11,16,.28);
+    --accent-wash:rgba(10,10,12,.06);
+    --accent-edge:rgba(10,10,12,.28);
     --sunken:#F3F6F9;                   /* inset wells */
   }
 }
 :root[data-theme="light"]{
   color-scheme:light;
-  --void:#E9EDF2; --ground:#FFFFFF; --surface:#F7F9FC; --raised:#FFFFFF;
-  --hairline:#E7EBF0; --hairline-strong:#CFD6DD;
-  --mark:#070B10; --mark-bright:#000000; --mark-deep:#4D535A;
-  --identity:#674415; --identity-ink:#FFFFFF;
-  --text:#070B10; --text-2:#4D535A; --text-3:#828C97;
+  --void:#E8E8EC; --ground:#FFFFFF; --surface:#F6F6F8; --raised:#FFFFFF;
+  --hairline:#E7EBF0; --hairline-strong:#E3E3E8;
+  --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#4D535A;
+  /* Gold fill, INK label: the light theme carried a white label, which the
+     v5.0 recolour turned into white-on-gold at 1.65:1. Rule 6 is explicit
+     that a gold fill on a light ground carries ink text — 11.15:1. */
+  --identity:#EFC53F; --identity-ink:#141416;
+  --text:#0A0A0C; --text-2:#4D535A; --text-3:#828C97;
   /* --warn keeps the dark scheme's hue (41.2°) rather than its lightness:
      28.9° from the light identity, 22.7° from --bad, 7.89:1 on paper and
      7.48:1 on --surface. */
   --ok:#0B6B3D; --warn:#913200; --bad:#A82036;
-  --c1:#070B10; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
+  --c1:#0A0A0C; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
   --neutral-mark:#C2C9D1;
   --ink:#FFFFFF;
-  --accent-wash:rgba(7,11,16,.06);
-  --accent-edge:rgba(7,11,16,.28);
+  --accent-wash:rgba(10,10,12,.06);
+  --accent-edge:rgba(10,10,12,.28);
   --sunken:#F3F6F9;
 }
 
@@ -315,11 +321,11 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
    docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
    /assets/wordmark{,-light}.svg (src/lib.rs). They were byte copies until
    the 2026-08-11 rebrand; the v3.0 ion recolour brought them back into step,
-   so both halves of each cut carry the current kit values (Obsidian #070B10,
-   Paper #E9EDF2) rather than only the brand hue (#2921).
+   so both halves of each cut carry the current kit values (Obsidian #0A0A0C,
+   Paper #E8E8EC) rather than only the brand hue (#2921).
 
-   These are the *color* cuts. The comet star is the gold `brand-500` #C58A32
-   on the dark cut and `brand-700` #8B5E1A on the light one. The two-stop rule
+   These are the *color* cuts. The comet star is the gold `brand-500` #EFC53F
+   on the dark cut and `brand-700` #141416 on the light one. The two-stop rule
    arrived with v3.0 — the rule before it was "shapes and marks stay full
    brand on both grounds" — and v4.0's return to gold keeps it rather than
    reverting it, because the rule was never really about ion: brand-500 holds

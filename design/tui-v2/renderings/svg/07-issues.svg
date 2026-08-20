@@ -1,0 +1,57 @@
+<svg viewBox="0 0 680 470" width="680" height="470" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
+<rect x="0" y="0" width="680" height="470" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="22" font-size="11" fill="#777782">SESSION  AGENTS  TRACES  GRAPH  FILES  SKILLS  MCP</text>
+<text x="400" y="22" font-size="11" fill="#EFC53F" font-weight="500">ISSUES</text>
+<text x="600" y="22" font-size="12" fill="#E8E8EC" font-weight="500">stella</text>
+<text x="645" y="22" font-size="12" fill="#EFC53F" font-weight="500">*</text>
+<line x1="0" y1="32" x2="680" y2="32" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="56" font-size="11" fill="#777782">backlog · linear via mcp · 14 open</text>
+<text x="300" y="56" font-size="11" fill="#4B4B56">f filter: mine · sort: heat</text>
+<rect x="12" y="64" width="656" height="152" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<rect x="13" y="70" width="654" height="18" fill="#17171B"/>
+<text x="24" y="83" font-size="11" fill="#EFC53F">▶</text>
+<text x="40" y="83" font-size="11" fill="#E8E8EC">OXA-142</text>
+<text x="108" y="83" font-size="11" fill="#E8E8EC">token refresh race</text>
+<text x="330" y="83" font-size="11" fill="#EFC53F">in progress</text>
+<text x="428" y="83" font-size="11" fill="#777782">plan r3 · task 3 live</text>
+<text x="612" y="83" font-size="11" fill="#4B4B56">3d</text>
+<text x="24" y="107" font-size="11" fill="#4B4B56">○</text>
+<text x="40" y="107" font-size="11" fill="#A9AAB5">OXA-151</text>
+<text x="108" y="107" font-size="11" fill="#A9AAB5">dedup digest persists across CI runs</text>
+<text x="410" y="107" font-size="11" fill="#4B4B56">triage</text>
+<text x="612" y="107" font-size="11" fill="#4B4B56">2d</text>
+<text x="24" y="129" font-size="11" fill="#EFC53F">◇</text>
+<text x="40" y="129" font-size="11" fill="#A9AAB5">OXA-148</text>
+<text x="108" y="129" font-size="11" fill="#A9AAB5">flaky e2e on auth suite</text>
+<text x="330" y="129" font-size="11" fill="#E0687A">blocked · gate e2e red</text>
+<text x="612" y="129" font-size="11" fill="#4B4B56">6d</text>
+<text x="24" y="151" font-size="11" fill="#4B4B56">○</text>
+<text x="40" y="151" font-size="11" fill="#A9AAB5">OXA-150</text>
+<text x="108" y="151" font-size="11" fill="#A9AAB5">graph parity slow on cold cache</text>
+<text x="410" y="151" font-size="11" fill="#4B4B56">triage</text>
+<text x="612" y="151" font-size="11" fill="#4B4B56">5h</text>
+<text x="24" y="173" font-size="11" fill="#74C991">✓</text>
+<text x="40" y="173" font-size="11" fill="#4B4B56">OXA-139</text>
+<text x="108" y="173" font-size="11" fill="#4B4B56">seen-set eviction on restart</text>
+<text x="410" y="173" font-size="11" fill="#4B4B56">done · merged #211</text>
+<text x="612" y="173" font-size="11" fill="#4B4B56">1d</text>
+<text x="24" y="198" font-size="11" fill="#4B4B56">heat = coupling of touched files × age · from the graph, not vibes</text>
+<rect x="12" y="228" width="656" height="150" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="24" y="248" font-size="11" fill="#EFC53F">▶ OXA-142</text>
+<text x="112" y="248" font-size="11" fill="#E8E8EC">token refresh race</text>
+<text x="540" y="248" font-size="11" fill="#4B4B56">assignee mac</text>
+<line x1="12" y1="256" x2="668" y2="256" stroke="#26262C" stroke-width="1"/>
+<text x="24" y="276" font-size="11" fill="#777782">"session store refresh is not locked; two workers refreshing the</text>
+<text x="24" y="292" font-size="11" fill="#777782">same key produce duplicate findings and flaky CI."</text>
+<text x="24" y="316" font-size="11" fill="#A9AAB5">linked</text>
+<text x="80" y="316" font-size="11" fill="#EFC53F">plan r3 · 2/6</text>
+<text x="192" y="316" font-size="11" fill="#777782">branch fix/token-race</text>
+<text x="376" y="316" font-size="11" fill="#777782">evidence 2 files · 4/4 tests</text>
+<text x="24" y="338" font-size="11" fill="#A9AAB5">status syncs back to linear on gate green · no manual updates</text>
+<text x="24" y="362" font-size="11" fill="#4B4B56">↵ open plan · c comment · s status · b branch</text>
+<line x1="0" y1="392" x2="680" y2="392" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="414" font-size="11" fill="#EFC53F">w start work</text>
+<text x="116" y="414" font-size="11" fill="#777782">on a triaged issue → stella drafts plan r1 from the issue + graph context,</text>
+<text x="116" y="430" font-size="11" fill="#777782">shows the task contracts, and waits for your approval before touching code</text>
+<text x="16" y="456" font-size="11" fill="#4B4B56">↑↓ select · w start work · n new issue · / search tracker · r refresh · esc</text>
+</svg>

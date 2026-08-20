@@ -18,6 +18,8 @@ mod inspect;
 
 pub use inspect::{InspectMessage, InspectView, JournalEra, RecordedCallInfo};
 
+use stella_tools::search::readiness::IndexReadiness;
+
 use crate::graph::GraphSnapshot;
 use crate::input::UserInput;
 
@@ -189,6 +191,14 @@ pub enum Inbound {
     /// sends one after `/init` rebuilds the index so the tab reflects it
     /// without a restart.
     GraphSnapshot(GraphSnapshot),
+    /// How far behind the workspace's semantic index is, sent by the driver
+    /// as its background embedding pass fills it and once more when that pass
+    /// stops (#4043). Out-of-band view state like
+    /// [`Inbound::GraphSnapshot`]: applied straight to
+    /// `DeckUi::index_readiness`, ignored by the model fold. It gates one
+    /// thing — a first prompt submitted while a cold workspace is still
+    /// indexing (`deck_ui::gates::index_hold`).
+    IndexReadiness(IndexReadiness),
     /// A refreshed slash-command vocabulary for the `/` popup. Out-of-band
     /// view state exactly like [`Inbound::GraphSnapshot`]: applied straight
     /// to `DeckUi::slash_commands` by [`crate::deck_ui::ingest_inbound`],

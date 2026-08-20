@@ -237,6 +237,14 @@ pub(super) struct PrView {
     /// branch it actually merges into rather than an assumed `main`.
     #[serde(default, rename = "baseRefName")]
     pub base_ref_name: String,
+    /// `OPEN`, `MERGED`, `CLOSED`.
+    ///
+    /// Read because a pull request that has already reached its destination
+    /// needs no further transition, and the observation the pure machine
+    /// decides over cannot express that: a merged pull request reports
+    /// `mergeable: UNKNOWN`, which is `Wait` — forever.
+    #[serde(default)]
+    pub state: String,
 }
 
 /// Assemble the observation the pure machine decides over.
@@ -372,6 +380,67 @@ fn run_id_from_link(link: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// The checks this repository actually requires to merge into `branch`.
+///
+/// # Why "CI is red" cannot mean "any check is red"
+///
+/// A repository's rollup contains checks it requires and checks it merely
+/// runs. This one carries a Vercel commit status that has been failing on
+/// every pull request for as long as the account has been blocked — it is
+/// advisory, the forge merges past it, and a human ignores it. A loop that
+/// treats it as blocking never merges anything again, and cannot be argued
+/// out of it: the failure is real, it is red, and it will never go green.
+///
+/// GitHub agrees, and says so in its own vocabulary: #4022 reported
+/// `mergeStateStatus: UNSTABLE, mergeable: MERGEABLE` — advisory checks
+/// failing, merge permitted. Reading branch protection is how the loop learns
+/// the same thing without hardcoding which service to ignore.
+///
+/// An unreadable protection document (no permission, no protection
+/// configured) yields an empty list, and an empty list means **no filtering**:
+/// every check counts, which is what the loop did before it could ask. That is
+/// the conservative direction — it can refuse to merge something mergeable,
+/// but it can never merge something the repository would have blocked.
+fn required_contexts(branch: &str) -> Vec<String> {
+    let out = std::process::Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/branches/{branch}/protection"),
+            "--jq",
+            ".required_status_checks.contexts[]?",
+        ])
+        .env("NO_COLOR", "1")
+        .output();
+    let Ok(out) = out else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Keep only the checks that can block a merge.
+///
+/// An empty `required` list leaves the rollup untouched — see
+/// [`required_contexts`] for why that is the safe reading rather than "nothing
+/// is required".
+#[must_use]
+fn only_required(checks: Vec<Check>, required: &[String]) -> Vec<Check> {
+    if required.is_empty() {
+        return checks;
+    }
+    checks
+        .into_iter()
+        .filter(|check| required.iter().any(|name| name == check.name()))
+        .collect()
 }
 
 /// The forge endpoint carrying a ref's check runs.
@@ -529,15 +598,31 @@ pub(super) fn open(
         .ok_or_else(|| format!("`gh pr create` printed no pull request number: {url:?}"))
 }
 
+/// What one read of the forge said about a pull request.
+///
+/// `settled` is carried beside the observation rather than inside it because
+/// it is not something the pure machine decides over — it is the question of
+/// whether there is anything left to decide. A merged pull request reports
+/// `mergeable: UNKNOWN`, which the machine correctly reads as `Wait`; without
+/// this flag the loop waits on it for the rest of the run. It did, on #4022,
+/// after merging it successfully.
+#[derive(Debug, Clone)]
+pub(super) struct Reading {
+    /// What the pure machine decides over.
+    pub observation: Observation,
+    /// Whether the pull request has already reached a terminal state.
+    pub settled: bool,
+}
+
 /// One read of the forge, plus the second read of the base its
 /// [`Observation::base_ci`] needs.
-pub(super) fn observe(pr: &str) -> Result<Observation, String> {
+pub(super) fn observe(pr: &str) -> Result<Reading, String> {
     let raw = gh(&[
         "pr",
         "view",
         pr,
         "--json",
-        "isDraft,mergeable,reviewDecision,statusCheckRollup,baseRefName",
+        "isDraft,mergeable,reviewDecision,statusCheckRollup,baseRefName,state",
     ])?;
     let view: PrView = serde_json::from_str(&raw).map_err(|error| {
         format!("`gh pr view` returned a payload this build cannot read: {error}")
@@ -546,9 +631,23 @@ pub(super) fn observe(pr: &str) -> Result<Observation, String> {
     // The forge's own name for the base, passed through untouched. Prefixing
     // it with `origin/` would name a remote-tracking ref this process no
     // longer resolves — see `checks_for_branch`.
-    let base_checks = checks_for_branch(&view.base_ref_name);
+    let required = required_contexts(&view.base_ref_name);
+    let base_checks = only_required(checks_for_branch(&view.base_ref_name), &required);
 
-    Ok(observation_from(&view, &base_checks))
+    // Both sides filtered by the same list, so the base can still excuse a
+    // required check — and an advisory one can no longer condemn.
+    let mut view = view;
+    view.status_check_rollup = only_required(view.status_check_rollup, &required);
+
+    let settled = matches!(
+        view.state.to_ascii_uppercase().as_str(),
+        "MERGED" | "CLOSED"
+    );
+
+    Ok(Reading {
+        observation: observation_from(&view, &base_checks),
+        settled,
+    })
 }
 
 /// Every open pull request on a branch with this workspace's prefix.
@@ -600,7 +699,26 @@ pub(super) fn mark_ready(pr: &str) -> Result<(), String> {
 /// [`stella_autonomy::Action::Merge`]; the caller enforces that, and the
 /// machine emits it from exactly one state.
 pub(super) fn merge(pr: &str) -> Result<(), String> {
-    gh(&["pr", "merge", pr, "--squash", "--delete-branch"]).map(|_| ())
+    // No `--delete-branch`. It deletes the *local* branch too, and this loop
+    // works inside git worktrees that hold exactly those branches — so the
+    // delete fails, `gh` exits non-zero, and a merge that already succeeded is
+    // reported as a failure. That is what it did: #4022 merged at 00:32:54 and
+    // the loop went on re-observing a merged pull request because the branch
+    // cleanup after it had failed.
+    //
+    // Cleanup is a separate concern from delivery, and the forge's own
+    // "automatically delete head branches" setting does it without a local
+    // side effect. Losing a branch is recoverable; losing the record of a
+    // merge strands the pull request forever.
+    let outcome = gh(&["pr", "merge", pr, "--squash"]).map(|_| ());
+
+    // A pull request that is already merged is the state this asked for, so it
+    // is a success. Racing a human who merged it by hand, or re-observing
+    // after a partial failure, must not read as an error.
+    match outcome {
+        Err(error) if error.to_ascii_lowercase().contains("already merged") => Ok(()),
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -626,6 +744,78 @@ mod tests {
         assert!(
             !endpoint.contains("origin/"),
             "a remote-tracking ref resolves against the last fetch, not the forge: {endpoint}"
+        );
+    }
+
+    /// An advisory check that fails forever must not block forever.
+    ///
+    /// **The witness for the rule that "CI is red" means the *required*
+    /// checks are red.** This repository runs a Vercel commit status that has
+    /// failed on every pull request for as long as the account has been
+    /// blocked. It is not a required context, the forge merges past it
+    /// (#4022 reported `UNSTABLE / MERGEABLE`), and a human ignores it.
+    ///
+    /// Counting it made the loop escalate two pull requests whose every
+    /// required check was green — and no amount of waiting could have helped,
+    /// because that failure is never going to clear.
+    #[test]
+    fn an_advisory_check_does_not_block_a_merge() {
+        let required = vec!["fmt + clippy + test".to_owned()];
+        let rollup = vec![
+            check("fmt + clippy + test", "SUCCESS"),
+            Check {
+                context: "Vercel".into(),
+                state: "FAILURE".into(),
+                ..Check::default()
+            },
+        ];
+
+        assert_eq!(
+            ci_from(&rollup),
+            CiConclusion::Red,
+            "unfiltered, the advisory failure condemns the pull request"
+        );
+        assert_eq!(
+            ci_from(&only_required(rollup, &required)),
+            CiConclusion::Green,
+            "filtered to what the repository requires, it is green"
+        );
+    }
+
+    /// A repository with no declared requirements keeps every check.
+    ///
+    /// The conservative direction: unable to read protection, the loop can
+    /// still refuse to merge something mergeable, but can never merge
+    /// something the repository would have blocked.
+    #[test]
+    fn no_declared_requirements_filters_nothing() {
+        let rollup = vec![check("a", "FAILURE"), check("b", "SUCCESS")];
+        assert_eq!(only_required(rollup, &[]).len(), 2);
+    }
+
+    /// Filtering applies to the base too, so it can still excuse a required
+    /// check that is broken on both sides.
+    #[test]
+    fn the_base_is_filtered_by_the_same_list() {
+        let required = vec!["fmt + clippy + test".to_owned()];
+        let pr = only_required(
+            vec![
+                check("fmt + clippy + test", "FAILURE"),
+                check("noise", "FAILURE"),
+            ],
+            &required,
+        );
+        let base = only_required(
+            vec![
+                check("fmt + clippy + test", "FAILURE"),
+                check("other noise", "SUCCESS"),
+            ],
+            &required,
+        );
+        assert_eq!(
+            base_conclusion(&pr, &base),
+            CiConclusion::Red,
+            "the required check is broken on the base, so this is not ours"
         );
     }
 
