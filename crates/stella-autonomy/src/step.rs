@@ -261,6 +261,16 @@ pub enum PrDisposition {
 pub struct CarriedPr {
     /// Which one.
     pub pr: PrRef,
+    /// Which issue this pull request addresses, when the loop knows it.
+    ///
+    /// Populated when the loop opens the PR itself, so idempotency checks can
+    /// ask "am I already carrying a PR for this issue?" — a question that
+    /// cannot be answered from [`CarriedPr::pr`] alone, because a PR number and
+    /// an issue key live in the same per-repo namespace and so never compare
+    /// equal across the two. `None` when the association is unknown (for
+    /// example, a PR re-derived from the forge on resume).
+    #[serde(default)]
+    pub issue: Option<IssueRef>,
     /// Where it has got to.
     pub disposition: PrDisposition,
 }
@@ -487,7 +497,10 @@ fn unblock_base(
     // would look busy and fix nothing.
     let issue = obs.base_breakage_issue.clone()?;
     let already_mine = state.claimed.contains(&issue)
-        || state.carrying.iter().any(|carried| carried.pr.0 == issue.0);
+        || state
+            .carrying
+            .iter()
+            .any(|carried| carried.issue.as_ref() == Some(&issue));
     if already_mine {
         return None;
     }
@@ -658,6 +671,7 @@ mod tests {
             claimed: vec![IssueRef("1".into())],
             carrying: vec![CarriedPr {
                 pr: PrRef("9".into()),
+                issue: None,
                 disposition: PrDisposition::Moving,
             }],
             lens: Some("rubric".into()),
@@ -707,6 +721,7 @@ mod tests {
         let carrying_escalated = LoopState {
             carrying: vec![CarriedPr {
                 pr: PrRef("412".into()),
+                issue: None,
                 disposition: PrDisposition::Escalated,
             }],
             ..planned()
@@ -789,6 +804,7 @@ mod tests {
         let stuck = LoopState {
             carrying: vec![CarriedPr {
                 pr: PrRef("412".into()),
+                issue: None,
                 disposition: PrDisposition::Escalated,
             }],
             ..planned()
@@ -837,6 +853,7 @@ mod tests {
         let stuck = LoopState {
             carrying: vec![CarriedPr {
                 pr: PrRef("412".into()),
+                issue: None,
                 disposition: PrDisposition::Escalated,
             }],
             ..planned()
@@ -930,6 +947,71 @@ mod tests {
         );
     }
 
+    /// The idempotency witness. Once the loop's own fix for the breakage is in
+    /// flight as a pull request, a still-red base is *not* adopted a second
+    /// time — the loop delivers the fix it already has instead.
+    ///
+    /// The guard keys off the issue the PR addresses, recorded on the
+    /// [`CarriedPr`]. A PR number can never equal an issue key (they share one
+    /// per-repo namespace, so a given number is one or the other, never both),
+    /// so comparing the PR reference against the issue would silently never
+    /// match and re-adopt every poll while the fix is uncontended.
+    #[test]
+    fn a_breakage_whose_fix_is_in_flight_is_not_re_adopted() {
+        // No contention evidence: nothing external to defer to, so the only
+        // thing that can stop a re-adopt is the loop recognising it already
+        // owns the fix.
+        let carrying_the_fix = LoopState {
+            carrying: vec![CarriedPr {
+                pr: PrRef("4001".into()),
+                issue: Some(IssueRef("3912".into())),
+                disposition: PrDisposition::Moving,
+            }],
+            ..planned()
+        };
+
+        assert_eq!(
+            step(&carrying_the_fix, &base_red_filed(), &adopting()),
+            LoopStep::Deliver {
+                pr: PrRef("4001".into())
+            },
+            "a breakage whose fix this loop already carries is delivered, not adopted again"
+        );
+
+        // The negative control: a PR whose *number* coincides with the issue
+        // key but with no recorded issue association must not be mistaken for
+        // the fix. Here the PR happens to be "3912" — the issue's key — yet
+        // the loop still adopts, because ownership is proven by the recorded
+        // issue, never by a number coincidence.
+        let coincidental_number = LoopState {
+            carrying: vec![CarriedPr {
+                pr: PrRef("3912".into()),
+                issue: None,
+                disposition: PrDisposition::Escalated,
+            }],
+            // Abandon escalated so the escalation does not park the loop before
+            // the base check runs; the point is only that the number match is
+            // not treated as ownership of the fix.
+            ..planned()
+        };
+        assert_eq!(
+            step(
+                &coincidental_number,
+                &base_red_filed(),
+                &Doctrine {
+                    abandon_escalated: true,
+                    ..adopting()
+                },
+            ),
+            LoopStep::Unblock {
+                attempt: UnblockAttempt::AdoptBaseBreakage {
+                    issue: IssueRef("3912".into())
+                }
+            },
+            "a PR whose number merely coincides with the issue key is not the recorded fix"
+        );
+    }
+
     /// `Ignore` is reachable and does nothing — present for the operator who
     /// wants a silent loop, and deliberately not the default.
     #[test]
@@ -965,6 +1047,7 @@ mod tests {
         let carrying = LoopState {
             carrying: vec![CarriedPr {
                 pr: PrRef("77".into()),
+                issue: None,
                 disposition: PrDisposition::Moving,
             }],
             ..planned()
@@ -998,6 +1081,7 @@ mod tests {
         let settled = LoopState {
             carrying: vec![CarriedPr {
                 pr: PrRef("77".into()),
+                issue: None,
                 disposition: PrDisposition::Settled,
             }],
             ..planned()

@@ -542,6 +542,11 @@ pub(super) fn drive(
                         durable.update_stats(|s| s.prs_opened += 1);
                         state.carrying.push(CarriedPr {
                             pr: PrRef(pr),
+                            // Recorded so a still-red base does not get adopted
+                            // again once its fix is in flight as this PR: the
+                            // idempotency guard compares issue-to-issue, which
+                            // a PR number could never satisfy.
+                            issue: Some(issue.clone()),
                             disposition: PrDisposition::Moving,
                         });
                     }
@@ -719,6 +724,9 @@ fn resume(durable: &Durable, cfg: &super::config::LoopConfig, state: &mut LoopSt
                 audit::record(durable, Audit::Resumed, Some(&pr), "carrying it");
                 state.carrying.push(CarriedPr {
                     pr: PrRef(pr),
+                    // The forge tells us the PR is open, not which issue it
+                    // addresses; the association is unknown until re-derived.
+                    issue: None,
                     disposition: PrDisposition::Moving,
                 });
             }
