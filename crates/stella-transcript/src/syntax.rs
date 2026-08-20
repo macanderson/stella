@@ -15,8 +15,8 @@
 //! rather than as flat grey: #4019 taught the deck to do it, and the export
 //! surfaces had no way to follow without reaching up into `stella-tui`.
 //! `stella-transcript` is a near-leaf by contract and cannot take that edge; it
-//! had to go the other way, so [`lang`]'s lexers now sit at the bottom with the
-//! JSON one.
+//! had to go the other way, so those lexers now sit at the bottom with the
+//! JSON one, behind [`tokenize`].
 //!
 //! What stayed up in `stella-tui` is the half that genuinely needs ratatui and
 //! the terminal theme: `tok_style`, turning a [`Tok`] into a `Style`. The grid

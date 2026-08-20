@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use crate::digest::{self, Chip};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::FoldState;
-use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, ToolKind, Turn};
+use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, Turn};
 use crate::syntax;
 use crate::word::Span;
 
