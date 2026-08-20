@@ -86,14 +86,19 @@ fn deck_renders_every_tab_with_real_content() {
     }
 
     // The redesigned chrome, on the same scripted session (D1/D2/D5): the
-    // two-row labeled statline, the unified stage stepper, and the nested
+    // single-line status bar, the unified stage stepper, and the nested
     // subagent rows under the lead's header.
+    //
+    // The needles are values now, not micro-labels. SPEC 5 replaced the
+    // two-row labeled statline (MODEL / CONTEXT / SPEND over their values)
+    // with one row of six self-describing values, so there is no label row
+    // left to assert — and the context cell reads a percentage rather than
+    // `used/window`, which is why `/200k` goes with it.
     let session = render_tab(&model, DeckTab::Session, 190, 44);
     for needle in [
-        "· ctx ",    // the v2 status bar's context meter (SPEC 5)
-        "saved ",    // its cache-savings cell, the one CACHE collapsed into
-        "? help",    // its pinned right-hand affordance
-        "stella*",   // the SPEC 3.3 wordmark on the tab bar's top border
+        "ctx ",      // the context meter's inline label (SPEC 5)
+        "saved ",    // cache savings, the one cache number a reader acts on
+        "? help",    // the right-pinned help affordance
         "✓ plan",    // stepper: completed stage
         "▸ execute", // stepper: active stage beside the track
         "◆",         // a nested subagent's identity mark

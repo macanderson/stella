@@ -15,6 +15,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs, Widget};
+
 use unicode_width::UnicodeWidthChar;
 
 use crate::cache_panel;
@@ -70,15 +71,15 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let text_w = (area.width as usize).saturating_sub(PROMPT_PREFIX_W + COMPOSER_GUTTER_W);
     let c_layout = composer_layout(&ui.composer, text_w.max(1));
     let composer_h = c_layout.rows.len().clamp(1, DECK_COMPOSER_MAX_ROWS) as u16;
-    // SPEC 5: one row, replacing the old label-over-value wall. A second row
-    // appears only when the focused agent earned a low-hit-rate diagnosis
-    // (#267) — that line is a warning, not a status cell, so the bar itself
-    // never grows and a healthy frame is one row exactly.
-    let diagnosis = model
+    // One row (SPEC 5), and a second only for an earned low-hit-rate
+    // diagnosis (#267). `v2::status_bar` carries the argument for why the
+    // two-row labelled band is gone.
+    let has_diagnosis = model
         .agents
         .get(ui.focused)
-        .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD));
-    let statline_h = if diagnosis.is_some() { 2 } else { 1 };
+        .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
+        .is_some();
+    let statline_h = if has_diagnosis { 2 } else { 1 };
     let bands = Layout::vertical([
         Constraint::Length(3),          // tab bar
         Constraint::Min(1),             // active view
@@ -120,19 +121,8 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     guarded_band(buf, bands[5], "footer", |b| {
         render_composer_footer(model, ui, &c_layout, bands[5], b)
     });
-    let status = crate::v2::status_source::StatusSource::project(model, ui);
-    guarded_band(buf, bands[6], "status bar", |b| {
-        use ratatui::widgets::Widget as _;
-        let band = bands[6];
-        crate::v2::status_bar::StatusBar(status.status()).render(band, b);
-        if let Some(cause) = diagnosis {
-            let row = Rect {
-                height: 1,
-                y: band.y + 1,
-                ..band
-            };
-            Paragraph::new(Line::from(cache_panel::diagnosis_spans(cause))).render(row, b);
-        }
+    guarded_band(buf, bands[6], "statline", |b| {
+        crate::v2::status_bar::render_band(model, ui, bands[6], b)
     });
     let composer_cursor = composer_cursor_position(&c_layout, bands[4]);
 
