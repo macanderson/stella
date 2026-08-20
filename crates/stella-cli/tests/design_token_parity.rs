@@ -703,17 +703,26 @@ fn the_observatory_defines_every_token_it_references() {
 /// The token family is `--stella-brand-*` since the v3.0 ion recolour; it was
 /// `--stella-gold-*` before, which is why this test reads role names rather
 /// than hue names now.
+///
+/// v5.0 deleted the 50–950 ramp this test used to read, and the deletion is the
+/// point rather than an inconvenience: the system is flat, so identity is `the`
+/// brand value on both grounds instead of a stop chosen per ground. What the
+/// test asserts therefore gets *stronger* — one value, not two — plus the pair
+/// that a flat identity makes load-bearing: a gold fill on a light ground has
+/// to carry an ink label. That pair is why this test is not merely renamed.
+/// The v5.0 recolour left `--identity-ink` at white on the light themes, which
+/// is white-on-gold at 1.65:1, and nothing in the suite would have caught it.
 #[test]
-fn identity_comes_from_the_brand_ramp() {
+fn identity_is_the_brand_value_on_both_grounds() {
     let brand = read("docs/brand/css/tokens.css");
     let ramp = declarations(&brand);
 
-    let ion = ramp
-        .get("--stella-brand-500")
-        .expect("brand tokens define --stella-brand-500");
-    let deep = ramp
-        .get("--stella-brand-800")
-        .expect("brand tokens define --stella-brand-800");
+    let gold = ramp
+        .get("--stella-brand")
+        .expect("brand tokens define --stella-brand");
+    let ink = ramp
+        .get("--stella-brand-deep")
+        .expect("brand tokens define --stella-brand-deep");
 
     let observatory = read("crates/stella-observatory/src/assets/index.html");
     let dark = declarations(between(&observatory, "BEGIN palette", "END palette"));
@@ -721,17 +730,22 @@ fn identity_comes_from_the_brand_ramp() {
 
     assert_eq!(
         dark.get("--identity"),
-        Some(ion),
-        "dark identity must be the brand's Ion (--stella-brand-500)"
+        Some(gold),
+        "dark identity must be --stella-brand"
     );
     assert_eq!(
         light.get("--identity"),
-        Some(deep),
-        "light identity must be --stella-brand-800. NOT --stella-brand-deep, \
-         which is documented for small brand text on light surfaces: identity \
-         has to clear contrast on --surface, not only on the page ground, and \
-         brand-800 measures 4.93:1 there and 5.20:1 as the identity fill pair \
-         (#2591)."
+        Some(gold),
+        "light identity must be the SAME --stella-brand. v3.0 and v4.0 each \
+         stepped it down a ramp for the light ground; v5.0 has no ramp to step \
+         down, and rule 6 permits the brand hue on a light ground as a fill."
+    );
+    assert_eq!(
+        light.get("--identity-ink"),
+        Some(ink),
+        "a gold fill on a light ground carries an INK label (11.15:1), never a \
+         white one (1.65:1). Rule 6 permits gold on light exactly for filled \
+         elements carrying ink text — the label is the half that makes it legal."
     );
 }
 

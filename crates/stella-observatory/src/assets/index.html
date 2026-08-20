@@ -230,7 +230,10 @@
     --void:#E8E8EC; --ground:#FFFFFF; --surface:#F6F6F8; --raised:#FFFFFF;
     --hairline:#E7EBF0; --hairline-strong:#E3E3E8;
     --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#4D535A;
-    --identity:#EFC53F; --identity-ink:#FFFFFF;
+    /* Gold fill, INK label: the light theme carried a white label, which the
+     v5.0 recolour turned into white-on-gold at 1.65:1. Rule 6 is explicit
+     that a gold fill on a light ground carries ink text — 11.15:1. */
+  --identity:#EFC53F; --identity-ink:#141416;
     --text:#0A0A0C; --text-2:#4D535A; --text-3:#828C97;
     --ok:#0B6B3D; --warn:#913200; --bad:#A82036;
     --c1:#0A0A0C; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
@@ -246,7 +249,10 @@
   --void:#E8E8EC; --ground:#FFFFFF; --surface:#F6F6F8; --raised:#FFFFFF;
   --hairline:#E7EBF0; --hairline-strong:#E3E3E8;
   --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#4D535A;
-  --identity:#EFC53F; --identity-ink:#FFFFFF;
+  /* Gold fill, INK label: the light theme carried a white label, which the
+     v5.0 recolour turned into white-on-gold at 1.65:1. Rule 6 is explicit
+     that a gold fill on a light ground carries ink text — 11.15:1. */
+  --identity:#EFC53F; --identity-ink:#141416;
   --text:#0A0A0C; --text-2:#4D535A; --text-3:#828C97;
   /* --warn keeps the dark scheme's hue (41.2°) rather than its lightness:
      28.9° from the light identity, 22.7° from --bad, 7.89:1 on paper and
