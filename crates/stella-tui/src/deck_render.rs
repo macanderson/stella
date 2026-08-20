@@ -70,15 +70,15 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let text_w = (area.width as usize).saturating_sub(PROMPT_PREFIX_W + COMPOSER_GUTTER_W);
     let c_layout = composer_layout(&ui.composer, text_w.max(1));
     let composer_h = c_layout.rows.len().clamp(1, DECK_COMPOSER_MAX_ROWS) as u16;
-    // 2 rows (labels over values), and a third only when the focused agent
-    // earned a low-hit-rate diagnosis (#267). The role-pin row that used to
-    // sit between them is gone: `/models` answers routing on demand, in full.
-    let has_diagnosis = model
+    // SPEC 5: one row, replacing the old label-over-value wall. A second row
+    // appears only when the focused agent earned a low-hit-rate diagnosis
+    // (#267) — that line is a warning, not a status cell, so the bar itself
+    // never grows and a healthy frame is one row exactly.
+    let diagnosis = model
         .agents
         .get(ui.focused)
-        .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
-        .is_some();
-    let statline_h = if has_diagnosis { 3 } else { 2 };
+        .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD));
+    let statline_h = if diagnosis.is_some() { 2 } else { 1 };
     let bands = Layout::vertical([
         Constraint::Length(3),          // tab bar
         Constraint::Min(1),             // active view
@@ -120,8 +120,19 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     guarded_band(buf, bands[5], "footer", |b| {
         render_composer_footer(model, ui, &c_layout, bands[5], b)
     });
-    guarded_band(buf, bands[6], "statline", |b| {
-        crate::statline::render(model, ui, bands[6], b)
+    let status = crate::v2::status_source::StatusSource::project(model, ui);
+    guarded_band(buf, bands[6], "status bar", |b| {
+        use ratatui::widgets::Widget as _;
+        let band = bands[6];
+        crate::v2::status_bar::StatusBar(status.status()).render(band, b);
+        if let Some(cause) = diagnosis {
+            let row = Rect {
+                height: 1,
+                y: band.y + 1,
+                ..band
+            };
+            Paragraph::new(Line::from(cache_panel::diagnosis_spans(cause))).render(row, b);
+        }
     });
     let composer_cursor = composer_cursor_position(&c_layout, bands[4]);
 
@@ -294,13 +305,13 @@ fn render_tab_bar(tab: DeckTab, area: Rect, buf: &mut Buffer) {
     // nothing but rule characters — zero rows of chrome spent. Dropped on
     // narrow frames rather than crowding the border.
     if area.width >= 44 {
-        block = block.title_top(
-            Line::from(vec![
-                Span::styled("✦ ", Style::new().fg(theme::GOLD)),
-                Span::styled("stella ", theme::muted()),
-            ])
-            .right_aligned(),
-        );
+        // SPEC 3.3: `stella*`, white word plus gold asterisk. The retired
+        // `✦ stella` lockup spent the four-pointed star on the brand, where
+        // SPEC 4 needs it for the `skill` event head — one glyph cannot be
+        // both an identity and a state.
+        let mut mark = stella_tui_theme::wordmark::spans().to_vec();
+        mark.push(Span::raw(" "));
+        block = block.title_top(Line::from(mark).right_aligned());
     }
     let tabs = Tabs::new(labels)
         .select(tab.index())

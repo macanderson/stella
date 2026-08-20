@@ -3,7 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────✦ stella ┐
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
 │ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ▶ lead  ·  running   0:00:00
@@ -19,13 +19,14 @@
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ transcript · 41 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│    crates/stella-transcript/src/html.rs:310                                                                          ││Refactor the automations store into a…│
-│    crates/stella-tui/src/render/entry.rs:66                                                                          ││○ 1. extract types                    │
-│    crates/stella-cli/src/export/transcript.rs:644                                                                    ││○ 2. move hooks                       │
-│    crates/stella-observatory/src/lib.rs:212                                                                          ││○ 3. update 9 imports                 │
+│    crates/stella-transcript/src/grid.rs:436                                                                          ││Refactor the automations store into a…│
+│    crates/stella-transcript/src/html.rs:310                                                                          ││○ 1. extract types                    │
+│    crates/stella-tui/src/render/entry.rs:66                                                                          ││○ 2. move hooks                       │
+│    crates/stella-cli/src/export/transcript.rs:644                                                                    ││○ 3. update 9 imports                 │
+│    crates/stella-observatory/src/lib.rs:212                                                                          ││                                      │
 │    ⋯ 2 lines · ctrl+o                                                                                                ││                                      │
 │                                                                                                                      ││                                      │
-│● get_state    {"key":"verify"}                                                                                       ││                                      │
+│ │ ● get_state {"key":"verify"}                                                                                       ││                                      │
 │  ⎿                                                                                                                8ms││                                      │
 │    {                                                                                                                 ││                                      │
 │      "flip": true,                                                                                                   ││                                      │
@@ -41,5 +42,4 @@
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  esc / > steer this turn  ·  ! shell  ·  / commands                          turn $0.0390  ·  1 line  ·  queue empty
- MODEL                   │ EXECUTE     │ CPU         │ CONTEXT          │ SPEND          │ CACHE                 │ ENGINE   │ LANES              │ PR
- worker: zai/glm-5.2-air │ Step 6 of 7 │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50 │ 63% (18.0K rd · 0 wr) │ 3 active │ ✦ 1 lead · ◆ 2 sub │ ⇢ #981 open …
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

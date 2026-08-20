@@ -3,7 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────✦ stella ┐
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
 │ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ? lead  ·  needs input   0:00:00
@@ -19,27 +19,27 @@
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│                                           ┌ models  resolved routing ───────────────────────────────── esc close ┐   ││Refactor the automations store into a…│
-│── PLAN ───────────────────────────────────│session   glm-5.2                                                     │───││○ 1. extract types                    │
-│                                           │auto      model off · effort on · thinking off                        │   ││○ 2. move hooks                       │
-│  Planning the automations cluster: list, e│                                                                      │   ││○ 3. update 9 imports                 │
-│                                           │lead      zai/glm-5.2-air                                             │   ││                                      │
-│☰  plan  4/7  ·  Wire the triggers API     │          medium · thinking on · from default_model                   │   ││                                      │
-│                                           │think     z-ai/glm-5.2                                    unassigned  │   ││                                      │
-│── EXECUTE ────────────────────────────────│          low · thinking off · from agents.triage.model               │───││                                      │
-│                                           │research  zai/glm-5.2-air                                             │   ││                                      │
-│● mcp__fs__read_file apps/app/automations/p│          low · thinking off · from default_model                     │   ││                                      │
-│  ⎿ 312 lines                              │plan      zai/glm-5.2-air                                             │2ms││                                      │
+│    ⋯ ctrl+o for provenance and budget     ┌ models  resolved routing ───────────────────────────────── esc close ┐   ││Refactor the automations store into a…│
+│                                           │session   glm-5.2                                                     │   ││○ 1. extract types                    │
+│── PLAN ───────────────────────────────────│auto      model off · effort on · thinking off                        │───││○ 2. move hooks                       │
+│                                           │                                                                      │   ││○ 3. update 9 imports                 │
+│  Planning the automations cluster: list, e│lead      zai/glm-5.2-air                                             │   ││                                      │
 │                                           │          medium · thinking on · from default_model                   │   ││                                      │
-│☰  plan  5/7  ·  Workflows canvas          │work      zai/glm-5.2-air                                     served  │   ││                                      │
-│                                           │          medium · thinking on · from default_model                   │   ││                                      │
-│⏸ plan  Refactor the automations store into│verify    anthropic/claude-opus-5                         unassigned  │   ││                                      │
-│                                           │          high  (effort_auto replaced "max") · thinking on            │   ││                                      │
-└───────────────────────────────────────────│          from pipeline_verifier_model                                │an ┘└────────────────────── /plan reads it ┘
-────────────────────────────────────────────└──────────────────────────────────────────────────────────────────────┘────────────────────────────────────────────
+│☰  plan  4/7  ·  Wire the triggers API     │think     z-ai/glm-5.2                                    unassigned  │   ││                                      │
+│                                           │          low · thinking off · from agents.triage.model               │   ││                                      │
+│── EXECUTE ────────────────────────────────│research  zai/glm-5.2-air                                             │───││                                      │
+│                                           │          low · thinking off · from default_model                     │   ││                                      │
+│ │ ● apps/app/automations/page.tsx         │plan      zai/glm-5.2-air                                             │   ││                                      │
+│  ⎿ 312 lines                              │          medium · thinking on · from default_model                   │2ms││                                      │
+│                                           │work      zai/glm-5.2-air                                     served  │   ││                                      │
+│☰  plan  5/7  ·  Workflows canvas          │          medium · thinking on · from default_model                   │   ││                                      │
+│                                           │verify    anthropic/claude-opus-5                         unassigned  │   ││                                      │
+│⏸ plan  Refactor the automations store into│          high  (effort_auto replaced "max") · thinking on            │   ││                                      │
+│                                           │          from pipeline_verifier_model                                │   ││                                      │
+└───────────────────────────────────────────└──────────────────────────────────────────────────────────────────────┘an ┘└────────────────────── /plan reads it ┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- MODEL                   │ EXECUTE     │ CONTEXT          │ SPEND
- worker: zai/glm-5.2-air │ Step 6 of 7 │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50                                                                ↝ deterministic-first
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

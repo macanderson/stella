@@ -171,9 +171,54 @@ pub(crate) fn entry_lines(
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    entry_body(entry, files, expand_thinking, expanded, live, width, out);
+    if !v2_rows(entry, width, out) {
+        entry_body(entry, files, expand_thinking, expanded, live, width, out);
+    }
     if closes_block(entry) {
         push_gap(out);
+    }
+}
+
+/// SPEC 6 rows for the entries the v2 transcript owns; `false` leaves the entry
+/// to the v1 renderer below.
+///
+/// Two arms, deliberately: a tool call's **head** and compaction's one quiet
+/// line. Everything else still renders v1 until its phase lands, which is why
+/// this is a router rather than a replacement — a half-migrated transcript must
+/// still draw every row it holds, not drop the ones v2 has no arm for yet.
+///
+/// A tool **result** is pointedly not here. Its body already carries syntax
+/// highlighting in the file's own language, inline word-level diffs, a line
+/// number gutter and a truncation notice naming the key that reveals the rest
+/// (#4019, #4020, #4036) — and SPEC 6.4 keeps every one of them. Routing the
+/// result through a v2 renderer that has not been taught them yet would delete
+/// working features to make the screen look newer, which is a regression
+/// wearing a redesign's clothes. The result row is restyled in P2, where the
+/// highlighter it needs is built, not here.
+fn v2_rows(entry: &TranscriptEntry, width: usize, out: &mut Vec<Line<'static>>) -> bool {
+    use crate::v2::transcript_source as v2;
+    match entry {
+        TranscriptEntry::ToolStart {
+            name, input, path, ..
+        } => {
+            out.extend(v2::head_rows(name, path.as_deref(), input, width));
+            true
+        }
+        TranscriptEntry::Compaction {
+            before_tokens,
+            after_tokens,
+            evicted,
+            deduped,
+        } => {
+            out.extend(v2::compaction_rows(
+                *before_tokens,
+                *after_tokens,
+                *evicted,
+                *deduped,
+            ));
+            true
+        }
+        _ => false,
     }
 }
 
