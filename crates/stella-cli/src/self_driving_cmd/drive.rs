@@ -180,9 +180,16 @@ pub(super) fn drive(
                 durable,
                 Audit::VerifyStarted,
                 None,
-                &format!("measuring the baseline — `{command}` on {base_branch}"),
+                &format!(
+                    "measuring the baseline — `{command}` on origin/{base_branch}, in a clean worktree"
+                ),
             );
-            match super::work::verify_locally(&root, command, cfg.verify_timeout_secs) {
+            match super::work::verify_base(
+                &root,
+                &format!("origin/{base_branch}"),
+                command,
+                cfg.verify_timeout_secs,
+            ) {
                 Ok(()) => {
                     audit::record(
                         durable,

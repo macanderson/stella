@@ -249,6 +249,50 @@ pub(super) fn default_verify_command(root: &Path) -> Option<String> {
     None
 }
 
+/// Run the verify command against the base branch, in a throwaway worktree.
+///
+/// # Why not simply run it where the loop is standing
+///
+/// Because that is not the tree the loop delivers against. The checkout a
+/// session starts in is whatever the operator left it on — a feature branch,
+/// a half-finished rebase, uncommitted edits — while every work unit branches
+/// from `origin/HEAD`. Measuring one and judging by the other produces a
+/// baseline that describes nothing the loop will ever build on.
+///
+/// That is not hypothetical. On oxagen-platform the checkout sat on
+/// `feat/adaptive-context-provider`, whose typecheck failed in `@oxagen/app`;
+/// `origin/main` failed in `@oxagen/ai` instead, on entirely different files.
+/// Four issues were filed from the wrong tree and every one of them was
+/// already fixed on the branch the loop was working — three turns ran, found
+/// nothing to do, and were right.
+///
+/// The worktree is removed whether the command passed or failed; a probe that
+/// leaves litter behind is one nobody runs twice.
+pub(super) fn verify_base(
+    root: &Path,
+    base: &str,
+    command: &str,
+    timeout_secs: u64,
+) -> Result<(), String> {
+    let probe = root.join(WORKTREES_DIR).join("baseline-probe");
+    let path = probe.to_string_lossy().to_string();
+
+    // A probe left by a killed run is in the way, and holds nothing worth
+    // keeping by construction.
+    let _ = super::state::git(root, &["worktree", "remove", &path, "--force"]);
+    let _ = super::state::git(root, &["worktree", "prune"]);
+
+    super::state::git(root, &["worktree", "add", &path, base, "--detach"])
+        .ok_or_else(|| format!("could not create a worktree at {base} to measure the baseline"))?;
+
+    let outcome = verify_locally(&probe, command, timeout_secs);
+
+    let _ = super::state::git(root, &["worktree", "remove", &path, "--force"]);
+    let _ = super::state::git(root, &["worktree", "prune"]);
+
+    outcome
+}
+
 /// Whether the change in `dir` survives the project's own checks.
 ///
 /// # Why a loop needs this at all
