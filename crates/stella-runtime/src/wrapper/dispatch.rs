@@ -233,13 +233,13 @@ pub struct WrapperDispatch {
     /// One entry is the ordinary case and the shape every caller had before
     /// composition existed; several is a `--pipeline` selection naming several
     /// plugins, whose declarations were reconciled once at bind time by
-    /// [`super::compose`].
+    /// `super::compose`.
     members: Vec<Member>,
     /// Every stage any member declares, in the one order they all agree with.
     stage_order: Vec<StageName>,
     rule: VerdictRule,
     /// The grant `again` consults — the arbiter's, or a non-arbiter's that
-    /// cannot hold. See [`super::compose::Composition::hold_grant`].
+    /// cannot hold. See `super::compose::Composition::hold_grant`.
     hold_grant: LoopGrant,
     host_max_holds: u32,
 }
@@ -376,7 +376,7 @@ impl WrapperDispatch {
     /// is stating that grounding comes before planning, and nothing else in
     /// the system knows that. Within one stage their contributions concatenate
     /// in that order; across stages they follow the merged stage order
-    /// [`super::compose`] computed.
+    /// `super::compose` computed.
     ///
     /// Each member keeps its **own** grants. A member that did not declare
     /// `before_turn` is not asked it because another member did; composition
@@ -387,9 +387,8 @@ impl WrapperDispatch {
     /// [`WrapperError::NotAWrapper`] when any member declares no `[wrapper]`
     /// block — a composition of a wrapper and a non-wrapper is a caller
     /// mistake, not a degraded composition. [`WrapperError::EmptyComposition`]
-    /// for no members. Otherwise one of the four conflict variants
-    /// [`super::compose`] documents: contradictory stage order, two oracles,
-    /// two arbiters, or one requirement name meaning two things.
+    /// for no members. Otherwise one of the two conflicts `super::compose`
+    /// documents: a contradictory stage order, or two arbiters.
     pub fn bind_composed(
         members: Vec<(PluginManifest, Arc<dyn TurnWrapper>)>,
     ) -> Result<Self, WrapperError> {
