@@ -39,7 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    dead-code-allows diagnostic-codes bench-suites
+                    dead-code-allows diagnostic-codes bench-suites tokens
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -304,6 +304,15 @@ file-size: ## Assert no new Rust or Python file exceeds the 1500-line ratchet (#
 .PHONY: file-size-update
 file-size-update: ## Retighten the 1500-line ratchet baseline (run after splitting a file)
 	@./scripts/check-file-size.sh --update
+
+.PHONY: tokens
+tokens: ## Validate the colour system: hue clamp, generated-file sync, no retired hex
+	@python3 ./scripts/gen-tokens.py --check
+	@python3 ./scripts/check-tokens.py
+
+.PHONY: tokens-update
+tokens-update: ## Regenerate every colour artifact from design/tokens/stella-tokens.json
+	@python3 ./scripts/gen-tokens.py
 
 .PHONY: typed-errors
 typed-errors: ## Assert no library crate's public API returns Result<_, String> (invariant #5)

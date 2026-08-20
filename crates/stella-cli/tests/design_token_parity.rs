@@ -209,7 +209,7 @@ fn surfaces() -> Vec<Surface> {
         //
         // It was outside this matrix until #3630, and had drifted exactly the
         // way an unchecked surface does: ground `#0a0a0a` against the
-        // instrument's `#070B10`, and a different green, red and amber, so
+        // instrument's `#0A0A0C`, and a different green, red and amber, so
         // "passed" was one colour in the dashboard and another in the
         // transcript of the same run. The file's own header comment claimed
         // the values WERE the instrument palette the whole time — which is the

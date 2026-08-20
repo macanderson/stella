@@ -65,7 +65,7 @@ concurrency = 4
 id = "stella"
 name = "Stella (Opus 5, xhigh)"
 agent = "stella"
-color = "#FFB000"
+color = "#EFC53F"
 
   [contestant.engine]
   api = "openrouter"

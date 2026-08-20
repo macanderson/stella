@@ -34,7 +34,7 @@ import "./engine-stations.css";
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#070b10", // --stella-ink
+  themeColor: "#0a0a0c", // --stella-ink
 };
 
 export default function Layout({ children }: { children: ReactNode }) {

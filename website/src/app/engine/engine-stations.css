@@ -38,7 +38,6 @@
   border: 1px solid var(--eng-accent-dim);
   border-radius: 0.5rem;
   background: var(--eng-surface-warm);
-  box-shadow: var(--stella-glow-brand);
   max-width: 46rem;
 }
 .eng-goal-line {
@@ -184,7 +183,6 @@
   margin-inline-start: -0.3rem;
   border-radius: 50%;
   background: var(--eng-accent);
-  box-shadow: var(--stella-glow-brand);
 }
 @keyframes eng-orbit {
   to {
@@ -475,12 +473,12 @@
   display: block;
   width: 3.5rem;
   height: 1px;
-  background: linear-gradient(
-    90deg,
-    var(--stella-danger),
-    var(--eng-accent),
-    var(--stella-success)
-  );
+  /* Flat gold, not a red-to-green ramp. The FAIL and PASS endpoints are text
+     labels, so the verdicts are already carried where a reader can read them;
+     smearing them along an aria-hidden connector was decorative red and green,
+     which rule 2 rations, in a gradient, which rule 5 retires. The arrow is
+     stella acting on the code between the two runs — that is gold. */
+  background: var(--eng-accent);
   position: relative;
 }
 .eng-flip-arrow::after {
@@ -880,12 +878,7 @@
   .eng-flip-arrow {
     width: 1px;
     height: 2.5rem;
-    background: linear-gradient(
-      180deg,
-      var(--stella-danger),
-      var(--eng-accent),
-      var(--stella-success)
-    );
+    background: var(--eng-accent);
   }
   .eng-flip-arrow::after {
     inset-inline-end: -0.2rem;

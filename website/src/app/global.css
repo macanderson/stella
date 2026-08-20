@@ -727,9 +727,6 @@ html[data-home-nav="hidden"] #nd-nav {
 .lp-cta:hover {
   background: var(--stella-cta-bg-hover);
 }
-.dark .lp-cta:hover {
-  box-shadow: var(--stella-glow-brand);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Terminal transcript — a static record of a real run.
@@ -896,37 +893,11 @@ html[data-home-nav="hidden"] #nd-nav {
   transform: scale(1.02);
 }
 
-/* The sheen. Ink ground in both themes, so one gold tint serves both. */
-.lp-install::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    105deg,
-    transparent 35%,
-    rgb(197 138 50 / 0.05) 45%,
-    rgb(223 180 115 / 0.16) 50%,
-    rgb(197 138 50 / 0.05) 55%,
-    transparent 65%
-  );
-  transform: translateX(-101%);
-}
-.lp-install:hover::after,
-.lp-install:focus-within::after {
-  animation: lp-shimmer 10s var(--stella-ease-arrive) infinite;
-}
-@keyframes lp-shimmer {
-  0% {
-    transform: translateX(-101%);
-  }
-  14% {
-    transform: translateX(101%);
-  }
-  100% {
-    transform: translateX(101%);
-  }
-}
+/* The sheen is gone. It was a gold gradient swept across the block on a 10s
+   loop, and it lost on two counts: rule 5 retires gradients on every surface,
+   and the kit's own motion rule is "assemble, don't spin" — an idle animation
+   that repeats forever reports no progress and carries no information. The
+   block keeps its scale-on-hover, which does. */
 
 /* The stretched hit target: one control, covering the whole block. */
 .lp-install-hit {

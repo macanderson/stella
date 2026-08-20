@@ -1,0 +1,62 @@
+<svg viewBox="0 0 680 480" width="680" height="480" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
+<rect x="0" y="0" width="680" height="480" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="22" font-size="11" fill="#777782">SESSION  AGENTS  TRACES  GRAPH  FILES</text>
+<text x="306" y="22" font-size="11" fill="#EFC53F" font-weight="500">SKILLS</text>
+<text x="366" y="22" font-size="11" fill="#777782">MCP  ISSUES</text>
+<text x="600" y="22" font-size="12" fill="#E8E8EC" font-weight="500">stella</text>
+<text x="645" y="22" font-size="12" fill="#EFC53F" font-weight="500">*</text>
+<line x1="0" y1="32" x2="680" y2="32" stroke="#26262C" stroke-width="1"/>
+<rect x="12" y="42" width="656" height="24" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="22" y="59" font-size="11" fill="#EFC53F">⌕</text>
+<text x="38" y="59" font-size="11" fill="#E8E8EC">rust async</text>
+<rect x="122" y="47" width="7" height="13" fill="#E8E8EC"/>
+<text x="440" y="59" font-size="11" fill="#777782">installed + registry · web · 6 hits</text>
+<text x="16" y="90" font-size="11" fill="#777782">installed · 43 · 2 match</text>
+<rect x="12" y="98" width="656" height="82" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<rect x="13" y="104" width="654" height="18" fill="#17171B"/>
+<text x="22" y="117" font-size="11" fill="#EFC53F">[x]</text>
+<text x="50" y="117" font-size="11" fill="#E8E8EC">rust-async-patterns</text>
+<text x="212" y="117" font-size="11" fill="#4B4B56">v1 · user</text>
+<text x="330" y="117" font-size="11" fill="#777782">tokio, pinning, cancel safety</text>
+<text x="560" y="117" font-size="11" fill="#777782">18× · 0.9k</text>
+<text x="22" y="139" font-size="11" fill="#EFC53F">[x]</text>
+<text x="50" y="139" font-size="11" fill="#A9AAB5">oxagen-testing</text>
+<text x="212" y="139" font-size="11" fill="#4B4B56">v1 · user</text>
+<text x="330" y="139" font-size="11" fill="#777782">async test conventions, co-located</text>
+<text x="560" y="139" font-size="11" fill="#777782">7× · 0.6k</text>
+<text x="22" y="161" font-size="11" fill="#4B4B56">uses · avg tok per inject → prune what never fires</text>
+<text x="16" y="204" font-size="11" fill="#777782">learned from traces · 3</text>
+<text x="196" y="204" font-size="11" fill="#4B4B56">stella wrote these after repeated wins</text>
+<rect x="12" y="212" width="656" height="64" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="22" y="232" font-size="11" fill="#EFC53F">[x]</text>
+<text x="50" y="232" font-size="11" fill="#E8E8EC">search-by-meaning-first</text>
+<text x="244" y="232" font-size="11" fill="#F7D96B">learned</text>
+<text x="310" y="232" font-size="11" fill="#777782">from 9 traces · turn 212 · was c6818842</text>
+<text x="612" y="232" font-size="11" fill="#777782">31×</text>
+<text x="22" y="252" font-size="11" fill="#EFC53F">[x]</text>
+<text x="50" y="252" font-size="11" fill="#A9AAB5">prefer-graph-over-grep</text>
+<text x="244" y="252" font-size="11" fill="#F7D96B">learned</text>
+<text x="310" y="252" font-size="11" fill="#777782">from 14 traces · turn 187</text>
+<text x="612" y="252" font-size="11" fill="#777782">44×</text>
+<text x="22" y="270" font-size="11" fill="#4B4B56">r rename · ctrl+o show source traces · x reject teaches the learner</text>
+<text x="16" y="300" font-size="11" fill="#777782">registry · web · 4 results</text>
+<rect x="12" y="308" width="656" height="104" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="22" y="328" font-size="11" fill="#A9AAB5">tokio-console-debugging</text>
+<text x="216" y="328" font-size="11" fill="#4B4B56">4.2k installs</text>
+<text x="322" y="328" font-size="11" fill="#74C991">signed · oxagen</text>
+<text x="588" y="328" font-size="11" fill="#EFC53F">i install</text>
+<text x="22" y="348" font-size="11" fill="#A9AAB5">async-tracing-discipline</text>
+<text x="216" y="348" font-size="11" fill="#4B4B56">1.1k installs</text>
+<text x="322" y="348" font-size="11" fill="#74C991">signed · community</text>
+<text x="588" y="348" font-size="11" fill="#EFC53F">i install</text>
+<text x="22" y="368" font-size="11" fill="#4B4B56">rust-async-patterns</text>
+<text x="216" y="368" font-size="11" fill="#4B4B56">✓ already installed</text>
+<text x="22" y="388" font-size="11" fill="#4B4B56">raw-async-hacks</text>
+<text x="216" y="388" font-size="11" fill="#4B4B56">300 installs</text>
+<text x="322" y="388" font-size="11" fill="#E0687A">unsigned · blocked by policy</text>
+<text x="560" y="388" font-size="11" fill="#4B4B56">v view anyway</text>
+<text x="22" y="406" font-size="11" fill="#4B4B56">installs land disabled until you preview and enable</text>
+<line x1="0" y1="424" x2="680" y2="424" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="446" font-size="11" fill="#4B4B56">space on/off · ctrl+o preview · i install · p pin · n new from prompt · esc</text>
+<text x="16" y="468" font-size="11" fill="#777782">43 installed · 3 learned · 12 active this session</text>
+</svg>

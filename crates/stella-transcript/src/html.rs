@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use crate::digest::{self, Chip};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::FoldState;
-use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, ToolKind, Turn};
+use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, Turn};
 use crate::syntax;
 use crate::word::Span;
 
@@ -361,13 +361,13 @@ fn args_toggle(out: &mut String, call: &Call) {
 }
 
 fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: usize, si: usize) {
-    let numbered = matches!(call.tool, ToolKind::ReadFile);
     let fold = digest::fold_output(&call.output, &call.header_object);
     // Decided once, from the whole body, so the head, the hidden middle and the
     // tail cannot disagree — and from the *body* rather than per line, because a
-    // JSON object's inner lines do not start with a delimiter. The Command Deck
-    // asks the same question of the same shared predicate (#3644).
-    let json = syntax::body_reads_as_json(&fold.body);
+    // JSON object's inner lines do not start with a delimiter. The grid renderer
+    // and the Command Deck make the same decision from the same shared function
+    // (#3644, #4036).
+    let paint = syntax::lines_body_paint(call.read_path(), &fold.body);
     let node = NodeId::Output { turn: ti, step: si };
     let open = state.is_open(run, node);
 
@@ -379,7 +379,7 @@ fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: 
     }
 
     let _ = write!(out, "<div class=\"out\"><pre>");
-    emit_lines(out, &fold.head, numbered, json, 1);
+    emit_lines(out, &fold.head, paint);
     out.push_str("</pre></div>");
 
     if fold.has_more() {
@@ -394,19 +394,13 @@ fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: 
         let hidden_start = fold.head.len();
         let hidden_end = fold.body.len() - fold.tail.len();
         let hidden = &fold.body[hidden_start.min(hidden_end)..hidden_end];
-        emit_lines(out, hidden, numbered, json, hidden_start + 1);
+        emit_lines(out, hidden, paint);
         out.push_str("</pre></div></details>");
     }
 
     if !fold.tail.is_empty() {
         out.push_str("<div class=\"out tail\"><pre>");
-        emit_lines(
-            out,
-            &fold.tail,
-            numbered,
-            json,
-            call.output.lines.len() - fold.tail.len() + 1,
-        );
+        emit_lines(out, &fold.tail, paint);
         out.push_str("</pre></div>");
     }
 }
@@ -420,28 +414,43 @@ fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: 
 /// classify each one the same way; only the paint differs. That is the honest
 /// reading of "one information model, two renderers", and it is what #3644
 /// asked for: the grid and the page had been sharing neither.
-fn emit_lines(out: &mut String, lines: &[String], numbered: bool, json: bool, start: usize) {
-    for (offset, line) in lines.iter().enumerate() {
-        if numbered {
-            let _ = write!(out, "<span class=\"ln\">{:>4}</span>  ", start + offset);
+fn emit_lines(out: &mut String, lines: &[String], paint: syntax::BodyPaint) {
+    for line in lines {
+        let painted = syntax::paint_line(paint, line);
+        // The emitter's own gutter *is* this renderer's `ln` column. It used to
+        // draw a second one counting position in the fold, which both stacked
+        // two gutters on one line and stated the wrong number — a read at
+        // offset 780 was labelled line 1 (#4036).
+        if paint.numbered {
+            match painted.gutter {
+                Some(g) => {
+                    let _ = write!(out, "<span class=\"ln\">{:>4}</span>  ", g.number);
+                }
+                // The read footer keeps the column's width so the source above
+                // it stays in one straight run.
+                None => out.push_str("<span class=\"ln\"></span>  "),
+            }
         }
-        if json {
-            emit_json_line(out, line);
-            out.push('\n');
-        } else {
-            let _ = writeln!(out, "{}", escape(line));
+        match painted.lang {
+            Some(lang) => {
+                emit_lexed_line(out, painted.source, lang);
+                out.push('\n');
+            }
+            None => {
+                let _ = writeln!(out, "{}", escape(painted.source));
+            }
         }
     }
 }
 
-/// One JSON line as classified spans.
+/// One line as classified spans.
 ///
 /// Untagged runs are written bare rather than wrapped in a no-op span, so the
 /// common case — punctuation and indentation — costs no markup at all. The
 /// lexer's losslessness is what makes that safe: concatenating the runs
 /// reproduces the line, so nothing is dropped by not wrapping it.
-fn emit_json_line(out: &mut String, line: &str) {
-    for (text, tok) in syntax::json_runs(line) {
+fn emit_lexed_line(out: &mut String, line: &str, lang: syntax::Lang) {
+    for (text, tok) in syntax::tokenize(line, lang) {
         match tok {
             Some(t) => {
                 let _ = write!(

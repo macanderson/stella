@@ -217,18 +217,18 @@
    bug in whichever moved last.
 
    Contrast, computed against WCAG 2.1 relative luminance rather than
-   estimated, worst case on --surface (#F7F9FC — the lightest surface a mark
+   estimated, worst case on --surface (#F6F6F8 — the lightest surface a mark
    can land on, so the binding constraint):
 
      --text 18.71:1   --text-2 7.37:1   --text-3 3.24:1
      --ok    6.25:1   --warn   7.48:1   --bad    6.81:1
-     --identity 8.25:1 (#674415)
+     --identity 8.25:1 (#EFC53F)
 
    and on the dark side against --raised (#11171D):
 
      --text 15.34:1   --text-2 7.78:1   --text-3 4.27:1
      --ok    9.97:1   --warn   6.98:1   --bad    6.04:1
-     --identity 6.06:1 (#C58A32)
+     --identity 6.06:1 (#EFC53F)
 
    Text and --text-2 clear AAA (7:1) on both; the three semantic colours clear
    AA (4.5:1) on both. --text-3 clears AAA on neither and is not meant to,
@@ -253,13 +253,16 @@
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     color-scheme:light;
-    --void:#E9EDF2; --ground:#FFFFFF; --surface:#F7F9FC; --raised:#FFFFFF;
-    --hairline:#E7EBF0; --hairline-strong:#CFD6DD;
-    --mark:#070B10; --mark-bright:#000000; --mark-deep:#4D535A;
-    --identity:#674415; --identity-ink:#FFFFFF;
-    --text:#070B10; --text-2:#4D535A; --text-3:#828C97;
+    --void:#E8E8EC; --ground:#FFFFFF; --surface:#F6F6F8; --raised:#FFFFFF;
+    --hairline:#E7EBF0; --hairline-strong:#E3E3E8;
+    --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#4D535A;
+    /* Gold fill, INK label: the light theme carried a white label, which the
+     v5.0 recolour turned into white-on-gold at 1.65:1. Rule 6 is explicit
+     that a gold fill on a light ground carries ink text — 11.15:1. */
+  --identity:#EFC53F; --identity-ink:#141416;
+    --text:#0A0A0C; --text-2:#4D535A; --text-3:#828C97;
     --ok:#0B6B3D; --warn:#913200; --bad:#A82036;
-    --c1:#070B10; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
+    --c1:#0A0A0C; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
     --neutral-mark:#C2C9D1;
     --ink:#FFFFFF;                      /* the inversion flips with the page */
     --accent-wash:rgba(10,10,12,.06);
@@ -351,11 +354,11 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
    docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
    /assets/wordmark{,-light}.svg (src/lib.rs). They were byte copies until
    the 2026-08-11 rebrand; the v3.0 ion recolour brought them back into step,
-   so both halves of each cut carry the current kit values (Obsidian #070B10,
-   Paper #E9EDF2) rather than only the brand hue (#2921).
+   so both halves of each cut carry the current kit values (Obsidian #0A0A0C,
+   Paper #E8E8EC) rather than only the brand hue (#2921).
 
-   These are the *color* cuts. The comet star is the gold `brand-500` #C58A32
-   on the dark cut and `brand-700` #8B5E1A on the light one. The two-stop rule
+   These are the *color* cuts. The comet star is the gold `brand-500` #EFC53F
+   on the dark cut and `brand-700` #141416 on the light one. The two-stop rule
    arrived with v3.0 — the rule before it was "shapes and marks stay full
    brand on both grounds" — and v4.0's return to gold keeps it rather than
    reverting it, because the rule was never really about ion: brand-500 holds

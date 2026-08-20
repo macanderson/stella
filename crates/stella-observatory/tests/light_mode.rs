@@ -53,10 +53,12 @@ fn both_wordmark_cuts_are_served_and_referenced() {
     assert_eq!(light.content_type, "image/svg+xml");
     let light_body = String::from_utf8(light.body).unwrap();
     assert!(light_body.contains("<svg"));
-    // Obsidian text, not Paper — this cut is for the Paper ground, not the
-    // dark one. The literal moves with the brand kit; it was `#0B0B0C` under
-    // v1.0 and is the v3.0 ground.
-    assert!(light_body.contains("#070B10"));
+    // Ink text, not Paper — this cut is for the Paper ground, not the dark
+    // one. The literal moves with the brand kit; v5.0 splits the two roles the
+    // older kits conflated, so the value here is `ink` (text on a light ground)
+    // and NOT `bg` (the dark canvas). They were one hex before, which is
+    // exactly why asserting the wrong one would still have looked plausible.
+    assert!(light_body.contains("#141416"));
 
     let page = String::from_utf8(respond(ws.path(), "/").body).unwrap();
     for needle in [

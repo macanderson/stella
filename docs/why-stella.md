@@ -16,10 +16,10 @@ status: living
 <p align="center"><em>A fast, BYOK, model-agnostic terminal coding agent that proves its own work. Built in Rust.</em></p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/engine-zero--I%2FO%20core-FFAC26?style=flat-square" alt="Zero-I/O core">
-  <img src="https://img.shields.io/badge/providers-9%20%2B%20local-FFAC26?style=flat-square" alt="9 providers + local">
-  <img src="https://img.shields.io/badge/community%20telemetry-local--only-FFAC26?style=flat-square" alt="Community telemetry is local-only">
-  <img src="https://img.shields.io/badge/rust-1.90%2B-FFAC26?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.90+">
+  <img src="https://img.shields.io/badge/engine-zero--I%2FO%20core-EFC53F?style=flat-square" alt="Zero-I/O core">
+  <img src="https://img.shields.io/badge/providers-9%20%2B%20local-EFC53F?style=flat-square" alt="9 providers + local">
+  <img src="https://img.shields.io/badge/community%20telemetry-local--only-EFC53F?style=flat-square" alt="Community telemetry is local-only">
+  <img src="https://img.shields.io/badge/rust-1.90%2B-EFC53F?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.90+">
 </p>
 
 ---
