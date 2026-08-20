@@ -679,16 +679,24 @@ pub(super) fn observe(
     );
     let mut observation = observation_from(&view, &base_checks);
 
-    // Nothing is left that can gate this pull request remotely — every check
-    // the repository requires has been waived as unwinnable. The forge has no
-    // opinion to offer, so `ci_from` sees an empty rollup and says `Pending`,
-    // which would park the loop forever on a verdict that is never coming.
+    // Nothing is left that can gate this pull request remotely, for one of two
+    // reasons, and the loop treats them the same because the forge does:
     //
-    // A repository whose CI cannot run still has a test suite. The label says
-    // whether this change survived it on this machine, and that becomes the
-    // verdict — weaker evidence than a clean CI run, and incomparably stronger
-    // than waiting for a suspended account to be reinstated.
-    if !required.is_empty() && blocking.is_empty() {
+    // - every check the repository *requires* has been waived as unwinnable; or
+    // - the repository declares no required checks at all. A private repository
+    //   on a free plan cannot even expose branch protection — the API answers
+    //   403 — and `gh pr merge` will merge such a pull request whatever its
+    //   checks say. A gate the forge does not enforce is not a gate.
+    //
+    // Either way the forge has no opinion to offer, so `ci_from` sees an empty
+    // rollup and says `Pending`, parking the loop forever on a verdict that is
+    // never coming.
+    //
+    // Such a repository still has a test suite. The label says whether this
+    // change survived it on this machine, and that becomes the verdict —
+    // weaker evidence than a clean CI run, and incomparably stronger than
+    // waiting for a suspended account to be reinstated.
+    if blocking.is_empty() {
         observation.ci = if verified_locally {
             CiConclusion::Green
         } else {

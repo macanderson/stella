@@ -162,6 +162,54 @@ pub(super) fn drive(
         ),
     }
 
+    // Is the gate winnable at all?
+    //
+    // Measured once, on the base, before any change is judged by it. A
+    // repository whose own test suite already fails on `main` has a local gate
+    // exactly as unwinnable as a suspended CI account, and blocking on it
+    // would be the same mistake one layer down — every pull request rejected
+    // for a failure that was there before it existed.
+    //
+    // When the baseline is red the verification still runs and is still
+    // recorded, but it stops being a veto. That is the honest reading: the
+    // signal cannot distinguish this change's fault from the tree's, so it is
+    // evidence rather than a verdict.
+    let baseline_green = match verify_command.as_deref() {
+        Some(command) => {
+            audit::record(
+                durable,
+                Audit::VerifyStarted,
+                None,
+                &format!("measuring the baseline — `{command}` on {base_branch}"),
+            );
+            match super::work::verify_locally(&root, command, cfg.verify_timeout_secs) {
+                Ok(()) => {
+                    audit::record(
+                        durable,
+                        Audit::Verified,
+                        None,
+                        "the baseline is green, so local verification can veto a change",
+                    );
+                    true
+                }
+                Err(reason) => {
+                    audit::record(
+                        durable,
+                        Audit::Waived,
+                        None,
+                        &format!(
+                            "the baseline is already red ({reason}) — local verification \
+                             becomes advisory, because it cannot tell this change's fault \
+                             from the tree's"
+                        ),
+                    );
+                    false
+                }
+            }
+        }
+        None => false,
+    };
+
     let mut state = LoopState {
         planned: true,
         batch: max_issues,
@@ -179,6 +227,24 @@ pub(super) fn drive(
             None,
             &format!("could not install the local-verification label: {error}"),
         );
+    }
+
+    // The loop's own vocabulary, installed before it needs it.
+    //
+    // Triage answers in the configured ladder and then writes that label; a
+    // tracker that does not carry the label rejects the write, and the issue
+    // comes back unassessed forever. A fresh repository has GitHub's stock
+    // labels and nothing else, so this is the ordinary case rather than the
+    // exotic one — it is what lets the loop be pointed at a repository nobody
+    // prepared for it.
+    for (index, rung) in cfg.triage.ladder.rungs.iter().enumerate() {
+        let _ = crate::issue_provider::ensure_label(
+            rung,
+            &format!("Priority {index} — installed by the self-driving loop."),
+        );
+    }
+    for kind in &cfg.triage.defect_kinds {
+        let _ = crate::issue_provider::ensure_label(kind, "Work the self-driving loop may take.");
     }
 
     let mut spent: HashMap<String, Spent> = HashMap::new();
@@ -379,9 +445,20 @@ pub(super) fn drive(
                                             durable,
                                             Audit::VerifyFailed,
                                             Some(&issue.0),
-                                            &reason,
+                                            &format!(
+                                                "{reason}{}",
+                                                if baseline_green {
+                                                    " — and the baseline was green, so this \
+                                                     is this change's doing"
+                                                } else {
+                                                    " — but the baseline was already red, so \
+                                                     this is not evidence against the change"
+                                                }
+                                            ),
                                         );
-                                        false
+                                        // Advisory when the gate was already
+                                        // unwinnable: see `baseline_green`.
+                                        !baseline_green
                                     }
                                 }
                             }
