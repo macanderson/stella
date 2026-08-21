@@ -1219,19 +1219,15 @@ pub(crate) async fn run_turn(
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };
-    // What this turn changed in the shared tree (#3413), measured at the
-    // boundary and emitted *before* the close below: these are the turn's own
-    // events and a consumer folding the stream must see them inside the turn
-    // they describe. See `crate::turn_files` for why a measurement, not a hook.
-    crate::turn_files::emit_shared_tree_changes(cfg, &tx, execution.as_ref());
     // This path owns its run — one raw engine turn, no pipeline above it — so
-    // it owes the run's terminator (#3379). The engine ends the turn with
-    // `TurnComplete` and deliberately says nothing about the run, and every
-    // other owner (the deck, fleet, goal, resume, the pipeline one-shot) goes
-    // through this same seam; without it a raw `stella run` ended on
-    // `turn_complete` and simply stopped, leaving every consumer waiting for a
-    // terminal event that never came. Last, after the turn's own events above.
-    persistence::emit_run_complete_for_turn(&tx, &cfg.model_id, &outcome);
+    // it owes both of the boundary's debts: what the turn changed in the shared
+    // tree (#3413), then the run's terminator (#3379). Emitted *before* the
+    // close below, because these are the turn's own events and a consumer
+    // folding the stream must see them inside the turn they describe. See
+    // `crate::turn_files::close_turn_boundary` for the ordering, for why the
+    // tree is measured rather than inferred from tool inputs, and for the deck
+    // defect that made the two one call.
+    crate::turn_files::close_turn_boundary(cfg, &tx, execution.as_ref(), &outcome);
     // The re-query adapter holds an `EventSender` clone of this run's channel
     // (#3366 telemetry), so it must be released here too — otherwise it keeps
     // the channel open and the renderer's `recv()` loop never ends (#2290).
