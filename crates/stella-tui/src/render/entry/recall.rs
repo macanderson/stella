@@ -643,7 +643,7 @@ fn recall_location(uri: &str, cap: usize) -> String {
 /// One table cell: `text` in exactly `col` display columns, elided if it does
 /// not fit and space-padded if it does.
 ///
-/// This is the invariant the whole table rests on. [`pad_name`]'s soft column
+/// This is the invariant the whole table rests on. the tool head's own soft column
 /// is the deliberate opposite — there an over-wide tool name overruns, because
 /// identity outranks alignment on a row nobody reads down a column. Here the
 /// row *is* read down a column, so a cell that overran would displace every

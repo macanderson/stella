@@ -25,6 +25,7 @@
 //! arm per tool is a renderer that silently drops the ones a user added — the
 //! reasoning [`stella_transcript::ToolKind`] already states.
 
+use ratatui::style::Color;
 use ratatui::text::Line;
 
 use super::transcript::{Event, EventKind, Receipt, event_rows, receipt, turn_end};
@@ -43,6 +44,19 @@ pub fn head_rows(name: &str, path: Option<&str>, input: &str, width: usize) -> V
     // "collapsed" in the fold sense — there is no body under it yet.
     event.collapsed = Some(false);
     event_rows(&event, width)
+}
+
+/// The rail metal [`head_rows`] draws this call in (SPEC 6.2) — silver-dim for
+/// a read, gold for anything that acts, red for a delete.
+///
+/// Exposed because the head is only the first row of a call's block: the rows
+/// the deck hangs *under* it — the expanded argument object — have to reproduce
+/// the same rail, and deriving the colour a second time from the tool name is
+/// how the two ends of one block come to disagree about what metal it is. One
+/// derivation, read by both.
+#[must_use]
+pub fn head_metal(name: &str) -> Color {
+    kind_for(name).metal()
 }
 
 /// One dim line, no rail (SPEC 6.3).
