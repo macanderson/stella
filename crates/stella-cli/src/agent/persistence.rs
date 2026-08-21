@@ -553,7 +553,22 @@ pub(crate) enum PersistOutcome {
     /// nothing" is the difference between a footnote and a real gap — and the
     /// surface that renders this is the only place a user ever learns which
     /// one happened.
-    UsageIncomplete(Option<stella_protocol::PartialUsage>),
+    UsageIncomplete {
+        /// Accounting the adapter salvaged from the failure, if any reached
+        /// us.
+        partial: Option<stella_protocol::PartialUsage>,
+        /// Why the attempt produced no usage frame — `None` when the call
+        /// **settled** and only the provider's frame never arrived.
+        ///
+        /// Two unrelated conditions reach this variant, and collapsing them
+        /// is what made the rendered sentence lie (#4147): an
+        /// [`AgentEvent::StepUsage`] with `complete: false` is a call that
+        /// did its work and simply went unbilled, while an
+        /// [`AgentEvent::UsageIncomplete`] is an attempt that **died** and
+        /// produced nothing. The engine already distinguishes them on the
+        /// wire — this field is that distinction, kept instead of dropped.
+        died: Option<stella_protocol::UsageIncompleteReason>,
+    },
 }
 
 impl PersistOutcome {
@@ -575,20 +590,42 @@ impl PersistOutcome {
             PersistOutcome::StoreWriteFailed => {
                 Some(format!("store write failed — {what} could not be written"))
             }
-            PersistOutcome::UsageIncomplete(Some(partial)) => Some(format!(
+            PersistOutcome::UsageIncomplete {
+                partial: Some(partial),
+                ..
+            } => Some(format!(
                 "{what} dropped before its final usage frame — recovered {} \
                  (~${:.4}) as an estimate; every other call is accounted normally",
                 token_summary(&partial),
                 partial.cost_usd,
             )),
-            // Deliberately not "failed": this branch also covers a call that
-            // SETTLED without a provider usage frame, where the work landed
-            // fine and only the accounting is short. Asserting a failure that
-            // did not happen is the same class of mistake as the session-wide
-            // wording this replaces.
-            PersistOutcome::UsageIncomplete(None) => Some(format!(
+            // Deliberately not "failed": this call SETTLED without a provider
+            // usage frame, so the work landed fine and only the accounting is
+            // short. Asserting a failure that did not happen is the same class
+            // of mistake as the session-wide wording this replaces.
+            PersistOutcome::UsageIncomplete {
+                partial: None,
+                died: None,
+            } => Some(format!(
                 "{what} reported no final usage — that call's tokens and cost \
                  are unaccounted (the work itself is unaffected)"
+            )),
+            // ...and the mirror image, which the sentence above used to claim
+            // too (#4147). This attempt DIED, so the reassurance is false: it
+            // was printed directly above the abort rows reporting the very
+            // failure it denied. Say what happened and stop there — the turn's
+            // own error rows are what speak to the work.
+            PersistOutcome::UsageIncomplete {
+                partial: None,
+                died: Some(reason),
+            } => Some(format!(
+                "{what} {} before reporting usage — that call's tokens and \
+                 cost are unaccounted",
+                match reason {
+                    stella_protocol::UsageIncompleteReason::ProviderError => "failed",
+                    stella_protocol::UsageIncompleteReason::Timeout => "timed out",
+                    stella_protocol::UsageIncompleteReason::Cancelled => "was cancelled",
+                }
             )),
         }
     }
@@ -691,6 +728,7 @@ pub(crate) fn persist_event_detailed(
     let mut telemetry_ok = true;
     let mut usage_complete = true;
     let mut recovered = None;
+    let mut died = None;
     if let AgentEvent::StepUsage {
         role,
         provider,
@@ -749,11 +787,17 @@ pub(crate) fn persist_event_detailed(
         duration_ms,
         retries,
         partial,
+        reason,
         ..
     } = event
     {
         usage_complete = false;
         recovered = *partial;
+        // This attempt died; the `StepUsage` branch above is the one where the
+        // call settled. Keeping the engine's own reason is what lets the
+        // rendered sentence tell those apart instead of reassuring the user
+        // about a call that produced nothing (#4147).
+        died = Some(*reason);
         // A failed attempt that salvaged accounting gets a real telemetry row,
         // flagged `usage_complete = false`. Before this the row was simply not
         // written: `stella stats` showed the turn as though the dead attempt
@@ -888,7 +932,10 @@ pub(crate) fn persist_event_detailed(
     if !recorded || !telemetry_ok {
         PersistOutcome::StoreWriteFailed
     } else if !usage_complete {
-        PersistOutcome::UsageIncomplete(recovered)
+        PersistOutcome::UsageIncomplete {
+            partial: recovered,
+            died,
+        }
     } else {
         PersistOutcome::Complete
     }
@@ -915,15 +962,62 @@ mod usage_recovery_tests {
     }
 
     fn incomplete(partial: Option<stella_protocol::PartialUsage>) -> AgentEvent {
+        incomplete_because(
+            stella_protocol::UsageIncompleteReason::ProviderError,
+            partial,
+        )
+    }
+
+    fn incomplete_because(
+        reason: stella_protocol::UsageIncompleteReason,
+        partial: Option<stella_protocol::PartialUsage>,
+    ) -> AgentEvent {
         AgentEvent::UsageIncomplete {
             role: stella_protocol::ModelCallRole::Worker,
             provider: "anthropic".into(),
             model: "claude-opus-5".into(),
-            reason: stella_protocol::UsageIncompleteReason::ProviderError,
+            reason,
             duration_ms: 4_200,
             retries: Some(1),
             partial,
         }
+    }
+
+    /// A call that SETTLED and simply went unbilled: the provider closed the
+    /// stream cleanly but sent no usage frame. The other way into
+    /// [`PersistOutcome::UsageIncomplete`], and the case whose reassurance is
+    /// true.
+    fn settled_without_a_usage_frame() -> AgentEvent {
+        AgentEvent::StepUsage {
+            upstream_provider: None,
+            step: 0,
+            role: stella_protocol::ModelCallRole::Worker,
+            provider: "anthropic".into(),
+            output_text: None,
+            model: "claude-opus-5".into(),
+            input_tokens: 0,
+            output_tokens: 0,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: None,
+            estimated_input_tokens: 0,
+            cost_usd: 0.0,
+            duration_ms: 1_200,
+            retries: 0,
+            tool_calls: 0,
+            complete: false,
+            finish_reason: None,
+        }
+    }
+
+    fn sentence_for(event: &AgentEvent) -> String {
+        let store = stella_store::Store::in_memory().expect("store");
+        let execution_id = store
+            .begin_execution("cli", "prompt", "anthropic", "claude-opus-5")
+            .expect("begin");
+        persist_event_detailed(&store, execution_id, 0, event, "anthropic")
+            .message("one model call")
+            .expect("an incomplete outcome has a sentence")
     }
 
     /// The storage half of the fix. A dropped attempt that salvaged real
@@ -959,7 +1053,13 @@ mod usage_recovery_tests {
         );
         // And the execution as a whole is marked short.
         assert!(!store.execution_usage_complete(execution_id).unwrap());
-        assert!(matches!(outcome, PersistOutcome::UsageIncomplete(Some(_))));
+        assert!(matches!(
+            outcome,
+            PersistOutcome::UsageIncomplete {
+                partial: Some(_),
+                ..
+            }
+        ));
     }
 
     /// A failure that learned nothing writes no telemetry row. Recording a
@@ -976,7 +1076,15 @@ mod usage_recovery_tests {
 
         assert!(store.telemetry_rows_after(0, 10).expect("rows").is_empty());
         assert!(!store.execution_usage_complete(execution_id).unwrap());
-        assert!(matches!(outcome, PersistOutcome::UsageIncomplete(None)));
+        // A dead attempt, so the reason rides along: this is the case the
+        // rendered sentence must NOT call unaffected (#4147).
+        assert!(matches!(
+            outcome,
+            PersistOutcome::UsageIncomplete {
+                partial: None,
+                died: Some(stella_protocol::UsageIncompleteReason::ProviderError),
+            }
+        ));
     }
 
     /// The wording defect from the report: one retried call must not be
@@ -985,9 +1093,12 @@ mod usage_recovery_tests {
     /// worst.
     #[test]
     fn the_warning_names_one_call_and_reports_what_was_recovered() {
-        let message = PersistOutcome::UsageIncomplete(Some(partial(14_000, 12_000, 130, 0.0213)))
-            .message("one model call")
-            .expect("an incomplete outcome has a sentence");
+        let message = PersistOutcome::UsageIncomplete {
+            partial: Some(partial(14_000, 12_000, 130, 0.0213)),
+            died: Some(stella_protocol::UsageIncompleteReason::ProviderError),
+        }
+        .message("one model call")
+        .expect("an incomplete outcome has a sentence");
         assert!(message.starts_with("one model call"), "{message}");
         assert!(!message.contains("this session"), "{message}");
         assert!(message.contains("14000 input"), "{message}");
@@ -997,9 +1108,12 @@ mod usage_recovery_tests {
 
         // With nothing recovered it stays honest about the gap, and still
         // scopes itself to the one attempt.
-        let bare = PersistOutcome::UsageIncomplete(None)
-            .message("one model call")
-            .expect("still a sentence");
+        let bare = PersistOutcome::UsageIncomplete {
+            partial: None,
+            died: None,
+        }
+        .message("one model call")
+        .expect("still a sentence");
         assert!(bare.contains("tokens and cost"), "{bare}");
         assert!(!bare.contains("this session"), "{bare}");
         // A call that settled without a usage frame did not "fail", and the
@@ -1013,6 +1127,49 @@ mod usage_recovery_tests {
         assert!(
             store_failed.contains("store write failed"),
             "{store_failed}"
+        );
+    }
+
+    /// The reported panel (#4147): an OpenRouter stream aborted, and the very
+    /// first line the user read was the accounting warning telling them the
+    /// work was fine — printed directly above the two rows reporting the
+    /// abort. The reassurance belongs to a call that SETTLED without a usage
+    /// frame; on a call that died it asserts a success that did not happen.
+    ///
+    /// Driven through `persist_event_detailed` rather than by building a
+    /// `PersistOutcome` by hand, deliberately: the fix changes that enum's
+    /// shape, so a hand-built witness would fail to *compile* on the parent
+    /// commit rather than fail its assertion, which proves nothing about the
+    /// behaviour. Feeding the real event through the real path compiles on
+    /// both sides and genuinely flips.
+    #[test]
+    fn a_dead_call_is_never_described_as_leaving_the_work_unaffected() {
+        for reason in [
+            stella_protocol::UsageIncompleteReason::ProviderError,
+            stella_protocol::UsageIncompleteReason::Timeout,
+            stella_protocol::UsageIncompleteReason::Cancelled,
+        ] {
+            let message = sentence_for(&incomplete_because(reason, None));
+            assert!(
+                !message.contains("unaffected"),
+                "{reason:?} claimed the work landed: {message}"
+            );
+            // It still has to say what it came to say: the accounting is short.
+            assert!(message.contains("tokens and cost"), "{message}");
+            assert!(message.starts_with("one model call"), "{message}");
+        }
+    }
+
+    /// The negative control for the test above, and the property the original
+    /// wording existed to protect: a call that settled keeps its reassurance
+    /// verbatim. One dropped frame out of hundreds is a footnote, and losing
+    /// this would regress the sentence #4147's fix is built on top of.
+    #[test]
+    fn a_settled_call_keeps_its_reassurance() {
+        let settled = sentence_for(&settled_without_a_usage_frame());
+        assert!(
+            settled.contains("the work itself is unaffected"),
+            "{settled}"
         );
     }
 }
