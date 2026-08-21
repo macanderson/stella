@@ -143,15 +143,16 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/term.rs`](src/term.rs) | `TerminalGuard` + `PanicHookGuard`. Open this before touching anything about raw mode or panics. |
 | [`src/deck.rs`](src/deck.rs) | `WorkspaceModel` — N `SessionModel`s plus cross-agent read-models (file ledger, route log, prompt queue, unified trace). |
 | [`src/deck_ui.rs`](src/deck_ui.rs) | `DeckUi` and `handle_deck_key` — every deck keybinding, and the documented Esc precedence list (line 1488). The largest file here. |
-| [`src/deck_render.rs`](src/deck_render.rs) | `render_deck`: tab bar · active view · trace strip · progress bar · composer · footer · statline. |
+| [`src/deck_render.rs`](src/deck_render.rs) | `render_deck`: tab bar · active view · trace strip · progress bar · composer · footer · status band. |
 | [`src/deck_shell.rs`](src/deck_shell.rs) | `run_deck(...)`: the deck's `select!` loop, plus a third arm — a 33 ms tick that advances the clock and samples resources. |
 | [`src/envelope.rs`](src/envelope.rs) | The multi-agent wire types: `Inbound` in, `WorkspaceInput` out, and every out-of-band snapshot the driver pushes. |
 | [`src/composer.rs`](src/composer.rs) | The input model: textarea semantics, `classify_enter`, paste chips, and the slash popup shared by both surfaces. |
 | [`src/views/*.rs`](src/views) | One module per deck tab (session · agents · installed · traces · graph · files · skills · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `engine` is the exception: the config editor SETTINGS hosts, with its own `render_panel` and key handler. |
 | [`src/diff.rs`](src/diff.rs), [`src/syntax.rs`](src/syntax.rs), [`src/markdown.rs`](src/markdown.rs), [`src/textline.rs`](src/textline.rs) | Shared text presentation — one implementation each of "how a diff looks", source coloring, markdown, and the event→wording table (also consumed by `stella-cli`'s plain renderer). |
 | [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` mirrors the brand kit at `docs/brand/`; `theme.rs` is the only module allowed to reference it. |
-| [`src/statline.rs`](src/statline.rs) | The two-row statline: a micro-label row over its value row, led by `MODEL` (`worker: z-ai/glm-5.2` — the model's vendor, not the gateway) and the stage box (the live stage name over `Step 4 of 5`), then the CPU/CONTEXT meters and CACHE volumes, over the always-on MODELS pins row. `statline_items` is the one decision function — priority drops and the collapse-under-a-card rule included. |
-| [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the unified stage stepper + progress row, the cache formatters behind the statline/context overlay, and the launch mark held over session init. |
+| [`src/v2/status_bar.rs`](src/v2/status_bar.rs) | SPEC 5's one-row status bar — `worker · stage · ctx [meter] % · $spend · saved $x · ✉ n`, with `? help` pinned right. `cells` is the one decision function (pure over `Status`, so the golden frames are fixture data); `render_band` draws it plus the cache-diagnosis row beneath. Replaced the two-row v1 statline in #4123/#4129; `src/statline.rs` is deleted (#4128) and this module's doc keeps the record of why the two-row shape lost. |
+| [`src/v2/project.rs`](src/v2/project.rs), [`src/v2/status_source.rs`](src/v2/status_source.rs) | `WorkspaceModel` → the v2 widgets' input structs. **Two projections of the same six values exist and disagree; `project.rs` is the one that draws** — see #4187 before changing either. |
+| [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the unified stage stepper + progress row, the cache formatters behind the status bar's `saved` cell / context overlay, and the launch mark held over session init. |
 | [`src/views/cards.rs`](src/views/cards.rs) + [`plan_card`](src/views/plan_card.rs) · [`models_card`](src/views/models_card.rs) · [`budget_card`](src/views/budget_card.rs) | The three floating cards over one shared chrome; their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). |
 | [`src/views/subagents.rs`](src/views/subagents.rs) | The SESSION tab's nested `└─ ◆` subagent blocks under the lead's header. |
 | [`src/scroll.rs`](src/scroll.rs), [`src/input.rs`](src/input.rs), [`src/graph.rs`](src/graph.rs), [`src/resource.rs`](src/resource.rs), [`src/attach.rs`](src/attach.rs), [`src/clipboard.rs`](src/clipboard.rs) | Small leaf modules: line-exact viewport math, the outbound message enum, the graph snapshot types, CPU/MEM sampling, pasted-path detection, `⌃V` clipboard capture. |
@@ -223,7 +224,7 @@ every panic on every thread, including panel panics the session survives.
 - **The panic boundary covers every band, but only in unwind builds.**
   [`src/panel_guard.rs`](src/panel_guard.rs) wraps the single-session panels,
   every deck band (tab bar, active tab, trace strip, progress bar, composer,
-  footer, statline, splash, each overlay) and the fleet dashboard, so a
+  footer, status band, splash, each overlay) and the fleet dashboard, so a
   panicking view becomes an error card and the session continues. Release
   builds set `panic = "abort"`, where `catch_unwind` never runs its handler —
   so the shipped binary still dies on a view panic. A new draw surface is

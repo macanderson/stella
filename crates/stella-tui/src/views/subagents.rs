@@ -76,7 +76,7 @@ fn block(sub: &AgentEntry, now_ms: u64, width: usize, accessible: bool) -> Vec<L
     let ctx = format!(
         "{}/{}",
         fmt_k(sub.context_tokens),
-        fmt_k(crate::statline::CTX_WINDOW)
+        fmt_k(crate::v2::status_bar::CTX_WINDOW)
     );
     let scope = sub
         .model

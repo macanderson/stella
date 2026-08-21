@@ -81,7 +81,6 @@ pub mod progress;
 pub mod resource;
 pub mod scenario;
 pub mod splash;
-pub mod statline;
 pub mod syntax;
 pub mod theme;
 pub mod tool_class;

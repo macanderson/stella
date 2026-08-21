@@ -93,12 +93,12 @@ fn buffer_text(buf: &Buffer) -> String {
 }
 
 #[test]
-fn full_deck_frame_grows_a_second_statline_row_for_a_diagnosed_agent() {
+fn full_deck_frame_grows_a_second_status_band_row_for_a_diagnosed_agent() {
     // The acceptance case: an opt-in provider (anthropic), 4 calls (past
     // MIN_TURNS=3), 0% hit rate, 0 cache writes — the marker never
-    // engaged. `render_deck` must reserve the statline's second row and
-    // `statline::render` must fill it with the full-sentence hint, not a
-    // clipped fragment.
+    // engaged. `render_deck` must reserve the band's second row and
+    // `v2::status_bar::render_band` must fill it with the full-sentence
+    // hint, not a clipped fragment.
     let mut model = running_model_with_queue();
     for step in 1..=4usize {
         model.apply_inbound(&Inbound::Event {
