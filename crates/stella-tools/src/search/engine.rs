@@ -790,16 +790,57 @@ const CHUNK_EMBED_CONCURRENCY: usize = 8;
 /// its vector. That is what makes editing one function in a 60-symbol
 /// file cost one embedding rather than sixty.
 ///
-/// Returns the number of files committed, so the caller can narrate the
-/// window as one progress step per file without the callback crossing an
-/// `await` — the eager caller's closure borrows a non-`Send` emitter, and
-/// holding it across the embedding fan-out would force `Send` on it.
+/// Reports what the window committed *and* how it ended, rather than one or
+/// the other. A `Result` would have to throw the count away on the failing
+/// arm, and the count is exactly what is still true then: the files whose
+/// vectors landed before the failure are in the store, and a caller that
+/// reported zero of them would be understating durable work — the next pass
+/// would find them already done and the narration would have lied about what
+/// the user paid for.
+///
+/// The count also lets the caller narrate one progress step per file without
+/// the callback crossing an `await`: the eager caller's closure borrows a
+/// non-`Send` emitter, and holding it across the embedding fan-out would
+/// force `Send` on it.
 async fn embed_and_store_chunk_files(
     graph: &CodeGraph,
     embedder: &dyn Embedder,
     fingerprint: &str,
     files: &[stella_graph::PendingChunkFile],
-) -> Result<usize, String> {
+) -> ChunkWindow {
+    let mut committed = 0;
+    let failure = fill_chunk_window(graph, embedder, fingerprint, files, &mut committed)
+        .await
+        .err();
+    ChunkWindow {
+        committed,
+        failure,
+    }
+}
+
+/// What one window of the chunk pass did: how many files reached the store,
+/// and why it stopped if it stopped early. Total by construction, for the
+/// reason [`ChunkWarmOutcome`] gives — the two facts are independent, and a
+/// shape that can only carry one of them forces a caller to guess the other.
+#[derive(Debug)]
+struct ChunkWindow {
+    /// Files whose rows are durably written. Never rolled back by a later
+    /// failure: [`store_chunk_file`] commits per file, and a committed file
+    /// stays committed.
+    committed: usize,
+    /// Why the window stopped short, if it did.
+    failure: Option<String>,
+}
+
+/// [`embed_and_store_chunk_files`]'s body, split out so the `?` operator is
+/// available while `committed` keeps counting through a failure.
+async fn fill_chunk_window(
+    graph: &CodeGraph,
+    embedder: &dyn Embedder,
+    fingerprint: &str,
+    files: &[stella_graph::PendingChunkFile],
+    committed: &mut usize,
+) -> Result<(), String> {
     use futures_util::stream::{self, StreamExt};
 
     // The unit of embedding work: one chunk that needs a vector, addressed
@@ -867,44 +908,108 @@ async fn embed_and_store_chunk_files(
     }))
     .buffer_unordered(CHUNK_EMBED_CONCURRENCY);
 
-    // One failed request abandons the whole window, because a window
-    // stored with a hole in it is indistinguishable from a finished one:
-    // every file would carry the current content hash, so the next pass
-    // would see nothing pending and never come back for the gap.
-    while let Some(result) = in_flight.next().await {
-        let (batch, embeddings) =
-            result.map_err(|error| format!("the embedder failed: {error}"))?;
-        for (chunk, embedding) in batch.iter().zip(embeddings) {
-            vectors[chunk.file_index][chunk.chunk_index] = Some(embedding.vector);
+    // How many vectors each file is still waiting for. A file's chunks can
+    // straddle two requests now that batches span files, so "this file is
+    // finished" is a count reaching zero rather than a request completing.
+    let mut outstanding: Vec<usize> = vec![0; files.len()];
+    for chunk in &needed {
+        outstanding[chunk.file_index] += 1;
+    }
+
+    // A file whose chunks are all unchanged waits for nothing: its rows are
+    // pure re-stamps of vectors already stored, so it is committed before
+    // the first request is even issued.
+    for index in 0..files.len() {
+        if outstanding[index] == 0 {
+            store_chunk_file(
+                graph,
+                fingerprint,
+                &files[index],
+                std::mem::take(&mut vectors[index]),
+            )?;
+            *committed += 1;
         }
     }
 
-    // Store file by file — the sweep's unit — committing each file once
-    // its rows are assembled.
-    let mut committed = 0;
-    for (file, file_vectors) in files.iter().zip(vectors) {
-        let rows: Vec<stella_graph::ChunkVector> = file
-            .chunks
-            .iter()
-            .zip(file_vectors)
-            .map(|(chunk, vector)| stella_graph::ChunkVector {
-                chunk_sha256: chunk.chunk_sha256.clone(),
-                name: chunk.name.clone(),
-                kind: chunk.kind.clone(),
-                start_line: chunk.start_line,
-                end_line: chunk.end_line,
-                vector,
-            })
-            .collect();
-        graph
-            .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
-            // Not recoverable by continuing: the next file would be written
-            // into the same broken store and the pass would report success
-            // having stored nothing.
-            .map_err(|error| format!("the chunk index could not be written: {error}"))?;
-        committed += 1;
+    // **Each file is committed the moment its last vector lands**, rather
+    // than the window being held until every request is back. The pass runs
+    // in the background and can be interrupted at any point — by a failing
+    // request, by the process ending — and whatever reached the store stays
+    // there. Holding a 64-file window would put all 64 at risk of one late
+    // failure and re-pay for them on the next pass.
+    //
+    // A failed request still abandons the *unfinished* files, and must: a
+    // file stored with a hole in it is indistinguishable from a finished
+    // one, because it would carry the current content hash and the next
+    // pass would see nothing pending and never come back for the gap.
+    while let Some(result) = in_flight.next().await {
+        let (batch, embeddings) =
+            result.map_err(|error| format!("the embedder failed: {error}"))?;
+
+        // A short response would leave some file's count stuck above zero,
+        // so the window would never commit it and the caller's loop would
+        // re-scan the same pending file forever. The trait's contract is one
+        // vector per text; naming the breach beats spinning on it.
+        if embeddings.len() != batch.len() {
+            return Err(format!(
+                "the embedder returned {} vectors for {} chunks",
+                embeddings.len(),
+                batch.len()
+            ));
+        }
+
+        for (chunk, embedding) in batch.iter().zip(embeddings) {
+            vectors[chunk.file_index][chunk.chunk_index] = Some(embedding.vector);
+            outstanding[chunk.file_index] -= 1;
+            if outstanding[chunk.file_index] == 0 {
+                store_chunk_file(
+                    graph,
+                    fingerprint,
+                    &files[chunk.file_index],
+                    std::mem::take(&mut vectors[chunk.file_index]),
+                )?;
+                *committed += 1;
+            }
+        }
     }
-    Ok(committed)
+
+    Ok(())
+}
+
+/// Write one file's chunk vectors — the store's atomic unit, for the reason
+/// [`embed_and_store_chunk_files`] gives: the sweep that removes a deleted
+/// symbol's vector keys on the file's content hash, so a file's rows go in
+/// together or not at all.
+///
+/// A `None` slot means "keep the vector already stored and re-stamp it with
+/// the new hash", which is what makes editing one function in a 60-symbol
+/// file cost one embedding rather than sixty.
+fn store_chunk_file(
+    graph: &CodeGraph,
+    fingerprint: &str,
+    file: &stella_graph::PendingChunkFile,
+    file_vectors: Vec<Option<Vec<f32>>>,
+) -> Result<(), String> {
+    let rows: Vec<stella_graph::ChunkVector> = file
+        .chunks
+        .iter()
+        .zip(file_vectors)
+        .map(|(chunk, vector)| stella_graph::ChunkVector {
+            chunk_sha256: chunk.chunk_sha256.clone(),
+            name: chunk.name.clone(),
+            kind: chunk.kind.clone(),
+            start_line: chunk.start_line,
+            end_line: chunk.end_line,
+            vector,
+        })
+        .collect();
+    graph
+        .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
+        // Not recoverable by continuing: the next file would be written into
+        // the same broken store and the pass would report success having
+        // stored nothing.
+        .map_err(|error| format!("the chunk index could not be written: {error}"))
+        .map(|_| ())
 }
 
 /// No ceiling here either — see [`super::semantic::NO_FILE_CEILING`], which
@@ -1049,19 +1154,20 @@ pub(super) async fn warm_chunks_opened<P: FnMut(usize) + ?Sized>(
         // crate being right, which is exactly the coupling that produced
         // #3128. `PendingChunkFile::to_embed()` is the per-symbol truth.
         let made_progress = scan.files.iter().any(|file| file.to_embed() > 0);
-        match embed_and_store_chunk_files(graph, embedder, &fingerprint, &scan.files).await {
-            Ok(committed) => {
-                for _ in 0..committed {
-                    files_embedded += 1;
-                    progress(files_embedded);
-                }
-            }
-            Err(reason) => {
-                return ChunkWarmOutcome::Failed {
-                    files_embedded,
-                    reason,
-                };
-            }
+        let window = embed_and_store_chunk_files(graph, embedder, &fingerprint, &scan.files).await;
+        // Narrated before the failure is considered, because these files are
+        // in the store either way: a window that ended badly still committed
+        // whatever finished before it did, and reporting the failure without
+        // them would understate work the user has already paid for.
+        for _ in 0..window.committed {
+            files_embedded += 1;
+            progress(files_embedded);
+        }
+        if let Some(reason) = window.failure {
+            return ChunkWarmOutcome::Failed {
+                files_embedded,
+                reason,
+            };
         }
         if !made_progress {
             break;

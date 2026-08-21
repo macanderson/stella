@@ -439,6 +439,102 @@ mod tests {
         }
     }
 
+    /// A backend that answers a fixed number of requests and then refuses
+    /// every one after — the refusal deliberately slow, so the requests that
+    /// did succeed have already landed by the time it arrives.
+    ///
+    /// Without that ordering the test would be asking a race what it thinks,
+    /// since a failure completing first legitimately abandons whatever was
+    /// still in flight beside it.
+    #[derive(Debug)]
+    struct FlakyEmbedder {
+        calls: AtomicUsize,
+        succeed_first: usize,
+    }
+
+    #[async_trait]
+    impl Embedder for FlakyEmbedder {
+        fn fingerprint(&self) -> EmbedderFingerprint {
+            EmbedderFingerprint {
+                model_id: "flaky".into(),
+                revision: "1".into(),
+                dims: 2,
+                normalization: "l2".into(),
+            }
+        }
+
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError> {
+            let ordinal = self.calls.fetch_add(1, Ordering::SeqCst);
+            if ordinal >= self.succeed_first {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                return Err(EmbedError::Backend("the backend went away".into()));
+            }
+            let fingerprint = self.fingerprint().id();
+            Ok(texts
+                .iter()
+                .map(|text| {
+                    let mut vector = vec![text.len() as f32, 1.0];
+                    stella_embed::l2_normalize(&mut vector);
+                    Embedding {
+                        fingerprint: fingerprint.clone(),
+                        vector,
+                    }
+                })
+                .collect())
+        }
+
+        fn similarity_posture(&self) -> SimilarityPosture {
+            SimilarityPosture::Semantic {
+                admission_floor: 0.2,
+            }
+        }
+    }
+
+    /// **The durability witness for #4144.** The pass runs unattended in the
+    /// background and is expected to be interrupted — by a failing backend,
+    /// by the process ending. Batching chunks across files must not turn the
+    /// whole 64-file window into one all-or-nothing unit: a file whose last
+    /// vector has landed is committed there and then, so a later failure
+    /// costs the files still in flight and not the ones already paid for.
+    ///
+    /// Sixty-four one-symbol files are two file-rung requests and two
+    /// chunk-rung requests. The backend answers three and refuses the fourth,
+    /// so exactly one chunk batch — half the window — must survive, and
+    /// `files_embedded` must say so rather than reporting zero.
+    #[tokio::test]
+    async fn files_finished_before_a_failure_stay_committed() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let graph = indexed_fixture(&root, 64);
+        let embedder = FlakyEmbedder {
+            calls: AtomicUsize::new(0),
+            succeed_first: 3,
+        };
+        let fingerprint = embedder.fingerprint().id();
+
+        let outcome = backfill_opened(&graph, &embedder, &mut |_| {}).await;
+        let BackfillOutcome::Ran { chunks, .. } = outcome else {
+            panic!("the pass held the lease and ran: {outcome:?}");
+        };
+        let ChunkWarmOutcome::Failed { files_embedded, .. } = chunks else {
+            panic!("the fourth request was refused, so the rung failed: {chunks:?}");
+        };
+
+        assert!(
+            files_embedded > 0,
+            "the batch that completed before the failure must be committed, \
+             not discarded with the window (#4144)"
+        );
+        assert_eq!(
+            graph
+                .embedded_chunk_count(&fingerprint)
+                .expect("count the stored chunks"),
+            files_embedded,
+            "every file the pass reported as embedded must actually be in the store"
+        );
+        graph.shutdown();
+    }
+
     /// **The correctness witness for #4144's concurrency.** Batching the
     /// chunk rung across files is only worth anything if the vectors land on
     /// the symbols they were computed for. With requests in flight
