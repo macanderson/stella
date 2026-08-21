@@ -113,6 +113,47 @@ fn every_seeded_provider_declares_an_output_budget_posture() {
     }
 }
 
+/// The stream-fallback-axis sibling. This axis shipped with neither half of
+/// the both-sides enforcement AGENTS.md describes — no completeness test here
+/// and no witness-existence test in `stella-model` (that half landed in the
+/// same PR). A provider with no row silently declares nothing about how it
+/// behaves when its streaming path breaks before the first byte, which is the
+/// fault #2686 exists to recover from.
+#[test]
+fn every_seeded_provider_declares_a_stream_fallback_posture() {
+    for provider in PROVIDERS.iter().chain(std::iter::once(&LOCAL_PROVIDER)) {
+        assert!(
+            stella_model::provider_parity::stream_fallback_posture(provider.id).is_some(),
+            "provider `{}` has no StreamFallbackPosture row in \
+             stella-model/src/provider_parity.rs — add it (with a witness test for a \
+             UnaryFallback, or a note for a StreamingOnly/AlwaysUnary row) in this PR",
+            provider.id
+        );
+    }
+}
+
+/// The parallel-tool-call-axis sibling (#4163): every seeded provider must
+/// declare whether several tool calls ride one assistant message, and name
+/// the test proving this adapter fans several of them in.
+///
+/// The engine dispatches consecutive read-only calls concurrently and the
+/// system prompt asks the model to send independent calls together — so this
+/// is a capability the working surface *already depends on*, and until this
+/// axis existed no provider stated it and no test pinned it.
+#[test]
+fn every_seeded_provider_declares_a_parallel_tool_call_posture() {
+    for provider in PROVIDERS.iter().chain(std::iter::once(&LOCAL_PROVIDER)) {
+        assert!(
+            stella_model::provider_parity::parallel_tool_call_posture(provider.id).is_some(),
+            "provider `{}` has no ParallelToolCallPosture row in \
+             stella-model/src/provider_parity.rs — add it (naming the fan-in witness, plus \
+             either an observation that parallel calls are admitted by default or a note \
+             saying the admission question is undetermined) in this PR",
+            provider.id
+        );
+    }
+}
+
 #[test]
 fn alias_env_var_resolves_when_the_primary_is_unset() {
     // Synthetic provider with unique var names so parallel tests can't

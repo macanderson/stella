@@ -732,3 +732,74 @@ async fn an_observed_turn_that_fails_announces_nothing() {
     assert!(matches!(err, ProviderError::Auth(_)), "{err:?}");
     assert!(observer.deltas.lock().unwrap().is_empty());
 }
+
+/// The parallel-tool-call fan-in witness named by the `bedrock` row of
+/// `PARALLEL_TOOL_CALL_POSTURE` (#4163).
+///
+/// Converse is unary, so there is no fragment reassembly to get wrong — the
+/// hazard here is the plainer one: a fan-in that takes the first `toolUse`
+/// block off `content` and stops. The engine's concurrent read-only dispatch
+/// and the prompt's "send independent tool calls together" both assume every
+/// block becomes a call, and nothing checked that they do.
+#[tokio::test]
+async fn several_tool_use_blocks_fan_in_as_several_calls_on_converse() {
+    let server = MockServer::start().await;
+    let body = serde_json::json!({
+        "output": {"message": {"role": "assistant", "content": [
+            {"text": "Reading both files."},
+            {"toolUse": {"toolUseId": "tu_a", "name": "read_file",
+                         "input": {"path": "a.rs"}}},
+            {"toolUse": {"toolUseId": "tu_b", "name": "read_file",
+                         "input": {"path": "b.rs"}}},
+            {"toolUse": {"toolUseId": "tu_c", "name": "bash",
+                         "input": {"command": "ls"}}}
+        ]}},
+        "stopReason": "tool_use",
+        "usage": {"inputTokens": 20, "outputTokens": 12}
+    });
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    let result = test_provider(&server.uri())
+        .complete(observed_request())
+        .await
+        .expect("three toolUse blocks parse");
+
+    let names: Vec<&str> = result
+        .tool_calls
+        .iter()
+        .map(|call| call.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["read_file", "read_file", "bash"],
+        "every toolUse block becomes a call, in content order — including two \
+         calls to the same tool, which is the exact shape a parallel read batch \
+         takes and the one a dedupe-by-name fan-in would silently collapse"
+    );
+
+    let ids: Vec<&str> = result
+        .tool_calls
+        .iter()
+        .map(|call| call.call_id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        ["tu_a", "tu_b", "tu_c"],
+        "each keeps its own toolUseId"
+    );
+
+    assert_eq!(result.tool_calls[0].input["path"], "a.rs");
+    assert_eq!(
+        result.tool_calls[1].input["path"], "b.rs",
+        "two calls to one tool keep distinct arguments"
+    );
+    assert_eq!(result.tool_calls[2].input["command"], "ls");
+    assert!(
+        matches!(result.finish_reason, Some(FinishReason::ToolCalls)),
+        "{:?}",
+        result.finish_reason
+    );
+}

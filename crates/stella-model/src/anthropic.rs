@@ -1328,4 +1328,6 @@ async fn aggregate_anthropic_stream(
 }
 
 #[cfg(test)]
+mod parallel_tool_calls;
+#[cfg(test)]
 mod tests;

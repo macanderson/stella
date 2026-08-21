@@ -357,7 +357,7 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    *after* the stable prefix (see `crates/stella-cli/src/agent.rs::build_system_prompt`
    and `crates/stella-cli/src/memory.rs` for the L-E8 discipline).
 8. **Provider feature parity is declared, not assumed.** Providers diverge
-   in sneaky ways, and this is guarded on **five axes** today in
+   in sneaky ways, and this is guarded on **six axes** today in
    `crates/stella-model/src/provider_parity.rs`:
    - **`CachePosture`** — how the prompt cache is engaged/observed
      (Anthropic's cache is explicit opt-in; DeepSeek spells its cache-hit
@@ -397,6 +397,23 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
      on its exact recorded body; every direct vendor is a declared
      `BestEffort` gap. Unrecognised, this failure killed three benchmark
      runs outright.
+   - **`ParallelToolCallPosture`** — whether several tool calls ride one
+     assistant message (#4163). The engine dispatches consecutive read-only
+     calls concurrently and the system prompt asks the model to use that
+     ("send independent tool calls together"), so both halves of the working
+     surface already depend on this — and nothing declared it or tested it.
+     Alone among the axes it records **two** facts, because they have
+     different kinds of evidence and collapsing them would let a row claim
+     more than it can show: `ParallelAdmission` is about a vendor's live API
+     and can only be settled by *observing* a run, while `fan_in_witness` is
+     about this tree's own adapters and is settled by a wiremock test — which
+     every row names, gap rows included. `DefaultOn` today for `openrouter`
+     and `zai`, each citing a census of this repository's own store.db
+     (grouping `tool_start` events by the preceding `step_manifest`); the
+     other eight are `Undetermined` rather than assumed to match a sibling
+     dialect. The measurement is also what decided the fix: both settled
+     routes already emit parallel calls in volume with **no opt-in ever
+     sent**, so no `parallel_tool_calls` request field was added.
 
    Each provider id declares a posture on **every** axis and, for a
    controllable/opt-in/implicit/fallback posture, names the **witness test**
