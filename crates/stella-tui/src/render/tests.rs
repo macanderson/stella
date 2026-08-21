@@ -473,7 +473,7 @@ fn a_turn_opens_on_a_labelled_rule() {
 /// no ceiling. Both elide. The failure this guards is not cosmetic: a rule that
 /// filled the gaps would open the transcript by naming a model nobody routed to
 /// and a `$0.00` nobody set, on the row a reader trusts to say what this turn
-/// is (#4175).
+/// is (#4183).
 #[test]
 fn an_opening_rule_names_no_model_or_budget_it_was_never_told() {
     let text = recall_text(

@@ -49,7 +49,7 @@ pub struct TurnOpening {
     /// `AgentEvent::TurnComplete`, which by definition has not arrived yet.
     /// Elided rather than substituted — the configured default is not evidence
     /// of what a router picked, and the rule would be asserting a routing
-    /// decision nothing recorded (#4175).
+    /// decision nothing recorded (#4183).
     pub model: Option<String>,
     /// The spend ceiling in force, as the last `AgentEvent::BudgetTick`
     /// reported it. `None` means **no budget is armed**, which is not a budget

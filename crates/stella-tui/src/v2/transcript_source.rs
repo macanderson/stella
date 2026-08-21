@@ -150,7 +150,7 @@ fn first_line(text: &str) -> &str {
 /// report one interruption twice; and a steer *queued before* the turn opened
 /// arrives as an ordinary prompt, which the deck cannot tell apart from any
 /// other. The label stays unfed rather than fed something that is not it
-/// (#4176).
+/// (#4185).
 #[must_use]
 pub fn turn_begin_rows(
     turn: u32,
@@ -182,7 +182,9 @@ pub fn turn_begin_rows(
 /// double-count the spend the budget gauge tracks), keeps no per-turn clock,
 /// and counts no per-turn files, tests or memories. A receipt reading
 /// `0 tok · 0 files · 0/0 tests` would be four measurements nobody took, on the
-/// one line whose whole job is to be the settled account of a turn.
+/// one line whose whole job is to be the settled account of a turn. Sourcing
+/// the other five — `det %` above all, which SPEC 5 moved off the status bar
+/// and re-homed here — is #4184.
 #[must_use]
 pub fn turn_end_rows(turn: u32, cost_usd: f64, width: usize) -> Vec<Line<'static>> {
     vec![
