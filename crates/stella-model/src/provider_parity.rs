@@ -12,8 +12,12 @@
 //! row is missing (`stella-cli` config tests), duplicated, or names a witness
 //! test that no longer exists in the adapter sources.
 //!
-//! Three axes are guarded today, all born from the same shape of silent
-//! per-provider divergence:
+//! Six axes are guarded today, all born from the same shape of silent
+//! per-provider divergence. (This sentence said "three" while listing four
+//! for as long as the fourth existed — a count in prose beside the list it
+//! counts is a cell that has to be written twice, which is why
+//! `all_axes_cover_the_same_provider_ids` checks the tables and this sentence
+//! merely introduces them.)
 //! - [`CachePosture`] — how a provider's prompt cache is engaged and observed.
 //! - [`ReasoningPosture`] — how a provider's reasoning/thinking budget is
 //!   controlled on the wire. The reasoning axis has the sibling defect the
@@ -35,6 +39,13 @@
 //!   times over. Unrecognised, it aborts the turn — which cost three
 //!   benchmark runs, every trial dead against a balance the provider itself
 //!   said could afford a smaller ask.
+//! - [`StreamFallbackPosture`] — how a provider recovers when its streaming
+//!   path is broken before it delivers a byte (#2686).
+//! - [`ParallelToolCallPosture`] — whether several tool calls ride one
+//!   assistant message, which the engine's concurrent read-only dispatch and
+//!   the system prompt's "send independent tool calls together" both depend
+//!   on and neither could check (#4163). See [`parallel`] for why this axis
+//!   records two facts rather than one.
 //!
 //! **The law for new providers:** adding a provider id means adding a row on
 //! every axis here in the same PR, and a `Controllable`/`OptIn`/`Implicit`
@@ -46,6 +57,71 @@
 //! per-provider feature divergence (attachment dialects, tool schemas): when
 //! one provider needs something the others don't, record the axis as a
 //! matrix, don't leave it as adapter folklore.
+
+pub mod parallel;
+
+pub use parallel::{
+    PARALLEL_TOOL_CALL_POSTURE, ParallelAdmission, ParallelToolCallPosture,
+    parallel_tool_call_posture,
+};
+
+/// Every file a witness test — on any axis — can live in. `include_str!`
+/// embeds them at compile time so a renamed or deleted witness fails the
+/// build's tests rather than production.
+///
+/// The `zai/tests/` and `anthropic/tests/` submodules are listed individually
+/// because this guard reads SOURCE TEXT, not the module tree: a witness that
+/// stays a real, passing test but moves into a split-out module would vanish
+/// from this list and fail the guard, which is a false alarm rather than the
+/// rotted proof it exists to catch. The parent `tests.rs` files are over the
+/// file-size ratchet, so those splits keep happening — the list has to follow
+/// them.
+///
+/// Returned as a slice, not a sized array: the array length was one shared
+/// cell every PR adding a source file had to write, and two green PRs (#2748
+/// adding `zai/tests/stream_fallback.rs`, #2752 adding `http.rs`) composed
+/// into a red `main` when the merge kept both entries and one length — the
+/// same shape that removed the spelled-out total from `GATE_STEPS` (#1883).
+///
+/// Lives at module level rather than inside `mod tests` so the axis
+/// submodules can check their own witnesses against the same list; the
+/// `include_str!` paths stay relative to this file either way.
+#[cfg(test)]
+pub(crate) fn adapter_sources() -> &'static [&'static str] {
+    &[
+        // The overflow axis's witnesses live beside the classifier they
+        // prove: overflow detection is shared plumbing
+        // (`http::classify_http_status`), and its per-dialect tests exercise
+        // each provider's exact body shape there.
+        include_str!("http.rs"),
+        include_str!("http/tests.rs"),
+        include_str!("anthropic/tests.rs"),
+        include_str!("anthropic/tests/cache_breakpoints.rs"),
+        include_str!("anthropic/tests/thinking.rs"),
+        // Beside `tests.rs`, not inside `tests/`: both parent `tests.rs`
+        // files sit on the file-size ratchet, so the two fan-in witnesses
+        // added by #4163 are declared from their adapter modules instead.
+        include_str!("anthropic/parallel_tool_calls.rs"),
+        include_str!("zai/parallel_tool_calls.rs"),
+        include_str!("bedrock/tests.rs"),
+        include_str!("openai.rs"),
+        // The Responses dialect's own `mod tests` lives in `openai.rs`, which
+        // is a grandfathered god file closed to growth — so its parallel
+        // fan-in witness lives in the sibling that owns the `Provider` impl
+        // the test dispatches through.
+        include_str!("openai/provider.rs"),
+        include_str!("gemini/tests.rs"),
+        include_str!("vertex.rs"),
+        include_str!("zai/tests.rs"),
+        include_str!("zai/tests/error_classify.rs"),
+        include_str!("zai/tests/openrouter_effort.rs"),
+        include_str!("zai/tests/openrouter_stream.rs"),
+        include_str!("zai/tests/stream_fallback.rs"),
+        include_str!("zai/tests/stream_frame.rs"),
+        include_str!("zai/tests/vision.rs"),
+        include_str!("zai/tests/zai_effort.rs"),
+    ]
+}
 
 /// How a provider's prompt cache is engaged and observed.
 #[derive(Debug)]
@@ -728,48 +804,6 @@ pub fn downgraded_effort(provider_id: &str, effort: &str) -> Option<&'static str
 mod tests {
     use super::*;
 
-    /// The adapter source files every witness (cache or reasoning) must live
-    /// in. `include_str!` embeds them at compile time so a renamed/deleted
-    /// witness fails the build's tests, not production.
-    /// Every file a witness test can live in. The `zai/tests/` submodules are
-    /// listed individually because this guard reads SOURCE TEXT, not the
-    /// module tree: a witness that stays a real, passing test but moves into a
-    /// split-out module would vanish from this list and fail the guard, which
-    /// is a false alarm rather than the rotted proof it exists to catch. The
-    /// parent `tests.rs` is over the file-size ratchet, so those splits keep
-    /// happening — the list has to follow them.
-    /// Returned as a slice, not a sized array: the array length was one
-    /// shared cell every PR adding a source file had to write, and two green
-    /// PRs (#2748 adding `zai/tests/stream_fallback.rs`, #2752 adding
-    /// `http.rs`) composed into a red `main` when the merge kept both
-    /// entries and one length — the same shape that removed the spelled-out
-    /// total from `GATE_STEPS` (#1883).
-    fn adapter_sources() -> &'static [&'static str] {
-        &[
-            // The overflow axis's witnesses live beside the classifier they
-            // prove: overflow detection is shared plumbing
-            // (`http::classify_http_status`), and its per-dialect tests
-            // exercise each provider's exact body shape there.
-            include_str!("http.rs"),
-            include_str!("http/tests.rs"),
-            include_str!("anthropic/tests.rs"),
-            include_str!("anthropic/tests/cache_breakpoints.rs"),
-            include_str!("anthropic/tests/thinking.rs"),
-            include_str!("bedrock/tests.rs"),
-            include_str!("openai.rs"),
-            include_str!("gemini/tests.rs"),
-            include_str!("vertex.rs"),
-            include_str!("zai/tests.rs"),
-            include_str!("zai/tests/error_classify.rs"),
-            include_str!("zai/tests/openrouter_effort.rs"),
-            include_str!("zai/tests/openrouter_stream.rs"),
-            include_str!("zai/tests/stream_fallback.rs"),
-            include_str!("zai/tests/stream_frame.rs"),
-            include_str!("zai/tests/vision.rs"),
-            include_str!("zai/tests/zai_effort.rs"),
-        ]
-    }
-
     /// Every witness named in the cache matrix must exist as a test function
     /// in the adapter sources — a row whose proof rotted (test renamed or
     /// deleted) fails here, not as a production surprise.
@@ -976,24 +1010,85 @@ mod tests {
         }
     }
 
+    /// The stream-fallback axis's sibling check, which it did not have.
+    ///
+    /// AGENTS.md describes every axis as enforced from both sides, and this
+    /// one was enforced from neither: no witness-existence test here and no
+    /// completeness test in `stella-cli` (that half landed in the same PR).
+    /// So a `UnaryFallback` row could name a test that had been renamed away
+    /// and nothing would notice — the exact rot the other four axes are
+    /// guarded against. The no-fallback variants carry a note, not a witness.
+    #[test]
+    fn every_stream_fallback_witness_test_exists_in_the_adapter_sources() {
+        let sources = adapter_sources();
+        for (id, posture) in STREAM_FALLBACK_POSTURE {
+            let witness = match posture {
+                StreamFallbackPosture::UnaryFallback { witness, .. } => witness,
+                StreamFallbackPosture::StreamingOnly { .. }
+                | StreamFallbackPosture::AlwaysUnary { .. } => continue,
+            };
+            let needle = format!("fn {witness}(");
+            assert!(
+                sources.iter().any(|source| source.contains(&needle)),
+                "stream-fallback witness for `{id}` not found in adapter sources: {witness}"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_fallback_provider_ids_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, _) in STREAM_FALLBACK_POSTURE {
+            assert!(
+                seen.insert(id),
+                "duplicate stream-fallback-posture row for `{id}`"
+            );
+        }
+    }
+
     /// All axes must cover exactly the same set of provider ids — a provider
     /// present on one axis but not another is a matrix hole.
+    ///
+    /// Compared against `cache` pairwise rather than by intersecting all six,
+    /// so a failure names *which* axis drifted instead of reporting that the
+    /// set sizes disagree.
     #[test]
     fn all_axes_cover_the_same_provider_ids() {
         let cache: std::collections::BTreeSet<_> =
             CACHE_POSTURE.iter().map(|(id, _)| *id).collect();
-        let reasoning: std::collections::BTreeSet<_> =
-            REASONING_POSTURE.iter().map(|(id, _)| *id).collect();
-        let overflow: std::collections::BTreeSet<_> =
-            OVERFLOW_POSTURE.iter().map(|(id, _)| *id).collect();
-        assert_eq!(
-            cache, reasoning,
-            "cache and reasoning matrices cover different provider ids"
-        );
-        assert_eq!(
-            cache, overflow,
-            "cache and overflow matrices cover different provider ids"
-        );
+        for (axis, ids) in [
+            (
+                "reasoning",
+                REASONING_POSTURE
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .collect::<std::collections::BTreeSet<_>>(),
+            ),
+            (
+                "overflow",
+                OVERFLOW_POSTURE.iter().map(|(id, _)| *id).collect(),
+            ),
+            (
+                "output-budget",
+                OUTPUT_BUDGET_POSTURE.iter().map(|(id, _)| *id).collect(),
+            ),
+            (
+                "stream-fallback",
+                STREAM_FALLBACK_POSTURE.iter().map(|(id, _)| *id).collect(),
+            ),
+            (
+                "parallel-tool-call",
+                PARALLEL_TOOL_CALL_POSTURE
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .collect(),
+            ),
+        ] {
+            assert_eq!(
+                cache, ids,
+                "the cache and {axis} matrices cover different provider ids"
+            );
+        }
     }
 
     #[test]

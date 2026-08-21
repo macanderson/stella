@@ -1369,4 +1369,6 @@ impl ZaiProvider {
 }
 
 #[cfg(test)]
+mod parallel_tool_calls;
+#[cfg(test)]
 mod tests;

@@ -711,3 +711,81 @@ async fn complete_sends_generation_config_params_on_the_wire() {
         "{body}"
     );
 }
+
+/// The parallel-tool-call fan-in witness named by the `gemini` and `vertex`
+/// rows of `PARALLEL_TOOL_CALL_POSTURE` (#4163) — `vertex` shares this
+/// aggregator, so it shares the proof.
+///
+/// `complete_mints_call_ids_and_captures_thought_signatures` already streams
+/// two `functionCall` parts, but it is about id minting and thought
+/// signatures; it would keep passing if the parts arrived in one chunk and
+/// the fan-in silently required that. Two things are pinned here that it does
+/// not pin: parts split across *separate SSE chunks* still fan in, and two
+/// calls to the same tool stay two calls.
+#[tokio::test]
+async fn several_function_call_parts_fan_in_as_several_calls() {
+    let server = MockServer::start().await;
+    // Three calls across two chunks — Gemini may split one candidate's parts
+    // over several streamed payloads, and a fan-in that reset per chunk would
+    // drop everything but the last group.
+    let sse_body = concat!(
+        "data: {\"candidates\":[{\"content\":{\"parts\":[",
+        "{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"a.rs\"}}},",
+        "{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"b.rs\"}}}",
+        "]}}]}\n\n",
+        "data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[",
+        "{\"functionCall\":{\"name\":\"bash\",\"args\":{\"command\":\"ls\"}}}",
+        "]}}],\"usageMetadata\":{\"promptTokenCount\":20,\"candidatesTokenCount\":12}}\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/models/gemini-3-pro:streamGenerateContent"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider =
+        GeminiProvider::new(ApiKey::new("test-key"), "gemini-3-pro").with_base_url(server.uri());
+    let result = provider
+        .complete(CompletionRequest {
+            messages: vec![CompletionMessage::user("read both files and list")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        })
+        .await
+        .expect("three functionCall parts across two chunks parse");
+
+    let names: Vec<&str> = result
+        .tool_calls
+        .iter()
+        .map(|call| call.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["read_file", "read_file", "bash"],
+        "every functionCall part becomes a call, across chunk boundaries and \
+         including repeats of one tool — the shape a parallel read batch takes"
+    );
+    assert_eq!(result.tool_calls[0].input["path"], "a.rs");
+    assert_eq!(
+        result.tool_calls[1].input["path"], "b.rs",
+        "two calls to one tool keep distinct arguments"
+    );
+    assert_eq!(result.tool_calls[2].input["command"], "ls");
+
+    let ids: std::collections::BTreeSet<&str> = result
+        .tool_calls
+        .iter()
+        .map(|call| call.call_id.as_str())
+        .collect();
+    assert_eq!(
+        ids.len(),
+        3,
+        "Gemini's wire carries no call ids, so the adapter mints them — and it \
+         must mint three DISTINCT ones here, or the next turn's results \
+         correlate back to the wrong call: {ids:?}"
+    );
+}
