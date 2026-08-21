@@ -60,7 +60,15 @@ fn result(name: &str, ok: bool, body: &str) -> TranscriptEntry {
 fn rows(entries: &[TranscriptEntry]) -> Vec<String> {
     let mut out = Vec::new();
     for entry in entries {
-        entry_lines(entry, &[], false, false, false, WIDTH, &mut out);
+        entry_lines(
+            entry,
+            EntryView::default(),
+            false,
+            false,
+            false,
+            WIDTH,
+            &mut out,
+        );
     }
     out.iter()
         .map(|l| {
@@ -141,7 +149,15 @@ fn a_failed_block_rides_its_own_rail_end_to_end() {
     ];
     let mut lines = Vec::new();
     for entry in &block {
-        entry_lines(entry, &[], false, false, false, WIDTH, &mut lines);
+        entry_lines(
+            entry,
+            EntryView::default(),
+            false,
+            false,
+            false,
+            WIDTH,
+            &mut lines,
+        );
     }
     let rail = expected_rail();
     let railed: Vec<_> = lines
@@ -245,7 +261,15 @@ fn call_with_args() -> TranscriptEntry {
 
 fn render(entry: &TranscriptEntry, expanded: bool) -> Vec<String> {
     let mut out = Vec::new();
-    entry_lines(entry, &[], false, expanded, false, WIDTH, &mut out);
+    entry_lines(
+        entry,
+        EntryView::default(),
+        false,
+        expanded,
+        false,
+        WIDTH,
+        &mut out,
+    );
     out.iter()
         .map(|l| {
             l.spans
@@ -302,7 +326,15 @@ fn revealed_arguments_ride_the_heads_own_rail() {
             path: Some("src/lib.rs".into()),
         };
         let mut lines = Vec::new();
-        entry_lines(&call, &[], false, true, false, WIDTH, &mut lines);
+        entry_lines(
+            &call,
+            EntryView::default(),
+            false,
+            true,
+            false,
+            WIDTH,
+            &mut lines,
+        );
         let railed: Vec<_> = lines
             .iter()
             .filter(|l| {

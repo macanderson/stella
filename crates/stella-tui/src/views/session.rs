@@ -21,8 +21,8 @@ use crate::deck::{AgentEntry, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::model::{FileState, TranscriptEntry};
 use crate::render::{
-    entry_lines, inner_height, inner_width, reasoning_is_live, render_ask_user, render_hud,
-    render_transcript_window, streaming_lines,
+    EntryView, entry_lines, inner_height, inner_width, reasoning_is_live, render_ask_user,
+    render_hud, render_transcript_window, streaming_lines,
 };
 use crate::theme;
 use crate::transcript_nav::TurnDigest;
@@ -260,7 +260,7 @@ impl SessionFold {
             } else {
                 entry_lines(
                     &transcript[i],
-                    files,
+                    EntryView::at(files, transcript, i),
                     thinking,
                     expand_all || expanded.contains(&i),
                     false,
@@ -284,7 +284,7 @@ impl SessionFold {
             } else if !plan.hides(target) {
                 entry_lines(
                     last,
-                    files,
+                    EntryView::at(files, transcript, target),
                     thinking,
                     expand_all || expanded.contains(&target),
                     reasoning_is_live(transcript, streaming),

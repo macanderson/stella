@@ -301,6 +301,21 @@ fn settled_entry_count(transcript_len: usize, include_trailing: bool) -> usize {
 /// `live` is `false` for every entry: liveness is the tail-follow affordance
 /// for a thought still being written, and nothing in this range is still being
 /// written — that is what makes it flushable at all.
+///
+/// Each entry is rendered against the **whole** lane transcript, not against
+/// the block's own slice: a row's tail is where a tool head finds the result
+/// that measured it (#4154), and a result sitting one index past `block.to` is
+/// no less real for not being in this write.
+///
+/// A row whose measurement has not arrived by flush time keeps no size column,
+/// permanently — scrollback is append-only, so what is written here is what a
+/// reader hears. That is the deliberate choice of the two on offer, and it is
+/// the same one the surface already makes for the v1 result row's `+N −M`,
+/// which resolves through the identical ledger. The alternative — holding a
+/// mutating head back until the turn boundary measures the tree — would trade a
+/// missing column for a silent reader through the whole of a long call, which
+/// is the one thing this mode exists to prevent. #4178 tracks the divergence
+/// from the pane, where the same row does fill in.
 pub fn block_lines(
     model: &WorkspaceModel,
     block: &FlushBlock,
@@ -317,10 +332,11 @@ pub fn block_lines(
     let transcript = &entry.model.transcript;
     let files: &[FileState] = &entry.model.files;
     let to = block.to.min(transcript.len());
-    for item in &transcript[block.from.min(to)..to] {
+    let from = block.from.min(to);
+    for (offset, item) in transcript[from..to].iter().enumerate() {
         crate::render::entry_lines(
             item,
-            files,
+            crate::render::EntryView::at(files, transcript, from + offset),
             expand_thinking,
             expand_thinking,
             false,

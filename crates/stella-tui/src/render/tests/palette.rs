@@ -24,7 +24,15 @@ use super::*;
 fn no_transcript_row_carries_a_raw_ansi_colour() {
     for entry in sample_entries() {
         let mut lines = Vec::new();
-        entry_lines(&entry, &[], true, true, false, 80, &mut lines);
+        entry_lines(
+            &entry,
+            EntryView::default(),
+            true,
+            true,
+            false,
+            80,
+            &mut lines,
+        );
         for line in &lines {
             for span in &line.spans {
                 for (slot, colour) in [("fg", span.style.fg), ("bg", span.style.bg)] {
@@ -53,7 +61,7 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
     // `theme::WARN`, a heading goes bold `INK`): proof none of it leaks.
     entry_lines(
         &TranscriptEntry::User("fix the `parser` bug\nand **ship** it".to_string()),
-        &[],
+        EntryView::default(),
         false,
         false,
         false,
@@ -106,7 +114,15 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
 fn transcript_prefix_colors_stay_in_the_brand_family() {
     let prefix_fg = |entry: &TranscriptEntry| -> Option<Color> {
         let mut out = Vec::new();
-        entry_lines(entry, &[], false, false, false, 80, &mut out);
+        entry_lines(
+            entry,
+            EntryView::default(),
+            false,
+            false,
+            false,
+            80,
+            &mut out,
+        );
         out[0].spans[0].style.fg
     };
     assert_eq!(
@@ -228,7 +244,7 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
                 raw: "{}".into(),
                 path: None,
             },
-            &[],
+            EntryView::default(),
             false,
             false,
             false,
@@ -272,7 +288,7 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
                 raw: "{}".into(),
                 path: Some("src/lib.rs".into()),
             },
-            &[],
+            EntryView::default(),
             false,
             false,
             false,
@@ -307,7 +323,7 @@ fn an_argument_less_call_prints_no_empty_object() {
             raw: "{}".into(),
             path: None,
         },
-        &[],
+        EntryView::default(),
         false,
         false,
         false,
@@ -338,7 +354,7 @@ fn a_sub_agent_dispatch_is_not_bookkeeping() {
             instruction_preview: "read the layout".into(),
             write_access: false,
         },
-        &[],
+        EntryView::default(),
         false,
         false,
         false,

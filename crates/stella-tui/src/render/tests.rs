@@ -67,7 +67,7 @@ fn transcript_lines(
     for (i, entry) in model.transcript.iter().enumerate() {
         entry_lines(
             entry,
-            &model.files,
+            EntryView::at(&model.files, &model.transcript, i),
             expand_thinking,
             expand_thinking,
             live && i == last,
@@ -443,7 +443,7 @@ fn the_turn_receipt_prices_in_gold_not_in_the_pass_colour() {
             cost_usd: 0.11,
             turn: 14,
         },
-        &[],
+        EntryView::default(),
         false,
         false,
         false,
@@ -472,7 +472,15 @@ fn the_turn_receipt_prices_in_gold_not_in_the_pass_colour() {
 
 fn recall_text(entry: &TranscriptEntry, expanded: bool, width: usize) -> String {
     let mut out = Vec::new();
-    entry_lines(entry, &[], false, expanded, false, width, &mut out);
+    entry_lines(
+        entry,
+        EntryView::default(),
+        false,
+        expanded,
+        false,
+        width,
+        &mut out,
+    );
     out.iter()
         .map(|l| {
             l.spans

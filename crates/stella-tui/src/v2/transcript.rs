@@ -49,11 +49,13 @@ pub const RAIL_W: usize = 2;
 /// counts stopped being re-derived for exactly this reason — #2290). `None`
 /// renders as no column at all.
 ///
-/// Nothing constructs a measured `Extent` from a live session yet: the head
-/// draws at dispatch and there is no pass that revisits the row once the
-/// turn-boundary `FileChange` lands. That backfill is the other half of #4150
-/// and is tracked separately; until it exists an edit head is honestly silent
-/// about its size, and the measured numbers stay on the v1 result row.
+/// A measured one is filled in after the fact, not at dispatch:
+/// [`super::transcript_source::measured_delta`] resolves the emitter's counts
+/// through the call's own result once the turn boundary has measured the tree,
+/// and the deck's settled-prefix fold re-renders the row when that lands
+/// (#4154). So `None` is the state of every head at the moment it is drawn, and
+/// of any head whose call failed, was cancelled, or changed nothing — three
+/// facts a zero would misreport as one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Extent {
     /// Lines added, for an edit or a new file.
@@ -102,7 +104,9 @@ impl Extent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
     /// `▸ read <path> · <n> lines` — folded by default. The count rides
-    /// `Extent::added`, and is absent until the read returns.
+    /// `Extent::added` and has no producer today: only a *mutation* stamps the
+    /// inline-diff reference the head's measurement is resolved through, so a
+    /// read states its path and nothing about its size (#4177).
     Read { extent: Extent },
     /// `● edit <path> +a -b`, the counts absent until the edit returns.
     Edit { extent: Extent },
