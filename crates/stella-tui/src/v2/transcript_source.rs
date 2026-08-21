@@ -27,7 +27,7 @@
 
 use ratatui::text::Line;
 
-use super::transcript::{Event, EventKind, event_rows};
+use super::transcript::{Event, EventKind, Receipt, event_rows, receipt, turn_end};
 
 /// The metal-bearing head of a dispatched call (SPEC 6.2).
 ///
@@ -106,6 +106,29 @@ fn subject_for(name: &str, path: Option<&str>, input: &str) -> String {
 /// The first line of a blob, for a row that has exactly one.
 fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or("").trim_end()
+}
+
+/// A turn's closing rule and its receipt (SPEC 6.1).
+///
+/// Two rows, always: the boundary is the transcript's rhythm — SPEC 2 makes the
+/// turn its unit — so it renders whether or not the receipt has anything but
+/// money to say.
+///
+/// Everything the receipt cannot source is elided rather than zeroed. Only
+/// `spend_usd` is fed today: the deck does not fold `StepUsage` (it would
+/// double-count the spend the budget gauge tracks), keeps no per-turn clock,
+/// and counts no per-turn files, tests or memories. A receipt reading
+/// `0 tok · 0 files · 0/0 tests` would be four measurements nobody took, on the
+/// one line whose whole job is to be the settled account of a turn.
+#[must_use]
+pub fn turn_end_rows(turn: u32, cost_usd: f64, width: usize) -> Vec<Line<'static>> {
+    vec![
+        turn_end(turn, None, width),
+        receipt(&Receipt {
+            spend_usd: cost_usd,
+            ..Receipt::default()
+        }),
+    ]
 }
 
 #[cfg(test)]

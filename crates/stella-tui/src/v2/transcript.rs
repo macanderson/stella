@@ -203,7 +203,14 @@ pub struct TurnHead {
 #[derive(Clone, Debug, Default)]
 pub struct Receipt {
     pub spend_usd: f64,
-    pub tokens: u64,
+    /// Tokens this turn spent. `None` when nothing has counted them.
+    ///
+    /// Optional for the same reason [`Receipt::det_pct`] is: `StepUsage` is a
+    /// metering record the deck deliberately does not fold (it would
+    /// double-count the spend the budget gauge already tracks), so a turn's
+    /// token total has no source in the session model today. A receipt that
+    /// printed `0 tok` would be stating a measurement nobody took.
+    pub tokens: Option<u64>,
     /// The deterministic share of the turn's work. This is `det %`'s home —
     /// SPEC 5 removed it from the status bar and named the receipt instead.
     pub det_pct: Option<u32>,
@@ -259,17 +266,20 @@ pub fn turn_begin(head: &TurnHead, width: usize) -> Line<'static> {
 /// The closing rule of a turn (SPEC 6.1). `elapsed` is pre-formatted — this
 /// module has no clock.
 #[must_use]
-pub fn turn_end(number: u32, elapsed: &str, width: usize) -> Line<'static> {
+pub fn turn_end(number: u32, elapsed: Option<&str>, width: usize) -> Line<'static> {
     let dim = Style::new().fg(token::DIM);
-    labelled_rule(
-        vec![
-            Span::styled("turn ", dim),
-            Span::styled(number.to_string(), Style::new().fg(token::GOLD)),
-            Span::styled(" done", Style::new().fg(token::TEXT)),
-            Span::styled(format!(" · {elapsed}"), dim),
-        ],
-        width,
-    )
+    let mut label = vec![
+        Span::styled("turn ", dim),
+        Span::styled(number.to_string(), Style::new().fg(token::GOLD)),
+        Span::styled(" done", Style::new().fg(token::TEXT)),
+    ];
+    // Elided rather than rendered as `0:00`, which is a duration nobody
+    // measured. The deck folds no per-turn clock today; when it does, this
+    // fills in without the rule changing shape.
+    if let Some(elapsed) = elapsed {
+        label.push(Span::styled(format!(" · {elapsed}"), dim));
+    }
+    labelled_rule(label, width)
 }
 
 /// The receipt line under a closing rule (SPEC 6.1).
@@ -284,10 +294,12 @@ pub fn receipt(r: &Receipt) -> Line<'static> {
     let mut spans = vec![
         Span::styled("   receipt ", dim),
         Span::styled(format!("${:.2}", r.spend_usd), Style::new().fg(token::GOLD)),
-        Span::styled(" · ", dim),
-        Span::styled(fmt_tokens(r.tokens), text),
-        Span::styled(" tok", dim),
     ];
+    if let Some(tokens) = r.tokens {
+        spans.push(Span::styled(" · ", dim));
+        spans.push(Span::styled(fmt_tokens(tokens), text));
+        spans.push(Span::styled(" tok", dim));
+    }
     if let Some(det) = r.det_pct {
         spans.push(Span::styled(" · det ", dim));
         spans.push(Span::styled(format!("{det}%"), text));

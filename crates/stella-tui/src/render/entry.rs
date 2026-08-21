@@ -19,7 +19,7 @@ use stella_protocol::{CiStatus, PrStatus, SubAgentStatus};
 use crate::model::{FileState, TranscriptEntry};
 use crate::render::row::*;
 use crate::textline::{
-    self, budget_mode_label, ci_status_label, media_kind_label, media_state_label, pr_status_label,
+    budget_mode_label, ci_status_label, media_kind_label, media_state_label, pr_status_label,
     stage_label,
 };
 // Still owned by the parent: `resolve_inline_diff` reads the draw-side file
@@ -216,6 +216,10 @@ fn v2_rows(entry: &TranscriptEntry, width: usize, out: &mut Vec<Line<'static>>) 
                 *evicted,
                 *deduped,
             ));
+            true
+        }
+        TranscriptEntry::Complete { cost_usd, turn, .. } => {
+            out.extend(v2::turn_end_rows(*turn, *cost_usd, width));
             true
         }
         _ => false,
@@ -1043,30 +1047,13 @@ fn entry_body(
                 out,
             );
         }
-        TranscriptEntry::Complete { model, cost_usd } => {
-            // The turn's receipt, and now the *only* spend line in the
-            // transcript — the per-call `BudgetTick` rows that used to print
-            // four or five running subtotals per turn are gauge-only (see
-            // `SessionModel::apply`). Because it is the one line, it can afford
-            // to be the definite one: green for a settled amount, and the model
-            // that actually answered spelled out beside it rather than left to
-            // the statline.
-            push_note(
-                "✓ cost",
-                loud(theme::SUCCESS_BRIGHT),
-                vec![
-                    Span::styled(
-                        textline::fmt_cost(*cost_usd),
-                        Style::new()
-                            .fg(theme::SUCCESS_BRIGHT)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(format!("  ·  {model}"), quiet()),
-                ],
-                width,
-                out,
-            );
-        }
+        // Owned by the v2 router above, which returns `true` for it and so
+        // never falls through to here — the closing rule and receipt of
+        // SPEC 6.1. The arm exists because the match must stay exhaustive, and
+        // it draws nothing rather than panicking: if the router is ever
+        // narrowed, a missing turn rule is a visible gap a reader can report,
+        // where an `unreachable!()` would take the session down mid-frame.
+        TranscriptEntry::Complete { .. } => {}
     }
 }
 
