@@ -165,10 +165,10 @@ _COMPLETED_TRIAL = [
 class TestRolesConfigReachesTheDeclaration:
     """#2134's headline: a verifier the host selector never saw."""
 
-    def test_a_harness_roles_config_verifier_puts_the_witness_arm_on(
+    def test_a_harness_roles_config_verifier_is_refused_at_the_launch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The witness test for #2134.
+        """#2134's channel, and #4103's refusal, in one trial.
 
         A roles config sets `pipeline_verifier_model` through the posture seam
         and never touches `STELLA_WITNESS_AUTHOR_MODEL`. The declaration used to
@@ -176,6 +176,14 @@ class TestRolesConfigReachesTheDeclaration:
         `verifier_model: null`, and an off-reason asserting facts about roles
         nothing had examined — for a run whose engine had an independent author
         the whole time.
+
+        #2134's half is still the subject and is still asserted: the refusal
+        can only name `_VERIFIER` if this channel reached the declaration, so a
+        regression that went back to reading the host selector alone would
+        compute `witness-off` here, launch, and fail this test on the missing
+        `RuntimeError`. What #4103 changes is what happens *next* — the engine
+        has one role now, so a declaration this channel puts on cannot be
+        honored by any model call, and the run is refused instead of scored.
         """
         monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
@@ -183,38 +191,40 @@ class TestRolesConfigReachesTheDeclaration:
 
         agent = _RolesConfigAgent.__new__(_RolesConfigAgent)
         agent.posture_override = _roles_posture()
-        context = _run_trial(agent, tmp_path, _COMPLETED_TRIAL)
 
-        assert context.metadata["stella_assurance_arm"] == "witness-on"
-        assert context.metadata["stella_verifier_model"] == _VERIFIER
-        tiers = context.metadata["stella_assurance_tiers"]
-        assert tiers["verifier_model"] == _VERIFIER
-        assert tiers["worker_model"] == _WORKER
-        assert tiers["tiers"]["authored_witness"] == "on"
-        assert tiers["tiers"]["model_verdict"] == "on-independent-of-worker"
-        assert tiers["authored_witness_off_reason"] is None
+        with pytest.raises(RuntimeError) as refusal:
+            _run_trial(agent, tmp_path, _COMPLETED_TRIAL)
 
-    def test_the_declaration_and_the_posture_name_the_same_verifier(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+        reason = str(refusal.value)
+        assert _VERIFIER in reason, (
+            "the refusal must name the verifier the ROLES CONFIG pinned — that "
+            "is the #2134 channel, and a reason naming anything else means the "
+            "declaration was recomputed from the host selector again"
+        )
+        assert _WORKER in reason
+        assert "#4103" in reason
+
+    def test_the_declaration_and_the_posture_name_the_same_verifier(self) -> None:
         """One source, so the two metadata blocks cannot contradict each other.
 
         The contradiction is the artifact a bench forensic reads first: #2134
         was diagnosed by opening `stella_engine_posture` and
         `stella_assurance_tiers` side by side in one `result.json`.
+
+        Asserted on the declaration directly rather than by driving a trial,
+        because the trial that used to carry it is now refused (#4103) — but
+        the claim itself is about *reading* a posture, which is exactly the
+        half the refusal deliberately leaves working. An archived `result.json`
+        from before the collapse is read by this same function.
         """
-        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
-        monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
-        monkeypatch.delenv(_WITNESS_AUTHOR_ENV, raising=False)
+        posture = _roles_posture()
+        tiers, _json, _digest = assurance_tiers_from_posture(posture)
 
-        agent = _RolesConfigAgent.__new__(_RolesConfigAgent)
-        agent.posture_override = _roles_posture()
-        context = _run_trial(agent, tmp_path, _COMPLETED_TRIAL)
-
-        posture = context.metadata["stella_engine_posture"]
-        tiers = context.metadata["stella_assurance_tiers"]
         assert posture["pipeline_verifier_model"] == tiers["verifier_model"]
-        assert context.metadata["stella_verifier_model"] == tiers["verifier_model"]
+        assert tiers["worker_model"] == _WORKER
+        assert tiers["tiers"]["authored_witness"] == "on"
+        assert tiers["tiers"]["model_verdict"] == "on-independent-of-worker"
+        assert tiers["authored_witness_off_reason"] is None
 
     def test_an_outer_timeout_reconstructs_the_declaration_from_the_seam(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
