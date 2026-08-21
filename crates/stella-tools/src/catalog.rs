@@ -91,7 +91,7 @@ pub struct ToolEntry {
     /// | [`RiskLevel::High`] | Leaves the workspace, spends money, or runs something nobody bounded |
     /// | [`RiskLevel::Destructive`] | The agent cannot undo it |
     ///
-    /// Today's eighteen built-ins populate all four grades, and the working
+    /// Today's built-ins populate all four grades, and the working
     /// surface is what spreads them: `read_file` and `search` observe
     /// (`Low`), `write_file` and `edit_file` are bounded and locally undoable
     /// (`Medium`), `delete_file` is the one thing the agent cannot undo from
@@ -202,6 +202,25 @@ catalog! {
     // One-shot environment report: workspace root, git/worktree bit,
     // platform, OS release, shell dialect, scratch dir (#2697).
     "get_environment"     => (true, true, Low, Always, "environment"),
+    // Put a decision back to whoever is driving this agent (#4212).
+    //
+    // `read_only` is honest — it changes nothing — and load-bearing twice:
+    // `ReadOnlyTools` filters on exactly this flag, so a delegated child can
+    // still ask its dispatcher (the whole agent-to-agent path, by
+    // construction rather than by a special case), and the engine
+    // parallelizes on it, which is why the broker holds a fairness gate.
+    // Deliberately NOT `speculation_safe`: a speculated call would ask a
+    // human the same question twice.
+    //
+    // `Low` on the same rubric as the board: what it touches cannot outlive
+    // the process. It spends a human's attention, which no column here
+    // grades — the ceiling that matters for this tool is the driver's
+    // patience, and the schema's own description is where that is defended.
+    //
+    // Its own group rather than `task`, so an operator can withhold
+    // questions without withholding the coordination family: an unattended
+    // fleet worker wants `"question": "off"` and its task board intact.
+    "ask_question"        => (true, false, Low, Always, "question"),
 }
 
 /// Tool names Stella once dispatched and no longer does.

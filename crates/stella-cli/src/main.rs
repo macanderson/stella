@@ -97,6 +97,7 @@ mod proposals_cmd;
 mod query_format;
 mod resume_frame;
 mod reward;
+mod question;
 mod rules;
 mod runtime;
 mod search_cmd;

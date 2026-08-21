@@ -14,6 +14,7 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 pub mod approval;
 mod executor;
 mod output;
+pub mod question;
 pub(crate) mod validate;
 
 /// One tool the agent can call. Input arrives as the model-produced JSON;
@@ -127,6 +128,12 @@ pub struct ToolRegistry {
     /// grant-path refusal); a host injects its responder at assembly time
     /// via [`ToolRegistry::attach_approval_responder`].
     approval: std::sync::RwLock<approval::ApprovalBroker>,
+    /// The session's question flow (#4212): how an `ask_question` call
+    /// reaches whoever is driving this session — a human at a terminal, or
+    /// the agent that dispatched the agent asking. Headless by default (the
+    /// decide-it-yourself decline); a host injects its responder at assembly
+    /// time via [`ToolRegistry::attach_question_responder`].
+    question: question::QuestionSlot,
     /// The live policy-plane bridge subscription (receipts spec §6.4), if
     /// [`ToolRegistry::bridge_policy_plane`] wired one. Held so a re-bridge
     /// (a new turn's event channel) replaces — unsubscribes — the previous
@@ -161,6 +168,10 @@ impl ToolRegistry {
         let spawn_dispatch: crate::tasks::SpawnDispatch = Arc::default();
         let sub_agent_dispatcher: crate::subagent::DispatcherSlot = Arc::default();
         let sub_agent_spend: stella_core::subagent::SubAgentSpendLedger = Arc::default();
+        // Filled by `attach_question_responder` after assembly; the tool holds
+        // a clone of the slot rather than of the broker, so attaching a
+        // responder reaches the already-registered tool (#4212).
+        let question: question::QuestionSlot = Arc::default();
         let scratch = crate::scratch::ScratchDir::new().map(Arc::new);
         let scratch_path = scratch.as_ref().ok().map(|s| s.path().to_path_buf());
 
@@ -196,6 +207,12 @@ impl ToolRegistry {
             Arc::new(crate::environment::GetEnvironment {
                 scratch_dir: scratch_path.clone(),
             }),
+            // Registered unconditionally, on the same argument as the
+            // delegation tool above: an unattached responder is the honest
+            // shape, and the tool says so in words the model can act on
+            // rather than vanishing from a schema list the prompt describes
+            // as complete.
+            Arc::new(crate::ask::AskQuestion::new(question.clone())),
         ];
         match scratch {
             Ok(scratch) => entries.extend([
@@ -225,6 +242,7 @@ impl ToolRegistry {
             turn_controls: crate::subagent::TurnControlsSlot::default(),
             bus: std::sync::RwLock::new(None),
             approval: Default::default(),
+            question,
             policy_bridge: std::sync::Mutex::new(None),
             events: std::sync::RwLock::new(None),
             extra_write_dirs: std::sync::RwLock::new(Vec::new()),

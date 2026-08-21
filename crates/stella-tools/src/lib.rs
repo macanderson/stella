@@ -17,7 +17,10 @@
 //!   session task board (`task_create` / `task_list` / `task_start` /
 //!   `task_complete` / `task_cancel` / `task_assign`), the session scratch
 //!   state plane (`save_state` / `get_state` / `list_state` / `delete_state`),
-//!   and the environment report (`get_environment`).
+//!   the environment report (`get_environment`), and one question back to
+//!   whoever is driving ([`ask`], #4212) — which is the only built-in whose
+//!   answer comes from outside the process, and which reaches a delegated
+//!   sub-agent precisely because it is `read_only`.
 //!
 //! That is the whole built-in set. Every *other* capability reaches the model
 //! as a developer-defined custom script tool ([`custom`]), an MCP tool
@@ -36,6 +39,7 @@
 //! hook runner/bridge ([`hook_runner`], [`hook_bridge`]).
 
 pub mod agent_use;
+pub mod ask;
 pub mod bash;
 pub mod batch;
 pub mod catalog;

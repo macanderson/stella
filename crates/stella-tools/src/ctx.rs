@@ -155,6 +155,27 @@ impl ToolCtx {
         &self.scope
     }
 
+    /// The agent this call is attributed to — a delegated sub-agent's id, or
+    /// `None` for a top-level turn (#4212).
+    ///
+    /// Read from the bus's attribution stack, which
+    /// `stella_core::subagent::AgentAttribution` maintains around every child
+    /// turn. That is the point: it is a fact the **runtime** establishes, so
+    /// a tool asking "who is calling me?" gets an answer no model input can
+    /// forge — a child cannot claim to be its parent, because nothing it
+    /// sends is consulted.
+    ///
+    /// `None` also when no bus is attached at all, which reads correctly:
+    /// with no attribution plane there are no sub-agents to distinguish.
+    ///
+    /// The consumer is [`crate::ask::AskQuestion`], which stamps it onto the
+    /// question so whoever is driving can see whose question they are being
+    /// asked.
+    #[must_use]
+    pub fn current_agent(&self) -> Option<String> {
+        self.bus.as_ref().and_then(HookBus::current_agent)
+    }
+
     /// Resolve a model-supplied path for a **mutation**, returning the allowed
     /// root to open it under and its path relative to that root.
     ///

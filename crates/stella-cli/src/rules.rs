@@ -378,12 +378,20 @@ fn merge_rule_trust_tiers(mut user_rules: Vec<Rule>, project_rules: Vec<Rule>) -
 /// constructing its registry.
 ///
 /// `interactive_approvals` declares whether this driver's surface can ask a
-/// human mid-turn: `true` (a TTY REPL/goal surface) attaches the #2676
-/// approval responder so a gate's `RequireApproval` parks on a real yes/no;
+/// human mid-turn, and now arms **both** mid-turn asks against that one fact
+/// (#4212): `true` (a TTY REPL/goal surface) attaches the #2676 approval
+/// responder so a gate's `RequireApproval` parks on a real yes/no, and the
+/// `ask_question` responder so an agent's question parks on a real answer;
 /// `false` (fleet workers, sub-agent lanes, machine-output runs, the deck
-/// until it grows an approval card) leaves the registry's broker headless,
-/// whose refusal names the grant path. It rides here because this is the
-/// same call that arms the guards able to produce a `RequireApproval`.
+/// until it grows an approval card) leaves both registry brokers headless —
+/// the approval refusal names the grant path, and the question decline tells
+/// the model to decide and state its assumption. It rides here because this
+/// is the same call that arms the guards able to produce a
+/// `RequireApproval`.
+///
+/// The parameter keeps its approvals-era name rather than growing a second
+/// one: two booleans would be two places for "is a human here?" to be
+/// answered differently, which is the exact defect #3035 collapsed.
 pub(crate) fn enforce_workspace_rules(
     registry: &ToolRegistry,
     workspace_root: &Path,
@@ -391,6 +399,11 @@ pub(crate) fn enforce_workspace_rules(
     interactive_approvals: bool,
 ) -> ResolvedRules {
     crate::approval::attach_interactive_approvals(registry, interactive_approvals);
+    // The same fact answers both: a surface that can park a tool call on a
+    // human yes/no is exactly a surface that can park one on a question
+    // (#4212). Deriving it twice is what let two consumers of "is anyone
+    // here?" disagree before #3035.
+    crate::question::attach_interactive_questions(registry, interactive_approvals);
     let rules = load_workspace_rules(workspace_root, authority);
     attach_rule_guards(registry, &rules);
     rules
