@@ -734,10 +734,39 @@ impl SessionModel {
                 // Only a *successful* mutation gets an inline-diff reference —
                 // a failed call produced no `FileChange`, and rendering the
                 // path's previous diff under its ✗ would attribute a change
-                // the call never made. The engine's `FileChangeTap` emits the
-                // `FileChange` during the tool's execution, so by the time
-                // this result folds, `files[path].changes` already counts this
-                // call's own change — that value is the freshness tag.
+                // the call never made.
+                //
+                // The `seq` stamped here does NOT resolve, and the comment that
+                // used to sit on it is why nobody noticed. It said "the
+                // engine's `FileChangeTap` emits the `FileChange` during the
+                // tool's execution, so by the time this result folds,
+                // `files[path].changes` already counts this call's own change".
+                // There is no `FileChangeTap` anywhere in the workspace — that
+                // string appeared in this comment and nowhere else.
+                //
+                // What is true instead, in two layers. `stella-pipeline`, which
+                // emitted one `FileChange` per adopted change *during* delivery,
+                // is deleted (#3865), so the only producer left is
+                // `stella_cli::turn_files::emit_shared_tree_changes` — one
+                // aggregate `--numstat` change per path, at the turn boundary.
+                // On the deck path it is not reached at all today:
+                // `command_deck::run_lead_turn` pays only the run terminator, so
+                // no `FileChange` reaches this fold and `recent_diffs` stays
+                // empty. #4160 fixes that half. Underneath it sits a second,
+                // latent one: the boundary emit lands *after* every `ToolResult`
+                // of the turn has folded, so `changes` here is the pre-turn
+                // value, `touch_file` then bumps it and `remember_diff` records
+                // at the bumped seq, and `diff_at` misses by exactly one. That
+                // is already live for `agent::run_turn` (`stella run`), and
+                // giving the deck a producer will surface it there too — the
+                // Files tab will fill while this row stays diffless.
+                //
+                // The stamp is left as-is on purpose: `+1` would make all of a
+                // path's calls in one turn point at the single aggregate
+                // change, which is the misattribution
+                // `render::resolve_inline_diff` exists to prevent. Per-call
+                // attribution needs a per-call producer, and that is a design
+                // decision, not a repair — tracked in #4155.
                 let diff = if ok {
                     self.mutated_path_for(call_id).map(|path| {
                         let seq = self
