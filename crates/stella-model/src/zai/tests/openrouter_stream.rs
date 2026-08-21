@@ -97,6 +97,89 @@ async fn openrouter_in_band_error_code_502_is_retryable() {
     );
 }
 
+/// The same shape as the 502 above, one rung further out: the frame carries
+/// NO `code` at all, and its prose is the gateway's own abort wording. An
+/// abort is the upstream connection dropping mid-stream — transient by
+/// construction, since nothing about the request was refused — but none of
+/// the classifier's transient words appear in it, so it fell through to
+/// non-retryable `Terminal` and killed the turn on attempt 1 with every
+/// configured retry unused.
+#[tokio::test]
+async fn openrouter_in_band_abort_without_a_code_is_retryable() {
+    let server = MockServer::start().await;
+    // The frame witnessed on a live OpenRouter stream: no `code`, and the
+    // message shares no substring with "overload"/"unavailable"/"timeout".
+    let sse_body = concat!(
+        "data: {\"error\":{\"message\":\"The operation was aborted\"}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "anthropic/claude-fable-5")
+        .with_base_url(server.uri())
+        .with_identity("openrouter", "OpenRouter");
+    let req = CompletionRequest {
+        messages: vec![CompletionMessage::user("hi")],
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    };
+    let err = provider.complete(req).await.expect_err("must be an error");
+    assert!(
+        err.is_retryable(),
+        "a dropped upstream connection must be retried, got {err:?}"
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("The operation was aborted"),
+        "surfaces the gateway's own text: {msg}"
+    );
+}
+
+/// The negative control for the abort arm: "aborted" must widen the transient
+/// set by exactly one word and no further. A refusal the gateway states
+/// plainly stays `Terminal`, because retrying it re-pays the prompt to be
+/// refused identically.
+#[tokio::test]
+async fn openrouter_in_band_refusal_stays_terminal() {
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "data: {\"error\":{\"message\":\"This model is not available to your account\"}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "anthropic/claude-fable-5")
+        .with_base_url(server.uri())
+        .with_identity("openrouter", "OpenRouter");
+    let req = CompletionRequest {
+        messages: vec![CompletionMessage::user("hi")],
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    };
+    let err = provider.complete(req).await.expect_err("must be an error");
+    assert!(
+        matches!(err, ProviderError::Terminal(_)),
+        "an account-level refusal is not transient, got {err:?}"
+    );
+    assert!(!err.is_retryable());
+}
+
 /// A `code: 429` frame whose prose never says "rate limit" must still
 /// classify as throttling rather than a permanent rejection.
 #[tokio::test]

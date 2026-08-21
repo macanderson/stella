@@ -753,8 +753,8 @@ impl ZaiStreamError {
 
 /// Classify an in-band OpenAI-compatible error frame into a typed
 /// `ProviderError`. Transient/server-side conditions (overloaded, 5xx,
-/// unavailable, timeout) are **retryable** `Transport`; an explicit rate
-/// limit is `RateLimited`; everything else is `Terminal`. The gateways don't
+/// unavailable, timeout, aborted) are **retryable** `Transport`; an explicit
+/// rate limit is `RateLimited`; everything else is `Terminal`. The gateways don't
 /// share a stable machine code, so this matches on the human-readable
 /// `type`/`message` text — deliberately conservative: unknown ⇒ terminal, so
 /// a genuine failure is never retried into an infinite loop. `label` names
@@ -772,6 +772,14 @@ fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError
         || haystack.contains("server_error")
         || haystack.contains("unavailable")
         || haystack.contains("timeout")
+        // An abort is the upstream connection dropping mid-stream, not a
+        // decision about the request — so it is transient by construction and
+        // the identical retry can succeed. OpenRouter phrases it "The
+        // operation was aborted" and attaches NO `code`, so neither the words
+        // above nor the statuses below could catch it: the same shape as the
+        // `code: 502` frame this arm's sibling was added for, one rung further
+        // out, and it burned the turn on attempt 1 with all retries unused.
+        || haystack.contains("aborted")
         || code == "500"
         || code == "502"
         || code == "503"
