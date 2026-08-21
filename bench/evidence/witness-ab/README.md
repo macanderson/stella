@@ -18,7 +18,7 @@ no author independent of the worker` and carried on with the judge alone. Those
 numbers are a lower bound on the ladder, not a measurement of it
 ([`../../READINESS.md`](../../READINESS.md) §9).
 
-Two things used to block turning it on, and both are fixed:
+Two things used to block turning it on, and both were fixed:
 
 * [#1007](https://github.com/macanderson/stella/issues/1007) added
   `STELLA_WITNESS_AUTHOR_MODEL`, which names a second model on the worker's
@@ -27,12 +27,35 @@ Two things used to block turning it on, and both are fixed:
 * [#1225](https://github.com/macanderson/stella/issues/1225) gave each task
   folder a git baseline, so a witness has something to be diffed against.
 
+> [!IMPORTANT]
+> **A third thing blocks it now, and this one is structural: the treatment arm
+> cannot be run on the binary this workspace builds**
+> ([#4103](https://github.com/macanderson/stella/issues/4103)).
+>
+> The engine has one role. `AgentEngineConfig::model_for` resolves
+> `agents.default.model` > `default_model` and takes no role argument;
+> `pipeline_verifier_model` and `agents.verifier` are retired keys the launcher
+> recognizes, reports and ignores. So the second model this experiment's whole
+> design rests on reaches no model call, and both arms would execute the same
+> configuration — the treatment arm merely carrying a different digest. That is
+> not a null result, it is a measurement artifact, and it would have been
+> reported as the answer to the question this directory exists to ask.
+>
+> `refuse_unauthorable_witness_arm` now refuses such a launch before it spends
+> anything, so the experiment cannot be run accidentally. Running it for real
+> needs an independent author to exist again — which in this workspace means a
+> verification plugin over the wrapper socket (`doc:pipeline-as-plugins` §8),
+> not an engine key. **The protocol, the denominator, the decision rule and the
+> preregistration below are unaffected and stay valid**; what changed is the
+> mechanism that would deliver an author, and therefore what a run must be
+> pointed at.
+
 This directory holds the protocol, the preregistered analysis plan and the
 decision rule for the run that answers the question. **The run itself has not
-happened yet** — it needs a spend-capable credential and a host that can run
-89 Docker task images, neither of which any amount of code in this repository
-can supply. Results land in a sibling `witness-ab-<YYYYMMDD>/` directory and
-this file gains a row pointing at them.
+happened yet** — and, per the note above, cannot happen against this
+workspace's engine keys until an independent author exists again. Results land
+in a sibling `witness-ab-<YYYYMMDD>/` directory and this file gains a row
+pointing at them.
 
 ## What gets measured
 

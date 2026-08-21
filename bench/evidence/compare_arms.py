@@ -13,8 +13,17 @@ because the posture pinned one model for every role and Stella refuses to let a
 worker author its own witness. Those numbers are a lower bound on the ladder,
 not a measurement of it.
 
-Turning the rung on is one environment variable (`STELLA_WITNESS_AUTHOR_MODEL`,
-#1007) over a workspace that now has a git baseline to compare against (#1225).
+Turning the rung on **used to be** one environment variable
+(`STELLA_WITNESS_AUTHOR_MODEL`, #1007) over a workspace that now has a git
+baseline to compare against (#1225). It no longer turns anything on: the engine
+has one role, so that pin reaches no model call, and a launch carrying it is
+refused rather than measured (#4103,
+`stella_harbor.posture.refuse_unauthorable_witness_arm`). This script is
+therefore a reader of evidence recorded on binaries that could still split the
+two roles — which is exactly what it always was, and why nothing in it changes:
+it has never trusted a posture's declaration on its own. See property 2 below,
+which is the same skepticism aimed at the same failure from the other side.
+
 What was missing is the arithmetic that turns two runs into an answer, and the
 evidence to run it over: the per-trial verdict and witness observations lived
 only in the multi-gigabyte Harbor job tree, which is never committed, so the
