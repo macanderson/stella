@@ -20,7 +20,7 @@ use stella_protocol::{BudgetMode, StageKind, StageName};
 ///
 /// # Why the facts ride the entry
 ///
-/// The same reason [`TranscriptEntry::Complete`]'s `turn` does: `render::entry`
+/// The same reason [`super::TranscriptEntry::Complete`]'s `turn` does: `render::entry`
 /// renders one entry at a time and holds no session state, so a fact that is not
 /// on the entry is a fact the rule cannot say.
 ///
@@ -34,7 +34,7 @@ use stella_protocol::{BudgetMode, StageKind, StageName};
 /// render time, because the renderer cannot see the entry before this one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TurnOpening {
-    /// This turn's 1-based ordinal — [`SessionModel::turns_completed`] plus the
+    /// This turn's 1-based ordinal — [`super::SessionModel::turns_completed`] plus the
     /// turn in flight, so it is the number the turn's own closing rule will
     /// carry.
     ///
@@ -51,9 +51,18 @@ pub struct TurnOpening {
     /// of what a router picked, and the rule would be asserting a routing
     /// decision nothing recorded (#4183).
     pub model: Option<String>,
-    /// The spend ceiling in force, as the last `AgentEvent::BudgetTick`
-    /// reported it. `None` means **no budget is armed**, which is not a budget
-    /// of `$0.00` — the same distinction [`Hud::deadline_remaining_ms`] draws.
+    /// This turn's spend ceiling, from [`Hud::limit_usd`].
+    ///
+    /// The **turn's**, not the session's, which is what makes it the right
+    /// number for a rule that opens one turn: `AgentEvent::BudgetTick`'s own
+    /// doc states that `spent_usd`/`limit_usd` are turn-scoped and that the
+    /// session axis rides separately on `session_spent_usd`/
+    /// `session_limit_usd`, which the deck does not fold.
+    ///
+    /// `None` means **no budget is armed**, which is not a budget of `$0.00` —
+    /// the same distinction [`Hud::deadline_remaining_ms`] draws, and for the
+    /// same reason: a rule printing `budget $0.00` over an uncapped run would
+    /// state a cap nobody set.
     pub budget_usd: Option<f64>,
 }
 
@@ -100,7 +109,7 @@ pub struct Hud {
     pub host_stage: Option<StageKind>,
     pub model: Option<String>,
     /// [`Hud::spent_usd`] as it stood when the current turn began, so live turn
-    /// cost is the difference. Snapshotted in [`SessionModel::push_user_prompt`]
+    /// cost is the difference. Snapshotted in [`super::SessionModel::push_user_prompt`]
     /// — the earliest signal a turn has started.
     pub turn_start_spent_usd: f64,
     /// The final turn cost, set once a `Complete` event lands.
