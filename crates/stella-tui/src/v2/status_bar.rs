@@ -38,13 +38,18 @@
 //! are booleans, not a computed ratio: a call either reached a model or it did
 //! not.
 //!
-//! ## Where it draws
+//! ## Wiring
 //!
-//! `render_deck`'s bottom band, through [`render_band`] — the deck's only
-//! status row since #4129 deleted the two-row wall. [`crate::v2::project`]
-//! turns the live `WorkspaceModel` into a [`Status`]; nothing in this module
-//! reads the fold itself, which is what keeps every golden below fixture data
-//! all the way down.
+//! [`render_band`] is the deck's bottom band: `render_deck` reserves one row
+//! for it and two only when a cache diagnosis is showing.
+//!
+//! This section used to say the module was "not wired to the live deck yet",
+//! and give the reason — that a v2 bar under v1 chrome would be "the only
+//! cool-gray element on a warm screen". That argument was already spent when it
+//! was written: the recolour that made v1 cool landed four minutes after the
+//! module did, and the two palettes agree on every token this row uses. The
+//! note outlived the condition it described by a day, which is the whole reason
+//! this repo treats a stale comment as a defect rather than as harmless prose.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
