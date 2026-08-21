@@ -706,6 +706,42 @@ mod tests {
         );
     }
 
+    /// The tool-level half of the single-lane rule: `task_start` on a second
+    /// task is refused, and the message the model reads names the task it must
+    /// close first. Without this, an agent that walked from "investigate" to
+    /// "implement" without a `task_complete` left the board pointing at the
+    /// wrong step for the rest of the session, and nothing ever said so.
+    #[tokio::test]
+    async fn task_start_refuses_a_second_task_and_names_the_open_one() {
+        let (board, _queue) = handles();
+        content(
+            exec(
+                &TaskCreate(board.clone()),
+                serde_json::json!({ "tasks": ["Investigate the pass", "Implement batching"] }),
+            )
+            .await,
+        );
+        content(exec(&TaskStart(board.clone()), serde_json::json!({"id": "1"})).await);
+
+        let msg = error(exec(&TaskStart(board.clone()), serde_json::json!({"id": "2"})).await);
+        assert!(msg.contains("Investigate the pass"), "{msg}");
+        assert!(msg.contains("task_complete"), "{msg}");
+        assert_eq!(
+            board.lock().unwrap().items()[1].status,
+            TaskStatus::Pending,
+            "a refused start must leave the second task claimable"
+        );
+
+        // Completing the first is what lets the second start — the correction
+        // the refusal asks for actually works.
+        content(exec(&TaskComplete(board.clone()), serde_json::json!({"id": "1"})).await);
+        content(exec(&TaskStart(board.clone()), serde_json::json!({"id": "2"})).await);
+        assert_eq!(
+            board.lock().unwrap().items()[1].status,
+            TaskStatus::InProgress
+        );
+    }
+
     #[tokio::test]
     async fn cancel_echoes_the_reason_in_the_confirmation() {
         let (board, _queue) = handles();
