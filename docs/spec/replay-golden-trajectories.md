@@ -9,52 +9,58 @@ status: archived
 > **Status (2026-08-19):** this document describes machinery that lived in
 > `crates/stella-pipeline`, which was removed from the workspace (#3865)
 > along with `make record-golden`. It is kept as the design record for the
-> replay-fixture approach; none of the commands below run against the
-> current tree.
+> replay-fixture approach; **none of the commands, paths or types below exist
+> in the current tree**, and the whole document is written in the past tense
+> for that reason. A verification plugin that wants trajectory fixtures
+> implements this on its own side of the wrapper socket
+> (`doc:pipeline-as-plugins` §8); the surviving per-PR wire gate is
+> `doc:verification-gate` Layer 2.
 
-How the golden-trajectory fixtures are recorded and refreshed, and what a
-**reference** engine has to do before its runs can join them.
+How the golden-trajectory fixtures were recorded and refreshed, and what a
+**reference** engine had to do before its runs could join them.
 
 Machinery: `crates/stella-pipeline/src/replay.rs` (`validate_stream`,
 `structural_diff`, `streams_equivalent`) and
-`crates/stella-pipeline/src/replay/golden.rs` (the fixture format and its load gates).
+`crates/stella-pipeline/src/replay/golden.rs` (the fixture format and its load
+gates) — both deleted in #3865.
 
 ---
 
 ## Two kinds of recording, deliberately not interchangeable
 
-A golden's manifest names its `source`, and the distinction is load-bearing:
+A golden's manifest named its `source`, and the distinction was load-bearing:
 
 | Source | What it is | What it proves |
 |---|---|---|
 | `rust_stack` | Recorded from this workspace's own pipeline | **Drift baseline.** Catches a stage that stopped being emitted, a tool that changed name, an event that moved or vanished. Both sides are the same code, so it is not independent evidence. |
 | `reference` | Recorded from another engine through an adapter that emits this protocol | **Reference trajectory.** The only kind that answers "does the Rust stack agree with the reference implementation?" |
 
-Encoding this in the fixture rather than in prose is what stops a baseline from
-being cited later as a reference. `RecordingSource::is_reference()` is asserted
-in `crates/stella-pipeline/src/pipeline/tests/golden.rs`.
+Encoding this in the fixture rather than in prose is what stopped a baseline
+from being cited later as a reference — a rule worth carrying into any
+successor. `RecordingSource::is_reference()` was asserted in
+`crates/stella-pipeline/src/pipeline/tests/golden.rs`.
 
-Today every committed golden is a `rust_stack` baseline. No `reference`
-recording exists — see [The reference-engine gap](#the-reference-engine-gap).
+Every committed golden was a `rust_stack` baseline. No `reference` recording was
+ever made — see [The reference-engine gap](#the-reference-engine-gap).
 
 ---
 
 ## The fixture format
 
-Two files per task under `crates/stella-pipeline/tests/fixtures/golden/`:
+Two files per task lived under `crates/stella-pipeline/tests/fixtures/golden/`:
 
 - `<task_id>.jsonl` — one `AgentEvent` per line, the same wire format
   `stella run --output-format stream-json` emits.
 - `<task_id>.manifest.json` — `task_id`, a one-line `description`, the
   `source`, and `event_count`.
 
-`event_count` is not decoration. `parse_jsonl` deliberately tolerates a torn
+`event_count` was not decoration. `parse_jsonl` deliberately tolerates a torn
 final line (L-T1) — correct for a live reader recovering from a crashed writer,
 and exactly wrong for a committed fixture, where it would silently hand back a
 recording one event short and weaken every assertion made against it. The count
-turns that into a loud `GoldenError::Truncated`.
+turned that into a loud `GoldenError::Truncated`.
 
-`GoldenTrajectory::load` additionally refuses:
+`GoldenTrajectory::load` additionally refused:
 
 - a recording that is not parseable as an `AgentEvent` stream
   (`GoldenError::Recording`) — this is what a foreign wire format produces;
@@ -68,36 +74,40 @@ turns that into a loud `GoldenError::Truncated`.
 
 ## Recording and refreshing
 
-```bash
-make record-golden        # re-record every golden from the current code
-```
-
-or directly:
+> **Neither command exists.** `make record-golden` is not a Makefile target and
+> `-p stella-pipeline` names no crate. They are shown because the *shape* of the
+> refresh loop is the part a successor should copy.
 
 ```bash
-STELLA_REFRESH_GOLDEN=1 cargo test -p stella-pipeline --lib golden
+make record-golden                                       # (removed, #3865)
+STELLA_REFRESH_GOLDEN=1 cargo test -p stella-pipeline --lib golden   # (removed)
 ```
 
-The recorders live in `crates/stella-pipeline/src/pipeline/tests/golden.rs`. Each
-drives the real `Pipeline` over scripted model/test ports and records the
-stream it actually emits — deterministic, no API key, runnable in CI, which is
-the only reason a recording can be asserted on every `cargo test` instead of
-refreshed by hand and hoped over.
+The recorders lived in `crates/stella-pipeline/src/pipeline/tests/golden.rs`.
+Each drove the real `Pipeline` over scripted model/test ports and recorded the
+stream it actually emitted — deterministic, no API key, runnable in CI, which
+was the only reason a recording could be asserted on every `cargo test` instead
+of refreshed by hand and hoped over. **Any successor that needs a live model to
+refresh its fixtures has already lost this property.**
 
-**A non-empty fixture diff is a change to the observable event contract.**
-Review it as one. If the change is intended, commit the refreshed fixture with
-the change that caused it; if it is not, you have found a regression.
+**A non-empty fixture diff was a change to the observable event contract**, and
+was reviewed as one. If the change was intended, the refreshed fixture landed
+with the change that caused it; if not, it was a regression.
 
 ### Adding a task
 
+The loop was:
+
 1. Add a `#[tokio::test]` to `crates/stella-pipeline/src/pipeline/tests/golden.rs`
-   that drives the pipeline over scripted ports and ends in `check_golden`.
+   driving the pipeline over scripted ports and ending in `check_golden`.
 2. Run `make record-golden` to write the fixture.
-3. Read the recorded `.jsonl`. It is evidence — confirm it is the flow you
-   meant to capture.
+3. **Read the recorded `.jsonl`.** It is evidence — confirm it is the flow you
+   meant to capture. (A golden blessed without looking is a changelog, not a
+   test; the same rule still governs the TUI's deck snapshots today.)
 4. Keep the set discriminating: `the_recorded_flows_are_structurally_distinct`
-   fails if two goldens collapse into the same trajectory, because a golden set
-   whose members are indistinguishable passes no matter what the pipeline does.
+   failed if two goldens collapsed into the same trajectory, because a golden
+   set whose members are indistinguishable passes no matter what the pipeline
+   does.
 
 ---
 
@@ -133,10 +143,12 @@ The two kinds that already parse (`text`, `reasoning`) are exactly the ones
 `event_signature` treats as structurally inert, and every event carrying
 structural identity fails. A half-imported reference recording would therefore
 be **all volatile content and no structure**: it would parse into something
-shaped like a trajectory that asserts nothing. That is why the loader gates
+shaped like a trajectory that asserts nothing. That is why the loader gated
 instead of trusting a recording, and why
-`crates/stella-pipeline/tests/reference_conformance.rs` pins the gap executably rather
-than leaving it as a comment that can rot.
+`crates/stella-pipeline/tests/reference_conformance.rs` pinned the gap
+executably rather than leaving it as a comment that can rot. That test went with
+the crate, so **the gap is now recorded here in prose only** — exactly the shape
+it was written to avoid.
 
 Note also that `structural_diff` is *positional* by design. Even with the wire
 format fixed, a reference stream would have to align stage-for-stage with the
@@ -145,9 +157,9 @@ or `ContextWrite` stage at all.
 
 ### The adapter
 
-The adapter is `crates/stella-pipeline/src/replay/reference_adapter.rs`
+The adapter was `crates/stella-pipeline/src/replay/reference_adapter.rs`
 (`adapt_reference_stream`, manifest id `replay::reference_adapter@v1`). It
-discharges the obligations `reference_conformance.rs` states — a typed
+discharged the obligations `reference_conformance.rs` stated — a typed
 `StageKind` per known stage label, synthesized `ref-N` call ids with FIFO
 pairing (the only order the id-less wire can support), and a terminal
 `Complete` translated from `result` — and it **fails closed** on everything
@@ -161,9 +173,10 @@ The reference transmits no tool arguments, so `ToolCall::input` is an empty
 object in adapted streams: a reference golden asserts stage order, tool
 identity/pairing, and termination — not arguments. `structural_diff` is also
 *positional*, and the reference emits no `Witness`, `ScopeReview`, `Reflect`,
-or `ContextWrite` stage at all, so a reference golden is only comparable
-against runs whose configuration skips those stages (e.g. a `--test-command`
-run that never authors a witness).
+or `ContextWrite` stage at all, so a reference golden was only comparable
+against runs whose configuration skipped those stages (e.g. a run with a
+supplied test command that never authored a witness — `--test-command` is
+refused outright today, #3867).
 
 ### Provenance of reference recordings — the settled policy
 
@@ -184,6 +197,8 @@ public OSS repo's CI can never regenerate a reference fixture. The policy
   version that produced it; drift between adapter versions is visible in the
   manifest diff.
 
-`STELLA_REFRESH_GOLDEN=1` and `make record-golden` remain the *rust-stack*
-refresh path only — a reference fixture can never be refreshed from this
-repo, by construction.
+`STELLA_REFRESH_GOLDEN=1` and `make record-golden` were the *rust-stack* refresh
+path only — a reference fixture could never be refreshed from this repo, by
+construction. Both are gone; the policy above is the part that outlives them,
+and applies unchanged to any verification plugin that commits opaque fixtures it
+cannot regenerate downstream.

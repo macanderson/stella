@@ -368,30 +368,30 @@ the engine is structured as a headless library, not a terminal program:
    but `stella-protocol`). **A web client is a drop-in peer of the TUI**: attach
    an SSE pump to the same `UnboundedReceiver<AgentEvent>`.
 
-3. **The pipeline is headless-first.** `stella-pipeline` has no TTY coupling in
-   its core; `PipelineConfig.headless` and `headless_bypass_scope_review` are
-   first-class, and a headless scope-review over threshold returns the named
+3. **The pipeline was headless-first** — and is now gone. As read in the
+   2026-07-20 sweep, `stella-pipeline` had no TTY coupling in its core;
+   `PipelineConfig.headless` and `headless_bypass_scope_review` were
+   first-class, and a headless scope-review over threshold returned the named
    error `ScopeReviewRequiredHeadless` — **never a silent auto-approve**.
-   `AutoApproveGate` / `AlwaysAbortGate` are the headless approval ports.
 
-   **Correction (#932 approval half).** This paragraph is the premise behind
-   "surface `ScopeReviewRequiredHeadless` to the host as a decision", and the
-   premise does not hold for `stella-serve` as built: **a served turn never
-   reaches a scope review at all.** `ApprovalGate::review` has exactly one
-   call site — `crates/stella-pipeline/src/pipeline/scope_stage.rs` — and
-   `stella-serve` does not depend on `stella-pipeline`. It drives the
-   *engine* (`stella_engine::run_step`), which has no plan or scope stage.
-   Only `stella-cli` and `stella-runtime` link the pipeline.
+   **Correction (#932 approval half), now overtaken.** That paragraph was the
+   premise behind "surface `ScopeReviewRequiredHeadless` to the host as a
+   decision", and the premise already did not hold for `stella-serve` as built:
+   a served turn never reached a scope review at all. `ApprovalGate::review`
+   had exactly one call site, in the pipeline's scope stage, and `stella-serve`
+   never depended on that crate — it drives the *engine*
+   (`stella_engine::run_step`), which has no plan or scope stage.
 
-   So `POST /v1/turns/{id}/approve` is not merely unbuilt, it is currently
-   **unreachable**: a route no turn could trigger, and a row in the table
-   above that a client could code against and never exercise. Building it
-   is blocked on a prior decision — whether `stella-serve` grows a
-   pipeline-driving surface (`POST /v1/runs`, distinct from `/v1/turns`)
-   or whether the approval boundary moves down into the engine. That is a
-   design question, not an increment, which is why the steering and
-   pause/resume halves of #932 shipped on their own (#1056) and this one
-   did not. It stays out of the table until that decision is made.
+   **`crates/stella-pipeline` has since been deleted outright (#3865)**, so
+   there is no scope review anywhere in the workspace and the last caller of
+   `ApprovalGate::review` went with it. `POST /v1/turns/{id}/approve` is
+   therefore not blocked on the design question this paragraph used to pose
+   (whether serve grows a pipeline-driving surface, or the approval boundary
+   moves down into the engine) — **it is blocked on there being nothing left to
+   approve.** Any future scope-review-shaped hold arrives through the wrapper
+   socket instead: a plugin's `before_turn` asking the host for a decision
+   (`doc:wrapper-socket` §6b), which is a different route and a different
+   design question. It stays out of the table.
 
    **What *did* ship in its place — the hold, made observable.** The half of
    the approval story that does not depend on that decision is the part the
@@ -546,7 +546,8 @@ consecutive backoffs — ends the loop.
 ### The step-scoped facade (`stella-engine`)
 
 ```rust
-// crates/stella-engine/src/lib.rs (facade over stella-core + stella-pipeline)
+// crates/stella-engine/src/lib.rs (facade over stella-core; the pipeline half
+// of this sketch is gone with `stella-pipeline`, #3865)
 pub struct TurnState { /* messages, budget, oracle_state, calibration, seq */ }
 
 impl Engine {
@@ -685,8 +686,11 @@ ADR-033 §7 names).
    `docs/wire/`. `scripts/check-wire-schema.sh` fails the gate on drift, and
    `validate_stream` runs as a conformance check over recorded fixtures and
    deliberate corruptions.
-   **Correction:** `validate_stream` lives in `crates/stella-pipeline/src/replay.rs`,
-   not `stella-protocol` as earlier editions of this document said.
+   **Correction:** `validate_stream` lived in
+   `crates/stella-pipeline/src/replay.rs`, not `stella-protocol` as earlier
+   editions of this document said — and went with that crate in #3865, so the
+   conformance half of this item no longer runs. The committed `docs/wire/`
+   artifacts and `scripts/check-wire-schema.sh` are the part that survives.
 5. ✅ **DONE (#1133).** Bus lifecycle events at the turn, step and model-call
    boundaries — closes "the bus is only emitted from the tool registry."
    `Engine::with_bus` attaches a `HookBus`; the engine then emits

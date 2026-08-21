@@ -51,11 +51,18 @@ file, the file is named so you can go check it.
 
 Stella has one step loop. Everything else is something wrapped around it.
 
-Today one of those wrappers — the staged pipeline — is not just a caller of the
-loop. It also reaches *into* the loop: it takes over the loop's own "I am done"
-event, and it hands each turn a private event channel so it can filter what the
-loop says. That is a two-way connection between the engine and one of its
-callers, and two-way connections are where bugs live.
+When this was written, one of those wrappers — the staged pipeline — was not
+just a caller of the loop. It also reached *into* the loop: it took over the
+loop's own "I am done" event, and it handed each turn a private event channel so
+it could filter what the loop said. That is a two-way connection between the
+engine and one of its callers, and two-way connections are where bugs live.
+
+That particular wrapper is gone (#3865, see the status note above), but the
+problem it exemplified is not: **the diagnosis is about the shape, not about
+that crate.** Any future wrapper that reaches into the loop instead of sitting
+around it re-creates it, which is exactly why the socket that replaced it makes
+the engine own its own ending (move one, landed) and gives a wrapper four
+declared points rather than a channel it can filter.
 
 This document says what to do about that, in three moves:
 
@@ -162,12 +169,15 @@ to plug in, and nothing else:
 | `judge` | after `after_turn` | turn the evidence into a verdict | call a model |
 | `again?` | after `judge` | say "another turn, here is the correction" or "stop, here is the outcome" | fake an ending the engine did not emit |
 
-`judge` calls no model on purpose. That is already the rule in the pipeline:
-`ladder_decision` in `crates/stella-pipeline/src/verify.rs` is terminal at every
-arm of `LadderDecision` — that enum is the enumeration, and this document
+`judge` calls no model on purpose. That was already the rule in the pipeline:
+`ladder_decision` in `crates/stella-pipeline/src/verify.rs` was terminal at every
+arm of `LadderDecision` — that enum was the enumeration, and this document
 deliberately does not restate it or its count, because a number copied into a
 second file drifts (#3473) — and #2584 removed the model verdict structurally.
-The wrapper contract keeps that rule instead of re-arguing it.
+The wrapper contract **keeps that rule** instead of re-arguing it, and since the
+crate that used to demonstrate it is deleted (#3865), the socket is now the only
+place the rule is enforced: `judge` is a synchronous, I/O-free, total function,
+so a plugin cannot buy a model call to grade its own work even if it wanted to.
 
 The arm a plugin author most needs from that enum is `WitnessUnsatisfiable`: the
 witness was authored and its red does not discriminate, so `judge` must be able
@@ -176,11 +186,15 @@ to say "the instrument is broken", not only "the work failed".
 `before_turn` is where the steering plane (#3243) is asked its one question —
 "what could help here?" — for a wrapped run. It is not a fifth plane.
 
-### What each of today's wrappers becomes
+### What each of the wrappers becomes
 
-- **The staged pipeline** is the first plugin. `triage`, `recall`, `research`,
-  `plan`, `scope` are `before_turn`. `witness` is `after_turn`. `verify` is
-  `judge`. `revise` is `again?`.
+- **The staged pipeline** was to be the first plugin, with `triage`, `recall`,
+  `research`, `plan`, `scope` as `before_turn`, `witness` as `after_turn`,
+  `verify` as `judge` and `revise` as `again?`. It was **deleted rather than
+  ported** (#3865), so this mapping is now the porting instruction handed to a
+  verification plugin (`doc:pipeline-as-plugins` §8) rather than a description
+  of a migration in flight. The mapping itself is unchanged and is the useful
+  part: it is how a stage graph lands on four points.
 - **Goal mode** is the second, or the same one with a different `judge`. Its
   rounds are `again?`; its independent verifier is `judge`.
 - **`stella monitor`** is goal mode with a pinned goal. It was never a separate
@@ -276,9 +290,9 @@ rules apply to it:
 
 ### Flip the default
 
-Today the pipeline is the default and `--no-pipeline` opts out. That is
-backwards once wrappers are plugins: the raw loop is the ground truth and a
-wrapper is the extra thing you asked for.
+When this was written the pipeline was the default and `--no-pipeline` opted
+out. That is backwards once wrappers are plugins: the raw loop is the ground
+truth and a wrapper is the extra thing you asked for.
 
 So: every door hits the raw loop by default, and `--pipeline <variant>` opts in.
 `--no-pipeline` stays as a deprecated alias that does nothing, so no script

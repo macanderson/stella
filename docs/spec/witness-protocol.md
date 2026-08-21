@@ -6,7 +6,18 @@ status: living
 
 # The Witness Protocol, adapted
 
-Status: approved for implementation — §4 and §7 land in `stella-pipeline`; §5 records what is deliberately declined
+Status: approved for implementation. §4 and §7 landed in `stella-pipeline`,
+which has since been **deleted from this workspace** (#3865); §5 records what is
+deliberately declined.
+
+> **Where this lands now.** Host-run verification no longer exists here, so the
+> adopted half of this protocol is what a **verification wrapper plugin**
+> implements on its own side of the wrapper socket — see
+> `doc:pipeline-as-plugins` §8 for the porting plan and `doc:wrapper-socket` for
+> the contract it implements against. The adoption *decision* below is unchanged
+> by the move: which ideas Stella takes and which it declines is a judgement
+> about the ideas, not about which crate hosts them. Citations into
+> `stella-pipeline` are historical (#3901).
 
 ## Purpose
 

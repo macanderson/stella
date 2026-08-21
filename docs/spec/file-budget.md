@@ -14,6 +14,17 @@ enforceable *numbers* live in exactly one place — `scripts/check-file-size.sh`
 — and `AGENTS.md` restates the rules in imperative form under a parity test
 (§8.3). Three copies of a number is how the last limit died.
 
+> **On the `stella-pipeline` rows.** Every table below is a **census taken on
+> 2026-08-02** and is left exactly as measured. `crates/stella-pipeline` was
+> deleted from the workspace in #3865, so its rows — `src/pipeline.rs` (3,465
+> lines) and `src/pipeline/tests.rs` (2,590) — describe files that no longer
+> exist, and work-order items #3 and #9 in §7.4 are **moot: those splits will
+> never be done, because the crate was removed instead.** The numbers are not
+> restated or re-ranked here, because a measurement edited after the fact stops
+> being one and the *reasoning* this document owns is unaffected by which files
+> happened to be large that day. For the live ceilings, read
+> `scripts/file-size-baseline.txt`, which is generated and gate-enforced.
+
 ---
 
 ## 1. Why a codebase written entirely by agents needs *tighter* file limits, not looser ones

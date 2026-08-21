@@ -11,6 +11,16 @@ review. Everything in §1–§3 is descriptive of `origin/main` at `a41de7be8` a
 was read out of the tree, not recalled; the measurements in §9.5, §9.6 and
 §10.2 were read at `a4b87649a`.
 
+> **§10's question has since been answered, and not by the route it proposed.**
+> `crates/stella-pipeline` was **deleted** from the workspace (#3865) rather
+> than extracted into a lane, so the "Later" row of §10.3, PR 6 and PR 8 of §8,
+> and the definition of done in §10.4 are all overtaken by events. Every
+> `stella-pipeline` count and file:line below is a **measurement taken at the
+> commit named above** and is left exactly as recorded — a measurement rewritten
+> after the fact is not a measurement. Read §10 as the decision record for why
+> the cut was worth making, not as a description of the tree. The lane seam
+> itself (Moves 1–4) is unaffected by the deletion and is still the proposal.
+
 **Companion docs:** `doc:engine-embedding` (the CLI↔API parity matrix this
 generalises), `doc:serve-surface`. **Subordinate to #3246** (the plugin
 authority plane) wherever the two touch — see §9.
@@ -59,7 +69,7 @@ cannot write a table whose rows have no names.
 | Sub-session | `stella-cli/src/subsession.rs:729` |
 | Subagent fork | `stella-core/src/subagent.rs:705` |
 | Fleet worker (raw) | `stella-cli/src/fleet_cmd.rs:914` |
-| Pipeline stage | `stella-pipeline/src/pipeline/execute_stage.rs:363`, `witness_stage.rs:361` |
+| Pipeline stage *(gone — #3865)* | `stella-pipeline/src/pipeline/execute_stage.rs:363`, `witness_stage.rs:361` |
 | Serve session | `stella-serve/src/session.rs:675` |
 
 Plus `stella-core/src/goal.rs:240`, which is a lane-shaped *derivation*
@@ -350,10 +360,14 @@ is a different layer and should stay one. "Re-implement the pipeline" remains a
 change to a stage graph — the matrix makes that boundary explicit rather than
 moving it. If the goal is that re-implementing the pipeline touches one place,
 that is a separate (and mostly already-satisfied) property: `stage_rank` in
-`stella-pipeline/src/replay.rs` is the canonical ordering.
+`stella-pipeline/src/replay.rs` was the canonical ordering.
 
-It also does not move the pipeline *out*. That is the opposite direction and a
-live question — §10.
+It also does not move the pipeline *out*. That was the opposite direction and,
+when this was written, a live question — §10. It is no longer live: the pipeline
+left by deletion (#3865), and the stage graph it supervised is now something a
+verification plugin owns on its own side of the wrapper socket. The paragraph
+above still holds for any *future* supervisor: a supervisor stays a layer, and
+merging one into the loop remains the wrong move.
 
 **It does not, on its own, carry a behavioural witness for Moves 2–3.** They
 are refactors. Move 2's fork witness is real and load-bearing; the rest of
@@ -377,9 +391,9 @@ whichever site was edited last.
 | 3 | Migrate all seven sites; delete shims; no `Default` | — | M |
 | 4 | Lane matrix in `stella-parity`, both-sides enforced | — | M |
 | 5 | `ResumeAuthority` + terminal-frame write side | #3232, #3233 | M |
-| 6 | Drop `stella-runtime`'s dead `stella-pipeline` dependency (§10.2) | — | XS |
+| 6 | ~~Drop `stella-runtime`'s dead `stella-pipeline` dependency (§10.2)~~ | **moot** — the crate is deleted (#3865) | — |
 | 7 | Manifest-declared lanes: `LaneId`, load-time totality, `stella plugins doctor` (§9) | #3246 | L |
-| 8 | Pipeline registers as a lane; cut `stella-cli`'s pipeline dependency (§10.4) | #3246 | XL |
+| 8 | ~~Pipeline registers as a lane; cut `stella-cli`'s pipeline dependency (§10.4)~~ | **moot** — deleted rather than extracted (#3865); a verification *plugin* now reaches the turn through the wrapper socket (`doc:wrapper-socket`), not through a lane | — |
 
 PRs 1 and 2 are independent and can run in parallel. PR 3 is the one that must
 not be split across two sessions — it is a single mechanical sweep, and half a
@@ -563,6 +577,11 @@ thing that looks like a style choice and is not:
 
 ## 10. Does the pipeline leave — now, later, or never?
 
+> **Answered: it left, by deletion (#3865).** This section is kept as the
+> decision record — the costs it weighs are why the cut happened, and §10.5's
+> warning about what an extraction does *not* buy still applies to the plugin
+> path that replaced it. The tables below are measurements at `a4b87649a`.
+
 ### 10.1 The premise, corrected
 
 It has already left `stella-core` (§9.6). What has not left is `stella-cli`.
@@ -602,6 +621,13 @@ So it is decidable rather than debatable:
   from a manifest;
 - a side-by-side bench on the same panel holds — this is the gate #3245 already
   imposes, and it is a measurement, not a review.
+
+**How it actually resolved.** The first bullet is satisfied. The second was
+**not met and was consciously given up**: `--pipeline classic` is refused rather
+than re-delivered, so today's default is the raw loop and verification is opt-in
+through an installed plugin. The third therefore has nothing to compare — there
+is no in-tree arm left to bench against. That is a weaker outcome than this
+section asked for, and naming it is the point of leaving the bullets in.
 
 ### 10.5 What the extraction buys, and what it does not
 

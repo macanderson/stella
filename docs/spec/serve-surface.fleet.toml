@@ -1,4 +1,11 @@
 # Stella serve surface — fleet plan
+#
+# HISTORICAL: this is the frozen dispatch record of an already-executed fleet
+# run, kept verbatim as the prompts the workers actually received. Task 4 below
+# permits stella-engine to depend on `stella-pipeline`; that crate was deleted
+# from the workspace in #3865, so the clause is dead. Do not re-run this plan
+# against the current tree.
+#
 # Source: docs/design/serve-surface.md (2026-07-20). Builds the headless engine
 # service (Option B of oxagen ADR-033) so Oxagen drives the Rust core over HTTP/SSE.
 #
