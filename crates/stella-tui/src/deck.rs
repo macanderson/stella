@@ -321,8 +321,8 @@ impl AgentEntry {
     }
 
     /// Whether this lane is a subagent (registered with the `subagent` role) —
-    /// the split the SESSION tab's nested rows and the statline's
-    /// `✦ lead · ◆ sub` counts read.
+    /// the split the SESSION tab's nested rows and the AGENTS tab's
+    /// `✦ lead · ◆ sub` header counts read.
     pub fn is_subagent(&self) -> bool {
         self.meta.role == "subagent"
     }
@@ -331,7 +331,8 @@ impl AgentEntry {
 /// The deck's PR read-model: the latest `AgentEvent::Pr` observation, from
 /// whichever agent emitted it. A session tells one PR story at a time — the
 /// newest event wins outright, so a CI update on the same PR simply replaces
-/// the snapshot in place. Drives the statline's PR cell.
+/// the snapshot in place. Drives the ISSUES tab's PR strip (SPEC 5 §9.4),
+/// which is where the v1 statline's PR cell went.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrInfo {
     pub url: String,
@@ -360,7 +361,7 @@ pub struct WorkspaceModel {
     /// events). Drives the status-bar gauge (and, later, dispatch backpressure).
     pub global_cpu_pct: f32,
     /// The latest PR observation across all agents (`AgentEvent::Pr` from the
-    /// fleet PR/CI monitor) — the statline's PR cell. Latest event wins;
+    /// fleet PR/CI monitor) — the ISSUES tab's PR strip. Latest event wins;
     /// `None` until a PR has been seen this session.
     pub pr: Option<PrInfo>,
     /// Last pin observed serving each of the three pipeline roles — the

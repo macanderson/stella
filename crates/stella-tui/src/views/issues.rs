@@ -27,7 +27,7 @@ const TYPEAHEAD_MAX_ROWS: usize = 8;
 /// Most body lines the create form previews before eliding.
 const FORM_BODY_MAX_LINES: usize = 6;
 
-pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let title = format!(" ISSUES — {} listed ", ui.issues.rows.len());
     let block = Block::default()
         .borders(Borders::ALL)
@@ -40,6 +40,13 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     }
 
     let mut lines: Vec<Line<'static>> = Vec::new();
+    // The session's own PR, above whatever mode the tab is in — it is a fact
+    // about this session, not about the list, so a search or a half-filled
+    // create form must not hide it.
+    if let Some(pr) = &model.pr {
+        lines.push(pr_strip(pr));
+        lines.push(Line::default());
+    }
     // The line index (within `lines`) of the create form's active field —
     // the type-ahead popup anchors right under it.
     let mut active_field_line = 0usize;
@@ -101,6 +108,67 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     if ui.issues.mode == IssuesMode::Create && ui.issues.typeahead.open() {
         render_typeahead(ui, inner, active_field_line, buf);
     }
+}
+
+/// The session's own PR, as one strip above the list.
+///
+/// SPEC 5 sends the v1 status wall's PR cell here (§9.4) rather than onto the
+/// one-row status bar: a pull request is the tracker-side artifact of the work
+/// this tab is already about, and the bar is six values that fit on one row
+/// (#4126). What is kept from the v1 cell is the part that had teeth — failing
+/// CI is red and bold, because v1 gave a failing PR an elevated drop priority
+/// precisely so a narrow row could not hide it.
+///
+/// The CI verdict carries its **word** as well as its glyph. v1 printed the
+/// glyph alone, which the status wall's width made defensible and a full-width
+/// tab does not: `✓`/`✗` differing only in colour and shape is the failure mode
+/// SPEC 2's "never colour alone" names. `None` prints nothing at all — the
+/// monitor has not polled yet, which is not the same claim as "passing".
+fn pr_strip(pr: &crate::deck::PrInfo) -> Line<'static> {
+    use stella_protocol::{CiStatus, PrStatus};
+
+    let status_color = match pr.status {
+        PrStatus::Draft => theme::WARNING,
+        PrStatus::Open | PrStatus::Merged => theme::ACCENT,
+        PrStatus::Closed => theme::DANGER,
+    };
+    let status_style = Style::default().fg(status_color);
+    let ident = match pr.number {
+        Some(n) => format!("#{n}"),
+        // No number parsed out of the URL — its tail still identifies the PR.
+        None => pr
+            .url
+            .rsplit('/')
+            .find(|s| !s.is_empty())
+            .unwrap_or("pr")
+            .to_string(),
+    };
+    let mut spans = vec![
+        Span::styled("  ⇢ ", theme::muted()),
+        Span::styled(ident, status_style.add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" {}", crate::textline::pr_status_label(pr.status)),
+            status_style,
+        ),
+    ];
+    if let Some(ci) = pr.ci {
+        let (glyph, style) = match ci {
+            CiStatus::Passing => ("✓", Style::default().fg(theme::OK)),
+            CiStatus::Failing => (
+                "✗",
+                Style::default().fg(theme::BAD).add_modifier(Modifier::BOLD),
+            ),
+            CiStatus::Pending => ("◌", theme::muted()),
+            CiStatus::Running => ("…", theme::muted()),
+        };
+        spans.push(Span::styled(" · CI ", theme::muted()));
+        spans.push(Span::styled(glyph, style));
+        spans.push(Span::styled(
+            format!(" {}", crate::textline::ci_status_label(ci)),
+            style,
+        ));
+    }
+    Line::from(spans)
 }
 
 /// The browse list, windowed on the selection so long lists keep it in view.

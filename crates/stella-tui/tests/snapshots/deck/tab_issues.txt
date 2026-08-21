@@ -7,13 +7,13 @@
 │ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ ISSUES — 3 listed ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  ⇢ #981 open · CI … running                                                                                                                                  │
+│                                                                                                                                                              │
 │  #874 [open] Command-deck render golden tests · dev · enhancement, area:tui                                                                                  │
 │▸ #826 [open] run_deck event-loop pty harness · enhancement                                                                                                   │
 │  #689 [closed] Surface per-server MCP tool truncation · dev · bug                                                                                            │
 │                                                                                                                                                              │
 │   ↑↓ select   r refresh   / search tracker   n new issue   c comment   s set status   w start work                                                           │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │

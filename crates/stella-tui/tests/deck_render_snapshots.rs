@@ -827,12 +827,19 @@ fn deck_render_snapshots_diff_explains_a_trailing_newline() {
     );
 }
 
-/// The statline's CLOCK cell (#2435): a run with an armed task deadline shows
-/// the wall clock it has left beside the money it has spent.
+/// The status bar's CLOCK cell (#2435, #4126): a run with an armed task
+/// deadline shows the wall clock it has left, third on the row, right after
+/// the stage (SPEC 5).
 ///
-/// A golden rather than a `contains` assertion because a new cell **moves
-/// columns** — every cell to its right shifts, and only the whole grid can say
-/// whether the band still fits and what it dropped to make room.
+/// A golden **and** a `contains`, and the pair is deliberate. The golden is
+/// here because a new cell **moves columns** — every cell to its right shifts,
+/// and only the whole grid can say whether the band still fits and what it
+/// dropped to make room. The `contains` is here because this test already
+/// failed once in the only way a golden can fail: #4123 replaced the two-row
+/// statline with the one-row bar, the clock stopped rendering entirely, and
+/// this snapshot was re-blessed to a frame with no clock in it while its own
+/// docstring still said the clock was there. A golden pins whatever it is
+/// shown; it cannot pin what it is *for*. The assertion can, so it does.
 ///
 /// The unarmed case needs no golden of its own: every other snapshot in this
 /// file is one, and none of them grew a cell when this landed. That is the
@@ -857,11 +864,49 @@ fn deck_render_snapshots_pin_the_armed_deadline_statline() {
         },
     });
     let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        frame.contains("deadline 12m 34s"),
+        "the armed deadline reached no surface on a default deck — the \
+         countdown to a SIGKILL is not something the bar may drop (#4126):\n\
+         {frame}"
+    );
     assert_golden(
         "statline_deadline_armed",
-        "the statline with a task deadline armed — CLOCK beside SPEND",
+        "the status bar with a task deadline armed — the countdown after the stage",
         W,
         H,
         &frame,
+    );
+}
+
+/// SPEC 5 re-homes the v1 wall's PR cell to the ISSUES tab (§9.4), and the
+/// half of it with teeth is failing CI: v1 gave a failing PR an elevated drop
+/// priority so a narrow row could not hide it, and that intent has to survive
+/// the move.
+///
+/// The demo fixture's PR is `… running`, so the tab goldens cover the ordinary
+/// case; this covers the one that is supposed to be impossible to miss. A
+/// `contains` rather than a golden because the strip does not move any column
+/// the tab goldens already pin — it is one line, and what is under test is
+/// that the failure is *stated in words*, not only in a colour the snapshot
+/// strips anyway.
+#[test]
+fn deck_render_snapshots_state_a_failing_pr_on_the_issues_tab() {
+    let mut model = fixture_model();
+    let mut ui = ui_for(DeckTab::Issues);
+    let agent = model.agents[ui.focused].meta.id.clone();
+    model.apply_inbound(&stella_tui::envelope::Inbound::Event {
+        agent,
+        event: stella_protocol::AgentEvent::Pr {
+            url: "https://github.com/macanderson/stella/pull/981".into(),
+            status: stella_protocol::PrStatus::Open,
+            number: Some(981),
+            ci: Some(stella_protocol::CiStatus::Failing),
+        },
+    });
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        frame.contains("⇢ #981 open · CI ✗ failing"),
+        "a failing PR is not stated on the tab SPEC 5 sends it to:\n{frame}"
     );
 }

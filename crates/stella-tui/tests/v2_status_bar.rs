@@ -129,6 +129,9 @@ fn demo() -> Status<'static> {
         spend_usd: 0.45,
         saved_usd: 0.69,
         inbox: 21,
+        // The rendering shows no deadline, because nothing was timing that
+        // session. `None` is that fact, and it is not the same fact as `0`.
+        deadline_remaining_ms: None,
     }
 }
 
@@ -326,6 +329,146 @@ fn the_meter_tracks_the_number_printed_beside_it() {
             }
         }
     }
+}
+
+// ── the conditional cell: an armed task deadline (#4126) ────────────────────
+
+/// The text of every cell, in order.
+fn flat(status: &Status<'_>) -> Vec<String> {
+    cells(status)
+        .iter()
+        .map(|cell| cell.iter().map(|s| s.content.to_string()).collect())
+        .collect()
+}
+
+/// #4126 witness. An armed task deadline draws a cell; an unarmed run does not.
+///
+/// The two halves are one test because the pair is the property: the v1 cell
+/// was built around `None` and `Some(0)` being different facts, and a test that
+/// only checked the armed half would pass on a bar that printed `deadline 0s`
+/// for a run nobody was timing.
+#[test]
+fn an_armed_deadline_earns_a_cell_and_an_unarmed_run_does_not() {
+    let armed = flat(&Status {
+        deadline_remaining_ms: Some(754_000),
+        ..demo()
+    });
+    assert_eq!(armed.len(), 7, "the armed bar: {armed:?}");
+    assert_eq!(
+        armed[2], "deadline 12m 34s",
+        "SPEC 5 puts the countdown third, right after the stage"
+    );
+
+    let unarmed = flat(&demo());
+    assert_eq!(unarmed.len(), 6, "the unarmed bar grew a cell: {unarmed:?}");
+    assert!(
+        !unarmed.iter().any(|c| c.contains("deadline")),
+        "an unarmed run paid columns for a deadline nobody set: {unarmed:?}"
+    );
+}
+
+/// A crossed deadline reads as a word, never as a quantity.
+///
+/// `0s` invites "no deadline", which is the one thing `Some(0)` does not mean —
+/// it means the `SIGKILL` has already been earned.
+#[test]
+fn a_crossed_deadline_reads_expired_not_zero() {
+    let bar = flat(&Status {
+        deadline_remaining_ms: Some(0),
+        ..demo()
+    });
+    assert_eq!(bar[2], "deadline expired");
+}
+
+/// The countdown escalates to red inside the last minute, and only there.
+///
+/// SPEC 2 keeps red for failure and destructive events. A kill under a minute
+/// away is a destructive event in progress; four minutes out is not, and must
+/// not spend the scarcity that makes red an alarm.
+#[test]
+fn the_countdown_takes_red_only_inside_the_last_minute() {
+    let value_fg = |ms: u64| {
+        cells(&Status {
+            deadline_remaining_ms: Some(ms),
+            ..demo()
+        })[2]
+            .last()
+            .expect("the countdown's value span")
+            .style
+            .fg
+    };
+    for calm in [61_000, 240_000, 7_200_000] {
+        assert_eq!(value_fg(calm), Some(token::TEXT), "{calm}ms took an alarm");
+    }
+    for alarm in [0, 1_000, 59_000, 60_000] {
+        assert_eq!(value_fg(alarm), Some(token::RED), "{alarm}ms drew no alarm");
+    }
+    // And the alarm is not the only carrier: the word survives `NO_COLOR` and
+    // red-blindness, which is SPEC 13's floor.
+    assert!(
+        flat(&Status {
+            deadline_remaining_ms: Some(0),
+            ..demo()
+        })[2]
+            .starts_with("deadline ")
+    );
+}
+
+/// The cell that says the run is about to stop is the last one the drop rule
+/// gives up.
+///
+/// v1 made this a priority number on a table; v2 makes it a position, so this
+/// asserts the consequence rather than the mechanism.
+///
+/// 46 columns is the width `v2_status_bar_narrow` pins: tight enough that the
+/// unarmed bar is down to worker and stage alone. Every other cell is already
+/// gone there, so a countdown that still renders has outranked all of them —
+/// including the context meter, which is what the bar drops last when nothing
+/// is timing the run.
+#[test]
+fn a_narrow_row_drops_everything_before_it_drops_the_deadline() {
+    let rendered = frame(
+        StatusBar(Status {
+            deadline_remaining_ms: Some(30_000),
+            ..demo()
+        }),
+        46,
+        1,
+    );
+    assert!(
+        rendered.contains("deadline 30s"),
+        "a 46-column row dropped the countdown:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("ctx "),
+        "46 columns fit more than the floor, so this proves nothing:\n{rendered}"
+    );
+}
+
+/// An armed deadline is allowed to put red on the frame; nothing else is.
+///
+/// The healthy-frame assertion above is the other half of this pair, and both
+/// have to hold: red that never appears is not a signal, and red that appears
+/// on a healthy frame is not an alarm.
+#[test]
+fn the_alarm_is_the_only_red_the_bar_can_draw() {
+    let armed = Status {
+        deadline_remaining_ms: Some(30_000),
+        ..demo()
+    };
+    assert!(red_cells(StatusBar(armed), 100, 1) > 0);
+    assert_eq!(
+        red_cells(
+            StatusBar(Status {
+                deadline_remaining_ms: Some(3_600_000),
+                ..demo()
+            }),
+            100,
+            1
+        ),
+        0,
+        "an hour of headroom is not an alarm"
+    );
 }
 
 /// Out-of-range input is clamped, not trusted. `ctx_used` is a ratio computed
