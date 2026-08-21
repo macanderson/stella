@@ -38,13 +38,6 @@ use stella_tui_theme::{glyph, token};
 /// Cells the coloured rail occupies at the head of every event row (SPEC 6.2).
 pub const RAIL_W: usize = 2;
 
-/// What kind of thing happened — the sole input to an event's glyph and metal.
-///
-/// A *visual* taxonomy, not a mirror of the engine's event enum, for the reason
-/// [`stella_transcript::ToolKind`] gives: the engine gains event kinds every
-/// release and a renderer that needs an arm per kind silently drops the ones it
-/// has not heard of. Anything unrecognised is [`EventKind::Other`] and renders
-/// as a plain muted row, which is the correct degradation.
 /// A file event's size, as **measured**.
 ///
 /// Every field here is an `Option` for one reason: a head row renders the
@@ -93,6 +86,13 @@ impl Extent {
     }
 }
 
+/// What kind of thing happened — the sole input to an event's glyph and metal.
+///
+/// A *visual* taxonomy, not a mirror of the engine's event enum, for the reason
+/// [`stella_transcript::ToolKind`] gives: the engine gains event kinds every
+/// release and a renderer that needs an arm per kind silently drops the ones it
+/// has not heard of. Anything unrecognised is [`EventKind::Other`] and renders
+/// as a plain muted row, which is the correct degradation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
     /// `▸ read <path> · <n> lines` — folded by default. The count rides
