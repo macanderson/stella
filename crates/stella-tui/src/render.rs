@@ -37,7 +37,7 @@ use crate::theme;
 // The transcript content builders moved to `entry` when this file crossed the
 // 1500-line guard; re-exported so `crate::render::transcript_lines` and
 // `::entry_lines` still resolve for `ui.rs` and `deck_ui.rs`.
-pub(crate) use entry::{entry_lines, reasoning_is_live, streaming_lines};
+pub(crate) use entry::{EntryView, entry_lines, reasoning_is_live, streaming_lines};
 pub(crate) use row::*;
 
 /// The usable interior height of a single-border panel.

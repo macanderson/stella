@@ -138,6 +138,45 @@ fn argument_rows(
 
 // Pure content builders (unit-tested directly)
 
+/// What a transcript row needs to know beyond its own entry.
+///
+/// Both fields exist because a row is not a function of its entry alone. An
+/// inline diff resolves against the draw-side file ledger; and a tool **head**
+/// states a size nothing has measured at the moment it dispatches — the
+/// emitter's `(added, removed)` arrives with the call's *result*, a later entry,
+/// and is only recorded once the turn boundary has measured the tree (#4154).
+///
+/// Bundled rather than passed as two more positional arguments: [`entry_lines`]
+/// already carries three booleans, and the pair travels together everywhere —
+/// pairing one entry's ledger with another entry's tail is not a call a caller
+/// should be able to make by ordering its arguments wrongly.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct EntryView<'a> {
+    /// The draw-side file ledger every diff and delta resolves against.
+    pub files: &'a [FileState],
+    /// The lane's entries *after* the one being rendered, in order.
+    pub following: &'a [TranscriptEntry],
+}
+
+impl<'a> EntryView<'a> {
+    /// The view entry `idx` is rendered against.
+    pub fn at(files: &'a [FileState], transcript: &'a [TranscriptEntry], idx: usize) -> Self {
+        Self {
+            files,
+            following: transcript.get(idx.saturating_add(1)..).unwrap_or_default(),
+        }
+    }
+
+    /// A view with no tail, for a row that has no later entry to consult: the
+    /// streaming answer preview, which is not in the transcript at all.
+    pub fn of(files: &'a [FileState]) -> Self {
+        Self {
+            files,
+            following: &[],
+        }
+    }
+}
+
 /// Fold the in-flight answer preview
 /// ([`SessionModel::streaming_text`](crate::model::SessionModel::streaming_text))
 /// as a trailing agent block, or nothing at all when there is none.
@@ -158,7 +197,15 @@ pub(crate) fn streaming_lines(
         return;
     }
     let preview = TranscriptEntry::Text(streaming.to_string());
-    entry_lines(&preview, files, expand_thinking, false, false, width, out);
+    entry_lines(
+        &preview,
+        EntryView::of(files),
+        expand_thinking,
+        false,
+        false,
+        width,
+        out,
+    );
 }
 
 /// Whether the trailing transcript entry is a thought *still being written* —
@@ -199,15 +246,15 @@ fn closes_block(entry: &TranscriptEntry) -> bool {
 /// head; every settled entry passes `false`.
 pub(crate) fn entry_lines(
     entry: &TranscriptEntry,
-    files: &[FileState],
+    view: EntryView<'_>,
     expand_thinking: bool,
     expanded: bool,
     live: bool,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    if !v2_rows(entry, expanded, width, out) {
-        entry_body(entry, files, expand_thinking, expanded, live, width, out);
+    if !v2_rows(entry, view, expanded, width, out) {
+        entry_body(entry, view, expand_thinking, expanded, live, width, out);
     }
     if closes_block(entry) {
         push_gap(out);
@@ -238,8 +285,18 @@ pub(crate) fn entry_lines(
 /// `module-reachability`, which see items. The row rendered identically
 /// expanded and collapsed for as long as nobody pressed the key (#4157). Hence
 /// `expanded` here: a router that takes a head takes the body under it too.
+///
+/// The head's size column is the other thing this arm owes, and it is why the
+/// router takes a [`EntryView`] rather than the entry alone: a `ToolStart` is
+/// drawn at dispatch, when nothing has measured the change it is about to make,
+/// so the number can only come from the paired result and the ledger behind it
+/// (#4154). Resolving it here rather than inside the projection keeps
+/// [`crate::v2::transcript_source::head_rows`] a pure function of what is known
+/// about one call. (Spelled in full: the `v2` alias below is a `use` inside the
+/// body, and rustdoc resolves a link against the module, not the function.)
 fn v2_rows(
     entry: &TranscriptEntry,
+    view: EntryView<'_>,
     expanded: bool,
     width: usize,
     out: &mut Vec<Line<'static>>,
@@ -247,13 +304,14 @@ fn v2_rows(
     use crate::v2::transcript_source as v2;
     match entry {
         TranscriptEntry::ToolStart {
+            call_id,
             name,
             input,
             raw,
             path,
-            ..
         } => {
-            out.extend(v2::head_rows(name, path.as_deref(), input, width));
+            let measured = v2::measured_delta(call_id, view.following, view.files);
+            out.extend(v2::head_rows(name, path.as_deref(), input, measured, width));
             if expanded {
                 argument_rows(v2::head_metal(name), raw, width, out);
             }
@@ -339,7 +397,7 @@ const THINKING_FOLD_HINT: &str = "⋯ ctrl+o expands this thought · ctrl+r all"
 
 fn entry_body(
     entry: &TranscriptEntry,
-    files: &[FileState],
+    view: EntryView<'_>,
     expand_thinking: bool,
     expanded: bool,
     live: bool,
@@ -495,13 +553,15 @@ fn entry_body(
             } else {
                 human_duration(*duration_ms)
             };
-            let inline = diff.as_ref().and_then(|d| resolve_inline_diff(d, files));
+            let inline = diff
+                .as_ref()
+                .and_then(|d| resolve_inline_diff(d, view.files));
             // The delta the emitter measured for this very mutation, carried
             // alongside its diff — not a recount of the rendered hunk, which is
             // a bounded view of the changed region and reports a smaller number.
             let inline_delta = diff
                 .as_ref()
-                .and_then(|d| super::resolve_inline_delta(d, files));
+                .and_then(|d| super::resolve_inline_delta(d, view.files));
 
             // The right-hand metric column. A diff states its own size in
             // added/removed lines, which is the honest unit for an edit —
@@ -1094,7 +1154,7 @@ fn entry_body(
         // Delegating means there is one implementation to keep correct and no
         // second one to rot.
         TranscriptEntry::ToolStart { .. } => {
-            v2_rows(entry, expanded, width, out);
+            v2_rows(entry, view, expanded, width, out);
         }
     }
 }
