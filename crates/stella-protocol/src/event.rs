@@ -271,6 +271,27 @@ pub use tags::KNOWN_TYPE_TAGS;
 /// cannot ([`crate::Provider::model`] returning `None`).
 pub const UNKNOWN_MODEL: &str = "unknown";
 
+/// The prefix the engine puts on a `StepOutcome::Aborted` reason when the
+/// abort was a model call failing, so that reason reads as a sentence on its
+/// own: `"model call failed: terminal provider error: …"`.
+///
+/// It lives here, in the crate both the emitter and every renderer already
+/// depend on, because **two surfaces have to agree on it and they cannot see
+/// each other**. `stella-core` writes it onto the abort reason; the host then
+/// re-emits that reason as a second [`AgentEvent::Error`], because some abort
+/// paths (budget, loop detection, cancel) emit no `Error` of their own and
+/// would otherwise show no row at all. For a *model call* failure the engine
+/// has already emitted one, so the host's row is the same failure wearing this
+/// prefix — and a reader saw two red rows and counted two failures (#4146).
+///
+/// The renderer that collapses them is `stella-tui`, which deliberately does
+/// not depend on `stella-core` and must not: it folds `AgentEvent`s and has no
+/// business knowing the engine. Hardcoding the string on that side instead
+/// would put it in two crates with nothing comparing them, so the day the
+/// wording changed the de-duplication would silently stop working and no test
+/// anywhere would go red. One definition, both sides.
+pub const MODEL_CALL_FAILED_PREFIX: &str = "model call failed: ";
+
 /// Content-free reason a provider attempt cannot contribute a truthful usage
 /// envelope. Error bodies and prompts are deliberately unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

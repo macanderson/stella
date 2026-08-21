@@ -107,9 +107,10 @@ pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, HunkProposal,
-    KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
-    PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare, ScopeProposal, StageKind,
-    StageScope, TaskItem, TaskStatus, UNKNOWN_MODEL, UsageIncompleteReason, VerdictEvidence,
+    KNOWN_TYPE_TAGS, MODEL_CALL_FAILED_PREFIX, ManifestEntry, MediaArtifactRef, MediaJobState,
+    MediaKind, ModelCallRole, PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare,
+    ScopeProposal, StageKind, StageScope, TaskItem, TaskStatus, UNKNOWN_MODEL,
+    UsageIncompleteReason, VerdictEvidence,
 };
 // The *open* stage vocabulary (`doc:roleless-core`). `StageKind` above stays
 // the closed set of boundaries this host emits; `StageName` is what the wire
