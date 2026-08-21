@@ -520,10 +520,19 @@ pub struct InlineDiffRef {
     /// The key into [`SessionModel::files`].
     pub path: String,
     /// The [`FileState::changes`] value this call's own mutation is recorded
-    /// at — one past the counter at fold time, because the surviving producer
-    /// emits at the turn boundary, *after* this result folds (#4155). It
-    /// resolves for as long as that mutation is remembered, and dangles
-    /// (rendering nothing) when the turn measured no net change to the path.
+    /// at.
+    ///
+    /// Which value that is depends on **which producer measured the call**,
+    /// and the fold decides it per call rather than assuming either (#4205).
+    /// The registry measures a solo mutating call the moment it returns, so
+    /// that change folds *before* this result and the seq is the counter as it
+    /// stands; the turn boundary sweeps whatever no single call can own
+    /// (`delegate`, a concurrent group, an external edit) and folds *after*
+    /// every result, so there the seq is one past. See the `ToolResult` arm in
+    /// [`SessionModel::apply`], and `tests::producer_seq` for both directions.
+    ///
+    /// It resolves for as long as that mutation is remembered, and dangles
+    /// (rendering nothing) when nothing measured a net change to the path.
     pub seq: u32,
 }
 
