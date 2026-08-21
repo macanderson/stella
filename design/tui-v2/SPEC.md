@@ -104,6 +104,12 @@ Top to bottom:
 4. **Prompt block**: pipeline line (`✓ plan ▸ execute [bar] 50% · verify`), input line `>>>`, keybinding hint row.
 5. **Status bar** (1 row, replaces the old two-row wall): `worker · stage · ctx [bar] 35% · $spend · saved $x · ✉ n · ? help`. MODEL detail, CPU, MEM, WARMTH, and ENGINE move behind `?` and the AGENTS tab. Money renders gold. Meters render gold fill on `border` gray. No pink, no green meters.
 
+   Three cells the v1 wall carried are named nowhere above. They are **re-homed, not dropped** — a surface that silently stops rendering a fact it used to render is the failure mode AGENTS.md invariant #10 exists to prevent:
+
+   - **CLOCK** earns a place on this bar when, and only when, a task deadline is armed. It sits third, immediately after the stage, and it is the last cell the drop rule gives up: a deadline whose expiry is a `SIGKILL` is the one fact on this row that says the run is about to *stop*. It reads `deadline 12m 34s`, and `deadline expired` once crossed — never `0s`, because "nobody is timing this run" and "this run is out of time" are the two states the cell exists to separate. The value renders `text` while more than a minute is left and `red` at a minute or less: a kill that close is a destructive event in progress, which is exactly what §2 reserves red for. An unarmed run pays no columns at all.
+   - **PR** moves to the ISSUES tab (§9.4). A pull request is a tracker-side artifact of the current work, and that tab is where tracker-side artifacts live.
+   - **LANES** moves to the AGENTS tab (§9.5), onto the EXECUTIONS header beside the active/total count that ENGINE became.
+
    The status bar deliberately carries **no `det %`**. An earlier draft placed the deterministic/model split here; it was removed (2026-08-19, owner's call) rather than plumbed. Do not restore it — a permanent row is the wrong home for a number that changes meaning with scope, and the thesis it serves is expressed where work is actually summarized (the turn receipt, §6.1) and where deterministic work is priced (`$0.00 · det` on gates, §6.3; the graph footer, §9.1). Note that those `det` *tags* are booleans — this call did or did not reach a model — and need no computed ratio behind them.
 
 ## 6. Transcript
@@ -233,12 +239,13 @@ Turn begin, turn end receipt, skill auto-trigger, memory log and promotion, comp
 - **Heat sort**: default ordering is coupling of the issue's touched files times age, computed from the graph. Caption: `from the graph, not vibes`.
 - In-progress rows show their linked plan and live task inline (`plan r3 · task 3 live`).
 - Detail pane: excerpt, `linked` line (plan progress, branch, evidence summary), and the sync rule: `status syncs back to <tracker> on gate green · no manual updates`.
+- **The session's own PR**, once one has been observed, is a strip above the list: `⇢ #183 open · CI ✗ failing`. This is §5's re-homed PR cell. Failing CI renders red and bold, and carries the word beside the glyph — never colour alone (section 2).
 - `w start work` runs section 8.2. Bottom strip explains the flow in one sentence.
 - Keys: `↑↓ select · w start work · n new issue · / search tracker · r refresh`.
 
 ### 9.5 AGENTS and SETTINGS
 
-Keep current information architecture (executions table, installed agents, agent editor, model params). Restyle to sections 3 through 5: kill pink and green meters, single-line status, two-metal rows, `stella*` wordmark. The agent editor gets the section 6.4 highlighter for YAML frontmatter and markdown.
+Keep current information architecture (executions table, installed agents, agent editor, model params). Restyle to sections 3 through 5: kill pink and green meters, single-line status, two-metal rows, `stella*` wordmark. The EXECUTIONS header additionally carries §5's re-homed **LANES** split — `✦ n lead · ◆ n sub`, appended to the active/total count — once a session has fanned out; a solo run shows nothing, because there is nothing to disambiguate. The agent editor gets the section 6.4 highlighter for YAML frontmatter and markdown.
 
 ## 10. Command palette (rendering `08-command-palette`)
 

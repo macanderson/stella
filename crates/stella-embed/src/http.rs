@@ -47,6 +47,33 @@ use crate::seam::{EmbedError, Embedder, EmbedderFingerprint, Embedding, Similari
 /// bounded because this sits on a tool call the agent is waiting on.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How many times one embedding request is issued before its failure becomes
+/// the caller's.
+///
+/// **A rate limit is not an error, it is an instruction.** A backend that
+/// answers `429` is saying "ask again shortly"; treating that as a terminal
+/// failure hands the caller a dead pass over a condition that resolves by
+/// itself. This mattered little while the chunk embedding pass issued one
+/// request at a time and merely ran slowly, and it matters now that the pass
+/// keeps several in flight (#4144) — concurrency is exactly what provokes a
+/// rate limit, so the pass that got faster would otherwise be the pass that
+/// started aborting.
+///
+/// Bounded, because retrying forever is how a caller waits on a backend that
+/// is never going to answer. Four attempts spans roughly seven seconds of
+/// backoff, which clears an ordinary burst limit without turning a genuine
+/// outage into a long silence.
+const MAX_ATTEMPTS: u32 = 4;
+
+/// The first pause between attempts; each subsequent one doubles.
+const INITIAL_BACKOFF: Duration = Duration::from_millis(500);
+
+/// The ceiling on any single pause — including one a `Retry-After` header
+/// asks for. A backend is entitled to ask for a delay; it is not entitled to
+/// park a session-start backfill for an hour, and a header this large is more
+/// often a misconfigured proxy than a real instruction.
+const MAX_BACKOFF: Duration = Duration::from_secs(8);
+
 /// The admission floor applied when nothing overrides it.
 ///
 /// **This number is provisional and is not a measured separation point.** The
@@ -314,6 +341,27 @@ impl fmt::Debug for HttpEmbedder {
     }
 }
 
+/// How long the backend asked us to wait, if it said so in a form worth
+/// trusting.
+///
+/// Only the delta-seconds form of `Retry-After` is read. The HTTP-date form
+/// is legal and is deliberately ignored: honouring it means trusting the
+/// caller's clock to agree with the server's, and a skewed clock turns a
+/// two-second pause into a two-hour one. Falling back to the local backoff
+/// schedule is wrong by at most a few seconds; trusting a bad date is wrong
+/// by however far the clocks differ.
+fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
+}
+
 #[async_trait]
 impl Embedder for HttpEmbedder {
     fn fingerprint(&self) -> EmbedderFingerprint {
@@ -334,28 +382,65 @@ impl Embedder for HttpEmbedder {
             return Err(EmbedError::EmptyInput);
         }
 
-        let mut request = self.client.post(&self.endpoint).json(&serde_json::json!({
+        let body = serde_json::json!({
             "model": self.model,
             "input": texts,
-        }));
-        if let Some(key) = &self.api_key {
-            request = request.bearer_auth(key);
-        }
+        });
 
-        let response = request
-            .send()
-            .await
-            .map_err(|error| EmbedError::Backend(format!("{}: {error}", self.endpoint)))?;
+        // Re-issue on the statuses that mean "not now" and on nothing else.
+        // A 401 or a 400 will say the same thing however many times it is
+        // asked, so retrying one only delays an error the caller has to read
+        // anyway; a 429 or a 5xx is a condition that clears.
+        //
+        // A transport error is deliberately *not* retried here. It is not a
+        // backend instruction, it has no `Retry-After` to honour, and the
+        // request may well have been received and billed — re-sending it is
+        // a decision about the user's money, not a courtesy, and belongs to
+        // whoever knows the pass can afford it.
+        let response = {
+            let mut attempt: u32 = 1;
+            let mut backoff = INITIAL_BACKOFF;
+            loop {
+                let mut request = self.client.post(&self.endpoint).json(&body);
+                if let Some(key) = &self.api_key {
+                    request = request.bearer_auth(key);
+                }
+                let response = request
+                    .send()
+                    .await
+                    .map_err(|error| EmbedError::Backend(format!("{}: {error}", self.endpoint)))?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let body: String = body.chars().take(400).collect();
-            return Err(EmbedError::Backend(format!(
-                "{} returned HTTP {status}: {body}",
-                self.endpoint
-            )));
-        }
+                let status = response.status();
+                if status.is_success() {
+                    break response;
+                }
+
+                let worth_retrying =
+                    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
+                if !worth_retrying || attempt >= MAX_ATTEMPTS {
+                    let body = response.text().await.unwrap_or_default();
+                    let body: String = body.chars().take(400).collect();
+                    // The attempt count is in the message because "HTTP 429"
+                    // alone reads as "the pass never even waited", and a user
+                    // deciding whether their rate limit is the problem needs
+                    // to know it already backed off and asked again.
+                    let tried = if attempt > 1 {
+                        format!(" after {attempt} attempts")
+                    } else {
+                        String::new()
+                    };
+                    return Err(EmbedError::Backend(format!(
+                        "{} returned HTTP {status}{tried}: {body}",
+                        self.endpoint
+                    )));
+                }
+
+                let pause = retry_after(&response).unwrap_or(backoff).min(MAX_BACKOFF);
+                tokio::time::sleep(pause).await;
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+                attempt += 1;
+            }
+        };
 
         let payload: EmbeddingsResponse = response.json().await.map_err(|error| {
             EmbedError::Backend(format!("unreadable embeddings response: {error}"))
@@ -656,5 +741,87 @@ mod tests {
         };
         assert!(message.contains("401"), "{message}");
         assert!(message.contains("bad key"), "{message}");
+    }
+
+    /// **The witness for #4144's rate-limit constraint.** The chunk embedding
+    /// pass now keeps several requests in flight, which is precisely what
+    /// provokes a rate limit — so a `429` has to be an instruction to wait
+    /// rather than the end of the pass. Without the retry the first one
+    /// aborts everything downstream of it.
+    #[tokio::test]
+    async fn a_rate_limited_request_is_retried_rather_than_failed() {
+        let server = MockServer::start().await;
+        // Answered in mount order, each `up_to_n_times` once exhausted
+        // falling through to the next: one refusal, then the real answer.
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "0")
+                    .set_body_string("slow down"),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [ { "index": 0, "embedding": [1.0, 0.0] } ]
+            })))
+            .mount(&server)
+            .await;
+
+        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, 0.25);
+        let out = embedder
+            .embed(&["only".to_string()])
+            .await
+            .expect("a 429 must be waited out, not surfaced as a failure");
+        assert_eq!(out[0].vector, vec![1.0, 0.0]);
+    }
+
+    /// The retry is bounded, and says so. A backend that refuses every
+    /// attempt still ends as a named error rather than an unbounded wait —
+    /// and the message reports that it was asked more than once, so a user
+    /// reading "HTTP 429" is not left thinking the pass never backed off.
+    #[tokio::test]
+    async fn a_backend_that_only_refuses_ends_as_an_error_naming_the_attempts() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "0")
+                    .set_body_string("still limited"),
+            )
+            .mount(&server)
+            .await;
+
+        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, 0.25);
+        let Err(EmbedError::Backend(message)) = embedder.embed(&["x".to_string()]).await else {
+            panic!("expected a backend error once the attempts ran out");
+        };
+        assert!(message.contains("429"), "{message}");
+        assert!(
+            message.contains(&format!("{MAX_ATTEMPTS} attempts")),
+            "the error must report that it retried: {message}"
+        );
+    }
+
+    /// A rate limit clears; a bad key does not. Retrying a `401` only delays
+    /// an error the caller has to read anyway, so it is issued exactly once.
+    #[tokio::test]
+    async fn an_unauthorized_request_is_not_retried() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("bad key"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, 0.25);
+        assert!(embedder.embed(&["x".to_string()]).await.is_err());
+        // `expect(1)` is verified on drop: a second attempt fails the test.
+        drop(server);
     }
 }

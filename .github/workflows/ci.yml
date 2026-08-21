@@ -485,6 +485,40 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo build --workspace --release --config 'profile.release.lto="thin"' --config 'profile.release.codegen-units=16'
 
+      # Last main step in the job, so it runs before rust-cache's post step —
+      # which is the whole point (#4149).
+      #
+      # `cargo test --workspace` above runs stella-diag's trybuild suite
+      # (crates/stella-diag/tests/compile_fail.rs). trybuild builds its scratch
+      # project under `${target_dir}/tests/trybuild` — hardcoded, with no
+      # override short of moving the whole build (trybuild 1.0.118
+      # src/cargo.rs:58-62) — so `target/tests` exists afterwards, with no
+      # sibling `target/` inside it.
+      #
+      # rust-cache's post step then walks `target/` to prune it before saving.
+      # At the SHA pinned above (and still on its master as of 2026-08-21),
+      # src/cleanup.ts:20-24 classifies ANY directory named `tests` as a build
+      # profile, and :45-50 calls `cleanTargetDir(<dir>/target)` *without
+      # awaiting it*, inside a `try {} catch {}` that therefore cannot catch
+      # the rejection. The ENOENT escapes to save.ts:8-11's `uncaughtException`
+      # handler, which emits `core.error(e.message)` and `core.error(e.stack)`:
+      # two failure-level annotations on a step that cannot fail the job. Every
+      # green run of this job carried them, and an annotations panel that is
+      # permanently red is one a reader stops reading — the same erosion the
+      # main-red-hold reasoning names one layer down. Upstream fixed this same
+      # bug class for the registry path (Swatinem/rust-cache#144) and left this
+      # call site alone.
+      #
+      # Deleting the scratch tree removes the trigger at the one point we
+      # control. It costs one cold trybuild rebuild per run (~5s, measured
+      # locally) because that tree is no longer cached, and it keeps a fixture
+      # cargo manifest out of the saved cache for the next tool that scans for
+      # workspaces. #4177 tracks reporting it upstream and deleting this step
+      # once the pin can be bumped past the fix.
+      - name: drop the trybuild scratch tree before the cache is saved
+        if: ${{ !cancelled() }}
+        run: rm -rf target/tests
+
   supply-chain:
     # NOTE: name is pinned to main's branch-protection required-status-check
     # list (`cargo deny + cargo audit`) even though this job no longer runs

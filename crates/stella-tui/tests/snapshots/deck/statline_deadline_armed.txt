@@ -1,5 +1,5 @@
 # deck golden · statline_deadline_armed
-# the statline with a task deadline armed — CLOCK beside SPEND
+# the status bar with a task deadline armed — the countdown after the stage
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
@@ -42,4 +42,4 @@
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $3.7700  ·  1 line  ·  queue empty
-zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $3.79 · saved $0.00 · ✉ 0                                                                               ? help
+zai/glm-5.2-air · execute · deadline 12m 34s · ctx ▌░░░░░░░░░░░ 4% · $3.79 · saved $0.00 · ✉ 0                                                            ? help

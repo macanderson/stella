@@ -94,6 +94,16 @@ silent quality regression.
   output that reaches the prompt is byte-stable for identical input
   (invariant 7). Two property tests pin it: ranking is independent of input
   order, and `limit` is always a prefix of the full ranking.
+- **A rate limit is an instruction, not a failure.** `HttpEmbedder::embed`
+  re-issues a `429` or a `5xx` up to four attempts with exponential backoff,
+  honouring `Retry-After`'s delta-seconds form under an 8-second ceiling — a
+  backend may ask for a delay, but not park a session-start backfill for an
+  hour. The HTTP-date form is deliberately ignored rather than trusting the
+  caller's clock to agree with the server's. A `4xx` that will say the same
+  thing next time is issued exactly once, and the error names how many
+  attempts were made so a slow pass is not mistaken for one that never waited.
+  This matters because the chunk embedding pass keeps several requests in
+  flight (#4144), and concurrency is precisely what provokes a rate limit.
 - **The default admission floor is provisional, not measured.** The
   `SimilarityPosture` contract asks for a floor derived from a model's observed
   relevant/irrelevant score distributions on a real corpus, and no such

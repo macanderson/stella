@@ -81,9 +81,11 @@ pub struct Hud {
     /// Wall clock left before the task deadline, as the last `BudgetTick`
     /// reported it (#2240, #2435). `None` is the load-bearing case and means
     /// **no deadline is armed** — never "no time left", which is
-    /// `Some(0)`. The statline renders the two differently for exactly that
+    /// `Some(0)`. The status bar renders the two differently for exactly that
     /// reason: a HUD showing `0s` for an unarmed run would put back into the
-    /// UI the confusion #2240 took out of the journal.
+    /// UI the confusion #2240 took out of the journal. `None` draws no cell at
+    /// all and `Some(0)` draws the word `expired`
+    /// ([`crate::v2::status_bar`]).
     ///
     /// Milliseconds rather than a `Duration` because that is the wire shape
     /// (`AgentEvent::BudgetTick::deadline_remaining_ms`), and this struct is a
