@@ -879,8 +879,35 @@ pub(crate) fn persist_event_detailed(
             },
         );
     }
-    let complete = recorded && telemetry_ok && usage_complete;
-    if !complete {
+    // What disqualifies the execution's COST ROLLUP, which is the only thing
+    // `usage_complete` claims — deliberately not `recorded`.
+    //
+    // `recorded` is whether *this event* reached the append-only event log,
+    // for any of the ~40 variants that flow through here: a task update, a
+    // block registration, a manifest. A lossy event log is a real durability
+    // problem and it already has its own channel — `StoreWriteFailed` below,
+    // which the deck surfaces (`command_deck::forwarder`). It says nothing
+    // about whether the cost total is whole, and folding it in here meant one
+    // transient SQLite failure on any event permanently disqualified an
+    // execution whose accounting was provably complete.
+    //
+    // Permanently, because `mark_execution_usage_incomplete` is a one-way
+    // latch: `finish_execution_accounted`'s CASE re-reads `usage_status` and
+    // holds the row at 0 once tripped, and nothing in `stella-store` ever
+    // writes it back to 1. Both consumers require `usage_complete = 1` — the
+    // local rollup and hub replication — so the execution's real spend simply
+    // vanishes from `stella usage report`. Witnessed in the wild: an
+    // execution carrying 69 telemetry rows, every one flagged complete,
+    // summing to its recorded $2.40705242 to the last decimal, reported as
+    // incomplete and excluded.
+    //
+    // The two that DO bear on the total stay: `telemetry_ok` is a receipt
+    // that failed to land (the sum is now short by that call), and
+    // `usage_complete` is a call the provider never accounted for. Neither is
+    // recoverable by reconciliation — a receipt that was never written is
+    // invisible to any later sum — so the latch is still the right shape for
+    // them. It is only the third input that never belonged.
+    if !telemetry_ok || !usage_complete {
         let _ = store.mark_execution_usage_incomplete(execution_id);
     }
     // A failed write outranks unreported usage: it is the more serious of the
@@ -960,6 +987,68 @@ mod usage_recovery_tests {
         // And the execution as a whole is marked short.
         assert!(!store.execution_usage_complete(execution_id).unwrap());
         assert!(matches!(outcome, PersistOutcome::UsageIncomplete(Some(_))));
+    }
+
+    /// A lossy EVENT LOG must not disqualify the COST ROLLUP.
+    ///
+    /// The witness for the defect found in session `ses-1787342320630-36613`:
+    /// an execution carrying 69 telemetry rows, every one flagged complete
+    /// and summing to its recorded cost exactly, reported `usage_complete =
+    /// false` and was therefore excluded from `stella usage report` and from
+    /// hub replication — permanently, since the flag is a one-way latch.
+    ///
+    /// `record_event` is `UNIQUE (execution_id, seq)`, so replaying a seq is
+    /// a real store write failure with no mocking. The event chosen is a text
+    /// delta: it touches no telemetry, so the *only* thing that fails is the
+    /// event-log append. Before this, that alone was enough.
+    #[test]
+    fn a_failed_event_log_write_does_not_disqualify_the_cost_rollup() {
+        let store = stella_store::Store::in_memory().expect("store");
+        let execution_id = store
+            .begin_execution("cli", "prompt", "anthropic", "claude-opus-5")
+            .expect("begin");
+        let event = stella_protocol::event::AgentEvent::TextDelta {
+            delta: "hello".into(),
+        };
+
+        // Seq 0 lands.
+        let first = persist_event_detailed(&store, execution_id, 0, &event, "anthropic");
+        assert!(matches!(first, PersistOutcome::Complete));
+
+        // Replaying seq 0 collides on UNIQUE (execution_id, seq).
+        let replayed = persist_event_detailed(&store, execution_id, 0, &event, "anthropic");
+        assert!(
+            matches!(replayed, PersistOutcome::StoreWriteFailed),
+            "the lossy event log is still reported — this fix narrows what it \
+             disqualifies, it does not hide it"
+        );
+
+        store
+            .finish_execution_accounted(execution_id, "completed", 1.25, true)
+            .expect("finish");
+        assert!(
+            store.execution_usage_complete(execution_id).unwrap(),
+            "no model call went unaccounted for, so the execution's cost total is whole \
+             and must stay visible to `stella usage report`"
+        );
+    }
+
+    /// The other half of the same contract: a receipt that failed to land DOES
+    /// disqualify the total, because the sum is now genuinely short by that
+    /// call and no later reconciliation can see the gap.
+    #[test]
+    fn an_unaccounted_call_still_disqualifies_the_cost_rollup() {
+        let store = stella_store::Store::in_memory().expect("store");
+        let execution_id = store
+            .begin_execution("cli", "prompt", "anthropic", "claude-opus-5")
+            .expect("begin");
+
+        persist_event_detailed(&store, execution_id, 0, &incomplete(None), "anthropic");
+
+        store
+            .finish_execution_accounted(execution_id, "completed", 1.25, true)
+            .expect("finish");
+        assert!(!store.execution_usage_complete(execution_id).unwrap());
     }
 
     /// A failure that learned nothing writes no telemetry row. Recording a
