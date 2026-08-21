@@ -449,6 +449,89 @@ pub fn effort_notices(
     .collect()
 }
 
+/// Every honest-degradation line this session's configuration earns, in the
+/// order the deck prints them.
+///
+/// The roster, and why each is a boot line rather than a doc note:
+///
+/// - [`effort_notices`] — a pinned reasoning effort the adapter cannot honor
+///   at all (#266), or cannot express at the tier asked for (#1499).
+/// - [`unpinned_gateway_notice`] — a gateway choosing its own upstream, which
+///   costs real money through the prompt cache.
+///
+/// One composer rather than a call per family, because the deck's boot path
+/// is a grandfathered god file closed to growth (AGENTS.md § "God files") and
+/// a third notice should not have to widen it a third time. Adding one here
+/// costs the call site nothing.
+pub fn boot_notices(cfg: &crate::config::Config) -> Vec<String> {
+    let mut notices = effort_notices(
+        cfg.provider.id,
+        cfg.provider.display_name,
+        // The explicit settings pin for the lead, never the auto-resolved
+        // effort: `effort_auto` synthesizes a level nobody asked for, and
+        // firing on it would spam every boot.
+        cfg.engine_settings
+            .as_ref()
+            .and_then(|e| e.agent())
+            .and_then(|a| a.effort),
+    );
+    notices.extend(unpinned_gateway_notice(
+        cfg.provider.id,
+        cfg.provider.display_name,
+        cfg.effective_base_url(),
+        cfg.provider.upstream_pin,
+    ));
+    notices
+}
+
+/// One line when a **gateway** session is running with upstream routing left
+/// to the gateway, or `None` for a direct vendor or a pinned gateway.
+///
+/// # Why this is worth a boot line
+///
+/// A gateway picks which upstream serves each request, and each upstream
+/// holds its own prompt cache. The sticky `session_id` the adapter sends is a
+/// *hint*, not a guarantee — see [`CACHE_POSTURE`]'s OpenRouter row — so under
+/// congestion a request lands on an upstream that has never seen the prefix
+/// and the whole prompt bills as a cache miss.
+///
+/// It is the single largest avoidable line item measured on this repo's own
+/// runs: in one 17-minute session, 20 of 69 calls read zero cached tokens,
+/// carrying 25% of the input tokens and **54% of the $2.41 spent** — about
+/// $0.93 for tokens that were already cached somewhere else. The misses were
+/// not TTL expiry: median idle before a miss was 0.3s against 0.2s before a
+/// hit, and calls alternated hit/miss inside the same second.
+///
+/// The default stays unpinned, because routing is the gateway's choice until
+/// an operator says otherwise and only a measured comparison needs it fixed
+/// (see `config::providers::ProviderConfig::upstream_pin`). What changes is
+/// that the choice stops being invisible — the same honest-degradation
+/// contract [`unsupported_effort_notice`] applies to a dropped reasoning
+/// effort. A silent default nobody can see is not a default anyone chose.
+///
+/// [`CACHE_POSTURE`]: stella_model::provider_parity::CACHE_POSTURE
+pub fn unpinned_gateway_notice(
+    provider_id: &str,
+    provider_label: &str,
+    base_url: &str,
+    upstream_pin: &[String],
+) -> Option<String> {
+    // Gated on "does this actually address the gateway", never on the id
+    // alone — matching the cache opt-in's own gate, because a settings-defined
+    // provider pointing at OpenRouter is the same routing surface (invariant
+    // 8, and the defect that widened that gate).
+    let is_gateway =
+        provider_id == "openrouter" || stella_model::zai::is_openrouter_endpoint(base_url);
+    if !is_gateway || !upstream_pin.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{provider_label} is a gateway and no upstream is pinned — it may route two turns of \
+         this session to different upstreams, and a prompt cached on one is a full-price miss \
+         on the next. Set `upstream_pin` in settings.json to fix the route."
+    ))
+}
+
 // Enum ↔ string (the TUI edits strings; settings/serde hold enums)
 
 pub fn effort_to_str(effort: ReasoningEffort) -> &'static str {
@@ -694,6 +777,67 @@ mod tests {
 
     fn is_builtin(id: &str) -> bool {
         crate::config::PROVIDERS.iter().any(|p| p.id == id)
+    }
+
+    /// The witness: a gateway session that has not pinned an upstream says so.
+    ///
+    /// Before this, the most expensive routing decision in a session — 54% of
+    /// one measured turn's spend — was the one nothing mentioned.
+    #[test]
+    fn an_unpinned_gateway_session_says_so() {
+        let notice = unpinned_gateway_notice("openrouter", "OpenRouter", "", &[])
+            .expect("an unpinned gateway earns a line");
+        assert!(
+            notice.contains("no upstream is pinned") && notice.contains("upstream_pin"),
+            "the line must name the condition and the remedy — got {notice:?}"
+        );
+    }
+
+    /// Pinning is the fix, so a pinned gateway is silent.
+    #[test]
+    fn a_pinned_gateway_is_silent() {
+        let pin = vec!["moonshotai".to_string()];
+        assert!(unpinned_gateway_notice("openrouter", "OpenRouter", "", &pin).is_none());
+    }
+
+    /// A direct vendor picks no upstream, so it has nothing to declare —
+    /// whatever its pin field happens to hold.
+    #[test]
+    fn a_direct_vendor_is_silent() {
+        for id in ["anthropic", "openai", "zai", "deepseek", "local"] {
+            assert!(
+                unpinned_gateway_notice(id, id, "https://api.example.com/v1", &[]).is_none(),
+                "{id} routes nothing and must stay silent"
+            );
+        }
+    }
+
+    /// Gated on the endpoint, never the id alone: a settings-defined provider
+    /// pointing at the gateway is the same routing surface. Gating on the id
+    /// is the exact defect that once ran Claude routes through OpenRouter
+    /// with zero caching (invariant 8).
+    #[test]
+    fn a_custom_provider_addressing_the_gateway_is_still_a_gateway() {
+        assert!(
+            unpinned_gateway_notice(
+                "my-gateway",
+                "My Gateway",
+                "https://openrouter.ai/api/v1",
+                &[]
+            )
+            .is_some(),
+            "a custom entry pointing at the gateway routes exactly like the built-in one"
+        );
+        // ...and a host that merely mentions it is not the gateway.
+        assert!(
+            unpinned_gateway_notice(
+                "impostor",
+                "Impostor",
+                "https://openrouter.ai.evil.example/v1",
+                &[]
+            )
+            .is_none()
+        );
     }
 
     fn engine_from_json(json: &str) -> AgentEngineConfig {

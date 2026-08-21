@@ -104,8 +104,13 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
         CachePosture::OptIn {
             mechanism: "request-root cache_control {type: ephemeral} — required for Claude \
                         routes, ignored by implicit-cache upstreams — plus a session-stable \
-                        top-level session_id that pins every turn of a session to the same \
-                        upstream provider + cache shard (sticky routing)",
+                        top-level session_id requesting that every turn of a session reach \
+                        the same upstream provider + cache shard (sticky routing). The \
+                        session_id is a HINT the gateway may decline, not a pin: measured \
+                        over one 17-minute session it held for the last 17 calls and not \
+                        the first 32, leaving 20 of 69 calls reading zero cached tokens \
+                        for 54% of the spend. Only a non-empty upstream_pin \
+                        (provider.order + allow_fallbacks:false) actually fixes the route",
             witness: "openrouter_identity_sends_root_level_cache_control",
         },
     ),

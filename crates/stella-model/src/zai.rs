@@ -125,7 +125,13 @@ fn new_session_id() -> String {
 /// gates what the request BODY carries, not where it is sent, but a sloppy
 /// match would still leak OpenRouter-only fields onto servers that 400 on
 /// unknown keys).
-fn is_openrouter_endpoint(base_url: &str) -> bool {
+///
+/// Public because "is this the gateway?" is asked in two places that must
+/// agree: here, gating the request body, and `stella-cli`'s boot notice for a
+/// gateway running with routing unpinned. Answering it twice is how the cache
+/// opt-in came to be gated on the id alone and silently ran Claude routes
+/// uncached through a custom provider entry (invariant 8).
+pub fn is_openrouter_endpoint(base_url: &str) -> bool {
     let after_scheme = base_url
         .split_once("://")
         .map_or(base_url, |(_, rest)| rest);

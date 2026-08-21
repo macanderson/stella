@@ -570,20 +570,11 @@ pub async fn run_deck_session(
     if let Some(report) = custom.problems_report() {
         let _ = deck_tx.send(system_notice(report));
     }
-    // Honest degradation (#266): a user who pinned a reasoning effort for the
-    // lead but chose a provider whose adapter has no reasoning control gets a
-    // one-line notice instead of a silently-dropped setting. Keyed on the
-    // explicit settings pin for the lead (Default kind), never the
-    // auto-resolved effort — session chrome, re-checked every boot, never
-    // journaled. Also covers a pin accepted at a coarser tier (#1499).
-    for notice in crate::engine_config::effort_notices(
-        cfg.provider.id,
-        cfg.provider.display_name,
-        cfg.engine_settings
-            .as_ref()
-            .and_then(|e| e.agent())
-            .and_then(|a| a.effort),
-    ) {
+    // Honest degradation: every silently-dropped or silently-defaulted
+    // setting the boot can name gets one line instead. Session chrome —
+    // re-checked every boot, never journaled. See `engine_config::boot_notices`
+    // for the roster and why each one earns its line.
+    for notice in crate::engine_config::boot_notices(cfg) {
         let _ = deck_tx.send(system_notice(notice));
     }
     // An idle lead is waiting on the human, not queued behind a supervisor —
