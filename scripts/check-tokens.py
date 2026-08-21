@@ -91,11 +91,6 @@ MIGRATING: dict[str, str] = {
     # with new numbers. stella-tui-prompt.md is superseded outright by
     # SPEC-stella-tui-v2.md and still specifies the retired `✦ stella` lockup.
     "docs/brand/prompts/": "#4057",
-    # Phase 2 of the alignment, in flight in another worktree which already has
-    # an uncommitted stella-tui-theme. Editing these files from a second branch
-    # would create two authorities over one palette — the exact failure this
-    # change exists to end.
-    "crates/stella-tui/": "#4058",
 }
 
 HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
