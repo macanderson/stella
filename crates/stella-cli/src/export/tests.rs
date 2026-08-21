@@ -158,6 +158,57 @@ fn script_json_cannot_close_the_script_element() {
     assert_eq!(parsed[0]["path"], "</script><img src=x onerror=alert(1)>");
 }
 
+/// The cache insight reads per-call rows, and no longer congratulates a
+/// session on a token rate that hides where the money went.
+///
+/// A token-weighted hit rate describes a uniformly mediocre session. It cannot
+/// see a bimodal one — most calls reading cache, a minority reading none and
+/// paying full input rate for a whole prefix. Session
+/// `ses-1787342320630-36613` scored 63.6%, cleared the old `rate > 50`
+/// threshold, and was told it was "reusing context well" while 20 of its 69
+/// calls read zero cached tokens and carried 54% of the $2.41 spent.
+///
+/// This asserts on the shipped script rather than executing it — the tips are
+/// computed in the page. What it pins is that the decision is made from the
+/// per-call table with a cost share in hand, and that the sentence that
+/// misread this session is gone.
+#[test]
+fn the_cache_insight_reads_per_call_rows_not_a_token_average() {
+    let html = render_dashboard(
+        &[],
+        &[],
+        "now",
+        "ses-x",
+        &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
+    );
+
+    assert!(
+        !html.contains("the session is reusing context well"),
+        "the sentence that called a 29%-cold session healthy must not ship"
+    );
+    for present in [
+        // Per-call rows, not the per-model aggregate: only TELEMETRY can say
+        // how many CALLS were cold.
+        "const billed = TELEMETRY.filter",
+        "r.cache_read_tokens === 0",
+        // The cost share is the statistic that ranks the finding.
+        "coldSpend / spend",
+        "read ZERO cached tokens",
+        // And the remedy names routing, which is what actually causes it.
+        "upstream_pin",
+    ] {
+        assert!(
+            html.contains(present),
+            "cache insight must carry: {present}"
+        );
+    }
+    assert!(
+        !html.contains("const cacheRead = USAGE.reduce"),
+        "the aggregate-only derivation is what could not see the cold calls"
+    );
+}
+
 /// A file path an agent created lands in `FILES`, flows into `barChart`
 /// as `d.label`, and is assigned to `innerHTML`. `script_json` only stops
 /// the payload from closing the `<script>` element — the JS parser decodes
