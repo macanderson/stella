@@ -844,13 +844,21 @@ async fn fill_chunk_window(
     // by which file it belongs to and where in that file's chunk list it
     // sits, so the response can be routed back without the text round-
     // tripping through a map keyed on content.
-    struct NeededChunk<'a> {
+    //
+    // The text is **owned** rather than borrowed from `files`. A borrow puts
+    // a lifetime on this struct, and a lifetime here is not a local matter:
+    // the futures below would carry it, and `tokio::spawn` at the session's
+    // backfill site cannot prove `Send` for a higher-ranked one. The error
+    // does not appear in this crate at all — it lands three crates away, in
+    // `stella-cli`'s `agent::graph`, as "implementation of `Send` is not
+    // general enough" pointing at a `spawn` that mentions none of this.
+    struct NeededChunk {
         file_index: usize,
         chunk_index: usize,
-        text: &'a str,
+        text: String,
     }
 
-    let needed: Vec<NeededChunk<'_>> = files
+    let needed: Vec<NeededChunk> = files
         .iter()
         .enumerate()
         .flat_map(|(file_index, file)| {
@@ -858,10 +866,10 @@ async fn fill_chunk_window(
                 .iter()
                 .enumerate()
                 .filter_map(move |(chunk_index, chunk)| {
-                    chunk.text.as_deref().map(|text| NeededChunk {
+                    chunk.text.as_ref().map(|text| NeededChunk {
                         file_index,
                         chunk_index,
-                        text,
+                        text: text.clone(),
                     })
                 })
         })
@@ -875,33 +883,40 @@ async fn fill_chunk_window(
         .map(|file| vec![None; file.chunks.len()])
         .collect();
 
-    // Cut the flattened stream into full requests and keep
-    // [`CHUNK_EMBED_CONCURRENCY`] of them in flight.
+    // Cut the flattened chunk list into full requests, each owning its own
+    // texts, and keep [`CHUNK_EMBED_CONCURRENCY`] of them in flight.
+    let requests: Vec<(usize, Vec<String>)> = needed
+        .chunks(EMBED_BATCH)
+        .enumerate()
+        .map(|(ordinal, batch)| {
+            (
+                ordinal,
+                batch.iter().map(|chunk| chunk.text.clone()).collect(),
+            )
+        })
+        .collect();
+
+    // **Each response carries the ordinal of the request it answers.**
+    // `buffer_unordered` yields results as they *complete*, not in the order
+    // the requests were issued, so pairing the Nth completion with the Nth
+    // batch would file one request's vectors against whichever chunks
+    // happened to be in a slower one. Nothing would fail: every chunk still
+    // gets a well-formed vector of the right width, and the only symptom is
+    // a semantic index that answers with the wrong symbols. It is the same
+    // misattribution `HttpEmbedder::embed` refuses one layer down when it
+    // routes rows by their `index` rather than by arrival order, for the
+    // same reason — a wrong vector is a corrupt ranking, never an error
+    // anyone sees.
     //
-    // **The batch travels with its own response.** `buffer_unordered`
-    // yields each result as it *completes*, not in the order the requests
-    // were issued, so pairing the Nth completion with the Nth batch would
-    // attribute one request's vectors to whichever chunks happened to be
-    // in a slower one. Nothing would fail: every chunk still receives a
-    // vector of the right width, and the only symptom is a semantic index
-    // that answers with the wrong symbols. It is the same misattribution
-    // `HttpEmbedder::embed` refuses one layer down when it routes rows by
-    // their `index` rather than by arrival order, for the same reason —
-    // a wrong vector is a corrupt ranking, never an error anyone sees.
-    //
-    // The async block is spelled out rather than a closure returning
-    // `embedder.embed(&texts)`: through the closure the compiler infers a
-    // higher-ranked lifetime for the borrowed embedder that `tokio::spawn`
-    // cannot prove `Send` over, and the failure surfaces three crates away
-    // at the spawn site as "not general enough".
-    let mut in_flight = stream::iter(needed.chunks(EMBED_BATCH).map(|batch| {
-        let texts: Vec<String> = batch.iter().map(|chunk| chunk.text.to_string()).collect();
-        async move {
-            embedder
-                .embed(&texts)
-                .await
-                .map(|embeddings| (batch, embeddings))
-        }
+    // An ordinal rather than the batch itself, because a borrow of `needed`
+    // travelling through these futures is what the owned `text` above exists
+    // to avoid: it would put a higher-ranked lifetime on the spawned
+    // backfill task in `stella-cli` and fail there rather than here.
+    let mut in_flight = stream::iter(requests.into_iter().map(|(ordinal, texts)| async move {
+        embedder
+            .embed(&texts)
+            .await
+            .map(|embeddings| (ordinal, embeddings))
     }))
     .buffer_unordered(CHUNK_EMBED_CONCURRENCY);
 
@@ -940,8 +955,14 @@ async fn fill_chunk_window(
     // one, because it would carry the current content hash and the next
     // pass would see nothing pending and never come back for the gap.
     while let Some(result) = in_flight.next().await {
-        let (batch, embeddings) =
+        let (ordinal, embeddings) =
             result.map_err(|error| format!("the embedder failed: {error}"))?;
+
+        // The ordinal names the request, so the batch is the same slice the
+        // texts were cut from — the one arithmetic that has to agree with
+        // `requests` above, and it agrees by construction.
+        let start = ordinal * EMBED_BATCH;
+        let batch = &needed[start..(start + EMBED_BATCH).min(needed.len())];
 
         // A short response would leave some file's count stuck above zero,
         // so the window would never commit it and the caller's loop would
