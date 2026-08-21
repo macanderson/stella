@@ -121,6 +121,7 @@ pub(super) fn push_body_line(
 /// result has landed and the turn boundary has measured the tree, and `None`
 /// until then — the router resolves it (`v2::measured_delta`), so this function
 /// and the projection under it stay pure functions of one call (#4154).
+#[allow(clippy::too_many_arguments)] // the ToolStart entry's own fields plus the resolved measurement; a struct here would be a second shape to keep in step with the entry, exactly as on `result_rows` below
 pub(super) fn start_rows(
     name: &str,
     input: &str,
