@@ -206,6 +206,20 @@ pub fn is_plural(input: &Value, plural: &'static str) -> bool {
 /// Generated rather than hand-written per tool so the four schemas cannot
 /// drift in how they describe the same idea — `docs/tools/*.toml` is
 /// regenerated from these and a reviewer reads them side by side.
+///
+/// # Why the enclosing tool declares `"required": []`
+///
+/// "Exactly one of the single fields or the plural key" is `oneOf` in JSON
+/// Schema, and that is the honest encoding. It is not the one used, because
+/// this schema is not consumed by a validator we control: it is sent to every
+/// provider, and top-level `oneOf`/`anyOf` in a tool's parameter schema is
+/// unevenly supported across them — the failure mode is a provider rejecting
+/// the tool declaration outright, which costs the tool rather than the
+/// mistake. So the arity requirement is enforced where it can be enforced
+/// exactly, in [`targets`], and the schema states it in the description
+/// instead. A call carrying neither spelling still fails, with the singular
+/// form's original wording (see [`BatchError::Single`]) rather than anything
+/// about arrays.
 pub fn plural_schema(item_properties: Value, required: &[&str], what: &str) -> Value {
     serde_json::json!({
         "type": "array",
