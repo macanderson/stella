@@ -27,13 +27,43 @@ available_for_speculation = false
 risk_level = "medium"
 
 description = '''
-Replace an exact substring in a file. By default the old_string must appear exactly once; set replace_all to replace every occurrence.
+Replace an exact substring in a file. By default the old_string must appear exactly once; set replace_all to replace every occurrence. To make several edits — in one file or across files — send them in ONE call with `edits`: the whole batch applies or none of it does, and later edits see the earlier ones.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.
 input_schema = '''
 {
   "properties": {
+    "edits": {
+      "description": "Several edits applied as ONE all-or-nothing change, in order — two edits to the same file compose, and if any edit fails nothing is written. Use this to act on several targets in ONE call instead of several calls. Omit it and use the single-target fields above for one target; passing both is refused. At most 32.",
+      "items": {
+        "properties": {
+          "new_string": {
+            "description": "Replacement text",
+            "type": "string"
+          },
+          "old_string": {
+            "description": "Exact text to find",
+            "type": "string"
+          },
+          "path": {
+            "description": "File path relative to workspace root",
+            "type": "string"
+          },
+          "replace_all": {
+            "description": "Replace all occurrences (default false)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "old_string",
+          "new_string"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "new_string": {
       "description": "Replacement text",
       "type": "string"
@@ -59,11 +89,7 @@ input_schema = '''
       "type": "string"
     }
   },
-  "required": [
-    "path",
-    "old_string",
-    "new_string"
-  ],
+  "required": [],
   "type": "object"
 }
 '''

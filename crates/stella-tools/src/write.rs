@@ -54,16 +54,26 @@ impl Tool for WriteFile {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "write_file".into(),
-            description: "Create or overwrite a file. Creates parent directories as needed. Overwriting an existing file is refused unless you have already read all of it this session — read_file it in full first, or use edit_file to change part of it in place.".into(),
+            description: "Create or overwrite a file. Creates parent directories as needed. Overwriting an existing file is refused unless you have already read all of it this session — read_file it in full first, or use edit_file to change part of it in place. To create several files, send them in ONE call with `files`: the whole batch is checked before any of it is written.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "File path relative to workspace root" },
                     "content": { "type": "string", "description": "Full file content to write" },
+                    "files": crate::batch::plural_schema(
+                        serde_json::json!({
+                            "path": { "type": "string", "description": "File path relative to workspace root" },
+                            "content": { "type": "string", "description": "Full file content to write" }
+                        }),
+                        &["path", "content"],
+                        "Several files written as ONE all-or-nothing change — every path is \
+                         scope-checked and every overwrite guard is asked before any byte is \
+                         written.",
+                    ),
                     "reason": { "type": "string", "description": "Why you are creating/overwriting this file — recorded in the session's file-touch audit log" },
                     "storage_intent": { "type": "string", "description": "Only when creating a database table/column that the storage gate flagged as similar to an existing one: one sentence of purpose plus why the existing objects don't fit. Recorded in stella.storage.toml." }
                 },
-                "required": ["path", "content"]
+                "required": []
             }),
             read_only: false,
             speculation_safe: false,
@@ -71,6 +81,100 @@ impl Tool for WriteFile {
     }
 
     async fn execute(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
+        if crate::batch::is_plural(input, FILES_KEY) {
+            return self.write_batch(input, ctx).await;
+        }
+        self.write_one(input, ctx).await
+    }
+}
+
+/// The plural key: several files written as one all-or-nothing change.
+const FILES_KEY: &str = "files";
+
+/// One file and its contents — the unit both spellings reduce to.
+struct WriteTarget {
+    path: String,
+    content: String,
+}
+
+/// Parse one target. Shared by the single form and by every element of
+/// `files`, so the two spellings cannot drift into two meanings.
+fn write_target(value: &Value) -> Result<WriteTarget, crate::input::InputError> {
+    Ok(WriteTarget {
+        path: crate::input::required_str(value, "path")?.to_string(),
+        content: crate::input::required_str(value, "content")?.to_string(),
+    })
+}
+
+impl WriteFile {
+    /// Write several files as one change.
+    ///
+    /// Every path is scope-resolved and every no-clobber guard is asked
+    /// **before** any byte is written, so a batch that would be refused on its
+    /// third file does not leave the first two on disk. Rolling a write back is
+    /// not possible once the old bytes are gone; validating first is, and it is
+    /// the same guarantee for the case that actually happens.
+    async fn write_batch(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
+        let root = ctx.root();
+        let targets = match crate::batch::targets(input, FILES_KEY, "path", write_target) {
+            Ok(targets) => targets,
+            Err(err) => return ToolOutput::from(err),
+        };
+
+        // Pass one: resolve and check. Nothing is written in this loop.
+        let mut planned = Vec::with_capacity(targets.len());
+        for (index, target) in targets.iter().enumerate() {
+            let (scope_root, path) = match ctx.resolve_for_write(&target.path) {
+                Ok(resolved) => resolved,
+                Err(refusal) => {
+                    return ToolOutput::error(format!(
+                        "`{FILES_KEY}`[{index}] (`{}`): {refusal} — nothing was written",
+                        target.path
+                    ));
+                }
+            };
+            let handle = match crate::rootfd::RootHandle::open(&scope_root) {
+                Ok(handle) => Arc::new(handle),
+                Err(e) => return ToolOutput::error(format!("cannot open workspace root: {e}")),
+            };
+            if handle.stat(&path).is_ok() && !self.ledger.saw_whole_file(root, &path) {
+                return ToolOutput::error(format!(
+                    "`{FILES_KEY}`[{index}]: refusing to overwrite `{path}`: this session has \
+                     not been shown the whole file, and `write_file` replaces all of it. Read \
+                     it first (`read_file` with no offset/limit), then write — or use \
+                     `edit_file` to change part of it in place. Nothing was written."
+                ));
+            }
+            planned.push((handle, path, target.content.as_str()));
+        }
+
+        // Pass two: every check passed, so commit.
+        let mut report = Vec::with_capacity(planned.len());
+        for (handle, path, content) in planned {
+            match crate::durable_write::write_file_durably_at(
+                handle,
+                path.clone(),
+                content.as_bytes().to_vec(),
+                true,
+            )
+            .await
+            {
+                Ok(()) => {
+                    self.ledger.record_known(root, &path, content);
+                    self.ledger.record_coverage(root, &path, true);
+                    report.push(format!("{path} — {} bytes", content.len()));
+                }
+                Err(e) => return ToolOutput::error(format!("failed to write `{path}`: {e}")),
+            }
+        }
+        ToolOutput::ok(format!(
+            "wrote {} file(s):\n{}",
+            report.len(),
+            report.join("\n")
+        ))
+    }
+
+    async fn write_one(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let root = ctx.root();
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
@@ -334,5 +438,65 @@ mod tests {
             .execute(&serde_json::json!({"path": "ok.txt"}), &cx(&dir))
             .await;
         assert!(result.is_error());
+    }
+
+    // ── batching (#4151) ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn one_call_writes_several_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = WriteFile::default()
+            .execute(
+                &serde_json::json!({"files": [
+                    {"path": "a.rs", "content": "fn a() {}\n"},
+                    {"path": "nested/b.rs", "content": "fn b() {}\n"}
+                ]}),
+                &cx(dir.path()),
+            )
+            .await;
+        assert!(!out.is_error(), "{out:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+            "fn a() {}\n"
+        );
+        // Parent directories are still created, as the single form does.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("nested/b.rs")).unwrap(),
+            "fn b() {}\n"
+        );
+    }
+
+    /// Every guard is asked before any byte is written, so a batch refused on
+    /// its second file does not leave the first one on disk. A write cannot be
+    /// rolled back once the old bytes are gone; checking first is the same
+    /// guarantee for the case that actually happens.
+    #[tokio::test]
+    async fn a_batch_refused_on_a_later_file_writes_none_of_them() {
+        let dir = tempfile::tempdir().unwrap();
+        // An existing file this session has never read: the no-clobber guard
+        // must refuse it, and take the whole batch down with it.
+        std::fs::write(dir.path().join("existing.rs"), "original\n").unwrap();
+
+        let out = WriteFile::default()
+            .execute(
+                &serde_json::json!({"files": [
+                    {"path": "fresh.rs", "content": "new\n"},
+                    {"path": "existing.rs", "content": "clobbered\n"}
+                ]}),
+                &cx(dir.path()),
+            )
+            .await;
+        let ToolOutput::Error { message, .. } = out else {
+            panic!("the no-clobber guard must refuse the batch: {out:?}");
+        };
+        assert!(message.contains("Nothing was written"), "{message}");
+        assert!(
+            !dir.path().join("fresh.rs").exists(),
+            "the file that would have succeeded must not have landed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("existing.rs")).unwrap(),
+            "original\n"
+        );
     }
 }

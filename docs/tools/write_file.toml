@@ -27,7 +27,7 @@ available_for_speculation = false
 risk_level = "medium"
 
 description = '''
-Create or overwrite a file. Creates parent directories as needed. Overwriting an existing file is refused unless you have already read all of it this session — read_file it in full first, or use edit_file to change part of it in place.
+Create or overwrite a file. Creates parent directories as needed. Overwriting an existing file is refused unless you have already read all of it this session — read_file it in full first, or use edit_file to change part of it in place. To create several files, send them in ONE call with `files`: the whole batch is checked before any of it is written.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.
@@ -37,6 +37,27 @@ input_schema = '''
     "content": {
       "description": "Full file content to write",
       "type": "string"
+    },
+    "files": {
+      "description": "Several files written as ONE all-or-nothing change — every path is scope-checked and every overwrite guard is asked before any byte is written. Use this to act on several targets in ONE call instead of several calls. Omit it and use the single-target fields above for one target; passing both is refused. At most 32.",
+      "items": {
+        "properties": {
+          "content": {
+            "description": "Full file content to write",
+            "type": "string"
+          },
+          "path": {
+            "description": "File path relative to workspace root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "array"
     },
     "path": {
       "description": "File path relative to workspace root",
@@ -51,10 +72,7 @@ input_schema = '''
       "type": "string"
     }
   },
-  "required": [
-    "path",
-    "content"
-  ],
+  "required": [],
   "type": "object"
 }
 '''
