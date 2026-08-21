@@ -658,6 +658,10 @@ fn empty_state(area: Rect, buf: &mut Buffer) {
     .render(mid, buf);
 }
 
+// The fold's #4154 backfill, in a sibling: this file is closed to growth.
+#[cfg(test)]
+mod fold_backfill;
+
 #[cfg(test)]
 mod tests {
     use super::*;
