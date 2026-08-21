@@ -14,15 +14,28 @@ use stella_tui_theme::token;
 
 use crate::deck::{PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
-use crate::statline::CTX_WINDOW;
 
-use super::status_bar::Status;
+use super::status_bar::{CTX_WINDOW, Status};
+
+/// A pin's slug with the API gateway stripped: the *model's own* vendor, not
+/// whoever proxied the call.
+///
+/// [`crate::deck::RolePin::slug`] answers "where did this call go", which is the
+/// right question for routing and the wrong one for a status bar — a reader
+/// wants to know which model is thinking, not which reseller billed it.
+pub(super) fn vendor_slug(pin: &crate::deck::RolePin) -> String {
+    if pin.model.contains('/') || pin.provider.is_empty() {
+        pin.model.clone()
+    } else {
+        format!("{}/{}", pin.provider, pin.model)
+    }
+}
 
 /// The model actually answering, as the bar names it.
 ///
 /// The *active* role when one is pinned, else the worker, else whatever pin
-/// exists — the same precedence `statline::model_spans` uses, because "which
-/// pin is answering" is one question and two answers to it would be a bug.
+/// exists — the precedence the v1 status line used, because "which pin is
+/// answering" is one question and two answers to it would be a bug.
 /// Unlike the v1 cell this drops the `worker: ` prefix: SPEC 5 gives the slot
 /// to the slug alone, and the role is already named by the stage beside it.
 fn worker_slug(model: &WorkspaceModel) -> String {
@@ -42,7 +55,7 @@ fn worker_slug(model: &WorkspaceModel) -> String {
                 .find(|r| model.role_pins.contains_key(r))
         });
     role.and_then(|role| model.role_pins.get(&role))
-        .map(crate::statline::vendor_slug)
+        .map(vendor_slug)
         .unwrap_or_else(|| "—".into())
 }
 

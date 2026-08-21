@@ -11,12 +11,11 @@
 //! it. Where the two rows disagree it is because SPEC 5 says so, and each of
 //! those is called out at its field below.
 
+use super::project::vendor_slug;
+use super::status_bar::{CTX_WINDOW, Status};
 use crate::WorkspaceModel;
 use crate::deck::PipelineRole;
 use crate::deck_ui::DeckUi;
-use crate::statline::{CTX_WINDOW, vendor_slug};
-
-use super::status_bar::Status;
 
 /// Owns the two strings [`Status`] borrows, so a caller can project once per
 /// frame and lend the widget a `Status` for the draw.

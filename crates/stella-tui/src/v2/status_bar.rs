@@ -10,9 +10,10 @@
 //! row, ten cells wide, carrying MODEL, the stage box, CPU, CONTEXT, SPEND,
 //! CACHE, SAVED, WARMTH, ENGINE and INBOX. Its case — stacking the label above
 //! the value spends free vertical space instead of scarce horizontal space —
-//! was sound for the set of cells it was answering for, and
-//! [`crate::statline`]'s module doc keeps it, because a design decision this
-//! surface reversed is worth being able to read.
+//! was sound for the set of cells it was answering for, and is restated here
+//! rather than lost, because a design decision this surface reversed is worth
+//! being able to read. The module that made it (`src/statline.rs`) is deleted;
+//! this doc is its only surviving account.
 //!
 //! v2 changes the set, and the argument does not survive the change. CPU, MEM,
 //! WARMTH and ENGINE move behind `?` and the AGENTS tab (SPEC 5) because none
@@ -156,13 +157,21 @@ fn sep() -> Span<'static> {
     Span::styled(" · ", Style::new().fg(token::DIM))
 }
 
+/// The context window the `ctx` meter divides by.
+///
+/// Lives with the meter rather than with the fold because it is a property of
+/// *this reading*, not of an agent: `AgentEntry::context_tokens` is a count, and
+/// a count only becomes an occupancy once something picks a denominator. The v1
+/// statline picked this one and the v2 bar kept it, so it moved here when that
+/// module was deleted rather than being duplicated at each projection.
+pub const CTX_WINDOW: u64 = 200_000;
+
 /// The bar's left group, in SPEC 5 order, as a list of cells so the renderer
 /// can drop from the right when the row is tight.
 ///
 /// Pure over [`Status`] — THE decision function, unit-testable without a
 /// buffer. The v1 status line built its row the same way and for the same
-/// reason; that builder is gone now (`crate::statline` keeps only the two
-/// pieces the v2 bar does not replace), so this is the only one left.
+/// reason; that builder is deleted, so this is the only one left.
 #[must_use]
 pub fn cells(status: &Status<'_>) -> Vec<Vec<Span<'static>>> {
     let text = Style::new().fg(token::TEXT);
@@ -225,7 +234,34 @@ pub fn render_band(
     // The low-hit-rate diagnosis is prose, so it keeps a row of its own rather
     // than a cell on a row of glanceable values.
     if let Some(rest) = area.rows().nth(1) {
-        crate::statline::render_diagnosis(model, ui, rest, buf);
+        render_diagnosis(model, ui, rest, buf);
+    }
+}
+
+/// The low-hit-rate cache diagnosis, on a row of its own under the bar.
+///
+/// Deliberately not a cell on that bar: a full sentence explaining *why* the
+/// cache is cold is prose, and a row of six glanceable values is the one place
+/// prose cannot go. Byte-identical to what `stella stats` prints for the same
+/// cause, which is the property that earns it a row at all — two surfaces
+/// explaining one fact differently is how a user learns to trust neither.
+///
+/// Renders nothing when the focused agent has not earned one, so a caller may
+/// hand it a row unconditionally; `render_deck` only reserves that row when the
+/// diagnosis exists.
+pub fn render_diagnosis(
+    model: &crate::deck::WorkspaceModel,
+    ui: &crate::deck_ui::DeckUi,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    if let Some(cause) = model
+        .agents
+        .get(ui.focused)
+        .and_then(|a| a.cache_diagnosis(crate::cache_panel::LOW_HIT_RATE_THRESHOLD))
+    {
+        ratatui::widgets::Paragraph::new(Line::from(crate::cache_panel::diagnosis_spans(cause)))
+            .render(area, buf);
     }
 }
 
