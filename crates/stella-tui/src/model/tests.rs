@@ -1190,3 +1190,143 @@ fn a_settled_progress_line_is_never_overwritten_by_a_later_pass() {
         model.transcript
     );
 }
+
+/// Fold one `edit_file` call: the start, the change it made, then its result.
+///
+/// The ordering is the whole subject of #4175 and is what a per-call producer
+/// buys. `stella_tools`' registry measures the work tree after a solo mutating
+/// call returns and publishes on the same channel the engine then sends
+/// `ToolResult` on, so a consumer folding the stream sees the `FileChange`
+/// *before* the row that made it.
+fn fold_edit(model: &mut SessionModel, call_id: &str, path: &str, diff: &str, added: u32) {
+    model.apply(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: call_id.into(),
+            name: "edit_file".into(),
+            input: serde_json::json!({ "path": path }),
+        },
+    });
+    model.apply(&AgentEvent::FileChange {
+        path: path.into(),
+        kind: FileChangeKind::Modified,
+        added,
+        removed: 0,
+        diff: Some(diff.into()),
+    });
+    model.apply(&AgentEvent::ToolResult {
+        call_id: call_id.into(),
+        output: stella_protocol::ToolOutput::Ok {
+            content: "edited".into(),
+            data: None,
+        },
+        duration_ms: 3,
+        speculated: false,
+    });
+}
+
+/// The `InlineDiffRef` a mutating row stamps, if it stamped one.
+fn stamped_diff<'a>(model: &'a SessionModel, call_id: &str) -> Option<&'a InlineDiffRef> {
+    model.transcript.iter().find_map(|entry| match entry {
+        TranscriptEntry::ToolResult {
+            call_id: id, diff, ..
+        } if id == call_id => diff.as_ref(),
+        _ => None,
+    })
+}
+
+/// **Witness (#4175).** Two `edit_file` calls to one path in one turn each
+/// render *their own* change.
+///
+/// This is the ceiling the issue was filed to lift, and it was lower than the
+/// issue described: with the turn-boundary producer as the only one, a path's
+/// `FileChange` arrives *after* every `ToolResult` of the turn has folded, so
+/// the seq a row stamps is the pre-turn count while `remember_diff` records at
+/// the post-bump one. Not "only the last row resolves" — **no** row resolved,
+/// which is the diffless successful `edit_file` reported in #4155.
+///
+/// A per-call producer fixes it without the fold changing at all: the change
+/// lands before the row, `changes` is already bumped when the row stamps, and
+/// the two seqs agree. The assertion that matters is the *distinctness* — each
+/// row must resolve the diff of the call it belongs to, never the other's and
+/// never the turn's aggregate.
+#[test]
+fn two_calls_to_one_path_each_resolve_the_change_they_made() {
+    let mut model = SessionModel::new();
+    fold_edit(&mut model, "c1", "src/lib.rs", "@@\n+first", 1);
+    fold_edit(&mut model, "c2", "src/lib.rs", "@@\n+second", 4);
+
+    let first = stamped_diff(&model, "c1").expect("the first row stamps a diff ref");
+    let second = stamped_diff(&model, "c2").expect("the second row stamps a diff ref");
+    assert_ne!(
+        first.seq, second.seq,
+        "two calls to one path must point at two different changes, or one row \
+         is rendering the other's work"
+    );
+
+    let file = model
+        .files
+        .iter()
+        .find(|f| f.path == "src/lib.rs")
+        .expect("the path is tracked");
+    assert_eq!(
+        file.diff_at(first.seq),
+        Some("@@\n+first"),
+        "the first row resolves the first edit — this was None before a \
+         per-call producer existed, which is why a successful edit rendered \
+         with no diff at all"
+    );
+    assert_eq!(
+        file.diff_at(second.seq),
+        Some("@@\n+second"),
+        "and the second row resolves the second edit"
+    );
+    assert_eq!(
+        (file.delta_at(first.seq), file.delta_at(second.seq)),
+        (Some((1, 0)), Some((4, 0))),
+        "each row's `+N −M` is its own call's measurement, not the turn's total"
+    );
+    assert_eq!(
+        (file.added, file.removed),
+        (5, 0),
+        "and the path's cumulative total is still the sum of the calls — the \
+         per-call readings partition the turn rather than double-counting it"
+    );
+}
+
+/// A failed call stamps nothing, so it cannot inherit the previous call's
+/// diff.
+///
+/// The per-call producer makes this reachable in a way it was not before: a
+/// successful edit now really does leave a resolvable diff at the path's
+/// current seq, so a following failure that stamped one would render that
+/// change under its own ✗ — attributing work the call never did.
+#[test]
+fn a_failed_call_after_a_successful_one_claims_no_diff() {
+    let mut model = SessionModel::new();
+    fold_edit(&mut model, "c1", "src/lib.rs", "@@\n+first", 1);
+
+    model.apply(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "c2".into(),
+            name: "edit_file".into(),
+            input: serde_json::json!({ "path": "src/lib.rs" }),
+        },
+    });
+    // No FileChange: the registry measures only a successful call.
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "c2".into(),
+        output: stella_protocol::ToolOutput::error("no such occurrence"),
+        duration_ms: 1,
+        speculated: false,
+    });
+
+    assert!(
+        stamped_diff(&model, "c1").is_some(),
+        "the successful row still resolves its own change"
+    );
+    assert!(
+        stamped_diff(&model, "c2").is_none(),
+        "the failed row claims nothing — rendering the path's previous diff \
+         under a ✗ would attribute a change that call never made"
+    );
+}

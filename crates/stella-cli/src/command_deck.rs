@@ -3747,9 +3747,9 @@ async fn run_lead_turn(
         execution.as_ref().map(|(store, _)| store.clone()),
         claim_holder,
     );
-    // Registry-born events (task board, sub-agent lifecycle) ride this
-    // turn's channel.
-    registry.attach_events(stella_core::EventSender::new(tx.clone()));
+    // Registry-born events (task board, sub-agent lifecycle) and this turn's
+    // per-call work-tree measurement both ride this turn's channel.
+    crate::turn_files::open_turn_streams_raw(registry, cfg, &tx, execution.as_ref());
     // ...and this turn's stop AND pause reach the sub-agents it dispatches
     // (`lead_control::turn_controls`). The guard takes them down on return.
     let _controls = registry.attach_turn_controls(lead_control::turn_controls(steering, pause));
