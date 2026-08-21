@@ -6,12 +6,13 @@
 //!
 //! ## Why one row and not two
 //!
-//! The v1 statline ([`crate::statline`]) is two rows: a dim micro-label row
-//! stacked over its value row, ten cells wide, carrying MODEL, the stage box,
-//! CPU, CONTEXT, SPEND, CACHE, SAVED, WARMTH, ENGINE and INBOX. Its own module
-//! doc makes the case — stacking the label above the value spends free
-//! vertical space instead of scarce horizontal space — and the case is sound
-//! for the set of cells it was answering for.
+//! The v1 statline was two rows: a dim micro-label row stacked over its value
+//! row, ten cells wide, carrying MODEL, the stage box, CPU, CONTEXT, SPEND,
+//! CACHE, SAVED, WARMTH, ENGINE and INBOX. Its case — stacking the label above
+//! the value spends free vertical space instead of scarce horizontal space —
+//! was sound for the set of cells it was answering for, and
+//! [`crate::statline`]'s module doc keeps it, because a design decision this
+//! surface reversed is worth being able to read.
 //!
 //! v2 changes the set, and the argument does not survive the change. CPU, MEM,
 //! WARMTH and ENGINE move behind `?` and the AGENTS tab (SPEC 5) because none
