@@ -775,30 +775,15 @@ impl SessionModel {
                             .iter()
                             .find(|f| f.path == path)
                             .map_or(0, |f| f.changes);
-                        // `== base + 1` states the contract exactly: the
-                        // per-call producer emits one `FileChange` per changed
-                        // path (`turn_files::emit_measured_tree_changes`) and
-                        // mutating calls dispatch alone, so a change that
-                        // landed for THIS call moved this path's count by
-                        // exactly one.
-                        //
-                        // `> base` passes every test this crate has, and no
-                        // reachable input is known to separate the two — the
-                        // stranded-baseline case that would (a turn cancelled
-                        // between `ToolStart` and `ToolResult`, then a provider
-                        // recycling the `call_id`, which this repository's own
-                        // telemetry shows kimi doing with `read_file:0`..`:3`)
-                        // is closed by the re-dispatched call's own `ToolStart`
-                        // overwriting the entry before anything reads it, and
-                        // the one path that folds a result with no start (the
-                        // halted arm in `driver::dispatch`) answers `Err`, so
-                        // it never stamps at all.
-                        //
-                        // So this is the exact form rather than a bug fix, and
-                        // is written down as such: it costs nothing, it is what
-                        // the producer actually guarantees, and it does not
-                        // depend on those two paths staying shut.
-                        let landed = baseline.is_some_and(|base| recorded == base + 1);
+                        // `>`, deliberately, not `== base + 1`. One
+                        // `FileChange` per changed path is what the producer
+                        // does today, not something anything pins — and if
+                        // that ever changes, `>` degrades to a true-but-partial
+                        // answer while `==` degrades to naming a change that
+                        // does not exist yet. `tests::producer_seq`'s module
+                        // doc carries the full argument and the case that
+                        // argues the other way.
+                        let landed = baseline.is_some_and(|base| recorded > base);
                         let seq = if landed { recorded } else { recorded + 1 };
                         InlineDiffRef { path, seq }
                     })

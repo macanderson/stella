@@ -12,6 +12,45 @@
 //! whatever no single call can own. `SessionModel` tells them apart from
 //! `mutation_baselines` rather than from anything on the wire (#4205), so this
 //! is where that discrimination is pinned — in both directions.
+//!
+//! # Why `landed` is `recorded > base` and not `== base + 1`
+//!
+//! Both forms agree on every input reachable today, so the choice is decided
+//! by which one fails better — worth writing down, because neither predicate
+//! shows it on its face.
+//!
+//! A landed change currently moves a path's `changes` by exactly one:
+//! `turn_files::emit_measured_tree_changes` sends one `FileChange` per changed
+//! path, because `WorkJournal::diff_trees` parses `git diff --name-status`,
+//! which names a path once. Nothing *pins* that — it is a property of the
+//! implementation, not an asserted invariant — and a per-hunk producer, a tool
+//! that triggers two measurements, or another partial producer would each
+//! break it.
+//!
+//! Suppose it breaks, so `recorded > base + 1`:
+//!
+//! - `>` still says landed and stamps `recorded` — the last change recorded
+//!   for this path, which is one of the changes this call really made.
+//!   Partial, but true.
+//! - `==` says NOT landed and stamps `recorded + 1`, naming a change that does
+//!   not exist yet. The row goes diffless, and if the boundary later records
+//!   there it resolves to a change made *after* this call — the misattribution
+//!   this whole mechanism exists to prevent.
+//!
+//! So the looser test is the safer one, and `==` is the form that quietly
+//! depends on one-`FileChange`-per-call holding forever.
+//!
+//! The case that argues the other way is a baseline stranded by a turn
+//! cancelled between `ToolStart` and `ToolResult`, then read by a provider
+//! recycling the `call_id` — real enough that this repository's own telemetry
+//! shows kimi reusing `read_file:0`..`:3` across messages. Under `>` that
+//! would read the path's grown count as this call's own change. It is shut
+//! twice over: the re-dispatched call's own `ToolStart` overwrites the entry
+//! before anything reads it, and the one path that folds a result with no
+//! start (the halted arm in `driver::dispatch`) answers `Err`, so it never
+//! stamps. A witness for it was written and then deleted — it passed under
+//! *both* predicates, which is how the unreachability was established rather
+//! than assumed.
 
 use super::*;
 
