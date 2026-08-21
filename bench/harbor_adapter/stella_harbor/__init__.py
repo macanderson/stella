@@ -1046,12 +1046,6 @@ class StellaAgent(BaseInstalledAgent):
             self._assurance_tiers_json,
             self._assurance_tiers_sha256,
         ) = assurance_tiers_from_posture(self._engine_posture)
-        # Declaring a tier and being able to run it are two questions, and this
-        # is where the second one is asked — after every channel has folded
-        # into one declaration, before a credential is selected or a container
-        # is touched. This binary has one engine role, so a `witness-on`
-        # posture would run the control arm under a treatment-arm digest
-        # (#4103, #1147).
         refuse_unauthorable_witness_arm(self._assurance_tiers)
         self._verifier_model_value = self._assurance_tiers.get("verifier_model")
         # Highest precedence, after ambient and all Harbor extra env. A task
@@ -1266,18 +1260,9 @@ class StellaAgent(BaseInstalledAgent):
     def _verifier_model(self) -> str | None:
         """Return the pinned witness/verifier author, or ``None`` for the control arm.
 
-        Unset defaults to the control arm, which keeps every published number
-        and every registered posture hash exactly as it was — the treatment arm
-        has to be asked for, so this can never change a run's meaning by
-        arriving in the tree.
-
-        Asking for it now ends the run rather than selecting an arm, but the
-        refusal is deliberately **not** raised here (#4103). This reads one
-        channel; an overriding ``_build_engine_posture`` (an ArenaBench roles
-        config, #2134's channel) is another, and a guard on this selector alone
-        would leave that one open. Both fold into the declaration, which is
-        where :func:`~stella_harbor.posture.refuse_unauthorable_witness_arm`
-        asks the question once for all of them.
+        Unset is the control arm, the posture every published number used.
+        Asking for the other now ends the run, from the gate on the resolved
+        declaration rather than here, so both channels are covered (#4103).
         """
         value = self._configured_value(_WITNESS_AUTHOR_ENV)
         if value is None:
