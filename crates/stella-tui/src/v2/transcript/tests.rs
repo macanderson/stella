@@ -29,13 +29,17 @@ fn scripted_turn() -> (TurnHead, Vec<Event>, Receipt) {
     );
     skill.footer = Some("  injected 10-layer feature contract · used 42× this repo".into());
 
-    let mut read = Event::new(EventKind::Read { lines: 221 }, "…/lifecycle.rs");
+    let mut read = Event::new(
+        EventKind::Read {
+            extent: Extent::added(221),
+        },
+        "…/lifecycle.rs",
+    );
     read.duration_ms = 3;
 
     let mut edit = Event::new(
         EventKind::Edit {
-            added: 3,
-            removed: 1,
+            extent: Extent::delta(3, 1),
         },
         "…/self_driving_cmd.rs",
     );
@@ -122,16 +126,30 @@ fn a_turn_rule_spans_the_full_width() {
 #[test]
 fn every_event_row_shows_its_rail_in_the_correct_metal() {
     let cases = [
-        (EventKind::Read { lines: 1 }, token::MUTED),
+        (
+            EventKind::Read {
+                extent: Extent::added(1),
+            },
+            token::MUTED,
+        ),
         (
             EventKind::Edit {
-                added: 1,
-                removed: 0,
+                extent: Extent::delta(1, 0),
             },
             token::GOLD,
         ),
-        (EventKind::Write { lines: 1 }, token::GOLD),
-        (EventKind::Delete { lines: 1 }, token::RED),
+        (
+            EventKind::Write {
+                extent: Extent::added(1),
+            },
+            token::GOLD,
+        ),
+        (
+            EventKind::Delete {
+                extent: Extent::removed(1),
+            },
+            token::RED,
+        ),
         (EventKind::Run, token::GOLD),
         (
             EventKind::Skill {
@@ -172,11 +190,15 @@ fn every_event_row_shows_its_rail_in_the_correct_metal() {
 /// SPEC 6.3: reads collapse by default, edits expand.
 #[test]
 fn reads_collapse_and_edits_expand_by_default() {
-    assert!(EventKind::Read { lines: 1 }.collapses_by_default());
+    assert!(
+        EventKind::Read {
+            extent: Extent::added(1)
+        }
+        .collapses_by_default()
+    );
     assert!(
         !EventKind::Edit {
-            added: 1,
-            removed: 1
+            extent: Extent::delta(1, 1)
         }
         .collapses_by_default()
     );
@@ -187,8 +209,7 @@ fn reads_collapse_and_edits_expand_by_default() {
 fn folding_an_event_hides_its_body_and_flips_the_glyph() {
     let mut event = Event::new(
         EventKind::Edit {
-            added: 1,
-            removed: 0,
+            extent: Extent::delta(1, 0),
         },
         "src/lib.rs",
     );
