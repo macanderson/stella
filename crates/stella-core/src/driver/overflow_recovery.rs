@@ -49,7 +49,7 @@
 //! resumed turn starts the allowance over, which only re-permits a bounded
 //! amount of work.
 
-use stella_protocol::AgentEvent;
+use stella_protocol::{AgentEvent, MODEL_CALL_FAILED_PREFIX};
 
 use super::{Engine, bus};
 use crate::event_sender::EventSender;
@@ -183,8 +183,11 @@ impl<'a> Engine<'a> {
                 retryable,
             } => {
                 // The abort string keeps its pre-#2679 bytes: consumers and
-                // transcripts read this exact rendering.
-                let reason = format!("model call failed: {message}");
+                // transcripts read this exact rendering. The prefix is named
+                // rather than inline because a renderer has to recognise it to
+                // collapse this reason against the `Error` emitted just below
+                // it (#4146) — see [`MODEL_CALL_FAILED_PREFIX`].
+                let reason = format!("{MODEL_CALL_FAILED_PREFIX}{message}");
                 self.emit_lifecycle(
                     bus::names::MODEL_REQUEST_FAILED,
                     || serde_json::json!({ "step": state.step, "reason": reason }),
@@ -311,7 +314,7 @@ impl<'a> Engine<'a> {
             outcomes.record_failure(self.active_provider().id());
         }
         StepOutcome::Aborted {
-            reason: format!("model call failed: {message}"),
+            reason: format!("{MODEL_CALL_FAILED_PREFIX}{message}"),
             kind: AbortKind::Failure,
             cost_usd: state.total_cost_usd,
         }
