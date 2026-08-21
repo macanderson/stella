@@ -407,10 +407,7 @@ pub fn symbol_terms(query: &str) -> Vec<&str> {
         let mut term = alternative.trim();
         // Peel leading keywords one at a time so `pub async fn name` reduces
         // the same way `fn name` does.
-        loop {
-            let Some((head, rest)) = term.split_once(char::is_whitespace) else {
-                break;
-            };
+        while let Some((head, rest)) = term.split_once(char::is_whitespace) {
             if !DEFINITION_KEYWORDS.contains(&head) {
                 break;
             }
