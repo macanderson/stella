@@ -20,10 +20,15 @@ async-trait.workspace = true
 # pay nothing for a transport they do not use; a host that needs it turns it on.
 reqwest = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+# `sleep` only — the backoff between retries of a rate-limited embedding
+# request. Optional with the transport for the same reason as the two above:
+# a host that never enables `http` links no runtime for a timer it cannot
+# reach. `reqwest` already requires tokio, so this adds no new tree.
+tokio = { workspace = true, optional = true, features = ["time"] }
 
 [features]
 default = []
-http = ["dep:reqwest", "dep:serde_json"]
+http = ["dep:reqwest", "dep:serde_json", "dep:tokio"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

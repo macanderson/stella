@@ -751,50 +751,267 @@ fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
     ))
 }
 
-/// Embed one file's pending chunks and store them — the single place a chunk
-/// vector comes into existence, shared by the eager `stella init` pass below
-/// and the background pass in [`super::backfill`], so there is one render, one
-/// table and one fingerprint discipline (mirrors [`super::semantic`]'s
-/// `embed_batch` for whole-file vectors).
+/// How many embedding requests one chunk pass keeps in flight at once.
 ///
-/// **One file per store call**, because the store's sweep — the thing that
-/// removes a deleted function's vector — keys on the file's content hash, so
-/// writing half a file's chunks and then the other half would have the second
-/// write delete the first's rows.
+/// The pass used to be strictly serial — one file per round trip, each
+/// awaited before the next was issued — which made a cold index cost one
+/// sequential request per file (#4144). The bound exists because the
+/// alternative is not "faster", it is a different failure: an unbounded
+/// fan-out turns a provider's rate limit into a wall of 429s, and a
+/// provider that answers slowly turns the pass into a queue of its own
+/// making. Eight is the same order of concurrency the rest of the tool
+/// already assumes a backend tolerates, and it is a knob on wall clock,
+/// not on correctness — every file is still embedded and stored exactly
+/// once, in scan order, whatever this number is.
+const CHUNK_EMBED_CONCURRENCY: usize = 8;
+
+/// Embed the pending chunks of every file in `files` and store them — the
+/// single place a chunk vector comes into existence, shared by the eager
+/// `stella init` pass below and the background pass in [`super::backfill`],
+/// so there is one render, one table and one fingerprint discipline
+/// (mirrors [`super::semantic`]'s `embed_batch` for whole-file vectors).
 ///
-/// A chunk whose rendered text is unchanged arrives with no `text` and costs
-/// no request: it is re-stamped with the file's new hash and keeps its vector.
-/// That is what makes editing one function in a 60-symbol file cost one
-/// embedding rather than sixty.
-async fn embed_and_store_chunk_file(
+/// **Batches span files.** The old shape embedded one file per request —
+/// 32 chunks of the same file per call, files strictly serial — so a
+/// workspace of small files paid one round trip per file no matter how
+/// few chunks each carried (#4144). Here the pending chunks of the whole
+/// window are flattened into one stream and cut into [`EMBED_BATCH`]-sized
+/// requests, so a request is always full unless the work ran out, and up
+/// to [`CHUNK_EMBED_CONCURRENCY`] of those requests are in flight at once.
+///
+/// **One file per store call still**, because the store's sweep — the
+/// thing that removes a deleted function's vector — keys on the file's
+/// content hash, so writing half a file's chunks and then the other half
+/// would have the second write delete the first's rows. Batching is an
+/// embedding-side change only; the storage unit is untouched.
+///
+/// A chunk whose rendered text is unchanged arrives with no `text` and
+/// costs no request: it is re-stamped with the file's new hash and keeps
+/// its vector. That is what makes editing one function in a 60-symbol
+/// file cost one embedding rather than sixty.
+///
+/// Reports what the window committed *and* how it ended, rather than one or
+/// the other. A `Result` would have to throw the count away on the failing
+/// arm, and the count is exactly what is still true then: the files whose
+/// vectors landed before the failure are in the store, and a caller that
+/// reported zero of them would be understating durable work — the next pass
+/// would find them already done and the narration would have lied about what
+/// the user paid for.
+///
+/// The count also lets the caller narrate one progress step per file without
+/// the callback crossing an `await`: the eager caller's closure borrows a
+/// non-`Send` emitter, and holding it across the embedding fan-out would
+/// force `Send` on it.
+async fn embed_and_store_chunk_files(
     graph: &CodeGraph,
     embedder: &dyn Embedder,
     fingerprint: &str,
-    file: &stella_graph::PendingChunkFile,
+    files: &[stella_graph::PendingChunkFile],
+) -> ChunkWindow {
+    let mut committed = 0;
+    let failure = fill_chunk_window(graph, embedder, fingerprint, files, &mut committed)
+        .await
+        .err();
+    ChunkWindow { committed, failure }
+}
+
+/// What one window of the chunk pass did: how many files reached the store,
+/// and why it stopped if it stopped early. Total by construction, for the
+/// reason [`ChunkWarmOutcome`] gives — the two facts are independent, and a
+/// shape that can only carry one of them forces a caller to guess the other.
+#[derive(Debug)]
+struct ChunkWindow {
+    /// Files whose rows are durably written. Never rolled back by a later
+    /// failure: [`store_chunk_file`] commits per file, and a committed file
+    /// stays committed.
+    committed: usize,
+    /// Why the window stopped short, if it did.
+    failure: Option<String>,
+}
+
+/// [`embed_and_store_chunk_files`]'s body, split out so the `?` operator is
+/// available while `committed` keeps counting through a failure.
+async fn fill_chunk_window(
+    graph: &CodeGraph,
+    embedder: &dyn Embedder,
+    fingerprint: &str,
+    files: &[stella_graph::PendingChunkFile],
+    committed: &mut usize,
 ) -> Result<(), String> {
-    let mut vectors: Vec<Option<Vec<f32>>> = vec![None; file.chunks.len()];
-    let needed: Vec<(usize, &str)> = file
-        .chunks
+    use futures_util::stream::{self, StreamExt};
+
+    // The unit of embedding work: one chunk that needs a vector, addressed
+    // by which file it belongs to and where in that file's chunk list it
+    // sits, so the response can be routed back without the text round-
+    // tripping through a map keyed on content.
+    //
+    // The text is **owned** rather than borrowed from `files`. A borrow puts
+    // a lifetime on this struct, and a lifetime here is not a local matter:
+    // the futures below would carry it, and `tokio::spawn` at the session's
+    // backfill site cannot prove `Send` for a higher-ranked one. The error
+    // does not appear in this crate at all — it lands three crates away, in
+    // `stella-cli`'s `agent::graph`, as "implementation of `Send` is not
+    // general enough" pointing at a `spawn` that mentions none of this.
+    struct NeededChunk {
+        file_index: usize,
+        chunk_index: usize,
+        text: String,
+    }
+
+    let needed: Vec<NeededChunk> = files
         .iter()
         .enumerate()
-        .filter_map(|(index, chunk)| chunk.text.as_deref().map(|text| (index, text)))
+        .flat_map(|(file_index, file)| {
+            file.chunks
+                .iter()
+                .enumerate()
+                .filter_map(move |(chunk_index, chunk)| {
+                    chunk.text.as_ref().map(|text| NeededChunk {
+                        file_index,
+                        chunk_index,
+                        text: text.clone(),
+                    })
+                })
+        })
         .collect();
 
-    for batch in needed.chunks(EMBED_BATCH) {
-        let texts: Vec<String> = batch.iter().map(|(_, text)| (*text).to_string()).collect();
-        let embeddings = embedder
+    // One slot per chunk of every file, `None` meaning "re-stamp the row
+    // that is already stored" — the same contract `ChunkVector::vector`
+    // carries into the store.
+    let mut vectors: Vec<Vec<Option<Vec<f32>>>> = files
+        .iter()
+        .map(|file| vec![None; file.chunks.len()])
+        .collect();
+
+    // Cut the flattened chunk list into full requests, each owning its own
+    // texts, and keep [`CHUNK_EMBED_CONCURRENCY`] of them in flight.
+    let requests: Vec<(usize, Vec<String>)> = needed
+        .chunks(EMBED_BATCH)
+        .enumerate()
+        .map(|(ordinal, batch)| {
+            (
+                ordinal,
+                batch.iter().map(|chunk| chunk.text.clone()).collect(),
+            )
+        })
+        .collect();
+
+    // **Each response carries the ordinal of the request it answers.**
+    // `buffer_unordered` yields results as they *complete*, not in the order
+    // the requests were issued, so pairing the Nth completion with the Nth
+    // batch would file one request's vectors against whichever chunks
+    // happened to be in a slower one. Nothing would fail: every chunk still
+    // gets a well-formed vector of the right width, and the only symptom is
+    // a semantic index that answers with the wrong symbols. It is the same
+    // misattribution `HttpEmbedder::embed` refuses one layer down when it
+    // routes rows by their `index` rather than by arrival order, for the
+    // same reason — a wrong vector is a corrupt ranking, never an error
+    // anyone sees.
+    //
+    // An ordinal rather than the batch itself, because a borrow of `needed`
+    // travelling through these futures is what the owned `text` above exists
+    // to avoid: it would put a higher-ranked lifetime on the spawned
+    // backfill task in `stella-cli` and fail there rather than here.
+    let mut in_flight = stream::iter(requests.into_iter().map(|(ordinal, texts)| async move {
+        embedder
             .embed(&texts)
             .await
-            .map_err(|error| format!("the embedder failed: {error}"))?;
-        for ((index, _), embedding) in batch.iter().zip(embeddings) {
-            vectors[*index] = Some(embedding.vector);
+            .map(|embeddings| (ordinal, embeddings))
+    }))
+    .buffer_unordered(CHUNK_EMBED_CONCURRENCY);
+
+    // How many vectors each file is still waiting for. A file's chunks can
+    // straddle two requests now that batches span files, so "this file is
+    // finished" is a count reaching zero rather than a request completing.
+    let mut outstanding: Vec<usize> = vec![0; files.len()];
+    for chunk in &needed {
+        outstanding[chunk.file_index] += 1;
+    }
+
+    // A file whose chunks are all unchanged waits for nothing: its rows are
+    // pure re-stamps of vectors already stored, so it is committed before
+    // the first request is even issued.
+    for index in 0..files.len() {
+        if outstanding[index] == 0 {
+            store_chunk_file(
+                graph,
+                fingerprint,
+                &files[index],
+                std::mem::take(&mut vectors[index]),
+            )?;
+            *committed += 1;
         }
     }
 
+    // **Each file is committed the moment its last vector lands**, rather
+    // than the window being held until every request is back. The pass runs
+    // in the background and can be interrupted at any point — by a failing
+    // request, by the process ending — and whatever reached the store stays
+    // there. Holding a 64-file window would put all 64 at risk of one late
+    // failure and re-pay for them on the next pass.
+    //
+    // A failed request still abandons the *unfinished* files, and must: a
+    // file stored with a hole in it is indistinguishable from a finished
+    // one, because it would carry the current content hash and the next
+    // pass would see nothing pending and never come back for the gap.
+    while let Some(result) = in_flight.next().await {
+        let (ordinal, embeddings) =
+            result.map_err(|error| format!("the embedder failed: {error}"))?;
+
+        // The ordinal names the request, so the batch is the same slice the
+        // texts were cut from — the one arithmetic that has to agree with
+        // `requests` above, and it agrees by construction.
+        let start = ordinal * EMBED_BATCH;
+        let batch = &needed[start..(start + EMBED_BATCH).min(needed.len())];
+
+        // A short response would leave some file's count stuck above zero,
+        // so the window would never commit it and the caller's loop would
+        // re-scan the same pending file forever. The trait's contract is one
+        // vector per text; naming the breach beats spinning on it.
+        if embeddings.len() != batch.len() {
+            return Err(format!(
+                "the embedder returned {} vectors for {} chunks",
+                embeddings.len(),
+                batch.len()
+            ));
+        }
+
+        for (chunk, embedding) in batch.iter().zip(embeddings) {
+            vectors[chunk.file_index][chunk.chunk_index] = Some(embedding.vector);
+            outstanding[chunk.file_index] -= 1;
+            if outstanding[chunk.file_index] == 0 {
+                store_chunk_file(
+                    graph,
+                    fingerprint,
+                    &files[chunk.file_index],
+                    std::mem::take(&mut vectors[chunk.file_index]),
+                )?;
+                *committed += 1;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Write one file's chunk vectors — the store's atomic unit, for the reason
+/// [`embed_and_store_chunk_files`] gives: the sweep that removes a deleted
+/// symbol's vector keys on the file's content hash, so a file's rows go in
+/// together or not at all.
+///
+/// A `None` slot means "keep the vector already stored and re-stamp it with
+/// the new hash", which is what makes editing one function in a 60-symbol
+/// file cost one embedding rather than sixty.
+fn store_chunk_file(
+    graph: &CodeGraph,
+    fingerprint: &str,
+    file: &stella_graph::PendingChunkFile,
+    file_vectors: Vec<Option<Vec<f32>>>,
+) -> Result<(), String> {
     let rows: Vec<stella_graph::ChunkVector> = file
         .chunks
         .iter()
-        .zip(vectors)
+        .zip(file_vectors)
         .map(|(chunk, vector)| stella_graph::ChunkVector {
             chunk_sha256: chunk.chunk_sha256.clone(),
             name: chunk.name.clone(),
@@ -806,9 +1023,9 @@ async fn embed_and_store_chunk_file(
         .collect();
     graph
         .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
-        // Not recoverable by continuing: the next file would be written
-        // into the same broken store and the pass would report success
-        // having stored nothing.
+        // Not recoverable by continuing: the next file would be written into
+        // the same broken store and the pass would report success having
+        // stored nothing.
         .map_err(|error| format!("the chunk index could not be written: {error}"))
         .map(|_| ())
 }
@@ -954,21 +1171,21 @@ pub(super) async fn warm_chunks_opened<P: FnMut(usize) + ?Sized>(
         // make the loop's boundedness depend on a SQL predicate in another
         // crate being right, which is exactly the coupling that produced
         // #3128. `PendingChunkFile::to_embed()` is the per-symbol truth.
-        let mut made_progress = false;
-        for file in &scan.files {
-            if file.to_embed() > 0 {
-                made_progress = true;
-            }
-            if let Err(reason) =
-                embed_and_store_chunk_file(graph, embedder, &fingerprint, file).await
-            {
-                return ChunkWarmOutcome::Failed {
-                    files_embedded,
-                    reason,
-                };
-            }
+        let made_progress = scan.files.iter().any(|file| file.to_embed() > 0);
+        let window = embed_and_store_chunk_files(graph, embedder, &fingerprint, &scan.files).await;
+        // Narrated before the failure is considered, because these files are
+        // in the store either way: a window that ended badly still committed
+        // whatever finished before it did, and reporting the failure without
+        // them would understate work the user has already paid for.
+        for _ in 0..window.committed {
             files_embedded += 1;
             progress(files_embedded);
+        }
+        if let Some(reason) = window.failure {
+            return ChunkWarmOutcome::Failed {
+                files_embedded,
+                reason,
+            };
         }
         if !made_progress {
             break;
