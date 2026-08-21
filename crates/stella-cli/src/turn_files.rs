@@ -60,11 +60,71 @@
 use std::sync::Arc;
 
 use stella_core::EventSender;
+use stella_core::TurnOutcome;
 use stella_protocol::event::{AgentEvent, FileChangeKind};
 use stella_store::work_journal::{JournalChange, JournalChangeKind};
 use stella_store::{FileTouchRow, Store};
 
 use crate::config::Config;
+
+/// Everything the owner of a turn owes its event stream at the boundary, in
+/// the one order that is correct.
+///
+/// The two debts are separate facts that have to be paid together, because
+/// they are paid to the same stream in the same instant and only one ordering
+/// is right: the tree measurement first — these are the turn's *own* events
+/// and a consumer folding the stream must see them inside the turn they
+/// describe — and then the run's terminator, which is the last thing a run
+/// says (#3379).
+///
+/// **It is one function because it was two, and a driver forgot one of them.**
+/// `emit_shared_tree_changes` had exactly one caller, `agent::run_turn`, so
+/// the Command Deck — the default interactive shell on a TTY, and therefore
+/// the surface almost every human actually watches — emitted no
+/// [`AgentEvent::FileChange`] at all. Its Files tab (`/files`, `/diff`) read
+/// `no files touched yet` for the whole of every session however many files
+/// the turn created, edited or deleted. The terminator was never forgotten,
+/// because a run that omits it visibly hangs every consumer; the measurement
+/// was, because a missing measurement renders as an honest-looking empty
+/// ledger. Folding the silent debt into the loud one is what stops the next
+/// driver making the same omission — the same repair, and the same reasoning,
+/// as `durability`'s `#2177` turn-boundary fence.
+///
+/// Call **before** the turn's event channel closes. Best-effort and silent
+/// throughout: a turn that ended is not made less ended by an unmeasurable
+/// tree.
+pub(crate) fn close_turn_boundary(
+    cfg: &Config,
+    tx: &EventSender,
+    execution: Option<&(Arc<Store>, i64)>,
+    outcome: &TurnOutcome,
+) {
+    emit_shared_tree_changes(cfg, tx, execution);
+    crate::agent::persistence::emit_run_complete_for_turn(tx, &cfg.model_id, outcome);
+}
+
+/// [`close_turn_boundary`] for a driver holding the raw channel sender rather
+/// than an [`EventSender`] — the Command Deck's lead turn, which builds its
+/// channel with `mpsc::unbounded_channel` and hands clones to the forwarder.
+///
+/// The sender it wraps is a **temporary**, dropped when this call returns. It
+/// has to be: the deck ends its turn with `close_turn_stream`, which closes
+/// the channel by dropping the last sender, and a clone left alive in the
+/// driver's scope would leave the forwarder's `recv()` pending forever and
+/// wedge the turn future after the deck had already painted the turn done
+/// (#2290).
+///
+/// This replaces `persistence::emit_run_complete_raw`, which paid only the
+/// terminator half of the boundary — deliberately, so that the deck cannot
+/// terminate a turn without also measuring what it changed.
+pub(crate) fn close_turn_boundary_raw(
+    cfg: &Config,
+    tx: &tokio::sync::mpsc::UnboundedSender<AgentEvent>,
+    execution: Option<&(Arc<Store>, i64)>,
+    outcome: &TurnOutcome,
+) {
+    close_turn_boundary(cfg, &EventSender::new(tx.clone()), execution, outcome);
+}
 
 /// Measure the shared work tree once, then write both of this turn's file
 /// projections from that one reading: the [`AgentEvent::FileChange`] stream
@@ -165,6 +225,81 @@ fn file_change(change: JournalChange) -> AgentEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Witness.** Every driver that owns a turn measures what that turn
+    /// changed, not just that it ended.
+    ///
+    /// [`emit_shared_tree_changes`] had exactly ONE caller, `agent::run_turn`.
+    /// The Command Deck — the default interactive shell on a TTY, and so the
+    /// surface a human actually watches — drives its lead turn through
+    /// `run_lead_turn`, which paid only the run terminator. It therefore
+    /// emitted no [`AgentEvent::FileChange`] for the whole of any session, and
+    /// its Files tab (`/files`, `/diff`) read `no files touched yet` however
+    /// many files the turn created, edited or deleted.
+    ///
+    /// The asymmetry is the point, and it is why this needs a fence rather
+    /// than trust: a driver that drops the *terminator* hangs every consumer
+    /// immediately and is found in minutes, while a driver that drops the
+    /// *measurement* renders an empty ledger that is indistinguishable from an
+    /// honest one. Only the loud debt was ever noticed. Folding both into
+    /// [`close_turn_boundary`] is the structural half of the repair; this is
+    /// the half that keeps the next driver from unfolding them.
+    ///
+    /// A source fence rather than an end-to-end run, and the choice is the
+    /// same one `durability`'s `#2177` fence names: the difference lives
+    /// inside ~400-line async driver functions needing a provider, a
+    /// journal-bound session and a file-touching turn to reach, and what
+    /// actually decays is the *call site* — exactly as it decayed here. The
+    /// measurement itself is covered end-to-end by
+    /// `durability`'s baseline witnesses and by `stella-store`'s
+    /// `snapshot_worktree` tests.
+    #[test]
+    fn every_turn_owner_pays_both_halves_of_the_boundary() {
+        // Built rather than written out, so this file is not its own match.
+        let seam = format!("close_turn_{}", "boundary");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for (file, driver) in [
+            // The raw engine turn: `stella run`, the plain REPL.
+            ("agent.rs", "run_turn"),
+            // The interactive deck's lead turn — the driver that had the hole.
+            ("command_deck.rs", "run_lead_turn"),
+        ] {
+            let body = std::fs::read_to_string(src.join(file))
+                .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
+            assert!(
+                body.contains(&seam),
+                "{file} ({driver}) owns a turn and no longer closes it through \
+                 `turn_files::close_turn_boundary`. A boundary that stops \
+                 measuring does not degrade loudly — it silently empties the \
+                 Files tab, `stella export` and the audit log for that whole \
+                 surface while every other surface keeps working."
+            );
+        }
+    }
+
+    /// The deleted half of the fence above: the terminator-only raw helper the
+    /// deck used to call must stay deleted.
+    ///
+    /// `persistence::emit_run_complete_raw` is what made the omission possible
+    /// — it let a driver holding a raw sender pay the loud debt alone, and read
+    /// exactly like a complete boundary at the call site. Re-adding a
+    /// terminator-only raw helper reopens the hole this change closed, and the
+    /// fence above would not catch it: a driver calling it would simply stop
+    /// containing the seam string, which is a failure the author is free to
+    /// "fix" by re-adding the string. This pins the removal itself.
+    #[test]
+    fn the_terminator_only_raw_helper_stays_deleted() {
+        let banned = format!("emit_run_complete_{}(", "raw");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let body = std::fs::read_to_string(src.join("agent/persistence.rs")).expect("persistence");
+        assert!(
+            !body.contains(&banned),
+            "`emit_run_complete_raw` is back. It pays the run terminator \
+             without the tree measurement that rides beside it, which is \
+             exactly how the deck's Files tab stayed empty for every session. \
+             Use `turn_files::close_turn_boundary_raw`, which pays both."
+        );
+    }
 
     fn measured(kind: JournalChangeKind) -> JournalChange {
         JournalChange {

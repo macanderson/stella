@@ -118,13 +118,13 @@ pub(crate) fn emit_run_complete_on_raw(
     emit_run_complete(&stella_core::EventSender::new(tx.clone()), model, cost_usd);
 }
 
-pub(crate) fn emit_run_complete_raw(
-    tx: &mpsc::UnboundedSender<AgentEvent>,
-    model: &str,
-    outcome: &TurnOutcome,
-) {
-    emit_run_complete_for_turn(&stella_core::EventSender::new(tx.clone()), model, outcome);
-}
+// `emit_run_complete_raw` — the turn-outcome sibling of the above — is
+// deliberately gone. It let a driver holding a raw sender pay the terminator
+// half of the turn boundary without the tree measurement that rides beside it,
+// and the Command Deck did exactly that for as long as both existed: every
+// session's Files tab read `no files touched yet` however many files its turns
+// wrote. `turn_files::close_turn_boundary_raw` is the replacement, and it pays
+// both. Restoring a terminator-only raw helper reopens that hole.
 
 #[derive(Default)]
 pub(crate) struct RendererOutcome {

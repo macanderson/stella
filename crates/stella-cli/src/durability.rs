@@ -107,13 +107,35 @@ struct Bound {
 
 impl SessionDurability {
     /// Point this handle at the durable record of the session that is now
-    /// running.
+    /// running, and establish that session's tree baseline.
+    ///
+    /// The baseline is taken **here**, at the moment the session opens, rather
+    /// than being left to the first turn's own boundary snapshot.
+    /// [`Self::snapshot_worktree`] reports the delta since the previous
+    /// snapshot and returns empty when there is none, because "every file in
+    /// the workspace" is not a description of what a turn changed. That
+    /// contract is right; taking the session's *first* reading at a turn
+    /// boundary was not. It spent the first turn establishing the baseline, so
+    /// that turn always reported having changed nothing — and for a one-shot
+    /// `stella run`, where every invocation is a fresh session and the first
+    /// turn is the only turn, the file stream was empty by construction on
+    /// every run.
+    ///
+    /// The reading is discarded on purpose: whatever changed before this
+    /// session existed is not this session's work. Best-effort like every
+    /// other journal write — an unmeasurable tree costs the file ledger, never
+    /// the session.
     pub fn bind(&self, journal: WorkJournal) {
-        let mut slot = self.bound.write().unwrap_or_else(|p| p.into_inner());
-        *slot = Some(Bound {
-            journal: Arc::new(journal),
-            pipeline: Arc::new(RwLock::new(None)),
-        });
+        {
+            let mut slot = self.bound.write().unwrap_or_else(|p| p.into_inner());
+            *slot = Some(Bound {
+                journal: Arc::new(journal),
+                pipeline: Arc::new(RwLock::new(None)),
+            });
+        }
+        // After the write lock is released: `snapshot_worktree` takes the read
+        // lock, and this is not a re-entrant lock.
+        let _ = self.snapshot_worktree();
     }
 
     /// Declare that this session's turns are running inside a staged pipeline,
@@ -337,6 +359,7 @@ pub fn bind_session(
 ) -> Option<String> {
     match WorkJournal::open(workspace_root, session_id) {
         Ok(journal) => {
+            // `bind` establishes this session's tree baseline; see its doc.
             durability.bind(journal);
             None
         }
@@ -361,6 +384,88 @@ mod tests {
     #[test]
     fn an_unbound_handle_offers_no_sink() {
         assert!(SessionDurability::default().sink().is_none());
+    }
+
+    /// **Witness.** A session's *first* turn reports what it changed.
+    ///
+    /// [`SessionDurability::snapshot_worktree`] answers with the delta since
+    /// the previous snapshot, and the first call of a lineage has no previous
+    /// snapshot to answer against — it establishes one and returns empty, on
+    /// purpose ("every file in the workspace" is not what a turn changed).
+    /// Nothing established that baseline at session start, so the *turn*
+    /// boundary spent its first reading on it and the session's first turn
+    /// reported having changed nothing, however many files it wrote.
+    ///
+    /// This is not a corner: one-shot `stella run` opens a fresh session per
+    /// invocation, so its first turn is its only turn and the file stream was
+    /// empty by construction on every single run.
+    ///
+    /// Both halves are asserted. A `bind` that reported the whole workspace on
+    /// turn one would satisfy a "not empty" assertion and be a worse bug, so
+    /// the pre-existing file must be absent from the answer and the turn's own
+    /// edit present.
+    #[test]
+    fn the_first_turn_after_a_bind_reports_its_own_changes() {
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        // Content that predates the session: the baseline must absorb it.
+        std::fs::write(ws.path().join("predates.txt"), "before\n").unwrap();
+
+        let durability = SessionDurability::default();
+        durability.bind(journal(store.path(), ws.path(), "ses-first-turn"));
+
+        // The session's first turn edits one file and creates another.
+        std::fs::write(ws.path().join("predates.txt"), "before\nafter\n").unwrap();
+        std::fs::write(ws.path().join("born.rs"), "new\n").unwrap();
+
+        let mut changes = durability.snapshot_worktree();
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
+
+        assert_eq!(
+            paths,
+            vec!["born.rs", "predates.txt"],
+            "the first turn's own changes reach the file ledger"
+        );
+        assert_eq!(
+            (changes[0].added, changes[0].removed),
+            (1, 0),
+            "with git's real counts, never +0 -0 (#2290)"
+        );
+        assert_eq!((changes[1].added, changes[1].removed), (1, 0));
+    }
+
+    /// The other half of the same baseline: `bind` absorbs the pre-existing
+    /// tree rather than reporting it. A bind that primed nothing would pass
+    /// nothing above; a bind that reported everything would make the first
+    /// turn claim authorship of the whole workspace.
+    #[test]
+    fn a_bind_absorbs_the_tree_it_found_rather_than_reporting_it() {
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::write(ws.path().join("predates.txt"), "before\n").unwrap();
+
+        let durability = SessionDurability::default();
+        durability.bind(journal(store.path(), ws.path(), "ses-absorbs"));
+
+        assert!(
+            durability.snapshot_worktree().is_empty(),
+            "a turn that changed nothing reports nothing, even the first one"
+        );
+    }
+
+    /// `bind` takes the write lock and then reads through
+    /// `snapshot_worktree`, which takes the read lock. `RwLock` is not
+    /// re-entrant, so doing both under one guard deadlocks the session at
+    /// startup — the one failure mode of priming here rather than at the
+    /// caller. A test that returns at all is the assertion.
+    #[test]
+    fn binding_does_not_deadlock_on_its_own_lock() {
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        let durability = SessionDurability::default();
+        durability.bind(journal(store.path(), ws.path(), "ses-lock"));
+        assert!(durability.sink().is_some(), "the handle really is bound");
     }
 
     /// #2177 witness: every driver that ends a turn marks it.
