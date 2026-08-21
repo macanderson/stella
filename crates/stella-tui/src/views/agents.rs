@@ -91,6 +91,44 @@ const COMPACT_TABLE_WIDTH: u16 = 140;
 /// identity — the wide layout still shows everything.
 const COMPACT_COLUMNS: [usize; 7] = [0, 1, 2, 3, 4, 6, 9];
 
+/// The EXECUTIONS header: the active/total count, and the lane split beside it
+/// once this session has fanned out.
+///
+/// The lane split is the v1 status wall's LANES cell, re-homed here by SPEC 5
+/// (§9.5) after the one-row status bar dropped it with nothing to catch it
+/// (#4126). This is where it belongs and arguably always did: the pane under
+/// this header is one row per lane, so the header is summarizing what it heads
+/// rather than borrowing a fact from somewhere else.
+///
+/// Absent for a solo run, exactly as v1 had it — a session with no subagents
+/// has no split to disambiguate, and `✦ 1 lead · ◆ 0 sub` is a sentence about
+/// nothing. Two metals, because the two lanes are different kinds of thing:
+/// the lead is stella acting, a subagent is a categorical role
+/// ([`theme::SUBAGENT`]) deliberately distinct from it — the same pairing
+/// [`crate::views::subagents`] draws under the transcript.
+fn executions_title(model: &WorkspaceModel) -> Line<'static> {
+    let mut spans = vec![Span::raw(format!(
+        " Executions — {} active / {} total",
+        model.active_count(),
+        model.agents.len()
+    ))];
+    let subs = model.subagent_count();
+    if subs > 0 {
+        spans.push(Span::styled(" · ", theme::muted()));
+        spans.push(Span::styled(
+            format!("✦ {} lead", model.lead_count()),
+            theme::accent(),
+        ));
+        spans.push(Span::styled(" · ", theme::muted()));
+        spans.push(Span::styled(
+            format!("◆ {subs} sub"),
+            Style::default().fg(theme::SUBAGENT),
+        ));
+    }
+    spans.push(Span::raw(" "));
+    Line::from(spans)
+}
+
 /// The EXECUTIONS pane — the pre-existing active-agents dashboard.
 fn render_executions(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     if model.agents.is_empty() {
@@ -98,12 +136,9 @@ fn render_executions(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &
         return;
     }
 
-    let title = format!(
-        " Executions — {} active / {} total ",
-        model.active_count(),
-        model.agents.len()
-    );
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(executions_title(model));
 
     if ui.accessible {
         render_executions_linear(model, ui.focused, block, area, buf);
@@ -456,6 +491,43 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// #4126 witness. SPEC 5 §9.5 re-homes the v1 status wall's LANES cell to
+    /// this header, and the conditional half comes with it: a solo run has no
+    /// split to disambiguate and says nothing.
+    ///
+    /// Asserted on the rendered buffer rather than on
+    /// [`executions_title`]'s spans, because a `Line` title that the block
+    /// silently truncates is a title nobody reads.
+    #[test]
+    fn the_executions_header_carries_the_lane_split_once_a_session_fans_out() {
+        let render_header = |subs: usize| {
+            let mut model = WorkspaceModel::new();
+            model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "the lead", 0)));
+            for i in 0..subs {
+                let mut meta = AgentMeta::new(format!("sub{i}"), "a lane", 0);
+                meta.role = "subagent".into();
+                model.apply_inbound(&Inbound::Register(meta));
+            }
+            let mut ui = DeckUi::default();
+            let area = Rect::new(0, 0, 200, 8);
+            let mut buf = Buffer::empty(area);
+            render(&model, &mut ui, area, &mut buf);
+            buffer_text(&buf)
+        };
+
+        let fanned_out = render_header(2);
+        assert!(
+            fanned_out.contains("✦ 1 lead · ◆ 2 sub"),
+            "the lane split reached no surface:\n{fanned_out}"
+        );
+
+        let solo = render_header(0);
+        assert!(
+            !solo.contains("lead ·") && !solo.contains("sub"),
+            "a solo run paid columns for a split of one:\n{solo}"
+        );
     }
 
     #[test]

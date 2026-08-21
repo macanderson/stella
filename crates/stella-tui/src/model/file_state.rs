@@ -59,7 +59,18 @@ pub struct FileState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RememberedDiff {
     pub seq: u32,
-    pub text: String,
+    /// The mutation's diff text, `None` when the emitter measured the change
+    /// but could not attach a patch for it.
+    ///
+    /// Counts and diff text arrive independently — a producer builds each
+    /// change from a name-status listing, then attaches numstat and diff text
+    /// in two calls, either of which can fail, and [`FileState::best_diff`]
+    /// names `diff: None` with real counts as a legitimate shape. Recording
+    /// the entry only when text was present conflated "no patch" with "no
+    /// measurement": [`FileState::delta_at`] answered `None` for a mutation whose
+    /// `(added, removed)` the emitter had measured, so the row lost its
+    /// `+N −M` as well as its diff (#4155).
+    pub text: Option<String>,
     pub added: u32,
     pub removed: u32,
 }
@@ -99,14 +110,21 @@ pub(crate) fn evict_lru(files: &mut Vec<FileState>) -> bool {
 }
 
 impl FileState {
-    /// Record a mutation's diff against the `changes` value it produced.
-    /// Called only for mutations, and only after `changes` has been bumped, so
-    /// the tag matches the seq a tool result folds at the same moment.
+    /// Record a mutation against the `changes` value it produced, whether or
+    /// not the emitter attached a patch for it. Called only for mutations, and
+    /// only after `changes` has been bumped, so the tag matches the seq the
+    /// mutation's own tool result stamped.
+    ///
+    /// A change carrying `diff: None` is recorded too: it still measured an
+    /// `(added, removed)` the row wants to state, and skipping it made
+    /// [`Self::delta_at`] deny a measurement that existed (#4155). The cost is
+    /// that such an entry occupies a [`DIFF_HISTORY`] slot — [`Self::best_diff`]
+    /// therefore scans back for the newest entry that *has* text rather than
+    /// reading the last one.
     pub(crate) fn remember_diff(&mut self, diff: &Option<String>, added: u32, removed: u32) {
-        let Some(text) = diff else { return };
         self.recent_diffs.push_back(RememberedDiff {
             seq: self.changes,
-            text: text.clone(),
+            text: diff.clone(),
             added,
             removed,
         });
@@ -115,10 +133,11 @@ impl FileState {
         }
     }
 
-    /// The diff this path produced at mutation `seq`, if still remembered.
+    /// The diff this path produced at mutation `seq`, if still remembered and
+    /// if that mutation carried a patch at all.
     #[must_use]
     pub fn diff_at(&self, seq: u32) -> Option<&str> {
-        self.remembered_at(seq).map(|d| d.text.as_str())
+        self.remembered_at(seq).and_then(|d| d.text.as_deref())
     }
 
     /// That mutation's measured `(added, removed)` — the numbers a transcript
@@ -160,10 +179,15 @@ impl FileState {
         if let Some(current) = self.latest_diff.as_deref() {
             return Some((current, true));
         }
+        // The newest entry that carries text, not simply the newest: since
+        // #4155 a measured-but-patchless change is remembered too, and reading
+        // `back()` alone would answer `None` for a path whose diff is sitting
+        // one entry further in — the exact regression #1741 fixed.
         self.recent_diffs
-            .back()
-            .map(|d| (d.text.as_str(), false))
-            .filter(|(text, _)| !text.is_empty())
+            .iter()
+            .rev()
+            .find_map(|d| d.text.as_deref().filter(|text| !text.is_empty()))
+            .map(|text| (text, false))
     }
 }
 

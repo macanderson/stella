@@ -195,7 +195,7 @@ pub(crate) fn fmt_tokens(n: u64) -> String {
     }
 }
 
-/// The statline's optional second row: a low-hit-rate diagnosis, prefixed
+/// The optional row under the status bar: a low-hit-rate diagnosis, prefixed
 /// with a warning glyph and rendered in `CacheCause::hint`'s full-sentence
 /// wording — byte-identical to what `stella stats` prints for the same
 /// cause, per `stella-protocol::cache`'s "the CLI and the TUI render
@@ -421,12 +421,12 @@ mod tests {
         );
     }
 
-    // ── Detail-line + statline diagnosis integration tests ──────────────────
+    // ── Detail-line + diagnosis-row integration tests ───────────────────────
     //
-    // The hit rate and the volumes are asserted in `crate::statline`'s own
-    // tests, where they are composed; what is asserted here is the diagnosis
-    // row, driven through the real band renderer so the formatter and the
-    // row reservation cannot drift apart.
+    // The hit rate and the volumes are asserted against the formatter directly.
+    // The diagnosis is asserted through `crate::v2::status_bar`, which owns
+    // the row under the status bar, so the formatter and the row reservation
+    // cannot drift apart.
 
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
@@ -464,10 +464,10 @@ mod tests {
     }
 
     #[test]
-    fn a_diagnosed_agent_earns_the_statline_diagnosis_row() {
+    fn a_diagnosed_agent_earns_the_diagnosis_row() {
         // Opt-in provider, past MIN_TURNS, 0% hit, nothing written: the
-        // marker never engaged, and the second statline row says so in the
-        // full-sentence wording `stella stats` prints for the same cause.
+        // marker never engaged, and the row under the status bar says so in
+        // the full-sentence wording `stella stats` prints for the same cause.
         let mut m = WorkspaceModel::new();
         m.now_ms = 1_000;
         m.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
@@ -493,7 +493,7 @@ mod tests {
         // the status bar, and only when an agent has earned one.
         let area = Rect::new(0, 0, 200, 1);
         let mut buf = Buffer::empty(area);
-        crate::statline::render_diagnosis(&m, &ui, area, &mut buf);
+        crate::v2::status_bar::render_diagnosis(&m, &ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(
             text.contains("cache opt-in never engaged"),
@@ -504,7 +504,7 @@ mod tests {
         let mut healthy = WorkspaceModel::new();
         healthy.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
         let mut buf = Buffer::empty(area);
-        crate::statline::render_diagnosis(&healthy, &ui, area, &mut buf);
+        crate::v2::status_bar::render_diagnosis(&healthy, &ui, area, &mut buf);
         assert!(!buffer_text(&buf).contains("engaged"));
     }
 }

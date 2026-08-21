@@ -1,0 +1,132 @@
+//! The **turn in flight** and the boundaries that fence it — the half of
+//! [`super::SessionModel`] that answers "what is happening now", as opposed
+//! to the scrollback that records what happened.
+//!
+//! Two types, and they are the two ends of the same thing. [`Hud`] is live
+//! state, read by the statline while the turn runs and overwritten by the
+//! next one. [`TurnOpening`] is the settled stamp that state leaves on the
+//! transcript when a turn opens, so the boundary can still say what the turn
+//! was long after the HUD has moved on.
+//!
+//! Split out of `model.rs` when it crossed the 1500-line guard, on the
+//! sibling-submodule remedy AGENTS.md names rather than a raised baseline —
+//! the same cut `file_state` and `recall` already make, and along the same
+//! seam: a `TranscriptEntry`'s supporting types live beside it, not in it.
+
+use stella_protocol::{BudgetMode, StageKind, StageName};
+
+/// What SPEC 6.1's opening rule says out loud, stamped onto the stage boundary
+/// that opens a turn.
+///
+/// # Why the facts ride the entry
+///
+/// The same reason [`super::TranscriptEntry::Complete`]'s `turn` does: `render::entry`
+/// renders one entry at a time and holds no session state, so a fact that is not
+/// on the entry is a fact the rule cannot say.
+///
+/// # Why one rule per turn and not one per stage
+///
+/// SPEC 6.1 draws a single labelled boundary and SPEC 2 makes the turn the
+/// transcript's unit. A wrapped run has four or five stages inside one turn, so
+/// a rule per stage would announce `turn 14` five times and the number would
+/// stop reading as the turn's identity. Which boundary is the opening one is
+/// decided at fold time (`SessionModel::turn_head_stamped`) rather than at
+/// render time, because the renderer cannot see the entry before this one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnOpening {
+    /// This turn's 1-based ordinal — [`super::SessionModel::turns_completed`] plus the
+    /// turn in flight, so it is the number the turn's own closing rule will
+    /// carry.
+    ///
+    /// It counts turns that *completed*. A turn that died without one is
+    /// therefore not counted, and the next attempt reopens under the same
+    /// ordinal — which is the honest reading of a counter that means "turns
+    /// this session has finished", not a renumbering.
+    pub turn: u32,
+    /// The model answering, as [`Hud::model`] last observed it.
+    ///
+    /// `None` for the whole first turn of a session: `Hud::model` is fed by
+    /// `AgentEvent::TurnComplete`, which by definition has not arrived yet.
+    /// Elided rather than substituted — the configured default is not evidence
+    /// of what a router picked, and the rule would be asserting a routing
+    /// decision nothing recorded (#4183).
+    pub model: Option<String>,
+    /// This turn's spend ceiling, from [`Hud::limit_usd`].
+    ///
+    /// The **turn's**, not the session's, which is what makes it the right
+    /// number for a rule that opens one turn: `AgentEvent::BudgetTick`'s own
+    /// doc states that `spent_usd`/`limit_usd` are turn-scoped and that the
+    /// session axis rides separately on `session_spent_usd`/
+    /// `session_limit_usd`, which the deck does not fold.
+    ///
+    /// `None` means **no budget is armed**, which is not a budget of `$0.00` —
+    /// the same distinction [`Hud::deadline_remaining_ms`] draws, and for the
+    /// same reason: a rule printing `budget $0.00` over an uncapped run would
+    /// state a cap nobody set.
+    pub budget_usd: Option<f64>,
+}
+
+/// Live HUD numbers, all folded from the event stream.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Hud {
+    /// Spend as the budget guard reports it on every `BudgetTick`.
+    ///
+    /// Note this is **cumulative for the life of the guard**, not per turn: the
+    /// deck builds one `BudgetGuard` for the whole session and never calls
+    /// `begin_turn`, so this only ever rises. Use [`Hud::turn_spent_usd`] for
+    /// the number a reader would call "what this turn cost".
+    pub spent_usd: f64,
+    pub limit_usd: Option<f64>,
+    pub budget_mode: Option<BudgetMode>,
+    /// Wall clock left before the task deadline, as the last `BudgetTick`
+    /// reported it (#2240, #2435). `None` is the load-bearing case and means
+    /// **no deadline is armed** — never "no time left", which is
+    /// `Some(0)`. The status bar renders the two differently for exactly that
+    /// reason: a HUD showing `0s` for an unarmed run would put back into the
+    /// UI the confusion #2240 took out of the journal. `None` draws no cell at
+    /// all and `Some(0)` draws the word `expired`
+    /// ([`crate::v2::status_bar`]).
+    ///
+    /// Milliseconds rather than a `Duration` because that is the wire shape
+    /// (`AgentEvent::BudgetTick::deadline_remaining_ms`), and this struct is a
+    /// fold of the stream, not a reinterpretation of it.
+    pub deadline_remaining_ms: Option<u64>,
+    /// The stage the turn is in. [`StageName`], not [`StageKind`]: a
+    /// contributed stage is what the statline must be able to name.
+    pub stage: Option<StageName>,
+    /// The most recent stage that was one of **this host's own** boundaries.
+    ///
+    /// Separate from [`Hud::stage`] because the two answer different questions,
+    /// and one field cannot answer both once the vocabulary is open. `stage` is
+    /// "what is happening right now", which is what the statline says out loud.
+    /// This is "how far through its own shape the turn has got", which is what
+    /// the three-segment progress bar draws — and the bar has only the host's
+    /// three phases to draw with.
+    ///
+    /// Keeping it is what stops a contributed stage reading as a regression: a
+    /// plugin stage arriving after `execute` leaves this at `Execute`, so the
+    /// bar holds. Folding the contributed stage into the same field would make
+    /// it phase-less, and a phase-less stage falls back to phase 0 — the bar
+    /// would snap back to "plan" and claim the run had gone backwards.
+    pub host_stage: Option<StageKind>,
+    pub model: Option<String>,
+    /// [`Hud::spent_usd`] as it stood when the current turn began, so live turn
+    /// cost is the difference. Snapshotted in [`super::SessionModel::push_user_prompt`]
+    /// — the earliest signal a turn has started.
+    pub turn_start_spent_usd: f64,
+    /// The final turn cost, set once a `Complete` event lands.
+    pub final_cost_usd: Option<f64>,
+    pub complete: bool,
+}
+
+impl Hud {
+    /// What the turn in flight has cost so far.
+    ///
+    /// Once the turn settles this yields to `Complete`'s own `cost_usd`, which
+    /// is authoritative — the driver totals it directly rather than differencing
+    /// a cumulative gauge, so it also catches spend that never produced a tick.
+    pub fn turn_spent_usd(&self) -> f64 {
+        self.final_cost_usd
+            .unwrap_or_else(|| (self.spent_usd - self.turn_start_spent_usd).max(0.0))
+    }
+}

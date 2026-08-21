@@ -70,7 +70,7 @@ const OK_PREVIEW: usize = stella_transcript::digest::PREVIEW_LINES;
 /// column: the transcript is a scrollback, and a reader who wants to open the
 /// file at that line wants the number the tool actually printed.
 pub(super) fn push_body_line(
-    rail: Rail,
+    margin: &[Span<'static>],
     line: &str,
     paint: BodyPaint,
     width: usize,
@@ -78,7 +78,7 @@ pub(super) fn push_body_line(
 ) {
     let painted = paint_line(paint, line);
     let Some(lang) = painted.lang else {
-        push_detail_line(rail, line, width, out);
+        push_detail_line(margin, line, width, out);
         return;
     };
     // The deck's single highlight site, and so where SPEC 6.4's "once when the
@@ -105,7 +105,7 @@ pub(super) fn push_body_line(
                 None => Span::styled(text, Style::new().fg(theme::MUTED)),
             }),
     );
-    push_detail_spans(rail, spans, width, out);
+    push_detail_spans(margin, spans, width, out);
 }
 
 /// The dispatched call: SPEC 6.2's head, plus its argument object when the row
@@ -114,22 +114,31 @@ pub(super) fn push_body_line(
 /// The head itself is [`v2::head_rows`]'. What is *not* v2's is the expanded
 /// body under it, and it had stopped rendering at all: #4123 routed `ToolStart`
 /// through the v2 router, which returns before the v1 arm that drew the
-/// pretty-printed arguments, and `head_rows` takes no `expanded` flag — so
+/// pretty-printed arguments, and `head_rows` took no `expanded` flag — so
 /// `ctrl+o` on a call row silently showed nothing from that PR until this one.
+///
+/// `measured` is the emitter's `(added, removed)` for this call once the paired
+/// result has landed and the turn boundary has measured the tree, and `None`
+/// until then — the router resolves it (`v2::measured_delta`), so this function
+/// and the projection under it stay pure functions of one call (#4154).
 pub(super) fn start_rows(
     name: &str,
     input: &str,
     raw: &str,
     path: Option<&str>,
+    measured: Option<(u32, u32)>,
     expanded: bool,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    out.extend(v2::head_rows(name, path, input, width));
+    out.extend(v2::head_rows(name, path, input, measured, width));
     if !expanded {
         return;
     }
-    let rail = Rail::Call(v2::metal_for(name));
+    // Bound once: every row of this call's argument object reproduces the same
+    // margin, and re-deriving it per row is how one of them ends up a cell out
+    // of line with the others.
+    let margin = Rail::Call(v2::metal_for(name)).continuation();
     // ctrl+o: the full argument object, pretty-printed and dim. An over-budget
     // argument may not parse (char-capped raw) — show it wrapped rather than
     // clipped at the pane edge. Pretty-printing is what makes the coloring
@@ -140,7 +149,7 @@ pub(super) fn start_rows(
         .and_then(|v| serde_json::to_string_pretty(&v))
         .unwrap_or_else(|_| raw.to_owned());
     for l in pretty.lines() {
-        push_body_line(rail, l, BodyPaint::json(), width, out);
+        push_body_line(&margin, l, BodyPaint::json(), width, out);
     }
 }
 
@@ -169,6 +178,10 @@ pub(super) fn result_rows(
     } else {
         Rail::Fail
     };
+    // Bound once: every row of this result's block reproduces the same margin,
+    // and re-deriving it per row is how one of them ends up a cell out of line
+    // with the others.
+    let margin = rail.continuation();
     let dim = Style::new().fg(theme::MUTED);
     // A JSON body is re-laid one member to a line *before* anything counts,
     // anchors or folds it. An API response — `gh api`, an MCP server, a REST
@@ -203,9 +216,17 @@ pub(super) fn result_rows(
     // output" would describe the tool's chatter, not the change. Everything
     // else reports output size, and only when there is more than the one line
     // already shown.
+    //
+    // Gated on the *measurement*, not on the diff text: a change can be measured
+    // without a patch being attachable, and gating on the text denied the row a
+    // size it actually knew (#4155). The two resolve together in the ordinary
+    // case; where they part, the row states the size and falls back to the
+    // tool's own preview below rather than showing nothing at all.
+    // `unwrap_or((0, 0))` is gone with it — a fabricated `+0 −0` over a real
+    // edit is the defect #4156 removed from the head row, and it has no place
+    // here.
     let mut metric: Vec<Span<'static>> = Vec::new();
-    if inline.is_some() {
-        let (added, removed) = inline_delta.unwrap_or((0, 0));
+    if let Some((added, removed)) = inline_delta {
         metric.push(Span::styled(
             format!("+{added}"),
             Style::new().fg(theme::OK),
@@ -231,7 +252,7 @@ pub(super) fn result_rows(
         );
         let paint = body_paint(path, full);
         for l in full.lines() {
-            push_body_line(rail, l, paint, width, out);
+            push_body_line(&margin, l, paint, width, out);
         }
     } else {
         // With a diff below, a prose summary ("Applied edit to src/agent.rs")
@@ -289,7 +310,7 @@ pub(super) fn result_rows(
             out,
         );
         for l in shown.iter().skip(usize::from(!paint.colored())) {
-            push_body_line(rail, l.trim_end(), paint, width, out);
+            push_body_line(&margin, l.trim_end(), paint, width, out);
         }
         // The "there is more" row, for a success as well as a failure — it is
         // the only place the hidden count is stated now, and the only place the
@@ -299,7 +320,7 @@ pub(super) fn result_rows(
         let hidden = total.saturating_sub(shown.len());
         if hidden > 0 && inline.is_none() {
             push_detail_line(
-                rail,
+                &margin,
                 &format!("⋯ {} · ctrl+o", plural_lines(hidden)),
                 width,
                 out,
@@ -330,7 +351,7 @@ pub(super) fn result_rows(
         // more" under a rendering whose last row is already the file's last row.
         let (body, _) = diff::body_lines_inline(d, Some(&dref.path), cap, Some(" · ctrl+o"));
         for line in body {
-            push_diff_line(rail, line, width, out);
+            push_diff_line(&margin, line, width, out);
         }
     }
 }

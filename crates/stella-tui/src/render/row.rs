@@ -82,6 +82,30 @@ pub(crate) const LEAD: usize = 2;
 /// call it belonged to.
 pub(crate) const BODY: usize = 4;
 
+/// Content column of every row in a tool-call block: [`RAIL`], a space, one
+/// glyph cell, a space.
+///
+/// The v2 head renderer arrives at the same number from the other side
+/// (`rail_span` + `" {glyph} "`), which is what makes a call and its result one
+/// block; `render::tests::block_rail` is what holds the two to it.
+pub(crate) const BLOCK_BODY: usize = RAIL_W + 3;
+
+/// The margin every row of a tool-call block reproduces *after* its glyph row:
+/// the rail in `metal`, then blanks out to [`BLOCK_BODY`].
+///
+/// Takes the metal rather than a [`Rail`] because the head of a block is drawn
+/// by the v2 event renderer, whose rail wears its **event kind's** colour —
+/// silver-dim for a read, gold for a mutation — and not one of `Rail`'s three
+/// tones. A body row that hard-coded the result's muted tone would leave a
+/// `read_file`'s block with a muted head above a gold body: one block, two
+/// metals, which is exactly the thing the rail exists to stop.
+pub(crate) fn block_margin(metal: Style) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(RAIL, metal),
+        Span::raw(" ".repeat(BLOCK_BODY - RAIL_W)),
+    ]
+}
+
 /// Which rail a transcript row rides. The glyph is the row's type signature —
 /// a reader scanning the margin sees the shape of the session (calls, their
 /// outcomes, prose, prompts) before reading any content.
@@ -145,10 +169,7 @@ impl Rail {
         if !self.railed() {
             return vec![Span::raw(" ".repeat(self.indent()))];
         }
-        vec![
-            Span::styled(RAIL, self.style()),
-            Span::raw(" ".repeat(self.indent() - RAIL_W)),
-        ]
+        block_margin(self.style())
     }
 
     /// The style the rail glyph itself renders in. Content styling is the
@@ -329,14 +350,25 @@ pub(crate) fn push_row(
 /// Emit one body row of a tool-call block — a preview line, an expanded
 /// (ctrl+o) body line, the `⋯ N lines` affordance.
 ///
-/// Rides `rail`'s own margin, so the row sits directly under its result's
-/// content and the block's rail runs unbroken past it. `rail` is the *result's*
-/// rail rather than a fixed one because a failure's block is drawn in danger
-/// and a success's in muted: a body that hard-coded either would leave one of
-/// the two with a rail that changes colour halfway down.
-pub(crate) fn push_detail_line(rail: Rail, text: &str, width: usize, out: &mut Vec<Line<'static>>) {
+/// Rides `margin` — [`Rail::continuation`] for a row under a v1 rail,
+/// [`block_margin`] for one under the v2-drawn head — so the row sits at the
+/// block's content column and the rail runs unbroken past it.
+///
+/// The margin is passed rather than derived because a block's body can hang
+/// from more than one metal and this function cannot see which: a call and its
+/// successful result both wear the event's own metal ([`Rail::Call`],
+/// [`Rail::Result`]), while a failure overrides it with danger. Binding it once
+/// per block at the call site is also what keeps every row of that block on the
+/// same content column — re-deriving it per row is how one of them ends up a
+/// cell out of line with the others.
+pub(crate) fn push_detail_line(
+    margin: &[Span<'static>],
+    text: &str,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
     push_detail_spans(
-        rail,
+        margin,
         vec![Span::styled(text.to_owned(), Style::new().fg(theme::MUTED))],
         width,
         out,
@@ -348,21 +380,20 @@ pub(crate) fn push_detail_line(rail: Rail, text: &str, width: usize, out: &mut V
 /// coloring it exists to show. Indent, column, and wrapping are identical, so
 /// the two forms interleave in one body without a seam.
 pub(crate) fn push_detail_spans(
-    rail: Rail,
+    margin: &[Span<'static>],
     content: Vec<Span<'static>>,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    let cont = rail.continuation();
-    let mut spans = cont.clone();
+    let mut spans = margin.to_vec();
     spans.extend(content);
-    wrap_one_lead(Line::from(spans), width, &cont, out);
+    wrap_one_lead(Line::from(spans), width, margin, out);
 }
 
 /// Emit a system-note row: `↻ retry`, `⇣ compacted`, `✗ error` and friends.
 ///
 /// These rows *are* their own rail — each label already opens with a glyph in
-/// column 0, so it indexes the margin exactly like [`Rail::Call`] does without
+/// column 0, so it indexes the margin exactly like [`Rail::Result`] does without
 /// needing a second marker in front of it. Content follows two spaces later;
 /// wrapped lines indent to [`LEAD`].
 pub(crate) fn push_note(
@@ -460,22 +491,21 @@ pub(crate) fn push_gap(out: &mut Vec<Line<'static>>) {
 ///
 /// SPEC 6.4 phrases this as `Line.style` carrying the tint while spans keep
 /// their syntax foreground. The deck cannot say it that way: `Line.style` would
-/// paint the whole row including the rail this function prepends, and the rail
-/// is the *call's* metal, not the diff's. Padding a trailing span is the same
-/// two layers with the margin left out of the second one.
+/// paint the whole row including the `margin` this function prepends, and that
+/// margin is the *call's* metal, not the diff's. Padding a trailing span is the
+/// same two layers with the margin left out of the second one.
 pub(crate) fn push_diff_line(
-    rail: Rail,
+    margin: &[Span<'static>],
     line: Line<'static>,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    let lead = rail.continuation();
     // The marker cell (`+`/`-`/` `) is the first span after the gutter, and it
     // is the one that always carries the row's *base* tint — a word-level
     // emphasis span carries the brighter `*_EMPH` ground instead, so reading
     // the tint off any old span would pad a changed row in the wrong colour.
     let tint = line.spans.get(1).and_then(|s| s.style.bg);
-    let mut spans = lead;
+    let mut spans = margin.to_vec();
     spans.extend(line.spans);
     // The one row that reaches the buffer without passing through
     // [`wrap_one_indent`], and so the one that needs [`expand_tabs`] by name: a

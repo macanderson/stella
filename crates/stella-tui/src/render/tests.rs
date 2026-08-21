@@ -68,7 +68,7 @@ fn transcript_lines(
     for (i, entry) in model.transcript.iter().enumerate() {
         entry_lines(
             entry,
-            &model.files,
+            EntryView::at(&model.files, &model.transcript, i),
             expand_thinking,
             expand_thinking,
             live && i == last,
@@ -90,7 +90,10 @@ fn transcript_lines(
 fn sample_entries() -> Vec<TranscriptEntry> {
     vec![
         TranscriptEntry::User("hi".into()),
-        TranscriptEntry::Stage(StageKind::Execute.into()),
+        TranscriptEntry::Stage {
+            name: StageKind::Execute.into(),
+            opens: None,
+        },
         TranscriptEntry::Text("ok".into()),
         TranscriptEntry::Reasoning("hmm".into()),
         TranscriptEntry::ToolStart {
@@ -432,6 +435,166 @@ fn a_completed_turn_closes_on_a_rule_and_a_receipt() {
     }
 }
 
+/// SPEC 6.1: a turn opens on a labelled rule naming the turn, its stage, the
+/// model and the budget in force.
+///
+/// The witness for the opening boundary landing. On the old renderer a stage
+/// was a hairline carrying the stage word alone, so every assertion below fails
+/// on it: no `turn 4`, no model, no budget, and — the point of the rule —
+/// nothing tying the events under it to the receipt that closes them.
+#[test]
+fn a_turn_opens_on_a_labelled_rule() {
+    let entry = TranscriptEntry::Stage {
+        name: StageKind::Execute.into(),
+        opens: Some(crate::model::TurnOpening {
+            turn: 4,
+            model: Some("kimi-k3".into()),
+            budget_usd: Some(0.60),
+        }),
+    };
+    let text = recall_text(&entry, false, 100);
+
+    assert!(text.contains("turn 4"), "no opening rule:\n{text}");
+    assert!(text.contains("execute"), "the rule lost its stage:\n{text}");
+    assert!(text.contains("kimi-k3"), "the rule lost its model:\n{text}");
+    assert!(
+        text.contains("budget $0.60"),
+        "the rule lost its budget:\n{text}"
+    );
+    assert!(
+        text.contains("──"),
+        "the rule does not reach the row:\n{text}"
+    );
+}
+
+/// …and states only what the session actually knows.
+///
+/// The first turn of a session has no model — `Hud::model` is fed by
+/// `TurnComplete`, which has not arrived — and a run with no budget armed has
+/// no ceiling. Both elide. The failure this guards is not cosmetic: a rule that
+/// filled the gaps would open the transcript by naming a model nobody routed to
+/// and a `$0.00` nobody set, on the row a reader trusts to say what this turn
+/// is (#4183).
+#[test]
+fn an_opening_rule_names_no_model_or_budget_it_was_never_told() {
+    let text = recall_text(
+        &TranscriptEntry::Stage {
+            name: StageKind::Execute.into(),
+            opens: Some(crate::model::TurnOpening {
+                turn: 1,
+                model: None,
+                budget_usd: None,
+            }),
+        },
+        false,
+        100,
+    );
+    assert!(text.contains("turn 1 execute"), "{text}");
+    for absent in ["budget", "$0.00", "$"] {
+        assert!(
+            !text.contains(absent),
+            "the opening rule invented {absent:?}:\n{text}"
+        );
+    }
+}
+
+/// SPEC 6.1 draws **one** labelled rule per turn, and SPEC 2 makes the turn the
+/// transcript's unit. A later stage of the same turn stays the plain section
+/// rule it has always been — otherwise a wrapped run with triage, plan, execute
+/// and verify inside one turn would announce `turn 4` four times and the number
+/// would stop reading as the turn's identity.
+#[test]
+fn a_stage_inside_a_turn_is_not_a_second_turn_rule() {
+    let text = recall_text(
+        &TranscriptEntry::Stage {
+            name: StageKind::Verify.into(),
+            opens: None,
+        },
+        false,
+        100,
+    );
+    // The v1 section rule sets its label in caps; what matters here is that the
+    // stage still names itself and that no turn number rides beside it.
+    assert!(
+        text.to_ascii_lowercase().contains("verify"),
+        "the section rule vanished:\n{text}"
+    );
+    assert!(
+        !text.to_ascii_lowercase().contains("turn "),
+        "a second turn rule:\n{text}"
+    );
+}
+
+/// SPEC 6.1 end to end, over the live path: events fold into a
+/// [`SessionModel`], the model's entries render through [`entry_lines`], and
+/// the result is a turn wrapped in its two rules with the receipt beneath.
+///
+/// This is #4124's definition of done — that
+/// `design/tui-v2/renderings/png/01-session-turn-lifecycle.png` is reproducible
+/// as a *live screen* and not merely as a call to the pure renderers. The unit
+/// tests above each prove one row from a hand-built entry; only this one proves
+/// that the fold stamps what the renderer needs and that the router reaches it.
+/// It asserts order, because a receipt above its own turn rule would be a
+/// correct set of rows and a wrong transcript.
+#[test]
+fn a_folded_turn_renders_its_whole_lifecycle_in_order() {
+    use stella_protocol::{StageScope, ToolCall};
+
+    let mut model = crate::model::SessionModel::new();
+    for event in [
+        AgentEvent::Stage {
+            name: StageKind::Execute.into(),
+            scope: StageScope::Run,
+        },
+        AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: "c1".into(),
+                name: "read_file".into(),
+                input: serde_json::json!({ "path": "src/lifecycle.rs" }),
+            },
+        },
+        AgentEvent::TurnComplete {
+            model: "kimi-k3".into(),
+            cost_usd: 0.11,
+        },
+    ] {
+        model.apply(&event);
+    }
+
+    let mut out = Vec::new();
+    for entry in &model.transcript {
+        entry_lines(
+            entry,
+            EntryView::default(),
+            false,
+            false,
+            false,
+            100,
+            &mut out,
+        );
+    }
+    let rows: Vec<String> = out
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    let index_of = |needle: &str| {
+        rows.iter()
+            .position(|r| r.contains(needle))
+            .unwrap_or_else(|| panic!("no row containing {needle:?} in:\n{}", rows.join("\n")))
+    };
+
+    let begin = index_of("turn 1 execute");
+    let event = index_of("src/lifecycle.rs");
+    let end = index_of("turn 1 done");
+    let receipt = index_of("receipt");
+    assert!(
+        begin < event && event < end && end < receipt,
+        "the turn's rows are out of order (begin {begin}, event {event}, end {end}, \
+         receipt {receipt}):\n{}",
+        rows.join("\n")
+    );
+}
+
 /// SPEC 2: money is gold. The v1 row rendered a settled turn cost in
 /// `SUCCESS_BRIGHT` green, which spends the pass colour on an amount — and
 /// green is reserved for pass semantics, not for spending.
@@ -444,7 +607,7 @@ fn the_turn_receipt_prices_in_gold_not_in_the_pass_colour() {
             cost_usd: 0.11,
             turn: 14,
         },
-        &[],
+        EntryView::default(),
         false,
         false,
         false,
@@ -473,7 +636,15 @@ fn the_turn_receipt_prices_in_gold_not_in_the_pass_colour() {
 
 fn recall_text(entry: &TranscriptEntry, expanded: bool, width: usize) -> String {
     let mut out = Vec::new();
-    entry_lines(entry, &[], false, expanded, false, width, &mut out);
+    entry_lines(
+        entry,
+        EntryView::default(),
+        false,
+        expanded,
+        false,
+        width,
+        &mut out,
+    );
     out.iter()
         .map(|l| {
             l.spans

@@ -16,7 +16,7 @@ use std::ops::Range;
 use ratatui::text::Line;
 
 use crate::model::{FileState, TranscriptEntry};
-use crate::render::{entry_lines, reasoning_is_live, streaming_lines};
+use crate::render::{EntryView, entry_lines, reasoning_is_live, streaming_lines};
 
 use super::{FoldPlan, digest_line};
 
@@ -195,7 +195,7 @@ impl SessionFold {
             } else {
                 entry_lines(
                     &transcript[i],
-                    files,
+                    EntryView::at(files, transcript, i),
                     thinking,
                     expand_all || expanded.contains(&i),
                     false,
@@ -239,7 +239,7 @@ impl SessionFold {
                 } else if !plan.hides(target) {
                     entry_lines(
                         last,
-                        files,
+                        EntryView::at(files, transcript, target),
                         thinking,
                         expand_all || expanded.contains(&target),
                         reasoning_is_live(transcript, streaming),

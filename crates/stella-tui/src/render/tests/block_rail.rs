@@ -60,7 +60,15 @@ fn result(name: &str, ok: bool, body: &str) -> TranscriptEntry {
 fn rows(entries: &[TranscriptEntry]) -> Vec<String> {
     let mut out = Vec::new();
     for entry in entries {
-        entry_lines(entry, &[], false, false, false, WIDTH, &mut out);
+        entry_lines(
+            entry,
+            EntryView::default(),
+            false,
+            false,
+            false,
+            WIDTH,
+            &mut out,
+        );
     }
     out.iter()
         .map(|l| {
@@ -141,7 +149,15 @@ fn a_failed_block_rides_its_own_rail_end_to_end() {
     ];
     let mut lines = Vec::new();
     for entry in &block {
-        entry_lines(entry, &[], false, false, false, WIDTH, &mut lines);
+        entry_lines(
+            entry,
+            EntryView::default(),
+            false,
+            false,
+            false,
+            WIDTH,
+            &mut lines,
+        );
     }
     let rail = expected_rail();
     let railed: Vec<_> = lines
@@ -232,4 +248,137 @@ fn the_v1_block_rail_is_the_v2_event_rail() {
             "{rail:?}'s continuation drops the rail: {margin:?}"
         );
     }
+}
+
+// ── ctrl+o on a call reveals its arguments again (#4157) ────────────────────
+
+/// A call carrying a `raw` argument object.
+fn call_with_args() -> TranscriptEntry {
+    TranscriptEntry::ToolStart {
+        call_id: "c1".into(),
+        name: "edit_file".into(),
+        input: "src/lib.rs".into(),
+        raw: r#"{"path":"src/lib.rs","old_string":"alpha","new_string":"bravo"}"#.into(),
+        path: Some("src/lib.rs".into()),
+    }
+}
+
+fn render(entry: &TranscriptEntry, expanded: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    entry_lines(
+        entry,
+        EntryView::default(),
+        false,
+        expanded,
+        false,
+        WIDTH,
+        &mut out,
+    );
+    out.iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// The witness. `ctrl+o` on a **call** row reveals the argument object it was
+/// dispatched with.
+///
+/// The regression it pins: the v2 head router intercepted every `ToolStart` and
+/// returned before `entry_body` ran, so the `expanded` flag was never consulted
+/// for a call and the row rendered identically either way. Nothing caught it —
+/// a dead *match arm* is invisible to `dead-code-allows` and to
+/// `module-reachability`, both of which see items (#4157).
+#[test]
+fn ctrl_o_on_a_call_reveals_its_arguments() {
+    let call = call_with_args();
+    let collapsed = render(&call, false);
+    let expanded = render(&call, true);
+
+    assert!(
+        !collapsed.iter().any(|r| r.contains("old_string")),
+        "the collapsed row already shows the argument object, so the test \
+         proves nothing:\n{collapsed:#?}"
+    );
+    assert!(
+        expanded.iter().any(|r| r.contains("\"old_string\"")),
+        "ctrl+o revealed nothing — the argument object is unreachable:\n{expanded:#?}"
+    );
+    // Pretty-printed, not the compact one-liner it arrived as: a flat object
+    // has no shape for a key hue to mark, which is the whole reason to expand.
+    assert!(
+        expanded.len() > collapsed.len() + 3,
+        "the arguments were shown, but on one line:\n{expanded:#?}"
+    );
+}
+
+/// Those revealed rows ride the block rail like every other row, and in the
+/// **head's own metal** — a `read_file`'s block is silver-dim end to end, a
+/// mutation's gold end to end, never one above the other.
+#[test]
+fn revealed_arguments_ride_the_heads_own_rail() {
+    let rail = expected_rail();
+    for name in ["read_file", "edit_file", "bash"] {
+        let call = TranscriptEntry::ToolStart {
+            call_id: "c1".into(),
+            name: name.into(),
+            input: "src/lib.rs".into(),
+            raw: r#"{"path":"src/lib.rs","limit":40}"#.into(),
+            path: Some("src/lib.rs".into()),
+        };
+        let mut lines = Vec::new();
+        entry_lines(
+            &call,
+            EntryView::default(),
+            false,
+            true,
+            false,
+            WIDTH,
+            &mut lines,
+        );
+        let railed: Vec<_> = lines
+            .iter()
+            .filter(|l| {
+                l.spans
+                    .first()
+                    .is_some_and(|s| s.content.starts_with(&rail))
+            })
+            .collect();
+        assert!(
+            railed.len() > 1,
+            "{name}: the revealed arguments are not on the rail"
+        );
+        let metals: std::collections::BTreeSet<_> = railed
+            .iter()
+            .map(|l| format!("{:?}", l.spans[0].style.fg))
+            .collect();
+        assert_eq!(
+            metals.len(),
+            1,
+            "{name}: the block's rail changes metal between the head and the \
+             arguments under it: {metals:?}"
+        );
+    }
+}
+
+/// An argument object big enough to have been cut by the fold's char cap no
+/// longer parses. It is still shown — lexed as the capped JSON it is — rather
+/// than swallowed.
+#[test]
+fn an_unparseable_argument_object_is_still_shown() {
+    let call = TranscriptEntry::ToolStart {
+        call_id: "c1".into(),
+        name: "bash".into(),
+        input: "echo".into(),
+        raw: r#"{"command":"echo hello","cwd":"/tm"#.into(),
+        path: None,
+    };
+    let rendered = render(&call, true);
+    assert!(
+        rendered.iter().any(|r| r.contains("echo hello")),
+        "a capped argument object was dropped instead of shown:\n{rendered:#?}"
+    );
 }

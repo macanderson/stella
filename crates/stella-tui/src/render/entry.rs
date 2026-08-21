@@ -34,14 +34,53 @@ use crate::theme;
 mod recall;
 use recall::recall_lines;
 
-// The tool-call block — head, result, preview, gutter, truncation notice and
-// inline diff. Split out for the reason `recall` was: it is the one entry pair
-// that stacks four independent rendering decisions, and SPEC 6's restyle of it
-// (#4127) is exactly the kind of change that drops one of them by accident when
-// it lives inside a 1100-line match.
+// The tool-call block — head, arguments, result, preview, gutter, truncation
+// notice and inline diff. Split out for the reason `recall` was: it is the one
+// entry pair that stacks four independent rendering decisions, and SPEC 6's
+// restyle of it (#4127) is exactly the kind of change that drops one of them by
+// accident when it lives inside a 1100-line match.
 mod tool;
 
 // Pure content builders (unit-tested directly)
+
+/// What a transcript row needs to know beyond its own entry.
+///
+/// Both fields exist because a row is not a function of its entry alone. An
+/// inline diff resolves against the draw-side file ledger; and a tool **head**
+/// states a size nothing has measured at the moment it dispatches — the
+/// emitter's `(added, removed)` arrives with the call's *result*, a later entry,
+/// and is only recorded once the turn boundary has measured the tree (#4154).
+///
+/// Bundled rather than passed as two more positional arguments: [`entry_lines`]
+/// already carries three booleans, and the pair travels together everywhere —
+/// pairing one entry's ledger with another entry's tail is not a call a caller
+/// should be able to make by ordering its arguments wrongly.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct EntryView<'a> {
+    /// The draw-side file ledger every diff and delta resolves against.
+    pub files: &'a [FileState],
+    /// The lane's entries *after* the one being rendered, in order.
+    pub following: &'a [TranscriptEntry],
+}
+
+impl<'a> EntryView<'a> {
+    /// The view entry `idx` is rendered against.
+    pub fn at(files: &'a [FileState], transcript: &'a [TranscriptEntry], idx: usize) -> Self {
+        Self {
+            files,
+            following: transcript.get(idx.saturating_add(1)..).unwrap_or_default(),
+        }
+    }
+
+    /// A view with no tail, for a row that has no later entry to consult: the
+    /// streaming answer preview, which is not in the transcript at all.
+    pub fn of(files: &'a [FileState]) -> Self {
+        Self {
+            files,
+            following: &[],
+        }
+    }
+}
 
 /// Fold the in-flight answer preview
 /// ([`SessionModel::streaming_text`](crate::model::SessionModel::streaming_text))
@@ -63,7 +102,15 @@ pub(crate) fn streaming_lines(
         return;
     }
     let preview = TranscriptEntry::Text(streaming.to_string());
-    entry_lines(&preview, files, expand_thinking, false, false, width, out);
+    entry_lines(
+        &preview,
+        EntryView::of(files),
+        expand_thinking,
+        false,
+        false,
+        width,
+        out,
+    );
 }
 
 /// Whether the trailing transcript entry is a thought *still being written* —
@@ -104,14 +151,14 @@ fn closes_block(entry: &TranscriptEntry) -> bool {
 /// head; every settled entry passes `false`.
 pub(crate) fn entry_lines(
     entry: &TranscriptEntry,
-    files: &[FileState],
+    view: EntryView<'_>,
     expand_thinking: bool,
     expanded: bool,
     live: bool,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    if !v2_rows(entry, files, expanded, width, out) {
+    if !v2_rows(entry, view, expanded, width, out) {
         entry_body(entry, expand_thinking, expanded, live, width, out);
     }
     if closes_block(entry) {
@@ -137,9 +184,26 @@ pub(crate) fn entry_lines(
 /// [`tool::result_rows`] keeps every feature and takes its metal from the call
 /// above it, so the block is one event with one rail instead of a v2 head over
 /// a v1 body.
+///
+/// **A router still owes every feature of the arm it intercepts.** This one did
+/// not: taking the `ToolStart` head made the whole v1 arm unreachable, and the
+/// `ctrl+o` argument view living in its second half went with it — silently,
+/// because a dead *match arm* is invisible to `dead-code-allows` and to
+/// `module-reachability`, which see items. The row rendered identically
+/// expanded and collapsed for as long as nobody pressed the key (#4157). Hence
+/// `expanded` here: a router that takes a head takes the body under it too.
+///
+/// The head's size column is the other thing this arm owes, and it is why the
+/// router takes an [`EntryView`] rather than the entry alone: a `ToolStart` is
+/// drawn at dispatch, when nothing has measured the change it is about to make,
+/// so the number can only come from the paired result and the ledger behind it
+/// (#4154). Resolving it here rather than inside the projection keeps
+/// [`crate::v2::transcript_source::head_rows`] a pure function of what is known
+/// about one call. (Spelled in full: the `v2` alias below is a `use` inside the
+/// body, and rustdoc resolves a link against the module, not the function.)
 fn v2_rows(
     entry: &TranscriptEntry,
-    files: &[FileState],
+    view: EntryView<'_>,
     expanded: bool,
     width: usize,
     out: &mut Vec<Line<'static>>,
@@ -147,13 +211,26 @@ fn v2_rows(
     use crate::v2::transcript_source as v2;
     match entry {
         TranscriptEntry::ToolStart {
+            call_id,
             name,
             input,
             raw,
             path,
-            ..
         } => {
-            tool::start_rows(name, input, raw, path.as_deref(), expanded, width, out);
+            // Resolved here rather than inside `tool`, for the reason on this
+            // function: the projection stays a pure function of one call, and
+            // the tail walk is the router's business.
+            let measured = v2::measured_delta(call_id, view.following, view.files);
+            tool::start_rows(
+                name,
+                input,
+                raw,
+                path.as_deref(),
+                measured,
+                expanded,
+                width,
+                out,
+            );
             true
         }
         TranscriptEntry::ToolResult {
@@ -174,7 +251,7 @@ fn v2_rows(
                 *duration_ms,
                 *speculated,
                 diff.as_ref(),
-                files,
+                view.files,
                 expanded,
                 width,
                 out,
@@ -197,6 +274,23 @@ fn v2_rows(
         }
         TranscriptEntry::Complete { cost_usd, turn, .. } => {
             out.extend(v2::turn_end_rows(*turn, *cost_usd, width));
+            true
+        }
+        // Only the boundary that *opens* the turn. A later stage of the same
+        // turn falls through to the plain section rule below, which is what
+        // keeps SPEC 6.1's labelled rule one-per-turn rather than one-per-stage
+        // (see `model::TurnOpening`).
+        TranscriptEntry::Stage {
+            name,
+            opens: Some(opening),
+        } => {
+            out.extend(v2::turn_begin_rows(
+                opening.turn,
+                stage_label(name),
+                opening.model.as_deref(),
+                opening.budget_usd,
+                width,
+            ));
             true
         }
         _ => false,
@@ -295,7 +389,10 @@ fn entry_body(
                 .collect();
             push_row_block(Rail::User, lines, width, out);
         }
-        TranscriptEntry::Stage(name) => {
+        // Reached only for a boundary *inside* a turn — the one that opens the
+        // turn is claimed by the v2 router above, which draws SPEC 6.1's
+        // labelled rule instead.
+        TranscriptEntry::Stage { name, .. } => {
             // A section rule, not a row — see `push_rule`. The word "stage" is
             // dropped with it: the label *is* the stage, and prefixing every
             // one with its own type name was three columns spent restating
@@ -392,6 +489,14 @@ fn entry_body(
         // router is ever narrowed, a missing call row is a visible gap a reader
         // can report, where an `unreachable!()` would take the session down
         // mid-frame.
+        //
+        // Empty here and *only* because the whole block moved: what used to sit
+        // in this arm was a live v1 renderer that #4123 made unreachable without
+        // deleting, taking the `ctrl+o` argument view down with it for four PRs.
+        // A dead match arm is invisible to `dead-code-allows` and to
+        // `module-reachability`, which see items and not arms (#4157) — so an
+        // arm the router claims must be emptied in the same change that claims
+        // it, never left looking live.
         TranscriptEntry::ToolStart { .. } | TranscriptEntry::ToolResult { .. } => {}
         TranscriptEntry::Retry { attempt, reason } => {
             push_note(

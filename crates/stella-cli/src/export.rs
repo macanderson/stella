@@ -920,13 +920,37 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>
   const el = document.getElementById('insights');
   const tips = [];
 
-  // Cache hit rate.
-  const totalIn = USAGE.reduce((s,r)=>s+r.input_tokens,0);
-  const cacheRead = USAGE.reduce((s,r)=>s+r.cache_read_tokens,0);
-  if (totalIn > 0) {{
-    const rate = (cacheRead/totalIn*100).toFixed(1);
-    if (rate > 50) tips.push({{label:'Cache Efficiency',text:`Prompt caching is saving ${{rate}}% of input tokens — the session is reusing context well.`}});
-    else if (totalIn > 10000) tips.push({{label:'Cache Opportunity',text:`Only ${{rate}}% of input tokens were cache reads. Longer, stable system prompts with cache breakpoints would cut cost.`}});
+  // Prompt cache. TWO statistics, because the token rate hides the one that
+  // costs money. A token-weighted average describes a session that is
+  // uniformly mediocre; it says nothing about a session that is BIMODAL —
+  // most calls reading cache, a minority reading none and paying full input
+  // rate for a whole prefix. Measured on a real session: 63.6% of tokens hit
+  // cache (which the old threshold called "reusing context well") while 20 of
+  // 69 calls read zero and carried 54% of the $2.41 spent.
+  //
+  // The remedies differ, which is why conflating them is worse than silence.
+  // A low token rate is a prompt-shape problem. Scattered cold calls on a
+  // prompt that is already stable are a ROUTING problem: each gateway upstream
+  // holds its own cache, so an unpinned gateway can serve two turns of one
+  // session from two caches. Advising "longer, stable system prompts" there
+  // sends the reader to fix something that was never broken.
+  const billed = TELEMETRY.filter(r => r.input_tokens > 0);
+  const totalIn = billed.reduce((s,r)=>s+r.input_tokens,0);
+  const cacheRead = billed.reduce((s,r)=>s+r.cache_read_tokens,0);
+  const cold = billed.filter(r => r.cache_read_tokens === 0);
+  const spend = billed.reduce((s,r)=>s+r.cost_usd,0);
+  const coldSpend = cold.reduce((s,r)=>s+r.cost_usd,0);
+  if (totalIn > 0 && billed.length > 0) {{
+    const rate = cacheRead / totalIn * 100;
+    const coldCalls = cold.length / billed.length * 100;
+    const coldCost = spend > 0 ? coldSpend / spend * 100 : 0;
+    if (cold.length > 0 && coldCost >= 25) {{
+      tips.push({{label:'Cold Prefixes',text:`${{cold.length}} of ${{billed.length}} calls (${{coldCalls.toFixed(0)}}%) read ZERO cached tokens and carried ${{coldCost.toFixed(0)}}% of the spend ($${{coldSpend.toFixed(2)}}) — even though ${{rate.toFixed(1)}}% of all input tokens did hit cache. Scattered cold calls on a stable prompt point at routing, not prompt shape: on a gateway, set 'upstream_pin' so every turn reaches the same upstream cache.`}});
+    }} else if (rate > 50) {{
+      tips.push({{label:'Cache Efficiency',text:`Prompt caching is saving ${{rate.toFixed(1)}}% of input tokens across ${{billed.length}} calls, and cold prefixes account for only ${{coldCost.toFixed(0)}}% of the spend.`}});
+    }} else if (totalIn > 10000) {{
+      tips.push({{label:'Cache Opportunity',text:`Only ${{rate.toFixed(1)}}% of input tokens were cache reads. Longer, stable system prompts with cache breakpoints would cut cost.`}});
+    }}
   }}
 
   // Resolve rate.

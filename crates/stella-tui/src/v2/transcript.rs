@@ -49,12 +49,13 @@ pub const RAIL_W: usize = 2;
 /// counts stopped being re-derived for exactly this reason — #2290). `None`
 /// renders as no column at all.
 ///
-/// Nothing constructs a measured `Extent` from a live session yet: the head
-/// draws at dispatch and there is no pass that revisits the row once the
-/// turn-boundary `FileChange` lands. That backfill is the other half of #4150
-/// and is tracked separately; until it exists an edit head is honestly silent
-/// about its size, and the measured numbers stay on the result row's metric
-/// column (`render::entry::tool`), which resolves them from the file ledger.
+/// A measured one is filled in after the fact, not at dispatch:
+/// [`super::transcript_source::measured_delta`] resolves the emitter's counts
+/// through the call's own result once the turn boundary has measured the tree,
+/// and the deck's settled-prefix fold re-renders the row when that lands
+/// (#4154). So `None` is the state of every head at the moment it is drawn, and
+/// of any head whose call failed, was cancelled, or changed nothing — three
+/// facts a zero would misreport as one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Extent {
     /// Lines added, for an edit or a new file.
@@ -103,9 +104,13 @@ impl Extent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
     /// `▸ read <path> · <n> lines` — folded by default. The count rides
-    /// `Extent::added`, and is absent until the read returns.
+    /// `Extent::added` and has no producer today: only a *mutation* stamps the
+    /// inline-diff reference the head's measurement is resolved through, so a
+    /// read states its path and nothing about its size (#4180).
     Read { extent: Extent },
-    /// `● edit <path> +a -b`, the counts absent until the edit returns.
+    /// `● edit <path> +a -b`, both counts or neither — they are one reading.
+    /// Absent until the emitter has measured the change (#4154), which is the
+    /// turn boundary rather than the moment the call returns.
     Edit { extent: Extent },
     /// `＋ write <path> · new file · n lines`, the count on `Extent::added`.
     Write { extent: Extent },
@@ -245,12 +250,22 @@ impl Event {
 }
 
 /// The label on a turn's opening rule (SPEC 6.1).
+///
+/// Three of the four fields beside the number are optional, and for the reason
+/// [`Receipt`]'s are: the rule states what something observed and elides the
+/// rest. A turn opens *before* most of what describes it is known — the first
+/// turn of a session has not been told which model answered, and a run with no
+/// budget armed has no ceiling to print — so the alternative to eliding is a
+/// rule that opens by naming a model nobody routed to and a `$0.00` nobody set.
 #[derive(Clone, Debug)]
 pub struct TurnHead {
     pub number: u32,
     pub stage: String,
-    pub model: String,
-    pub budget_usd: f64,
+    /// The model that is answering, when the session knows it yet.
+    pub model: Option<String>,
+    /// The spend ceiling in force. `None` is **no budget armed**, which is a
+    /// different fact from `Some(0.0)` — a run capped at nothing.
+    pub budget_usd: Option<f64>,
     /// The steer this turn consumed, if any. Rendered `queued: "…"` so
     /// queue-never-blocks has a visible payoff (SPEC 6.1).
     pub queued_steer: Option<String>,
@@ -303,13 +318,15 @@ pub fn turn_begin(head: &TurnHead, width: usize) -> Line<'static> {
         Span::styled("turn ", dim),
         Span::styled(head.number.to_string(), Style::new().fg(token::GOLD)),
         Span::styled(format!(" {}", head.stage), text),
-        Span::styled(" · ", dim),
-        Span::styled(head.model.clone(), text),
     ];
-    if head.budget_usd > 0.0 {
+    if let Some(model) = &head.model {
+        label.push(Span::styled(" · ", dim));
+        label.push(Span::styled(model.clone(), text));
+    }
+    if let Some(budget) = head.budget_usd {
         label.push(Span::styled(" · budget ", dim));
         label.push(Span::styled(
-            format!("${:.2}", head.budget_usd),
+            format!("${budget:.2}"),
             Style::new().fg(token::GOLD),
         ));
     }

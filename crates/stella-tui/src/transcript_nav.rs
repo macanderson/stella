@@ -136,7 +136,7 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
         E::Error { message, .. } => vec![message],
         E::Complete { model, .. } => vec![model],
         E::Evicted { .. }
-        | E::Stage(_)
+        | E::Stage { .. }
         | E::Compaction { .. }
         | E::BudgetTick { .. }
         | E::MediaProgress { .. }
@@ -485,9 +485,10 @@ mod tests {
             assert_eq!(search_hits(&t, query), vec![0], "no hit for {query:?}");
         }
         assert!(
-            entry_fields(&TranscriptEntry::Stage(
-                stella_protocol::StageKind::Verify.into()
-            ))
+            entry_fields(&TranscriptEntry::Stage {
+                name: stella_protocol::StageKind::Verify.into(),
+                opens: None,
+            })
             .is_empty()
         );
     }

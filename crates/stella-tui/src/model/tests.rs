@@ -167,8 +167,107 @@ fn a_stage_between_text_deltas_breaks_coalescing() {
     // text, stage, text
     assert_eq!(model.transcript.len(), 3);
     assert!(matches!(model.transcript[0], TranscriptEntry::Text(_)));
-    assert!(matches!(model.transcript[1], TranscriptEntry::Stage(_)));
+    assert!(matches!(model.transcript[1], TranscriptEntry::Stage { .. }));
     assert!(matches!(model.transcript[2], TranscriptEntry::Text(_)));
+}
+
+fn stage(kind: StageKind) -> AgentEvent {
+    AgentEvent::Stage {
+        name: kind.into(),
+        scope: stella_protocol::StageScope::Run,
+    }
+}
+
+/// Every `TurnOpening` the fold stamped, in transcript order.
+fn openings(model: &SessionModel) -> Vec<&TurnOpening> {
+    model
+        .transcript
+        .iter()
+        .filter_map(|e| match e {
+            TranscriptEntry::Stage { opens, .. } => opens.as_ref(),
+            _ => None,
+        })
+        .collect()
+}
+
+/// SPEC 6.1's rule opens a **turn**, not a stage: the first boundary of a turn
+/// carries it and the rest of that turn's stages do not.
+///
+/// The witness for the fold half of #4124. Before it every stage boundary was a
+/// bare `Stage(name)` with nothing to open a rule *with* — no turn number, no
+/// model, no budget — which is why the renderer written in #4123 had never been
+/// called.
+#[test]
+fn only_the_first_stage_of_a_turn_opens_a_turn_rule() {
+    let mut model = SessionModel::new();
+    for kind in [StageKind::Triage, StageKind::Plan, StageKind::Execute] {
+        model.apply(&stage(kind));
+    }
+    let opened = openings(&model);
+    assert_eq!(opened.len(), 1, "one rule per turn, not one per stage");
+    assert_eq!(opened[0].turn, 1);
+
+    // …and the next turn opens its own, numbered by what has completed.
+    model.apply(&AgentEvent::TurnComplete {
+        model: "kimi-k3".into(),
+        cost_usd: 0.11,
+    });
+    model.apply(&stage(StageKind::Execute));
+    let opened = openings(&model);
+    assert_eq!(opened.len(), 2);
+    assert_eq!(opened[1].turn, 2, "the ordinal follows the closing rule");
+    assert_eq!(
+        opened[1].turn,
+        model.turns_completed + 1,
+        "the opening and closing rules must agree on the turn's number",
+    );
+}
+
+/// The opening rule states the budget the last `BudgetTick` reported and the
+/// model the HUD has observed — and states neither before anything reported
+/// one. `None` is "nobody said", not `$0.00` and not the configured default.
+#[test]
+fn an_opening_rule_carries_only_facts_the_fold_was_given() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    let first = openings(&model)[0].clone();
+    assert_eq!(
+        first.model, None,
+        "no turn has settled, so no model is known"
+    );
+    assert_eq!(first.budget_usd, None, "no tick has armed a budget");
+
+    model.apply(&AgentEvent::TurnComplete {
+        model: "kimi-k3".into(),
+        cost_usd: 0.11,
+    });
+    model.apply(&AgentEvent::BudgetTick {
+        spent_usd: 0.11,
+        limit_usd: Some(0.60),
+        mode: BudgetMode::Enforced,
+        session_spent_usd: None,
+        session_limit_usd: None,
+        deadline_remaining_ms: None,
+    });
+    model.apply(&stage(StageKind::Execute));
+    let second = openings(&model)[1].clone();
+    assert_eq!(second.model.as_deref(), Some("kimi-k3"));
+    assert_eq!(second.budget_usd, Some(0.60));
+}
+
+/// A turn that died never emits `TurnComplete`, so nothing else clears the
+/// latch — and the turn after it would open with no rule at all, leaving its
+/// events hanging under the dead turn's boundary.
+#[test]
+fn a_turn_that_died_still_lets_the_next_one_open() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    model.apply(&AgentEvent::Error {
+        message: "provider refused".into(),
+        retryable: false,
+    });
+    model.apply(&stage(StageKind::Execute));
+    assert_eq!(openings(&model).len(), 2, "the next turn opened no rule");
 }
 
 fn delta(text: &str) -> AgentEvent {
@@ -1188,5 +1287,204 @@ fn a_settled_progress_line_is_never_overwritten_by_a_later_pass() {
         ],
         "{:?}",
         model.transcript
+    );
+}
+
+// ---- #4155: a mutating row resolves the change its own call made ----
+
+/// Fold one successful `edit_file` call: the start that names the path, then
+/// the result that folds the transcript row.
+fn edit_call(model: &mut SessionModel, call_id: &str, path: &str) {
+    model.apply(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: call_id.into(),
+            name: "edit_file".into(),
+            input: serde_json::json!({ "path": path }),
+        },
+    });
+    model.apply(&AgentEvent::ToolResult {
+        call_id: call_id.into(),
+        output: ToolOutput::ok("replaced 1 occurrence(s)"),
+        duration_ms: 7,
+        speculated: false,
+    });
+}
+
+/// The turn boundary's measurement: `emit_shared_tree_changes` emits one
+/// aggregate change per path *after* every `ToolResult` of the turn has
+/// folded. That ordering is the whole defect, so these tests reproduce it
+/// rather than emitting the change alongside the call.
+fn turn_boundary(model: &mut SessionModel, path: &str, diff: Option<&str>, adds: u32, dels: u32) {
+    model.apply(&AgentEvent::FileChange {
+        path: path.into(),
+        kind: FileChangeKind::Modified,
+        added: adds,
+        removed: dels,
+        diff: diff.map(Into::into),
+    });
+}
+
+/// The inline-diff reference that call's row kept, if any. Panics if the call
+/// folded no row at all — that would be a different defect.
+fn inline_ref<'a>(model: &'a SessionModel, call_id: &str) -> Option<&'a InlineDiffRef> {
+    model
+        .transcript
+        .iter()
+        .find_map(|e| match e {
+            TranscriptEntry::ToolResult {
+                call_id: cid, diff, ..
+            } if cid == call_id => Some(diff.as_ref()),
+            _ => None,
+        })
+        .expect("the call folded a result row")
+}
+
+/// The live cause of #4155: a successful edit rendered no diff and no
+/// `+N −M`, because the seq the row stamped named the change *before* its own.
+#[test]
+fn an_edit_result_resolves_the_change_its_own_call_made() {
+    let mut model = SessionModel::new();
+    edit_call(&mut model, "c1", "src/a.rs");
+    turn_boundary(
+        &mut model,
+        "src/a.rs",
+        Some("@@ -1 +1,2 @@\n+first\n"),
+        2,
+        1,
+    );
+
+    let dref = inline_ref(&model, "c1").expect("a successful edit keeps an inline-diff ref");
+    let file = model.files.iter().find(|f| f.path == "src/a.rs").unwrap();
+    assert_eq!(
+        file.diff_at(dref.seq),
+        Some("@@ -1 +1,2 @@\n+first\n"),
+        "the row resolves the diff of the change its own call produced"
+    );
+    assert_eq!(
+        file.delta_at(dref.seq),
+        Some((2, 1)),
+        "and the measurement that rides with it"
+    );
+}
+
+/// The half the off-by-one hid: it did not merely blank the row, it pointed
+/// every turn after the first at the PREVIOUS turn's change to that path —
+/// the misattribution `render::resolve_inline_diff` exists to prevent.
+#[test]
+fn a_later_turns_edit_never_renders_an_earlier_turns_diff() {
+    let mut model = SessionModel::new();
+    edit_call(&mut model, "c1", "src/a.rs");
+    turn_boundary(&mut model, "src/a.rs", Some("@@ first turn @@\n"), 1, 0);
+    edit_call(&mut model, "c2", "src/a.rs");
+    turn_boundary(&mut model, "src/a.rs", Some("@@ second turn @@\n"), 3, 2);
+
+    let file = model.files.iter().find(|f| f.path == "src/a.rs").unwrap();
+    let first = inline_ref(&model, "c1").expect("turn one keeps its ref");
+    let second = inline_ref(&model, "c2").expect("turn two keeps its ref");
+    assert_ne!(first.seq, second.seq, "two turns, two distinct changes");
+    assert_eq!(file.diff_at(first.seq), Some("@@ first turn @@\n"));
+    assert_eq!(
+        file.diff_at(second.seq),
+        Some("@@ second turn @@\n"),
+        "turn two's row shows turn two's change, not the one before it"
+    );
+}
+
+/// One aggregate change per path per turn, so exactly one row may claim it.
+/// Stamping every call that touched the path would render the turn's whole
+/// change under each of them; the last keeps it, the earlier ones degrade to
+/// naming their change.
+#[test]
+fn only_the_last_call_to_a_path_in_a_turn_claims_the_turns_change() {
+    let mut model = SessionModel::new();
+    edit_call(&mut model, "c1", "src/a.rs");
+    edit_call(&mut model, "c2", "src/a.rs");
+    turn_boundary(&mut model, "src/a.rs", Some("@@ both edits @@\n"), 4, 1);
+
+    assert!(
+        inline_ref(&model, "c1").is_none(),
+        "the superseded row gives up its ref rather than restating the aggregate"
+    );
+    let last = inline_ref(&model, "c2").expect("the last call keeps it");
+    let file = model.files.iter().find(|f| f.path == "src/a.rs").unwrap();
+    assert_eq!(file.diff_at(last.seq), Some("@@ both edits @@\n"));
+}
+
+/// Supersession is per path: two files edited in one turn keep one row each.
+#[test]
+fn calls_to_different_paths_in_one_turn_each_keep_their_own_ref() {
+    let mut model = SessionModel::new();
+    edit_call(&mut model, "c1", "src/a.rs");
+    edit_call(&mut model, "c2", "src/b.rs");
+    turn_boundary(&mut model, "src/a.rs", Some("@@ a @@\n"), 1, 0);
+    turn_boundary(&mut model, "src/b.rs", Some("@@ b @@\n"), 2, 0);
+
+    for (call, path, text) in [
+        ("c1", "src/a.rs", "@@ a @@\n"),
+        ("c2", "src/b.rs", "@@ b @@\n"),
+    ] {
+        let dref = inline_ref(&model, call).expect("each path's row keeps its ref");
+        let file = model.files.iter().find(|f| f.path == path).unwrap();
+        assert_eq!(file.diff_at(dref.seq), Some(text));
+    }
+}
+
+/// A turn that measured no net change to the path leaves the ref dangling,
+/// and a dangling ref renders nothing. Silence is the honest answer — an edit
+/// reverted within the same turn changed nothing on disk.
+#[test]
+fn a_turn_that_measured_no_change_leaves_the_row_silent() {
+    let mut model = SessionModel::new();
+    edit_call(&mut model, "c1", "src/a.rs");
+    let dref = inline_ref(&model, "c1").expect("the ref is still stamped");
+    assert_eq!(dref.path, "src/a.rs");
+    assert!(
+        model.files.iter().all(|f| f.path != "src/a.rs"),
+        "nothing measured the path, so nothing resolves"
+    );
+}
+
+/// A failed mutation still carries no reference: the change it would point at
+/// is one it never made.
+#[test]
+fn a_failed_mutation_keeps_no_inline_diff_ref() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "c1".into(),
+            name: "edit_file".into(),
+            input: serde_json::json!({ "path": "src/a.rs" }),
+        },
+    });
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "c1".into(),
+        output: ToolOutput::error("no such file"),
+        duration_ms: 3,
+        speculated: false,
+    });
+    turn_boundary(&mut model, "src/a.rs", Some("@@ someone else @@\n"), 1, 0);
+    assert!(inline_ref(&model, "c1").is_none());
+}
+
+/// #4155's second named cause: counts and diff text arrive independently, and
+/// a change measured without an attachable patch used to be dropped entirely —
+/// so the row lost its `+N −M` as well as its diff.
+#[test]
+fn a_measured_change_with_no_patch_still_reports_its_delta() {
+    let mut model = SessionModel::new();
+    edit_call(&mut model, "c1", "src/a.rs");
+    turn_boundary(&mut model, "src/a.rs", None, 3, 1);
+
+    let dref = inline_ref(&model, "c1").expect("the row keeps its ref");
+    let file = model.files.iter().find(|f| f.path == "src/a.rs").unwrap();
+    assert_eq!(
+        file.delta_at(dref.seq),
+        Some((3, 1)),
+        "the measurement survives the missing patch"
+    );
+    assert_eq!(
+        file.diff_at(dref.seq),
+        None,
+        "and no patch is invented for it"
     );
 }

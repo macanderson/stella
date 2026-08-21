@@ -7,7 +7,7 @@
 │ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                         │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   EXECUTIONS  │  INSTALLED AGENTS   ←/→
-┌ Executions — 3 active / 3 total ─────────────────────────────────────────────────────────────────────────────────────┐
+┌ Executions — 3 active / 3 total · ✦ 1 lead · ◆ 2 sub ────────────────────────────────────────────────────────────────┐
 │Agent              Goal                                          Status       Ctx%   Cost      Elapsed  In/Out        │
 │  ? lead           web-app-2.0 · phase 3 automations             needs input    4%   $0.04     05:12    20.6k/1.5k    │
 │> ? sub:auth       wire automations triggers API                 needs input    3%   $0.01     05:12    5.1k/420      │

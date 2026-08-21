@@ -15,8 +15,8 @@ fn scripted_turn() -> (TurnHead, Vec<Event>, Receipt) {
     let head = TurnHead {
         number: 14,
         stage: "execute".into(),
-        model: "kimi-k3".into(),
-        budget_usd: 0.60,
+        model: Some("kimi-k3".into()),
+        budget_usd: Some(0.60),
         queued_steer: None,
     };
 

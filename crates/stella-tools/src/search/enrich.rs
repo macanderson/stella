@@ -335,6 +335,91 @@ fn line_at(source: &str, number: u32) -> Option<&str> {
     source.lines().nth(index)
 }
 
+/// Rust definition keywords a query may lead with before naming the symbol.
+///
+/// Ordered longest-first only for readability; [`symbol_terms`] strips
+/// whichever ones lead, repeatedly, so `pub async fn` peels in three steps.
+const DEFINITION_KEYWORDS: &[&str] = &[
+    "macro_rules!",
+    "pub(crate)",
+    "pub(super)",
+    "pub(self)",
+    "unsafe",
+    "static",
+    "struct",
+    "trait",
+    "union",
+    "async",
+    "const",
+    "enum",
+    "impl",
+    "type",
+    "mod",
+    "pub",
+    "fn",
+];
+
+/// Whether `s` is a bare Rust identifier — the only shape the code graph can
+/// be asked about, and the guard that keeps regex fragments out.
+///
+/// A query alternative like `rate.limit`, `429` or `PendingChunk\b` is a
+/// pattern, not a name; looking one up would always miss, and letting it
+/// through would cost a graph round-trip per junk term.
+fn is_bare_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_')
+        && chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// The symbol names a query is asking about, in the order it named them.
+///
+/// # Why a query is decomposed at all
+///
+/// [`exact_symbol_hits`] used to take the whole query as one name, so it
+/// answered only for a query that was already exactly one bare identifier.
+/// That is not the shape callers write. Measured over a real session, every
+/// one of the agent's twenty-one code searches was an exact-identifier
+/// lookup, and most named **several** symbols at once in regex alternation
+/// (`warm_chunks_opened|embed_and_store_chunk_file|ChunkWarmOutcome`) or led
+/// with the definition keyword (`pub fn store_chunk_vectors`). Every one of
+/// them missed this rung entirely and fell through to embedding rank — the
+/// instrument the doc above says is measurably wrong for this question —
+/// even though each individual term was an exact graph fact. The session
+/// used `rg` instead, twenty-one times out of twenty-one.
+///
+/// # Why these two decompositions and no others
+///
+/// `|` is unambiguous: it cannot occur in a Rust identifier and carries no
+/// meaning in a natural-language question, so splitting on it reads an
+/// explicit "any of these" rather than inferring an intent. The leading
+/// keywords are unambiguous in the same way — a question does not open with
+/// `pub struct`. Both preserve the rule the strategy exists for: **a
+/// sentence is still not a symbol**, so an alternative that is not a bare
+/// identifier after stripping is dropped rather than guessed at, and a
+/// prose query decomposes to nothing and stays free.
+///
+/// Partial decomposition is deliberate: `429|retry|backoff` yields
+/// `[retry, backoff]`. The junk term costs nothing and the two real names
+/// are still facts.
+pub fn symbol_terms(query: &str) -> Vec<&str> {
+    let mut terms = Vec::new();
+    for alternative in query.split('|') {
+        let mut term = alternative.trim();
+        // Peel leading keywords one at a time so `pub async fn name` reduces
+        // the same way `fn name` does.
+        while let Some((head, rest)) = term.split_once(char::is_whitespace) {
+            if !DEFINITION_KEYWORDS.contains(&head) {
+                break;
+            }
+            term = rest.trim_start();
+        }
+        if is_bare_identifier(term) && !terms.contains(&term) {
+            terms.push(term);
+        }
+    }
+    terms
+}
+
 /// The files that define a symbol the query names **exactly** — a lookup, not
 /// a ranking (#3125).
 ///
@@ -344,43 +429,45 @@ fn line_at(source: &str, number: u32) -> Option<&str> {
 /// symbol name is a handful of tokens against whole files of prose. The graph
 /// already holds the answer as a fact.
 ///
-/// A sentence is not a symbol, so a multi-word query is refused before the
-/// query runs rather than after it returns nothing. That is the common case,
-/// and it keeps this free for every search that is a question.
+/// A sentence is not a symbol, so a query that names none is refused before
+/// any lookup runs rather than after it returns nothing. That is the common
+/// case, and it keeps this free for every search that is a question. Which
+/// names a query does name is [`symbol_terms`]'s job — it reads an explicit
+/// alternation and a leading definition keyword, and nothing else.
 ///
 /// The matched symbol rides as the hit's focus, so the detailed facets the
 /// renderer pays for describe the definition itself rather than whatever
 /// happens to sit first in the file.
 pub fn exact_symbol_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit> {
-    let name = query.trim();
-    if name.is_empty() || name.split_whitespace().count() != 1 {
-        return Vec::new();
-    }
-    let Ok(spans) = graph.definition_spans(name) else {
-        return Vec::new();
-    };
-
     let mut seen = std::collections::HashSet::new();
     let mut hits = Vec::new();
-    for span in spans {
-        // `definition_spans` is already `WHERE s.name = ?`, so this only guards
-        // the contract rather than filtering: an inexact hit here would be a
-        // ranking wearing a certainty's label, which is the one thing this
-        // strategy must never do.
-        if span.name != name || !seen.insert(span.path.clone()) {
+    // Term order, not graph order: the caller named these in a sequence and a
+    // certainty found for the first should not be displaced by one found for
+    // the third.
+    for name in symbol_terms(query) {
+        let Ok(spans) = graph.definition_spans(name) else {
             continue;
-        }
-        hits.push(Hit {
-            why: format!(
-                "EXACT name match — `{}` ({}) is DEFINED here at line {}. This is a code-graph \
-                 fact, not a similarity score.",
-                span.name, span.kind, span.start_line
-            ),
-            path: span.path,
-            focus: Some(span.name),
-        });
-        if hits.len() >= limit {
-            break;
+        };
+        for span in spans {
+            // `definition_spans` is already `WHERE s.name = ?`, so this only
+            // guards the contract rather than filtering: an inexact hit here
+            // would be a ranking wearing a certainty's label, which is the one
+            // thing this strategy must never do.
+            if span.name != name || !seen.insert(span.path.clone()) {
+                continue;
+            }
+            hits.push(Hit {
+                why: format!(
+                    "EXACT name match — `{}` ({}) is DEFINED here at line {}. This is a code-graph \
+                     fact, not a similarity score.",
+                    span.name, span.kind, span.start_line
+                ),
+                path: span.path,
+                focus: Some(span.name),
+            });
+            if hits.len() >= limit {
+                return hits;
+            }
         }
     }
     hits
@@ -446,4 +533,123 @@ pub fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> (Vec<Hit>, usi
         })
         .collect();
     (hits, matched)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A single bare identifier is the shape that already worked, and it must
+    /// keep decomposing to itself — the rung's whole contract rests on it.
+    #[test]
+    fn a_bare_identifier_decomposes_to_itself() {
+        assert_eq!(symbol_terms("ContextFrame"), vec!["ContextFrame"]);
+        assert_eq!(symbol_terms("  ContextFrame  "), vec!["ContextFrame"]);
+    }
+
+    /// A sentence is still not a symbol. This is the rule the decomposition
+    /// had to preserve: a question must cost no graph round-trip at all.
+    #[test]
+    fn prose_still_names_no_symbol() {
+        assert!(symbol_terms("where is the retry logic").is_empty());
+        assert!(symbol_terms("how does compaction decide what to evict").is_empty());
+        assert!(symbol_terms("").is_empty());
+        assert!(symbol_terms("   ").is_empty());
+    }
+
+    /// The dominant real shape: several exact names in regex alternation.
+    #[test]
+    fn alternation_names_every_symbol_it_lists() {
+        assert_eq!(
+            symbol_terms("warm_chunks_opened|embed_and_store_chunk_file|ChunkWarmOutcome"),
+            vec![
+                "warm_chunks_opened",
+                "embed_and_store_chunk_file",
+                "ChunkWarmOutcome"
+            ]
+        );
+        assert_eq!(
+            symbol_terms("EMBED_BATCH|MAX_FILES_PER_CHUNK_PASS"),
+            vec!["EMBED_BATCH", "MAX_FILES_PER_CHUNK_PASS"]
+        );
+    }
+
+    /// The second real shape: the caller leads with the definition keyword.
+    #[test]
+    fn a_leading_definition_keyword_is_peeled() {
+        assert_eq!(
+            symbol_terms("pub fn store_chunk_vectors"),
+            vec!["store_chunk_vectors"]
+        );
+        assert_eq!(symbol_terms("pub struct CodeGraph"), vec!["CodeGraph"]);
+        assert_eq!(symbol_terms("impl CodeGraph"), vec!["CodeGraph"]);
+        assert_eq!(
+            symbol_terms("pub async fn warm_chunk_vectors"),
+            vec!["warm_chunk_vectors"]
+        );
+        assert_eq!(
+            symbol_terms("pub(crate) const RANK_CEILING"),
+            vec!["RANK_CEILING"]
+        );
+    }
+
+    /// Both shapes at once, which is how they actually arrive.
+    #[test]
+    fn keywords_are_peeled_from_every_alternative() {
+        assert_eq!(
+            symbol_terms("pub fn store_chunk_vectors|pub struct CodeGraph|impl CodeGraph"),
+            vec!["store_chunk_vectors", "CodeGraph"],
+            "the repeated type is named once"
+        );
+    }
+
+    /// A regex fragment is a pattern, not a name — dropped, without taking
+    /// the real names beside it down with it.
+    #[test]
+    fn pattern_fragments_are_dropped_not_guessed_at() {
+        assert_eq!(
+            symbol_terms("429|rate.limit|retry|backoff"),
+            vec!["retry", "backoff"]
+        );
+        assert_eq!(
+            symbol_terms(r"pub struct PendingChunk\b|pub struct ChunkVector"),
+            vec!["ChunkVector"]
+        );
+    }
+
+    /// The witness that the call site actually consults the decomposition: a
+    /// two-symbol alternation returns BOTH definitions. Under the single-name
+    /// lookup this replaces, the whole query was one candidate name, nothing
+    /// in the graph was called `alpha_symbol|beta_symbol`, and the answer was
+    /// empty — so the exact rung was skipped and the search fell through to
+    /// embedding rank.
+    #[test]
+    fn an_alternation_query_returns_every_definition_it_names() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        for (path, body) in [
+            ("src/alpha.rs", "pub fn alpha_symbol() -> u8 { 1 }\n"),
+            ("src/beta.rs", "pub fn beta_symbol() -> u8 { 2 }\n"),
+        ] {
+            let file = workspace.path().join(path);
+            std::fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+            std::fs::write(&file, body).expect("write");
+        }
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+        graph.index_all().expect("index");
+
+        let hits = exact_symbol_hits(&graph, "alpha_symbol|beta_symbol", 10);
+
+        let focuses: Vec<_> = hits.iter().filter_map(|h| h.focus.as_deref()).collect();
+        assert!(
+            focuses.contains(&"alpha_symbol") && focuses.contains(&"beta_symbol"),
+            "both names in the alternation are code-graph facts, so both must be returned as \
+             certainties — got {focuses:?}"
+        );
+
+        // And the single-name path is unchanged by the decomposition.
+        let one = exact_symbol_hits(&graph, "alpha_symbol", 10);
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].focus.as_deref(), Some("alpha_symbol"));
+    }
 }

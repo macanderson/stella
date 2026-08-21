@@ -48,7 +48,7 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
         removed,
         recent_diffs: [crate::model::RememberedDiff {
             seq: 1,
-            text: diff_text,
+            text: Some(diff_text),
             added,
             removed,
         }]
@@ -78,7 +78,15 @@ fn flat_text(lines: &[Line<'_>]) -> String {
 fn collapsed_tool_result_shows_a_capped_syntax_highlighted_inline_diff() {
     let (entry, files) = mutation_entry_and_files();
     let mut out = Vec::new();
-    entry_lines(&entry, &files, false, false, false, 120, &mut out);
+    entry_lines(
+        &entry,
+        EntryView::of(&files),
+        false,
+        false,
+        false,
+        120,
+        &mut out,
+    );
     let text = flat_text(&out);
 
     // No path rule and no counts footer inline, unlike the standalone diff
@@ -170,7 +178,15 @@ fn collapsed_tool_result_shows_a_capped_syntax_highlighted_inline_diff() {
 fn expanded_tool_result_shows_the_full_inline_diff() {
     let (entry, files) = mutation_entry_and_files();
     let mut out = Vec::new();
-    entry_lines(&entry, &files, false, true, false, 120, &mut out);
+    entry_lines(
+        &entry,
+        EntryView::of(&files),
+        false,
+        true,
+        false,
+        120,
+        &mut out,
+    );
     let text = flat_text(&out);
     assert!(
         text.contains(&format!("+let x{FIXTURE_ADDS} = {FIXTURE_ADDS};")),
@@ -204,13 +220,21 @@ fn a_stale_or_unresolvable_diff_ref_renders_no_inline_diff() {
     files[0].recent_diffs = (2..=files[0].changes)
         .map(|seq| crate::model::RememberedDiff {
             seq,
-            text: format!("@@ -0,0 +1,1 @@\n+later_edit_{seq}\n"),
+            text: Some(format!("@@ -0,0 +1,1 @@\n+later_edit_{seq}\n")),
             added: 1,
             removed: 0,
         })
         .collect();
     let mut out = Vec::new();
-    entry_lines(&entry, &files, false, false, false, 120, &mut out);
+    entry_lines(
+        &entry,
+        EntryView::of(&files),
+        false,
+        false,
+        false,
+        120,
+        &mut out,
+    );
     let text = flat_text(&out);
     assert!(
         !text.contains("+let x1 = 1;"),
@@ -227,7 +251,15 @@ fn a_stale_or_unresolvable_diff_ref_renders_no_inline_diff() {
 
     // A ref whose path is no longer tracked resolves to nothing at all.
     let mut out = Vec::new();
-    entry_lines(&entry, &[], false, false, false, 120, &mut out);
+    entry_lines(
+        &entry,
+        EntryView::default(),
+        false,
+        false,
+        false,
+        120,
+        &mut out,
+    );
     assert!(
         !flat_text(&out).contains("+let x1 = 1;"),
         "unknown path renders no diff"

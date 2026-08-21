@@ -30,11 +30,13 @@ mod error_rows;
 pub mod file_state;
 pub mod recall;
 mod summarize;
+mod turn;
 
 #[cfg(test)]
 pub use file_state::DIFF_HISTORY;
 pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
 pub use recall::{RecallBudget, RecalledFrameRow};
+pub use turn::{Hud, TurnOpening};
 // Re-imported rather than left qualified, so the split was a pure move: every
 // call site in the fold reads exactly as it did before (#2958). See
 // `summarize`'s module doc for why the seam is there and not elsewhere.
@@ -84,6 +86,18 @@ pub struct SessionModel {
     /// `turn_instance` that is per-*run*, so a wrapped run restarts it while
     /// the scrollback does not.
     pub turns_completed: u32,
+    /// Whether the turn in flight has already drawn its SPEC 6.1 opening rule.
+    ///
+    /// The turn's *first* stage boundary opens it and every later one is a
+    /// plain section rule ([`TurnOpening`]). Kept as a latch rather than
+    /// derived from the trailing transcript entries because the fold is the
+    /// only place that can see the boundary: front-eviction can drop the
+    /// opening rule itself, and a derivation that looked backwards for one
+    /// would re-open the turn the moment the retention cap bit.
+    ///
+    /// Cleared by whatever ends a turn — a `TurnComplete`, the `RunComplete`
+    /// that ends the run, a terminal `Error`, and `/clear`.
+    turn_head_stamped: bool,
     /// The scrollback transcript, oldest first. Streaming `Text`/`Reasoning`
     /// deltas are accumulated into the trailing entry rather than producing
     /// one line per token.
@@ -254,7 +268,13 @@ pub enum TranscriptEntry {
     /// A stage boundary marker (`triage`, `plan`, `execute`, …) — or a stage a
     /// plugin contributed, under its own word. Open vocabulary, so the deck
     /// renders a stage it has never heard of instead of dropping it.
-    Stage(StageName),
+    Stage {
+        name: StageName,
+        /// Set on the one boundary that **opens** a turn — SPEC 6.1's labelled
+        /// rule. `None` on every later boundary of the same turn, which stays
+        /// the plain section rule it has always been.
+        opens: Option<TurnOpening>,
+    },
     /// Accumulated assistant natural-language output.
     Text(String),
     /// Accumulated model reasoning (rendered dimmed).
@@ -478,81 +498,21 @@ pub enum TranscriptEntry {
 }
 
 /// A mutating tool result's handle on the diff it may render inline: the
-/// path into [`SessionModel::files`] plus the value of that file's `changes`
-/// counter when the result folded. The renderer shows the inline diff only
-/// while the counter still matches — a later mutation of the same path bumps
-/// it, so a historical entry can never display a diff its call didn't
-/// produce. Only the *reference* lives here; the diff bytes stay on the
-/// single event-borne path (L-T5).
+/// path into [`SessionModel::files`] plus the `changes` seq of the mutation
+/// *this call produced*. The renderer resolves it against
+/// [`FileState::recent_diffs`], so a row shows the change its own call made
+/// and never a neighbour's. Only the *reference* lives here; the diff bytes
+/// stay on the single event-borne path (L-T5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineDiffRef {
     /// The key into [`SessionModel::files`].
     pub path: String,
-    /// [`FileState::changes`] at fold time — stale (hidden) once it differs.
+    /// The [`FileState::changes`] value this call's own mutation is recorded
+    /// at — one past the counter at fold time, because the surviving producer
+    /// emits at the turn boundary, *after* this result folds (#4155). It
+    /// resolves for as long as that mutation is remembered, and dangles
+    /// (rendering nothing) when the turn measured no net change to the path.
     pub seq: u32,
-}
-
-/// Live HUD numbers, all folded from the event stream.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Hud {
-    /// Spend as the budget guard reports it on every `BudgetTick`.
-    ///
-    /// Note this is **cumulative for the life of the guard**, not per turn: the
-    /// deck builds one `BudgetGuard` for the whole session and never calls
-    /// `begin_turn`, so this only ever rises. Use [`Hud::turn_spent_usd`] for
-    /// the number a reader would call "what this turn cost".
-    pub spent_usd: f64,
-    pub limit_usd: Option<f64>,
-    pub budget_mode: Option<BudgetMode>,
-    /// Wall clock left before the task deadline, as the last `BudgetTick`
-    /// reported it (#2240, #2435). `None` is the load-bearing case and means
-    /// **no deadline is armed** — never "no time left", which is
-    /// `Some(0)`. The statline renders the two differently for exactly that
-    /// reason: a HUD showing `0s` for an unarmed run would put back into the
-    /// UI the confusion #2240 took out of the journal.
-    ///
-    /// Milliseconds rather than a `Duration` because that is the wire shape
-    /// (`AgentEvent::BudgetTick::deadline_remaining_ms`), and this struct is a
-    /// fold of the stream, not a reinterpretation of it.
-    pub deadline_remaining_ms: Option<u64>,
-    /// The stage the turn is in. [`StageName`], not [`StageKind`]: a
-    /// contributed stage is what the statline must be able to name.
-    pub stage: Option<StageName>,
-    /// The most recent stage that was one of **this host's own** boundaries.
-    ///
-    /// Separate from [`Hud::stage`] because the two answer different questions,
-    /// and one field cannot answer both once the vocabulary is open. `stage` is
-    /// "what is happening right now", which is what the statline says out loud.
-    /// This is "how far through its own shape the turn has got", which is what
-    /// the three-segment progress bar draws — and the bar has only the host's
-    /// three phases to draw with.
-    ///
-    /// Keeping it is what stops a contributed stage reading as a regression: a
-    /// plugin stage arriving after `execute` leaves this at `Execute`, so the
-    /// bar holds. Folding the contributed stage into the same field would make
-    /// it phase-less, and a phase-less stage falls back to phase 0 — the bar
-    /// would snap back to "plan" and claim the run had gone backwards.
-    pub host_stage: Option<StageKind>,
-    pub model: Option<String>,
-    /// [`Hud::spent_usd`] as it stood when the current turn began, so live turn
-    /// cost is the difference. Snapshotted in [`SessionModel::push_user_prompt`]
-    /// — the earliest signal a turn has started.
-    pub turn_start_spent_usd: f64,
-    /// The final turn cost, set once a `Complete` event lands.
-    pub final_cost_usd: Option<f64>,
-    pub complete: bool,
-}
-
-impl Hud {
-    /// What the turn in flight has cost so far.
-    ///
-    /// Once the turn settles this yields to `Complete`'s own `cost_usd`, which
-    /// is authoritative — the driver totals it directly rather than differencing
-    /// a cumulative gauge, so it also catches spend that never produced a tick.
-    pub fn turn_spent_usd(&self) -> f64 {
-        self.final_cost_usd
-            .unwrap_or_else(|| (self.spent_usd - self.turn_start_spent_usd).max(0.0))
-    }
 }
 
 impl SessionModel {
@@ -664,7 +624,22 @@ impl SessionModel {
                     // and does so from the event, so replay reconstructs it.
                     self.plan.approve();
                 }
-                self.transcript.push(TranscriptEntry::Stage(name.clone()));
+                // The first boundary of a turn carries SPEC 6.1's rule; the
+                // rest of the turn's stages are plain section rules.
+                let opens = if self.turn_head_stamped {
+                    None
+                } else {
+                    self.turn_head_stamped = true;
+                    Some(TurnOpening {
+                        turn: self.turns_completed.saturating_add(1),
+                        model: self.hud.model.clone(),
+                        budget_usd: self.hud.limit_usd,
+                    })
+                };
+                self.transcript.push(TranscriptEntry::Stage {
+                    name: name.clone(),
+                    opens,
+                });
             }
             AgentEvent::Text { text } => {
                 // The authoritative step text replaces any streamed preview
@@ -736,49 +711,44 @@ impl SessionModel {
                 // path's previous diff under its ✗ would attribute a change
                 // the call never made.
                 //
-                // The `seq` stamped here does NOT resolve, and the comment that
-                // used to sit on it is why nobody noticed. It said "the
-                // engine's `FileChangeTap` emits the `FileChange` during the
-                // tool's execution, so by the time this result folds,
-                // `files[path].changes` already counts this call's own change".
-                // There is no `FileChangeTap` anywhere in the workspace — that
-                // string appeared in this comment and nowhere else.
-                //
-                // What is true instead, in two layers. `stella-pipeline`, which
-                // emitted one `FileChange` per adopted change *during* delivery,
-                // is deleted (#3865), so the only producer left is
-                // `stella_cli::turn_files::emit_shared_tree_changes` — one
-                // aggregate `--numstat` change per path, at the turn boundary.
-                // On the deck path it is not reached at all today:
-                // `command_deck::run_lead_turn` pays only the run terminator, so
-                // no `FileChange` reaches this fold and `recent_diffs` stays
-                // empty. #4160 fixes that half. Underneath it sits a second,
-                // latent one: the boundary emit lands *after* every `ToolResult`
-                // of the turn has folded, so `changes` here is the pre-turn
-                // value, `touch_file` then bumps it and `remember_diff` records
-                // at the bumped seq, and `diff_at` misses by exactly one. That
-                // is already live for `agent::run_turn` (`stella run`), and
-                // giving the deck a producer will surface it there too — the
-                // Files tab will fill while this row stays diffless.
-                //
-                // The stamp is left as-is on purpose: `+1` would make all of a
-                // path's calls in one turn point at the single aggregate
-                // change, which is the misattribution
-                // `render::resolve_inline_diff` exists to prevent. Per-call
-                // attribution needs a per-call producer, and that is a design
-                // decision, not a repair — tracked in #4155.
+                // The seq names the change this call *will* produce, not the
+                // one already recorded. `stella-pipeline`, which emitted one
+                // `FileChange` per adopted change during delivery, is deleted
+                // (#3865); the only producer left is
+                // `stella_cli::turn_files::emit_shared_tree_changes`, which
+                // emits one aggregate change per path at the **turn boundary**
+                // — after every `ToolResult` of the turn has folded — and
+                // `touch_file` records it at the *bumped* `changes`. Stamping
+                // the pre-bump value therefore pointed one change into the
+                // past: a path's first turn resolved to nothing, and every
+                // later turn rendered the PREVIOUS turn's diff under this
+                // turn's edit, which is exactly the misattribution
+                // `render::resolve_inline_diff` exists to prevent (#4155).
                 let diff = if ok {
                     self.mutated_path_for(call_id).map(|path| {
                         let seq = self
                             .files
                             .iter()
                             .find(|f| f.path == path)
-                            .map_or(0, |f| f.changes);
+                            .map_or(0, |f| f.changes)
+                            + 1;
                         InlineDiffRef { path, seq }
                     })
                 } else {
                     None
                 };
+                // Several calls may mutate one path in a turn, and they all
+                // compute the same seq — `changes` does not move until the
+                // boundary. Exactly one row may claim that single aggregate
+                // change: the last, whose post-state the diff actually
+                // describes. Earlier rows give up their reference and degrade
+                // to naming their change, the same degradation `DIFF_HISTORY`
+                // aging and `MAX_TRACKED_FILES` eviction already have. The
+                // alternative is every one of them rendering the whole turn's
+                // change as its own.
+                if let Some(dref) = diff.as_ref() {
+                    self.supersede_inline_diff(dref);
+                }
                 self.transcript.push(TranscriptEntry::ToolResult {
                     call_id: call_id.clone(),
                     name,
@@ -1127,6 +1097,10 @@ impl SessionModel {
                 // warning mid-flight; the turn goes on.
                 if !*retryable {
                     self.plan.finish();
+                    // The turn died without a `TurnComplete`, so nothing else
+                    // will clear the latch and the next turn would open with
+                    // no rule at all.
+                    self.turn_head_stamped = false;
                 }
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -1158,6 +1132,8 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.streaming_text.clear();
                 self.turns_completed += 1;
+                // The next stage boundary opens a new turn, and its rule.
+                self.turn_head_stamped = false;
                 self.transcript.push(TranscriptEntry::Complete {
                     model: model.clone(),
                     cost_usd: *cost_usd,
@@ -1172,6 +1148,10 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.hud.final_cost_usd = Some(*cost_usd);
                 self.hud.complete = true;
+                // A run that ended between turns leaves no `TurnComplete` to
+                // clear the latch, and the next run's first stage must still
+                // open a rule (#4124).
+                self.turn_head_stamped = false;
                 self.plan.finish();
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -1372,6 +1352,27 @@ impl SessionModel {
                 _ => None,
             })
             .and_then(|(name, path)| is_file_mutation(&name).then_some(path).flatten())
+    }
+
+    /// Drop the inline-diff reference from every earlier result that pointed
+    /// at the same change as `dref`, so one change is claimed by one row.
+    ///
+    /// The turn boundary emits **one** aggregate `FileChange` per path, so
+    /// every call that mutated that path in the turn stamps an identical
+    /// `(path, seq)`. Left alone they would each render the turn's whole
+    /// change to that file as their own. The last call keeps it because the
+    /// measured post-state is the one its edit left behind; the earlier rows
+    /// degrade to naming their change rather than showing it.
+    ///
+    /// Called before the new result is pushed, so it never clears its own ref.
+    fn supersede_inline_diff(&mut self, dref: &InlineDiffRef) {
+        for entry in &mut self.transcript {
+            if let TranscriptEntry::ToolResult { diff, .. } = entry
+                && diff.as_ref().is_some_and(|d| d == dref)
+            {
+                *diff = None;
+            }
+        }
     }
 
     /// Record a file touch, retaining the latest diff for the path (L-T5).

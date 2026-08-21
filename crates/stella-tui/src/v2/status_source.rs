@@ -11,12 +11,11 @@
 //! it. Where the two rows disagree it is because SPEC 5 says so, and each of
 //! those is called out at its field below.
 
+use super::project::vendor_slug;
+use super::status_bar::{CTX_WINDOW, Status};
 use crate::WorkspaceModel;
 use crate::deck::PipelineRole;
 use crate::deck_ui::DeckUi;
-use crate::statline::{CTX_WINDOW, vendor_slug};
-
-use super::status_bar::Status;
 
 /// Owns the two strings [`Status`] borrows, so a caller can project once per
 /// frame and lend the widget a `Status` for the draw.
@@ -28,6 +27,7 @@ pub struct StatusSource {
     spend_usd: f64,
     saved_usd: f64,
     inbox: u32,
+    deadline_remaining_ms: Option<u64>,
 }
 
 impl StatusSource {
@@ -49,6 +49,10 @@ impl StatusSource {
             // Unread only. The badge exists to be cleared, so a read
             // notification is not something the row should still be counting.
             inbox: ui.notifications.iter().filter(|n| !n.read).count() as u32,
+            // The armed task deadline, or nothing. SPEC 5 gives this a cell on
+            // the bar only while it is armed, so the `Option` is the whole
+            // signal and must not be flattened to a number here.
+            deadline_remaining_ms: focused.and_then(|a| a.model.hud.deadline_remaining_ms),
         }
     }
 
@@ -62,6 +66,7 @@ impl StatusSource {
             spend_usd: self.spend_usd,
             saved_usd: self.saved_usd,
             inbox: self.inbox,
+            deadline_remaining_ms: self.deadline_remaining_ms,
         }
     }
 }

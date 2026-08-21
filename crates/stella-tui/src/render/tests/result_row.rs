@@ -48,8 +48,16 @@ fn result(name: &str, ok: bool, path: Option<&str>, body: &str) -> TranscriptEnt
 /// which for a railed row is the rail's own metal.
 fn rail_metals(entries: &[TranscriptEntry], expanded: bool) -> Vec<Color> {
     let mut out = Vec::new();
-    for entry in entries {
-        entry_lines(entry, &[], false, expanded, false, WIDTH, &mut out);
+    for (i, entry) in entries.iter().enumerate() {
+        entry_lines(
+            entry,
+            EntryView::at(&[], entries, i),
+            false,
+            expanded,
+            false,
+            WIDTH,
+            &mut out,
+        );
     }
     out.iter()
         .filter(|l| l.spans.first().is_some_and(|s| s.content.starts_with(" │")))
@@ -146,7 +154,7 @@ fn a_failure_overrides_the_metal_and_still_says_so_without_colour() {
             None,
             "error[E0432]: unresolved import\n  --> src/lib.rs:3:5",
         ),
-        &[],
+        EntryView::of(&[]),
         false,
         false,
         false,
@@ -193,7 +201,7 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
         removed,
         recent_diffs: [crate::model::RememberedDiff {
             seq: 1,
-            text: diff_text.to_string(),
+            text: Some(diff_text.to_string()),
             added,
             removed,
         }]
@@ -218,7 +226,15 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
         }),
     };
     let mut out = Vec::new();
-    entry_lines(&entry, &files, false, false, false, WIDTH, &mut out);
+    entry_lines(
+        &entry,
+        EntryView::of(&files),
+        false,
+        false,
+        false,
+        WIDTH,
+        &mut out,
+    );
 
     let ground = |bg: Color| -> Vec<&Line<'static>> {
         out.iter()
@@ -302,7 +318,15 @@ fn expanding_a_call_row_shows_its_arguments_again() {
     let entry = start("read_file", Some("src/lib.rs"));
     let text = |expanded: bool| -> String {
         let mut out = Vec::new();
-        entry_lines(&entry, &[], false, expanded, false, WIDTH, &mut out);
+        entry_lines(
+            &entry,
+            EntryView::of(&[]),
+            false,
+            expanded,
+            false,
+            WIDTH,
+            &mut out,
+        );
         out.iter()
             .map(|l| {
                 l.spans
