@@ -85,6 +85,11 @@ fn push_body_line(
         push_detail_line(margin, line, width, out);
         return;
     };
+    // The deck's single highlight site, and so where SPEC 6.4's "once when the
+    // event arrives, never per frame" budget is counted. See
+    // [`crate::syntax::lex_count`], and `views::session::fold` for what holds it.
+    #[cfg(test)]
+    syntax::lex_count::bump();
     let mut spans: Vec<Span<'static>> = Vec::new();
     if let Some(gutter) = painted.gutter {
         // The gutter is chrome, not source: it wears the dimmest text tone so
@@ -536,6 +541,7 @@ fn entry_body(
             );
         }
         TranscriptEntry::ToolResult {
+            name,
             ok,
             path,
             full,
@@ -544,7 +550,15 @@ fn entry_body(
             diff,
             ..
         } => {
-            let rail = if *ok { Rail::Result } else { Rail::Fail };
+            // One event, one metal (SPEC 6.2). The head above this row read the
+            // same table, so the block is one unbroken vertical instead of a v2
+            // rail over a v1 body. Failure is the one override — see
+            // [`Rail::Fail`].
+            let rail = if *ok {
+                Rail::Result(crate::v2::transcript_source::head_metal(name))
+            } else {
+                Rail::Fail
+            };
             // Bound once: every row of this result's block reproduces the same
             // margin, and re-deriving it per row is how one of them ends up a
             // cell out of line with the others.
@@ -734,7 +748,7 @@ fn entry_body(
                 let (body, _) =
                     diff::body_lines_inline(d, Some(&dref.path), cap, Some(" · ctrl+o"));
                 for line in body {
-                    push_diff_line(&margin, line, out);
+                    push_diff_line(&margin, line, width, out);
                 }
             }
         }

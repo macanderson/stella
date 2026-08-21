@@ -117,15 +117,19 @@ crate's own precedent is the [`src/views/`](src/views) directory — one render
 module per tab, split out of the deck files — so a change that adds rendering
 goes in a `views/` module, not `deck_ui.rs` or `deck_render.rs`; new modal
 key handling goes in a `src/deck_ui/` submodule the way
-[`src/deck_ui/cards.rs`](src/deck_ui/cards.rs) already does. Note that two
-`views/` modules (`engine.rs`, `session.rs`) are themselves grandfathered: a
-split buys headroom, not immunity, so code you touch inside any of these
-files is a candidate to extract.
+[`src/deck_ui/cards.rs`](src/deck_ui/cards.rs) already does. Note that
+[`src/views/engine.rs`](src/views/engine.rs) is itself grandfathered: a split
+buys headroom, not immunity, so code you touch inside any of these files is a
+candidate to extract.
 
 - [`src/deck_render.rs`](src/deck_render.rs)
 - [`src/deck_ui.rs`](src/deck_ui.rs)
 - [`src/views/engine.rs`](src/views/engine.rs)
-- [`src/views/session.rs`](src/views/session.rs)
+
+`src/views/session.rs` left this list in #4127: its incremental transcript fold
+moved to [`src/views/session/fold.rs`](src/views/session/fold.rs), which took it
+under the limit. That is the shape a split is meant to have — a self-contained
+concern leaving, not lines redistributed.
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an

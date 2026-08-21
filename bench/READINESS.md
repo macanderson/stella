@@ -692,12 +692,28 @@ of it.
 Selecting an arm:
 
 ```bash
-# control arm — the default, and the posture every published number used
+# control arm — the default, the posture every published number used, and
+# the only arm this workspace's binary can run at all (see the box below)
 unset STELLA_WITNESS_AUTHOR_MODEL
 
-# treatment arm — a second pinned model on the worker's provider
+# treatment arm — REFUSED at launch since #4103, not selected
 export STELLA_WITNESS_AUTHOR_MODEL=openrouter/deepseek/deepseek-v4-pro
 ```
+
+> [!WARNING]
+> **The treatment arm is unrunnable on this workspace's engine and is refused
+> rather than measured** ([#4103](https://github.com/macanderson/stella/issues/4103)).
+> `AgentEngineConfig::model_for` resolves `agents.default.model` >
+> `default_model` with no role argument (#3944), and `pipeline_verifier_model` /
+> `agents.verifier` are retired keys the launcher recognizes, reports and
+> ignores. So the pin reaches no model call: a treatment-arm run would execute
+> the control arm's configuration under a treatment arm's digest, which is
+> #1147's failure with the guard that used to catch it deleted (#3865).
+> `refuse_unauthorable_witness_arm` stops such a launch before it spends
+> anything. Nothing below is retracted — the *reading* path is unchanged, so
+> every digest and every recorded `assurance` block in this document still
+> re-derives byte for byte — but the arm is a description of a configuration,
+> not a run anyone can perform today.
 
 The arm changes `stella_engine_posture_sha256`, and therefore the registered
 SUT — that is intended. Two arms over the same 89 tasks on the same SUT is a
@@ -731,14 +747,24 @@ Constraints, each enforced fail-closed by `_validated_witness_author`:
   provider. A trial runs with `STELLA_CATALOG_AUTO_REFRESH=0`, so an unlisted
   slug fails model validation and the verifier pin is dropped — which is how the
   first witness-arm run executed the control arm under a witness-arm digest
-  (#1147). The posture is unchanged; what changed is that such a run now
-  refuses instead of scoring.
+  (#1147). Every author is in that position now, listed or not, which is why the
+  refusal above is unconditional rather than a slug check.
 
 Guarded by `config::tests::the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam`
-(the arm passes the fail-closed launcher seam),
-`agent::tests::engine_wiring::the_benchmark_posture_splits_worker_and_verifier_only_on_the_witness_arm`
-(the arm actually separates the two roles the witness check compares),
-`agent::tests::engine_wiring::the_flat_pipeline_verifier_model_alone_resolves_role_verifier_to_the_witness_author`
-(the flat root key alone reaches `Role::Verifier`), and
-`pipeline::tests::witness_isolation::requiring_an_independent_witness_refuses_before_spending_anything`
-(a witness arm without an independent author produces no number at all).
+(the arm's posture still passes the fail-closed launcher seam, which is what
+lets registered treatment-arm digests keep re-deriving), and, in the adapter's
+own suite, `TestWitnessArmIsUnlaunchable` plus
+`TestRolesConfigReachesTheDeclaration::test_a_harness_roles_config_verifier_is_refused_at_the_launch`
+(both channels into the declaration are refused before anything is spent, and
+the control arm passes the gate untouched).
+
+Three Rust guards this section used to name were deleted with
+`crates/stella-pipeline` (#3865) and with the role collapse (#3944), and are
+removed here rather than left as citations that resolve to nothing — each was
+grepped to zero hits in this workspace on 2026-08-21 (#4103):
+`the_benchmark_posture_splits_worker_and_verifier_only_on_the_witness_arm`,
+`the_flat_pipeline_verifier_model_alone_resolves_role_verifier_to_the_witness_author`,
+and `pipeline::tests::witness_isolation::requiring_an_independent_witness_refuses_before_spending_anything`.
+The last is the load-bearing one: it is what this document cited as the reason a
+witness arm without an independent author "produces no number at all", and it
+had not existed for the whole time that claim stood.

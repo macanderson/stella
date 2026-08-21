@@ -9,18 +9,21 @@
 //! cursor node showing its human `label` (the primary identifier — a raw id
 //! is never shown, per project rule) plus its incident edges rendered as
 //! human relations (`imports → serde`, `called by ← driver.rs`), citing the
-//! *other* node's label, never an index or id. When there's room, a small
-//! spatial node-edge sketch is drawn below the detail panel with
-//! `ratatui::widgets::canvas`.
-
-use std::f64::consts::{FRAC_PI_2, TAU};
+//! *other* node's label, never an index or id. When there's room, the coupling
+//! ranking ([`crate::v2::graph`]) sits below the detail panel: neighbours
+//! ordered by how many edges tie them to the cursor, which is the question a
+//! reader has before editing a file.
+//!
+//! That panel replaced a dot-matrix sketch of the neighborhood drawn on a
+//! `ratatui` `Canvas`. SPEC 9.1 retires it by name; SPEC 2 forbids its
+//! `Marker::Dot` braille sub-cells; and it could not answer the question
+//! anyway, since a ring places every neighbour equidistant from the focus by
+//! construction.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use crate::deck::WorkspaceModel;
@@ -153,18 +156,22 @@ fn node_list_line(node: &GraphNode, selected: bool) -> Line<'static> {
 /// Below this height (rows) + width (cols), the spatial sketch is skipped —
 /// a cramped canvas reads as noise, not a diagram, and the list+detail view
 /// already fully covers the cursor node.
-const SKETCH_MIN_HEIGHT: u16 = 10;
-const SKETCH_HEIGHT: u16 = 12;
-const SKETCH_MIN_WIDTH: u16 = 24;
+/// Detail needs six rows above it before the ranking earns any.
+const COUPLING_MIN_HEIGHT: u16 = 10;
+/// Room for a caption plus the neighbours worth ranking; past a handful the
+/// tail is noise, and the list is sorted so the tail is what gets cut.
+const COUPLING_HEIGHT: u16 = 8;
+/// Under this the bars would be shorter than their own labels.
+const COUPLING_MIN_WIDTH: u16 = 24;
 
 fn render_right(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
-    let show_sketch =
-        area.height >= SKETCH_MIN_HEIGHT + SKETCH_HEIGHT && area.width >= SKETCH_MIN_WIDTH;
-    if show_sketch {
+    let show_coupling =
+        area.height >= COUPLING_MIN_HEIGHT + COUPLING_HEIGHT && area.width >= COUPLING_MIN_WIDTH;
+    if show_coupling {
         let rows =
-            Layout::vertical([Constraint::Min(6), Constraint::Length(SKETCH_HEIGHT)]).split(area);
+            Layout::vertical([Constraint::Min(6), Constraint::Length(COUPLING_HEIGHT)]).split(area);
         render_detail(snapshot, cursor, rows[0], buf);
-        render_sketch(snapshot, cursor, rows[1], buf);
+        crate::v2::graph::render(snapshot, cursor, rows[1], buf);
     } else {
         render_detail(snapshot, cursor, area, buf);
     }
@@ -254,90 +261,6 @@ fn passive(kind: &str) -> String {
         format!("{stem}ed")
     };
     format!("{past} by")
-}
-
-// Bonus: a small spatial node-edge sketch
-
-/// Roughly compensates for terminal cells being taller than they are wide, so
-/// nodes placed on a unit circle read as a ring rather than a tall ellipse.
-const X_BOUNDS: [f64; 2] = [-1.7, 1.7];
-const Y_BOUNDS: [f64; 2] = [-1.1, 1.1];
-
-fn render_sketch(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" neighborhood ");
-    let inner = block.inner(area);
-    block.render(area, buf);
-    if inner.width < 6 || inner.height < 4 {
-        return; // too small to sketch legibly; detail panel above still covers the cursor node
-    }
-
-    let positions = circle_positions(snapshot.nodes.len());
-    let nodes = &snapshot.nodes;
-    let edges = &snapshot.edges;
-
-    let canvas = Canvas::default()
-        .x_bounds(X_BOUNDS)
-        .y_bounds(Y_BOUNDS)
-        .marker(Marker::Dot)
-        .paint(|ctx| {
-            for edge in edges {
-                if let (Some(&(x1, y1)), Some(&(x2, y2))) =
-                    (positions.get(edge.from), positions.get(edge.to))
-                {
-                    let touches_cursor = edge.from == cursor || edge.to == cursor;
-                    let color = if touches_cursor {
-                        theme::ACCENT
-                    } else {
-                        theme::RULE
-                    };
-                    ctx.draw(&CanvasLine::new(x1, y1, x2, y2, color));
-                }
-            }
-            for (i, node) in nodes.iter().enumerate() {
-                if let Some(&(x, y)) = positions.get(i) {
-                    ctx.print(x, y, node_glyph_line(node, i == cursor));
-                }
-            }
-        });
-    canvas.render(inner, buf);
-}
-
-/// The label printed at one node's position in the sketch: the cursor node is
-/// bracketed and rendered in the brand accent so it stands out regardless of
-/// its kind color; every other node keeps its kind glyph/color.
-fn node_glyph_line(node: &GraphNode, is_cursor: bool) -> Line<'static> {
-    let glyph = theme::graph_kind_glyph(&node.kind);
-    if is_cursor {
-        Line::from(Span::styled(
-            format!("[{glyph}]"),
-            Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
-        ))
-    } else {
-        Line::from(Span::styled(
-            glyph,
-            Style::new().fg(theme::graph_kind_color(&node.kind)),
-        ))
-    }
-}
-
-/// Evenly space `n` points around a unit circle, starting at the top (12
-/// o'clock) and proceeding clockwise. `n == 0` yields no points; `n == 1`
-/// places the lone node at the origin.
-fn circle_positions(n: usize) -> Vec<(f64, f64)> {
-    if n == 0 {
-        return Vec::new();
-    }
-    if n == 1 {
-        return vec![(0.0, 0.0)];
-    }
-    (0..n)
-        .map(|i| {
-            let angle = -FRAC_PI_2 + (i as f64) * (TAU / n as f64);
-            (angle.cos(), angle.sin())
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -539,12 +462,5 @@ mod tests {
         assert_eq!(passive("calls"), "called by");
         assert_eq!(passive("defines"), "defined by");
         assert_eq!(passive("references"), "referenced by");
-    }
-
-    #[test]
-    fn circle_positions_handles_zero_one_and_many_nodes_without_panicking() {
-        assert!(circle_positions(0).is_empty());
-        assert_eq!(circle_positions(1), vec![(0.0, 0.0)]);
-        assert_eq!(circle_positions(5).len(), 5);
     }
 }
