@@ -24,6 +24,7 @@ use stella_protocol::{
     StageKind, SubAgentStatus,
 };
 
+mod block_rail;
 mod inline_diff;
 mod palette;
 mod slash;

@@ -18,6 +18,24 @@ use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme;
+use crate::v2::transcript::RAIL_W;
+
+/// The cells every row of a **tool-call block** opens with, so a call's head,
+/// its result, its body and its inline diff read as one unbroken vertical.
+///
+/// The glyph is [`crate::v2::transcript::rail_span`]'s and not a second copy of
+/// it (`render::tests::block_rail` is what says so): the head of every
+/// call renders through the v2 event renderer (SPEC 6.2) while the result below
+/// it still renders here, and the two must agree on the column or the rail dies
+/// one row into the block — which is exactly what it did. The *metal* is
+/// deliberately not shared: a v2 head wears its event's colour and a result
+/// recedes to [`Rail::style`]'s muted (or danger) tone under it, for the reason
+/// `render::tests::palette` states.
+pub(crate) const RAIL: &str = " │";
+
+// The rail is two cells wide on both sides of the seam, or every column below
+// is arithmetic about a different glyph than the one v2 draws.
+const _: () = assert!(RAIL_W == 2);
 
 /// Coalesce adjacent same-styled characters into spans for compact output.
 pub(crate) fn styled_chars_to_spans(chars: Vec<(char, Style)>) -> Vec<Span<'static>> {
@@ -47,9 +65,15 @@ pub(crate) fn styled_chars_to_spans(chars: Vec<(char, Style)>) -> Vec<Span<'stat
 /// one space separates it from the text.
 pub(crate) const LEAD: usize = 2;
 
-/// Content column for a subordinate row (a tool result and its body). Indented
-/// one rail-width past its parent call so the hierarchy is visible without a
-/// connecting line on every row.
+/// Content column for a subordinate row that rides no rail — the context-recall
+/// table's frame and budget grids. Indented one rail-width past the note that
+/// heads it so the hierarchy is visible without a connecting line on every row.
+///
+/// Not the tool-block column: everything inside a call block indents to
+/// [`Rail::indent`] instead, which is [`RAIL`] plus a glyph cell. The two were
+/// one constant until the v2 head renderer moved the block's content column to
+/// 5 and left this one behind at 4, so a result's body sat one cell left of the
+/// call it belonged to.
 pub(crate) const BODY: usize = 4;
 
 /// Which rail a transcript row rides. The glyph is the row's type signature —
@@ -73,12 +97,22 @@ pub(crate) enum Rail {
 }
 
 impl Rail {
+    /// Whether this rail belongs to a tool-call block, and so opens every one
+    /// of its rows with [`RAIL`].
+    pub(crate) fn railed(self) -> bool {
+        matches!(self, Rail::Call | Rail::Result | Rail::Fail)
+    }
+
     /// The literal prefix this rail prints before a row's first line.
+    ///
+    /// A block rail is `RAIL` + space + glyph + space, which puts the glyph in
+    /// the same cell as the v2 head's and the content in the same column: a
+    /// call, its result and its body then share one left edge instead of three.
     pub(crate) fn prefix(self) -> &'static str {
         match self {
-            Rail::Call => "● ",
-            Rail::Result => "  ⎿ ",
-            Rail::Fail => "  ✗ ",
+            Rail::Call => " │ ● ",
+            Rail::Result => " │ ⎿ ",
+            Rail::Fail => " │ ✗ ",
             Rail::User => "▌ ",
             Rail::Agent => "  ",
         }
@@ -89,6 +123,23 @@ impl Rail {
     /// rather than under its glyph.
     pub(crate) fn indent(self) -> usize {
         UnicodeWidthStr::width(self.prefix())
+    }
+
+    /// What every line of this rail's row *after* the first opens with: blanks
+    /// out to [`Rail::indent`] for an unrailed row, and the rail itself for a
+    /// block row.
+    ///
+    /// A wrapped result whose continuation was blank punched a hole in the rail
+    /// at exactly the rows a wide `bash` result produces most of — so the margin
+    /// stopped being scannable on the output it was built to index.
+    pub(crate) fn continuation(self) -> Vec<Span<'static>> {
+        if !self.railed() {
+            return vec![Span::raw(" ".repeat(self.indent()))];
+        }
+        vec![
+            Span::styled(RAIL, self.style()),
+            Span::raw(" ".repeat(self.indent() - RAIL_W)),
+        ]
     }
 
     /// The style the rail glyph itself renders in. Content styling is the
@@ -148,11 +199,30 @@ fn expand_tabs(line: &mut Line<'static>) {
 /// with continuation lines indented by `indent` spaces. The first line
 /// passes through unchanged (it already has its label prefix).
 pub(crate) fn wrap_one_indent(
-    mut line: Line<'static>,
+    line: Line<'static>,
     max_width: usize,
     indent: usize,
     out: &mut Vec<Line<'static>>,
 ) {
+    wrap_one_lead(line, max_width, &[Span::raw(" ".repeat(indent))], out);
+}
+
+/// [`wrap_one_indent`] for a continuation margin that is not blank — a
+/// tool-block row, whose wrapped lines must reproduce [`RAIL`] rather than the
+/// spaces that would break it.
+///
+/// `lead` is the whole margin, so its display width *is* the indent; the two
+/// cannot be passed separately and disagree.
+pub(crate) fn wrap_one_lead(
+    mut line: Line<'static>,
+    max_width: usize,
+    lead: &[Span<'static>],
+    out: &mut Vec<Line<'static>>,
+) {
+    let indent: usize = lead
+        .iter()
+        .map(|s| UnicodeWidthStr::width(&*s.content))
+        .sum();
     // Before the width is taken: see [`expand_tabs`] on why measuring a tab
     // and drawing a tab are the same hole.
     expand_tabs(&mut line);
@@ -183,7 +253,7 @@ pub(crate) fn wrap_one_indent(
             if first {
                 out.push(Line::from(styled_chars_to_spans(pairs)));
             } else {
-                let mut spans = vec![Span::raw(" ".repeat(indent))];
+                let mut spans = lead.to_vec();
                 spans.extend(styled_chars_to_spans(pairs));
                 out.push(Line::from(spans));
             }
@@ -241,12 +311,17 @@ pub(crate) fn push_row(
     push_row_block(rail, vec![Line::from(content)], width, out);
 }
 
-/// Emit one expanded-detail row (a ctrl+o body line) at the subordinate body
-/// column. Detail rows sit directly under their parent result's content —
-/// aligned to [`BODY`] — so an expanded body reads as part of the same block
-/// rather than as a new top-level event.
-pub(crate) fn push_detail_line(text: &str, width: usize, out: &mut Vec<Line<'static>>) {
+/// Emit one body row of a tool-call block — a preview line, an expanded
+/// (ctrl+o) body line, the `⋯ N lines` affordance.
+///
+/// Rides `rail`'s own margin, so the row sits directly under its result's
+/// content and the block's rail runs unbroken past it. `rail` is the *result's*
+/// rail rather than a fixed one because a failure's block is drawn in danger
+/// and a success's in muted: a body that hard-coded either would leave one of
+/// the two with a rail that changes colour halfway down.
+pub(crate) fn push_detail_line(rail: Rail, text: &str, width: usize, out: &mut Vec<Line<'static>>) {
     push_detail_spans(
+        rail,
         vec![Span::styled(text.to_owned(), Style::new().fg(theme::MUTED))],
         width,
         out,
@@ -258,13 +333,15 @@ pub(crate) fn push_detail_line(text: &str, width: usize, out: &mut Vec<Line<'sta
 /// coloring it exists to show. Indent, column, and wrapping are identical, so
 /// the two forms interleave in one body without a seam.
 pub(crate) fn push_detail_spans(
+    rail: Rail,
     content: Vec<Span<'static>>,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    let mut spans = vec![Span::raw(" ".repeat(BODY))];
+    let cont = rail.continuation();
+    let mut spans = cont.clone();
     spans.extend(content);
-    wrap_one_indent(Line::from(spans), width, BODY, out);
+    wrap_one_lead(Line::from(spans), width, &cont, out);
 }
 
 /// Emit a system-note row: `↻ retry`, `⇣ compacted`, `✗ error` and friends.
@@ -359,8 +436,8 @@ pub(crate) fn push_gap(out: &mut Vec<Line<'static>>) {
 /// un-wrapped — the transcript renders without wrap (one logical line per row
 /// keeps the scroll math line-exact), so overflow clips at the pane edge like
 /// the diff viewer, and the line-number gutter never mis-aligns mid-diff.
-pub(crate) fn push_diff_line(line: Line<'static>, out: &mut Vec<Line<'static>>) {
-    let mut spans = vec![Span::raw(" ".repeat(BODY))];
+pub(crate) fn push_diff_line(rail: Rail, line: Line<'static>, out: &mut Vec<Line<'static>>) {
+    let mut spans = rail.continuation();
     spans.extend(line.spans);
     // The one row that reaches the buffer without passing through
     // [`wrap_one_indent`], and so the one that needs [`expand_tabs`] by name: a
@@ -378,15 +455,15 @@ pub(crate) fn push_row_block(
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    let indent = rail.indent();
+    let cont = rail.continuation();
     for (i, line) in lines.into_iter().enumerate() {
         let mut spans = if i == 0 {
             vec![Span::styled(rail.prefix().to_string(), rail.style())]
         } else {
-            vec![Span::raw(" ".repeat(indent))]
+            cont.clone()
         };
         spans.extend(line.spans);
-        wrap_one_indent(Line::from(spans), width, indent, out);
+        wrap_one_lead(Line::from(spans), width, &cont, out);
     }
 }
 

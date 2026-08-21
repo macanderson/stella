@@ -5,6 +5,11 @@
 //! than a rendered string — a golden frame proves what the renderer did today,
 //! a property proves what it may never do.
 
+// The one body transform this crate applies before it folds anything, kept in
+// its own file because its contract is a property (whitespace only) rather than
+// a rendered shape, and a property wants room to state itself.
+mod json_reindent;
+
 use crate::digest::{self, format_cost, format_duration, format_tokens};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::{Command, Cursor, FoldState, Zoom, apply};

@@ -107,7 +107,19 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
         echo_hidden = true;
     }
 
-    let body = lines.to_vec();
+    // Re-laid one member to a line before the fold measures it, for the reason
+    // [`crate::syntax::reindent_json`] gives: an API response arrives as a
+    // single line, so a fold that counted lines counted *one*, hid nothing, and
+    // called an eight-thousand-column blob fully shown. The deck normalises the
+    // same body through the same function, so "how much of this result do I
+    // see" still has one answer across the surfaces (#3644).
+    let body = match crate::syntax::body_reads_as_json(lines) {
+        true => crate::syntax::reindent_json(&lines.join("\n"))
+            .lines()
+            .map(str::to_owned)
+            .collect(),
+        false => lines.to_vec(),
+    };
     let total = body.len();
     if total <= PREVIEW_LINES {
         return OutputFold {
