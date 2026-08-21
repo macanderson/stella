@@ -508,9 +508,17 @@ fn entry_body(
             // "42 lines of output" would describe the tool's chatter, not the
             // change. Everything else reports output size, and only when
             // there is more than the one line already shown.
+            //
+            // Gated on the *measurement*, not on the diff text: a change can
+            // be measured without a patch being attachable, and gating on the
+            // text denied the row a size it actually knew (#4155). The two
+            // resolve together in the ordinary case; where they part, the row
+            // states the size and falls back to the tool's own preview below
+            // rather than showing nothing at all. `unwrap_or((0, 0))` is gone
+            // with it — a fabricated `+0 −0` over a real edit is the defect
+            // #4156 removed from the head row, and it has no place here.
             let mut metric: Vec<Span<'static>> = Vec::new();
-            if inline.is_some() {
-                let (added, removed) = inline_delta.unwrap_or((0, 0));
+            if let Some((added, removed)) = inline_delta {
                 metric.push(Span::styled(
                     format!("+{added}"),
                     Style::new().fg(theme::OK),

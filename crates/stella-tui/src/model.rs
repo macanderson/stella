@@ -478,17 +478,20 @@ pub enum TranscriptEntry {
 }
 
 /// A mutating tool result's handle on the diff it may render inline: the
-/// path into [`SessionModel::files`] plus the value of that file's `changes`
-/// counter when the result folded. The renderer shows the inline diff only
-/// while the counter still matches — a later mutation of the same path bumps
-/// it, so a historical entry can never display a diff its call didn't
-/// produce. Only the *reference* lives here; the diff bytes stay on the
-/// single event-borne path (L-T5).
+/// path into [`SessionModel::files`] plus the `changes` seq of the mutation
+/// *this call produced*. The renderer resolves it against
+/// [`FileState::recent_diffs`], so a row shows the change its own call made
+/// and never a neighbour's. Only the *reference* lives here; the diff bytes
+/// stay on the single event-borne path (L-T5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineDiffRef {
     /// The key into [`SessionModel::files`].
     pub path: String,
-    /// [`FileState::changes`] at fold time — stale (hidden) once it differs.
+    /// The [`FileState::changes`] value this call's own mutation is recorded
+    /// at — one past the counter at fold time, because the surviving producer
+    /// emits at the turn boundary, *after* this result folds (#4155). It
+    /// resolves for as long as that mutation is remembered, and dangles
+    /// (rendering nothing) when the turn measured no net change to the path.
     pub seq: u32,
 }
 
@@ -736,49 +739,44 @@ impl SessionModel {
                 // path's previous diff under its ✗ would attribute a change
                 // the call never made.
                 //
-                // The `seq` stamped here does NOT resolve, and the comment that
-                // used to sit on it is why nobody noticed. It said "the
-                // engine's `FileChangeTap` emits the `FileChange` during the
-                // tool's execution, so by the time this result folds,
-                // `files[path].changes` already counts this call's own change".
-                // There is no `FileChangeTap` anywhere in the workspace — that
-                // string appeared in this comment and nowhere else.
-                //
-                // What is true instead, in two layers. `stella-pipeline`, which
-                // emitted one `FileChange` per adopted change *during* delivery,
-                // is deleted (#3865), so the only producer left is
-                // `stella_cli::turn_files::emit_shared_tree_changes` — one
-                // aggregate `--numstat` change per path, at the turn boundary.
-                // On the deck path it is not reached at all today:
-                // `command_deck::run_lead_turn` pays only the run terminator, so
-                // no `FileChange` reaches this fold and `recent_diffs` stays
-                // empty. #4160 fixes that half. Underneath it sits a second,
-                // latent one: the boundary emit lands *after* every `ToolResult`
-                // of the turn has folded, so `changes` here is the pre-turn
-                // value, `touch_file` then bumps it and `remember_diff` records
-                // at the bumped seq, and `diff_at` misses by exactly one. That
-                // is already live for `agent::run_turn` (`stella run`), and
-                // giving the deck a producer will surface it there too — the
-                // Files tab will fill while this row stays diffless.
-                //
-                // The stamp is left as-is on purpose: `+1` would make all of a
-                // path's calls in one turn point at the single aggregate
-                // change, which is the misattribution
-                // `render::resolve_inline_diff` exists to prevent. Per-call
-                // attribution needs a per-call producer, and that is a design
-                // decision, not a repair — tracked in #4155.
+                // The seq names the change this call *will* produce, not the
+                // one already recorded. `stella-pipeline`, which emitted one
+                // `FileChange` per adopted change during delivery, is deleted
+                // (#3865); the only producer left is
+                // `stella_cli::turn_files::emit_shared_tree_changes`, which
+                // emits one aggregate change per path at the **turn boundary**
+                // — after every `ToolResult` of the turn has folded — and
+                // `touch_file` records it at the *bumped* `changes`. Stamping
+                // the pre-bump value therefore pointed one change into the
+                // past: a path's first turn resolved to nothing, and every
+                // later turn rendered the PREVIOUS turn's diff under this
+                // turn's edit, which is exactly the misattribution
+                // `render::resolve_inline_diff` exists to prevent (#4155).
                 let diff = if ok {
                     self.mutated_path_for(call_id).map(|path| {
                         let seq = self
                             .files
                             .iter()
                             .find(|f| f.path == path)
-                            .map_or(0, |f| f.changes);
+                            .map_or(0, |f| f.changes)
+                            + 1;
                         InlineDiffRef { path, seq }
                     })
                 } else {
                     None
                 };
+                // Several calls may mutate one path in a turn, and they all
+                // compute the same seq — `changes` does not move until the
+                // boundary. Exactly one row may claim that single aggregate
+                // change: the last, whose post-state the diff actually
+                // describes. Earlier rows give up their reference and degrade
+                // to naming their change, the same degradation `DIFF_HISTORY`
+                // aging and `MAX_TRACKED_FILES` eviction already have. The
+                // alternative is every one of them rendering the whole turn's
+                // change as its own.
+                if let Some(dref) = diff.as_ref() {
+                    self.supersede_inline_diff(dref);
+                }
                 self.transcript.push(TranscriptEntry::ToolResult {
                     call_id: call_id.clone(),
                     name,
@@ -1372,6 +1370,27 @@ impl SessionModel {
                 _ => None,
             })
             .and_then(|(name, path)| is_file_mutation(&name).then_some(path).flatten())
+    }
+
+    /// Drop the inline-diff reference from every earlier result that pointed
+    /// at the same change as `dref`, so one change is claimed by one row.
+    ///
+    /// The turn boundary emits **one** aggregate `FileChange` per path, so
+    /// every call that mutated that path in the turn stamps an identical
+    /// `(path, seq)`. Left alone they would each render the turn's whole
+    /// change to that file as their own. The last call keeps it because the
+    /// measured post-state is the one its edit left behind; the earlier rows
+    /// degrade to naming their change rather than showing it.
+    ///
+    /// Called before the new result is pushed, so it never clears its own ref.
+    fn supersede_inline_diff(&mut self, dref: &InlineDiffRef) {
+        for entry in &mut self.transcript {
+            if let TranscriptEntry::ToolResult { diff, .. } = entry
+                && diff.as_ref().is_some_and(|d| d == dref)
+            {
+                *diff = None;
+            }
+        }
     }
 
     /// Record a file touch, retaining the latest diff for the path (L-T5).

@@ -48,7 +48,7 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
         removed,
         recent_diffs: [crate::model::RememberedDiff {
             seq: 1,
-            text: diff_text,
+            text: Some(diff_text),
             added,
             removed,
         }]
@@ -204,7 +204,7 @@ fn a_stale_or_unresolvable_diff_ref_renders_no_inline_diff() {
     files[0].recent_diffs = (2..=files[0].changes)
         .map(|seq| crate::model::RememberedDiff {
             seq,
-            text: format!("@@ -0,0 +1,1 @@\n+later_edit_{seq}\n"),
+            text: Some(format!("@@ -0,0 +1,1 @@\n+later_edit_{seq}\n")),
             added: 1,
             removed: 0,
         })

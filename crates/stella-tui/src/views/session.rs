@@ -937,10 +937,10 @@ mod tests {
     #[test]
     fn a_later_mutation_leaves_the_settled_inline_diff_showing_its_own_change() {
         use stella_protocol::{FileChangeKind, ToolCall, ToolOutput};
-        // A successful edit_file: ToolStart → FileChange (the engine's tap
-        // fires during execution) → ToolResult. The result's inline diff
-        // must render, and must go on rendering *the change that call made*
-        // when the same path is edited again.
+        // A successful edit_file: ToolStart → ToolResult → FileChange, the
+        // real producer ordering — the turn boundary measures the tree after
+        // the result has folded (#4155). The result's inline diff must
+        // render, and must go on rendering *the change that call made*.
         //
         // It used to vanish instead: `FileState` kept one `latest_diff` and
         // the ref resolved only while `changes` still equalled the recorded
@@ -963,13 +963,6 @@ mod tests {
                 input: serde_json::json!({"path": "src/x.rs"}),
             },
         });
-        model.apply(&AgentEvent::FileChange {
-            path: "src/x.rs".into(),
-            kind: FileChangeKind::Modified,
-            added: 1,
-            removed: 0,
-            diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
-        });
         model.apply(&AgentEvent::ToolResult {
             call_id: "c1".into(),
             output: ToolOutput::Ok {
@@ -978,6 +971,13 @@ mod tests {
             },
             duration_ms: 3,
             speculated: false,
+        });
+        model.apply(&AgentEvent::FileChange {
+            path: "src/x.rs".into(),
+            kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
+            diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
         });
         let expanded = HashSet::new();
         let mut fold = SessionFold::default();
