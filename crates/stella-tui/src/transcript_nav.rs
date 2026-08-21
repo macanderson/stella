@@ -511,6 +511,7 @@ mod tests {
             TranscriptEntry::Complete {
                 model: "m".into(),
                 cost_usd: 0.1,
+                turn: 1,
             },
         ];
         let turns = turns(&t);

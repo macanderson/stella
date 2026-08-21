@@ -212,6 +212,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
         TranscriptEntry::Complete {
             model: "glm-5.2".into(),
             cost_usd: 0.1,
+            turn: 1,
         },
         // Both phases: the start and finish rows take different render
         // paths (quiet note vs. status-hued note), so one sample would
@@ -385,6 +386,86 @@ fn screenshot_recall() -> TranscriptEntry {
                 ("workspace-memory".into(), 1, 2, 812),
             ],
         }),
+    }
+}
+
+/// SPEC 6.1: a turn ends on a labelled rule and one receipt line.
+///
+/// The witness for the boundary landing. On the old renderer a completed turn
+/// was a single `✓ cost` note, so every assertion here fails on it: there was
+/// no rule, no `receipt` line, and no turn number anywhere in the transcript.
+#[test]
+fn a_completed_turn_closes_on_a_rule_and_a_receipt() {
+    let entry = TranscriptEntry::Complete {
+        model: "glm-5.2".into(),
+        cost_usd: 0.11,
+        turn: 14,
+    };
+    let text = recall_text(&entry, false, 100);
+
+    assert!(text.contains("turn 14 done"), "no closing rule:\n{text}");
+    assert!(
+        text.contains("──"),
+        "the rule does not reach the row:\n{text}"
+    );
+    assert!(text.contains("receipt"), "no receipt line:\n{text}");
+    assert!(
+        text.contains("$0.11"),
+        "the receipt lost the spend:\n{text}"
+    );
+    assert!(
+        text.contains("↵ audit"),
+        "the receipt lost its affordance:\n{text}"
+    );
+
+    // Nothing the deck cannot measure. `StepUsage` is deliberately unfolded,
+    // there is no per-turn clock, and no per-turn file/test/memory count — so a
+    // receipt claiming any of them would be reporting a measurement nobody
+    // took. They elide until something counts them.
+    for absent in ["tok", "det ", "tests", "file", "memory", "0:00"] {
+        assert!(
+            !text.contains(absent),
+            "the receipt invented {absent:?}:\n{text}"
+        );
+    }
+}
+
+/// SPEC 2: money is gold. The v1 row rendered a settled turn cost in
+/// `SUCCESS_BRIGHT` green, which spends the pass colour on an amount — and
+/// green is reserved for pass semantics, not for spending.
+#[test]
+fn the_turn_receipt_prices_in_gold_not_in_the_pass_colour() {
+    let mut out = Vec::new();
+    entry_lines(
+        &TranscriptEntry::Complete {
+            model: "glm-5.2".into(),
+            cost_usd: 0.11,
+            turn: 14,
+        },
+        &[],
+        false,
+        false,
+        false,
+        100,
+        &mut out,
+    );
+    let money = out
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .find(|s| s.content.contains("$0.11"))
+        .expect("the receipt renders the spend");
+    assert_eq!(
+        money.style.fg,
+        Some(stella_tui_theme::token::GOLD),
+        "money is gold (SPEC 2/5)"
+    );
+    for span in out.iter().flat_map(|l| l.spans.iter()) {
+        assert_ne!(
+            span.style.fg,
+            Some(stella_tui_theme::token::GREEN),
+            "green is pass semantics; a turn ending is not a pass: {:?}",
+            span.content
+        );
     }
 }
 

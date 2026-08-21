@@ -48,7 +48,7 @@ fn scripted_turn() -> (TurnHead, Vec<Event>, Receipt) {
 
     let receipt = Receipt {
         spend_usd: 0.11,
-        tokens: 18_000,
+        tokens: Some(18_000),
         det_pct: Some(86),
         tests_passed: 4,
         tests_total: 4,
@@ -65,7 +65,7 @@ fn frame(head: &TurnHead, events: &[Event], r: &Receipt) -> (Buffer, String) {
     for e in events {
         lines.extend(event_rows(e, W));
     }
-    lines.push(turn_end(head.number, "0:42", W));
+    lines.push(turn_end(head.number, Some("0:42"), W));
     lines.push(receipt(r));
 
     let h = lines.len() as u16;
@@ -113,7 +113,9 @@ fn a_scripted_turn_renders_begin_events_and_receipt() {
 fn a_turn_rule_spans_the_full_width() {
     let (head, _, _) = scripted_turn();
     assert_eq!(turn_begin(&head, W).width(), W);
-    assert_eq!(turn_end(14, "0:42", W).width(), W);
+    assert_eq!(turn_end(14, Some("0:42"), W).width(), W);
+    // A turn with no measured clock still rules the full width.
+    assert_eq!(turn_end(14, None, W).width(), W);
 }
 
 /// SPEC 6.2: every event row carries a rail, and the rail is the kind's metal.

@@ -74,6 +74,16 @@ const _: () =
 /// [`mod@crate::render`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SessionModel {
+    /// Turns this session has completed — the ordinal stamped on each
+    /// [`TranscriptEntry::Complete`] so a closing rule can name its turn
+    /// (SPEC 6.1).
+    ///
+    /// A counter rather than a derivation, because the two obvious derivations
+    /// both lie: counting `Complete` entries in the transcript renumbers
+    /// everything once front-eviction drops one, and `AgentEvent` carries a
+    /// `turn_instance` that is per-*run*, so a wrapped run restarts it while
+    /// the scrollback does not.
+    pub turns_completed: u32,
     /// The scrollback transcript, oldest first. Streaming `Text`/`Reasoning`
     /// deltas are accumulated into the trailing entry rather than producing
     /// one line per token.
@@ -454,7 +464,17 @@ pub enum TranscriptEntry {
     /// An error event.
     Error { message: String, retryable: bool },
     /// The turn completed.
-    Complete { model: String, cost_usd: f64 },
+    ///
+    /// `turn` is this turn's ordinal in the session, 1-based, so the closing
+    /// rule can name it (SPEC 6.1). Carried on the entry rather than counted at
+    /// render time: the renderer sees one entry at a time and front-eviction
+    /// shifts every index, so a position-derived number would renumber the
+    /// whole scrollback the first time the retention cap bit.
+    Complete {
+        model: String,
+        cost_usd: f64,
+        turn: u32,
+    },
 }
 
 /// A mutating tool result's handle on the diff it may render inline: the
@@ -1108,9 +1128,11 @@ impl SessionModel {
             AgentEvent::TurnComplete { model, cost_usd } => {
                 self.hud.model = Some(model.clone());
                 self.streaming_text.clear();
+                self.turns_completed += 1;
                 self.transcript.push(TranscriptEntry::Complete {
                     model: model.clone(),
                     cost_usd: *cost_usd,
+                    turn: self.turns_completed,
                 });
             }
             // The RUN ended — the only event that means nothing more is
