@@ -64,10 +64,10 @@ pub struct RememberedDiff {
     ///
     /// Counts and diff text arrive independently — a producer builds each
     /// change from a name-status listing, then attaches numstat and diff text
-    /// in two calls, either of which can fail, and [`Self::best_diff`] names
-    /// `diff: None` with real counts as a legitimate shape. Recording the
-    /// entry only when text was present conflated "no patch" with "no
-    /// measurement": [`Self::delta_at`] answered `None` for a mutation whose
+    /// in two calls, either of which can fail, and [`FileState::best_diff`]
+    /// names `diff: None` with real counts as a legitimate shape. Recording
+    /// the entry only when text was present conflated "no patch" with "no
+    /// measurement": [`FileState::delta_at`] answered `None` for a mutation whose
     /// `(added, removed)` the emitter had measured, so the row lost its
     /// `+N −M` as well as its diff (#4155).
     pub text: Option<String>,
