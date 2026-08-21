@@ -76,13 +76,35 @@ pub(crate) const LEAD: usize = 2;
 /// call it belonged to.
 pub(crate) const BODY: usize = 4;
 
+/// Content column of every row in a tool-call block: [`RAIL`], a space, one
+/// glyph cell, a space.
+///
+/// The v2 head renderer arrives at the same number from the other side
+/// (`rail_span` + `" {glyph} "`), which is what makes a call and its result one
+/// block; `render::tests::block_rail` is what holds the two to it.
+pub(crate) const BLOCK_BODY: usize = RAIL_W + 3;
+
+/// The margin every row of a tool-call block reproduces *after* its glyph row:
+/// the rail in `metal`, then blanks out to [`BLOCK_BODY`].
+///
+/// Takes the metal rather than a [`Rail`] because the head of a block is drawn
+/// by the v2 event renderer, whose rail wears its **event kind's** colour —
+/// silver-dim for a read, gold for a mutation — and not one of `Rail`'s three
+/// tones. A body row that hard-coded the result's muted tone would leave a
+/// `read_file`'s block with a muted head above a gold body: one block, two
+/// metals, which is exactly the thing the rail exists to stop.
+pub(crate) fn block_margin(metal: Style) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(RAIL, metal),
+        Span::raw(" ".repeat(BLOCK_BODY - RAIL_W)),
+    ]
+}
+
 /// Which rail a transcript row rides. The glyph is the row's type signature —
 /// a reader scanning the margin sees the shape of the session (calls, their
 /// outcomes, prose, prompts) before reading any content.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Rail {
-    /// A tool invocation — the thing that happened.
-    Call,
     /// A tool result body, subordinate to the call above it.
     Result,
     /// A failed tool result. Distinct glyph *and* column-2 position, so a
@@ -100,7 +122,7 @@ impl Rail {
     /// Whether this rail belongs to a tool-call block, and so opens every one
     /// of its rows with [`RAIL`].
     pub(crate) fn railed(self) -> bool {
-        matches!(self, Rail::Call | Rail::Result | Rail::Fail)
+        matches!(self, Rail::Result | Rail::Fail)
     }
 
     /// The literal prefix this rail prints before a row's first line.
@@ -110,7 +132,6 @@ impl Rail {
     /// call, its result and its body then share one left edge instead of three.
     pub(crate) fn prefix(self) -> &'static str {
         match self {
-            Rail::Call => " │ ● ",
             Rail::Result => " │ ⎿ ",
             Rail::Fail => " │ ✗ ",
             Rail::User => "▌ ",
@@ -136,10 +157,7 @@ impl Rail {
         if !self.railed() {
             return vec![Span::raw(" ".repeat(self.indent()))];
         }
-        vec![
-            Span::styled(RAIL, self.style()),
-            Span::raw(" ".repeat(self.indent() - RAIL_W)),
-        ]
+        block_margin(self.style())
     }
 
     /// The style the rail glyph itself renders in. Content styling is the
@@ -147,7 +165,6 @@ impl Rail {
     /// margin reads consistently even when content colors vary.
     pub(crate) fn style(self) -> Style {
         match self {
-            Rail::Call => Style::new().fg(theme::ACCENT),
             Rail::Result => Style::new().fg(theme::MUTED),
             Rail::Fail => Style::new().fg(theme::DANGER),
             Rail::User => Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
@@ -314,14 +331,23 @@ pub(crate) fn push_row(
 /// Emit one body row of a tool-call block — a preview line, an expanded
 /// (ctrl+o) body line, the `⋯ N lines` affordance.
 ///
-/// Rides `rail`'s own margin, so the row sits directly under its result's
-/// content and the block's rail runs unbroken past it. `rail` is the *result's*
-/// rail rather than a fixed one because a failure's block is drawn in danger
-/// and a success's in muted: a body that hard-coded either would leave one of
-/// the two with a rail that changes colour halfway down.
-pub(crate) fn push_detail_line(rail: Rail, text: &str, width: usize, out: &mut Vec<Line<'static>>) {
+/// Rides `margin` — [`Rail::continuation`] for a row under a v1 rail,
+/// [`block_margin`] for one under the v2-drawn head — so the row sits at the
+/// block's content column and the rail runs unbroken past it.
+///
+/// The margin is passed rather than derived because the three things a block
+/// body can hang from wear three different metals: a success recedes to muted,
+/// a failure stands in danger, and a call's own arguments take the event kind's
+/// colour from the v2 head above them. Deriving any one of those here would
+/// give one of the three a rail that changes colour halfway down.
+pub(crate) fn push_detail_line(
+    margin: &[Span<'static>],
+    text: &str,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
     push_detail_spans(
-        rail,
+        margin,
         vec![Span::styled(text.to_owned(), Style::new().fg(theme::MUTED))],
         width,
         out,
@@ -333,21 +359,20 @@ pub(crate) fn push_detail_line(rail: Rail, text: &str, width: usize, out: &mut V
 /// coloring it exists to show. Indent, column, and wrapping are identical, so
 /// the two forms interleave in one body without a seam.
 pub(crate) fn push_detail_spans(
-    rail: Rail,
+    margin: &[Span<'static>],
     content: Vec<Span<'static>>,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    let cont = rail.continuation();
-    let mut spans = cont.clone();
+    let mut spans = margin.to_vec();
     spans.extend(content);
-    wrap_one_lead(Line::from(spans), width, &cont, out);
+    wrap_one_lead(Line::from(spans), width, margin, out);
 }
 
 /// Emit a system-note row: `↻ retry`, `⇣ compacted`, `✗ error` and friends.
 ///
 /// These rows *are* their own rail — each label already opens with a glyph in
-/// column 0, so it indexes the margin exactly like [`Rail::Call`] does without
+/// column 0, so it indexes the margin exactly like [`Rail::Result`] does without
 /// needing a second marker in front of it. Content follows two spaces later;
 /// wrapped lines indent to [`LEAD`].
 pub(crate) fn push_note(
@@ -436,8 +461,12 @@ pub(crate) fn push_gap(out: &mut Vec<Line<'static>>) {
 /// un-wrapped — the transcript renders without wrap (one logical line per row
 /// keeps the scroll math line-exact), so overflow clips at the pane edge like
 /// the diff viewer, and the line-number gutter never mis-aligns mid-diff.
-pub(crate) fn push_diff_line(rail: Rail, line: Line<'static>, out: &mut Vec<Line<'static>>) {
-    let mut spans = rail.continuation();
+pub(crate) fn push_diff_line(
+    margin: &[Span<'static>],
+    line: Line<'static>,
+    out: &mut Vec<Line<'static>>,
+) {
+    let mut spans = margin.to_vec();
     spans.extend(line.spans);
     // The one row that reaches the buffer without passing through
     // [`wrap_one_indent`], and so the one that needs [`expand_tabs`] by name: a
@@ -472,20 +501,9 @@ pub(crate) fn push_row_block(
 /// stay flush-right and only genuinely wide ones are reined in.
 pub(crate) const METRIC_SPAN: usize = 140;
 
-/// Soft column the tool-name field pads to, so arguments align down a run of
-/// calls. A longer name overruns it rather than truncating — identity beats
-/// alignment — and the argument simply starts one space later on that row.
-pub(crate) const NAME_COL: usize = 13;
-
 /// Lines of a *failed* result shown without expanding. Enough for a compiler
 /// error with its location and caret line, or the top of a panic backtrace.
 pub(crate) const FAIL_PREVIEW: usize = 6;
-
-/// Pad a tool name to [`NAME_COL`], display-width aware.
-pub(crate) fn pad_name(name: &str) -> String {
-    let w = UnicodeWidthStr::width(name);
-    format!("{name}{} ", " ".repeat(NAME_COL.saturating_sub(w + 1)))
-}
 
 /// A duration at human scale. Raw milliseconds are the wrong unit above a
 /// second — `4210ms` forces the reader to count digits to learn "about four
@@ -533,23 +551,6 @@ pub(crate) fn thousands(n: usize) -> String {
         out.push(c);
     }
     out
-}
-
-/// Split a path into (directory, basename) spans so the basename carries the
-/// emphasis. In a scan, the file *identity* is what the eye is hunting; the
-/// directory is context that only matters once you've found the file, so it
-/// recedes. Non-path text renders as a single unemphasised span.
-pub(crate) fn path_spans(text: &str, is_path: bool) -> Vec<Span<'static>> {
-    let dim = Style::new().fg(theme::MUTED);
-    let bright = Style::new().fg(theme::INK);
-    match text.rfind('/').filter(|_| is_path) {
-        Some(cut) => vec![
-            Span::styled(text[..=cut].to_owned(), dim),
-            Span::styled(text[cut + 1..].to_owned(), bright),
-        ],
-        None if is_path => vec![Span::styled(text.to_owned(), bright)],
-        None => vec![Span::styled(text.to_owned(), dim)],
-    }
 }
 
 /// Lay a row out as `left … right`, with `right` flush to the pane edge and
