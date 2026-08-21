@@ -189,7 +189,11 @@ mod tests {
     /// the tool ran and changed nothing — sitting on the one row a reader
     /// scans to find out what a turn touched. The same substitution had
     /// already shipped once in the files panel and been removed there for this
-    /// reason ([`crate::deck::FileLedger`]).
+    /// reason ([`crate::deck::FileLedger`]), and `AgentEvent::FileChange`'s own
+    /// doc names that instance (#2290) while forbidding the repair that looks
+    /// easiest: deriving the counts from the tool's *input* or its result text.
+    /// This row therefore states no number at all rather than a wrong one
+    /// (#4150).
     #[test]
     fn a_dispatched_head_states_no_size_it_has_not_measured() {
         for (tool, path) in [

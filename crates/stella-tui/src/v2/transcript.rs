@@ -46,8 +46,14 @@ pub const RAIL_W: usize = 2;
 /// that the edit changed nothing, which is a louder and entirely different
 /// claim than "not measured yet", and the same substitution already shipped
 /// once as a defect in the files panel (see [`crate::deck::FileLedger`], whose
-/// counts stopped being re-derived for exactly this reason). `None` renders as
-/// no column at all.
+/// counts stopped being re-derived for exactly this reason — #2290). `None`
+/// renders as no column at all.
+///
+/// Nothing constructs a measured `Extent` from a live session yet: the head
+/// draws at dispatch and there is no pass that revisits the row once the
+/// turn-boundary `FileChange` lands. That backfill is the other half of #4150
+/// and is tracked separately; until it exists an edit head is honestly silent
+/// about its size, and the measured numbers stay on the v1 result row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Extent {
     /// Lines added, for an edit or a new file.
