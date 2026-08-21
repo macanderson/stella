@@ -299,4 +299,192 @@ mod tests {
         );
         graph.shutdown();
     }
+
+    /// **The witness for #4144.** The chunk rung used to spend one HTTP
+    /// round trip per file, strictly serially; the fix batches chunks across
+    /// files, so a window of small files must cost a small constant number
+    /// of requests, not one per file. Sixty one-symbol files fit in two
+    /// 32-chunk batches; the old shape would have made sixty calls.
+    #[tokio::test]
+    async fn the_chunk_pass_batches_across_files() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let graph = indexed_fixture(&root, 60);
+        let embedder = CountingEmbedder::default();
+
+        let outcome = backfill_opened(&graph, &embedder, &mut |_| {}).await;
+        assert!(
+            matches!(outcome, BackfillOutcome::Ran { .. }),
+            "{outcome:?}"
+        );
+
+        // The file rung costs ceil(60 / 32) = 2 requests of its own; the
+        // chunk rung must cost the same order — one request per 32 chunks
+        // across the whole window, not one per file.
+        let calls = embedder.calls.load(Ordering::SeqCst);
+        assert!(
+            calls <= 8,
+            "60 one-symbol files must embed in a handful of batched requests, \
+             not one round trip per file (#4144): {calls} calls"
+        );
+        graph.shutdown();
+    }
+
+    /// The concurrency bound is a bound, not a goal: a window whose chunks
+    /// fit in one batch must cost one request, however many files they came
+    /// from.
+    #[tokio::test]
+    async fn a_small_window_costs_one_chunk_request() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let graph = indexed_fixture(&root, 4);
+        let embedder = CountingEmbedder::default();
+
+        let outcome = backfill_opened(&graph, &embedder, &mut |_| {}).await;
+        assert!(
+            matches!(outcome, BackfillOutcome::Ran { .. }),
+            "{outcome:?}"
+        );
+
+        // One file-rung request (4 files < 32) plus one chunk-rung request
+        // (4 chunks < 32): the old shape would have made 1 + 4.
+        let calls = embedder.calls.load(Ordering::SeqCst);
+        assert_eq!(
+            calls, 2,
+            "four one-symbol files must cost one file batch and one chunk batch: {calls} calls"
+        );
+        graph.shutdown();
+    }
+
+    /// A backend that answers **out of the order it was asked**, and whose
+    /// vectors say which symbol they belong to.
+    ///
+    /// Concurrency is what makes this shape possible: with several requests
+    /// in flight, the one issued first is no longer the one that returns
+    /// first, and a pass that routes a response by its arrival position
+    /// rather than by the request it answers files every vector against the
+    /// wrong symbol. Nothing errors when that happens — each chunk still
+    /// receives a well-formed vector of the right width — so the only
+    /// instrument that can see it is what the index answers afterwards.
+    ///
+    /// Earlier requests are made to sleep longer, so completion order is the
+    /// exact reverse of issue order and the misattribution is deterministic
+    /// rather than a race the test might win.
+    #[derive(Debug, Default)]
+    struct ReversingEmbedder {
+        issued: AtomicUsize,
+    }
+
+    /// The width of [`ReversingEmbedder`]'s one-hot space, and the number of
+    /// fixture files the witness below builds — two full [`EMBED_BATCH`]
+    /// requests, which is the smallest window that can be reordered at all.
+    const REVERSING_DIMS: usize = 64;
+
+    impl ReversingEmbedder {
+        /// The symbol index a rendered text is about. Every fixture symbol is
+        /// `thing_<k>`, and both rungs' renderings carry the name, so this
+        /// reads a file vector's text as happily as a chunk's.
+        fn symbol_index(text: &str) -> usize {
+            let tail = text.split("thing_").nth(1).expect("a fixture symbol name");
+            tail.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .expect("a fixture symbol index")
+        }
+
+        /// The vector that means "symbol `k`" — one-hot, so cosine against it
+        /// is 1.0 for the right symbol and 0.0 for every other one. A
+        /// misrouted vector is then not a near miss but a different answer.
+        fn one_hot(index: usize) -> Vec<f32> {
+            let mut vector = vec![0.0; REVERSING_DIMS];
+            vector[index % REVERSING_DIMS] = 1.0;
+            vector
+        }
+    }
+
+    #[async_trait]
+    impl Embedder for ReversingEmbedder {
+        fn fingerprint(&self) -> EmbedderFingerprint {
+            EmbedderFingerprint {
+                model_id: "reversing".into(),
+                revision: "1".into(),
+                dims: REVERSING_DIMS,
+                normalization: "l2".into(),
+            }
+        }
+
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError> {
+            // Request 0 waits longest, request 1 less, and so on: issue
+            // order reversed, with enough separation that the ordering is
+            // decided by the sleeps and not by scheduler noise.
+            let ordinal = self.issued.fetch_add(1, Ordering::SeqCst);
+            let delay = 200u64.saturating_sub(ordinal as u64 * 50);
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+
+            let fingerprint = self.fingerprint().id();
+            Ok(texts
+                .iter()
+                .map(|text| Embedding {
+                    fingerprint: fingerprint.clone(),
+                    vector: Self::one_hot(Self::symbol_index(text)),
+                })
+                .collect())
+        }
+
+        fn similarity_posture(&self) -> SimilarityPosture {
+            SimilarityPosture::Semantic {
+                admission_floor: 0.5,
+            }
+        }
+    }
+
+    /// **The correctness witness for #4144's concurrency.** Batching the
+    /// chunk rung across files is only worth anything if the vectors land on
+    /// the symbols they were computed for. With requests in flight
+    /// concurrently they complete out of order, so a response must be
+    /// matched to the request it answers — pairing the Nth completion with
+    /// the Nth batch stores every vector against the wrong symbol, silently.
+    ///
+    /// Sixty-four one-symbol files are two full 32-chunk requests, and
+    /// [`ReversingEmbedder`] guarantees the second completes first. Asking
+    /// the index for symbol `k` must return symbol `k`.
+    #[tokio::test]
+    async fn every_chunk_keeps_the_vector_computed_for_it() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let graph = indexed_fixture(&root, REVERSING_DIMS);
+        let embedder = ReversingEmbedder::default();
+        let fingerprint = embedder.fingerprint().id();
+
+        let outcome = backfill_opened(&graph, &embedder, &mut |_| {}).await;
+        assert!(
+            matches!(outcome, BackfillOutcome::Ran { .. }),
+            "{outcome:?}"
+        );
+
+        // Read back through the ranking path a search actually uses, so the
+        // assertion is about what a user is told, not about a row shape.
+        for index in 0..REVERSING_DIMS {
+            let hits = graph
+                .rank_chunks_by_vector(
+                    &fingerprint,
+                    &ReversingEmbedder::one_hot(index),
+                    0.5,
+                    1,
+                )
+                .expect("rank the stored chunks");
+            let top = hits
+                .first()
+                .unwrap_or_else(|| panic!("symbol thing_{index} has no stored vector"));
+            assert_eq!(
+                top.name, format!("thing_{index}"),
+                "the vector computed for thing_{index} was stored against {} — a \
+                 response was routed by arrival order rather than to the request \
+                 it answered (#4144)",
+                top.name
+            );
+        }
+        graph.shutdown();
+    }
 }
