@@ -30,11 +30,13 @@ mod error_rows;
 pub mod file_state;
 pub mod recall;
 mod summarize;
+mod turn;
 
 #[cfg(test)]
 pub use file_state::DIFF_HISTORY;
 pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
 pub use recall::{RecallBudget, RecalledFrameRow};
+pub use turn::{Hud, TurnOpening};
 // Re-imported rather than left qualified, so the split was a pure move: every
 // call site in the fold reads exactly as it did before (#2958). See
 // `summarize`'s module doc for why the seam is there and not elsewhere.
@@ -84,6 +86,18 @@ pub struct SessionModel {
     /// `turn_instance` that is per-*run*, so a wrapped run restarts it while
     /// the scrollback does not.
     pub turns_completed: u32,
+    /// Whether the turn in flight has already drawn its SPEC 6.1 opening rule.
+    ///
+    /// The turn's *first* stage boundary opens it and every later one is a
+    /// plain section rule ([`TurnOpening`]). Kept as a latch rather than
+    /// derived from the trailing transcript entries because the fold is the
+    /// only place that can see the boundary: front-eviction can drop the
+    /// opening rule itself, and a derivation that looked backwards for one
+    /// would re-open the turn the moment the retention cap bit.
+    ///
+    /// Cleared by whatever ends a turn — a `TurnComplete`, the `RunComplete`
+    /// that ends the run, a terminal `Error`, and `/clear`.
+    turn_head_stamped: bool,
     /// The scrollback transcript, oldest first. Streaming `Text`/`Reasoning`
     /// deltas are accumulated into the trailing entry rather than producing
     /// one line per token.
@@ -254,7 +268,13 @@ pub enum TranscriptEntry {
     /// A stage boundary marker (`triage`, `plan`, `execute`, …) — or a stage a
     /// plugin contributed, under its own word. Open vocabulary, so the deck
     /// renders a stage it has never heard of instead of dropping it.
-    Stage(StageName),
+    Stage {
+        name: StageName,
+        /// Set on the one boundary that **opens** a turn — SPEC 6.1's labelled
+        /// rule. `None` on every later boundary of the same turn, which stays
+        /// the plain section rule it has always been.
+        opens: Option<TurnOpening>,
+    },
     /// Accumulated assistant natural-language output.
     Text(String),
     /// Accumulated model reasoning (rendered dimmed).
@@ -495,71 +515,6 @@ pub struct InlineDiffRef {
     pub seq: u32,
 }
 
-/// Live HUD numbers, all folded from the event stream.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Hud {
-    /// Spend as the budget guard reports it on every `BudgetTick`.
-    ///
-    /// Note this is **cumulative for the life of the guard**, not per turn: the
-    /// deck builds one `BudgetGuard` for the whole session and never calls
-    /// `begin_turn`, so this only ever rises. Use [`Hud::turn_spent_usd`] for
-    /// the number a reader would call "what this turn cost".
-    pub spent_usd: f64,
-    pub limit_usd: Option<f64>,
-    pub budget_mode: Option<BudgetMode>,
-    /// Wall clock left before the task deadline, as the last `BudgetTick`
-    /// reported it (#2240, #2435). `None` is the load-bearing case and means
-    /// **no deadline is armed** — never "no time left", which is
-    /// `Some(0)`. The status bar renders the two differently for exactly that
-    /// reason: a HUD showing `0s` for an unarmed run would put back into the
-    /// UI the confusion #2240 took out of the journal. `None` draws no cell at
-    /// all and `Some(0)` draws the word `expired`
-    /// ([`crate::v2::status_bar`]).
-    ///
-    /// Milliseconds rather than a `Duration` because that is the wire shape
-    /// (`AgentEvent::BudgetTick::deadline_remaining_ms`), and this struct is a
-    /// fold of the stream, not a reinterpretation of it.
-    pub deadline_remaining_ms: Option<u64>,
-    /// The stage the turn is in. [`StageName`], not [`StageKind`]: a
-    /// contributed stage is what the statline must be able to name.
-    pub stage: Option<StageName>,
-    /// The most recent stage that was one of **this host's own** boundaries.
-    ///
-    /// Separate from [`Hud::stage`] because the two answer different questions,
-    /// and one field cannot answer both once the vocabulary is open. `stage` is
-    /// "what is happening right now", which is what the statline says out loud.
-    /// This is "how far through its own shape the turn has got", which is what
-    /// the three-segment progress bar draws — and the bar has only the host's
-    /// three phases to draw with.
-    ///
-    /// Keeping it is what stops a contributed stage reading as a regression: a
-    /// plugin stage arriving after `execute` leaves this at `Execute`, so the
-    /// bar holds. Folding the contributed stage into the same field would make
-    /// it phase-less, and a phase-less stage falls back to phase 0 — the bar
-    /// would snap back to "plan" and claim the run had gone backwards.
-    pub host_stage: Option<StageKind>,
-    pub model: Option<String>,
-    /// [`Hud::spent_usd`] as it stood when the current turn began, so live turn
-    /// cost is the difference. Snapshotted in [`SessionModel::push_user_prompt`]
-    /// — the earliest signal a turn has started.
-    pub turn_start_spent_usd: f64,
-    /// The final turn cost, set once a `Complete` event lands.
-    pub final_cost_usd: Option<f64>,
-    pub complete: bool,
-}
-
-impl Hud {
-    /// What the turn in flight has cost so far.
-    ///
-    /// Once the turn settles this yields to `Complete`'s own `cost_usd`, which
-    /// is authoritative — the driver totals it directly rather than differencing
-    /// a cumulative gauge, so it also catches spend that never produced a tick.
-    pub fn turn_spent_usd(&self) -> f64 {
-        self.final_cost_usd
-            .unwrap_or_else(|| (self.spent_usd - self.turn_start_spent_usd).max(0.0))
-    }
-}
-
 impl SessionModel {
     /// A fresh, empty model — the seq-0 state.
     pub fn new() -> Self {
@@ -669,7 +624,22 @@ impl SessionModel {
                     // and does so from the event, so replay reconstructs it.
                     self.plan.approve();
                 }
-                self.transcript.push(TranscriptEntry::Stage(name.clone()));
+                // The first boundary of a turn carries SPEC 6.1's rule; the
+                // rest of the turn's stages are plain section rules.
+                let opens = if self.turn_head_stamped {
+                    None
+                } else {
+                    self.turn_head_stamped = true;
+                    Some(TurnOpening {
+                        turn: self.turns_completed.saturating_add(1),
+                        model: self.hud.model.clone(),
+                        budget_usd: self.hud.limit_usd,
+                    })
+                };
+                self.transcript.push(TranscriptEntry::Stage {
+                    name: name.clone(),
+                    opens,
+                });
             }
             AgentEvent::Text { text } => {
                 // The authoritative step text replaces any streamed preview
@@ -1127,6 +1097,10 @@ impl SessionModel {
                 // warning mid-flight; the turn goes on.
                 if !*retryable {
                     self.plan.finish();
+                    // The turn died without a `TurnComplete`, so nothing else
+                    // will clear the latch and the next turn would open with
+                    // no rule at all.
+                    self.turn_head_stamped = false;
                 }
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -1158,6 +1132,8 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.streaming_text.clear();
                 self.turns_completed += 1;
+                // The next stage boundary opens a new turn, and its rule.
+                self.turn_head_stamped = false;
                 self.transcript.push(TranscriptEntry::Complete {
                     model: model.clone(),
                     cost_usd: *cost_usd,
@@ -1172,6 +1148,10 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.hud.final_cost_usd = Some(*cost_usd);
                 self.hud.complete = true;
+                // A run that ended between turns leaves no `TurnComplete` to
+                // clear the latch, and the next run's first stage must still
+                // open a rule (#4124).
+                self.turn_head_stamped = false;
                 self.plan.finish();
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;

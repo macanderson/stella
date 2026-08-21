@@ -335,6 +335,23 @@ fn v2_rows(
             out.extend(v2::turn_end_rows(*turn, *cost_usd, width));
             true
         }
+        // Only the boundary that *opens* the turn. A later stage of the same
+        // turn falls through to the plain section rule below, which is what
+        // keeps SPEC 6.1's labelled rule one-per-turn rather than one-per-stage
+        // (see `model::TurnOpening`).
+        TranscriptEntry::Stage {
+            name,
+            opens: Some(opening),
+        } => {
+            out.extend(v2::turn_begin_rows(
+                opening.turn,
+                stage_label(name),
+                opening.model.as_deref(),
+                opening.budget_usd,
+                width,
+            ));
+            true
+        }
         _ => false,
     }
 }
@@ -425,7 +442,10 @@ fn entry_body(
                 .collect();
             push_row_block(Rail::User, lines, width, out);
         }
-        TranscriptEntry::Stage(name) => {
+        // Reached only for a boundary *inside* a turn — the one that opens the
+        // turn is claimed by the v2 router above, which draws SPEC 6.1's
+        // labelled rule instead.
+        TranscriptEntry::Stage { name, .. } => {
             // A section rule, not a row — see `push_rule`. The word "stage" is
             // dropped with it: the label *is* the stage, and prefixing every
             // one with its own type name was three columns spent restating
