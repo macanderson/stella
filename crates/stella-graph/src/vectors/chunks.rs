@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Chunk vectors: the pieces a file is made of, embedded one at a time.
+//! Chunk vectors: the pieces a file is made of, embedded one symbol at a
+//! time rather than one file at a time.
 //!
 //! # The measurement
 //!
@@ -214,11 +215,16 @@ pub fn line_span(content: &str, start_line: u32, end_line: u32) -> String {
 ///
 /// Asking instead whether the file carries **any** chunk vector stamped with
 /// its current content hash is exact here, because a chunk pass is per-file
-/// atomic: `embed_and_store_chunk_file` gathers every vector the file needs
-/// before it writes any of them, and re-stamps `file_sha256` on the rows it
-/// skipped. So a file is either untouched at this content hash or completely
-/// covered at it — there is no partial state for the marker to misread. Edited
-/// files still re-enter: their new `content_sha256` matches no stored row.
+/// atomic: the pass gathers every vector a file needs before writing any of
+/// them, and re-stamps `file_sha256` on the rows it skipped. So a file is
+/// either untouched at this content hash or completely covered at it — there
+/// is no partial state for the marker to misread. Edited files still
+/// re-enter: their new `content_sha256` matches no stored row.
+///
+/// That atomicity is a property of the **write**, and it survived the pass
+/// being batched across files and made concurrent (#4144): requests may now
+/// carry chunks from several files at once, but a file's rows still go to
+/// [`store_chunk_vectors`] together, once its last vector has landed.
 ///
 /// The `EXISTS` on symbols is load-bearing rather than tidiness. Without it a
 /// file with no symbols at all — an empty source file, a markdown document with
