@@ -349,7 +349,9 @@ mod tests {
         let id = store
             .begin_execution("deck", "fix the search ladder", "openrouter", "kimi-k3")
             .unwrap();
-        store.record_event(id, 0, &started("c1", "edit_file")).unwrap();
+        store
+            .record_event(id, 0, &started("c1", "edit_file"))
+            .unwrap();
         store
             .record_event(id, 1, &settled("c1", ok_output("edited")))
             .unwrap();
@@ -375,12 +377,16 @@ mod tests {
         let id = store
             .begin_execution("deck", "look around", "openrouter", "kimi-k3")
             .unwrap();
-        store.record_event(id, 0, &started("c1", "read_file")).unwrap();
+        store
+            .record_event(id, 0, &started("c1", "read_file"))
+            .unwrap();
         store
             .record_event(id, 1, &settled("c1", ok_output("fn main() {}")))
             .unwrap();
         // An edit that did not land. `ok = 0`, so it proves nothing.
-        store.record_event(id, 2, &started("c2", "edit_file")).unwrap();
+        store
+            .record_event(id, 2, &started("c2", "edit_file"))
+            .unwrap();
         store
             .record_event(
                 id,

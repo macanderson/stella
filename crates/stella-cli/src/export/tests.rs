@@ -158,17 +158,6 @@ fn script_json_cannot_close_the_script_element() {
     assert_eq!(parsed[0]["path"], "</script><img src=x onerror=alert(1)>");
 }
 
-/// A file path an agent created lands in `FILES`, flows into `barChart`
-/// as `d.label`, and is assigned to `innerHTML`. `script_json` only stops
-/// the payload from closing the `<script>` element — the JS parser decodes
-/// `<` straight back and the live string reaches the sink — so every
-/// `innerHTML` interpolation of agent-, MCP-, or repo-chosen text has to
-/// escape at the sink.
-///
-/// The assertion is structural (over the emitted JS) rather than over the
-/// rendered DOM on purpose: the escaping happens in the browser, so no
-/// Rust-side output ever contains the escaped `&lt;img` form.
-#[test]
 /// The cache insight reads per-call rows, and no longer congratulates a
 /// session on a token rate that hides where the money went.
 ///
@@ -209,7 +198,10 @@ fn the_cache_insight_reads_per_call_rows_not_a_token_average() {
         // And the remedy names routing, which is what actually causes it.
         "upstream_pin",
     ] {
-        assert!(html.contains(present), "cache insight must carry: {present}");
+        assert!(
+            html.contains(present),
+            "cache insight must carry: {present}"
+        );
     }
     assert!(
         !html.contains("const cacheRead = USAGE.reduce"),
@@ -217,6 +209,16 @@ fn the_cache_insight_reads_per_call_rows_not_a_token_average() {
     );
 }
 
+/// A file path an agent created lands in `FILES`, flows into `barChart`
+/// as `d.label`, and is assigned to `innerHTML`. `script_json` only stops
+/// the payload from closing the `<script>` element — the JS parser decodes
+/// `<` straight back and the live string reaches the sink — so every
+/// `innerHTML` interpolation of agent-, MCP-, or repo-chosen text has to
+/// escape at the sink.
+///
+/// The assertion is structural (over the emitted JS) rather than over the
+/// rendered DOM on purpose: the escaping happens in the browser, so no
+/// Rust-side output ever contains the escaped `&lt;img` form.
 #[test]
 fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
     let hostile = r#"[{"path":"<img src=x onerror=alert(1)>","lines_added":1,"lines_removed":0}]"#;
