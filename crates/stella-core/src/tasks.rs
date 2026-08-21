@@ -24,6 +24,18 @@ pub enum TaskBoardError {
     UnknownTask { id: String },
     #[error("task {id} is already {status:?} — terminal tasks cannot change state")]
     Terminal { id: String, status: TaskStatus },
+    #[error(
+        "task {open_id} `{open_subject}` is still in_progress — you hold exactly one task at a \
+         time. Finish it with task_complete if its work is done; if you are changing order and \
+         it is not, task_cancel it with the reason (the row stays as an audit trail, and \
+         task_create can put the step back later — ids are never reused). Only then start \
+         task {id}. Do not complete a task whose work is unfinished."
+    )]
+    AnotherTaskInProgress {
+        id: String,
+        open_id: String,
+        open_subject: String,
+    },
 }
 
 /// One queued request to spawn a dedicated sub-agent for a task
@@ -122,12 +134,64 @@ impl TaskBoard {
     /// reject every transition; re-asserting the same open status is a no-op
     /// that succeeds (idempotent `task_complete` retries stay terminal-safe
     /// because terminality is checked first).
+    ///
+    /// # The lead holds one task at a time
+    ///
+    /// A move *into* `InProgress` is refused while another **unowned** task is
+    /// already in progress: that is the agent's own lane, and it is
+    /// single-occupancy. `task_start`'s and `task_complete`'s descriptions have
+    /// promised this since they were written ("keep exactly ONE task
+    /// in_progress at a time: complete the current task before starting the
+    /// next") and nothing enforced it, so a board could — and did — sit with a
+    /// step marked in progress that the agent had long since walked past, while
+    /// it edited files for a later step. An advisory board is a board that
+    /// misreports which step the work is on, which is the one thing it exists
+    /// to report.
+    ///
+    /// Refusal, not silent auto-completion: closing a card the agent never said
+    /// was finished would claim work was done on the board's own authority. The
+    /// error names the open task and every way out, so the next call can be the
+    /// `task_complete` that should have come first.
+    ///
+    /// All three ways, deliberately. A refusal offering only "finish it" and
+    /// "drop it" is a trap for the agent that is merely re-ordering — it starts
+    /// a step, learns a later one must land first, and finds that the only exit
+    /// phrased as *keeping* the step is a `task_complete` that would be a lie.
+    /// So the message also names the honest reorder path (`task_cancel` with the
+    /// reason, which keeps the row as an audit trail, then `task_create` when the
+    /// step is reachable — ids are never reused, so nothing is corrupted) and
+    /// says outright not to complete unfinished work. A rule that makes the
+    /// board honest must not buy that by making the agent dishonest.
+    ///
+    /// Only *unowned* tasks occupy the lane. [`Self::assign`] deliberately does
+    /// not route through here: delegated tasks carry an owner and run in
+    /// parallel by design, so N sub-agent lanes plus the lead's own task is a
+    /// legal board, not a violation.
     pub fn set_status(
         &mut self,
         id: &str,
         status: TaskStatus,
     ) -> Result<&TaskItem, TaskBoardError> {
+        // Scanned before the mutable borrow, but reported *after* the
+        // unknown/terminal check below: a task that can never start should be
+        // told why it can never start, not which lane it happened to collide
+        // with.
+        let occupant = (status == TaskStatus::InProgress)
+            .then(|| {
+                self.items
+                    .iter()
+                    .find(|t| t.id != id && t.owner.is_none() && t.status == TaskStatus::InProgress)
+            })
+            .flatten()
+            .map(|t| (t.id.clone(), t.subject.clone()));
         let item = Self::find(&mut self.items, id)?;
+        if let Some((open_id, open_subject)) = occupant {
+            return Err(TaskBoardError::AnotherTaskInProgress {
+                id: id.to_string(),
+                open_id,
+                open_subject,
+            });
+        }
         item.status = status;
         Ok(item)
     }
@@ -274,6 +338,128 @@ mod tests {
         assert_eq!(
             board.set_status("7", TaskStatus::Completed).unwrap_err(),
             TaskBoardError::UnknownTask { id: "7".into() }
+        );
+    }
+
+    /// Witness for the defect: a plan whose step 1 is never checked off.
+    ///
+    /// A three-step plan is seeded, step 1 is started, and the agent walks on
+    /// to step 2 without completing step 1. On main both starts succeeded and
+    /// the board carried two live steps — so the panel kept pointing at
+    /// "investigate" while the edits belonged to "implement". The refusal names
+    /// the step that has to be closed and both ways to close it.
+    #[test]
+    fn a_second_task_cannot_start_while_the_first_is_still_open() {
+        let mut board = TaskBoard::new();
+        assert!(board.seed_from_plan(&[
+            "Investigate chunk embedding pass",
+            "Implement cross-file batching",
+            "Add tests",
+        ]));
+        board.set_status("1", TaskStatus::InProgress).unwrap();
+
+        let refusal = board.set_status("2", TaskStatus::InProgress).unwrap_err();
+        assert_eq!(
+            refusal,
+            TaskBoardError::AnotherTaskInProgress {
+                id: "2".into(),
+                open_id: "1".into(),
+                open_subject: "Investigate chunk embedding pass".into(),
+            }
+        );
+        let rendered = refusal.to_string();
+        // All three ways out, not just the two that are easy to reach for. A
+        // refusal offering only "complete it" and "drop it" pushes an agent
+        // that is merely re-ordering toward a false task_complete — the exact
+        // dishonesty this rule exists to prevent — so the reorder path
+        // (cancel with a reason, re-create the step later) is named too, along
+        // with the guard against taking the lying exit.
+        for remedy in ["task_complete", "task_cancel", "task_create"] {
+            assert!(
+                rendered.contains(remedy),
+                "the refusal must name the way out: {rendered}"
+            );
+        }
+        assert!(
+            rendered.contains("Do not complete a task whose work is unfinished"),
+            "the refusal must not read as an invitation to lie: {rendered}"
+        );
+
+        // The board is untouched by a refused start — no second live step.
+        assert_eq!(board.items()[0].status, TaskStatus::InProgress);
+        assert_eq!(board.items()[1].status, TaskStatus::Pending);
+
+        // And closing step 1 is what unblocks step 2, which is the whole point.
+        board.set_status("1", TaskStatus::Completed).unwrap();
+        board.set_status("2", TaskStatus::InProgress).unwrap();
+        assert_eq!(board.items()[1].status, TaskStatus::InProgress);
+    }
+
+    /// Cancelling is the other way out, and a completed/cancelled step never
+    /// occupies the lane it has left.
+    #[test]
+    fn cancelling_the_open_task_also_frees_the_lane() {
+        let mut board = TaskBoard::new();
+        board.create("abandoned", None);
+        board.create("the real work", None);
+        board.set_status("1", TaskStatus::InProgress).unwrap();
+        board.set_status("1", TaskStatus::Cancelled).unwrap();
+        board.set_status("2", TaskStatus::InProgress).unwrap();
+        assert_eq!(board.items()[1].status, TaskStatus::InProgress);
+    }
+
+    /// Re-asserting in_progress on the task you already hold stays the
+    /// idempotent no-op it always was — the occupant check excludes the target
+    /// itself, so a repeated `task_start` is not a self-collision.
+    #[test]
+    fn restarting_the_task_you_already_hold_is_not_a_collision() {
+        let mut board = TaskBoard::new();
+        board.create("mine", None);
+        board.set_status("1", TaskStatus::InProgress).unwrap();
+        board.set_status("1", TaskStatus::InProgress).unwrap();
+        assert_eq!(board.items()[0].status, TaskStatus::InProgress);
+    }
+
+    /// Delegation is parallel by design: sub-agent lanes carry an owner and do
+    /// not occupy the lead's. Three workers running plus the lead's own step is
+    /// a legal board — the rule is one task *of yours*, not one task on the
+    /// board.
+    #[test]
+    fn delegated_lanes_do_not_occupy_the_leads_lane() {
+        let mut board = TaskBoard::new();
+        for subject in [
+            "port the parser",
+            "port the lexer",
+            "port the printer",
+            "review it all",
+        ] {
+            board.create(subject, None);
+        }
+        board.assign("1", "sub:1").unwrap();
+        board.assign("2", "sub:2").unwrap();
+        board.assign("3", "sub:3").unwrap();
+
+        board
+            .set_status("4", TaskStatus::InProgress)
+            .expect("the lead may work while sub-agents run");
+        assert_eq!(board.items()[3].status, TaskStatus::InProgress);
+    }
+
+    /// Terminality outranks the lane: a task that can never start is told why
+    /// it can never start, not which lane it collided with.
+    #[test]
+    fn a_terminal_target_reports_terminality_not_the_open_lane() {
+        let mut board = TaskBoard::new();
+        board.create("open", None);
+        board.create("done", None);
+        board.set_status("1", TaskStatus::InProgress).unwrap();
+        board.set_status("2", TaskStatus::Completed).unwrap();
+        assert_eq!(
+            board.set_status("2", TaskStatus::InProgress).unwrap_err(),
+            TaskBoardError::Terminal {
+                id: "2".into(),
+                status: TaskStatus::Completed
+            }
         );
     }
 
