@@ -1159,7 +1159,7 @@ pub(crate) async fn run_turn(
     // free. Seeded from `messages` so the turn-opening block is never
     // re-injected, and given `tx` so its own recall is metered (#3366).
     let requery = crate::memory::requery_for_turn(session_memory.as_deref(), messages, tx.clone());
-    persistence::attach_run_streams(registry, &tx);
+    persistence::attach_run_streams(registry, cfg, &tx, execution.as_ref());
     let renderer = spawn_renderer(
         rx,
         format,
