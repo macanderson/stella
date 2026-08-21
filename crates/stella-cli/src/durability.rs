@@ -221,6 +221,16 @@ impl SessionDurability {
     /// Empty while unbound, on the session's first snapshot, and for a turn
     /// that changed nothing — the caller cannot tell those apart and must not
     /// need to: all three mean "no file change to report".
+    ///
+    /// **A failed snapshot is a fourth case wearing those three's clothes**,
+    /// and it does *not* mean the same thing: `.ok()` below discards a
+    /// `git add`/`write-tree` failure into the same empty vector, so
+    /// "measured, nothing changed" and "could not measure" are one value here
+    /// (#4149). Nothing downstream may treat this emptiness as evidence a turn
+    /// wrote nothing — `Store::finalize_execution_reflection` deliberately
+    /// corroborates `wrote_files` against the tool-call ledger for exactly
+    /// this reason, having once reported a turn with nineteen successful
+    /// `edit_file` calls as having written none.
     pub fn snapshot_worktree(&self) -> Vec<stella_store::work_journal::JournalChange> {
         self.journal()
             .and_then(|journal| journal.snapshot_worktree().ok())

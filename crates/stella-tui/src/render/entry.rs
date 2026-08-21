@@ -74,7 +74,7 @@ use stella_transcript::syntax::{BodyPaint, body_paint, paint_line};
 /// column: the transcript is a scrollback, and a reader who wants to open the
 /// file at that line wants the number the tool actually printed.
 fn push_body_line(
-    rail: Rail,
+    margin: &[Span<'static>],
     line: &str,
     paint: BodyPaint,
     width: usize,
@@ -82,7 +82,7 @@ fn push_body_line(
 ) {
     let painted = paint_line(paint, line);
     let Some(lang) = painted.lang else {
-        push_detail_line(rail, line, width, out);
+        push_detail_line(margin, line, width, out);
         return;
     };
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -104,7 +104,36 @@ fn push_body_line(
                 None => Span::styled(text, Style::new().fg(theme::MUTED)),
             }),
     );
-    push_detail_spans(rail, spans, width, out);
+    push_detail_spans(margin, spans, width, out);
+}
+
+/// The `ctrl+o` body of a tool **call**: its full argument object, laid out and
+/// coloured under the head, on the head's own rail.
+///
+/// Pretty-printed rather than shown as it arrived, because that is what makes
+/// the colouring worth having — a compact one-line object has no shape for a
+/// key hue to mark. `raw` is capped to a char budget at fold time, so an
+/// over-budget argument may not re-parse; it is still lexed and wrapped rather
+/// than clipped at the pane edge, since it is capped JSON and not some other
+/// format.
+///
+/// `metal` comes from [`crate::v2::transcript_source::head_metal`] rather than
+/// from a `Rail`, so these rows carry the same rail colour as the head they
+/// hang from: a `read_file`'s block is silver-dim end to end, a mutation's is
+/// gold end to end.
+fn argument_rows(
+    metal: ratatui::style::Color,
+    raw: &str,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    let margin = block_margin(Style::new().fg(metal));
+    let pretty = serde_json::from_str::<serde_json::Value>(raw)
+        .and_then(|v| serde_json::to_string_pretty(&v))
+        .unwrap_or_else(|_| raw.to_owned());
+    for l in pretty.lines() {
+        push_body_line(&margin, l, BodyPaint::json(), width, out);
+    }
 }
 
 // Pure content builders (unit-tested directly)
@@ -177,7 +206,7 @@ pub(crate) fn entry_lines(
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    if !v2_rows(entry, width, out) {
+    if !v2_rows(entry, expanded, width, out) {
         entry_body(entry, files, expand_thinking, expanded, live, width, out);
     }
     if closes_block(entry) {
@@ -201,13 +230,33 @@ pub(crate) fn entry_lines(
 /// working features to make the screen look newer, which is a regression
 /// wearing a redesign's clothes. The result row is restyled in P2, where the
 /// highlighter it needs is built, not here.
-fn v2_rows(entry: &TranscriptEntry, width: usize, out: &mut Vec<Line<'static>>) -> bool {
+///
+/// **A router still owes every feature of the arm it intercepts.** This one did
+/// not: taking the `ToolStart` head made the whole v1 arm unreachable, and the
+/// `ctrl+o` argument view living in its second half went with it — silently,
+/// because a dead *match arm* is invisible to `dead-code-allows` and to
+/// `module-reachability`, which see items. The row rendered identically
+/// expanded and collapsed for as long as nobody pressed the key (#4157). Hence
+/// `expanded` here: a router that takes a head takes the body under it too.
+fn v2_rows(
+    entry: &TranscriptEntry,
+    expanded: bool,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) -> bool {
     use crate::v2::transcript_source as v2;
     match entry {
         TranscriptEntry::ToolStart {
-            name, input, path, ..
+            name,
+            input,
+            raw,
+            path,
+            ..
         } => {
             out.extend(v2::head_rows(name, path.as_deref(), input, width));
+            if expanded {
+                argument_rows(v2::head_metal(name), raw, width, out);
+            }
             true
         }
         TranscriptEntry::Compaction {
@@ -408,62 +457,6 @@ fn entry_body(
                 out,
             );
         }
-        TranscriptEntry::ToolStart {
-            name,
-            input,
-            raw,
-            path,
-            ..
-        } => {
-            // `name` then `argument`, the name soft-padded to a common column
-            // so arguments line up across a run of calls. Soft, not hard: a
-            // long MCP name (`mcp__github__create_pull_request`) overruns the
-            // column rather than being truncated, since the tool's identity
-            // outranks the alignment it would cost.
-            // The tool name is the one thing in the transcript that carries a
-            // categorical hue. Everything a session did, it did through a tool
-            // call, so the names are the index to the whole scrollback — and
-            // they are the only rows a reader scans *for* rather than reads.
-            // The hue is the call's CLASS (`crate::tool_class`), so the margin
-            // answers "was that a read, a write, a shell, a test, a push, a
-            // hand-off" before a name is read. The argument beside it stays
-            // white/dim (`path_spans`), so the colour marks the verb and never
-            // the object.
-            //
-            // Not the brand accent: gold means brand/active/focus, and every
-            // tool name wearing it made the accent mean "a tool ran", which is
-            // every row.
-            let class = crate::tool_class::classify(name);
-            let mut left = vec![Span::styled(
-                pad_name(name),
-                Style::new().fg(class.color()).add_modifier(Modifier::BOLD),
-            )];
-            // An argument-less tool (`get_environment`, a zero-argument
-            // `task_list`) renders NO argument column at all.
-            // The compact-JSON fallback printed a literal `{}` there, which
-            // reads as an empty *result* — the deck's own owner read it that
-            // way and filed it as a bug. Absence is the honest rendering: the
-            // row is the call, and there was nothing to say about it.
-            if !input.is_empty() {
-                left.extend(path_spans(input, path.is_some()));
-            }
-            push_row(Rail::Call, left, width, out);
-            if expanded {
-                // ctrl+o: the full argument object, pretty-printed and dim.
-                // An over-budget argument may not parse (char-capped raw) —
-                // show it wrapped rather than clipped at the pane edge.
-                // Pretty-printing is what makes the coloring worth having: a
-                // compact one-line object has no shape for a key hue to mark.
-                // A body that failed to re-parse is still lexed — it is capped
-                // JSON, not another format.
-                let pretty = serde_json::from_str::<serde_json::Value>(raw)
-                    .and_then(|v| serde_json::to_string_pretty(&v))
-                    .unwrap_or_else(|_| raw.clone());
-                for l in pretty.lines() {
-                    push_body_line(Rail::Call, l, BodyPaint::json(), width, out);
-                }
-            }
-        }
         TranscriptEntry::ToolResult {
             ok,
             path,
@@ -474,6 +467,10 @@ fn entry_body(
             ..
         } => {
             let rail = if *ok { Rail::Result } else { Rail::Fail };
+            // Bound once: every row of this result's block reproduces the same
+            // margin, and re-deriving it per row is how one of them ends up a
+            // cell out of line with the others.
+            let margin = rail.continuation();
             let dim = Style::new().fg(theme::MUTED);
             // A JSON body is re-laid one member to a line *before* anything
             // counts, anchors or folds it. An API response — `gh api`, an MCP
@@ -547,7 +544,7 @@ fn entry_body(
                 );
                 let paint = body_paint(path.as_deref(), full);
                 for l in full.lines() {
-                    push_body_line(rail, l, paint, width, out);
+                    push_body_line(&margin, l, paint, width, out);
                 }
             } else {
                 // With a diff below, a prose summary ("Applied edit to
@@ -613,7 +610,7 @@ fn entry_body(
                     out,
                 );
                 for l in shown.iter().skip(usize::from(!paint.colored())) {
-                    push_body_line(rail, l.trim_end(), paint, width, out);
+                    push_body_line(&margin, l.trim_end(), paint, width, out);
                 }
                 // The "there is more" row, for a success as well as a failure —
                 // it is the only place the hidden count is stated now, and the
@@ -623,7 +620,7 @@ fn entry_body(
                 let hidden = total.saturating_sub(shown.len());
                 if hidden > 0 && inline.is_none() {
                     push_detail_line(
-                        rail,
+                        &margin,
                         &format!("⋯ {} · ctrl+o", plural_lines(hidden)),
                         width,
                         out,
@@ -657,7 +654,7 @@ fn entry_body(
                 let (body, _) =
                     diff::body_lines_inline(d, Some(&dref.path), cap, Some(" · ctrl+o"));
                 for line in body {
-                    push_diff_line(rail, line, out);
+                    push_diff_line(&margin, line, out);
                 }
             }
         }
@@ -1088,6 +1085,17 @@ fn entry_body(
         // narrowed, a missing turn rule is a visible gap a reader can report,
         // where an `unreachable!()` would take the session down mid-frame.
         TranscriptEntry::Complete { .. } => {}
+        // Also the router's — head *and*, on ctrl+o, the argument object under
+        // it. This one **delegates** rather than drawing nothing, which is the
+        // difference between the two arms and the lesson of #4157: the row a
+        // gap here would cost is the call itself, the single most load-bearing
+        // row in the transcript, and the previous version of this arm sat here
+        // looking live while the router quietly took its `expanded` half away.
+        // Delegating means there is one implementation to keep correct and no
+        // second one to rot.
+        TranscriptEntry::ToolStart { .. } => {
+            v2_rows(entry, expanded, width, out);
+        }
     }
 }
 
