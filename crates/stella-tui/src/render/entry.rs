@@ -291,7 +291,9 @@ pub(crate) fn entry_lines(
 /// drawn at dispatch, when nothing has measured the change it is about to make,
 /// so the number can only come from the paired result and the ledger behind it
 /// (#4154). Resolving it here rather than inside the projection keeps
-/// [`v2::head_rows`] a pure function of what is known about one call.
+/// [`crate::v2::transcript_source::head_rows`] a pure function of what is known
+/// about one call. (Spelled in full: the `v2` alias below is a `use` inside the
+/// body, and rustdoc resolves a link against the module, not the function.)
 fn v2_rows(
     entry: &TranscriptEntry,
     view: EntryView<'_>,
