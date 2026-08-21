@@ -118,6 +118,15 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         .await;
         match kind {
             Ok(Ok(EntryKind::File | EntryKind::Symlink)) => planned.push((handle, path)),
+            // An escape is a different mistake from a directory, and the
+            // single form has always said so. Collapsing them here would tell
+            // a model that `sub/..` "is not a file", which is true and useless.
+            Ok(Err(e)) if e.is_escape() => {
+                return ToolOutput::error(format!(
+                    "`{FILES_KEY}`[{index}]: path `{path}` escapes the workspace root ({e}) — \
+                     nothing was deleted"
+                ));
+            }
             Ok(Ok(_)) | Ok(Err(_)) => {
                 return ToolOutput::error(format!(
                     "`{FILES_KEY}`[{index}]: `{path}` is not a file (directories and missing \
@@ -165,72 +174,68 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
 }
 
 async fn delete_one(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
-    {
-        let path = match crate::input::required_str(input, "path") {
-            Ok(v) => v,
-            Err(err) => {
-                return ToolOutput::from(err);
-            }
-        };
-        // A delete is the one built-in effect the agent cannot undo, so the
-        // scope is consulted before the descriptor walk starts.
-        let (scope_root, path) = match ctx.resolve_for_write(path) {
-            Ok(resolved) => resolved,
-            Err(refusal) => return ToolOutput::error(refusal.to_string()),
-        };
-        let path = path.as_str();
-        let handle = match RootHandle::open(&scope_root) {
-            Ok(handle) => std::sync::Arc::new(handle),
-            Err(e) => {
-                return ToolOutput::error(format!("cannot open workspace root: {e}"));
-            }
-        };
-        // Classify, read the link, and unlink on one blocking worker. All three
-        // are entry-level calls off the same held directory descriptor, so
-        // nothing planted between them can redirect the removal — and none of
-        // them expands the leaf, which is what keeps a link's target out of it.
-        let outcome = tokio::task::spawn_blocking({
-            let (handle, path) = (std::sync::Arc::clone(&handle), path.to_string());
-            move || -> Result<Option<Removed>, crate::rootfd::RootError> {
-                let kind = handle.symlink_stat(&path)?.kind();
-                let removed = match kind {
-                    EntryKind::File => Removed::File,
-                    // Read the target BEFORE unlinking: afterwards the link is
-                    // gone and the report could not name what it spared.
-                    EntryKind::Symlink => Removed::Symlink(handle.read_link(&path)?),
-                    EntryKind::Dir | EntryKind::Other => return Ok(None),
-                };
-                handle.remove_file(&path)?;
-                Ok(Some(removed))
-            }
-        })
-        .await;
-        match outcome {
-            Ok(Ok(Some(Removed::File))) => ToolOutput::ok(format!("deleted {path}")),
-            Ok(Ok(Some(Removed::Symlink(target)))) => ToolOutput::ok(format!(
-                "deleted symlink {path} — the link only; its target `{}` is untouched",
-                target.display()
-            )),
-            Ok(Ok(None)) => ToolOutput::error(format!(
-                "`{path}` is not a file (directories and missing paths are not deletable \
-                     with this tool)"
-            )),
-            Ok(Err(e)) if e.is_escape() => {
-                ToolOutput::error(format!("path `{path}` escapes the workspace root ({e})"))
-            }
-            // A missing path reaches here as the `stat` failing, and must read
-            // as the same refusal a directory gets — this tool deletes files.
-            Ok(Err(crate::rootfd::RootError::Io(e)))
-                if e.kind() == std::io::ErrorKind::NotFound =>
-            {
-                ToolOutput::error(format!(
-                    "`{path}` is not a file (directories and missing paths are not deletable \
-                         with this tool)"
-                ))
-            }
-            Ok(Err(e)) => ToolOutput::error(format!("could not delete `{path}`: {e}")),
-            Err(e) => ToolOutput::error(format!("could not delete `{path}`: {e}")),
+    let path = match crate::input::required_str(input, "path") {
+        Ok(v) => v,
+        Err(err) => {
+            return ToolOutput::from(err);
         }
+    };
+    // A delete is the one built-in effect the agent cannot undo, so the
+    // scope is consulted before the descriptor walk starts.
+    let (scope_root, path) = match ctx.resolve_for_write(path) {
+        Ok(resolved) => resolved,
+        Err(refusal) => return ToolOutput::error(refusal.to_string()),
+    };
+    let path = path.as_str();
+    let handle = match RootHandle::open(&scope_root) {
+        Ok(handle) => std::sync::Arc::new(handle),
+        Err(e) => {
+            return ToolOutput::error(format!("cannot open workspace root: {e}"));
+        }
+    };
+    // Classify, read the link, and unlink on one blocking worker. All three
+    // are entry-level calls off the same held directory descriptor, so
+    // nothing planted between them can redirect the removal — and none of
+    // them expands the leaf, which is what keeps a link's target out of it.
+    let outcome = tokio::task::spawn_blocking({
+        let (handle, path) = (std::sync::Arc::clone(&handle), path.to_string());
+        move || -> Result<Option<Removed>, crate::rootfd::RootError> {
+            let kind = handle.symlink_stat(&path)?.kind();
+            let removed = match kind {
+                EntryKind::File => Removed::File,
+                // Read the target BEFORE unlinking: afterwards the link is
+                // gone and the report could not name what it spared.
+                EntryKind::Symlink => Removed::Symlink(handle.read_link(&path)?),
+                EntryKind::Dir | EntryKind::Other => return Ok(None),
+            };
+            handle.remove_file(&path)?;
+            Ok(Some(removed))
+        }
+    })
+    .await;
+    match outcome {
+        Ok(Ok(Some(Removed::File))) => ToolOutput::ok(format!("deleted {path}")),
+        Ok(Ok(Some(Removed::Symlink(target)))) => ToolOutput::ok(format!(
+            "deleted symlink {path} — the link only; its target `{}` is untouched",
+            target.display()
+        )),
+        Ok(Ok(None)) => ToolOutput::error(format!(
+            "`{path}` is not a file (directories and missing paths are not deletable \
+                     with this tool)"
+        )),
+        Ok(Err(e)) if e.is_escape() => {
+            ToolOutput::error(format!("path `{path}` escapes the workspace root ({e})"))
+        }
+        // A missing path reaches here as the `stat` failing, and must read
+        // as the same refusal a directory gets — this tool deletes files.
+        Ok(Err(crate::rootfd::RootError::Io(e))) if e.kind() == std::io::ErrorKind::NotFound => {
+            ToolOutput::error(format!(
+                "`{path}` is not a file (directories and missing paths are not deletable \
+                         with this tool)"
+            ))
+        }
+        Ok(Err(e)) => ToolOutput::error(format!("could not delete `{path}`: {e}")),
+        Err(e) => ToolOutput::error(format!("could not delete `{path}`: {e}")),
     }
 }
 
