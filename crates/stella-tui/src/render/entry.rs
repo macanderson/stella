@@ -73,10 +73,16 @@ use stella_transcript::syntax::{BodyPaint, body_paint, paint_line};
 /// The deck renders the emitter's gutter as it arrived, rather than as its own
 /// column: the transcript is a scrollback, and a reader who wants to open the
 /// file at that line wants the number the tool actually printed.
-fn push_body_line(line: &str, paint: BodyPaint, width: usize, out: &mut Vec<Line<'static>>) {
+fn push_body_line(
+    rail: Rail,
+    line: &str,
+    paint: BodyPaint,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
     let painted = paint_line(paint, line);
     let Some(lang) = painted.lang else {
-        push_detail_line(line, width, out);
+        push_detail_line(rail, line, width, out);
         return;
     };
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -98,7 +104,7 @@ fn push_body_line(line: &str, paint: BodyPaint, width: usize, out: &mut Vec<Line
                 None => Span::styled(text, Style::new().fg(theme::MUTED)),
             }),
     );
-    push_detail_spans(spans, width, out);
+    push_detail_spans(rail, spans, width, out);
 }
 
 // Pure content builders (unit-tested directly)
@@ -454,7 +460,7 @@ fn entry_body(
                     .and_then(|v| serde_json::to_string_pretty(&v))
                     .unwrap_or_else(|_| raw.clone());
                 for l in pretty.lines() {
-                    push_body_line(l, BodyPaint::json(), width, out);
+                    push_body_line(Rail::Call, l, BodyPaint::json(), width, out);
                 }
             }
         }
@@ -469,6 +475,21 @@ fn entry_body(
         } => {
             let rail = if *ok { Rail::Result } else { Rail::Fail };
             let dim = Style::new().fg(theme::MUTED);
+            // A JSON body is re-laid one member to a line *before* anything
+            // counts, anchors or folds it. An API response — `gh api`, an MCP
+            // server, a REST tool — arrives as one line, so the fold measured a
+            // 1-line result, hid nothing, offered no `ctrl+o`, and handed the
+            // pane eight thousand unbroken columns to wrap. Six lines of an
+            // object with a reveal affordance under them is the same content,
+            // read rather than survived.
+            //
+            // [`stella_transcript::syntax`]'s and not this file's, because
+            // `digest::fold_output` normalises the identical body for the
+            // export and Observatory surfaces: a re-indenter living here would
+            // be the deck and the export disagreeing about how many lines a
+            // result has, which is the drift #3644 closed once already.
+            let reindented = stella_transcript::syntax::reindent_json_body(full);
+            let full: &str = reindented.as_deref().unwrap_or(full.as_str());
             let total = full.lines().count();
             // ⚡ marks a speculated result: the duration overlapped the
             // model's own streaming instead of following it.
@@ -518,7 +539,7 @@ fn entry_body(
                 );
                 let paint = body_paint(path.as_deref(), full);
                 for l in full.lines() {
-                    push_body_line(l, paint, width, out);
+                    push_body_line(rail, l, paint, width, out);
                 }
             } else {
                 // With a diff below, a prose summary ("Applied edit to
@@ -584,7 +605,7 @@ fn entry_body(
                     out,
                 );
                 for l in shown.iter().skip(usize::from(!paint.colored())) {
-                    push_body_line(l.trim_end(), paint, width, out);
+                    push_body_line(rail, l.trim_end(), paint, width, out);
                 }
                 // The "there is more" row, for a success as well as a failure —
                 // it is the only place the hidden count is stated now, and the
@@ -593,7 +614,12 @@ fn entry_body(
                 // own chatter is what would be counted.
                 let hidden = total.saturating_sub(shown.len());
                 if hidden > 0 && inline.is_none() {
-                    push_detail_line(&format!("⋯ {} · ctrl+o", plural_lines(hidden)), width, out);
+                    push_detail_line(
+                        rail,
+                        &format!("⋯ {} · ctrl+o", plural_lines(hidden)),
+                        width,
+                        out,
+                    );
                 }
             }
             // The mutation's diff, inline under the result — GitHub-PR style
@@ -623,7 +649,7 @@ fn entry_body(
                 let (body, _) =
                     diff::body_lines_inline(d, Some(&dref.path), cap, Some(" · ctrl+o"));
                 for line in body {
-                    push_diff_line(line, out);
+                    push_diff_line(rail, line, out);
                 }
             }
         }

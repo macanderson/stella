@@ -97,6 +97,142 @@ pub fn body_reads_as_json(lines: &[String]) -> bool {
         .is_some_and(|l| reads_as_json(l))
 }
 
+/// [`reindent_json`], but only for a body that [`reads_as_json`] — `None` when
+/// the body is anything else and must be rendered exactly as the tool emitted
+/// it.
+///
+/// The pairing is the whole point: the *sniff* and the *transform* have to be
+/// asked in one place, or a surface will re-indent a `read_file` listing whose
+/// line-number gutter makes it look like nothing of the sort.
+#[must_use]
+pub fn reindent_json_body(text: &str) -> Option<String> {
+    reads_as_json(text).then(|| reindent_json(text))
+}
+
+/// Cells one nesting level indents by in [`reindent_json`].
+const JSON_INDENT: &str = "  ";
+
+/// Re-lay a JSON body one member to a line, so a document that arrived as a
+/// single eight-thousand-character line can be read.
+///
+/// A **whitespace** transform, not a parse and not a pretty-printer. Every
+/// non-whitespace byte survives, in order; the only decisions are where a
+/// newline goes and how far the next line indents. Two consequences, and both
+/// are the point:
+///
+/// - **It works on the bodies these surfaces actually hold.** A tool result is
+///   middle-elided to a char budget before it is ever rendered, so a large `gh
+///   api` response is *not valid JSON* by the time anything looks at it, and a
+///   `serde_json` round trip refuses precisely the body this exists for — the
+///   reader gets the wall of text back. A scan re-indents what it can and
+///   leaves the elision marker sitting between the two halves.
+/// - **It is idempotent on an already-indented document**, because the layout
+///   it produces is the layout it recognises: two spaces per level, a line per
+///   comma, closers on their own line. So applying it unconditionally to a
+///   body that [`reads_as_json`] costs nothing and needs no width threshold to
+///   decide it is "long enough" — a threshold would be one more number two
+///   surfaces could disagree about.
+///
+/// Whitespace *inside* a string literal is untouched, and so is whitespace in a
+/// run that is not JSON at all — otherwise the elision marker's own words would
+/// be glued together by the transform meant to make them legible.
+#[must_use]
+pub fn reindent_json(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 8);
+    let mut depth = 0usize;
+    // A newline is *owed* after an opener or a comma, and paid at the next
+    // non-whitespace character — never before it, or an empty `{}` would be
+    // broken across three lines to say nothing.
+    let mut owed = false;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for ch in text.chars() {
+        if in_string {
+            out.push(ch);
+            match ch {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '{' | '[' => {
+                pay(&mut out, owed, depth);
+                out.push(ch);
+                depth += 1;
+                owed = true;
+            }
+            '}' | ']' => {
+                depth = depth.saturating_sub(1);
+                trim_trailing_blanks(&mut out);
+                // An empty container keeps its two glyphs together: the newline
+                // owed by the opener is simply forgiven.
+                if !ends_with_opener(&out) {
+                    pay(&mut out, true, depth);
+                }
+                out.push(ch);
+                owed = false;
+            }
+            ',' => {
+                trim_trailing_blanks(&mut out);
+                out.push(ch);
+                owed = true;
+            }
+            '"' => {
+                pay(&mut out, owed, depth);
+                owed = false;
+                in_string = true;
+                escaped = false;
+                out.push(ch);
+            }
+            // Whitespace an owed newline is about to replace is dropped; every
+            // other run of it is the input's own and is left alone.
+            c if c.is_whitespace() => {
+                if !owed {
+                    out.push(c);
+                }
+            }
+            c => {
+                pay(&mut out, owed, depth);
+                owed = false;
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
+/// Emit an owed newline and the indent for `depth`.
+fn pay(out: &mut String, owed: bool, depth: usize) {
+    if !owed {
+        return;
+    }
+    trim_trailing_blanks(out);
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    for _ in 0..depth {
+        out.push_str(JSON_INDENT);
+    }
+}
+
+/// Drop the whitespace already written at the end of `out`, so a newline this
+/// transform is about to emit does not land after the input's own.
+fn trim_trailing_blanks(out: &mut String) {
+    while out.ends_with(|c: char| c.is_whitespace()) {
+        out.pop();
+    }
+}
+
+/// Whether the last thing written was a container opener — the one case where
+/// the newline it owes is forgiven rather than paid.
+fn ends_with_opener(out: &str) -> bool {
+    out.ends_with('{') || out.ends_with('[')
+}
+
 /// `read_file`'s line-number gutter, split off one body line.
 ///
 /// The emitter's shape is `stella-tools`' `{line_num:>6}\t{line}`: padding
