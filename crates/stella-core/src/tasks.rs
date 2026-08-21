@@ -26,8 +26,10 @@ pub enum TaskBoardError {
     Terminal { id: String, status: TaskStatus },
     #[error(
         "task {open_id} `{open_subject}` is still in_progress — you hold exactly one task at a \
-         time, so finish it with task_complete (or drop it with task_cancel) before starting \
-         task {id}"
+         time. Finish it with task_complete if its work is done; if you are changing order and \
+         it is not, task_cancel it with the reason (the row stays as an audit trail, and \
+         task_create can put the step back later — ids are never reused). Only then start \
+         task {id}. Do not complete a task whose work is unfinished."
     )]
     AnotherTaskInProgress {
         id: String,
@@ -148,8 +150,18 @@ impl TaskBoard {
     ///
     /// Refusal, not silent auto-completion: closing a card the agent never said
     /// was finished would claim work was done on the board's own authority. The
-    /// error names the open task and both remedies, so the next call can be the
+    /// error names the open task and every way out, so the next call can be the
     /// `task_complete` that should have come first.
+    ///
+    /// All three ways, deliberately. A refusal offering only "finish it" and
+    /// "drop it" is a trap for the agent that is merely re-ordering — it starts
+    /// a step, learns a later one must land first, and finds that the only exit
+    /// phrased as *keeping* the step is a `task_complete` that would be a lie.
+    /// So the message also names the honest reorder path (`task_cancel` with the
+    /// reason, which keeps the row as an audit trail, then `task_create` when the
+    /// step is reachable — ids are never reused, so nothing is corrupted) and
+    /// says outright not to complete unfinished work. A rule that makes the
+    /// board honest must not buy that by making the agent dishonest.
     ///
     /// Only *unowned* tasks occupy the lane. [`Self::assign`] deliberately does
     /// not route through here: delegated tasks carry an owner and run in
@@ -356,12 +368,22 @@ mod tests {
             }
         );
         let rendered = refusal.to_string();
-        for remedy in ["task_complete", "task_cancel"] {
+        // All three ways out, not just the two that are easy to reach for. A
+        // refusal offering only "complete it" and "drop it" pushes an agent
+        // that is merely re-ordering toward a false task_complete — the exact
+        // dishonesty this rule exists to prevent — so the reorder path
+        // (cancel with a reason, re-create the step later) is named too, along
+        // with the guard against taking the lying exit.
+        for remedy in ["task_complete", "task_cancel", "task_create"] {
             assert!(
                 rendered.contains(remedy),
                 "the refusal must name the way out: {rendered}"
             );
         }
+        assert!(
+            rendered.contains("Do not complete a task whose work is unfinished"),
+            "the refusal must not read as an invitation to lie: {rendered}"
+        );
 
         // The board is untouched by a refused start — no second live step.
         assert_eq!(board.items()[0].status, TaskStatus::InProgress);
