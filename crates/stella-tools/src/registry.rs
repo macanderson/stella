@@ -137,11 +137,6 @@ pub struct ToolRegistry {
     /// ([`ToolRegistry::events`]) so a child turn streams onto the channel of
     /// the turn that spawned it.
     events: std::sync::RwLock<Option<stella_core::EventSender>>,
-    /// The host's per-call work-tree measurement (#4175), attached per turn
-    /// beside `events` — see [`crate::call_measure`] for why the producer sits
-    /// here rather than in the file tools, and why consecutive readings
-    /// partition a turn instead of double-counting it.
-    call_measure: crate::call_measure::CallMeasureSlot,
     /// Directories beyond the workspace root this session may write to, set by
     /// the host from operator configuration ([`ToolRegistry::allow_write_dirs`]).
     /// Empty by default: a session confines to its own tree until an operator
@@ -232,7 +227,6 @@ impl ToolRegistry {
             approval: Default::default(),
             policy_bridge: std::sync::Mutex::new(None),
             events: std::sync::RwLock::new(None),
-            call_measure: std::sync::Arc::default(),
             extra_write_dirs: std::sync::RwLock::new(Vec::new()),
             scratch_dir: scratch_path
                 .as_ref()
@@ -361,41 +355,6 @@ impl ToolRegistry {
         *self.events.write().unwrap_or_else(|p| p.into_inner()) = Some(events);
     }
 
-    /// Publish this turn's per-call work-tree measurement (#4175), so a
-    /// mutating tool call that ran alone reports the change *it* made rather
-    /// than waiting for the turn boundary to report one aggregate per path.
-    ///
-    /// Per turn and replacing, exactly like [`Self::attach_events`] and for
-    /// the same reason: the measurer holds that turn's event channel and
-    /// execution row. A registry that never calls this keeps turn-boundary
-    /// granularity, which is what every non-session host wants.
-    ///
-    /// See [`crate::call_measure`] for which calls are measured, which are
-    /// deliberately not, and why consecutive readings cannot double-count.
-    pub fn attach_call_measure(
-        &self,
-        measure: std::sync::Arc<dyn crate::call_measure::CallMeasure>,
-    ) {
-        *self.call_measure.write().unwrap_or_else(|p| p.into_inner()) = Some(measure);
-    }
-
-    /// Whether a call to `name` that has just succeeded should be measured on
-    /// its own, rather than left to the turn-boundary sweep.
-    ///
-    /// The two exclusions are the ones [`crate::call_measure`] argues for, and
-    /// they are read from the tool's own schema rather than from a name list:
-    /// a read-only tool is dispatched concurrently and by its own declaration
-    /// changed nothing, and a [`Tool::parallel_safe`] tool (`delegate`) is
-    /// dispatched in a group with its siblings, so no before/after reading can
-    /// say which sibling wrote what.
-    ///
-    /// An unknown name answers `false`: the call did not run.
-    fn measures_alone(&self, name: &str) -> bool {
-        self.tools
-            .get(name)
-            .is_some_and(|tool| !tool.schema().read_only && !tool.parallel_safe())
-    }
-
     /// Release this turn's event channel: the counterpart every turn owes
     /// [`Self::attach_events`] and [`Self::bridge_policy_plane`].
     ///
@@ -410,10 +369,6 @@ impl ToolRegistry {
     /// Idempotent, and safe on a registry that never attached either one.
     pub fn detach_event_stream(&self) {
         *self.events.write().unwrap_or_else(|p| p.into_inner()) = None;
-        // The per-call measurer holds a sender on the same channel, so leaving
-        // it attached keeps the stream open exactly the way #960's stale
-        // `events` clone did.
-        *self.call_measure.write().unwrap_or_else(|p| p.into_inner()) = None;
         // Dropping the subscription unsubscribes it, releasing the sender the
         // bridge closure captured.
         *self.policy_bridge.lock().unwrap_or_else(|p| p.into_inner()) = None;
@@ -580,31 +535,6 @@ impl ToolRegistry {
             Some(defect) => defect,
             None => output,
         };
-        // Per-call work-tree measurement (#4175), before this call's
-        // `ToolResult` reaches the stream — the engine sends that only once
-        // `execute` has returned, and both ride the same channel, so a
-        // transcript folding the stream sees the change before the row that
-        // made it and can resolve its own diff. At the turn boundary the
-        // stamped seq was always one short of the recorded one, so a
-        // successful `edit_file` rendered with no diff and no `+N −M` at all.
-        //
-        // Gated on success: a failed call changed nothing worth attributing,
-        // and rendering the path's previous diff under its ✗ would attribute
-        // a change the call never made. Whatever a failed call *did* leave
-        // behind (a partial write, a `bash` that died mid-command) is not
-        // lost — the next measurement, per-call or at the boundary, still
-        // reports it, because a snapshot reports everything since the last
-        // one rather than everything one call did.
-        if matches!(output, ToolOutput::Ok { .. }) && self.measures_alone(name) {
-            let measure = self
-                .call_measure
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .clone();
-            if let Some(measure) = measure {
-                measure.measure_and_publish();
-            }
-        }
         if let Some(bus) = &bus {
             let duration_ms = started_at.elapsed().as_millis() as u64;
             match &output {

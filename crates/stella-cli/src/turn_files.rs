@@ -66,97 +66,6 @@ use stella_store::work_journal::{JournalChange, JournalChangeKind};
 use stella_store::{FileTouchRow, Store};
 
 use crate::config::Config;
-use crate::durability::SessionDurability;
-
-/// This turn's per-call work-tree measurement, handed to the registry so a
-/// mutating tool call that ran alone reports the change *it* made (#4175).
-///
-/// Everything about *which* calls are measured, why consecutive readings
-/// partition a turn rather than double-counting it, and why the producer is a
-/// tree reading rather than a hook on the file tools, lives on the trait —
-/// see [`stella_tools::call_measure`]. This half is only the binding: the
-/// session's journal, this turn's stream, this turn's execution row.
-///
-/// Built per turn and dropped when the registry detaches it, because two of
-/// its three fields are turn-scoped. Holding it past the turn would publish
-/// the next turn's changes onto a closed channel and a finished execution —
-/// and, worse, keep that channel open (#960).
-pub(crate) struct TurnCallMeasure {
-    durability: SessionDurability,
-    tx: EventSender,
-    execution: Option<(Arc<Store>, i64)>,
-}
-
-impl TurnCallMeasure {
-    pub(crate) fn new(
-        durability: SessionDurability,
-        tx: EventSender,
-        execution: Option<(Arc<Store>, i64)>,
-    ) -> Self {
-        Self {
-            durability,
-            tx,
-            execution,
-        }
-    }
-}
-
-impl stella_tools::call_measure::CallMeasure for TurnCallMeasure {
-    /// The same measurement the turn boundary takes, taken now.
-    ///
-    /// `snapshot_worktree` consumes what it reports — it commits the tree onto
-    /// the session's snapshot ref and diffs against the previous commit — so
-    /// this reading and the boundary's partition the turn between them. That
-    /// is the property the counters downstream depend on, and it is why this
-    /// calls the boundary's own function rather than a per-call variant of it.
-    fn measure_and_publish(&self) {
-        emit_measured_tree_changes(&self.durability, &self.tx, self.execution.as_ref());
-    }
-}
-
-/// Everything the owner of a turn owes the **registry** when it opens the
-/// turn's event stream — the opening bookend to [`close_turn_boundary`].
-///
-/// Both debts ride one channel and are dropped together by
-/// `ToolRegistry::detach_event_stream`, so they are taken on together here for
-/// the same reason the two closing debts were folded into one function: one of
-/// the pair is loud when forgotten and the other is silent, and only the loud
-/// one ever gets noticed.
-///
-/// - **Registry-born events** (task board, sub-agent lifecycle). Forgetting
-///   these is loud — a sub-agent's whole lifecycle vanishes from the
-///   transcript.
-/// - **This turn's per-call work-tree measurement** (#4175). Forgetting it is
-///   silent: every solo mutating call still renders a result row, the row
-///   simply carries no diff and no `+N −M`, which is indistinguishable from a
-///   call that changed nothing. That is the exact shape #4155 was reported as,
-///   and the exact shape #4160 had to repair once already at the turn
-///   boundary.
-pub(crate) fn open_turn_streams(
-    registry: &stella_tools::registry::ToolRegistry,
-    cfg: &Config,
-    tx: &EventSender,
-    execution: Option<&(Arc<Store>, i64)>,
-) {
-    registry.attach_events(tx.clone());
-    registry.attach_call_measure(Arc::new(TurnCallMeasure::new(
-        cfg.durability.clone(),
-        tx.clone(),
-        execution.cloned(),
-    )));
-}
-
-/// [`open_turn_streams`] for a driver holding the raw channel sender rather
-/// than an [`EventSender`] — the Command Deck's lead turn, exactly as
-/// [`close_turn_boundary_raw`] serves it at the other end of the turn.
-pub(crate) fn open_turn_streams_raw(
-    registry: &stella_tools::registry::ToolRegistry,
-    cfg: &Config,
-    tx: &tokio::sync::mpsc::UnboundedSender<AgentEvent>,
-    execution: Option<&(Arc<Store>, i64)>,
-) {
-    open_turn_streams(registry, cfg, &EventSender::new(tx.clone()), execution);
-}
 
 /// Everything the owner of a turn owes its event stream at the boundary, in
 /// the one order that is correct.
@@ -240,23 +149,7 @@ pub(crate) fn emit_shared_tree_changes(
     tx: &EventSender,
     execution: Option<&(Arc<Store>, i64)>,
 ) {
-    emit_measured_tree_changes(&cfg.durability, tx, execution);
-}
-
-/// [`emit_shared_tree_changes`] over the durability handle alone.
-///
-/// The whole of `cfg` this ever needed was `cfg.durability`, and taking the
-/// narrower thing is what lets the per-call measurer (#4175) hold one cheaply
-/// for the length of a turn instead of cloning a `Config`. Both granularities
-/// then run the *same* function, which is the load-bearing half of the
-/// no-double-counting argument in `stella_tools::call_measure`: there is one
-/// measurement, called more or less often, not two that have to agree.
-pub(crate) fn emit_measured_tree_changes(
-    durability: &SessionDurability,
-    tx: &EventSender,
-    execution: Option<&(Arc<Store>, i64)>,
-) {
-    let measured = durability.snapshot_worktree();
+    let measured = cfg.durability.snapshot_worktree();
     if measured.is_empty() {
         return;
     }
@@ -380,52 +273,6 @@ mod tests {
                  measuring does not degrade loudly — it silently empties the \
                  Files tab, `stella export` and the audit log for that whole \
                  surface while every other surface keeps working."
-            );
-        }
-    }
-
-    /// **Witness (#4175).** Every driver that opens a turn's event stream
-    /// opens it through [`open_turn_streams`], so the per-call measurement is
-    /// attached with it rather than beside it.
-    ///
-    /// The same asymmetry as the boundary fence above, at the other end of the
-    /// turn and one notch more subtle. A driver that forgets
-    /// `attach_events` loses a sub-agent's whole lifecycle from the transcript
-    /// and is found immediately. A driver that forgot only the measurer would
-    /// render every mutating row *correctly shaped* and simply diffless —
-    /// indistinguishable from a turn whose calls changed nothing, which is
-    /// precisely how #4155 was reported and how the deck's empty Files tab
-    /// survived until #4160. Folding the two into one function is the
-    /// structural half; this is the half that stops the next driver unfolding
-    /// them by calling `attach_events` directly.
-    #[test]
-    fn every_turn_owner_opens_its_streams_through_the_one_seam() {
-        // Built rather than written out, so this file is not its own match.
-        let seam = format!("open_turn_{}", "streams");
-        let raw = format!("attach_{}(", "events");
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        for (file, driver) in [
-            // The raw engine turn, which reaches the seam through
-            // `persistence::attach_run_streams`.
-            ("agent/persistence.rs", "attach_run_streams"),
-            // The interactive deck's lead turn.
-            ("command_deck.rs", "run_lead_turn"),
-        ] {
-            let body = std::fs::read_to_string(src.join(file))
-                .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
-            assert!(
-                body.contains(&seam),
-                "{file} ({driver}) opens a turn's event stream and no longer \
-                 does it through `turn_files::open_turn_streams`. A stream \
-                 opened without the per-call measurement does not degrade \
-                 loudly — every mutating row still renders, just with no diff \
-                 and no `+N −M`, which reads as a turn that changed nothing."
-            );
-            assert!(
-                !body.contains(&raw),
-                "{file} ({driver}) calls `attach_events` directly again. That \
-                 is the seam being unfolded: it pays the loud debt (registry \
-                 events) without the silent one beside it."
             );
         }
     }
