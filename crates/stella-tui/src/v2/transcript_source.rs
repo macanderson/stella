@@ -27,7 +27,7 @@
 
 use ratatui::text::Line;
 
-use super::transcript::{Event, EventKind, Receipt, event_rows, receipt, turn_end};
+use super::transcript::{Event, EventKind, Extent, Receipt, event_rows, receipt, turn_end};
 
 /// The metal-bearing head of a dispatched call (SPEC 6.2).
 ///
@@ -72,15 +72,29 @@ pub fn compaction_rows(
 /// Deliberately the same six names [`stella_transcript::ToolKind::from_name`]
 /// recognises, so the two renderers of the same transcript cannot disagree
 /// about what a `bash` row is.
+///
+/// Every file kind takes an **unmeasured** [`Extent`], and that is the whole
+/// point of the type. This function runs when the call *dispatches*: the tool
+/// has not returned, no `FileChange` has been emitted, and there is nothing to
+/// count. Filling the fields with zeros instead put `edit <path> +0 -0` over
+/// every real edit in the deck — a row asserting the change was empty, on the
+/// one screen a reader consults to find out what changed. The measured numbers
+/// live on the result row (`render::entry`'s `resolve_inline_delta`), which is
+/// where they can be true; this row states the verb and its subject.
 fn kind_for(name: &str) -> EventKind {
     match name {
-        "read_file" => EventKind::Read { lines: 0 },
-        "edit_file" => EventKind::Edit {
-            added: 0,
-            removed: 0,
+        "read_file" => EventKind::Read {
+            extent: Extent::default(),
         },
-        "write_file" => EventKind::Write { lines: 0 },
-        "delete_file" => EventKind::Delete { lines: 0 },
+        "edit_file" => EventKind::Edit {
+            extent: Extent::default(),
+        },
+        "write_file" => EventKind::Write {
+            extent: Extent::default(),
+        },
+        "delete_file" => EventKind::Delete {
+            extent: Extent::default(),
+        },
         "bash" => EventKind::Run,
         _ => EventKind::Other,
     }
@@ -139,6 +153,13 @@ mod tests {
         line.spans.iter().map(|s| s.content.clone()).collect()
     }
 
+    /// Every row of a head, joined — a head is one row today, but an assertion
+    /// that a number is absent must not pass merely by looking at the wrong
+    /// row if that ever changes.
+    fn text_of_rows(rows: &[Line<'static>]) -> String {
+        rows.iter().map(text_of).collect::<Vec<_>>().join("\n")
+    }
+
     /// An unknown tool still renders — the vocabulary is open (MCP, custom
     /// tools), and a missing row is the failure this guards against.
     #[test]
@@ -159,5 +180,60 @@ mod tests {
         let text = text_of(&rows[0]);
         assert!(text.contains("read src/main.rs"), "{text}");
         assert!(!text.contains('{'), "the raw argument blob must not leak");
+    }
+
+    /// A dispatched call has measured nothing yet, so its head states no size.
+    ///
+    /// The zeros this guards against were not cosmetic: `edit <path> +0 -0`
+    /// rode over every real edit in the deck, and `+0 -0` is a *claim* — that
+    /// the tool ran and changed nothing — sitting on the one row a reader
+    /// scans to find out what a turn touched. The same substitution had
+    /// already shipped once in the files panel and been removed there for this
+    /// reason ([`crate::deck::FileLedger`]).
+    #[test]
+    fn a_dispatched_head_states_no_size_it_has_not_measured() {
+        for (tool, path) in [
+            ("edit_file", "crates/stella-tools/Cargo.toml"),
+            ("read_file", "src/main.rs"),
+            ("write_file", "src/new.rs"),
+            ("delete_file", "src/old.rs"),
+        ] {
+            let text = text_of_rows(&head_rows(tool, Some(path), "{}", 120));
+            for zero in ["+0", "-0", "0 lines"] {
+                assert!(
+                    !text.contains(zero),
+                    "`{tool}` head fabricates `{zero}` before its result exists: {text}"
+                );
+            }
+            assert!(text.contains(path), "{text}");
+        }
+    }
+
+    /// Absent counts are not the same as an absent row: `write` still says the
+    /// file is new and `delete` still says it is recoverable, because neither
+    /// is a measurement.
+    #[test]
+    fn an_unmeasured_head_keeps_the_facts_that_are_not_measurements() {
+        let write = text_of_rows(&head_rows("write_file", Some("src/new.rs"), "{}", 120));
+        assert!(write.contains("new file"), "{write}");
+        let delete = text_of_rows(&head_rows("delete_file", Some("src/old.rs"), "{}", 120));
+        assert!(delete.contains("git-backed"), "{delete}");
+        assert!(delete.contains("u undo"), "{delete}");
+    }
+
+    /// And a measured extent still renders its numbers — the fix removes the
+    /// fabrication, not the column.
+    #[test]
+    fn a_measured_edit_still_renders_its_delta() {
+        let mut event = Event::new(
+            EventKind::Edit {
+                extent: Extent::delta(3, 1),
+            },
+            "src/lib.rs",
+        );
+        event.collapsed = Some(false);
+        let text = text_of_rows(&event_rows(&event, 120));
+        assert!(text.contains("+3"), "{text}");
+        assert!(text.contains("-1"), "{text}");
     }
 }

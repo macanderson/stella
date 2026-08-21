@@ -45,16 +45,66 @@ pub const RAIL_W: usize = 2;
 /// release and a renderer that needs an arm per kind silently drops the ones it
 /// has not heard of. Anything unrecognised is [`EventKind::Other`] and renders
 /// as a plain muted row, which is the correct degradation.
+/// A file event's size, as **measured**.
+///
+/// Every field here is an `Option` for one reason: a head row renders the
+/// moment its call dispatches, and nothing has been measured yet at that
+/// moment. A zero is not the honest stand-in — `+0 -0` beside a path asserts
+/// that the edit changed nothing, which is a louder and entirely different
+/// claim than "not measured yet", and the same substitution already shipped
+/// once as a defect in the files panel (see [`crate::deck::FileLedger`], whose
+/// counts stopped being re-derived for exactly this reason). `None` renders as
+/// no column at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Extent {
+    /// Lines added, for an edit or a new file.
+    pub added: Option<u32>,
+    /// Lines removed, for an edit or a deletion.
+    pub removed: Option<u32>,
+}
+
+impl Extent {
+    /// A measured `(added, removed)` pair.
+    #[must_use]
+    pub fn delta(added: u32, removed: u32) -> Self {
+        Self {
+            added: Some(added),
+            removed: Some(removed),
+        }
+    }
+
+    /// A measured one-sided count — a read's or a new file's line count on the
+    /// `added` side, a deletion's on the `removed` side.
+    #[must_use]
+    pub fn added(lines: u32) -> Self {
+        Self {
+            added: Some(lines),
+            removed: None,
+        }
+    }
+
+    /// The removed-side counterpart of [`Extent::added`].
+    #[must_use]
+    pub fn removed(lines: u32) -> Self {
+        Self {
+            added: None,
+            removed: Some(lines),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
-    /// `▸ read <path> · <n> lines` — folded by default.
-    Read { lines: u32 },
-    /// `● edit <path> +a -b`.
-    Edit { added: u32, removed: u32 },
-    /// `＋ write <path> · new file · n lines`.
-    Write { lines: u32 },
-    /// `✗ delete <path> · -n lines · git-backed · u undo`.
-    Delete { lines: u32 },
+    /// `▸ read <path> · <n> lines` — folded by default. The count rides
+    /// `Extent::added`, and is absent until the read returns.
+    Read { extent: Extent },
+    /// `● edit <path> +a -b`, the counts absent until the edit returns.
+    Edit { extent: Extent },
+    /// `＋ write <path> · new file · n lines`, the count on `Extent::added`.
+    Write { extent: Extent },
+    /// `✗ delete <path> · -n lines · git-backed · u undo`, the count on
+    /// `Extent::removed`.
+    Delete { extent: Extent },
     /// `● run <cmd>`.
     Run,
     /// `✦ skill <name> · auto|/cmd · n tok`.
@@ -418,21 +468,42 @@ fn kind_detail(kind: &EventKind) -> Vec<Span<'static>> {
     let dim = Style::new().fg(token::DIM);
     let text = Style::new().fg(token::TEXT);
     match kind {
-        EventKind::Read { lines } => vec![Span::styled(format!(" · {lines} lines"), dim)],
+        EventKind::Read { extent } => extent
+            .added
+            .map(|lines| vec![Span::styled(format!(" · {lines} lines"), dim)])
+            .unwrap_or_default(),
         // The separator spaces stay neutral: colour marks the count, not the
         // padding around it, and a red cell is a scarce thing on this screen
         // (prompt.md rule 5) that must not be spent on whitespace.
-        EventKind::Edit { added, removed } => vec![
-            Span::raw(" "),
-            Span::styled(format!("+{added}"), Style::new().fg(token::GREEN)),
-            Span::raw(" "),
-            Span::styled(format!("-{removed}"), Style::new().fg(token::RED)),
-        ],
-        EventKind::Write { lines } => {
-            vec![Span::styled(format!(" · new file · {lines} lines"), dim)]
-        }
-        EventKind::Delete { lines } => vec![Span::styled(
-            format!(" · -{lines} lines · git-backed · u undo"),
+        //
+        // Both halves or neither: an edit's two numbers are one measurement,
+        // and `+3` alone would read as an addition-only change rather than as
+        // half a reading.
+        EventKind::Edit { extent } => match (extent.added, extent.removed) {
+            (Some(added), Some(removed)) => vec![
+                Span::raw(" "),
+                Span::styled(format!("+{added}"), Style::new().fg(token::GREEN)),
+                Span::raw(" "),
+                Span::styled(format!("-{removed}"), Style::new().fg(token::RED)),
+            ],
+            _ => Vec::new(),
+        },
+        // `new file` is a fact about the call, not a measurement, so it stays
+        // on the row when the line count has not arrived.
+        EventKind::Write { extent } => vec![Span::styled(
+            match extent.added {
+                Some(lines) => format!(" · new file · {lines} lines"),
+                None => " · new file".to_string(),
+            },
+            dim,
+        )],
+        // Likewise the undo affordance: a reader needs to know the deletion is
+        // recoverable whether or not its size has been counted yet.
+        EventKind::Delete { extent } => vec![Span::styled(
+            match extent.removed {
+                Some(lines) => format!(" · -{lines} lines · git-backed · u undo"),
+                None => " · git-backed · u undo".to_string(),
+            },
             dim,
         )],
         EventKind::Skill { trigger, tokens } => vec![
