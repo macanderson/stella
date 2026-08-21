@@ -47,11 +47,19 @@ _ENGINE_POSTURE_VERSION = "stella-tb21-engine-posture-v1"
 _ASSURANCE_TIERS_VERSION = "stella-tb21-assurance-tiers-v2"
 
 # Host-side selector for the witness/verifier author. Unset (the default) is the
-# control arm: one inherited model, authored witness structurally off. Set to a
-# second `provider/model` on the worker's provider and the same 89 tasks run the
-# treatment arm. Never forwarded into the container — the decision reaches
-# Stella only as `pipeline_verifier_model` inside the hashed posture, so the arm a
-# trial ran cannot disagree with the arm its digest records (#1007).
+# control arm: one inherited model, authored witness structurally off. Never
+# forwarded into the container — the decision reaches Stella only as
+# `pipeline_verifier_model` inside the hashed posture, so the arm a trial ran
+# cannot disagree with the arm its digest records (#1007).
+#
+# **Setting it no longer selects a treatment arm; it refuses the launch**
+# (#4103, `refuse_unauthorable_witness_arm`). The engine this workspace ships
+# has one role — `AgentEngineConfig::model_for` resolves `agents.default.model`
+# > `default_model` with no role argument at all, and `verifier` is a name in
+# `RETIRED_ENGINE_AGENT_NAMES` recognized and ignored — so no key in a posture
+# can route a second model to the verifier. A run launched with this set would
+# spend a treatment arm's money on a control arm's configuration and record it
+# under a treatment arm's digest, which is #1147 exactly.
 _WITNESS_AUTHOR_ENV = "STELLA_WITNESS_AUTHOR_MODEL"
 
 # Host-side selector for the worker's effort tier. The rule that sets it has
@@ -664,21 +672,32 @@ def _benchmark_engine_posture(
 
     * ``verifier=None`` — the **control arm**. Model routing is expressed
       only by ``default_model``; every role inherits it and no role has a
-      provider/model override. Stella will not let the worker write the test
-      that verifies it, so with one model for every role the independent author
-      never exists: the run reports ``WitnessUnavailable`` and proceeds unproven
-      (#973). Every Terminal-Bench number published before #1007 is this arm.
+      provider/model override. With one model for every role the independent
+      author never exists. Every Terminal-Bench number Stella has published is
+      this arm.
     * ``verifier="provider/slug"`` — the **treatment arm**. A second model
       is pinned for the verifier role via ``pipeline_verifier_model``, which is what
       the authored-witness tier resolves its author from, and ``allowed_models``
       widens to name both. Still fully pinned, still one hash, still no
-      auto-selection — the reproducibility argument is untouched; the posture
-      simply now says which of two frozen configurations it is.
+      auto-selection.
 
-    Both arms are frozen and disclosed. Choosing between them is a measurement
-    decision that changes ``digest``, and therefore the registered SUT; the
-    point of having both is that the choice is made in the manifest instead of
-    being discovered by grepping a trajectory for a warning line.
+    **This function stays total on both arms, and no longer launches one of
+    them** (#4103). Building a treatment-arm posture is still exactly right for
+    what this function is — the frozen claim implementation, whose output every
+    registered digest in ``bench/READINESS.md`` §8.4 and §9 must keep
+    reproducing byte for byte. What changed is underneath it: the engine this
+    workspace ships has one role, so the pin this emits reaches no model call
+    (see :func:`refuse_unauthorable_witness_arm`, which is where a *run*
+    carrying that declaration is refused). Keeping the builder total and gating
+    the launch is the split that lets history re-derive while no new number can
+    misdescribe itself.
+
+    This is deliberately not the shape #3871 used for ``max_revisions`` and its
+    two siblings, which became a ``TypeError`` at the call site. Those emitted
+    keys the launcher now **refuses** outright, so no reproducible digest could
+    contain one; ``pipeline_verifier_model`` is recognized-and-ignored
+    (``RETIRED_ENGINE_ROOT``), so treatment-arm postures still parse through
+    the trusted seam and still have digests on record to reproduce.
 
     ``max_revisions``, ``candidates`` and ``verifier_evidence_demand`` were
     three more arguments of the same shape (#1211 §6.7, §6.8; #1295). They are
@@ -806,28 +825,29 @@ def _benchmark_engine_posture(
     }
     if verifier is not None:
         author = _validated_verifier(selected_model, verifier)
-        # The flat root key, never `agents.verifier.model`. Both resolve — the
-        # engine reads `agents.<role>.model` first and falls through to the
-        # flat key (`AgentEngineConfig::model_for`), and
-        # `the_flat_pipeline_verifier_model_alone_resolves_role_verifier_to_the_verifier`
-        # pins that the flat key alone reaches `Role::Verifier` — but the flat key
-        # is what `settings_check` and `stella config` report as the verifier's
-        # origin, so the disclosed posture and the engine's own account of its
-        # wiring name the same field.
+        # The flat root key, never `agents.verifier.model`. It is the field
+        # `settings_check` and `stella config` report as the verifier's origin,
+        # so the disclosed posture and the engine's own account of its wiring
+        # name the same one.
         #
-        # Naming the author is not the same as reaching it. A trial runs with
-        # the catalog frozen (`STELLA_CATALOG_AUTO_REFRESH=0`), so the author
-        # must be a slug Stella's OFFLINE seed catalog carries for that
-        # provider; an unlisted one fails slug validation, the verifier pin is
-        # dropped, and the verifier falls back to the worker. That used to make
-        # the treatment arm run as the control arm under a treatment-arm digest
-        # (#1147). It now refuses the run instead: a posture delivered through
-        # the trusted launcher seam that names a verifier other than the worker
-        # arms `PipelineConfig::require_independent_witness`, and a run that
-        # cannot resolve an independent author fails before it spends anything.
-        # A witness arm whose author is outside the seed therefore produces no
-        # number at all, which is the intended outcome — the alternative is a
-        # number this digest misdescribes.
+        # **Naming the author is not the same as reaching it, and today it
+        # never reaches it** (#4103). This key is in `RETIRED_ENGINE_ROOT`: the
+        # launcher recognizes it, reports it and ignores it, because
+        # `AgentEngineConfig::model_for` has no role argument left to spend it
+        # on. Writing it here is still correct — this is the frozen claim
+        # implementation and its digests must keep reproducing — but the
+        # *launch* carrying it is refused by
+        # `refuse_unauthorable_witness_arm`, which is the only reason it is
+        # safe for this builder to keep emitting a pin the engine drops.
+        #
+        # The catalog rule below is the older half of the same hazard and is
+        # now subsumed by that refusal. A trial runs with the catalog frozen
+        # (`STELLA_CATALOG_AUTO_REFRESH=0`), so an author outside Stella's
+        # offline seed used to fail slug validation, drop the pin, and run the
+        # control arm under a treatment-arm digest (#1147). What caught that
+        # was `PipelineConfig::require_independent_witness`, deleted with
+        # `crates/stella-pipeline` (#3865) with no successor — so the guard
+        # named here for two releases has not existed for any of them.
         posture["pipeline_verifier_model"] = author
         posture["allowed_models"] = [selected_model, author]
     # Triage, research and plan pin identically — flat key plus a widened
@@ -905,14 +925,20 @@ _FLAT_ROLE_MODEL_KEY = {
 #: The roles whose UNPINNED default is the worker's model, not ``default_model``.
 #:
 #: Every other role has a standing identity — unpinned, triage and the verifier
-#: still have a model of their own, and ``default_model`` is it. These two are
-#: documented as "run whatever the worker runs"
-#: (``own_model_spec_for``, ``crates/stella-cli/src/engine_config.rs``), so
-#: falling through to ``default_model`` for them would split them onto a
-#: different model the moment anything re-points the worker without touching
-#: settings. The two coincide in the frozen posture below, where the worker
-#: carries no pin of its own — which is exactly why a resolver that got this
-#: wrong would keep agreeing with reality until the first arm that pinned one.
+#: still have a model of their own, and ``default_model`` is it. These two were
+#: documented as "run whatever the worker runs", so falling through to
+#: ``default_model`` for them would split them onto a different model the moment
+#: anything re-pointed the worker without touching settings. The two coincide in
+#: the frozen posture below, where the worker carries no pin of its own — which
+#: is exactly why a resolver that got this wrong would keep agreeing with
+#: reality until the first arm that pinned one.
+#:
+#: The engine function that drew this split, ``own_model_spec_for``, is **gone**
+#: (#4103): ``crates/stella-cli/src/engine_config.rs`` has ``model_spec_for``
+#: alone now, taking no role. The distinction survives here for the same reason
+#: the flat rung does — this reads postures as written, and postures in the
+#: corpus were written while it was real. It is not a claim about any live
+#: binary; see :func:`resolve_posture_role_model`.
 _WORKER_INHERITING_ROLES = frozenset({"research", "plan"})
 
 
@@ -960,28 +986,45 @@ def resolve_posture_role_model(
 ) -> tuple[str, str]:
     """Resolve one role's model from a posture, and name the key it came from.
 
-    Mirrors ``AgentEngineConfig::model_for``
-    (``crates/stella-cli/src/settings/engine.rs``): ``agents.<role>.model``
-    outranks the flat ``pipeline_<role>_model``, which outranks
-    ``default_model`` — except for the two roles that inherit the worker
-    instead on that last rung (``_WORKER_INHERITING_ROLES``, which is the
-    engine's own split between ``model_spec_for`` and ``own_model_spec_for``,
-    not an approximation of it). Mirroring it is the whole point: a declaration
-    that resolves roles by a different rule than the engine does is free to
-    disagree with the run it describes, which is the shape of #2134 and of
-    #1147 before it.
+    **Reads a posture as written; it is not a mirror of any live engine.**
+    That distinction is the resolution of #4103 and it is load-bearing, so it
+    is stated before the ladder rather than after it. The subject of this
+    function is a *document* — a posture dict, possibly one recorded years ago
+    and hashed into a registered SUT — and the question it answers is "what
+    does this posture say about this role?". Answering it the same way forever
+    is what lets ``bench/READINESS.md`` §8.4's digests and every recorded
+    ``assurance`` block re-derive; re-pointing it at whatever the current
+    binary happens to resolve would silently re-characterise evidence nobody
+    re-ran.
 
-    **The middle rung is knowingly ahead of the engine.** #3908 collapsed
-    ``agent_engine_config`` to the one role core has, so ``model_for`` now
-    reads ``agents.default.model`` > ``default_model`` and the five flat
-    ``pipeline_<role>_model`` keys are **retired** — recognized, ignored and
-    reported by name (``settings::unknown::RETIRED_ENGINE_ROOT``) rather than
-    removed, because this harness and ``arenabench`` still write them into
-    postures whose digests are registered in ``bench/READINESS.md`` §8.4.
-    Reading them here is therefore still correct for what this function
-    describes — the posture as written — and stops being correct when slice 6
-    (#3910) stops writing them. Both halves of that are pinned by
-    ``test_assurance_tiers.py``; do not narrow this ladder without it.
+    The ladder, therefore, is the union of every spelling a posture in this
+    corpus can carry: ``agents.<role>.model`` outranks the flat
+    ``pipeline_<role>_model``, which outranks ``default_model`` — except for
+    the two roles documented as running whatever the worker runs, which fall
+    back to the worker on that last rung (``_WORKER_INHERITING_ROLES``).
+
+    **What the engine does now, and why that is no longer this function's
+    business.** ``AgentEngineConfig::model_for``
+    (``crates/stella-cli/src/settings/engine.rs``) reads
+    ``agents.default.model`` > ``default_model``, takes no role argument, and
+    resolves every role to one model; the five flat keys and the five persona
+    agent names are retired — recognized, reported, ignored
+    (``settings::unknown::RETIRED_ENGINE_ROOT`` /
+    ``RETIRED_ENGINE_AGENT_NAMES``). So a posture's role pins describe an
+    intent the binary no longer honors.
+
+    This function keeps reporting that intent, and the divergence is made safe
+    at the other end rather than here: :func:`refuse_unauthorable_witness_arm`
+    refuses to *launch* a run whose declaration depends on a distinction the
+    binary cannot make. Reading stays truthful about the document; launching
+    stays truthful about the binary. Collapsing this ladder instead would have
+    made the reader agree with today's engine at the cost of every historical
+    posture it also describes — see #4103 for the three options and which one
+    was taken.
+
+    ``test_assurance_tiers.py`` pins both halves: the engine's real two rungs,
+    and that the flat keys are *declared* retired rather than quietly dropped.
+    Do not narrow this ladder without it.
 
     Two of those rungs bit in the same match. ``cc00894779ff`` read only the
     host-side selector and so missed the flat key an ArenaBench roles config
@@ -1030,13 +1073,24 @@ def assurance_tiers_from_posture(
     for a run whose posture named kimi-k3 as the verifier and whose trials
     demonstrably authored a witness (#2134).
 
-    The witness arm's predicate is exactly one sentence, and it is the engine's
-    own: the verifier role resolves to a model different from the worker's
-    (``Pipeline::witness_author_independence``). Both sides are resolved here
-    through :func:`resolve_posture_role_model`, so "the verifier inherits" is
-    never *assumed* to mean "the verifier equals the worker" — a posture that
-    pins only the worker leaves the verifier on ``default_model``, which is an
-    independent author and used to be declared as the opposite.
+    The witness arm's predicate is exactly one sentence: the verifier role
+    resolves to a model different from the worker's. It was the engine's own —
+    ``Pipeline::witness_author_independence`` — and that predicate no longer
+    exists anywhere in this workspace, deleted with ``crates/stella-pipeline``
+    (#3865). What it means for this function is nothing, and that is the point:
+    the sentence is evaluated against the **posture**, so it keeps describing
+    what a posture claims however the engine changes. What it means for a
+    *launch* is everything, and lives in
+    :func:`refuse_unauthorable_witness_arm` — on today's binary no posture can
+    satisfy the predicate in a way any model call would honor, so a run
+    carrying a ``witness-on`` declaration is refused rather than scored
+    (#4103).
+
+    Both sides are resolved here through :func:`resolve_posture_role_model`, so
+    "the verifier inherits" is never *assumed* to mean "the verifier equals the
+    worker" — a posture that pins only the worker leaves the verifier on
+    ``default_model``, which is an independent author and used to be declared
+    as the opposite.
 
     When the predicate fails, the recorded off-reason states the models both
     roles resolved to and the posture keys they came from — never a claim about
@@ -1138,6 +1192,64 @@ def _benchmark_assurance_tiers(
     if author is not None:
         posture["pipeline_verifier_model"] = author
     return assurance_tiers_from_posture(posture)
+
+
+def refuse_unauthorable_witness_arm(tiers: dict[str, Any]) -> None:
+    """Refuse a *launch* whose declaration claims a tier this binary cannot run.
+
+    The gate for #4103, and it is deliberately about launching rather than
+    about reading. :func:`assurance_tiers_from_posture` stays total: it
+    describes a posture **as written**, which is what lets a registered digest
+    and a recorded run re-derive byte for byte years later. This is the second
+    question, asked only where money is about to be spent — *can the binary in
+    front of us actually author what that declaration promises?*
+
+    Today it cannot, and the reason is structural rather than a missing pin.
+    ``AgentEngineConfig::model_for`` (``crates/stella-cli/src/settings/
+    engine.rs``) resolves ``agents.default.model`` > ``default_model`` and
+    takes no role argument at all; ``ENGINE_AGENT_NAMES`` is the single name
+    ``default``, with ``verifier`` sitting in ``RETIRED_ENGINE_AGENT_NAMES``
+    beside ``pipeline_verifier_model`` in ``RETIRED_ENGINE_ROOT`` — recognized,
+    reported, ignored (``crates/stella-cli/src/settings/unknown.rs``). So every
+    role resolves to one model, and no posture key can separate the verifier
+    from the worker.
+
+    That is #1147's shape with the guard removed. A witness-arm run whose
+    author does not resolve executes the control arm under a treatment-arm
+    digest; what used to catch it was
+    ``PipelineConfig::require_independent_witness``, which was deleted with
+    ``crates/stella-pipeline`` (#3865) and has no successor in this workspace —
+    host-run verification does not exist here at all any more, so there is no
+    place left to arm it. Failing closed here is what keeps the treatment arm
+    from becoming a number that misdescribes itself.
+
+    Every channel into the posture is covered because the input is the
+    resolved declaration rather than a selector: the host-side
+    ``STELLA_WITNESS_AUTHOR_MODEL`` and a harness's overridden
+    ``_build_engine_posture`` (an ArenaBench roles config, #2134's channel)
+    both arrive here as the same ``witness-on``.
+
+    Raises ``RuntimeError`` before anything is spent; returns ``None`` for the
+    control arm, which is every run this workspace's binary can honestly
+    record.
+    """
+    if tiers.get("arm") != "witness-on":
+        return
+    raise RuntimeError(
+        "refusing to launch the witness treatment arm: this Stella has one "
+        f"engine role, so the posture's verifier pin "
+        f"(`{tiers.get('verifier_model')}`) cannot reach any model call and "
+        f"the worker (`{tiers.get('worker_model')}`) would author its own "
+        "witness. `AgentEngineConfig::model_for` resolves "
+        "`agents.default.model` > `default_model` with no role argument, and "
+        "`pipeline_verifier_model`/`agents.verifier` are retired keys the "
+        "launcher recognizes and ignores. The run would spend a treatment "
+        "arm's money on a control arm's configuration and record it under a "
+        "treatment arm's digest (#1147). Unset "
+        f"`{_WITNESS_AUTHOR_ENV}` to run the control arm, which is the only "
+        "arm this binary can honestly record; see #4103 for why the arm is "
+        "not merely unset here but unavailable."
+    )
 
 
 def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
