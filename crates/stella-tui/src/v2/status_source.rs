@@ -27,6 +27,7 @@ pub struct StatusSource {
     spend_usd: f64,
     saved_usd: f64,
     inbox: u32,
+    deadline_remaining_ms: Option<u64>,
 }
 
 impl StatusSource {
@@ -48,6 +49,10 @@ impl StatusSource {
             // Unread only. The badge exists to be cleared, so a read
             // notification is not something the row should still be counting.
             inbox: ui.notifications.iter().filter(|n| !n.read).count() as u32,
+            // The armed task deadline, or nothing. SPEC 5 gives this a cell on
+            // the bar only while it is armed, so the `Option` is the whole
+            // signal and must not be flattened to a number here.
+            deadline_remaining_ms: focused.and_then(|a| a.model.hud.deadline_remaining_ms),
         }
     }
 
@@ -61,6 +66,7 @@ impl StatusSource {
             spend_usd: self.spend_usd,
             saved_usd: self.saved_usd,
             inbox: self.inbox,
+            deadline_remaining_ms: self.deadline_remaining_ms,
         }
     }
 }

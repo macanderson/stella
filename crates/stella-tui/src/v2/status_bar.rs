@@ -28,6 +28,29 @@
 //! The row it gives back is not free floor space either: it is the row the
 //! keybinding hint line and the pipeline line above the prompt now occupy.
 //!
+//! ## The one conditional cell
+//!
+//! Everything above is permanent. `deadline` is not: it draws only while a
+//! task deadline is armed, sits third — immediately after the stage — and is
+//! the last cell the drop rule gives up (SPEC 5).
+//!
+//! It is the one cell here that says the run is about to *stop* rather than
+//! how it is going, and an expiring deadline is a `SIGKILL`. It was on the v1
+//! wall, SPEC 5's re-homing sentence did not mention it, and #4123 dropped it
+//! along with the row — for a day nothing on any screen counted it down
+//! (#4126). What survives from v1 is the distinction that made the cell worth
+//! having: `None` is *nobody is timing this run* and draws nothing at all,
+//! `Some(0)` is *this run is out of time* and draws a word. A cell reading
+//! `0s` for an unarmed run would say the first thing in the second thing's
+//! shape.
+//!
+//! v1 coloured it on a three-rung green/amber/red ladder. That does not
+//! survive SPEC 2: green means *pass* here and an unfinished countdown has
+//! passed nothing, and the palette has no amber that is not gold, which means
+//! stella acting. Two rungs, then — `text` while there is time, `red` inside
+//! the last minute, where a kill this close is a destructive event in
+//! progress and that is what §2 keeps red for.
+//!
 //! ## What is deliberately NOT here
 //!
 //! A `det %` cell — the deterministic/model split. An earlier draft of SPEC 5
@@ -82,7 +105,19 @@ pub struct Status<'a> {
     pub saved_usd: f64,
     /// Queued inbound messages.
     pub inbox: u32,
+    /// Wall clock left before the armed task deadline, in milliseconds.
+    ///
+    /// `None` and `Some(0)` are different facts and render differently: see
+    /// the module doc's "The one conditional cell".
+    pub deadline_remaining_ms: Option<u64>,
 }
+
+/// At or under this much left, the countdown turns red.
+///
+/// One minute, because that is the horizon on which a human can still do
+/// something about a `SIGKILL` — steer the turn, raise the deadline, or take
+/// the artifact off the machine before it is taken away.
+const DEADLINE_ALARM_MS: u64 = 60_000;
 
 /// A ratio computed upstream, made safe to draw with.
 ///
@@ -180,9 +215,17 @@ pub fn cells(status: &Status<'_>) -> Vec<Vec<Span<'static>>> {
     // same kind of fact and take the same metal; only their labels differ.
     let money = Style::new().fg(token::GOLD);
 
-    vec![
+    let mut cells = vec![
         vec![Span::styled(status.worker.to_string(), text)],
         vec![Span::styled(status.stage.to_string(), text)],
+    ];
+    // Third, so the drop rule — which pops from the right — gives it up last
+    // of everything it is allowed to give up. The cell that says the run is
+    // about to stop must not be the first casualty of a narrow terminal.
+    if let Some(remaining_ms) = status.deadline_remaining_ms {
+        cells.push(deadline_cell(remaining_ms, label));
+    }
+    cells.extend([
         {
             let mut ctx = vec![Span::styled("ctx ", label)];
             ctx.extend(meter(status.ctx_used));
@@ -200,7 +243,49 @@ pub fn cells(status: &Status<'_>) -> Vec<Vec<Span<'static>>> {
             Span::styled("✉ ", Style::new().fg(token::SILVER)),
             Span::styled(status.inbox.to_string(), text),
         ],
+    ]);
+    cells
+}
+
+/// The CLOCK cell: what is left of an armed task deadline (SPEC 5).
+///
+/// Only ever called with an armed deadline — an unarmed run has no cell,
+/// because "nobody is timing this" is not a duration and must not be drawn as
+/// one.
+fn deadline_cell(remaining_ms: u64, label: Style) -> Vec<Span<'static>> {
+    let value = if remaining_ms <= DEADLINE_ALARM_MS {
+        token::RED
+    } else {
+        token::TEXT
+    };
+    vec![
+        // The word is the state's non-colour carrier (SPEC 13): on a 16-colour
+        // terminal, under `NO_COLOR`, or to a red-blind reader, `deadline` is
+        // still the thing that distinguishes this cell from a number.
+        Span::styled("deadline ", label),
+        Span::styled(fmt_remaining(remaining_ms), Style::new().fg(value)),
     ]
+}
+
+/// The countdown's text: the coarsest unit that still resolves the wait.
+///
+/// Seconds are dropped above an hour deliberately. A run with an hour left is
+/// not one anybody is watching second by second, and a cell that changes width
+/// on every tick costs each of its neighbours a column each time.
+///
+/// Carried over from the v1 statline unchanged, `expired` included — the one
+/// string here that is a word rather than a quantity, because `0s` invites the
+/// reading "no deadline", which is the single thing it does not mean.
+fn fmt_remaining(remaining_ms: u64) -> String {
+    let secs = remaining_ms / 1_000;
+    match secs {
+        0 if remaining_ms == 0 => "expired".to_string(),
+        // Sub-second but not yet crossed: still armed, still counting.
+        0 => "<1s".to_string(),
+        s if s < 60 => format!("{s}s"),
+        s if s < 3_600 => format!("{}m {:02}s", s / 60, s % 60),
+        s => format!("{}h {:02}m", s / 3_600, (s % 3_600) / 60),
+    }
 }
 
 /// A fraction as whole percent, saturating at both ends.
@@ -293,6 +378,11 @@ impl Widget for StatusBar<'_> {
         // with a gap between them. Worker and stage are never dropped — which
         // pin is answering and where the run is are the two facts a status bar
         // exists for; everything after them is negotiable.
+        //
+        // An armed `deadline` is negotiable *last*, which [`cells`] arranges by
+        // placing it third rather than by teaching this loop a priority table.
+        // Position is the priority here, and one mechanism that both the reader
+        // and the renderer can see beats two that have to agree.
         while cells.len() > 2 && joined_width(&cells) + help_width + 2 > width {
             cells.pop();
         }

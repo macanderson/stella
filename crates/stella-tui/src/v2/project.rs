@@ -82,6 +82,12 @@ pub fn status<'a>(model: &'a WorkspaceModel, ui: &DeckUi, worker: &'a str) -> St
         spend_usd: model.total_cost(),
         saved_usd: model.total_cache_savings_usd(),
         inbox: ui.notifications.iter().filter(|n| !n.read).count() as u32,
+        // Absent unless a deadline is armed, and the fold already keeps that
+        // distinction: `BudgetTick` carries `None` for an untimed run and
+        // `Some(0)` for one that is out of time (#2435). Passed through
+        // rather than defaulted, because a `0` invented here would render as
+        // `expired` on a run nobody was timing.
+        deadline_remaining_ms: focused.and_then(|a| a.model.hud.deadline_remaining_ms),
     }
 }
 
