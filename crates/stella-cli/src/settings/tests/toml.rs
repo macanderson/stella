@@ -427,6 +427,38 @@ fn unknown_toml_roots_are_flagged() {
     );
 }
 
+/// `[plugins]` is read by the loader, so it must not be reported as a typo.
+///
+/// The third instance of the omission `unknown::TOML_ROOT_FIELDS` already
+/// documents twice — `[seats]` (#3908) and `[self_driving]`/`[issues]` — and it
+/// bites hardest here: `plugins.<name> = "off"` is the per-plugin retraction
+/// switch, so the operator most likely to hit the warning is the one switching
+/// a plugin OFF, being told the section they used to do it is misspelled.
+#[test]
+fn the_plugin_retraction_table_is_a_recognized_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[plugins]\nvera = \"off\"\n",
+    );
+
+    // It really is read: the switch survives into `Settings`.
+    let settings = load_toml(&path, ConfigScope::Project).expect("should load");
+    assert_eq!(
+        settings.plugins.get("vera"),
+        Some(&Toggle::Off),
+        "the loader lowers [plugins] into Settings"
+    );
+
+    // ...so the walker must not call it a typo.
+    assert_eq!(
+        super::unknown::unknown_toml_keys_in(&path),
+        Vec::<String>::new(),
+        "a section the loader reads was reported as an unrecognized key"
+    );
+}
+
 /// The two vocabularies are genuinely different, and each must reject the
 /// other's spelling — otherwise the warning would bless a key that configures
 /// nothing in the format actually being read.

@@ -438,7 +438,7 @@ pub(super) fn unknown_keys_in(path: &Path) -> Vec<String> {
 /// `allowed_models` → `models.allowed`) and adds `meta`. Sharing one list
 /// would make a JSON-only key look valid in TOML and vice versa, which is the
 /// exact confusion this pass exists to prevent.
-const TOML_ROOT_FIELDS: &[&str] = &[
+pub(super) const TOML_ROOT_FIELDS: &[&str] = &[
     "meta",
     "run",
     "workspace",
@@ -471,6 +471,18 @@ const TOML_ROOT_FIELDS: &[&str] = &[
     // change, or this walker tells people their working config is a typo.
     "self_driving",
     "issues",
+    // `[plugins]` — the per-plugin retraction switches
+    // (`TomlConfig::plugins`). The THIRD instance of the omission the two
+    // comments above record, and the one that bites hardest: the operator most
+    // likely to write this section is the one switching a plugin OFF, and the
+    // walker told them the section they used to do it was a typo while the
+    // loader was reading it correctly the whole time.
+    //
+    // Twice was a pattern; three times is a missing guard. See
+    // `toml_root_vocabulary_is_total` in `super::completeness`, which now
+    // destructures `TomlConfig` exhaustively so a root section added without an
+    // entry here stops the crate compiling instead of shipping this warning.
+    "plugins",
 ];
 
 const META_FIELDS: &[&str] = &["schema_version", "scope"];
