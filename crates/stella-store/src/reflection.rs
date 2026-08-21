@@ -228,10 +228,39 @@ impl Store {
                 params![execution_id],
                 |r| r.get::<_, i64>(0),
             )? > 0;
+            // Two sources, because either alone answers "did this turn write
+            // anything?" with a confident no when it cannot see (#3413's
+            // measurement, and the tool ledger, have disjoint blind spots):
+            //
+            // - `files_touched` is the turn-boundary tree measurement. It is
+            //   the better evidence — it sees `bash`, MCP servers and custom
+            //   script tools, none of which name a path in a schema the engine
+            //   reads — but it is empty for a session with no work journal
+            //   bound, on the session's first snapshot (baseline only), AND
+            //   whenever the snapshot itself failed, which
+            //   `SessionDurability::snapshot_worktree` cannot distinguish from
+            //   a clean tree.
+            // - A file-writing tool call that returned `ok` is weaker evidence
+            //   about *what* landed — a tool's arguments are a request, not a
+            //   measurement, which is why `stella-cli`'s `turn_files` refuses
+            //   to synthesize line counts from them (#2290). But this column
+            //   is a **boolean**, not a count, and for that question a
+            //   succeeded `edit_file` is a fact. It can only ever turn a wrong
+            //   `false` into a right `true`.
+            //
+            // Witnessed in session `ses-1787342320630-36613`: nineteen
+            // successful `edit_file` calls against two files that git confirms
+            // were left modified, `files_touched` empty, and this column
+            // reported `false` — telling the reflection loop a turn that
+            // edited one file sixteen times had written nothing.
             let wrote_files: bool = conn.query_row(
-                "SELECT COUNT(*) FROM files_touched \
-                 WHERE execution_id = ?1 \
-                   AND (ops LIKE '%C%' OR ops LIKE '%U%' OR ops LIKE '%D%')",
+                "SELECT \
+                   (SELECT COUNT(*) FROM files_touched \
+                     WHERE execution_id = ?1 \
+                       AND (ops LIKE '%C%' OR ops LIKE '%U%' OR ops LIKE '%D%')) \
+                 + (SELECT COUNT(*) FROM tool_calls \
+                     WHERE execution_id = ?1 AND ok = 1 \
+                       AND name IN ('write_file', 'edit_file', 'delete_file'))",
                 params![execution_id],
                 |r| r.get::<_, i64>(0),
             )? > 0;
@@ -261,6 +290,113 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wrote_files_of(store: &Store, execution_id: i64) -> i64 {
+        let conn = store.lock();
+        conn.query_row(
+            "SELECT wrote_files FROM execution_reflection WHERE execution_id = ?1",
+            params![execution_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    use stella_protocol::event::AgentEvent;
+    use stella_protocol::tool::{ToolCall, ToolOutput};
+
+    fn started(call_id: &str, name: &str) -> AgentEvent {
+        AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: call_id.into(),
+                name: name.into(),
+                input: serde_json::json!({"path": "src/engine.rs"}),
+            },
+        }
+    }
+
+    fn settled(call_id: &str, output: ToolOutput) -> AgentEvent {
+        AgentEvent::ToolResult {
+            call_id: call_id.into(),
+            output,
+            duration_ms: 4,
+            speculated: false,
+        }
+    }
+
+    fn ok_output(content: &str) -> ToolOutput {
+        ToolOutput::Ok {
+            content: content.into(),
+            data: None,
+        }
+    }
+
+    /// The witness: a turn whose only evidence of writing is the tool ledger
+    /// is still a turn that wrote.
+    ///
+    /// `files_touched` has three benign ways to be empty (unbound journal,
+    /// first snapshot of the session, genuinely clean tree) and one that is
+    /// not benign at all — a failed measurement, which
+    /// `SessionDurability::snapshot_worktree` discards into the same empty
+    /// vector. Deriving this column from that table alone therefore reported
+    /// a confident `false` whenever the measurement could not see.
+    ///
+    /// Observed in session `ses-1787342320630-36613`: nineteen successful
+    /// `edit_file` calls against two files git confirms were left modified,
+    /// zero `files_touched` rows, `wrote_files = 0`.
+    #[test]
+    fn a_turn_that_edited_files_wrote_files_even_with_no_tree_measurement() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("deck", "fix the search ladder", "openrouter", "kimi-k3")
+            .unwrap();
+        store.record_event(id, 0, &started("c1", "edit_file")).unwrap();
+        store
+            .record_event(id, 1, &settled("c1", ok_output("edited")))
+            .unwrap();
+        store.materialize_tool_calls(id).unwrap();
+
+        // The tree measurement produced nothing — the defect's exact shape.
+        assert_eq!(store.count("files_touched").unwrap(), 0);
+
+        store.finalize_execution_reflection(id).unwrap();
+        assert_eq!(
+            wrote_files_of(&store, id),
+            1,
+            "a succeeded edit_file is a fact about whether the turn wrote, even when the \
+             turn-boundary snapshot saw nothing"
+        );
+    }
+
+    /// The other direction must not drift: a read-only turn still wrote
+    /// nothing, and a *failed* write is not a write.
+    #[test]
+    fn reading_and_failing_to_write_are_both_still_wrote_nothing() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("deck", "look around", "openrouter", "kimi-k3")
+            .unwrap();
+        store.record_event(id, 0, &started("c1", "read_file")).unwrap();
+        store
+            .record_event(id, 1, &settled("c1", ok_output("fn main() {}")))
+            .unwrap();
+        // An edit that did not land. `ok = 0`, so it proves nothing.
+        store.record_event(id, 2, &started("c2", "edit_file")).unwrap();
+        store
+            .record_event(
+                id,
+                3,
+                &settled("c2", ToolOutput::error("old_string not found")),
+            )
+            .unwrap();
+        store.materialize_tool_calls(id).unwrap();
+
+        store.finalize_execution_reflection(id).unwrap();
+        assert_eq!(
+            wrote_files_of(&store, id),
+            0,
+            "a read is not a write, and neither is an edit that was refused"
+        );
+    }
 
     fn a_review() -> SelfReviewRow {
         SelfReviewRow {
