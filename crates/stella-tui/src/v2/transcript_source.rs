@@ -85,8 +85,8 @@ pub fn head_metal(name: &str) -> Color {
 ///    closing entry: a result cannot land after the turn that dispatched it
 ///    completed, so this bounds the walk by turn length rather than by session
 ///    length, and an unanswered head (a cancelled call) costs one turn's scan.
-/// 2. **The measurement, through that reference.**
-///    [`crate::render::resolve_inline_delta`] reads
+/// 2. **The measurement, through that reference.** `render::resolve_inline_delta`
+///    (crate-private, so named rather than linked) reads
 ///    [`crate::model::FileState::delta_at`] — the counts the *emitter*
 ///    measured. Never the tool's input, never a recount of the rendered diff:
 ///    the first is what #2290 established as the defect (`edit_file` with
@@ -157,7 +157,7 @@ pub fn compaction_rows(
 /// (they are one reading), a write states what it wrote, a deletion what it
 /// removed. A read never resolves one at all — only a *mutation* stamps an
 /// inline-diff reference, so a read's line count has no source on this path and
-/// stays honestly absent (#4177).
+/// stays honestly absent (#4180).
 fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
     match name {
         "read_file" => EventKind::Read {

@@ -106,9 +106,11 @@ pub enum EventKind {
     /// `▸ read <path> · <n> lines` — folded by default. The count rides
     /// `Extent::added` and has no producer today: only a *mutation* stamps the
     /// inline-diff reference the head's measurement is resolved through, so a
-    /// read states its path and nothing about its size (#4177).
+    /// read states its path and nothing about its size (#4180).
     Read { extent: Extent },
-    /// `● edit <path> +a -b`, the counts absent until the edit returns.
+    /// `● edit <path> +a -b`, both counts or neither — they are one reading.
+    /// Absent until the emitter has measured the change (#4154), which is the
+    /// turn boundary rather than the moment the call returns.
     Edit { extent: Extent },
     /// `＋ write <path> · new file · n lines`, the count on `Extent::added`.
     Write { extent: Extent },

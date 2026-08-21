@@ -314,7 +314,7 @@ fn settled_entry_count(transcript_len: usize, include_trailing: bool) -> usize {
 /// which resolves through the identical ledger. The alternative — holding a
 /// mutating head back until the turn boundary measures the tree — would trade a
 /// missing column for a silent reader through the whole of a long call, which
-/// is the one thing this mode exists to prevent. #4178 tracks the divergence
+/// is the one thing this mode exists to prevent. #4181 tracks the divergence
 /// from the pane, where the same row does fill in.
 pub fn block_lines(
     model: &WorkspaceModel,
