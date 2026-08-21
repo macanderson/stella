@@ -27,13 +27,29 @@ available_for_speculation = false
 risk_level = "destructive"
 
 description = '''
-Delete a file in the workspace. Prefer this over `bash rm`. A symlink is removed as the link; its target is left alone.
+Delete a file in the workspace. Prefer this over `bash rm`. A symlink is removed as the link; its target is left alone. To delete several files, send them in ONE call with `files`: every path is checked before any of them is removed.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.
 input_schema = '''
 {
   "properties": {
+    "files": {
+      "description": "Several files deleted in one call — every path is scope-checked and confirmed to be a file before any of them is removed. Use this to act on several targets in ONE call instead of several calls. Omit it and use the single-target fields above for one target; passing both is refused. At most 32.",
+      "items": {
+        "properties": {
+          "path": {
+            "description": "Workspace-relative path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "path": {
       "description": "Workspace-relative path",
       "type": "string"
@@ -43,9 +59,7 @@ input_schema = '''
       "type": "string"
     }
   },
-  "required": [
-    "path"
-  ],
+  "required": [],
   "type": "object"
 }
 '''

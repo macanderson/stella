@@ -27,13 +27,37 @@ available_for_speculation = true
 risk_level = "low"
 
 description = '''
-Read a file from the workspace. Returns content with 1-based line numbers. Use offset and limit for ranges.
+Read a file from the workspace. Returns content with 1-based line numbers. Use offset and limit for ranges. To read several files — or several ranges — read them in ONE call with `files` rather than one call each.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.
 input_schema = '''
 {
   "properties": {
+    "files": {
+      "description": "Several files, or several ranges of one file, read in a single call. Use this to act on several targets in ONE call instead of several calls. Omit it and use the single-target fields above for one target; passing both is refused. At most 32.",
+      "items": {
+        "properties": {
+          "limit": {
+            "description": "Max lines to return (optional; default and ceiling 2000)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "1-based start line (optional)",
+            "type": "integer"
+          },
+          "path": {
+            "description": "File path relative to workspace root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "limit": {
       "description": "Max lines to return (optional; default and ceiling 2000)",
       "type": "integer"
@@ -51,9 +75,7 @@ input_schema = '''
       "type": "string"
     }
   },
-  "required": [
-    "path"
-  ],
+  "required": [],
   "type": "object"
 }
 '''

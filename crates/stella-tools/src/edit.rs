@@ -205,12 +205,41 @@ fn drift_echo(content: &str) -> String {
     numbered
 }
 
+/// The plural key: several edits, applied as one all-or-nothing change.
+const EDITS_KEY: &str = "edits";
+
+/// One replacement — the unit both spellings of an `edit_file` call reduce to.
+struct EditTarget {
+    path: String,
+    old_string: String,
+    new_string: String,
+    replace_all: bool,
+}
+
+/// Parse one edit. Shared by the single form and by every element of `edits`.
+fn edit_target(value: &Value) -> Result<EditTarget, crate::input::InputError> {
+    Ok(EditTarget {
+        path: crate::input::required_str(value, "path")?.to_string(),
+        old_string: crate::input::required_str(value, "old_string")?.to_string(),
+        new_string: crate::input::required_str(value, "new_string")?.to_string(),
+        replace_all: crate::input::optional_bool(value, "replace_all")?.unwrap_or(false),
+    })
+}
+
+/// One file's in-flight content while a batch is being composed.
+struct Pending {
+    scope_root: std::path::PathBuf,
+    path: String,
+    content: String,
+    edits: usize,
+}
+
 #[async_trait]
 impl Tool for EditFile {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "edit_file".into(),
-            description: "Replace an exact substring in a file. By default the old_string must appear exactly once; set replace_all to replace every occurrence.".into(),
+            description: "Replace an exact substring in a file. By default the old_string must appear exactly once; set replace_all to replace every occurrence. To make several edits — in one file or across files — send them in ONE call with `edits`: the whole batch applies or none of it does, and later edits see the earlier ones.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -218,10 +247,22 @@ impl Tool for EditFile {
                     "old_string": { "type": "string", "description": "Exact text to find" },
                     "new_string": { "type": "string", "description": "Replacement text" },
                     "replace_all": { "type": "boolean", "description": "Replace all occurrences (default false)" },
+                    "edits": crate::batch::plural_schema(
+                        serde_json::json!({
+                            "path": { "type": "string", "description": "File path relative to workspace root" },
+                            "old_string": { "type": "string", "description": "Exact text to find" },
+                            "new_string": { "type": "string", "description": "Replacement text" },
+                            "replace_all": { "type": "boolean", "description": "Replace all occurrences (default false)" }
+                        }),
+                        &["path", "old_string", "new_string"],
+                        "Several edits applied as ONE all-or-nothing change, in order — \
+                         two edits to the same file compose, and if any edit fails nothing \
+                         is written.",
+                    ),
                     "reason": { "type": "string", "description": "Why you are editing this file — recorded in the session's file-touch audit log" },
                     "storage_intent": { "type": "string", "description": "Only when creating a database table/column that the storage gate flagged as similar to an existing one: one sentence of purpose plus why the existing objects don't fit. Recorded in stella.storage.toml." }
                 },
-                "required": ["path", "old_string", "new_string"]
+                "required": []
             }),
             read_only: false,
             speculation_safe: false,
@@ -229,6 +270,19 @@ impl Tool for EditFile {
     }
 
     async fn execute(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
+        if crate::batch::is_plural(input, EDITS_KEY) {
+            return self.edit_batch(input, ctx).await;
+        }
+        // The single form runs the original path over the original `input`,
+        // untouched: its success string is an identity stamp the stagnation
+        // detector keys on (#3176) and its drift attribution is asserted
+        // verbatim, so the batch work must not reshape either.
+        self.edit_one(input, ctx).await
+    }
+}
+
+impl EditFile {
+    async fn edit_one(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let root = ctx.root();
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
@@ -391,6 +445,203 @@ impl Tool for EditFile {
                 ))
             }
             Err(e) => ToolOutput::error(format!("failed to write `{path}`: {e}")),
+        }
+    }
+
+    /// Apply several edits as one change: compose every replacement in memory,
+    /// and touch the disk only once all of them have landed.
+    ///
+    /// **All-or-nothing is the whole point.** A `sed -i` chain applies edit 1,
+    /// fails edit 2, and leaves a tree that neither the model nor the turn's
+    /// diff can describe — the model must now work out which half happened
+    /// before it can retry. Here a miss writes nothing, so a failed batch costs
+    /// a retry instead of a repair. That is a guarantee the shell cannot offer
+    /// at any length, which is what makes this the better tool rather than
+    /// merely the sanctioned one.
+    ///
+    /// Edits compose **in order**, so a second edit to a file sees the first.
+    /// That is what lets one call rename a symbol and then edit the line that
+    /// now mentions it.
+    async fn edit_batch(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
+        let root = ctx.root();
+        let targets = match crate::batch::targets(input, EDITS_KEY, "path", edit_target) {
+            Ok(targets) => targets,
+            Err(err) => return ToolOutput::from(err),
+        };
+
+        let mut pending: Vec<Pending> = Vec::new();
+        for (index, target) in targets.iter().enumerate() {
+            // Scope is consulted per target. There is no batch-level path for
+            // a gate to miss: the plural key changes the arity of this loop
+            // and nothing else.
+            let (scope_root, path) = match ctx.resolve_for_write(&target.path) {
+                Ok(resolved) => resolved,
+                Err(refusal) => {
+                    return ToolOutput::error(format!(
+                        "`{EDITS_KEY}`[{index}] (`{}`): {refusal} — nothing was written",
+                        target.path
+                    ));
+                }
+            };
+            if target.old_string.is_empty() {
+                return ToolOutput::error(format!(
+                    "`{EDITS_KEY}`[{index}] (`{path}`): old_string must not be empty — use \
+                     write_file to create or replace a whole file. Nothing was written."
+                ));
+            }
+
+            // One load per file. Every later edit to it composes on the
+            // in-memory copy rather than re-reading a file this batch has not
+            // written yet.
+            let slot = match pending
+                .iter()
+                .position(|p| p.scope_root == scope_root && p.path == path)
+            {
+                Some(slot) => slot,
+                None => {
+                    let handle = match crate::rootfd::RootHandle::open(&scope_root) {
+                        Ok(handle) => Arc::new(handle),
+                        Err(e) => {
+                            return ToolOutput::error(format!("cannot open workspace root: {e}"));
+                        }
+                    };
+                    let content = match crate::rootfd::read_to_string_async(&handle, &path).await {
+                        Ok(content) => content,
+                        Err(e) => {
+                            return ToolOutput::error(format!(
+                                "`{EDITS_KEY}`[{index}]: failed to read `{path}`: {e} — nothing \
+                                 was written"
+                            ));
+                        }
+                    };
+                    pending.push(Pending {
+                        scope_root,
+                        path,
+                        content,
+                        edits: 0,
+                    });
+                    pending.len() - 1
+                }
+            };
+
+            // A needle copied out of `read_file`'s render carries LF newlines
+            // even when the file on disk is CRLF — see [`crlf_promoted`].
+            let promoted = crlf_promoted(
+                &pending[slot].content,
+                &target.old_string,
+                &target.new_string,
+            );
+            let (old_string, new_string) = match &promoted {
+                Some((old, new)) => (old.as_str(), new.as_str()),
+                None => (target.old_string.as_str(), target.new_string.as_str()),
+            };
+
+            let current = &pending[slot].content;
+            if !current.contains(old_string) {
+                return ToolOutput::error(self.batch_miss(root, &pending[slot], index, old_string));
+            }
+            let count = current.matches(old_string).count();
+            if count > 1 && !target.replace_all {
+                return ToolOutput::error(format!(
+                    "`{EDITS_KEY}`[{index}]: old_string appears {count} times in `{}` — set \
+                     replace_all=true or provide a more specific string. Nothing was written.",
+                    pending[slot].path
+                ));
+            }
+            pending[slot].content = if target.replace_all {
+                current.replace(old_string, new_string)
+            } else {
+                current.replacen(old_string, new_string, 1)
+            };
+            pending[slot].edits += 1;
+        }
+
+        // Every edit validated against the composed content. Only now does
+        // anything reach the disk.
+        let mut report = Vec::with_capacity(pending.len());
+        for file in &pending {
+            let handle = match crate::rootfd::RootHandle::open(&file.scope_root) {
+                Ok(handle) => Arc::new(handle),
+                Err(e) => return ToolOutput::error(format!("cannot open workspace root: {e}")),
+            };
+            if let Err(e) = crate::durable_write::write_file_durably_at(
+                handle,
+                file.path.clone(),
+                file.content.as_bytes().to_vec(),
+                false,
+            )
+            .await
+            {
+                return ToolOutput::error(format!("failed to write `{}`: {e}", file.path));
+            }
+            // The model knows the bytes it just produced — record them so its
+            // own edit is never later misattributed as drift.
+            self.ledger.record_known(root, &file.path, &file.content);
+            report.push(format!(
+                "{} — {} edit(s), file sha256/8 {}",
+                file.path,
+                file.edits,
+                crate::staleness::sha256_8(file.content.as_bytes())
+            ));
+        }
+        // The per-file digests are the batch's identity stamp, for the same
+        // reason the single form carries one (#3176): N distinct batches must
+        // not produce byte-identical output, or the stagnation detector reads
+        // correct work as a stuck loop.
+        ToolOutput::ok(format!(
+            "applied {} edit(s) across {} file(s), all or nothing:\n{}",
+            targets.len(),
+            pending.len(),
+            report.join("\n")
+        ))
+    }
+
+    /// Attribute a miss inside a batch, in the vocabulary the single form uses.
+    ///
+    /// The one thing this must not do is cry drift at its own work: once this
+    /// batch has edited a file, the composed content no longer matches what the
+    /// ledger last saw, and reporting that as an out-of-band modification would
+    /// send the model hunting for a second writer that is itself.
+    fn batch_miss(
+        &self,
+        root: &std::path::Path,
+        file: &Pending,
+        index: usize,
+        old_string: &str,
+    ) -> String {
+        let path = &file.path;
+        let head = format!("`{EDITS_KEY}`[{index}]: old_string not found in `{path}`");
+        if let Some(actual) = indentation_only_match(&file.content, old_string) {
+            return format!(
+                "{head} — but the same text IS present with different leading whitespace, so \
+                 the needle was re-indented. Nothing was written. Copy this span \
+                 byte-exact:\n\n--- {path} (actual indentation) ---\n{actual}"
+            );
+        }
+        let composed = if file.edits > 0 {
+            format!(
+                " (an earlier edit in this same batch already changed `{path}`, so match \
+                 against the text as that edit left it)"
+            )
+        } else {
+            String::new()
+        };
+        let current_sha = crate::staleness::hex_sha256(file.content.as_bytes());
+        match self.ledger.last_seen_sha(root, path) {
+            // Only meaningful before this batch touched the file.
+            Some(seen) if seen != current_sha && file.edits == 0 => format!(
+                "{head} — the file CHANGED after you last read it (out-of-band modification); \
+                 the copy in your context is stale. Nothing was written — re-read it and \
+                 re-issue the batch."
+            ),
+            Some(_) => format!(
+                "{head} — the file is otherwise unchanged since you last saw it{composed}; \
+                 check for exact whitespace/newline differences. Nothing was written."
+            ),
+            None => format!(
+                "{head} — no read of this file is recorded this session; read it first and \
+                 copy old_string byte-exact. Nothing was written."
+            ),
         }
     }
 }
@@ -847,5 +1098,132 @@ mod tests {
             }
             ToolOutput::Ok { content, .. } => panic!("expected drift error, got: {content}"),
         }
+    }
+
+    // ── batching (#4151) ──────────────────────────────────────────────────
+
+    /// One call, several edits, across more than one file.
+    #[tokio::test]
+    async fn one_call_applies_several_edits_across_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "let a = 1;\n").unwrap();
+        std::fs::write(dir.path().join("b.rs"), "let b = 2;\n").unwrap();
+
+        let out = EditFile::default()
+            .execute(
+                &serde_json::json!({"edits": [
+                    {"path": "a.rs", "old_string": "1", "new_string": "10"},
+                    {"path": "b.rs", "old_string": "2", "new_string": "20"}
+                ]}),
+                &cx(dir.path()),
+            )
+            .await;
+        assert!(!out.is_error(), "{out:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+            "let a = 10;\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("b.rs")).unwrap(),
+            "let b = 20;\n"
+        );
+    }
+
+    /// **The guarantee `sed -i` cannot offer at any length.**
+    ///
+    /// A shell chain applies edit 1, fails edit 2, and leaves a tree neither
+    /// the model nor the turn's diff can describe — the model has to work out
+    /// which half happened before it can retry. Here a miss anywhere writes
+    /// nothing, so a failed batch costs a retry rather than a repair.
+    #[tokio::test]
+    async fn a_batch_that_fails_midway_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "let a = 1;\n").unwrap();
+        std::fs::write(dir.path().join("b.rs"), "let b = 2;\n").unwrap();
+
+        let out = EditFile::default()
+            .execute(
+                &serde_json::json!({"edits": [
+                    {"path": "a.rs", "old_string": "1", "new_string": "10"},
+                    {"path": "b.rs", "old_string": "NOT PRESENT", "new_string": "x"}
+                ]}),
+                &cx(dir.path()),
+            )
+            .await;
+        let ToolOutput::Error { message, .. } = out else {
+            panic!("a batch with an unmatchable edit must fail: {out:?}");
+        };
+        assert!(message.contains("[1]"), "names the failing edit: {message}");
+        assert!(message.contains("Nothing was written"), "{message}");
+        // The first edit validated cleanly and must STILL not be on disk.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+            "let a = 1;\n",
+            "the edit that would have succeeded must not have landed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("b.rs")).unwrap(),
+            "let b = 2;\n"
+        );
+    }
+
+    /// Two edits to one file compose in order, so the second sees the first.
+    /// That is what lets a single call rename a symbol and then edit the line
+    /// that now mentions it.
+    #[tokio::test]
+    async fn two_edits_to_one_file_compose_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn old_name() {}\n").unwrap();
+
+        let out = EditFile::default()
+            .execute(
+                &serde_json::json!({"edits": [
+                    {"path": "a.rs", "old_string": "old_name", "new_string": "new_name"},
+                    {"path": "a.rs", "old_string": "fn new_name() {}", "new_string": "pub fn new_name() {}"}
+                ]}),
+                &cx(dir.path()),
+            )
+            .await;
+        assert!(
+            !out.is_error(),
+            "the second edit must see the first: {out:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+            "pub fn new_name() {}\n"
+        );
+    }
+
+    /// A batch must not cry drift at its own work: once an earlier edit has
+    /// changed the file, the composed content no longer matches the ledger, and
+    /// calling that an out-of-band modification sends the model hunting for a
+    /// second writer that is itself.
+    #[tokio::test]
+    async fn a_batch_does_not_report_its_own_earlier_edit_as_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "let a = 1;\n").unwrap();
+        let ledger = Arc::new(ReadLedger::default());
+        ledger.record_known(dir.path(), "a.rs", "let a = 1;\n");
+
+        let out = EditFile::with_ledger(ledger)
+            .execute(
+                &serde_json::json!({"edits": [
+                    {"path": "a.rs", "old_string": "1", "new_string": "10"},
+                    {"path": "a.rs", "old_string": "NOT PRESENT", "new_string": "x"}
+                ]}),
+                &cx(dir.path()),
+            )
+            .await;
+        let ToolOutput::Error { message, .. } = out else {
+            panic!("expected the second edit to miss: {out:?}");
+        };
+        assert!(
+            !message.contains("out-of-band"),
+            "the batch's own edit must not be reported as drift: {message}"
+        );
+        assert!(
+            message.contains("earlier edit in this same batch"),
+            "the real cause has to be named: {message}"
+        );
     }
 }

@@ -56,6 +56,22 @@ use super::*;
 /// whole (65,723 bytes) then five more — twelve greps over bytes already in
 /// context, the largest single source of waste in a $3.77 turn.
 ///
+/// The read clause is newer than the write clause, and the asymmetry between
+/// them is why it exists (#4151). One execution ran 24 `sed -n 'A,Bp'` range
+/// reads against 2 `read_file` calls — while making 18 `edit_file` calls and
+/// **zero** `sed -i`. Same model, same turn, same prompt: the paragraph that
+/// named its shell equivalents outright was obeyed, and the paragraph that only
+/// said "use read_file when you already know the exact path" leaked almost
+/// everything. So the read side now names `cat`/`sed -n`/`head`/`tail` the way
+/// the write side has always named `cat > file`/`sed -i`/`rm`.
+///
+/// Wording alone was not expected to carry it, and should not be credited if
+/// the ratio moves: the same telemetry showed 69 distinct timestamps across 71
+/// tool calls, so that model was not emitting the parallel calls the last
+/// paragraph asks for, and `bash` was the only surface through which it could
+/// batch at all. The file tools gained in-schema batch forms in the same change,
+/// which is the half that removes the incentive rather than arguing with it.
+///
 /// No trailing newline: each prompt continues with its own blank line.
 macro_rules! tool_steering {
     () => {
@@ -63,7 +79,9 @@ macro_rules! tool_steering {
 
 To find code, call search first: it takes a description or a name and returns the files that answer it with their symbols, callers and imports attached, so one call usually replaces a run of grep and read_file round trips. Use read_file when you already know the exact path, and bash with grep only when you need every occurrence of one exact literal string. A RANK CEILING note on a search result means your query was too broad, not that search failed: narrow it and search again. Never grep or sed a file you already read in full this turn — those bytes are already in front of you; re-read a specific range with read_file offset and limit only if you need to re-anchor.
 
-To change the workspace, use the file tools rather than the shell: write_file creates or overwrites, edit_file replaces an exact substring, delete_file removes a file. Prefer them over shell equivalents like cat > file, sed -i or rm — they are confined to the workspace root, they report what actually changed, and their edits are what the turn's diff and verification are computed from. bash is for running things: builds, tests, linters, git, anything the task needs executed.
+To read a file, use read_file rather than the shell. Never cat, sed -n, head or tail a file to see it: read_file records what you were shown, and edit_file uses that record to tell a stale needle from a file that changed underneath you — bytes you read through bash leave no such record, so a later edit failure cannot be explained. Needing several files, or several ranges, is not a reason to reach for the shell: pass files to ONE read_file call instead of chaining sed with semicolons.
+
+To change the workspace, use the file tools rather than the shell: write_file creates or overwrites, edit_file replaces an exact substring, delete_file removes a file. Prefer them over shell equivalents like cat > file, sed -i or rm — they are confined to the workspace root, they report what actually changed, and their edits are what the turn's diff and verification are computed from. Each takes a batch too: pass edits to edit_file, or files to write_file or delete_file, to make several changes in one call. A batch is all-or-nothing, which a chain of shell commands can never be — if any part of it fails, nothing is written. bash is for running things: builds, tests, linters, git, anything the task needs executed.
 
 Your coordination tools are the task board (task_create, task_list, task_start, task_complete, task_cancel, task_assign) for multi-step work, delegate to hand a self-contained subtask to a sub-agent, the scratch state plane (save_state, get_state, list_state, delete_state) for intermediate notes and data between steps, and get_environment for the platform facts. Anything beyond these — reaching the network, a service API — arrives as an MCP or custom tool in your schema list; use exactly what is advertised and never assume a capability no schema names.
 
