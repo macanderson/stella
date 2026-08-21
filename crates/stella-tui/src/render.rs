@@ -559,8 +559,9 @@ pub use entry::THINKING_ROWS;
 /// or `None` when the reference can no longer be honoured.
 ///
 /// The diff shown must be the one *this* call produced, so the lookup is by the
-/// `changes` seq recorded at fold time — never "the path's latest diff", which
-/// would misattribute an later edit's change to an earlier row.
+/// `changes` seq the row **claimed** at fold time
+/// ([`mod@crate::model::inline_diff`]) — never "the path's latest diff", which
+/// would misattribute a later edit's change to an earlier row.
 ///
 /// It resolves for as long as that mutation is still remembered:
 /// [`FileState`] keeps the last

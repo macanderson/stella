@@ -28,6 +28,7 @@ use std::collections::VecDeque;
 
 mod error_rows;
 pub mod file_state;
+pub mod inline_diff;
 pub mod recall;
 mod summarize;
 mod turn;
@@ -35,6 +36,8 @@ mod turn;
 #[cfg(test)]
 pub use file_state::DIFF_HISTORY;
 pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
+use inline_diff::ClaimWindow;
+pub use inline_diff::InlineDiffRef;
 pub use recall::{RecallBudget, RecalledFrameRow};
 pub use turn::{Hud, TurnOpening};
 // Re-imported rather than left qualified, so the split was a pure move: every
@@ -102,6 +105,11 @@ pub struct SessionModel {
     /// deltas are accumulated into the trailing entry rather than producing
     /// one line per token.
     pub transcript: Vec<TranscriptEntry>,
+    /// The mutations a tool call in flight has been observed to produce and
+    /// no result row has claimed yet — how a mutating row learns which change
+    /// was its own ([`mod@inline_diff`], where the rule and the two arithmetic
+    /// answers it replaced are argued out).
+    claims: ClaimWindow,
     /// Files the agent touched, in first-touched order, each retaining the
     /// latest diff that rode its `FileChange` event (L-T5 — there is no
     /// second data path for diffs). Capped at [`MAX_TRACKED_FILES`]; the
@@ -497,24 +505,6 @@ pub enum TranscriptEntry {
     },
 }
 
-/// A mutating tool result's handle on the diff it may render inline: the
-/// path into [`SessionModel::files`] plus the `changes` seq of the mutation
-/// *this call produced*. The renderer resolves it against
-/// [`FileState::recent_diffs`], so a row shows the change its own call made
-/// and never a neighbour's. Only the *reference* lives here; the diff bytes
-/// stay on the single event-borne path (L-T5).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InlineDiffRef {
-    /// The key into [`SessionModel::files`].
-    pub path: String,
-    /// The [`FileState::changes`] value this call's own mutation is recorded
-    /// at — one past the counter at fold time, because the surviving producer
-    /// emits at the turn boundary, *after* this result folds (#4155). It
-    /// resolves for as long as that mutation is remembered, and dangles
-    /// (rendering nothing) when the turn measured no net change to the path.
-    pub seq: u32,
-}
-
 impl SessionModel {
     /// A fresh, empty model — the seq-0 state.
     pub fn new() -> Self {
@@ -651,6 +641,7 @@ impl SessionModel {
             AgentEvent::TextDelta { delta } => self.push_streaming_delta(delta),
             AgentEvent::Reasoning { delta } => self.push_reasoning(delta),
             AgentEvent::ToolStart { call } => {
+                self.claims.call_started();
                 self.transcript.push(TranscriptEntry::ToolStart {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),
@@ -706,49 +697,35 @@ impl SessionModel {
                         _ => None,
                     })
                     .unwrap_or_else(|| ("tool".to_string(), None));
+                // This call's window closes here, whether or not it claims
+                // anything.
+                self.claims.call_settled();
                 // Only a *successful* mutation gets an inline-diff reference —
                 // a failed call produced no `FileChange`, and rendering the
                 // path's previous diff under its ✗ would attribute a change
                 // the call never made.
                 //
-                // The seq names the change this call *will* produce, not the
-                // one already recorded. `stella-pipeline`, which emitted one
-                // `FileChange` per adopted change during delivery, is deleted
-                // (#3865); the only producer left is
-                // `stella_cli::turn_files::emit_shared_tree_changes`, which
-                // emits one aggregate change per path at the **turn boundary**
-                // — after every `ToolResult` of the turn has folded — and
-                // `touch_file` records it at the *bumped* `changes`. Stamping
-                // the pre-bump value therefore pointed one change into the
-                // past: a path's first turn resolved to nothing, and every
-                // later turn rendered the PREVIOUS turn's diff under this
-                // turn's edit, which is exactly the misattribution
-                // `render::resolve_inline_diff` exists to prevent (#4155).
+                // The reference names a change this call was *observed* to
+                // produce, never one computed from the path's counter —
+                // [`mod@inline_diff`] is where that rule and the two
+                // arithmetic answers it replaced are argued out (#4155,
+                // #4175, #4203).
+                //
+                // The producer this pairs with is `stella_tools::call_measure`:
+                // the registry measures the work tree the moment a solo
+                // mutating call returns and publishes on the channel the
+                // engine then sends this `ToolResult` on, so the change is
+                // already folded and already remembered by the time this runs.
+                // Nothing here *depends* on that — a call under which no
+                // change folded simply gets no reference — which is the point:
+                // the coupling is a fact this reads, not a convention it
+                // assumes.
                 let diff = if ok {
-                    self.mutated_path_for(call_id).map(|path| {
-                        let seq = self
-                            .files
-                            .iter()
-                            .find(|f| f.path == path)
-                            .map_or(0, |f| f.changes)
-                            + 1;
-                        InlineDiffRef { path, seq }
-                    })
+                    self.mutated_path_for(call_id)
+                        .and_then(|path| self.claims.claim(&path))
                 } else {
                     None
                 };
-                // Several calls may mutate one path in a turn, and they all
-                // compute the same seq — `changes` does not move until the
-                // boundary. Exactly one row may claim that single aggregate
-                // change: the last, whose post-state the diff actually
-                // describes. Earlier rows give up their reference and degrade
-                // to naming their change, the same degradation `DIFF_HISTORY`
-                // aging and `MAX_TRACKED_FILES` eviction already have. The
-                // alternative is every one of them rendering the whole turn's
-                // change as its own.
-                if let Some(dref) = diff.as_ref() {
-                    self.supersede_inline_diff(dref);
-                }
                 self.transcript.push(TranscriptEntry::ToolResult {
                     call_id: call_id.clone(),
                     name,
@@ -879,7 +856,16 @@ impl SessionModel {
                 added,
                 removed,
                 diff,
-            } => self.touch_file(path, *kind, *added, *removed, diff),
+            } => {
+                // A mutation measured while a call is in flight is claimable
+                // by that call's result: #4175's per-call producer publishes
+                // on this same channel between the call's `ToolStart` and its
+                // `ToolResult`. One measured while nothing is running is not,
+                // and [`ClaimWindow::record`] is where that is decided.
+                if let Some(seq) = self.touch_file(path, *kind, *added, *removed, diff) {
+                    self.claims.record(path, seq);
+                }
+            }
             // Every field is carried through. The old fold projected the
             // frames down to their labels here, which is where the deck's
             // recall row lost the ability to be anything but a paragraph —
@@ -1354,31 +1340,15 @@ impl SessionModel {
             .and_then(|(name, path)| is_file_mutation(&name).then_some(path).flatten())
     }
 
-    /// Drop the inline-diff reference from every earlier result that pointed
-    /// at the same change as `dref`, so one change is claimed by one row.
-    ///
-    /// The turn boundary emits **one** aggregate `FileChange` per path, so
-    /// every call that mutated that path in the turn stamps an identical
-    /// `(path, seq)`. Left alone they would each render the turn's whole
-    /// change to that file as their own. The last call keeps it because the
-    /// measured post-state is the one its edit left behind; the earlier rows
-    /// degrade to naming their change rather than showing it.
-    ///
-    /// Called before the new result is pushed, so it never clears its own ref.
-    fn supersede_inline_diff(&mut self, dref: &InlineDiffRef) {
-        for entry in &mut self.transcript {
-            if let TranscriptEntry::ToolResult { diff, .. } = entry
-                && diff.as_ref().is_some_and(|d| d == dref)
-            {
-                *diff = None;
-            }
-        }
-    }
-
     /// Record a file touch, retaining the latest diff for the path (L-T5).
     /// A read on an already-tracked path only grows its read count — the
     /// mutation kind, diff, and `changes` (the inline-diff freshness tag)
     /// stay exactly as the last mutation left them.
+    ///
+    /// Returns the `changes` seq a **mutation** was recorded at — the value
+    /// [`FileState::remember_diff`] tagged it with, and so the only value that
+    /// resolves it — and `None` for a read. Whether a row may claim it is not
+    /// decided here; see [`mod@inline_diff`].
     fn touch_file(
         &mut self,
         path: &str,
@@ -1386,42 +1356,45 @@ impl SessionModel {
         added: u32,
         removed: u32,
         diff: &Option<String>,
-    ) {
+    ) -> Option<u32> {
         self.file_touch_seq += 1;
         let touched_seq = self.file_touch_seq;
         if let Some(existing) = self.files.iter_mut().find(|f| f.path == path) {
             existing.touched_seq = touched_seq;
-            if kind.is_mutation() {
-                existing.kind = kind;
-                existing.latest_diff = diff.clone();
-                existing.changes += 1;
-                existing.added += added;
-                existing.removed += removed;
-                existing.remember_diff(diff, added, removed);
-            } else {
+            if !kind.is_mutation() {
                 existing.reads += 1;
+                return None;
             }
-        } else {
-            if self.files.len() >= MAX_TRACKED_FILES && file_state::evict_lru(&mut self.files) {
-                self.files_evicted += 1;
-            }
-            let mutation = kind.is_mutation();
-            let mut state = FileState {
-                path: path.to_string(),
-                kind,
-                latest_diff: diff.clone(),
-                added: if mutation { added } else { 0 },
-                removed: if mutation { removed } else { 0 },
-                recent_diffs: VecDeque::new(),
-                changes: mutation as u32,
-                reads: !mutation as u32,
-                touched_seq,
-            };
-            if mutation {
-                state.remember_diff(diff, added, removed);
-            }
-            self.files.push(state);
+            existing.kind = kind;
+            existing.latest_diff = diff.clone();
+            existing.changes += 1;
+            existing.added += added;
+            existing.removed += removed;
+            existing.remember_diff(diff, added, removed);
+            return Some(existing.changes);
         }
+        if self.files.len() >= MAX_TRACKED_FILES && file_state::evict_lru(&mut self.files) {
+            self.files_evicted += 1;
+        }
+        let mutation = kind.is_mutation();
+        let mut state = FileState {
+            path: path.to_string(),
+            kind,
+            latest_diff: diff.clone(),
+            added: if mutation { added } else { 0 },
+            removed: if mutation { removed } else { 0 },
+            recent_diffs: VecDeque::new(),
+            changes: mutation as u32,
+            reads: !mutation as u32,
+            touched_seq,
+        };
+        if mutation {
+            state.remember_diff(diff, added, removed);
+        }
+        self.files.push(state);
+        // A path's first mutation is recorded at seq 1, matching the `changes`
+        // the branch above would have bumped to.
+        mutation.then_some(1)
     }
 }
 

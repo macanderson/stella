@@ -97,8 +97,9 @@ pub fn head_metal(name: &str) -> Color {
 ///    change.
 ///
 /// `None` therefore covers three honest cases — the call has not returned, it
-/// failed (a failed mutation stamps no reference), or the turn boundary has not
-/// measured the tree yet — and each of them renders as no column at all.
+/// failed (a failed mutation claims no reference), or nothing measured a change
+/// under it, which is what a call that moved no bytes looks like — and each of
+/// them renders as no column at all.
 #[must_use]
 pub fn measured_delta(
     call_id: &str,
@@ -157,7 +158,7 @@ pub fn compaction_rows(
 /// Which half of the pair a kind states is a property of the verb, and lives
 /// here so one measurement cannot be read two ways: an edit states both sides
 /// (they are one reading), a write states what it wrote, a deletion what it
-/// removed. A read never resolves one at all — only a *mutation* stamps an
+/// removed. A read never resolves one at all — only a *mutation* claims an
 /// inline-diff reference, so a read's line count has no source on this path and
 /// stays honestly absent (#4180).
 fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
@@ -387,25 +388,42 @@ mod tests {
     }
 
     /// The whole chain, driven by the events a real session emits: dispatch,
-    /// result, and the turn boundary's measurement of the tree.
+    /// the measurement of what that call changed, then the result.
     ///
     /// `mutations` is `(call_id, path, added, removed)` per `edit_file` call.
-    /// Every `FileChange` follows every `ToolResult`, which is the **real**
-    /// producer ordering and not a convenience: `stella-pipeline` emitted one
-    /// change per adoption during delivery and is deleted (#3865), leaving
-    /// `stella_cli::turn_files::emit_shared_tree_changes` — one aggregate
-    /// `--numstat` change per path, at the boundary, after every result of the
-    /// turn has folded (#4155). A fixture that measured earlier would prove the
-    /// head fills in under an ordering the product does not produce.
+    ///
+    /// The **ordering is the fixture's whole content**, and it changed with
+    /// the producer (#4175, #4203). A solo mutating call is measured the
+    /// moment it returns and published on the channel the engine then sends
+    /// its `ToolResult` on (`stella_tools::call_measure`), so the change
+    /// folds *between* the call's start and its result — which is what lets a
+    /// row show the change its own call made rather than the turn's total for
+    /// the path.
+    ///
+    /// It used to emit every `FileChange` after every `ToolResult`, because
+    /// the turn-boundary sweep
+    /// (`stella_cli::turn_files::emit_shared_tree_changes`) was the only
+    /// producer left once `stella-pipeline` was deleted (#3865). That sweep
+    /// still runs and still reports what the per-call readings did not claim,
+    /// but a change it reports belongs to no call and no row claims it — see
+    /// `SessionModel::unclaimed_changes`. A fixture that measured there would
+    /// now prove nothing about a head at all.
     fn edited(mutations: &[(&str, &str, u32, u32)]) -> SessionModel {
         let mut model = SessionModel::new();
-        for (call_id, path, ..) in mutations {
+        for (call_id, path, added, removed) in mutations {
             model.apply(&AgentEvent::ToolStart {
                 call: ToolCall {
                     call_id: (*call_id).into(),
                     name: "edit_file".into(),
                     input: serde_json::json!({ "path": path }),
                 },
+            });
+            model.apply(&AgentEvent::FileChange {
+                path: (*path).into(),
+                kind: FileChangeKind::Modified,
+                added: *added,
+                removed: *removed,
+                diff: Some(format!("@@ -1,1 +1,1 @@\n+{path}")),
             });
             model.apply(&AgentEvent::ToolResult {
                 call_id: (*call_id).into(),
@@ -415,15 +433,6 @@ mod tests {
                 },
                 duration_ms: 2,
                 speculated: false,
-            });
-        }
-        for (_, path, added, removed) in mutations {
-            model.apply(&AgentEvent::FileChange {
-                path: (*path).into(),
-                kind: FileChangeKind::Modified,
-                added: *added,
-                removed: *removed,
-                diff: Some(format!("@@ -1,1 +1,1 @@\n+{path}")),
             });
         }
         model

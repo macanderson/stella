@@ -967,6 +967,16 @@ mod tests {
                 input: serde_json::json!({"path": "src/x.rs"}),
             },
         });
+        // The call's own measurement, where the per-call producer puts it:
+        // between the call's dispatch and its result (#4175), which is what
+        // lets the row claim it.
+        model.apply(&AgentEvent::FileChange {
+            path: "src/x.rs".into(),
+            kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
+            diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
+        });
         model.apply(&AgentEvent::ToolResult {
             call_id: "c1".into(),
             output: ToolOutput::Ok {
@@ -975,13 +985,6 @@ mod tests {
             },
             duration_ms: 3,
             speculated: false,
-        });
-        model.apply(&AgentEvent::FileChange {
-            path: "src/x.rs".into(),
-            kind: FileChangeKind::Modified,
-            added: 1,
-            removed: 0,
-            diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
         });
         let expanded = HashSet::new();
         let mut fold = SessionFold::default();

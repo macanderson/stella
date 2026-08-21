@@ -112,8 +112,9 @@ pub(crate) fn evict_lru(files: &mut Vec<FileState>) -> bool {
 impl FileState {
     /// Record a mutation against the `changes` value it produced, whether or
     /// not the emitter attached a patch for it. Called only for mutations, and
-    /// only after `changes` has been bumped, so the tag matches the seq the
-    /// mutation's own tool result stamped.
+    /// only after `changes` has been bumped, so the tag is the seq the
+    /// mutation's own tool result claims
+    /// ([`mod@crate::model::inline_diff`]).
     ///
     /// A change carrying `diff: None` is recorded too: it still measured an
     /// `(added, removed)` the row wants to state, and skipping it made
