@@ -812,10 +812,7 @@ async fn embed_and_store_chunk_files(
     let failure = fill_chunk_window(graph, embedder, fingerprint, files, &mut committed)
         .await
         .err();
-    ChunkWindow {
-        committed,
-        failure,
-    }
+    ChunkWindow { committed, failure }
 }
 
 /// What one window of the chunk pass did: how many files reached the store,

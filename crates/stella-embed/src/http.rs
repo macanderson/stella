@@ -405,17 +405,18 @@ impl Embedder for HttpEmbedder {
                 if let Some(key) = &self.api_key {
                     request = request.bearer_auth(key);
                 }
-                let response = request.send().await.map_err(|error| {
-                    EmbedError::Backend(format!("{}: {error}", self.endpoint))
-                })?;
+                let response = request
+                    .send()
+                    .await
+                    .map_err(|error| EmbedError::Backend(format!("{}: {error}", self.endpoint)))?;
 
                 let status = response.status();
                 if status.is_success() {
                     break response;
                 }
 
-                let worth_retrying = status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                    || status.is_server_error();
+                let worth_retrying =
+                    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error();
                 if !worth_retrying || attempt >= MAX_ATTEMPTS {
                     let body = response.text().await.unwrap_or_default();
                     let body: String = body.chars().take(400).collect();

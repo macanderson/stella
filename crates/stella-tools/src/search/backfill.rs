@@ -563,18 +563,14 @@ mod tests {
         // assertion is about what a user is told, not about a row shape.
         for index in 0..REVERSING_DIMS {
             let hits = graph
-                .rank_chunks_by_vector(
-                    &fingerprint,
-                    &ReversingEmbedder::one_hot(index),
-                    0.5,
-                    1,
-                )
+                .rank_chunks_by_vector(&fingerprint, &ReversingEmbedder::one_hot(index), 0.5, 1)
                 .expect("rank the stored chunks");
             let top = hits
                 .first()
                 .unwrap_or_else(|| panic!("symbol thing_{index} has no stored vector"));
             assert_eq!(
-                top.name, format!("thing_{index}"),
+                top.name,
+                format!("thing_{index}"),
                 "the vector computed for thing_{index} was stored against {} — a \
                  response was routed by arrival order rather than to the request \
                  it answered (#4144)",
