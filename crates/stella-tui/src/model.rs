@@ -734,10 +734,32 @@ impl SessionModel {
                 // Only a *successful* mutation gets an inline-diff reference —
                 // a failed call produced no `FileChange`, and rendering the
                 // path's previous diff under its ✗ would attribute a change
-                // the call never made. The engine's `FileChangeTap` emits the
-                // `FileChange` during the tool's execution, so by the time
-                // this result folds, `files[path].changes` already counts this
-                // call's own change — that value is the freshness tag.
+                // the call never made.
+                //
+                // The `seq` stamped here does NOT currently resolve, and the
+                // comment that used to sit on it is why nobody noticed. It
+                // said "the engine's `FileChangeTap` emits the `FileChange`
+                // during the tool's execution, so by the time this result
+                // folds, `files[path].changes` already counts this call's own
+                // change". There is no `FileChangeTap` anywhere in the
+                // workspace — that string appeared in this comment and nowhere
+                // else. The only producer left is
+                // `stella_cli::turn_files::emit_shared_tree_changes`, called
+                // from `agent.rs` *after* `run_turn_with_sender` returns
+                // (`stella-pipeline`, which did emit per adopted change during
+                // delivery, is deleted — #3865). So every `ToolResult` of the
+                // turn has already folded by the time any `FileChange` arrives,
+                // `changes` here is the pre-turn value, `touch_file` then bumps
+                // it and `remember_diff` records at the bumped seq, and
+                // `diff_at` misses by exactly one — forever, for every
+                // mutation on this path.
+                //
+                // The stamp is left as-is on purpose: `+1` would make all of a
+                // path's calls in one turn point at the single aggregate
+                // `--numstat` change, which is the misattribution
+                // `render::resolve_inline_diff` exists to prevent. Per-call
+                // attribution needs a per-call producer, and that is a design
+                // decision, not a repair — tracked in #4155.
                 let diff = if ok {
                     self.mutated_path_for(call_id).map(|path| {
                         let seq = self
