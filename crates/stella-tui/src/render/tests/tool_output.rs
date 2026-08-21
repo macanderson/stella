@@ -57,7 +57,15 @@ fn numbered(first: usize, source: &[&str]) -> String {
 
 fn collapsed(entry: &TranscriptEntry) -> Vec<Line<'static>> {
     let mut out = Vec::new();
-    entry_lines(entry, &[], false, false, false, 120, &mut out);
+    entry_lines(
+        entry,
+        EntryView::default(),
+        false,
+        false,
+        false,
+        120,
+        &mut out,
+    );
     out
 }
 
