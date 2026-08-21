@@ -95,13 +95,18 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
 /// crimson, calls deep gold, prompts violet — so no raw ANSI cyan/blue/
 /// magenta survives from before the palette landed.
 ///
-/// The margin's colour is itself the hierarchy, in three steps: the `●`
-/// call rail is brand gold because the call *is* the event; the `⎿` result
-/// rail is muted because a successful outcome is that event's consequence,
-/// subordinate chrome rather than a second thing to look at; and the `✗`
-/// fail rail is danger, the one outcome worth interrupting a scan for.
-/// Painting every ✓ as loudly as every ✗ would leave a failure with nothing
-/// to stand out against.
+/// The margin's colour is itself the hierarchy. Since #4127 a call and its
+/// result share one metal, because SPEC 6.2 makes the rail a property of the
+/// **event** and they are two entries of one event — read silver-dim, mutation
+/// gold. What separates the result from the head is its glyph (`⎿`), not a
+/// second colour. The `✗` fail rail is the one override, in danger: it is the
+/// outcome worth interrupting a scan for, and painting every ✓ as loudly would
+/// leave a failure with nothing to stand out against.
+///
+/// This assertion previously read the other way — a successful result receded
+/// to a fixed muted tone under whatever metal its head wore. That is what made
+/// an `edit_file` block draw a gold rail for exactly one row and a silver one
+/// for every row beneath it, which is the defect #4127 is named for.
 #[test]
 fn transcript_prefix_colors_stay_in_the_brand_family() {
     let prefix_fg = |entry: &TranscriptEntry| -> Option<Color> {
@@ -153,9 +158,8 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
             speculated: false,
             diff: None,
         }),
-        Some(theme::MUTED),
-        "a successful result's rail recedes — it is a continuation of its \
-         call, not a second event competing for the eye",
+        Some(stella_tui_theme::token::MUTED),
+        "a successful result wears its call's metal — one event, one rail",
     );
     assert_eq!(
         prefix_fg(&TranscriptEntry::ToolResult {

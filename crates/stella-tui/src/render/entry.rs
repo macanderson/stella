@@ -22,11 +22,7 @@ use crate::textline::{
     budget_mode_label, ci_status_label, media_kind_label, media_state_label, pr_status_label,
     stage_label,
 };
-// Still owned by the parent: `resolve_inline_diff` reads the draw-side file
-// list and `INLINE_DIFF_CAP` bounds it. A child module may reach a private
-// parent item, so the move needed no visibility change.
-use super::{INLINE_DIFF_CAP, resolve_inline_diff};
-use crate::{diff, syntax, theme};
+use crate::theme;
 
 // The context-recall table. Split out rather than grown here: it is the one
 // entry kind that lays out a *grid* — fitted columns, a heading, a rule, a
@@ -38,74 +34,12 @@ use crate::{diff, syntax, theme};
 mod recall;
 use recall::recall_lines;
 
-/// How many lines of a *successful* tool result the collapsed fold shows.
-///
-/// This was 1, on the argument that a successful call's output is chatter and
-/// its size belongs in the metric column. That is wrong for the calls whose
-/// output *is* the answer — a `search`, a `read_file`, a `get_state` — where
-/// one line plus a count told a reader only that something had been found, and
-/// left the finding itself behind a keystroke they had no reason to press.
-///
-/// It is now [`stella_transcript::digest::PREVIEW_LINES`] rather than a number
-/// of this crate's own, because the export and Observatory surfaces fold the
-/// same result through `digest::fold_output` and were answering "how much do I
-/// see" differently — six lines here against three there, for one run (#3644).
-/// Equality by *construction*; `render::tests::tool_output` then asserts the two
-/// renderers really do show the same count, since sharing a constant does not
-/// by itself prove two fold implementations agree.
-///
-/// It still equals [`FAIL_PREVIEW`], which keeps one preview rule instead of
-/// two; that is now a fact a test pins rather than a definition.
-const OK_PREVIEW: usize = stella_transcript::digest::PREVIEW_LINES;
-
-/// How a tool-result body is colored, and the gutter parser that goes with it.
-///
-/// Both are [`stella_transcript::syntax`]'s now rather than this file's. They
-/// were written here for #4019 and moved down in #4036 for the reason the JSON
-/// predicate moved down in #3644: the export and Observatory renderers ask the
-/// identical question of the identical bodies, and a rendering decision held in
-/// three copies is a rendering decision that drifts. The deck keeps the
-/// *palette* ([`syntax::tok_style`]) and nothing else.
-use stella_transcript::syntax::{BodyPaint, body_paint, paint_line};
-
-/// Emit one body line at the detail column, colored per `paint`.
-///
-/// The deck renders the emitter's gutter as it arrived, rather than as its own
-/// column: the transcript is a scrollback, and a reader who wants to open the
-/// file at that line wants the number the tool actually printed.
-fn push_body_line(
-    rail: Rail,
-    line: &str,
-    paint: BodyPaint,
-    width: usize,
-    out: &mut Vec<Line<'static>>,
-) {
-    let painted = paint_line(paint, line);
-    let Some(lang) = painted.lang else {
-        push_detail_line(rail, line, width, out);
-        return;
-    };
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    if let Some(gutter) = painted.gutter {
-        // The gutter is chrome, not source: it wears the dimmest text tone so
-        // the eye reads down the code and not down the numbers.
-        spans.push(Span::styled(
-            gutter.text.to_owned(),
-            Style::new().fg(theme::TEXT_TERTIARY),
-        ));
-    }
-    spans.extend(
-        syntax::tokenize(painted.source, lang)
-            .into_iter()
-            .map(|(text, tok)| match tok {
-                Some(t) => Span::styled(text, syntax::tok_style(t)),
-                // Punctuation and whitespace keep the body's muted base tone, so
-                // the colored tokens are what the eye lands on.
-                None => Span::styled(text, Style::new().fg(theme::MUTED)),
-            }),
-    );
-    push_detail_spans(rail, spans, width, out);
-}
+// The tool-call block — head, result, preview, gutter, truncation notice and
+// inline diff. Split out for the reason `recall` was: it is the one entry pair
+// that stacks four independent rendering decisions, and SPEC 6's restyle of it
+// (#4127) is exactly the kind of change that drops one of them by accident when
+// it lives inside a 1100-line match.
+mod tool;
 
 // Pure content builders (unit-tested directly)
 
@@ -177,8 +111,8 @@ pub(crate) fn entry_lines(
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    if !v2_rows(entry, width, out) {
-        entry_body(entry, files, expand_thinking, expanded, live, width, out);
+    if !v2_rows(entry, files, expanded, width, out) {
+        entry_body(entry, expand_thinking, expanded, live, width, out);
     }
     if closes_block(entry) {
         push_gap(out);
@@ -188,26 +122,63 @@ pub(crate) fn entry_lines(
 /// SPEC 6 rows for the entries the v2 transcript owns; `false` leaves the entry
 /// to the v1 renderer below.
 ///
-/// Two arms, deliberately: a tool call's **head** and compaction's one quiet
-/// line. Everything else still renders v1 until its phase lands, which is why
-/// this is a router rather than a replacement — a half-migrated transcript must
-/// still draw every row it holds, not drop the ones v2 has no arm for yet.
+/// A router rather than a replacement — a half-migrated transcript must still
+/// draw every row it holds, not drop the ones v2 has no arm for yet — so the
+/// notes, prose, prompts and verdicts below still render v1 until their phase
+/// lands.
 ///
-/// A tool **result** is pointedly not here. Its body already carries syntax
-/// highlighting in the file's own language, inline word-level diffs, a line
-/// number gutter and a truncation notice naming the key that reveals the rest
-/// (#4019, #4020, #4036) — and SPEC 6.4 keeps every one of them. Routing the
-/// result through a v2 renderer that has not been taught them yet would delete
-/// working features to make the screen look newer, which is a regression
-/// wearing a redesign's clothes. The result row is restyled in P2, where the
-/// highlighter it needs is built, not here.
-fn v2_rows(entry: &TranscriptEntry, width: usize, out: &mut Vec<Line<'static>>) -> bool {
+/// A tool **result** is here as of #4127, and how it got here is the point.
+/// #4123 left it on v1 deliberately: its body carries syntax highlighting in
+/// the file's own language, word-level inline diffs, the emitter's line-number
+/// gutter and a truncation notice naming the key that reveals the rest (#4019,
+/// #4020, #4036), a v2 renderer had been taught none of them, and swapping one
+/// in would have deleted working features to make the screen look newer. The
+/// resolution is not a second renderer but the same one wearing SPEC 6's rail:
+/// [`tool::result_rows`] keeps every feature and takes its metal from the call
+/// above it, so the block is one event with one rail instead of a v2 head over
+/// a v1 body.
+fn v2_rows(
+    entry: &TranscriptEntry,
+    files: &[FileState],
+    expanded: bool,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) -> bool {
     use crate::v2::transcript_source as v2;
     match entry {
         TranscriptEntry::ToolStart {
-            name, input, path, ..
+            name,
+            input,
+            raw,
+            path,
+            ..
         } => {
-            out.extend(v2::head_rows(name, path.as_deref(), input, width));
+            tool::start_rows(name, input, raw, path.as_deref(), expanded, width, out);
+            true
+        }
+        TranscriptEntry::ToolResult {
+            name,
+            ok,
+            path,
+            full,
+            duration_ms,
+            speculated,
+            diff,
+            ..
+        } => {
+            tool::result_rows(
+                name,
+                *ok,
+                path.as_deref(),
+                full,
+                *duration_ms,
+                *speculated,
+                diff.as_ref(),
+                files,
+                expanded,
+                width,
+                out,
+            );
             true
         }
         TranscriptEntry::Compaction {
@@ -288,9 +259,15 @@ pub const THINKING_ROWS: usize = 5;
 /// thought still being written.
 const THINKING_FOLD_HINT: &str = "⋯ ctrl+o expands this thought · ctrl+r all";
 
+/// The v1 half of the transcript: notes, prose, prompts, verdicts — everything
+/// SPEC 6 has no arm for yet.
+///
+/// It takes no `files`, which is how you can tell the tool block really did
+/// leave: the file ledger was here only so a result could resolve its inline
+/// diff against it, and that resolution moved to [`tool::result_rows`] with the
+/// rest of the block.
 fn entry_body(
     entry: &TranscriptEntry,
-    files: &[FileState],
     expand_thinking: bool,
     expanded: bool,
     live: bool,
@@ -408,251 +385,14 @@ fn entry_body(
                 out,
             );
         }
-        TranscriptEntry::ToolStart {
-            name,
-            input,
-            raw,
-            path,
-            ..
-        } => {
-            // `name` then `argument`, the name soft-padded to a common column
-            // so arguments line up across a run of calls. Soft, not hard: a
-            // long MCP name (`mcp__github__create_pull_request`) overruns the
-            // column rather than being truncated, since the tool's identity
-            // outranks the alignment it would cost.
-            // The tool name is the one thing in the transcript that carries a
-            // categorical hue. Everything a session did, it did through a tool
-            // call, so the names are the index to the whole scrollback — and
-            // they are the only rows a reader scans *for* rather than reads.
-            // The hue is the call's CLASS (`crate::tool_class`), so the margin
-            // answers "was that a read, a write, a shell, a test, a push, a
-            // hand-off" before a name is read. The argument beside it stays
-            // white/dim (`path_spans`), so the colour marks the verb and never
-            // the object.
-            //
-            // Not the brand accent: gold means brand/active/focus, and every
-            // tool name wearing it made the accent mean "a tool ran", which is
-            // every row.
-            let class = crate::tool_class::classify(name);
-            let mut left = vec![Span::styled(
-                pad_name(name),
-                Style::new().fg(class.color()).add_modifier(Modifier::BOLD),
-            )];
-            // An argument-less tool (`get_environment`, a zero-argument
-            // `task_list`) renders NO argument column at all.
-            // The compact-JSON fallback printed a literal `{}` there, which
-            // reads as an empty *result* — the deck's own owner read it that
-            // way and filed it as a bug. Absence is the honest rendering: the
-            // row is the call, and there was nothing to say about it.
-            if !input.is_empty() {
-                left.extend(path_spans(input, path.is_some()));
-            }
-            push_row(Rail::Call, left, width, out);
-            if expanded {
-                // ctrl+o: the full argument object, pretty-printed and dim.
-                // An over-budget argument may not parse (char-capped raw) —
-                // show it wrapped rather than clipped at the pane edge.
-                // Pretty-printing is what makes the coloring worth having: a
-                // compact one-line object has no shape for a key hue to mark.
-                // A body that failed to re-parse is still lexed — it is capped
-                // JSON, not another format.
-                let pretty = serde_json::from_str::<serde_json::Value>(raw)
-                    .and_then(|v| serde_json::to_string_pretty(&v))
-                    .unwrap_or_else(|_| raw.clone());
-                for l in pretty.lines() {
-                    push_body_line(Rail::Call, l, BodyPaint::json(), width, out);
-                }
-            }
-        }
-        TranscriptEntry::ToolResult {
-            ok,
-            path,
-            full,
-            duration_ms,
-            speculated,
-            diff,
-            ..
-        } => {
-            let rail = if *ok { Rail::Result } else { Rail::Fail };
-            let dim = Style::new().fg(theme::MUTED);
-            // A JSON body is re-laid one member to a line *before* anything
-            // counts, anchors or folds it. An API response — `gh api`, an MCP
-            // server, a REST tool — arrives as one line, so the fold measured a
-            // 1-line result, hid nothing, offered no `ctrl+o`, and handed the
-            // pane eight thousand unbroken columns to wrap. Six lines of an
-            // object with a reveal affordance under them is the same content,
-            // read rather than survived.
-            //
-            // [`stella_transcript::syntax`]'s and not this file's, because
-            // `digest::fold_output` normalises the identical body for the
-            // export and Observatory surfaces: a re-indenter living here would
-            // be the deck and the export disagreeing about how many lines a
-            // result has, which is the drift #3644 closed once already.
-            let reindented = stella_transcript::syntax::reindent_json_body(full);
-            let full: &str = reindented.as_deref().unwrap_or(full.as_str());
-            let total = full.lines().count();
-            // ⚡ marks a speculated result: the duration overlapped the
-            // model's own streaming instead of following it.
-            let dur = if *speculated {
-                format!("⚡{}", human_duration(*duration_ms))
-            } else {
-                human_duration(*duration_ms)
-            };
-            let inline = diff.as_ref().and_then(|d| resolve_inline_diff(d, files));
-            // The delta the emitter measured for this very mutation, carried
-            // alongside its diff — not a recount of the rendered hunk, which is
-            // a bounded view of the changed region and reports a smaller number.
-            let inline_delta = diff
-                .as_ref()
-                .and_then(|d| super::resolve_inline_delta(d, files));
-
-            // The right-hand metric column. A diff states its own size in
-            // added/removed lines, which is the honest unit for an edit —
-            // "42 lines of output" would describe the tool's chatter, not the
-            // change. Everything else reports output size, and only when
-            // there is more than the one line already shown.
-            let mut metric: Vec<Span<'static>> = Vec::new();
-            if inline.is_some() {
-                let (added, removed) = inline_delta.unwrap_or((0, 0));
-                metric.push(Span::styled(
-                    format!("+{added}"),
-                    Style::new().fg(theme::OK),
-                ));
-                metric.push(Span::styled(" ".to_string(), dim));
-                metric.push(Span::styled(
-                    format!("−{removed}"),
-                    Style::new().fg(theme::BAD),
-                ));
-                metric.push(Span::styled(" · ".to_string(), dim));
-            }
-            // The size chip that used to sit here stated the same count as the
-            // hint row below, one of them without the affordance. Now the count
-            // is stated once, in the row that also says which key reveals it.
-            metric.push(Span::styled(dur, dim));
-
-            if expanded {
-                push_row(
-                    rail,
-                    justify(vec![], metric, width, rail.indent()),
-                    width,
-                    out,
-                );
-                let paint = body_paint(path.as_deref(), full);
-                for l in full.lines() {
-                    push_body_line(rail, l, paint, width, out);
-                }
-            } else {
-                // With a diff below, a prose summary ("Applied edit to
-                // src/agent.rs") would restate the call row above it and the
-                // diff under it in the same breath. The row carries only its
-                // metrics and gets out of the way.
-                let paint = body_paint(path.as_deref(), full);
-                let shown: Vec<&str> = if inline.is_some() {
-                    Vec::new()
-                } else {
-                    // A failure never collapses to a single line. The point of
-                    // reading a transcript at the moment something breaks is to
-                    // see *why*, and a one-line preview of a stack trace is a
-                    // prompt to go hunting rather than an answer. A success now
-                    // gets the same window, for the reason on [`OK_PREVIEW`].
-                    let budget = if *ok { OK_PREVIEW } else { FAIL_PREVIEW };
-                    // `salient_line` skips a tool's preamble to the line worth
-                    // reading. A *document* has no preamble — a JSON body's
-                    // first line is the opening delimiter, and starting
-                    // anywhere else shows an object with its shape cut off; a
-                    // numbered listing's first line is the line the caller
-                    // asked for by offset, and hunting inside it for the word
-                    // "error" would anchor a source file's preview on its own
-                    // error-handling code.
-                    //
-                    // Clamped so the window is never starved: anchoring on a
-                    // salient line near the *end* of the output would otherwise
-                    // leave fewer than `budget` lines to take, and the fold
-                    // would show one line where the export surfaces showed six
-                    // — the same cross-surface divergence #3644 closed, sneaking
-                    // back in through the offset instead of the budget. Sliding
-                    // the window back to fill keeps the salient line on screen
-                    // (it is the last thing shown rather than the first) while
-                    // honouring the shared preview budget.
-                    let skip = if paint.colored() {
-                        0
-                    } else {
-                        let total = full.lines().count();
-                        salient_line(full).min(total.saturating_sub(budget))
-                    };
-                    full.lines().skip(skip).take(budget).collect()
-                };
-                // A colored preview stays whole in the body column. Promoting
-                // its first line to the result row would strip that line's
-                // coloring (the row is one flat style) and split an object —
-                // or a numbered listing's own gutter column — across two
-                // different columns.
-                let head: Vec<Span<'static>> = match shown.first() {
-                    Some(l) if !paint.colored() => vec![Span::styled(
-                        l.trim_end().to_owned(),
-                        if *ok {
-                            dim
-                        } else {
-                            Style::new().fg(theme::BAD)
-                        },
-                    )],
-                    _ => Vec::new(),
-                };
-                push_row(
-                    rail,
-                    justify(head, metric, width, rail.indent()),
-                    width,
-                    out,
-                );
-                for l in shown.iter().skip(usize::from(!paint.colored())) {
-                    push_body_line(rail, l.trim_end(), paint, width, out);
-                }
-                // The "there is more" row, for a success as well as a failure —
-                // it is the only place the hidden count is stated now, and the
-                // only place the ctrl+o affordance appears. Not under an inline
-                // diff: there the rendered hunk is the result, and the tool's
-                // own chatter is what would be counted.
-                let hidden = total.saturating_sub(shown.len());
-                if hidden > 0 && inline.is_none() {
-                    push_detail_line(
-                        rail,
-                        &format!("⋯ {} · ctrl+o", plural_lines(hidden)),
-                        width,
-                        out,
-                    );
-                }
-            }
-            // The mutation's diff, inline under the result — GitHub-PR style
-            // via `crate::diff` (the one implementation of "how a diff
-            // looks"), gated on freshness: a later mutation of the same path
-            // bumps `FileState::changes` past the recorded seq and the diff
-            // no longer belongs to this call, so it is hidden rather than
-            // misattributed. Collapsed shows at most [`INLINE_DIFF_CAP`]
-            // styled lines; ctrl+o reveals the whole diff.
-            if let (Some(dref), Some(d)) = (diff.as_ref(), inline) {
-                // No path header and no counts footer here, unlike the
-                // standalone viewer: the call row above already names the file
-                // and the metric column already states `+n −m`, so both rules
-                // would be the same facts a second time — four rows of chrome
-                // around what is often a two-row change.
-                let cap = if expanded {
-                    usize::MAX
-                } else {
-                    INLINE_DIFF_CAP
-                };
-                // The fold row is the renderer's, not this call site's: a
-                // head-and-tail rendering elides the *middle*, so the marker
-                // has to sit where the missing lines were. Appending it after
-                // the body — which is what happened here until the shared
-                // policy landed — would put "and there is more" under a
-                // rendering whose last row is already the file's last row.
-                let (body, _) =
-                    diff::body_lines_inline(d, Some(&dref.path), cap, Some(" · ctrl+o"));
-                for line in body {
-                    push_diff_line(rail, line, out);
-                }
-            }
-        }
+        // Owned by the v2 router above, which returns `true` for both and so
+        // never falls through to here — the two halves of one SPEC 6.2 event,
+        // rendered together by `tool`. The arms exist because the match must
+        // stay exhaustive, and they draw nothing rather than panicking: if the
+        // router is ever narrowed, a missing call row is a visible gap a reader
+        // can report, where an `unreachable!()` would take the session down
+        // mid-frame.
+        TranscriptEntry::ToolStart { .. } | TranscriptEntry::ToolResult { .. } => {}
         TranscriptEntry::Retry { attempt, reason } => {
             push_note(
                 "↻ retry",

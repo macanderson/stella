@@ -15,17 +15,21 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
 
 use crate::deck::{AgentEntry, WorkspaceModel};
 use crate::deck_ui::DeckUi;
-use crate::model::{FileState, TranscriptEntry};
+use crate::model::TranscriptEntry;
 use crate::render::{
-    entry_lines, inner_height, inner_width, reasoning_is_live, render_ask_user, render_hud,
-    render_transcript_window, streaming_lines,
+    inner_height, inner_width, render_ask_user, render_hud, render_transcript_window,
 };
 use crate::theme;
 use crate::transcript_nav::TurnDigest;
+
+// The incremental transcript fold. Split out in #4127, which took this file
+// under the god-file limit it had been grandfathered against — the fold reads
+// the two items below (`FoldPlan`, `digest_line`) and nothing else here.
+mod fold;
+pub use fold::SessionFold;
 
 /// Which turns render as a one-line digest this frame, and which entries that
 /// hides.
@@ -128,201 +132,6 @@ fn digest_line(d: &TurnDigest, folded: bool, width: usize) -> Vec<Line<'static>>
     )];
     spans.extend(crate::render::justify(left, metric, width, 2));
     vec![Line::from(spans)]
-}
-
-/// Everything the settled prefix was folded under. Any change invalidates it,
-/// so each term is a thing that can silently alter an already-rendered row:
-/// the agent, thinking/expand-all overlays and their revision, the pane width,
-/// how many entries have been evicted off the front, the file-mutation count
-/// (an inline diff can go stale without anything being appended), the set of
-/// folded turns (which changes on its own when a turn finishes under the
-/// fold-all overlay), and how many leading entries have moved into the
-/// terminal's scrollback (accessible mode — those must stop being drawn).
-type FoldKey = (String, bool, bool, u64, usize, usize, u64, u64, usize);
-
-/// Incremental transcript fold for the Session tab.
-///
-/// Everything before the last entry is *settled* — streaming deltas only ever
-/// mutate the final entry — so settled entries fold (markdown, labels, wrap)
-/// exactly once and are cached with their visual-row ranges; only the tail
-/// entry re-folds per frame. The cache invalidates whole when anything that
-/// changes how settled entries render changes: focused agent, the thinking
-/// toggle, a ctrl+o expansion, the pane width, or the retention cap evicting
-/// a chunk of the front (which shifts every retained index). This turns the
-/// old O(whole-history) fold per frame into O(tail) — typing latency no
-/// longer grows with session length.
-#[derive(Debug, Clone, Default)]
-pub struct SessionFold {
-    key: Option<FoldKey>,
-    settled: usize,
-    prefix: Vec<Line<'static>>,
-    entry_rows: Vec<Range<usize>>,
-    tail: Vec<Line<'static>>,
-}
-
-impl SessionFold {
-    /// Bring the cache up to date for this frame. `expand_all` is the
-    /// no-selection ctrl+o overlay: every expandable entry folds as if
-    /// individually expanded (it participates in the cache key, so toggling
-    /// it invalidates exactly once).
-    /// `streaming` is the in-flight `TextDelta` preview
-    /// ([`SessionModel::streaming_text`](crate::model::SessionModel)): folded
-    /// into the live tail after the last entry, so it re-wraps per frame
-    /// like the tail does and vanishes without residue when the
-    /// authoritative `Text` clears it — never a settled entry.
-    #[allow(clippy::too_many_arguments)] // mirrors the fold's inputs one to one; a struct would just add a second shape
-    fn refresh(
-        &mut self,
-        agent: &str,
-        transcript: &[TranscriptEntry],
-        files: &[FileState],
-        streaming: &str,
-        thinking: bool,
-        expanded: &HashSet<usize>,
-        expand_all: bool,
-        expanded_rev: u64,
-        width: usize,
-        plan: &FoldPlan,
-        flushed: usize,
-    ) {
-        // Front-eviction shifts every retained index, so the settled prefix
-        // no longer describes the entries now occupying 0..settled. The
-        // marker's cumulative count grows on every pass, so keying on it
-        // invalidates exactly when the front moves — the shrink check alone
-        // misses an eviction whose survivors still outnumber `settled`.
-        let evicted = match transcript.first() {
-            Some(TranscriptEntry::Evicted { count }) => *count,
-            _ => 0,
-        };
-        // A settled tool result's inline diff resolves against `files` at
-        // fold time, and a later mutation can stale it (freshness gate in
-        // `entry_lines`) without appending anything — the total mutation
-        // count is the only fingerprint that moves, so it keys the cache.
-        let file_gen: u64 = files.iter().map(|f| u64::from(f.changes)).sum();
-        let key = (
-            agent.to_string(),
-            thinking,
-            expand_all,
-            expanded_rev,
-            width,
-            evicted,
-            file_gen,
-            plan.signature,
-            flushed,
-        );
-        // Invalidation CLEARS the key; the commit happens after the fold loop
-        // below. A panic inside `entry_lines` would otherwise leave `prefix`
-        // extended with no matching `entry_rows` range and no `settled` bump,
-        // and the next frame — key still matching — would resume at the same
-        // index and double-append. With the commit moved after the loop, a
-        // caught panic leaves `key = None` and the cache rebuilds from zero
-        // (see `crate::panel_guard` for why that matters).
-        if self.key.as_ref() != Some(&key) || self.settled > transcript.len().saturating_sub(1) {
-            self.key = None;
-            self.settled = 0;
-            self.prefix.clear();
-            self.entry_rows.clear();
-        }
-        let target = transcript.len().saturating_sub(1);
-        while self.settled < target {
-            let i = self.settled;
-            let start = self.prefix.len();
-            if i < flushed {
-                // Already ordinary terminal output above this pane
-                // (`accessible::Scrollback`). Drawing it again would have a
-                // reader hear the conversation twice — once as it arrived in
-                // scrollback, once as part of a pane that repaints. It still
-                // gets a (zero-width) row range so every index-keyed
-                // affordance — selection, search, scroll-into-view — stays
-                // aligned with the transcript rather than shifting by
-                // however much has been flushed.
-                self.entry_rows.push(start..start);
-                self.settled += 1;
-                continue;
-            }
-            if let Some(d) = plan.digests.get(&i) {
-                self.prefix.extend(digest_line(d, true, width));
-            } else if plan.hides(i) {
-                // Swallowed by the turn above. It still gets a row range —
-                // the digest's — so that selecting, scrolling to, or
-                // searching a hidden entry lands on the line standing in for
-                // it rather than on nothing.
-                let digest_rows = self
-                    .entry_rows
-                    .iter()
-                    .rev()
-                    .find(|r| !r.is_empty())
-                    .cloned()
-                    .unwrap_or(start..start);
-                self.entry_rows.push(digest_rows);
-                self.settled += 1;
-                continue;
-            } else {
-                entry_lines(
-                    &transcript[i],
-                    files,
-                    thinking,
-                    expand_all || expanded.contains(&i),
-                    false,
-                    width,
-                    &mut self.prefix,
-                );
-            }
-            // The tearing window: `prefix` is extended, `entry_rows` is not.
-            #[cfg(test)]
-            crate::panel_guard::fail_if_armed("session fold");
-            self.entry_rows.push(start..self.prefix.len());
-            self.settled += 1;
-        }
-        self.key = Some(key);
-        self.tail.clear();
-        if let Some(last) = transcript.last() {
-            // The tail obeys the same plan: a last entry inside a folded turn
-            // must not reappear below the digest that already stands for it.
-            if let Some(d) = plan.digests.get(&target) {
-                self.tail.extend(digest_line(d, true, width));
-            } else if !plan.hides(target) {
-                entry_lines(
-                    last,
-                    files,
-                    thinking,
-                    expand_all || expanded.contains(&target),
-                    reasoning_is_live(transcript, streaming),
-                    width,
-                    &mut self.tail,
-                );
-            }
-        }
-        streaming_lines(streaming, files, thinking, width, &mut self.tail);
-    }
-
-    /// Total visual rows (settled prefix + live tail).
-    pub fn total(&self) -> usize {
-        self.prefix.len() + self.tail.len()
-    }
-
-    /// The visual-row range entry `idx` occupies (the live tail entry spans
-    /// everything past the prefix).
-    pub fn rows_of(&self, idx: usize) -> Range<usize> {
-        if idx < self.entry_rows.len() {
-            self.entry_rows[idx].clone()
-        } else {
-            self.prefix.len()..self.total()
-        }
-    }
-
-    /// Materialize just the rows in `window` — ≤ one viewport of clones.
-    fn window_lines(&self, window: Range<usize>) -> Vec<Line<'static>> {
-        window
-            .filter_map(|r| {
-                if r < self.prefix.len() {
-                    self.prefix.get(r).cloned()
-                } else {
-                    self.tail.get(r - self.prefix.len()).cloned()
-                }
-            })
-            .collect()
-    }
 }
 
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
@@ -662,7 +471,7 @@ fn empty_state(area: Rect, buf: &mut Buffer) {
 mod tests {
     use super::*;
     use crate::envelope::{AgentMeta, Inbound};
-    use crate::model::{MAX_TRANSCRIPT_ENTRIES, SessionModel};
+    use crate::model::{FileState, MAX_TRANSCRIPT_ENTRIES, SessionModel};
     use stella_protocol::{AgentEvent, ScopeProposal, TaskItem, TaskStatus};
 
     /// Flatten a `Buffer` to plain text (content, not ANSI — the crate-wide

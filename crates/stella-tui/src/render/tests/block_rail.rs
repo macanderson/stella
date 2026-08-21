@@ -208,7 +208,11 @@ fn the_v1_block_rail_is_the_v2_event_rail() {
         expected_rail(),
         "the transcript now draws two different rails"
     );
-    for rail in [Rail::Call, Rail::Result, Rail::Fail] {
+    // The metal a block wears is now its call's (SPEC 6.2, #4127), so these are
+    // constructed with one — geometry is what this test is about, and the
+    // margin's *shape* is the same whichever metal is passed.
+    let metal = stella_tui_theme::token::GOLD;
+    for rail in [Rail::Call(metal), Rail::Result(metal), Rail::Fail] {
         assert!(
             rail.prefix().starts_with(RAIL),
             "{rail:?} opens a block without the rail"

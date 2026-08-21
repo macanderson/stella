@@ -10,13 +10,18 @@
 //! render before the result exists, and a transcript that waited for the
 //! result would show nothing at all while a two-minute `cargo test` ran.
 //!
-//! This module projects the **head** only. The result row stays on the v1
-//! renderer until P2, because that row already carries syntax highlighting in
-//! the file's own language, word-level inline diffs, a line-number gutter and a
-//! truncation notice naming the key that reveals the rest (#4019, #4020,
-//! #4036). SPEC 6.4 keeps every one of them, and a v2 result renderer that has
-//! not been taught them yet would delete working features to make the screen
-//! look newer. P2 builds the highlighter; the row is restyled there.
+//! This module projects the **head**, and [`metal_for`] is how the result row
+//! joins it: SPEC 6.2 makes the rail a property of the event, so both entries
+//! read one metal from one table.
+//!
+//! The result's *rows* are deliberately not built here. That row carries syntax
+//! highlighting in the file's own language, word-level inline diffs, a
+//! line-number gutter and a truncation notice naming the key that reveals the
+//! rest (#4019, #4020, #4036); SPEC 6.4 keeps every one of them, and a second
+//! renderer written next to this one would have to be taught all four or
+//! silently drop them — which is exactly why #4123 left the row alone rather
+//! than replacing it. #4127 restyled the renderer that already has them instead
+//! (`render::entry::tool`), and this module supplies the metal it wears.
 //!
 //! ## Open vocabulary
 //!
@@ -43,6 +48,20 @@ pub fn head_rows(name: &str, path: Option<&str>, input: &str, width: usize) -> V
     // "collapsed" in the fold sense — there is no body under it yet.
     event.collapsed = Some(false);
     event_rows(&event, width)
+}
+
+/// The rail metal a tool's whole block wears (SPEC 6.2).
+///
+/// The head and the result are two [`crate::TranscriptEntry`]s and one *event*,
+/// so they take one metal. Exported rather than folded into [`head_rows`]
+/// because the result row is rendered by `render::entry::tool` — it carries
+/// syntax highlighting, inline diffs, a gutter and a truncation notice that
+/// live there — and it has to reach the same answer from the same table. A
+/// second `match` on tool names beside this one is how the block came to draw
+/// gold for one row and silver for the rest (#4127).
+#[must_use]
+pub fn metal_for(name: &str) -> ratatui::style::Color {
+    kind_for(name).metal()
 }
 
 /// One dim line, no rail (SPEC 6.3).

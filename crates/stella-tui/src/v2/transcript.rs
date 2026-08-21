@@ -53,7 +53,8 @@ pub const RAIL_W: usize = 2;
 /// draws at dispatch and there is no pass that revisits the row once the
 /// turn-boundary `FileChange` lands. That backfill is the other half of #4150
 /// and is tracked separately; until it exists an edit head is honestly silent
-/// about its size, and the measured numbers stay on the v1 result row.
+/// about its size, and the measured numbers stay on the result row's metric
+/// column (`render::entry::tool`), which resolves them from the file ledger.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Extent {
     /// Lines added, for an edit or a new file.

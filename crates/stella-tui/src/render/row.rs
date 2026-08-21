@@ -13,7 +13,7 @@
 //! glyph names the row's kind, so the margin can be scanned for shape before
 //! anything is read for content.
 
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -27,10 +27,16 @@ use crate::v2::transcript::RAIL_W;
 /// it (`render::tests::block_rail` is what says so): the head of every
 /// call renders through the v2 event renderer (SPEC 6.2) while the result below
 /// it still renders here, and the two must agree on the column or the rail dies
-/// one row into the block — which is exactly what it did. The *metal* is
-/// deliberately not shared: a v2 head wears its event's colour and a result
-/// recedes to [`Rail::style`]'s muted (or danger) tone under it, for the reason
-/// `render::tests::palette` states.
+/// one row into the block — which is exactly what it did.
+///
+/// The **metal** is shared too, and that is newer (#4127). It was not: a v2
+/// head wore its event's colour while the result under it receded to a fixed
+/// muted tone, so an `edit_file` block drew a gold rail for one row and a
+/// silver one for every row after it. SPEC 6.2 makes the rail a property of the
+/// *event*, and a call and its result are one event — the transcript records
+/// them as two entries only because the head has to draw before the result
+/// exists. So the metal now rides [`Rail::Call`] and [`Rail::Result`] from the
+/// call's own kind; see [`Rail::style`].
 pub(crate) const RAIL: &str = " │";
 
 // The rail is two cells wide on both sides of the seam, or every column below
@@ -81,12 +87,15 @@ pub(crate) const BODY: usize = 4;
 /// outcomes, prose, prompts) before reading any content.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Rail {
-    /// A tool invocation — the thing that happened.
-    Call,
-    /// A tool result body, subordinate to the call above it.
-    Result,
-    /// A failed tool result. Distinct glyph *and* column-2 position, so a
-    /// failure is findable by margin-scan alone.
+    /// A tool invocation — the thing that happened — in its event's metal
+    /// (SPEC 6.2, [`crate::v2::transcript::EventKind::metal`]).
+    Call(Color),
+    /// A tool result body, subordinate to the call above it and wearing the
+    /// **same** metal: one event, one rail.
+    Result(Color),
+    /// A failed tool result. Distinct glyph *and* danger metal, so a failure is
+    /// findable by margin-scan alone — and legible without colour at all, which
+    /// SPEC 13 requires and a red-only rail would not give.
     Fail,
     /// A user prompt — the strongest landmark in the scrollback, since it is
     /// where a reader re-orients when scrolling back.
@@ -100,7 +109,7 @@ impl Rail {
     /// Whether this rail belongs to a tool-call block, and so opens every one
     /// of its rows with [`RAIL`].
     pub(crate) fn railed(self) -> bool {
-        matches!(self, Rail::Call | Rail::Result | Rail::Fail)
+        matches!(self, Rail::Call(_) | Rail::Result(_) | Rail::Fail)
     }
 
     /// The literal prefix this rail prints before a row's first line.
@@ -110,8 +119,8 @@ impl Rail {
     /// call, its result and its body then share one left edge instead of three.
     pub(crate) fn prefix(self) -> &'static str {
         match self {
-            Rail::Call => " │ ● ",
-            Rail::Result => " │ ⎿ ",
+            Rail::Call(_) => " │ ● ",
+            Rail::Result(_) => " │ ⎿ ",
             Rail::Fail => " │ ✗ ",
             Rail::User => "▌ ",
             Rail::Agent => "  ",
@@ -145,10 +154,16 @@ impl Rail {
     /// The style the rail glyph itself renders in. Content styling is the
     /// caller's; the glyph is always the rail's own semantic color so the
     /// margin reads consistently even when content colors vary.
+    ///
+    /// A tool block's metal is carried by the variant rather than chosen here,
+    /// because it is a fact about the *call* — a read is silver-dim, a mutation
+    /// gold, an unrecognised MCP tool still gold — and this function cannot see
+    /// which tool ran. Failure is the one metal that overrides its call's, since
+    /// SPEC 6.2's rails describe what an event *is* and a failed one has stopped
+    /// being that.
     pub(crate) fn style(self) -> Style {
         match self {
-            Rail::Call => Style::new().fg(theme::ACCENT),
-            Rail::Result => Style::new().fg(theme::MUTED),
+            Rail::Call(metal) | Rail::Result(metal) => Style::new().fg(metal),
             Rail::Fail => Style::new().fg(theme::DANGER),
             Rail::User => Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
             Rail::Agent => Style::new(),
@@ -436,14 +451,46 @@ pub(crate) fn push_gap(out: &mut Vec<Line<'static>>) {
 /// un-wrapped — the transcript renders without wrap (one logical line per row
 /// keeps the scroll math line-exact), so overflow clips at the pane edge like
 /// the diff viewer, and the line-number gutter never mis-aligns mid-diff.
-pub(crate) fn push_diff_line(rail: Rail, line: Line<'static>, out: &mut Vec<Line<'static>>) {
-    let mut spans = rail.continuation();
+///
+/// A tinted row is then **padded to `width`** so the add/remove ground is a
+/// band rather than a ragged shape traced around the code (SPEC 6.4). The tint
+/// is read off the row's own marker cell rather than passed in, so a renderer
+/// that stops tinting stops padding, and the two can never disagree about which
+/// rows are changed ones.
+///
+/// SPEC 6.4 phrases this as `Line.style` carrying the tint while spans keep
+/// their syntax foreground. The deck cannot say it that way: `Line.style` would
+/// paint the whole row including the rail this function prepends, and the rail
+/// is the *call's* metal, not the diff's. Padding a trailing span is the same
+/// two layers with the margin left out of the second one.
+pub(crate) fn push_diff_line(
+    rail: Rail,
+    line: Line<'static>,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    let lead = rail.continuation();
+    // The marker cell (`+`/`-`/` `) is the first span after the gutter, and it
+    // is the one that always carries the row's *base* tint — a word-level
+    // emphasis span carries the brighter `*_EMPH` ground instead, so reading
+    // the tint off any old span would pad a changed row in the wrong colour.
+    let tint = line.spans.get(1).and_then(|s| s.style.bg);
+    let mut spans = lead;
     spans.extend(line.spans);
     // The one row that reaches the buffer without passing through
     // [`wrap_one_indent`], and so the one that needs [`expand_tabs`] by name: a
     // tab-indented file's diff would otherwise lose its indentation entirely.
     let mut row = Line::from(spans);
     expand_tabs(&mut row);
+    if let Some(tint) = tint {
+        let used = row.width();
+        if used < width {
+            row.spans.push(Span::styled(
+                " ".repeat(width - used),
+                Style::new().bg(tint),
+            ));
+        }
+    }
     out.push(row);
 }
 
@@ -472,20 +519,9 @@ pub(crate) fn push_row_block(
 /// stay flush-right and only genuinely wide ones are reined in.
 pub(crate) const METRIC_SPAN: usize = 140;
 
-/// Soft column the tool-name field pads to, so arguments align down a run of
-/// calls. A longer name overruns it rather than truncating — identity beats
-/// alignment — and the argument simply starts one space later on that row.
-pub(crate) const NAME_COL: usize = 13;
-
 /// Lines of a *failed* result shown without expanding. Enough for a compiler
 /// error with its location and caret line, or the top of a panic backtrace.
 pub(crate) const FAIL_PREVIEW: usize = 6;
-
-/// Pad a tool name to [`NAME_COL`], display-width aware.
-pub(crate) fn pad_name(name: &str) -> String {
-    let w = UnicodeWidthStr::width(name);
-    format!("{name}{} ", " ".repeat(NAME_COL.saturating_sub(w + 1)))
-}
 
 /// A duration at human scale. Raw milliseconds are the wrong unit above a
 /// second — `4210ms` forces the reader to count digits to learn "about four
@@ -533,23 +569,6 @@ pub(crate) fn thousands(n: usize) -> String {
         out.push(c);
     }
     out
-}
-
-/// Split a path into (directory, basename) spans so the basename carries the
-/// emphasis. In a scan, the file *identity* is what the eye is hunting; the
-/// directory is context that only matters once you've found the file, so it
-/// recedes. Non-path text renders as a single unemphasised span.
-pub(crate) fn path_spans(text: &str, is_path: bool) -> Vec<Span<'static>> {
-    let dim = Style::new().fg(theme::MUTED);
-    let bright = Style::new().fg(theme::INK);
-    match text.rfind('/').filter(|_| is_path) {
-        Some(cut) => vec![
-            Span::styled(text[..=cut].to_owned(), dim),
-            Span::styled(text[cut + 1..].to_owned(), bright),
-        ],
-        None if is_path => vec![Span::styled(text.to_owned(), bright)],
-        None => vec![Span::styled(text.to_owned(), dim)],
-    }
 }
 
 /// Lay a row out as `left … right`, with `right` flush to the pane edge and

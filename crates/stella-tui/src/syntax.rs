@@ -63,6 +63,45 @@ impl HighlightSpans for Highlighter {
     }
 }
 
+/// A tally of body lines this crate has actually lexed.
+///
+/// SPEC 6.4 says highlighting happens **once when the event arrives** and is
+/// cached — never once per frame — and the implementation plan names the way to
+/// hold that: "benchmark proving highlight runs once per event (call counter in
+/// tests)". A budget nobody counts is a budget that quietly stops holding, so
+/// the counter is the enforcement rather than a note in a doc comment.
+///
+/// `#[cfg(test)]` on purpose: an atomic bumped once per rendered body line
+/// would be pure cost in a shipped binary, and the rule this pins is about the
+/// *shape* of the render path, which a test can observe exactly as well as
+/// production can. It is also what AGENTS.md asks for over an `#[allow]` — the
+/// compiler, not a comment, keeps it out of the product.
+#[cfg(test)]
+pub(crate) mod lex_count {
+    use std::cell::Cell;
+
+    thread_local! {
+        static LEXED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Record one lexed body line. Called from the deck's single highlight
+    /// site, `render::entry::tool::push_body_line`.
+    pub(crate) fn bump() {
+        LEXED.with(|c| c.set(c.get() + 1));
+    }
+
+    /// Lines lexed so far **on this thread**. Tests measure a delta across a
+    /// scenario, and thread-local is what makes that delta mean anything:
+    /// `cargo test` runs the suite in one process across many threads, so a
+    /// shared counter reports whatever else happened to be rendering at the
+    /// same moment. It read `40` for ten frames against `56` for one before
+    /// this was thread-local — a measurement that moved with the scheduler,
+    /// which is worse than no measurement.
+    pub(crate) fn snapshot() -> usize {
+        LEXED.with(Cell::get)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

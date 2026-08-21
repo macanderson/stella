@@ -643,12 +643,14 @@ fn recall_location(uri: &str, cap: usize) -> String {
 /// One table cell: `text` in exactly `col` display columns, elided if it does
 /// not fit and space-padded if it does.
 ///
-/// This is the invariant the whole table rests on. [`pad_name`]'s soft column
-/// is the deliberate opposite — there an over-wide tool name overruns, because
-/// identity outranks alignment on a row nobody reads down a column. Here the
-/// row *is* read down a column, so a cell that overran would displace every
-/// cell to its right on that row and only that row, which is the one failure a
-/// table cannot survive.
+/// This is the invariant the whole table rests on, and it is deliberately the
+/// opposite of how a *row* pads. The transcript's call rows used to pad the
+/// tool-name field to a soft column that an over-wide name simply overran,
+/// because identity outranks alignment on a row nobody reads down a column.
+/// (That helper went with the v1 call row in #4127; SPEC 6.2's head sets its
+/// own columns.) Here the row *is* read down a column, so a cell that overran
+/// would displace every cell to its right on that row and only that row, which
+/// is the one failure a table cannot survive.
 fn cell(text: &str, col: usize) -> String {
     let text = elide(text, col);
     format!(
