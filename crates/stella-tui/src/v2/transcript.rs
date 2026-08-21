@@ -244,12 +244,22 @@ impl Event {
 }
 
 /// The label on a turn's opening rule (SPEC 6.1).
+///
+/// Three of the four fields beside the number are optional, and for the reason
+/// [`Receipt`]'s are: the rule states what something observed and elides the
+/// rest. A turn opens *before* most of what describes it is known — the first
+/// turn of a session has not been told which model answered, and a run with no
+/// budget armed has no ceiling to print — so the alternative to eliding is a
+/// rule that opens by naming a model nobody routed to and a `$0.00` nobody set.
 #[derive(Clone, Debug)]
 pub struct TurnHead {
     pub number: u32,
     pub stage: String,
-    pub model: String,
-    pub budget_usd: f64,
+    /// The model that is answering, when the session knows it yet.
+    pub model: Option<String>,
+    /// The spend ceiling in force. `None` is **no budget armed**, which is a
+    /// different fact from `Some(0.0)` — a run capped at nothing.
+    pub budget_usd: Option<f64>,
     /// The steer this turn consumed, if any. Rendered `queued: "…"` so
     /// queue-never-blocks has a visible payoff (SPEC 6.1).
     pub queued_steer: Option<String>,
@@ -302,13 +312,15 @@ pub fn turn_begin(head: &TurnHead, width: usize) -> Line<'static> {
         Span::styled("turn ", dim),
         Span::styled(head.number.to_string(), Style::new().fg(token::GOLD)),
         Span::styled(format!(" {}", head.stage), text),
-        Span::styled(" · ", dim),
-        Span::styled(head.model.clone(), text),
     ];
-    if head.budget_usd > 0.0 {
+    if let Some(model) = &head.model {
+        label.push(Span::styled(" · ", dim));
+        label.push(Span::styled(model.clone(), text));
+    }
+    if let Some(budget) = head.budget_usd {
         label.push(Span::styled(" · budget ", dim));
         label.push(Span::styled(
-            format!("${:.2}", head.budget_usd),
+            format!("${budget:.2}"),
             Style::new().fg(token::GOLD),
         ));
     }

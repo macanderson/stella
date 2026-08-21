@@ -84,6 +84,18 @@ pub struct SessionModel {
     /// `turn_instance` that is per-*run*, so a wrapped run restarts it while
     /// the scrollback does not.
     pub turns_completed: u32,
+    /// Whether the turn in flight has already drawn its SPEC 6.1 opening rule.
+    ///
+    /// The turn's *first* stage boundary opens it and every later one is a
+    /// plain section rule ([`TurnOpening`]). Kept as a latch rather than
+    /// derived from the trailing transcript entries because the fold is the
+    /// only place that can see the boundary: front-eviction can drop the
+    /// opening rule itself, and a derivation that looked backwards for one
+    /// would re-open the turn the moment the retention cap bit.
+    ///
+    /// Cleared by whatever ends a turn — a `TurnComplete`, the `RunComplete`
+    /// that ends the run, a terminal `Error`, and `/clear`.
+    turn_head_stamped: bool,
     /// The scrollback transcript, oldest first. Streaming `Text`/`Reasoning`
     /// deltas are accumulated into the trailing entry rather than producing
     /// one line per token.
@@ -254,7 +266,13 @@ pub enum TranscriptEntry {
     /// A stage boundary marker (`triage`, `plan`, `execute`, …) — or a stage a
     /// plugin contributed, under its own word. Open vocabulary, so the deck
     /// renders a stage it has never heard of instead of dropping it.
-    Stage(StageName),
+    Stage {
+        name: StageName,
+        /// Set on the one boundary that **opens** a turn — SPEC 6.1's labelled
+        /// rule. `None` on every later boundary of the same turn, which stays
+        /// the plain section rule it has always been.
+        opens: Option<TurnOpening>,
+    },
     /// Accumulated assistant natural-language output.
     Text(String),
     /// Accumulated model reasoning (rendered dimmed).
@@ -477,6 +495,48 @@ pub enum TranscriptEntry {
     },
 }
 
+/// What SPEC 6.1's opening rule says out loud, stamped onto the stage boundary
+/// that opens a turn.
+///
+/// # Why the facts ride the entry
+///
+/// The same reason [`TranscriptEntry::Complete`]'s `turn` does:
+/// [`crate::render::entry`] renders one entry at a time and holds no session
+/// state, so a fact that is not on the entry is a fact the rule cannot say.
+///
+/// # Why one rule per turn and not one per stage
+///
+/// SPEC 6.1 draws a single labelled boundary and SPEC 2 makes the turn the
+/// transcript's unit. A wrapped run has four or five stages inside one turn, so
+/// a rule per stage would announce `turn 14` five times and the number would
+/// stop reading as the turn's identity. Which boundary is the opening one is
+/// decided at fold time ([`SessionModel::turn_head_stamped`]) rather than at
+/// render time, because the renderer cannot see the entry before this one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnOpening {
+    /// This turn's 1-based ordinal — [`SessionModel::turns_completed`] plus the
+    /// turn in flight, so it is the number the turn's own closing rule will
+    /// carry.
+    ///
+    /// It counts turns that *completed*. A turn that died without one is
+    /// therefore not counted, and the next attempt reopens under the same
+    /// ordinal — which is the honest reading of a counter that means "turns
+    /// this session has finished", not a renumbering.
+    pub turn: u32,
+    /// The model answering, as [`Hud::model`] last observed it.
+    ///
+    /// `None` for the whole first turn of a session: `Hud::model` is fed by
+    /// `AgentEvent::TurnComplete`, which by definition has not arrived yet.
+    /// Elided rather than substituted — the configured default is not evidence
+    /// of what a router picked, and the rule would be asserting a routing
+    /// decision nothing recorded (#4175).
+    pub model: Option<String>,
+    /// The spend ceiling in force, as the last `AgentEvent::BudgetTick`
+    /// reported it. `None` means **no budget is armed**, which is not a budget
+    /// of `$0.00` — the same distinction [`Hud::deadline_remaining_ms`] draws.
+    pub budget_usd: Option<f64>,
+}
+
 /// A mutating tool result's handle on the diff it may render inline: the
 /// path into [`SessionModel::files`] plus the `changes` seq of the mutation
 /// *this call produced*. The renderer resolves it against
@@ -667,7 +727,22 @@ impl SessionModel {
                     // and does so from the event, so replay reconstructs it.
                     self.plan.approve();
                 }
-                self.transcript.push(TranscriptEntry::Stage(name.clone()));
+                // The first boundary of a turn carries SPEC 6.1's rule; the
+                // rest of the turn's stages are plain section rules.
+                let opens = if self.turn_head_stamped {
+                    None
+                } else {
+                    self.turn_head_stamped = true;
+                    Some(TurnOpening {
+                        turn: self.turns_completed.saturating_add(1),
+                        model: self.hud.model.clone(),
+                        budget_usd: self.hud.limit_usd,
+                    })
+                };
+                self.transcript.push(TranscriptEntry::Stage {
+                    name: name.clone(),
+                    opens,
+                });
             }
             AgentEvent::Text { text } => {
                 // The authoritative step text replaces any streamed preview
@@ -1125,6 +1200,10 @@ impl SessionModel {
                 // warning mid-flight; the turn goes on.
                 if !*retryable {
                     self.plan.finish();
+                    // The turn died without a `TurnComplete`, so nothing else
+                    // will clear the latch and the next turn would open with
+                    // no rule at all.
+                    self.turn_head_stamped = false;
                 }
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -1156,6 +1235,8 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.streaming_text.clear();
                 self.turns_completed += 1;
+                // The next stage boundary opens a new turn, and its rule.
+                self.turn_head_stamped = false;
                 self.transcript.push(TranscriptEntry::Complete {
                     model: model.clone(),
                     cost_usd: *cost_usd,
@@ -1170,6 +1251,10 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.hud.final_cost_usd = Some(*cost_usd);
                 self.hud.complete = true;
+                // A run that ended between turns leaves no `TurnComplete` to
+                // clear the latch, and the next run's first stage must still
+                // open a rule (#4124).
+                self.turn_head_stamped = false;
                 self.plan.finish();
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;

@@ -167,8 +167,107 @@ fn a_stage_between_text_deltas_breaks_coalescing() {
     // text, stage, text
     assert_eq!(model.transcript.len(), 3);
     assert!(matches!(model.transcript[0], TranscriptEntry::Text(_)));
-    assert!(matches!(model.transcript[1], TranscriptEntry::Stage(_)));
+    assert!(matches!(model.transcript[1], TranscriptEntry::Stage { .. }));
     assert!(matches!(model.transcript[2], TranscriptEntry::Text(_)));
+}
+
+fn stage(kind: StageKind) -> AgentEvent {
+    AgentEvent::Stage {
+        name: kind.into(),
+        scope: stella_protocol::StageScope::Run,
+    }
+}
+
+/// Every `TurnOpening` the fold stamped, in transcript order.
+fn openings(model: &SessionModel) -> Vec<&TurnOpening> {
+    model
+        .transcript
+        .iter()
+        .filter_map(|e| match e {
+            TranscriptEntry::Stage { opens, .. } => opens.as_ref(),
+            _ => None,
+        })
+        .collect()
+}
+
+/// SPEC 6.1's rule opens a **turn**, not a stage: the first boundary of a turn
+/// carries it and the rest of that turn's stages do not.
+///
+/// The witness for the fold half of #4124. Before it every stage boundary was a
+/// bare `Stage(name)` with nothing to open a rule *with* — no turn number, no
+/// model, no budget — which is why the renderer written in #4123 had never been
+/// called.
+#[test]
+fn only_the_first_stage_of_a_turn_opens_a_turn_rule() {
+    let mut model = SessionModel::new();
+    for kind in [StageKind::Triage, StageKind::Plan, StageKind::Execute] {
+        model.apply(&stage(kind));
+    }
+    let opened = openings(&model);
+    assert_eq!(opened.len(), 1, "one rule per turn, not one per stage");
+    assert_eq!(opened[0].turn, 1);
+
+    // …and the next turn opens its own, numbered by what has completed.
+    model.apply(&AgentEvent::TurnComplete {
+        model: "kimi-k3".into(),
+        cost_usd: 0.11,
+    });
+    model.apply(&stage(StageKind::Execute));
+    let opened = openings(&model);
+    assert_eq!(opened.len(), 2);
+    assert_eq!(opened[1].turn, 2, "the ordinal follows the closing rule");
+    assert_eq!(
+        opened[1].turn,
+        model.turns_completed + 1,
+        "the opening and closing rules must agree on the turn's number",
+    );
+}
+
+/// The opening rule states the budget the last `BudgetTick` reported and the
+/// model the HUD has observed — and states neither before anything reported
+/// one. `None` is "nobody said", not `$0.00` and not the configured default.
+#[test]
+fn an_opening_rule_carries_only_facts_the_fold_was_given() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    let first = openings(&model)[0].clone();
+    assert_eq!(
+        first.model, None,
+        "no turn has settled, so no model is known"
+    );
+    assert_eq!(first.budget_usd, None, "no tick has armed a budget");
+
+    model.apply(&AgentEvent::TurnComplete {
+        model: "kimi-k3".into(),
+        cost_usd: 0.11,
+    });
+    model.apply(&AgentEvent::BudgetTick {
+        spent_usd: 0.11,
+        limit_usd: Some(0.60),
+        mode: BudgetMode::Enforced,
+        session_spent_usd: None,
+        session_limit_usd: None,
+        deadline_remaining_ms: None,
+    });
+    model.apply(&stage(StageKind::Execute));
+    let second = openings(&model)[1].clone();
+    assert_eq!(second.model.as_deref(), Some("kimi-k3"));
+    assert_eq!(second.budget_usd, Some(0.60));
+}
+
+/// A turn that died never emits `TurnComplete`, so nothing else clears the
+/// latch — and the turn after it would open with no rule at all, leaving its
+/// events hanging under the dead turn's boundary.
+#[test]
+fn a_turn_that_died_still_lets_the_next_one_open() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    model.apply(&AgentEvent::Error {
+        message: "provider refused".into(),
+        retryable: false,
+    });
+    model.apply(&stage(StageKind::Execute));
+    assert_eq!(openings(&model).len(), 2, "the next turn opened no rule");
 }
 
 fn delta(text: &str) -> AgentEvent {

@@ -28,7 +28,9 @@
 use ratatui::style::Color;
 use ratatui::text::Line;
 
-use super::transcript::{Event, EventKind, Extent, Receipt, event_rows, receipt, turn_end};
+use super::transcript::{
+    Event, EventKind, Extent, Receipt, TurnHead, event_rows, receipt, turn_begin, turn_end,
+};
 
 /// The metal-bearing head of a dispatched call (SPEC 6.2).
 ///
@@ -134,6 +136,39 @@ fn subject_for(name: &str, path: Option<&str>, input: &str) -> String {
 /// The first line of a blob, for a row that has exactly one.
 fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or("").trim_end()
+}
+
+/// A turn's opening rule (SPEC 6.1).
+///
+/// One row, and only on the stage boundary that **opens** the turn — see
+/// [`crate::model::TurnOpening`] for why a wrapped run's four inner stages do
+/// not each announce the same turn number.
+///
+/// `queued_steer` is deliberately never fed here. A steer that landed is
+/// already its own transcript row ([`crate::TranscriptEntry::User`], prefixed
+/// `(steered mid-turn)`), so naming it a second time on the rule above it would
+/// report one interruption twice; and a steer *queued before* the turn opened
+/// arrives as an ordinary prompt, which the deck cannot tell apart from any
+/// other. The label stays unfed rather than fed something that is not it
+/// (#4176).
+#[must_use]
+pub fn turn_begin_rows(
+    turn: u32,
+    stage: &str,
+    model: Option<&str>,
+    budget_usd: Option<f64>,
+    width: usize,
+) -> Vec<Line<'static>> {
+    vec![turn_begin(
+        &TurnHead {
+            number: turn,
+            stage: stage.to_string(),
+            model: model.map(str::to_string),
+            budget_usd,
+            queued_steer: None,
+        },
+        width,
+    )]
 }
 
 /// A turn's closing rule and its receipt (SPEC 6.1).
