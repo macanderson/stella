@@ -146,7 +146,9 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
 
 - Engine: `syntect` with a custom theme built from section 3.1 (keywords gold, types silver_type, identifiers text, comments comment, strings silver, primitives silver_type). Two metals plus white is the full syntax palette on purpose.
 - Highlight once when the event arrives, cache `Vec<Line<'static>>`. Never highlight per frame.
-- Diff rows are two-layer: `Line.style` carries the bg tint (`diff_add_bg` or `diff_del_bg`), spans keep syntax fg. ratatui composes them per cell.
+- Diff rows are two-layer: a background tint (`diff_add_bg` or `diff_del_bg`) under foreground spans that keep their syntax colors. The tint covers the **code column, out to the pane edge** — reaching the edge is what makes the ground read as a band rather than tracing the ragged right end of the code — and it covers **nothing to the left of it**. A rail, a line-number gutter, or any other chrome the surface draws in the margin is not part of the diff and never takes the tint.
+
+  Stated as a constraint because the obvious mechanism violates it. `Line.style` is the one-call way to tint a row and is correct only where the row is *nothing but* diff; on any row carrying a margin it paints the whole row's area, so a green band swallows the rail whose metal says which event the diff belongs to (SPEC 6.2) — the two layers then disagree about what the row is. In the transcript every diff row carries that rail, so the tint rides a per-span `bg` on the code plus one trailing padded span to the pane edge. A surface with no margin may use `Line.style`; a surface with one must not. The reference implementation is `push_diff_line` in `crates/stella-tui/src/render/row.rs`, and `a_rust_diff_renders_add_and_remove_rows_per_spec_64` asserts both halves — the band reaches the pane edge, and the rail span's `bg` stays `None`.
 - Line number gutter in `dim`. Sign column (`+`/`-`) is mandatory and colored; color is never the only diff signal.
 
 ## 7. Plan and task contracts
