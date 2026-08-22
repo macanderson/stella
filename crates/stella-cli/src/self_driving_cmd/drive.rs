@@ -1166,7 +1166,10 @@ fn next_claimable(
                 super::claim::Claim::Unavailable => return Pick::Take(key, None),
                 super::claim::Claim::HeldBy(who) => deferred(
                     &key,
-                    &[format!("ledger claim: {} held by {who}", issue_claim_key(&key))],
+                    &[format!(
+                        "ledger claim: {} held by {who}",
+                        issue_claim_key(&key)
+                    )],
                 ),
             },
             ContentionVerdict::Defer { evidence } => deferred(&key, &evidence),

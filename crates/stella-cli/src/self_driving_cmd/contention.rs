@@ -394,7 +394,8 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let own = super::super::work::worktrees_root(root.path());
         // The one path. Both runs leave exactly this.
-        let seen = porcelain(&[&own.join("stella-4300-8f6b50dc").to_string_lossy()]);
+        let leftover = own.join("stella-4300-8f6b50dc").display().to_string();
+        let seen = porcelain(&[leftover.as_str()]);
 
         let gathered = |root: &std::path::Path| Contention {
             local_worktrees: worktrees_naming(&seen, "4300", Some(&own)),
