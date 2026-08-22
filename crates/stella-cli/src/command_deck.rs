@@ -27,12 +27,13 @@
 //!
 //! ## The two engine seams handled here
 //!
-//! - **Interactive questions** ([`DeckAskUserIo`]): the plain REPL reads
-//!   stdin, which raw mode owns in deck mode. The deck io emits its own
-//!   `AskUser` card, waits for the deck's `AskUserAnswer`, then echoes the
-//!   answer back as that card's `ToolResult` — the documented event-pure path
-//!   that clears the pending gate (`stella_tui::model`). Its consumer is the
-//!   approvals plane: scope review's confirm question routes through it.
+//! - **Mid-turn asks** ([`mid_turn_ask`]): the plain REPL reads stdin, which
+//!   raw mode owns in deck mode, so both places a tool call parks on a
+//!   person get a deck-backed responder instead. An approval rides the
+//!   `AskUser` card ([`mid_turn_ask::DeckAskUserIo`]) — emit, wait for the
+//!   deck's `AskUserAnswer`, echo the answer back as that card's
+//!   `ToolResult`, the documented event-pure path that clears the pending
+//!   gate (`stella_tui::model`); an `ask_question` rides the #4220 overlay.
 //! - **Cancel** (`Stop` / `UserInput::Cancel`): the engine has no abort input;
 //!   cancelling drops the in-flight turn future at its next await point and
 //!   truncates the partial turn out of the conversation so the next prompt
@@ -63,30 +64,30 @@ use skills::{deck_slash_commands, handle_skills_input, skills_snapshot};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use stella_core::ports::{Principal, ToolExecutor};
 use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
 use stella_model::provider::Provider;
 use stella_protocol::{
-    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, TaskItem, ToolOutput,
+    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, QuestionOutcome, TaskItem,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
 use stella_tools::custom::CustomTool;
 use stella_tools::hook_runner::ShellHookRunner;
+use stella_tools::registry::approval::ApprovalResponse;
 use stella_tui::{
     AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound, SkillOp,
     SkillScope, SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput,
     run_deck,
 };
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedSender};
 
 use crate::claims::ClaimTap;
 use crate::config::Config;
-use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, SkillRegistry};
+use crate::interactive::{AskUserIo, SkillRegistry};
 use crate::{agent, rules};
 
 mod add_dir;
@@ -119,12 +120,6 @@ mod steer;
 
 /// The lead agent's id — the one conversation this driver runs.
 pub(crate) const LEAD: &str = "lead";
-
-/// Ids for the cards [`DeckAskUserIo`] mints (`deck-ask-N`). Process-unique
-/// like `interactive::NEXT_ASK_ID`, and deliberately a different namespace:
-/// the deck io's card must be cleared by the deck io's own echoed
-/// `ToolResult`, never by an unrelated result.
-static NEXT_DECK_ASK: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
@@ -339,9 +334,47 @@ pub async fn run_deck_session(
     let provider = agent::build_provider(cfg)?;
     let registry: Arc<ToolRegistry> = Arc::new(crate::write_dirs::registry_for(cfg));
 
+    // ── Channels: engine → deck (Inbound) and deck → driver (WorkspaceInput)
+    // The driver's send side (`in_tx`) reaches the deck through the journal
+    // tee — the single choke point that makes the session durable. Direct
+    // `deck_tx` sends bypass the journal: replay (which must never
+    // re-journal itself) and ephemeral session chrome (boot narration,
+    // hints) that would otherwise pile up in the transcript on every resume.
+    //
+    // Created here, ahead of the registry wiring rather than beside the deck
+    // spawn, because the deck's mid-turn ask responders are built over them
+    // and `enforce_workspace_rules` below is where a surface declares who
+    // answers (#4220). Attaching them later would leave one window in which
+    // the registry's answer to "who is driving?" was wrong.
+    let (in_tx, raw_rx) = mpsc::unbounded_channel::<Inbound>();
+    let (deck_tx, deck_rx) = mpsc::unbounded_channel::<Inbound>();
+    let (sub_tx, mut sub_rx) = mpsc::unbounded_channel::<WorkspaceInput>();
+    let (ask_tx, ask_rx) = mpsc::unbounded_channel::<String>();
+    let (question_tx, question_rx) = mpsc::unbounded_channel::<QuestionOutcome>();
+    let (approval_tx, approval_rx) = mpsc::unbounded_channel::<ApprovalResponse>();
+
     crate::subagent::install_for_session(cfg, &registry)?;
-    let active_rules =
-        rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, false);
+    // The deck can park a turn on a human, so it declares a surface rather
+    // than the headless posture it was stuck with before it had an overlay
+    // to park on. Both responders ride the deck's own channels: the
+    // approvals half reuses the existing `AskUser` card through
+    // [`DeckAskUserIo`], and the question half raises the #4220 overlay.
+    // Neither may be the plain-TTY responder — the deck holds the terminal
+    // in raw mode, and a blocking stdin read behind its render loop would
+    // fight it for every keystroke.
+    let (mid_turn_posture, ask_io) = mid_turn_ask::surface(
+        LEAD.to_string(),
+        in_tx.clone(),
+        ask_rx,
+        approval_rx,
+        question_rx,
+    );
+    let active_rules = rules::enforce_workspace_rules(
+        &registry,
+        &cfg.workspace_root,
+        &cfg.authority,
+        mid_turn_posture,
+    );
     let custom_tools = agent::discover_custom_tools(cfg, true).await;
     let mut budget = agent::build_budget_guard(budget_limit);
     let store = agent::open_store(&cfg.workspace_root);
@@ -448,16 +481,6 @@ pub async fn run_deck_session(
         budget.reseed_session_spend(rs.spent_usd.unwrap_or(0.0));
     }
 
-    // ── Channels: engine → deck (Inbound) and deck → driver (WorkspaceInput)
-    // The driver's send side (`in_tx`) reaches the deck through the journal
-    // tee — the single choke point that makes the session durable. Direct
-    // `deck_tx` sends bypass the journal: replay (which must never
-    // re-journal itself) and ephemeral session chrome (boot narration,
-    // hints) that would otherwise pile up in the transcript on every resume.
-    let (in_tx, raw_rx) = mpsc::unbounded_channel::<Inbound>();
-    let (deck_tx, deck_rx) = mpsc::unbounded_channel::<Inbound>();
-    let (sub_tx, mut sub_rx) = mpsc::unbounded_channel::<WorkspaceInput>();
-    let (ask_tx, ask_rx) = mpsc::unbounded_channel::<String>();
     // The supervisor channel: `task_assign` spawn requests (tap → driver)
     // and sub-session endings (worker → driver). See `crate::subsession`.
     let (sup_tx, mut sup_rx) = mpsc::unbounded_channel::<SupervisorMsg>();
@@ -644,12 +667,6 @@ pub async fn run_deck_session(
         &crate::tool_switches::session_tool_names(&*registry, &custom_tools),
         None,
     ));
-
-    let ask_io = DeckAskUserIo {
-        agent: LEAD.to_string(),
-        inbound: in_tx.clone(),
-        answers: Arc::new(tokio::sync::Mutex::new(ask_rx)),
-    };
 
     // Honour the persisted colour theme (`ui.theme`) before the deck spawns its
     // render task, so the very first frame — the launch cinematic — is already
@@ -1627,6 +1644,18 @@ pub async fn run_deck_session(
                             input: UserInput::AskUserAnswer { answer, .. }, ..
                         }) => {
                             let _ = ask_tx.send(answer);
+                        }
+                        // The settled `ask_question` card: hand the outcome
+                        // to the parked `DeckQuestionResponder`, which is
+                        // what unblocks the tool call and the turn behind it.
+                        Some(WorkspaceInput::QuestionAnswered(outcome)) => {
+                            let _ = question_tx.send(*outcome);
+                        }
+                        // The decided approval card: hand the response to the
+                        // parked `DeckApprovalResponder`, which is what
+                        // releases (or refuses) the gated dispatch.
+                        Some(WorkspaceInput::ApprovalAnswered(response)) => {
+                            let _ = approval_tx.send(*response);
                         }
                         // A hunk decision answers no card this driver raises —
                         // journal replays can render the card, but nothing
@@ -3825,79 +3854,7 @@ async fn run_lead_turn(
     agent::outcome::turn_outcome_result(&outcome)
 }
 
-// ── interactive questions through the deck ──────────────────────────────────
-
-/// [`AskUserIo`] over the deck's channels — how the approvals plane's
-/// questions (scope review's confirm) reach the human at the deck. `prompt`
-/// emits an `AskUser` card, awaits the user's `AskUserAnswer`, echoes the
-/// answer back as the card's own `ToolResult` (the event-pure clear), and
-/// returns the answer with an exact option match becoming its 1-based index
-/// (the numeric quick-pick), anything else passing verbatim as free text.
-#[derive(Clone)]
-struct DeckAskUserIo {
-    agent: String,
-    inbound: UnboundedSender<Inbound>,
-    answers: Arc<tokio::sync::Mutex<UnboundedReceiver<String>>>,
-}
-
-#[async_trait]
-impl AskUserIo for DeckAskUserIo {
-    async fn prompt(&self, question: &str, options: &[String]) -> Result<String, String> {
-        // A caller may append the free-text affordance; the deck's card
-        // renders its own (Enter submits the composer), so presenting the
-        // label as a pickable option would double it — and picking it would
-        // return the label itself as an "answer". Strip it; every other
-        // option passes through untouched.
-        let mut presented: Vec<String> = options.to_vec();
-        if presented
-            .last()
-            .is_some_and(|o| o.starts_with(FREE_TEXT_LABEL))
-        {
-            presented.pop();
-        }
-
-        let id = format!("deck-ask-{}", NEXT_DECK_ASK.fetch_add(1, Ordering::Relaxed));
-        let mut answers = self.answers.lock().await;
-        // Drop answers stranded by a cancelled turn — they belong to a card
-        // that no longer exists.
-        while answers.try_recv().is_ok() {}
-
-        let _ = self.inbound.send(Inbound::Event {
-            agent: self.agent.clone(),
-            event: AgentEvent::AskUser {
-                id: id.clone(),
-                question: question.to_string(),
-                options: presented.clone(),
-            },
-        });
-
-        let answer = answers
-            .recv()
-            .await
-            .ok_or_else(|| "the deck closed before the question was answered".to_string())?;
-
-        // The echoed ToolResult is what clears the pending card in the fold
-        // (matched by this exact id) — without it the gate would keep eating
-        // keys for the rest of the turn.
-        let _ = self.inbound.send(Inbound::Event {
-            agent: self.agent.clone(),
-            event: AgentEvent::ToolResult {
-                call_id: id,
-                output: ToolOutput::Ok {
-                    content: answer.clone(),
-                    data: None,
-                },
-                duration_ms: 0,
-                speculated: false,
-            },
-        });
-
-        match presented.iter().position(|option| *option == answer) {
-            Some(i) => Ok((i + 1).to_string()),
-            None => Ok(answer),
-        }
-    }
-}
+mod mid_turn_ask;
 
 #[cfg(test)]
 mod tests;

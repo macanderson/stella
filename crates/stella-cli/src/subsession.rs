@@ -665,7 +665,7 @@ async fn run_worker(
         &registry,
         &cfg.workspace_root,
         &cfg.authority,
-        false,
+        crate::rules::MidTurnAsk::Headless,
     );
 
     let system_prompt = agent::with_session_hook_context(

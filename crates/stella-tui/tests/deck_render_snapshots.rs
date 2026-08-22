@@ -756,6 +756,231 @@ fn deck_render_snapshots_pin_the_floating_cards() {
     }
 }
 
+/// The two questions the `ask_question` overlay fixtures are built from.
+///
+/// Deliberately unlike each other: the first is single-select with a
+/// description on one option and none on the other (so both option shapes are
+/// pinned in one frame), the second is multi-select (so the tab strip has a
+/// second entry and the `[x]` accumulation is reachable). The asker is a
+/// sub-agent, because the attribution chip is the half a driver answering a
+/// fanned-out delegation cannot do without — and a golden is the only thing
+/// that would notice it silently vanishing from the title row.
+fn fixture_question_request(count: usize) -> stella_protocol::QuestionRequest {
+    let questions = vec![
+        stella_protocol::Question {
+            header: "Auth method".into(),
+            question: "Which auth should the new endpoint use?".into(),
+            options: vec![
+                stella_protocol::QuestionOption {
+                    label: "Session cookie".into(),
+                    description: "Matches the rest of the app".into(),
+                },
+                stella_protocol::QuestionOption {
+                    label: "Bearer token".into(),
+                    description: String::new(),
+                },
+            ],
+            multi_select: false,
+        },
+        stella_protocol::Question {
+            header: "Rollout".into(),
+            question: "Which environments should it reach first?".into(),
+            options: vec![
+                stella_protocol::QuestionOption {
+                    label: "staging".into(),
+                    description: "the usual soak".into(),
+                },
+                stella_protocol::QuestionOption {
+                    label: "canary".into(),
+                    description: String::new(),
+                },
+            ],
+            multi_select: true,
+        },
+    ];
+    stella_protocol::QuestionRequest {
+        asker: Some("research-child".into()),
+        questions: questions.into_iter().take(count).collect(),
+    }
+}
+
+/// Golden frames for the `ask_question` overlay (#4220) — the wizard a
+/// **parked turn** waits on.
+///
+/// This overlay earns goldens more than most: it is the one surface where a
+/// layout regression costs a decision rather than a glance. Every affordance
+/// it offers is drawn as a glyph — `▸` selection, `[x]`/`[ ]` choice,
+/// `●`/`○` per-question progress, the `▏` editor caret — specifically so a
+/// style-stripped golden can pin all of them. A `[x]` that stops rendering,
+/// or a tab strip that loses the question it is on, is a driver answering the
+/// wrong question, and neither shows up in a `contains` assertion.
+#[test]
+fn deck_render_snapshots_pin_the_question_overlay() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let model = fixture_model();
+    let press = |ui: &mut DeckUi, code: KeyCode| {
+        ui.question.key(KeyEvent::new(code, KeyModifiers::NONE));
+    };
+
+    // 1. One question, nothing chosen yet — the card as it first appears.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.question.open(fixture_question_request(1));
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_question_single",
+        "one parked question, freshly raised — options, the appended free-text row, the asker chip",
+        W,
+        H,
+        &frame,
+    );
+
+    // 2. Two questions, the first answered — so the tab strip shows both and
+    //    marks which one is settled.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.question.open(fixture_question_request(2));
+    press(&mut ui, KeyCode::Enter);
+    press(&mut ui, KeyCode::Tab);
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_question_tabstrip",
+        "two questions, the first answered — the tab strip, on the multi-select second",
+        W,
+        H,
+        &frame,
+    );
+
+    // 3. The note editor open over a chosen option — the affordance the plain
+    //    TTY spells ` # note`.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.question.open(fixture_question_request(1));
+    press(&mut ui, KeyCode::Down);
+    press(&mut ui, KeyCode::Enter);
+    press(&mut ui, KeyCode::Char('n'));
+    for c in "only for the admin routes".chars() {
+        press(&mut ui, KeyCode::Char(c));
+    }
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_question_note",
+        "the note editor open on a chosen option, mid-typing",
+        W,
+        H,
+        &frame,
+    );
+
+    // 4. The review pane: the whole answer set, then the three ways out.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.question.open(fixture_question_request(2));
+    press(&mut ui, KeyCode::Enter);
+    press(&mut ui, KeyCode::Char('n'));
+    for c in "admin routes only".chars() {
+        press(&mut ui, KeyCode::Char(c));
+    }
+    press(&mut ui, KeyCode::Enter);
+    press(&mut ui, KeyCode::Tab);
+    press(&mut ui, KeyCode::Enter);
+    press(&mut ui, KeyCode::Char('r'));
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_question_review",
+        "the review pane — every answer with its note, then submit / chat / cancel",
+        W,
+        H,
+        &frame,
+    );
+
+    // 5. Accessible mode spans the card across the frame instead of floating
+    //    it. A float clips its rows at its right border, and this is the one
+    //    overlay where a half-heard option is a decision made on half the
+    //    facts — so the widening gets a golden of its own rather than living
+    //    on a `ui.accessible` nobody would notice going missing.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.accessible = true;
+    ui.question.open(fixture_question_request(1));
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_question_accessible",
+        "accessible mode — the card spans the frame, so no option is clipped",
+        W,
+        H,
+        &frame,
+    );
+}
+
+/// Golden frames for the approval card (#4240) — the yes/no a parked
+/// **dispatch** waits on.
+///
+/// The fields are the point. `read_only` renders as the word `mutating` or
+/// `read-only`, and `gate` gets a labelled row, precisely because the generic
+/// `AskUser` card this replaces carried neither to the person deciding. Both
+/// are words rather than colours so a style-stripped golden can pin them —
+/// if either stops rendering, this test says so.
+#[test]
+fn deck_render_snapshots_pin_the_approval_card() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let model = fixture_model();
+    let press = |ui: &mut DeckUi, code: KeyCode| {
+        ui.approval.key(KeyEvent::new(code, KeyModifiers::NONE));
+    };
+    let request = stella_tools::registry::approval::ApprovalRequest {
+        tool: "bash".into(),
+        read_only: false,
+        reason: "matched rule no-destructive-shell".into(),
+        gate: "command.started".into(),
+        subject: Some("rm -rf build/".into()),
+    };
+
+    // 1. The card as it first appears — cursor on Deny, never on Allow.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.approval.open(request.clone());
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_approval",
+        "a parked approval — tool, mutating mark, subject, gate, reason; cursor on deny",
+        W,
+        H,
+        &frame,
+    );
+
+    // 2. The reason editor, where a deny becomes a redirection the turn can
+    //    act on rather than a wall it has to guess around.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.approval.open(request);
+    press(&mut ui, KeyCode::Down);
+    press(&mut ui, KeyCode::Enter);
+    for c in "use the staging bucket instead".chars() {
+        press(&mut ui, KeyCode::Char(c));
+    }
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_approval_reason",
+        "denying with words — the reason editor open, mid-typing",
+        W,
+        H,
+        &frame,
+    );
+
+    // 3. A read-only call, so the mark's other value is pinned too. Nothing
+    //    else distinguishes "this reads a file" from "this rewrites one".
+    let mut ui = ui_for(DeckTab::Session);
+    ui.approval
+        .open(stella_tools::registry::approval::ApprovalRequest {
+            tool: "read_file".into(),
+            read_only: true,
+            reason: "matched rule secrets-are-off-limits".into(),
+            gate: "tool.call.requested".into(),
+            subject: Some(".stella/private/credentials.toml".into()),
+        });
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_approval_read_only",
+        "a read-only call — the other value of the mark the generic card never showed",
+        W,
+        H,
+        &frame,
+    );
+}
+
 // ─────────────────────────── the harness itself ───────────────────────────
 
 /// The suite's own guard: rendering the same fixture twice must produce the

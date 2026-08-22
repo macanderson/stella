@@ -746,6 +746,16 @@ impl WorkspaceModel {
             | Inbound::RecordedCalls(_)
             | Inbound::InspectedCall(_)
             | Inbound::ShowHelp
+            // A parked question is a tool call waiting, not speech. Nothing
+            // has been said until the driver answers, and folding the
+            // question into the transcript would leave an unanswered one
+            // there for good if the answer never comes.
+            | Inbound::QuestionAsked(_)
+            | Inbound::QuestionWithdrawn
+            // Same for a parked approval: a gate demanding a yes/no is not
+            // speech either, and the call it gates has not run.
+            | Inbound::ApprovalAsked(_)
+            | Inbound::ApprovalWithdrawn
             | Inbound::Splash(_)
             // The whole point of `Notice`: a system notification is not agent
             // or user speech, so the fold must NOT give it a transcript row.

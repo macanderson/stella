@@ -34,6 +34,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The label every answering surface appends as its free-text escape.
+///
+/// It lives here rather than in one surface because **more than one surface
+/// renders it** — the plain-TTY card numbers it after the asker's options,
+/// and the Command Deck's overlay draws it as the last selectable row — and
+/// the two must name the same affordance. A second copy is a string that
+/// drifts: the deck would offer "Something else" while the TTY offered this,
+/// and the same question would read as two different questions depending on
+/// which shell the person happened to be in.
+///
+/// Not a wire field. It is a rendering constant that crosses a crate
+/// boundary, which is the same reason the types around it live here.
+pub const FREE_TEXT_LABEL: &str = "Type your own answer";
+
 /// One choice offered for a [`Question`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuestionOption {

@@ -783,6 +783,16 @@ pub struct DeckUi {
     /// driver-owned snapshot ([`Inbound::ToolPolicy`]). Modal while open, and
     /// mutually exclusive with `engine`: one editor owns the tab's keyboard.
     pub tools: crate::views::tools::ToolsOverlay,
+    /// The `ask_question` overlay (#4220): the wizard a **parked turn** waits
+    /// on. Modal ahead of everything but Ctrl-C while a question is up —
+    /// nothing else in this struct holds a live tool call open, which is why
+    /// it wins the keyboard over every other modal here.
+    pub question: crate::views::question::QuestionOverlay,
+    /// The approval card (#4240): the yes/no a parked **dispatch** waits on.
+    /// Outranks `question` for the keyboard — a call about to execute is a
+    /// tighter gate than a decision being deliberated, and its TTL is two
+    /// minutes against the question's thirty.
+    pub approval: crate::views::approval::ApprovalOverlay,
 }
 
 impl Default for DeckUi {
@@ -862,6 +872,8 @@ impl Default for DeckUi {
             pending_inputs: Vec::new(),
             engine: crate::views::engine::EngineOverlay::default(),
             tools: crate::views::tools::ToolsOverlay::default(),
+            question: crate::views::question::QuestionOverlay::default(),
+            approval: crate::views::approval::ApprovalOverlay::default(),
         }
     }
 }
@@ -1190,6 +1202,13 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
         ui.mcp.apply_detail(detail.as_ref().clone());
         return;
     }
+    // A parked question raises its overlay and nothing else: out-of-band view
+    // state, deliberately never folded into the transcript. Nothing has been
+    // *said* yet — the turn is stopped waiting — and writing an unanswered
+    // question into the history would leave one there if the answer never came.
+    if ui.question.ingest(inbound) || ui.approval.ingest(inbound) {
+        return;
+    }
     // `/help` from the driver opens the same overlay the `?` key opens. Reset
     // to the top so re-opening via the command always lands at the start.
     if let Inbound::ShowHelp = inbound {
@@ -1499,6 +1518,7 @@ pub mod cards;
 mod create;
 pub mod dispatch;
 mod gates;
+mod parked;
 /// Esc-with-something-to-say — see [`steer`].
 mod steer;
 pub use gates::HunkMarks;
@@ -1521,6 +1541,13 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
 fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     if key.kind == KeyEventKind::Release {
         return DeckAction::Ignored;
+    }
+
+    // The parked asks (#4220, #4240) outrank every other modal here, the
+    // routing card below included — see `parked` for why, and for why
+    // approval is asked before question.
+    if let Some(action) = parked::handle_key(key, ui) {
+        return action;
     }
 
     // The routing card owns every key while it is up — it is holding the
