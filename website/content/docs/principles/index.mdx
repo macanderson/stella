@@ -13,13 +13,13 @@ Every claim is grounded in the shipping implementation.
 <Callout type="info">
 **"Witnessed, not asserted" is a property of the path, not of the binary.**
 The witness-test / flip-oracle machinery below (invariant 3, and the "Is the
-work done?" and "What proves the change?" mechanisms) is real and host-run in
-stella's built-in staged pipeline — no plugin required. It is also being
-extracted into an installable verification plugin (Oxagen's Vera is the
-reference one); once that lands, a plugin reports its own evidence instead of
-stella running the check, and this guarantee does not automatically carry
-over to that path. See [the inference pipeline](/docs/inference-pipeline) for
-the mechanism and `doc:pipeline-as-plugins` for the plugin architecture.
+work done?" and "What proves the change?" mechanisms) is what an installed
+**verification plugin** implements on its own side of the
+[wrapper socket](/docs/plugins) — Oxagen's Vera is the reference one. A plugin
+reports its own evidence and stella evaluates it against the rule the plugin
+declared at install; stella does not re-run the check itself. A plain
+`stella run` with no `--pipeline <variant>` has nothing verifying it, and
+says so rather than implying otherwise.
 </Callout>
 
 ## The master rule: given a choice, prefer determinism over intelligence
@@ -40,7 +40,7 @@ You can see the rule everywhere in the product:
 
 <CardGrid size="md">
   <SpecCard title="Is the work done?">
-    **Mechanism:** the [flip oracle](/docs/inference-pipeline) — the same test
+    **Mechanism:** the [flip oracle](/docs/plugins) — the same test
     fails before the change and passes after — plus the zero-diff guard and a
     400-line diff budget.
 
@@ -50,7 +50,7 @@ You can see the rule everywhere in the product:
     unconditionally, never as an inconclusive-evidence fallback.)
   </SpecCard>
   <SpecCard title="What proves the change?">
-    **Mechanism:** the [witness stage](/docs/inference-pipeline) replays the
+    **Mechanism:** the [witness step](/docs/plugins) replays the
     witness test against the pre-change code — it must fail there and pass on
     the change.
 
@@ -89,7 +89,8 @@ are the surfaces you already use:
 
 ```bash
 # The flip oracle, armed: a run that cannot prove fail→pass does not submit.
-stella run --test-command "cargo test -p stella-pipeline" "fix the witness tamper check"
+stella run --pipeline my-verifier --test-command "cargo test -p stella-core" \
+  "fix the witness tamper check"
 
 # The ledgers, read back — no model involved, no network, no key.
 stella stats
@@ -105,9 +106,9 @@ stella stats
    over owned data, property-testable with no network and no filesystem.
 3. **The witness-test contract.** An agent must *prove* its change is the
    change that fixed the problem: fail on `HEAD`, pass on the diff,
-   tamper-excluded — "the suite is green" is not a proof. The built-in staged
-   pipeline runs this check itself; an installed verification plugin (Vera is
-   the reference one) runs its own instead and reports the result.
+   tamper-excluded — "the suite is green" is not a proof. An installed
+   verification plugin (Vera is the reference one) runs this check and reports
+   the result.
 4. **BYOK + zero telemetry egress by default.** Your keys call your provider
    directly, and Community/default telemetry remains in local SQLite. Two
    explicit configurations, and only these two, send telemetry anywhere:
@@ -131,8 +132,8 @@ witness verification onto an engine that can't replay deterministically.
 
 ## What this buys you, concretely
 
-- **Trust:** "done" means *witnessed*, not *asserted* — host-run in the
-  built-in pipeline, or self-reported by an installed verification plugin.
+- **Trust:** "done" means *witnessed*, not *asserted* — self-reported by an
+  installed verification plugin and evaluated against its declared rule.
 - **Reasoning:** one single-threaded loop you can read top to bottom — no
   coordinator, no hidden control plane, no swarm state to desynchronize.
 - **Cost:** the cache discipline and the evidence ladder mean you pay for

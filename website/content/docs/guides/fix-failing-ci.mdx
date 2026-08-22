@@ -59,14 +59,14 @@ the interesting part:
 
 1. **Watch.** The engine waits until the latest run for the target finishes,
    then reads its conclusion and the failing jobs' logs.
-2. **Diagnose and fix.** A working round runs the full
-   [staged pipeline](/docs/inference-pipeline) — triage, plan, witness, execute,
-   verify. It is not a raw step loop: `monitor` always runs pipelined, and unlike
-   `stella goal` it exposes no `--no-pipeline` escape hatch.
+2. **Diagnose and fix.** A working round is a step-loop turn over the failing
+   jobs' logs. `monitor` takes no wrapper flag of its own — it is
+   [goal mode](/docs/agent-modes#outcome-driven-goal-mode) with the objective
+   pinned to "CI is green", and the outer goal verifier is what judges it.
 3. **Commit and push.** The remote is the only thing that can produce the next
    round's evidence.
 4. **Verifier.** A separate verifier model — by preference from a
-   [different family](/docs/inference-pipeline#per-role-model-routing) than the
+   [different family](/docs/api-providers/models) than the
    worker — assesses whether the objective is met. It reads the CI state
    itself, so it is checking the run rather than reading the worker's account of
    the run.
@@ -78,14 +78,13 @@ This is where `monitor` differs from a script that retries until the exit code
 is zero, and it is worth being precise about, because it is the whole reason to
 use it.
 
-**Inside each round**, verification runs the deterministic
-[evidence ladder](/docs/inference-pipeline#6-verify--the-deterministic-ladder)
-before any model is asked for an opinion. The load-bearing rung is the **flip
-oracle**: the relevant test must have *failed before* the change and *passed
-after* it. A suite that was already green proves nothing about the fix, so it
-cannot be used to claim one. That structurally excludes the failure mode you
-actually fear — a change that makes the red go away without making the bug go
-away.
+**Inside each round**, an installed [verification plugin](/docs/plugins) can run
+the deterministic evidence ladder before any model is asked for an opinion. The
+load-bearing rung is the **flip oracle**: the relevant test must have *failed
+before* the change and *passed after* it. A suite that was already green proves
+nothing about the fix, so it cannot be used to claim one. That structurally
+excludes the failure mode you actually fear — a change that makes the red go
+away without making the bug go away.
 
 **Across rounds**, the outer goal verifier only ends the loop when the *latest CI
 run for the target has completed with every check successful*. Not "the tests I
@@ -93,9 +92,10 @@ ran locally passed". Not "I believe this is fixed". A run on the remote, green,
 that you can open in a browser.
 
 <Callout type="info">
-Pipelined goal rounds mean **double verification**: the pipeline's own verifier
-checks each round's work, and the outer goal verifier checks the objective. A fix
-that passes locally but doesn't turn CI green gets caught by the second one.
+Rounds wrapped by a verification plugin mean **double verification**: the
+plugin's own evidence covers each round's work, and the outer goal verifier
+checks the objective. A fix that passes locally but doesn't turn CI green gets
+caught by the second one.
 </Callout>
 
 ## When the fix doesn't hold
@@ -115,11 +115,10 @@ A revision whose candidate has already deterministically failed a **second** tim
 carrying the sealed, redacted account of the test that went red, and nothing else. The
 worker is told what failed, not what to do about it.
 
-This used to buy a model **distress-guidance** call: a verifier reading the diff and
-appending a course-correction note to the evidence. It is gone, for the same reason the
-[model verdict is](/docs/inference-pipeline): a model's reading of a bounded diff is a
-claim, a claim appended to a measurement inherits that measurement's authority, and a
-worker cannot tell the two apart. The failing test is already conclusive; there was
+There is no model **distress-guidance** call here — no verifier reading the diff and
+appending a course-correction note to the evidence. A model's reading of a bounded diff
+is a claim, a claim appended to a measurement inherits that measurement's authority, and
+a worker cannot tell the two apart. The failing test is already conclusive; there is
 nothing a reviewer could add to it except a way to be wrong about it.
 
 ### It hits the round cap
@@ -182,7 +181,7 @@ command, and gate on `verdict.deterministic` — the
 
 ## Running it *from* CI instead of *at* CI
 
-`monitor` watches a remote pipeline from your machine. The other arrangement —
+`monitor` watches a remote CI run from your machine. The other arrangement —
 stella running headlessly *inside* a CI job — is a different setup with
 different requirements (a non-TTY surface, JSON output, an explicit scope-review
 bypass):
@@ -193,10 +192,9 @@ stella --spend-limit 2.00 \
   | jq -e '.status == "completed" and .verdict.deterministic == true'
 ```
 
-There is no scope-review gate to opt past here: it shipped as a stage of the
-built-in staged pipeline and was removed with it, and the
-`agent_engine_config.headless_scope_bypass` key that used to wave a headless run
-past it is inert — setting it changes nothing. See [Scripting](/docs/scripting).
+There is no scope-review gate to opt past here, and the
+`agent_engine_config.headless_scope_bypass` key is inert — setting it changes
+nothing. See [Scripting](/docs/scripting).
 
 ## Next
 

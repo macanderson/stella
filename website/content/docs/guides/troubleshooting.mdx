@@ -205,9 +205,9 @@ off after trusting the project, look at the managed file.
     not selectable, however it was configured.
   </SpecCard>
   <SpecCard title="A role fell back">
-    A configured role model whose provider has no credential **falls back to the
-    worker with a notice** rather than erroring. Configuration can never turn a
-    runnable pipeline into an error — so read the notice.
+    A configured seat model whose provider has no credential **falls back to the
+    session's model with a notice** rather than erroring. Configuration can never
+    turn a runnable session into an error — so read the notice.
   </SpecCard>
   <SpecCard title="A circuit breaker opened">
     Three consecutive transport failures open a provider's breaker; routing skips it
@@ -281,10 +281,9 @@ form of its output — `--output-format` is a flag of `run` and `fleet`, and
   <SpecCard title="A verification plugin stopped it">
     A plugin driving the turn can end a run before it edits anything — over a
     blast-radius threshold, say. Its rule is the plugin's, so check its manifest
-    for what it refuses. The built-in scope gate this card used to describe was
-    removed with the staged pipeline, and the
-    `agent_engine_config.headless_scope_bypass` key that waved a headless run
-    past it is inert — it is not what ended your run.
+    for what it refuses. There is no built-in scope gate, and the
+    `agent_engine_config.headless_scope_bypass` key is inert — it is not what
+    ended your run.
   </SpecCard>
   <SpecCard title="The spend limit tripped">
     `--spend-limit` aborts cleanly between steps. Exit code `1`; already-committed work

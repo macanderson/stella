@@ -13,12 +13,11 @@ stella calibration --format json  # machine-readable tallies
 ```
 
 <Callout type="warn">
-**Nothing in stella emits a verdict any more.** The built-in staged pipeline
-was the only in-tree producer of `Verdict` events and was deleted; a plain
-`stella run` is the raw step loop with no verification stage over it. Verdicts
-now come from an **installed verification plugin** (`stella plugin install`,
-then `stella run --pipeline <plugin-id>`), or from sessions recorded before
-that deletion. A workspace with neither has nothing to calibrate — and the
+**Verdicts come from an installed verification plugin.** A plain
+`stella run` is the raw step loop with nothing verifying it, so it emits no
+`Verdict` events. Verdicts come from an **installed verification plugin**
+(`stella plugin install`, then `stella run --pipeline <plugin-id>`). A
+workspace with none has nothing to calibrate — and the
 command says exactly that, rather than printing a page of zeroes that reads
 like a flawless verifier.
 </Callout>
@@ -60,7 +59,7 @@ A revert also outranks a green CI run for the same pass: it is the later and bet
 
 Under the versioned query envelope. Every rate is `null` when unmeasured, never `0`. Keys: `sessions`, `verdicts_observed`, the `unproven_*` and `deterministic_*` cohorts with their `*_false_positive_rate`, `snapshotted_verdicts` / `uncorroborated_verdicts` / `uncorroborated_rate` / `unproven_passes_standing_alone`, `settled_by_late_evidence` / `unreconciled_passes`, `unproven_reverted` / `deterministic_reverted`, and `by_grader` (`self_graded`, `independent`, `unknown`).
 
-`verdicts_observed` is the field that separates "no verdict was ever recorded" from "no verdict passed" — they are identical in every other tally, and since the pipeline's deletion the first is the ordinary state.
+`verdicts_observed` is the field that separates "no verdict was ever recorded" from "no verdict passed" — they are identical in every other tally, and with no verification plugin installed the first is the ordinary state.
 
 <Callout type="warn">
 **Earlier rename.** `verifier_passes`, `verifier_reconciled`,

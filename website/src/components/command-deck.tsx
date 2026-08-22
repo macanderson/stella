@@ -9,7 +9,7 @@
  *
  * It could not be read. The whole cycle ran about fourteen seconds and then
  * restarted, so a reader who paused on a line lost it. The information — the
- * pipeline stages, the per-task cost, the outcome of each worker — is worth
+ * wrapper steps, the per-task cost, the outcome of each worker — is worth
  * reading, which is exactly why it should sit still.
  *
  * It was noise. Under `prefers-reduced-motion` the component already froze on
@@ -20,7 +20,7 @@
  * timers shipped to the browser to render text that never changes per visitor.
  * These are server components now and ship no JavaScript at all.
  *
- * The content is faithful, not fabricated: the states, the pipeline stages
+ * The content is faithful, not fabricated: the states, the wrapper steps
  * (triage → plan → witness → execute → verify → verdict), and the budget
  * accounting are Stella's own. The numbers illustrate a run; they are not a
  * benchmark claim.
@@ -56,7 +56,7 @@ function Ok({ children }: { children: string }) {
 }
 
 /**
- * The landing-page proof: one command, the pipeline it walks, and the evidence
+ * The landing-page proof: one command, the path it walks, and the evidence
  * the run ended on. Short enough to read in the time it takes to scroll past.
  */
 export function HeroTerminal() {

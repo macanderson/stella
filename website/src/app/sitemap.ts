@@ -106,7 +106,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     {
       // The engine tour is a React route with no MDX source and no derived
-      // date to stand in for one — its copy tracks the pipeline and
+      // date to stand in for one — its copy tracks the plugins and
       // self-improvement docs, but nothing here can observe when it last
       // did. `lastModified` is therefore omitted rather than guessed, which
       // is the same rule the docs rows follow when git history is

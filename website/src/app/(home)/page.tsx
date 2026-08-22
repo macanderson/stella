@@ -20,9 +20,8 @@ import { REPO_URL, SITE_URL } from "@/lib/site";
 // said one thing and every shared card said another.
 const HOME_TITLE = "stella — the terminal agent that proves its work finished";
 // "ends a run on evidence" is load-bearing and deliberately not "a second
-// model confirms it". That was the old wording, and it described a rung the
-// pipeline no longer has: #2584 removed the model verdict outright, and
-// `LadderDecision` (crates/stella-pipeline/src/verify.rs) carries no arm that
+// model confirms it". That was the old wording, and it described a rung that
+// does not exist: there is no model verdict, and no arm that
 // asks a model anything — a turn the oracle cannot settle reports UNVERIFIED
 // rather than borrowing a model's opinion. One verifier-tier call survives, and
 // it is the witness *author*; what it writes is then decided by running it.
@@ -102,14 +101,9 @@ const DOORS = [
     body: "Every tool sits behind a per-tool permission model, with the shell off by default.",
   },
   {
-    href: "/docs/inference-pipeline",
-    // The order is the pipeline's own (`stage_rank` in
-    // crates/stella-pipeline/src/replay.rs): witness authoring is
-    // demand-driven and runs AFTER execute, once the warrant has read the
-    // executed diff. This read "witness, execute … verifier" — the two
-    // swapped, and ending on a role that is not a stage and no longer judges.
-    title: "Read the pipeline",
-    body: "triage, plan, execute, witness, verify, verdict — and where a run can stop.",
+    href: "/docs/plugins",
+    title: "Wrap a run in evidence",
+    body: "Install a verification plugin and a turn reports what proves it — and where a run can stop.",
   },
 ];
 

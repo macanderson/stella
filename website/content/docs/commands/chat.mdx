@@ -57,8 +57,7 @@ You never have to wait for a turn to finish, and what happens to your text depen
 <CardGrid size="md">
   <SpecCard title="Steer this turn — `> …`">
     A message prefixed `>` is injected into the **running** turn at its next step boundary.
-    A `Steered` line in the transcript is the acknowledgement. Works for both the step-loop
-    turn and the pipeline's execute stage.
+    A `Steered` line in the transcript is the acknowledgement.
   </SpecCard>
   <SpecCard title="Anything else — a new sub-session">
     A plain prompt does **not** interrupt the turn. It becomes its own sub-session, dispatched
@@ -194,9 +193,6 @@ Open a tab or run an action:
   </OptionCard>
   <OptionCard name="/init">
     Index the workspace: domain taxonomy plus the code graph.
-  </OptionCard>
-  <OptionCard name="/pipeline">
-    Toggle the staged pipeline on or off for subsequent turns.
   </OptionCard>
   <OptionCard name="/agents">
     Open the AGENTS tab — executions and installed agents.

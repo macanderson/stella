@@ -191,20 +191,19 @@ text{font-family:var(--sans);fill:var(--ink2)}
       <div class="h">Part 4 · The routes, end to end</div>
       <a href="#s-routeA"><span class="n">18</span><span>Route A — raw turn (the short one)</span></a>
       <a href="#s-routeB"><span class="n">19</span><span>Route B — a wrapper plugin</span></a>
-      <a href="#s-stages"><span class="n">20</span><span>Pipeline stages — historical, deleted #3865</span></a>
-      <a href="#s-witness"><span class="n">21</span><span>The witness — proof, not opinion</span></a>
-      <a href="#s-routeC"><span class="n">22</span><span>Route C — a turn inside a turn (sub-agents)</span></a>
-      <a href="#s-routeD"><span class="n">23</span><span>Route D — goal mode &amp; monitor</span></a>
-      <a href="#s-routeE"><span class="n">24</span><span>Route E — fleet workers</span></a>
-      <a href="#s-routeF"><span class="n">25</span><span>Route F — serve, one step at a time</span></a>
-      <a href="#s-compare"><span class="n">26</span><span>All six routes side by side</span></a>
+      <a href="#s-witness"><span class="n">20</span><span>The witness — proof, not opinion</span></a>
+      <a href="#s-routeC"><span class="n">21</span><span>Route C — a turn inside a turn (sub-agents)</span></a>
+      <a href="#s-routeD"><span class="n">22</span><span>Route D — goal mode &amp; monitor</span></a>
+      <a href="#s-routeE"><span class="n">23</span><span>Route E — fleet workers</span></a>
+      <a href="#s-routeF"><span class="n">24</span><span>Route F — serve, one step at a time</span></a>
+      <a href="#s-compare"><span class="n">25</span><span>All six routes side by side</span></a>
     </div>
     <div class="toc-part">
       <div class="h">Part 5 · After the turn</div>
-      <a href="#s-record"><span class="n">27</span><span>Writing the turn down</span></a>
-      <a href="#s-reflect"><span class="n">28</span><span>Reflection → memories → skills</span></a>
-      <a href="#s-foundry"><span class="n">29</span><span>The tool foundry (short version)</span></a>
-      <a href="#s-next"><span class="n">30</span><span>What the next two decks cover</span></a>
+      <a href="#s-record"><span class="n">26</span><span>Writing the turn down</span></a>
+      <a href="#s-reflect"><span class="n">27</span><span>Reflection → memories → skills</span></a>
+      <a href="#s-foundry"><span class="n">28</span><span>The tool foundry (short version)</span></a>
+      <a href="#s-next"><span class="n">29</span><span>What the next two decks cover</span></a>
     </div>
     <div class="toc-part">
       <div class="h">Appendix</div>
@@ -368,12 +367,10 @@ text{font-family:var(--sans);fill:var(--ink2)}
     </div>
   </div>
 
-  <div class="note red"><p><b>The crate this box used to draw is gone.</b> A built-in staged
-  pipeline (<code>crates/stella-pipeline</code>) shipped this shape once, as the default for two
-  of these doors. It was deleted (#3852, #3865); <code>--pipeline classic</code> is refused with a
-  typed error naming <code>stella plugin install</code> as the remedy. What is drawn above is the
-  <b>socket</b> that replaced it — the same shape, but only an installed plugin runs it, and only
-  when a door names it.</p></div>
+  <div class="note blue"><p><b>Nothing is wrapped unless a door names it.</b> What is drawn
+  above is the <b>socket</b>: only an installed plugin runs it, and only when a door names it
+  with <code>--pipeline &lt;variant&gt;</code>. With no flag, the door drives the raw step loop
+  directly.</p></div>
 
   <div class="note"><p><b>The one subtlety.</b> The two direct doors are not the same depth.
   <code>stella --plain</code> calls <code>run_turn</code> and lets it loop.
@@ -407,8 +404,8 @@ text{font-family:var(--sans);fill:var(--ink2)}
     <div class="card"><div class="num">06</div><h4>Model routing applies</h4>
       <p>The worker role, goal mode's independent verifier, and any sub-agent role can each be
       pinned to a different model. An installed wrapper plugin declares its own
-      <code>[roles]</code> the same way — that roster lives on the plugin's side of the socket
-      now, not as built-in pipeline stages.</p></div>
+      <code>[roles]</code> the same way — that roster lives on the plugin's side of the
+      socket, never inside Stella.</p></div>
   </div>
 
   <div class="note green"><p><b>Why this matters for a new hire.</b> If you find a bug in the step
@@ -905,39 +902,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
   judging the same round is exactly the doubled-supervisor shape this design forbids.</p></div>
 </section>
 
-<!-- ============ 20 stage walker ============ -->
-<section class="slide" id="s-stages" data-title="Pipeline stages (historical)">
-  <p class="eyebrow">Part 4 · 20</p>
-  <h2>The stages, one at a time — <span style="color:var(--red)">historical</span></h2>
-  <p class="lead">This is not how anything runs today. This is what the built-in
-  <code>crates/stella-pipeline</code> crate did, host-run, before it was deleted (#3852, #3865) in
-  favor of the wrapper socket the previous two slides describe.</p>
-  <p>It stays in this deck because the <em>shape</em> — triage before work, an independent witness,
-  a deterministic verdict ladder — did not disappear. It moved to the plugin side of the socket:
-  an installed verification plugin (Oxagen's Vera is the private reference one) can implement all
-  of this on its own, self-report the result through <code>after_turn</code>, and Stella evaluates
-  that report without re-running it. Nothing below is enforced by Stella itself anymore.</p>
-  <div class="viz">
-    <div class="vhead">
-      <span class="vtitle">Interactive · stage walker</span>
-      <div class="ctrls">
-        <button class="btn sm" id="stPrev">◀ Prev</button>
-        <button class="btn sm" id="stNext">Next ▶</button>
-      </div>
-    </div>
-    <div class="svgwrap"><svg id="stageSvg" viewBox="0 0 940 210" width="940"><g id="stageNodes"></g></svg></div>
-    <div class="detail" id="stageDetail"></div>
-  </div>
-  <div class="note blue"><p><b>Conditional means conditional — as it worked, then.</b> A simple
-  lookup skipped planning entirely. Research ran only when triage named actual questions. Scope
-  review fired only above a threshold. The witness was authored only when there was no test
-  command <em>and</em> the change turned out to need one. A cheap task did not pay for ceremony it
-  could not use — the same design pressure a plugin author porting this shape inherits today.</p></div>
-</section>
-
-<!-- ============ 21 witness ============ -->
+<!-- ============ 20 witness ============ -->
 <section class="slide" id="s-witness" data-title="The witness">
-  <p class="eyebrow">Part 4 · 21</p>
+  <p class="eyebrow">Part 4 · 20</p>
   <h2>The witness — proof, not opinion</h2>
   <p class="lead">"Verified done" means a test that <b>fails before the change and passes after</b>
   — not a model saying it looks right. But <b>Stella verifies nothing itself.</b> That proof is a
@@ -952,8 +919,8 @@ text{font-family:var(--sans);fill:var(--ink2)}
   <h3>What a plugin can choose to implement, vs. what Stella still enforces</h3>
   <div class="grid g2">
     <div class="card"><div class="num">01</div><h4>A plugin's choice: who writes the test</h4>
-      <p>Oxagen's Vera authors a fresh test with a model that never saw the change — the built-in
-      pipeline's old design, ported to plugin-side. The three reference <code>verify-*</code>
+      <p>Oxagen's Vera authors a fresh test with a model that never saw the change. The three
+      reference <code>verify-*</code>
       plugins take a different, simpler path: they just run a test command the candidate grant
       names. Both are legitimate; neither is something Stella mandates.</p></div>
     <div class="card"><div class="num">02</div><h4>A plugin's choice: how tightly the author is scoped</h4>
@@ -976,9 +943,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
   mismatch — the candidate is stopped. Those are deliberately different outcomes.</p></div>
 </section>
 
-<!-- ============ 22 route C ============ -->
+<!-- ============ 21 route C ============ -->
 <section class="slide" id="s-routeC" data-title="Route C — sub-agents">
-  <p class="eyebrow">Part 4 · 22</p>
+  <p class="eyebrow">Part 4 · 21</p>
   <h2>Route C — a turn inside a turn</h2>
   <p class="lead">A sub-agent is a child turn whose transcript is <b>thrown away</b>. Only a short
   summary comes back.</p>
@@ -1017,9 +984,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
   call the sub-agent function, which builds it inside the crate with every seam attached.</p></div>
 </section>
 
-<!-- ============ 23 route D ============ -->
+<!-- ============ 22 route D ============ -->
 <section class="slide" id="s-routeD" data-title="Route D — goal mode">
-  <p class="eyebrow">Part 4 · 23</p>
+  <p class="eyebrow">Part 4 · 22</p>
   <h2>Route D — goal mode</h2>
   <p class="lead">Goal mode flips the contract: you say <b>what must be true when it is done</b>,
   not what to do. Then it works in rounds until that is true.</p>
@@ -1054,9 +1021,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
   abort ends the run first, it ends as <b>not met</b>. It never rounds up to success.</p></div>
 </section>
 
-<!-- ============ 24 route E ============ -->
+<!-- ============ 23 route E ============ -->
 <section class="slide" id="s-routeE" data-title="Route E — fleet">
-  <p class="eyebrow">Part 4 · 24</p>
+  <p class="eyebrow">Part 4 · 23</p>
   <h2>Route E — fleet workers</h2>
   <p class="lead">For when the work is <b>many tasks</b>, not one. A dependency-ordered task graph
   fans out to parallel workers.</p>
@@ -1086,9 +1053,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
   that it does not introduce a third loop.</p>
 </section>
 
-<!-- ============ 25 route F ============ -->
+<!-- ============ 24 route F ============ -->
 <section class="slide" id="s-routeF" data-title="Route F — serve">
-  <p class="eyebrow">Part 4 · 25</p>
+  <p class="eyebrow">Part 4 · 24</p>
   <h2>Route F — serve, one step at a time</h2>
   <p class="lead">The only door that drives <code>run_step</code> itself instead of letting
   <code>run_turn</code> loop. That single difference is what makes it durable.</p>
@@ -1114,9 +1081,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
   return. Both of those are declared positions, written down in a parity table, not oversights.</p></div>
 </section>
 
-<!-- ============ 26 compare ============ -->
+<!-- ============ 25 compare ============ -->
 <section class="slide" id="s-compare" data-title="All six routes">
-  <p class="eyebrow">Part 4 · 26</p>
+  <p class="eyebrow">Part 4 · 25</p>
   <h2>All six routes side by side</h2>
   <div class="scroller"><table>
     <tr><th>Route</th><th>Command</th><th>Wrapper plugin?</th><th>Loop driver</th><th>Best for</th></tr>
@@ -1137,15 +1104,13 @@ text{font-family:var(--sans);fill:var(--ink2)}
   <code>run</code>, <code>chat</code>, <code>deck</code>, <code>deck-sub</code>,
   <code>goal</code>, <code>fleet</code> — in the <code>kind</code> column. A separate
   <code>pipeline_variant</code> column names the wrapper that ran over it, or is
-  <code>NULL</code> for the ordinary unwrapped case; <code>pipeline</code> is not a door, it is
-  history — rows written before the split migrated to <code>kind='run',
-  pipeline_variant='classic'</code>. That is why a cost row in the dashboard always traces back to
+  <code>NULL</code> for the ordinary unwrapped case. That is why a cost row in the dashboard always traces back to
   a door <em>and</em> to whatever wrapped it. The store is ordinary SQLite; you can ask it directly.</p>
 </section>
 
-<!-- ============ 27 record ============ -->
+<!-- ============ 26 record ============ -->
 <section class="slide" id="s-record" data-title="Writing the turn down">
-  <p class="eyebrow">Part 5 · 27</p>
+  <p class="eyebrow">Part 5 · 26</p>
   <h2>Writing the turn down</h2>
   <p>When the turn settles, several things get recorded — in different places, for different
   readers.</p>
@@ -1172,9 +1137,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
   content fails the build until a human answers "is this content?".</p></div>
 </section>
 
-<!-- ============ 28 reflect ============ -->
+<!-- ============ 27 reflect ============ -->
 <section class="slide" id="s-reflect" data-title="Reflection → memories → skills">
-  <p class="eyebrow">Part 5 · 28</p>
+  <p class="eyebrow">Part 5 · 27</p>
   <h2>Reflection → memories → skills</h2>
   <p class="lead">After a turn that did real work — success <b>or</b> failure — the agent looks
   back at what it just did and writes down what it learned.</p>
@@ -1205,9 +1170,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
   self-tuning — is deck two, <b>Stella Self-Improvement</b>.</p>
 </section>
 
-<!-- ============ 29 foundry ============ -->
+<!-- ============ 28 foundry ============ -->
 <section class="slide" id="s-foundry" data-title="The tool foundry">
-  <p class="eyebrow">Part 5 · 29</p>
+  <p class="eyebrow">Part 5 · 28</p>
   <h2>The tool foundry (short version)</h2>
   <p class="lead">If the agent keeps typing the same <em>shape</em> of shell command by hand, it
   should be offered a real tool for it instead.</p>
@@ -1242,9 +1207,9 @@ text{font-family:var(--sans);fill:var(--ink2)}
   which is why an exact repeat is explicitly not a foundry proposal.</p></div>
 </section>
 
-<!-- ============ 30 next ============ -->
+<!-- ============ 29 next ============ -->
 <section class="slide" id="s-next" data-title="What comes next">
-  <p class="eyebrow">Part 5 · 30</p>
+  <p class="eyebrow">Part 5 · 29</p>
   <h2>What the next two decks cover</h2>
   <div class="grid g3">
     <div class="card"><div class="num" style="color:var(--gold)">THIS DECK</div>
@@ -1298,7 +1263,7 @@ text{font-family:var(--sans);fill:var(--ink2)}
     <tr><td>The tool foundry detector</td><td class="mono">stella-core/src/tool_foundry.rs</td></tr>
     <tr><td>Wrapper socket — before_turn/after_turn, judge/again, transports</td><td class="mono">crates/stella-runtime/src/wrapper/</td></tr>
     <tr><td>Plugin manifest, evidence, wire contract</td><td class="mono">crates/stella-plugin/src/{manifest,evidence,wire}.rs</td></tr>
-    <tr><td>Door → wrapper choice, --pipeline classic refusal</td><td class="mono">crates/stella-cli/src/wrapper_plugin.rs</td></tr>
+    <tr><td>Door → wrapper choice</td><td class="mono">crates/stella-cli/src/wrapper_plugin.rs</td></tr>
     <tr><td>Candidate grant / tamper-watch minting</td><td class="mono">crates/stella-plugin/src/candidate_grant.rs</td></tr>
     <tr><td>Prompt assembly</td><td class="mono">crates/stella-cli/src/agent/prompt.rs</td></tr>
     <tr><td>Recall, reflection, skill promotion</td><td class="mono">crates/stella-cli/src/memory.rs</td></tr>
@@ -1406,7 +1371,7 @@ paint();
 var DOORS=[
  {id:"run",label:"stella run",sub:"one-shot",pipe:true,
   d:["The scripting workhorse. One prompt in, work out, an exit code back. Runs the raw step loop by default — nothing plans first or proves after unless you ask.",
-     "Pass <code>--pipeline &lt;variant&gt;</code> naming an installed wrapper plugin (`stella plugin install`) to opt into <code>before_turn</code>/<code>after_turn</code>, up to and including an arbiter-grade judge/again hold loop. <code>--pipeline classic</code> is refused outright — the built-in staged pipeline it named is deleted (#3852, #3865)."],
+     "Pass <code>--pipeline &lt;variant&gt;</code> naming an installed wrapper plugin (`stella plugin install`) to opt into <code>before_turn</code>/<code>after_turn</code>, up to and including an arbiter-grade judge/again hold loop."],
   m:"execution kind: run · pipeline_variant: NULL unless --pipeline names a plugin"},
  {id:"deck",label:"stella",sub:"Command Deck",pipe:false,
   d:["The tabbed terminal app, and what you get by default on a real terminal. Each prompt is one lead-agent turn on the raw step loop — no wrapper socket wired to this door yet.",
@@ -1488,7 +1453,7 @@ var DOORS=[
 var LAYERS=[
  {n:"1",t:"Base instructions",c:"gold",
   d:["Who the agent is and how it behaves. Can be replaced per agent kind — <code>stella run</code>'s worker gets a different base than a plain chat turn (the constant name predates the wrapper socket, but the persona split is current)."],
-  m:"SYSTEM_PROMPT / PIPELINE_SYSTEM_PROMPT"},
+  m:"SYSTEM_PROMPT"},
  {n:"2",t:"Session environment",c:"gold",
   d:["The facts the model would otherwise waste its first turns discovering: working directory, whether this is a git checkout, the platform, the OS release, the shell dialect.",
      "The admission rule is strict — only what is <b>session-constant and free</b>. A process cannot change its OS mid-run, so those are safe. Today's date is useful and genuinely changes, so it is deliberately <em>not</em> here."],
@@ -1998,79 +1963,7 @@ var LOOPCASES=[
       12,"#f0a35f");
 })();
 
-/* ================= 20 · stage walker ================= */
-var STAGES=[
- {t:"Triage",c:"#b28cf0",cond:"always",
-  d:["A fast, cheap call decides how much process this task deserves: a lookup, a single change, or genuinely multi-step.",
-     "It runs under a hard 30-second ceiling. If the model does not answer in time, the run falls through to the full path rather than waiting — and <b>says so</b>, so a task classified by a keyword fallback is never mistaken for one the model actually classified.",
-     "The classes are ordered, and the ordering is load-bearing: a keyword floor can only ever <em>add</em> ceremony, never remove it. A misjudged task must still finish — just more slowly."]},
- {t:"Recall",c:"#68a8f0",cond:"always · runs alongside triage",
-  d:["Memories and context for this prompt. It has no data dependency on triage, so the two run at the same time — but recall's result is emitted after, so the event stream stays readable.",
-     "Recall has a latency ceiling. Triage deliberately still waits for its paid call to finish even past the ceiling, so its cost cannot vanish from the accounting by being cancelled."]},
- {t:"Research",c:"#5fd0d0",cond:"only when triage names questions",
-  d:["Parallel read-only sub-agents answer specific questions before anything else is prompted.",
-     "Their findings ride into <b>both</b> the planner's prompt and the worker's — the work is done once and used twice."]},
- {t:"Plan",c:"#b28cf0",cond:"skipped for a simple lookup",
-  d:["Explicit steps, produced from the goal, the recalled context, and a summary of the repository's structure.",
-     "A plan that will not parse gets exactly one repair attempt, then degrades to a single-step plan. A stubborn planner is never allowed to block the actual work."]},
- {t:"Scope review",c:"#f0a35f",cond:"only above a threshold",
-  d:["If the plan is bigger than configured limits — too many steps, too many files, too much estimated money — it stops and asks a person before a single file changes.",
-     "The comparison is strict, so a plan sitting exactly on a limit passes. Headless runs must <b>opt in</b> to bypass this. There is no silent auto-approve: without the opt-in, an oversized plan ends the run.",
-     "No bare keystroke commits the plan, because the text box is live the whole time — a note beginning “also do X” would otherwise have approved the very plan it was arguing with."]},
- {t:"Execute",c:"#e2b869",cond:"always · this is the step loop",
-  d:["The worker runs the step loop against the plan, with the full toolbelt. Everything in Part 3 of this deck happens inside this one box.",
-     "If a test command was supplied, it is run <b>once before</b> execution to record the failing baseline — that is the “fail” half of the flip."]},
- {t:"Witness",c:"#5fcf94",cond:"only without a test command, and only on demand",
-  d:["A warrant reads the diff the work produced and decides whether it needs a test at all. Docs-only, a pure removal, or a test-only change gets a <em>stated reason</em> instead. Anything mixed or unreadable fails closed to “prove it”.",
-     "When a test is warranted, an independent model writes a minimal failing test — working in a clean copy of the tree from <em>before</em> the change, so it cannot simply restate the patch."]},
- {t:"Verify",c:"#5fcf94",cond:"always",
-  d:["Run the oracle. Did the command flip from failing to passing? Was the witness file tampered with? What does the diff actually show?",
-     "This spends <b>no model call</b>. The one verifier-tier call in the whole story was writing the test, and that survives because it creates the measuring stick rather than replacing it."]},
- {t:"Verdict",c:"#5fcf94",cond:"always · terminal",
-  d:["A deterministic ladder produces one outcome: submit, revise, an unsatisfiable witness, nothing was attempted, unverifiable, or unverified. Every one is terminal.",
-     "The pipeline does not emit a separate verdict stage — it reads the ladder's answer directly. Which is why the stage order is an ordering, not a place the run passes through."]},
- {t:"Revise",c:"#f0a35f",cond:"bounded loop",
-  d:["A verdict of “revise” sends the run back — and it lands on <b>execute</b>, not on plan.",
-     "So re-execution never re-plans and never re-authors a witness. The loop is bounded; it cannot spin."]}
-];
-(function(){
-  var g=document.getElementById("stageNodes"), det=document.getElementById("stageDetail");
-  var svg=document.getElementById("stageSvg"), sel=0, nodes=[];
-  STAGES.forEach(function(s,i){
-    var col=i%5, row=Math.floor(i/5);
-    var x=22+col*182, y=40+row*84;
-    var gg=el("g",{"data-i":i,style:"cursor:pointer"});
-    var r=el("rect",{x:x,y:y,width:162,height:56,rx:9,fill:"#1c2130",stroke:"#333c52","stroke-width":1.4});
-    gg.appendChild(r);
-    var lab=el("text",{x:x+81,y:y+26,"font-size":13.5,fill:"#e8ecf4","text-anchor":"middle","font-weight":600},s.t);
-    gg.appendChild(lab);
-    gg.appendChild(el("text",{x:x+81,y:y+44,"font-size":10,fill:"#6f7c95","text-anchor":"middle"},
-      s.cond.length>26?s.cond.slice(0,25)+"…":s.cond));
-    g.appendChild(gg);
-    if(col<4&&i<STAGES.length-1)g.appendChild(el("path",{d:"M"+(x+166)+" "+(y+28)+" L"+(x+178)+" "+(y+28),
-      stroke:"#333c52","stroke-width":1.4}));
-    nodes.push({r:r,lab:lab,s:s});
-  });
-  function show(i){
-    sel=i;
-    nodes.forEach(function(n,j){
-      var on=j===i;
-      n.r.setAttribute("stroke",on?n.s.c:"#333c52");
-      n.r.setAttribute("stroke-width",on?2.4:1.4);
-      n.r.setAttribute("fill",on?"#252b3b":"#1c2130");
-      n.lab.setAttribute("fill",on?n.s.c:"#e8ecf4");
-    });
-    setDetail(det,STAGES[i].t,STAGES[i].d,"runs: "+STAGES[i].cond);
-  }
-  svg.addEventListener("click",function(e){
-    var n=e.target.closest?e.target.closest("g[data-i]"):null; if(n)show(parseInt(n.dataset.i,10));
-  });
-  document.getElementById("stNext").onclick=function(){show((sel+1)%STAGES.length);};
-  document.getElementById("stPrev").onclick=function(){show((sel+STAGES.length-1)%STAGES.length);};
-  show(0);
-})();
-
-/* ================= 21 · flip ================= */
+/* ================= 20 · flip ================= */
 (function(){
   var g=document.getElementById("flipSvg");
   g.appendChild(el("rect",{x:30,y:36,width:250,height:70,rx:10,fill:"#1c2130",stroke:"#f0736a","stroke-width":1.6}));
@@ -2087,7 +1980,7 @@ var STAGES=[
   txt(g,450,130,"That flip is the proof. No model is asked whether the work is done.",13,"#e2b869");
 })();
 
-/* ================= 22 · sub-agent ================= */
+/* ================= 21 · sub-agent ================= */
 (function(){
   var g=document.getElementById("subNodes"), det=document.getElementById("subDetail");
   var on=document.getElementById("subOn"), off=document.getElementById("subOff");
@@ -2126,7 +2019,7 @@ var STAGES=[
   draw(false);
 })();
 
-/* ================= 23 · route D ================= */
+/* ================= 22 · route D ================= */
 (function(){
   var g=document.getElementById("routeD");
   g.appendChild(el("rect",{x:20,y:40,width:170,height:56,rx:9,fill:"#1c2130",stroke:"#68a8f0"}));
@@ -2151,7 +2044,7 @@ var STAGES=[
       12.5,"#6f7c95","start");
 })();
 
-/* ================= 24 · route E ================= */
+/* ================= 23 · route E ================= */
 (function(){
   var g=document.getElementById("routeE");
   g.appendChild(el("rect",{x:20,y:70,width:150,height:60,rx:9,fill:"#1c2130",stroke:"#68a8f0"}));
@@ -2178,7 +2071,7 @@ var STAGES=[
       12.5,"#6f7c95","start");
 })();
 
-/* ================= 25 · route F ================= */
+/* ================= 24 · route F ================= */
 (function(){
   var g=document.getElementById("routeF");
   txt(g,20,26,"every other door",12,"#6f7c95","start",600);
@@ -2206,7 +2099,7 @@ var STAGES=[
       12.5,"#6f7c95","start");
 })();
 
-/* ================= 28 · learning ================= */
+/* ================= 27 · learning ================= */
 var LEARN=[
  {t:"the turn ends",c:"#e2b869",
   d:["Success or failure, it does not matter — both are worth learning from. A failed turn is the <b>highest-value</b> signal a session produces, so it gets a different prompt: “why did this fail?”"],
@@ -2259,7 +2152,7 @@ var LEARN=[
   show(0);
 })();
 
-/* ================= 29 · foundry ================= */
+/* ================= 28 · foundry ================= */
 var FCASES=[
  {n:"A recurring incantation",ok:true,
   rows:["gh pr list --repo stella --state open","gh pr list --repo stella --state merged","gh pr list --repo stella --state open","gh pr list --repo stella --state closed"],

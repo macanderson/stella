@@ -181,7 +181,7 @@ export function VeraStation() {
         </p>
         <footer>
           — why <BrandFace>vera</BrandFace> has no opinion,{" "}
-          <Link href="/docs/inference-pipeline">the deterministic ladder</Link>
+          <Link href="/docs/plugins">the deterministic ladder</Link>
         </footer>
       </blockquote>
 
@@ -463,7 +463,7 @@ export function ExitStation() {
         <a href="https://github.com/macanderson">@macanderson</a>. Every
         mechanism on this tour is documented in full, including the parts that
         are still a design —{" "}
-        <Link href="/docs/inference-pipeline">start with the pipeline</Link>.
+        <Link href="/docs/plugins">start with plugins</Link>.
       </p>
     </Station>
   );

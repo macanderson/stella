@@ -18,7 +18,7 @@ Every deck session registers itself in a machine-wide registry — one JSON file
 - **`stella resume`** (no id) reopens the most recently active resumable session **of the current workspace**. If there is none, it says so and points you at `--list`.
 - **`stella resume <id>`** reopens one specific session by its registry id — ids are minted at session start as `ses-<ms>-<pid>` and shown by `--list`.
 
-What comes back: the transcript is rebuilt by replaying the session journal, the LLM conversation is restored from its last committed turn boundary, and the pending prompt queue returns exactly as you left it. Prompts an interruption cut short mid-dispatch are requeued at the **front** in their original order — at most the in-flight turn's streamed tail is re-run. The session's staged-pipeline toggle and cumulative spend are restored too, so a `--spend-limit` cap keeps meaning "this session", not "since the restart".
+What comes back: the transcript is rebuilt by replaying the session journal, the LLM conversation is restored from its last committed turn boundary, and the pending prompt queue returns exactly as you left it. Prompts an interruption cut short mid-dispatch are requeued at the **front** in their original order — at most the in-flight turn's streamed tail is re-run. The session's cumulative spend is restored too, so a `--spend-limit` cap keeps meaning "this session", not "since the restart".
 
 A session can only be reopened where it belongs: it must not be live in another stella process (there is no attach — stop that session first), it must belong to the current workspace (the deck's tools, memory, and graph are workspace-bound), and it must have durable state on disk (sessions predating session journaling are listed but not resumable).
 

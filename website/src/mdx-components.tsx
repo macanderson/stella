@@ -23,7 +23,6 @@ import {
   LoopVerdictDiagram,
   McpTopologyDiagram,
   PermissionGateDiagram,
-  PipelineFlowDiagram,
   QuickstartDiagram,
   RecallLoopDiagram,
   SettingsCascadeDiagram,
@@ -59,7 +58,6 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     ),
     // Diagrams
     HeroFlowDiagram,
-    PipelineFlowDiagram,
     RecallLoopDiagram,
     FleetFanoutDiagram,
     QuickstartDiagram,
