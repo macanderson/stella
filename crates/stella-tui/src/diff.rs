@@ -264,7 +264,6 @@ fn render_body(
         // Every line advances the gutter counters, shown or not — skipping a
         // line must not renumber the ones after it, and the numbers on the
         // far side of an elision have to be the file's real ones.
-        //
         // Read *before* `body_line` runs, because that call is what moves the
         // state this asks about. The same structural rule `body_line` itself
         // applies (only before a file's first hunk is `+++ `/`--- ` a header):
@@ -281,14 +280,6 @@ fn render_body(
             &mut in_hunk,
             emphasis.get(&i).copied(),
         );
-        // `index 74f38f3..9e6e426 100644`, `--- a/<path>`, `+++ b/<path>`:
-        // three rows of git plumbing at the head of every diff, saying the
-        // path the row above already names and a pair of blob hashes nobody
-        // can act on. They cost three of the handful of rows a collapsed diff
-        // gets, which is most of the budget spent before the first changed
-        // line. The counters above still advance over them, so the gutter's
-        // numbers stay the file's own.
-        //
         // Chrome is suppressed after planning rather than before it, so an
         // elided row's `⋯ n lines` count stays the one `stella_diff::view`
         // computed and every surface reports the same number for one change.
@@ -778,10 +769,6 @@ mod tests {
         assert!(texts[6].starts_with("   3 +another add"), "{:?}", texts[6]);
     }
 
-    /// In the standalone viewer the file preamble and the hunk header both
-    /// render, and neither takes a line number — they are not lines of the
-    /// file. Inline under a tool call they are chrome and go away instead,
-    /// which is what `a_full_git_patch_renders_only_its_hunk` covers.
     #[test]
     fn file_headers_and_hunks_get_no_number() {
         let lines = body_lines(SAMPLE, None);
@@ -794,33 +781,46 @@ mod tests {
         }
     }
 
-    /// A real git patch leads with `diff --git` and `index …` as well, and
-    /// inline none of it reaches the row — a single-file, single-hunk patch is
-    /// all chrome until its first changed line.
+    /// The viewer keeps a single file's preamble (above); inline, the same
+    /// patch opens on its first changed line.
     ///
-    /// This asks `body_lines_inline` and not `body_lines`: the standalone
-    /// viewer keeps both boundaries on purpose, because there they are what a
-    /// reader navigates by (`Chrome::VIEWER`).
+    /// `index 74f38f3..9e6e426 100644`, `--- a/<path>`, `+++ b/<path>`: three
+    /// rows restating the path the call row already names and a pair of blob
+    /// hashes nobody can act on. In a viewer that is orientation. Inline under
+    /// a tool call it is most of the row budget spent before the first changed
+    /// line — which is why `Chrome::inline_for` drops it for a lone file and
+    /// keeps it once a patch spans two.
     #[test]
-    fn a_full_git_patch_renders_only_its_hunk() {
-        let patch = "diff --git a/x.rs b/x.rs\n\
-                     index 74f38f3..9e6e426 100644\n\
-                     --- a/x.rs\n\
-                     +++ b/x.rs\n\
-                     @@ -1,2 +1,2 @@\n\
-                      keep\n\
-                     -old\n\
-                     +new";
+    fn a_full_git_patch_renders_only_its_hunk_inline() {
+        // Spelled with explicit `\n` rather than `\`-continuation: that
+        // continuation eats the *leading* whitespace of each line, which would
+        // silently strip the context line's `' '` marker and leave the fixture
+        // something git never emits.
+        let patch = "diff --git a/x.rs b/x.rs\nindex 74f38f3..9e6e426 100644\n--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n keep\n-old\n+new";
         let (lines, _) = body_lines_inline(patch, None, usize::MAX, None);
         let texts: Vec<String> = lines.iter().map(line_text).collect();
         for meta in ["diff --git", "index 74f38f3", "--- a/", "+++ b/"] {
             assert!(
                 !texts.iter().any(|t| t.contains(meta)),
-                "{meta:?} still renders: {texts:?}"
+                "{meta:?} still renders inline: {texts:?}"
             );
         }
         assert!(texts.iter().any(|t| t.contains("-old")), "{texts:?}");
         assert!(texts.iter().any(|t| t.contains("+new")), "{texts:?}");
+        // The gutter still walked the skipped rows, so the numbering is the
+        // file's own rather than a count of what survived.
+        assert!(
+            texts.iter().any(|t| t.starts_with("   1  keep")),
+            "context keeps its real line number: {texts:?}"
+        );
+
+        // The viewer is the other half of the contract: same patch, preamble
+        // intact, because a reader navigating a patch wants the boundaries.
+        let viewer: Vec<String> = body_lines(patch, None).iter().map(line_text).collect();
+        assert!(
+            viewer.iter().any(|t| t.contains("+++ b/x.rs")),
+            "the viewer keeps the preamble: {viewer:?}"
+        );
     }
 
     #[test]
