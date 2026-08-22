@@ -788,6 +788,11 @@ pub struct DeckUi {
     /// nothing else in this struct holds a live tool call open, which is why
     /// it wins the keyboard over every other modal here.
     pub question: crate::views::question::QuestionOverlay,
+    /// The approval card (#4240): the yes/no a parked **dispatch** waits on.
+    /// Outranks `question` for the keyboard — a call about to execute is a
+    /// tighter gate than a decision being deliberated, and its TTL is two
+    /// minutes against the question's thirty.
+    pub approval: crate::views::approval::ApprovalOverlay,
 }
 
 impl Default for DeckUi {
@@ -868,6 +873,7 @@ impl Default for DeckUi {
             engine: crate::views::engine::EngineOverlay::default(),
             tools: crate::views::tools::ToolsOverlay::default(),
             question: crate::views::question::QuestionOverlay::default(),
+            approval: crate::views::approval::ApprovalOverlay::default(),
         }
     }
 }
@@ -1200,7 +1206,7 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // state, deliberately never folded into the transcript. Nothing has been
     // *said* yet — the turn is stopped waiting — and writing an unanswered
     // question into the history would leave one there if the answer never came.
-    if ui.question.ingest(inbound) {
+    if ui.question.ingest(inbound) || ui.approval.ingest(inbound) {
         return;
     }
     // `/help` from the driver opens the same overlay the `?` key opens. Reset
@@ -1512,6 +1518,7 @@ pub mod cards;
 mod create;
 pub mod dispatch;
 mod gates;
+mod parked;
 /// Esc-with-something-to-say — see [`steer`].
 mod steer;
 pub use gates::HunkMarks;
@@ -1536,18 +1543,11 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         return DeckAction::Ignored;
     }
 
-    // A parked question outranks every other modal here, including the
-    // routing card below: it is the only one holding a live tool call open,
-    // and a turn that is stopped waiting for an answer cannot make progress
-    // on any key that is not that answer. Like the routing card it declines
-    // Ctrl-C, so the quit branch below still fires.
-    match ui.question.key(key) {
-        crate::views::question::QuestionAction::Ignored => {}
-        crate::views::question::QuestionAction::Handled => return DeckAction::Handled,
-        crate::views::question::QuestionAction::Resolve(outcome) => {
-            ui.question.close();
-            return DeckAction::Send(WorkspaceInput::QuestionAnswered(Box::new(outcome)));
-        }
+    // The parked asks (#4220, #4240) outrank every other modal here, the
+    // routing card below included — see `parked` for why, and for why
+    // approval is asked before question.
+    if let Some(action) = parked::handle_key(key, ui) {
+        return action;
     }
 
     // The routing card owns every key while it is up — it is holding the

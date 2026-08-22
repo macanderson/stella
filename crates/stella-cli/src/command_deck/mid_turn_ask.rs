@@ -8,11 +8,16 @@
 //! together as one [`crate::rules::MidTurnAsk::Surface`] at session assembly:
 //!
 //! - an **approval** (#2676): a gate decided a call needs a human yes/no, so
-//!   [`DeckAskUserIo`] raises the deck's existing `AskUser` card and the
-//!   shared [`crate::approval::AskUserApprovalResponder`] reads the answer;
+//!   [`DeckApprovalResponder`] raises the #4240 card — every field of the
+//!   request as a field, `read_only` and `gate` included — and waits for the
+//!   driver's [`ApprovalResponse`];
 //! - a **question** (#4212): an agent cannot make a decision itself, so
 //!   [`DeckQuestionResponder`] raises the #4220 overlay and waits for the
 //!   whole [`QuestionOutcome`] the fold produces.
+//!
+//! [`DeckAskUserIo`] is here too, but it is no longer either of them: it
+//! backs the deck's *generic* `AskUser` card, which slash commands
+//! (`/init`'s confirmations) still ask through.
 //!
 //! # Why the deck cannot use the plain-TTY responders
 //!
@@ -24,9 +29,14 @@
 //! "no driver is attached" decline (#4220).
 //!
 //! Everything here is transport. No decision about what a driver may do
-//! lives in this file: the overlay's fold
-//! (`stella_tui::views::question`) owns those, and is unit-tested without a
+//! lives in this file: the folds (`stella_tui::views::question` and
+//! `stella_tui::views::approval`) own those, and are unit-tested without a
 //! terminal.
+//!
+//! The one invariant this file does carry is the **direction of failure**.
+//! An approval that cannot be answered — closed deck, dropped wait, stranded
+//! decision — denies. No path here produces an `Approve` the driver did not
+//! choose.
 //!
 //! # This module is deliberately separate from `command_deck.rs`
 //!
@@ -43,6 +53,8 @@ use stella_protocol::{AgentEvent, QuestionOutcome, QuestionRequest, ToolOutput};
 use stella_tui::Inbound;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
+use stella_tools::registry::approval::{ApprovalRequest, ApprovalResponse};
+
 use crate::interactive::{AskUserIo, FREE_TEXT_LABEL};
 
 /// Ids for the cards [`DeckAskUserIo`] mints (`deck-ask-N`). Process-unique
@@ -51,33 +63,37 @@ use crate::interactive::{AskUserIo, FREE_TEXT_LABEL};
 static NEXT_DECK_ASK: AtomicU64 = AtomicU64::new(0);
 
 /// Both of the deck's mid-turn ask responders, as the one posture
-/// `enforce_workspace_rules` consumes — plus the [`DeckAskUserIo`] behind
-/// the approvals half, which the caller also needs.
+/// `enforce_workspace_rules` consumes — plus the [`DeckAskUserIo`] the
+/// caller also needs for its slash commands.
 ///
-/// One constructor rather than two exported types, because they are one
+/// One constructor rather than three exported types, because they are one
 /// declaration: a surface that can park a call on a yes/no is exactly a
 /// surface that can park one on a question, and handing them out separately
 /// would let a caller arm half of it.
 ///
 /// The io comes back because slash commands ask their own questions through
-/// the same card (`/init`'s confirmations), and it must be the **same** io —
-/// it holds the receiver, and a second one built over a clone of the channel
-/// would race it for every answer.
+/// the generic `AskUser` card (`/init`'s confirmations), and it must be the
+/// **same** io — it holds the receiver, and a second one built over a clone
+/// of the channel would race it for every answer. Note it is no longer what
+/// answers *approvals*: #4240 gave those their own card, because the generic
+/// one flattened a five-field `ApprovalRequest` into a line of prose.
 pub(crate) fn surface(
     agent: String,
     inbound: UnboundedSender<Inbound>,
-    approvals: UnboundedReceiver<String>,
+    asks: UnboundedReceiver<String>,
+    approvals: UnboundedReceiver<ApprovalResponse>,
     questions: UnboundedReceiver<QuestionOutcome>,
 ) -> (crate::rules::MidTurnAsk, DeckAskUserIo) {
     let ask_io = DeckAskUserIo {
         agent,
         inbound: inbound.clone(),
-        answers: Arc::new(tokio::sync::Mutex::new(approvals)),
+        answers: Arc::new(tokio::sync::Mutex::new(asks)),
     };
     let posture = crate::rules::MidTurnAsk::Surface {
-        approval: Arc::new(crate::approval::AskUserApprovalResponder::new(Box::new(
-            ask_io.clone(),
-        ))),
+        approval: Arc::new(DeckApprovalResponder {
+            inbound: inbound.clone(),
+            answers: Arc::new(tokio::sync::Mutex::new(approvals)),
+        }),
         question: Arc::new(DeckQuestionResponder {
             inbound,
             answers: Arc::new(tokio::sync::Mutex::new(questions)),
@@ -158,6 +174,54 @@ impl AskUserIo for DeckAskUserIo {
     }
 }
 
+/// [`ApprovalResponder`][a] over the deck's channels (#4240): raise the
+/// approval card, park until the driver decides, take the card down.
+///
+/// Replaces wrapping [`DeckAskUserIo`] in the shared
+/// [`crate::approval::AskUserApprovalResponder`], which worked but had to
+/// flatten a five-field [`ApprovalRequest`] into one line of prose — losing
+/// `read_only` and `gate` entirely on the way to the person deciding.
+/// Handing the whole request to the card keeps every field a field.
+///
+/// **Denies on every path that is not an explicit approval**: a closed deck,
+/// a dropped wait, a card the driver dismissed. There is no arm here that
+/// produces [`ApprovalResponse::Approve`] without the driver having chosen
+/// it, and that is the property to preserve if this is ever edited.
+///
+/// [a]: stella_tools::registry::approval::ApprovalResponder
+pub(crate) struct DeckApprovalResponder {
+    pub(crate) inbound: UnboundedSender<Inbound>,
+    pub(crate) answers: Arc<tokio::sync::Mutex<UnboundedReceiver<ApprovalResponse>>>,
+}
+
+#[async_trait]
+impl stella_tools::registry::approval::ApprovalResponder for DeckApprovalResponder {
+    async fn respond(&self, request: &ApprovalRequest) -> ApprovalResponse {
+        let mut answers = self.answers.lock().await;
+        // Drop decisions stranded by a cancelled turn — they answer a card
+        // that no longer exists, and reading one here would let a stale
+        // "allow" approve a call the driver never saw.
+        while answers.try_recv().is_ok() {}
+
+        let _withdraw = WithdrawOnDrop {
+            inbound: self.inbound.clone(),
+            withdraw: Inbound::ApprovalWithdrawn,
+        };
+        let _ = self
+            .inbound
+            .send(Inbound::ApprovalAsked(Box::new(request.clone())));
+
+        match answers.recv().await {
+            Some(response) => response,
+            // The deck went away mid-approval. Deny, naming the cause —
+            // never approve on silence.
+            None => ApprovalResponse::Deny {
+                reason: "the deck closed before the approval was answered".to_string(),
+            },
+        }
+    }
+}
+
 /// [`QuestionResponder`][r] over the deck's channels (#4220): raise the question
 /// overlay, park until the driver settles it, take the card down.
 ///
@@ -179,20 +243,27 @@ pub(crate) struct DeckQuestionResponder {
     pub(crate) answers: Arc<tokio::sync::Mutex<UnboundedReceiver<QuestionOutcome>>>,
 }
 
-/// Takes the card down however the wait ends.
+/// Takes a card down however its wait ends — `withdraw` is the envelope for
+/// whichever card is up.
 ///
 /// A `Drop` guard rather than a line at each exit, because the exit that
-/// matters is the one with no line to put it on: at the 30-minute
-/// `DEFAULT_QUESTION_TTL` the broker's `timeout` drops the `respond` future
-/// where it stands, and no code in this file runs again. Without this the
-/// deck would keep a live-looking card up over a turn that had already given
-/// up on it, and a driver's considered answer would go into a oneshot nobody
-/// was holding.
-struct WithdrawOnDrop(UnboundedSender<Inbound>);
+/// matters is the one with no line to put it on: at its TTL the broker's
+/// `timeout` drops the `respond` future where it stands, and no code in this
+/// file runs again. Without this the deck would keep a live-looking card up
+/// over a call that had already given up on it, and a driver's considered
+/// answer would go into a oneshot nobody was holding.
+///
+/// Both TTLs need it and they are far apart — thirty minutes for a question,
+/// two for an approval — so the approval card is the one a driver is far more
+/// likely to watch expire.
+struct WithdrawOnDrop {
+    inbound: UnboundedSender<Inbound>,
+    withdraw: Inbound,
+}
 
 impl Drop for WithdrawOnDrop {
     fn drop(&mut self) {
-        let _ = self.0.send(Inbound::QuestionWithdrawn);
+        let _ = self.inbound.send(self.withdraw.clone());
     }
 }
 
@@ -205,7 +276,10 @@ impl stella_tools::registry::question::QuestionResponder for DeckQuestionRespond
         // would resolve it without the driver having looked at it.
         while answers.try_recv().is_ok() {}
 
-        let _withdraw = WithdrawOnDrop(self.inbound.clone());
+        let _withdraw = WithdrawOnDrop {
+            inbound: self.inbound.clone(),
+            withdraw: Inbound::QuestionWithdrawn,
+        };
         let _ = self
             .inbound
             .send(Inbound::QuestionAsked(Box::new(request.clone())));
@@ -229,10 +303,136 @@ mod tests {
     use std::time::Duration;
 
     use stella_protocol::{Answer, Question, QuestionOption};
+    use stella_tools::registry::approval::ApprovalResponder as _;
     use stella_tools::registry::question::QuestionResponder as _;
     use tokio::sync::mpsc;
 
     use super::*;
+
+    fn approval_request() -> ApprovalRequest {
+        ApprovalRequest {
+            tool: "bash".into(),
+            read_only: false,
+            reason: "matched rule no-destructive-shell".into(),
+            gate: "command.started".into(),
+            subject: Some("rm -rf build/".into()),
+        }
+    }
+
+    fn approval_responder() -> (
+        DeckApprovalResponder,
+        mpsc::UnboundedReceiver<Inbound>,
+        mpsc::UnboundedSender<ApprovalResponse>,
+    ) {
+        let (in_tx, in_rx) = mpsc::unbounded_channel();
+        let (out_tx, out_rx) = mpsc::unbounded_channel();
+        (
+            DeckApprovalResponder {
+                inbound: in_tx,
+                answers: Arc::new(tokio::sync::Mutex::new(out_rx)),
+            },
+            in_rx,
+            out_tx,
+        )
+    }
+
+    /// **The #4240 witness.** The whole structured request reaches the deck —
+    /// `read_only` and `gate` included, the two fields the generic `AskUser`
+    /// card could not carry — and the driver's decision comes back.
+    #[tokio::test]
+    async fn the_whole_approval_request_reaches_the_card() {
+        let (responder, mut inbound, decisions) = approval_responder();
+        let ask = approval_request();
+        let deciding = tokio::spawn(async move { responder.respond(&ask).await });
+
+        let Some(Inbound::ApprovalAsked(carried)) = inbound.recv().await else {
+            panic!("the approval must reach the deck as a card");
+        };
+        assert_eq!(carried.tool, "bash");
+        assert!(
+            !carried.read_only,
+            "read_only must survive — it is what separates a read from a write, \
+             and the generic AskUser card dropped it entirely"
+        );
+        assert_eq!(
+            carried.gate, "command.started",
+            "the gate that raised the demand is what makes a deny defensible"
+        );
+        assert_eq!(carried.subject.as_deref(), Some("rm -rf build/"));
+
+        decisions
+            .send(ApprovalResponse::Deny {
+                reason: "use the staging bucket instead".into(),
+            })
+            .expect("the parked dispatch is still listening");
+
+        let ApprovalResponse::Deny { reason } = deciding.await.expect("settles") else {
+            panic!("the driver denied");
+        };
+        assert_eq!(reason, "use the staging bucket instead");
+    }
+
+    /// **The safety property, at the transport layer.** Every way the wait
+    /// can fail denies. There is no path to `Approve` the driver did not
+    /// choose — and an approval that defaulted open would run the exact call
+    /// a gate stopped.
+    #[tokio::test]
+    async fn every_failed_approval_wait_denies() {
+        // A closed deck.
+        let (responder, _inbound, decisions) = approval_responder();
+        drop(decisions);
+        assert!(
+            matches!(
+                responder.respond(&approval_request()).await,
+                ApprovalResponse::Deny { .. }
+            ),
+            "a closed deck must deny"
+        );
+
+        // A decision stranded by a cancelled turn must not answer the next
+        // card — least of all a stale `Approve`.
+        let (responder, mut inbound, decisions) = approval_responder();
+        decisions
+            .send(ApprovalResponse::Approve)
+            .expect("queued before anyone asked");
+        let ask = approval_request();
+        let deciding = tokio::spawn(async move { responder.respond(&ask).await });
+        assert!(
+            matches!(inbound.recv().await, Some(Inbound::ApprovalAsked(_))),
+            "the stale approve must not have short-circuited the ask"
+        );
+        decisions
+            .send(ApprovalResponse::Deny {
+                reason: "the real answer".into(),
+            })
+            .expect("still listening");
+        let ApprovalResponse::Deny { reason } = deciding.await.expect("settles") else {
+            panic!("the live decision is the one that counts");
+        };
+        assert_eq!(reason, "the real answer");
+    }
+
+    /// The approval card comes down when its wait is abandoned, exactly like
+    /// the question overlay's. Its TTL is `DEFAULT_APPROVAL_TTL` — two
+    /// minutes, not thirty — so this is the card a driver is far more likely
+    /// to watch expire.
+    #[tokio::test]
+    async fn an_abandoned_approval_withdraws_the_card() {
+        let (responder, mut inbound, _decisions) = approval_responder();
+        let ask = approval_request();
+        let timed_out = tokio::time::timeout(Duration::from_millis(30), responder.respond(&ask))
+            .await
+            .is_err();
+        assert!(timed_out, "nobody decided, so the wait must expire");
+        assert!(
+            matches!(inbound.recv().await, Some(Inbound::ApprovalAsked(_))),
+            "the card went up"
+        );
+        assert!(
+            matches!(inbound.recv().await, Some(Inbound::ApprovalWithdrawn)),
+            "and must come down again when the wait is abandoned"
+        );
+    }
 
     fn request() -> QuestionRequest {
         QuestionRequest {

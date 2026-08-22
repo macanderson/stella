@@ -344,6 +344,29 @@ pub enum Inbound {
     /// path, so it fires on every way the wait can end rather than only the
     /// ones somebody remembered to handle.
     QuestionWithdrawn,
+    /// A gate demands a human yes/no before a tool call may run, and that
+    /// dispatch is **parked** on the answer (#4240). Raises the approval card
+    /// ([`crate::views::approval`]).
+    ///
+    /// Separate from [`Inbound::QuestionAsked`] because the two asks are
+    /// different decisions: this one is a yes/no over a call already chosen,
+    /// where the whole job is showing enough of the request — the tool,
+    /// whether it mutates, the gate that stopped it — to make a refusal
+    /// defensible. It rode the generic `AskUser` card until #4240, which
+    /// flattened all five fields into one line of prose.
+    ///
+    /// Out-of-band view state; the model fold ignores it. Boxed like its
+    /// siblings so the per-token [`Inbound::Event`] does not grow to the size
+    /// of the rarest variant.
+    ApprovalAsked(Box<stella_tools::registry::approval::ApprovalRequest>),
+    /// The parked approval is no longer answerable — its TTL expired (a much
+    /// shorter one than a question's: `DEFAULT_APPROVAL_TTL` is two minutes)
+    /// or the turn holding it was cancelled — so take the card down.
+    ///
+    /// The dispatch is denied on that path, never approved, so this is
+    /// strictly about not leaving a card up that offers to decide something
+    /// already decided.
+    ApprovalWithdrawn,
     /// A launch-mark cue (see [`SplashCue`]): the driver holds the mark
     /// open over a running init (session startup, `/init`) and
     /// releases it when init finishes. Out-of-band view state, applied
@@ -714,6 +737,14 @@ pub enum WorkspaceInput {
     /// Boxed to match [`Inbound::QuestionAsked`]: the answer set carries a
     /// note and free text per question.
     QuestionAnswered(Box<stella_protocol::QuestionOutcome>),
+    /// How the driver decided the parked approval the card was showing
+    /// (#4240) — the return leg of [`Inbound::ApprovalAsked`].
+    ///
+    /// A `Deny` carries the driver's own words when they gave any, and the
+    /// broker forwards them to the model verbatim: "no, use the staging
+    /// bucket" is a redirection the turn can act on, where a bare refusal is
+    /// a wall it has to guess its way around.
+    ApprovalAnswered(Box<stella_tools::registry::approval::ApprovalResponse>),
     /// Pause / resume / stop / restart a specific agent.
     Control {
         agent: AgentId,

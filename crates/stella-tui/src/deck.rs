@@ -752,6 +752,10 @@ impl WorkspaceModel {
             // there for good if the answer never comes.
             | Inbound::QuestionAsked(_)
             | Inbound::QuestionWithdrawn
+            // Same for a parked approval: a gate demanding a yes/no is not
+            // speech either, and the call it gates has not run.
+            | Inbound::ApprovalAsked(_)
+            | Inbound::ApprovalWithdrawn
             | Inbound::Splash(_)
             // The whole point of `Notice`: a system notification is not agent
             // or user speech, so the fold must NOT give it a transcript row.
