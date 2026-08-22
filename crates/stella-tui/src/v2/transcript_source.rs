@@ -256,23 +256,36 @@ pub fn turn_begin_rows(
 /// turn its unit — so it renders whether or not the receipt has anything but
 /// money to say.
 ///
-/// Everything the receipt cannot source is elided rather than zeroed. Only
-/// `spend_usd` is fed today: the deck does not fold `StepUsage` (it would
-/// double-count the spend the budget gauge tracks), keeps no per-turn clock,
-/// and counts no per-turn files, tests or memories. A receipt reading
-/// `0 tok · 0 files · 0/0 tests` would be four measurements nobody took, on the
-/// one line whose whole job is to be the settled account of a turn. Sourcing
-/// the other five — `det %` above all, which SPEC 5 moved off the status bar
-/// and re-homed here — is #4184.
+/// Everything the receipt cannot source is elided rather than zeroed: a
+/// receipt reading `0 tok · 0/0 tests` would be measurements nobody took, on
+/// the one line whose whole job is to be the settled account of a turn.
+///
+/// `tally` is [`crate::model::TurnReceipt`] — counted at fold time and stamped
+/// onto the closing entry, because this renderer sees one entry and no session
+/// state. Tests are the one field still absent, and
+/// [`crate::model::TurnCounters`] states what would have to exist to feed it.
 #[must_use]
-pub fn turn_end_rows(turn: u32, cost_usd: f64, width: usize) -> Vec<Line<'static>> {
+pub fn turn_end_rows(
+    turn: u32,
+    cost_usd: f64,
+    tally: &crate::model::TurnReceipt,
+    width: usize,
+) -> Vec<Line<'static>> {
     vec![
-        turn_end(turn, None, width),
+        turn_end(turn, tally.elapsed_ms.map(human_elapsed).as_deref(), width),
         receipt(&Receipt {
             spend_usd: cost_usd,
+            tokens: tally.tokens,
+            files: tally.files,
+            memories: tally.memories,
             ..Receipt::default()
         }),
     ]
+}
+
+/// A turn's wall clock, in the deck's own duration wording.
+fn human_elapsed(ms: u64) -> String {
+    crate::render::human_duration(ms)
 }
 
 #[cfg(test)]

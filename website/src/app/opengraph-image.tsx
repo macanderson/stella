@@ -21,7 +21,7 @@ import {
  * double up — the kit's own lockup SVG omits it for the same reason.
  *
  * Colours are literals or imported constants rather than CSS vars because
- * Satori resolves no cascade: the canvas #0a0a0c, text #e8e8ec, gold
+ * Satori resolves no cascade: the canvas #0a0a0c, text #f4f1ea, gold
  * #efc53f (6.4:1 on ink), muted #777782 (6.8:1 on ink). Keep the markup inside Satori's
  * supported subset — plain <path>/<rect> fills only, no gradients, masks, or
  * filters (the trails are pre-flattened rounded rects for exactly this
@@ -40,7 +40,7 @@ export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 const INK = "#0a0a0c";
-const PAPER = "#e8e8ec";
+const PAPER = "#f4f1ea";
 const MUTED = "#777782";
 const SURFACE = "#0f0f12";
 const SURFACE_TOP = "#141b22";

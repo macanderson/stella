@@ -336,8 +336,13 @@ fn v2_rows(
             ));
             true
         }
-        TranscriptEntry::Complete { cost_usd, turn, .. } => {
-            out.extend(v2::turn_end_rows(*turn, *cost_usd, width));
+        TranscriptEntry::Complete {
+            cost_usd,
+            turn,
+            receipt,
+            ..
+        } => {
+            out.extend(v2::turn_end_rows(*turn, *cost_usd, receipt, width));
             true
         }
         // Only the boundary that *opens* the turn. A later stage of the same

@@ -53,7 +53,6 @@ fn scripted_turn() -> (TurnHead, Vec<Event>, Receipt) {
     let receipt = Receipt {
         spend_usd: 0.11,
         tokens: Some(18_000),
-        det_pct: Some(86),
         tests_passed: 4,
         tests_total: 4,
         files: 2,
@@ -105,7 +104,7 @@ fn a_scripted_turn_renders_begin_events_and_receipt() {
         "● edit …/self_driving_cmd.rs +3 -1",
         "● run cargo test -p stella-core",
         "── turn 14 done · 0:42",
-        "receipt $0.11 · 18k tok · det 86% · 4/4 tests · 2 files · 1 memory · ↵ audit",
+        "receipt $0.11 · 18k tok · 4/4 tests · 2 files · 1 memory · ↵ audit",
     ] {
         assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
     }

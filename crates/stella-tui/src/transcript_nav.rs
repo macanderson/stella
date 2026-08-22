@@ -510,6 +510,7 @@ mod tests {
             TranscriptEntry::User("do the thing".into()),
             TranscriptEntry::User("(steered mid-turn) actually stop".into()),
             TranscriptEntry::Complete {
+                receipt: Default::default(),
                 model: "m".into(),
                 cost_usd: 0.1,
                 turn: 1,
