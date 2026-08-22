@@ -14,6 +14,18 @@
 //! character specifically; a layout that budgets one cell for it will shear
 //! the row to its right, so [`width`] states the width rather than leaving
 //! each call site to measure. Nothing else here is fullwidth.
+//!
+//! [`WRITE`] is the only *unconditionally* wide one. Seven others carry East
+//! Asian Width `A` (**ambiguous**) rather than `N`, so a terminal configured
+//! for CJK double-width ambiguity draws them in two cells: [`RUNNING`],
+//! [`QUEUED`], [`GATE`], [`MEMORY`], [`NODE_FILE`], [`TOOL_EXECUTE`], and
+//! `BLOCK_EIGHTHS[8]`. [`width`] answers one for all of them, because that is
+//! what every non-CJK configuration draws and what the layout budgets.
+//!
+//! The hazard is named rather than silently inherited, and it predates the
+//! tool-class rows below: six of those seven shipped before them. It is not
+//! guarded, because nothing here knows the terminal's ambiguous-width setting
+//! — a real fix means asking the terminal, not asserting a number.
 
 /// Done, pass. Green.
 pub const DONE: char = '✓';
@@ -72,6 +84,54 @@ pub const NODE_TYPE: char = '▢';
 /// Graph node: function. Silver.
 pub const NODE_FN: char = 'ƒ';
 
+// ── Tool class (SPEC 4) ─────────────────────────────────────────────────────
+//
+// Four glyphs for the four classes a tool call falls into, drawn on the head
+// of a call this renderer has no verb of its own for. They take the metal of
+// the row they head and add none of their own: SPEC 2 spends its two metals on
+// *kind*, and re-adding *class* as a third hue would erode the rule the whole
+// scheme rests on. Shape carries class instead, which is what SPEC 2's "never
+// colour alone" already points at (#4125).
+//
+// All four are drawn from the circle and arrow families rather than invented,
+// and each was checked against the shipped `cmap` of the brand font before it
+// was chosen — see the per-glyph notes. That check is why `TOOL_EXECUTE` is
+// U+2299 and not U+2317 VIEWDATA SQUARE, which the design first named.
+
+/// Tool class: a look — nothing changed. Outline, unfilled.
+///
+/// U+25CC DOTTED CIRCLE, native to JetBrains Mono (SPEC 3.4).
+pub const TOOL_INSPECT: char = '◌';
+
+/// Tool class: written — filled and marked.
+///
+/// U+25C9 FISHEYE, native to JetBrains Mono (SPEC 3.4).
+pub const TOOL_MUTATE: char = '◉';
+
+/// Tool class: external, opaque — a call this table cannot vouch for.
+///
+/// U+2299 CIRCLED DOT OPERATOR. The design's first choice was U+2317 VIEWDATA
+/// SQUARE, which reads better for "external" and is width `N` rather than this
+/// character's ambiguous `A`. It was rejected on coverage: U+2317 is absent
+/// from the `cmap` of *every* monospace face checked — JetBrains Mono, DejaVu
+/// Sans Mono, Fira Code, Cascadia Mono, Hack, Ubuntu Mono and Menlo — so it
+/// resolves through CoreText to the proportional Apple Symbols on macOS and
+/// has nothing to resolve to on a bare Linux terminal. A glyph whose entire
+/// job is to be recognised may not ship as a tofu box (SPEC 2, cell-grid
+/// honest). This character is present in JetBrains Mono itself.
+pub const TOOL_EXECUTE: char = '⊙';
+
+/// Tool class: handed to another agent.
+///
+/// U+21B3 DOWNWARDS ARROW WITH TIP RIGHTWARDS — width `N`, and the one glyph
+/// here whose shape states the relation rather than naming it. Absent from
+/// JetBrains Mono, so it resolves to Menlo, which is exactly what the shipped
+/// [`RUNNING`] spinner already does and therefore no new hazard. The
+/// circle-family alternative (U+25D1) was declined because it is
+/// [`SPINNER`]`[2]`: a delegation would be indistinguishable from a call
+/// caught mid-spin.
+pub const TOOL_DELEGATE: char = '↳';
+
 /// The eighth-block ramp, empty through full — the only sub-cell precision
 /// this design allows itself (SPEC 2: cell-grid honest).
 ///
@@ -87,7 +147,7 @@ pub const METER_TRACK: char = '░';
 ///
 /// The tests walk this instead of a second list, so a glyph added without a
 /// stated width is caught rather than assumed.
-pub const ALL: [(&str, char); 16] = [
+pub const ALL: [(&str, char); 20] = [
     ("done", DONE),
     ("running", RUNNING),
     ("queued", QUEUED),
@@ -102,6 +162,10 @@ pub const ALL: [(&str, char); 16] = [
     ("node_file", NODE_FILE),
     ("node_type", NODE_TYPE),
     ("node_fn", NODE_FN),
+    ("tool_inspect", TOOL_INSPECT),
+    ("tool_mutate", TOOL_MUTATE),
+    ("tool_execute", TOOL_EXECUTE),
+    ("tool_delegate", TOOL_DELEGATE),
     ("block_full", BLOCK_EIGHTHS[8]),
     ("meter_track", METER_TRACK),
 ];

@@ -95,6 +95,51 @@ One vocabulary across every panel, including plugin-drawn UI:
 | `◆` | memory | silver |
 | `✦` | skill | silver |
 | `▤ ▢ ƒ` | graph node kinds: file, type, fn | silver |
+| `◌` | tool class: inspect — a look, nothing changed | takes the row's metal |
+| `◉` | tool class: mutate — written | takes the row's metal |
+| `⊙` | tool class: execute — external, opaque | takes the row's metal |
+| `↳` | tool class: delegate — handed to another agent | takes the row's metal |
+
+### 4.1 Tool class is a shape, never a hue
+
+The four rows above are drawn on the head of a call the transcript has no verb
+of its own for — an MCP tool, a workspace custom tool, a built-in like
+`get_state` or `delegate`. They add **no colour**: they take the metal of the
+row they head, which §6.2 makes gold for all of them alike, because every one
+of them is stella acting.
+
+v1 hued the tool *name* by its class, using four categorical `data-*` hues.
+§3.2's clamp rejects those outright, so v2 dropped the signal, and
+`get_state`, `mcp__github__create_pull_request` and `delegate` all collapsed
+onto one `●` on one gold rail — a reader could no longer tell a look from an
+opaque external call from a hand-off (#4125). Restoring the distinction as a
+third colour channel was declined: it would erode the two-metal rule the whole
+scheme rests on. Shape carries it instead, which is what §2's *never colour
+alone* already asks for.
+
+**Font coverage decided two of the four.** A glyph whose entire job is to be
+recognised may not ship as a tofu box (§2, cell-grid honest), so each candidate
+was checked against the shipped `cmap` of the brand font (§3.4) and of six
+other common monospace faces:
+
+- `◌` U+25CC and `◉` U+25C9 are **native to JetBrains Mono**. Both are East
+  Asian Width `N` — unambiguously one cell, which is stricter than seven rows
+  above them already are: `◐`, `○`, `◇`, `◆`, `▤` and the full block are all
+  width `A`, and `＋` is fullwidth outright.
+- `⊙` U+2299 replaces the design's first choice, `⌗` U+2317 VIEWDATA SQUARE.
+  U+2317 reads better for *external* and is width `N`, but it is absent from
+  **every** monospace face checked — JetBrains Mono, DejaVu Sans Mono, Fira
+  Code, Cascadia Mono, Hack, Ubuntu Mono, Menlo — resolving to the proportional
+  Apple Symbols on macOS and to nothing on a bare Linux terminal. U+2299 is
+  present in JetBrains Mono itself. Its cost is width `A`.
+- `↳` U+21B3 is width `N` and absent from JetBrains Mono, resolving to Menlo —
+  exactly what the shipped `◐` spinner above already does, so it is no new
+  hazard. The circle-family alternative U+25D1 was declined because it is the
+  third frame of that spinner: a delegation would be indistinguishable from a
+  call caught mid-spin.
+
+The 16-colour fallback (§3.5) needs no work here: these carry meaning by shape,
+so a colour-degraded terminal loses nothing.
 
 ## 5. Layout
 
