@@ -320,24 +320,18 @@ pub fn set_active_theme(theme: ThemeName) {
 /// distinction that renders identically — and `gold_stops`/`gold_gradient`,
 /// which had no caller outside this module, are gone with it.
 pub fn primary_stops() -> [Color; 2] {
-    match active_theme() {
+    stops_for(active_theme())
+}
+
+/// The pure half of [`primary_stops`]: which pair a *named* theme sweeps
+/// between, reading none of the process-global active theme. Split out so the
+/// table can be asserted for every theme at once without a test flipping
+/// global state the rest of the binary shares.
+fn stops_for(theme: ThemeName) -> [Color; 2] {
+    match theme {
         ThemeName::StellaDark => [palette::BRAND, palette::BRAND_LIVE],
         ThemeName::StellaLight => [palette::BRAND_INK_DEEP, palette::BRAND_INK],
     }
-}
-
-/// The active theme's bright primary. Same value the flat
-/// [`ACCENT_LIVE`] remaps to, but resolved eagerly — use this only where a colour is
-/// *interpolated* (lightened, swept), since [`apply_theme`]'s value remap can't
-/// reach an interpolated cell. Flat fills should keep using [`ACCENT`].
-pub fn primary() -> Color {
-    primary_stops()[1]
-}
-
-/// The active theme's resting primary — the interpolation counterpart of
-/// [`primary`] (see its note on when to reach for these over [`ACCENT`]).
-pub fn primary_deep() -> Color {
-    primary_stops()[0]
 }
 
 // ── Diff panel ──────────────────────────────────────────────────────────────

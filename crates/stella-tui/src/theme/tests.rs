@@ -952,6 +952,39 @@ fn degrade_buffer_strips_color_under_no_color() {
     assert_eq!(buf.content[0].bg, Color::Reset);
 }
 
+/// Which two golds a theme sweeps between is the whole contract of the brand
+/// gradient, and it used to be readable a second way — through the
+/// `primary`/`primary_deep` wrappers, which projected one end each. Those had
+/// no caller and are gone (#3741), so this is where the pairing is pinned:
+/// per theme, in full, on the accessor that survived.
+///
+/// It asserts against `stops_for` rather than `primary_stops` because the
+/// latter reads process-global state every other test in this binary shares —
+/// a test that flipped the active theme to see the light row would race
+/// `theme_remap_and_apply`'s "stella-dark is the identity" assertion.
+#[test]
+fn primary_stops_are_the_two_golds_per_theme() {
+    assert_eq!(
+        stops_for(ThemeName::StellaDark),
+        [palette::BRAND, palette::BRAND_LIVE],
+        "stella-dark sweeps resting gold → live gold"
+    );
+    assert_eq!(
+        stops_for(ThemeName::StellaLight),
+        [palette::BRAND_INK_DEEP, palette::BRAND_INK],
+        "stella-light sweeps the deep paper gold → the paper gold"
+    );
+    // No theme may collapse the sweep to one colour: a gradient between a
+    // value and itself is a flat fill wearing a gradient's cost.
+    for theme in ThemeName::ALL {
+        let [resting, live] = stops_for(theme);
+        assert_ne!(resting, live, "{} has a one-colour sweep", theme.slug());
+    }
+    // And the live accessor is that table read at the active theme, not a
+    // second copy of it.
+    assert_eq!(primary_stops(), stops_for(active_theme()));
+}
+
 #[test]
 fn brand_gradient_spans_resting_to_live_accent() {
     // The default theme is `stella-dark`, so the stops are the two golds;
