@@ -71,6 +71,14 @@ pub const GOLD_LIFT_HUE_TOLERANCE_DEG: f64 = 3.0;
 /// The token a lift is anchored to.
 pub const GOLD_LIFT_ANCHOR: &str = "gold";
 
+/// The green floor warm paper must clear, as a percentage of red.
+///
+/// The light ground's clamp: warm or neutral, never blue. The floors keep paper from becoming tan, and are taken from brand v1.0's own light neutrals, which sit at g = 0.988 r and b = 0.960 r.
+pub const PAPER_GREEN_PCT: u32 = 97;
+
+/// The blue floor warm paper must clear, as a percentage of red.
+pub const PAPER_BLUE_PCT: u32 = 93;
+
 // ── Tokens ─────────────────────────────────────────────────────────
 
 /// Canvas. `#0A0A0C`
@@ -100,7 +108,7 @@ pub const SILVER: Color = Color::Rgb(0xA9, 0xAA, 0xB5);
 /// Syntax types, tertiary labels. `#BFC1CC`
 pub const SILVER_TYPE: Color = Color::Rgb(0xBF, 0xC1, 0xCC);
 
-/// Primary text on dark. `#E8E8EC`
+/// Primary text on dark, in the deck. `#E8E8EC`
 pub const TEXT: Color = Color::Rgb(0xE8, 0xE8, 0xEC);
 
 /// Secondary text. `#777782`
@@ -124,17 +132,17 @@ pub const DIFF_ADD_BG: Color = Color::Rgb(0x10, 0x20, 0x1A);
 /// Removed diff row background. `#241019`
 pub const DIFF_DEL_BG: Color = Color::Rgb(0x24, 0x10, 0x19);
 
-/// Primary text on light surfaces (web light mode only). `#141416`
-pub const INK: Color = Color::Rgb(0x14, 0x14, 0x16);
+/// Primary text on light surfaces (web light mode only). `#141413`
+pub const INK: Color = Color::Rgb(0x14, 0x14, 0x13);
 
-/// Light canvas. `#FFFFFF`
-pub const PAPER: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
+/// The warm light canvas. `#FFFCF5`
+pub const PAPER: Color = Color::Rgb(0xFF, 0xFC, 0xF5);
 
-/// Light panel. `#F6F6F8`
-pub const PAPER_PANEL: Color = Color::Rgb(0xF6, 0xF6, 0xF8);
+/// Light panel. `#F9F6EF`
+pub const PAPER_PANEL: Color = Color::Rgb(0xF9, 0xF6, 0xEF);
 
-/// Light border. `#E3E3E8`
-pub const PAPER_BORDER: Color = Color::Rgb(0xE3, 0xE3, 0xE8);
+/// Light border. `#E6E3DD`
+pub const PAPER_BORDER: Color = Color::Rgb(0xE6, 0xE3, 0xDD);
 
 // ── The walkable table ─────────────────────────────────────────────
 
@@ -154,6 +162,9 @@ pub enum Clamp {
     CoolSilver,
     /// `r == g` and `b >= g` -- neutral, or tipped toward blue, never toward red.
     NeutralGray,
+    /// `r >= g >= b`, `100 g >= PAPER_GREEN_PCT r`, `100 b >= PAPER_BLUE_PCT r`
+    /// -- the light ground, warm or neutral, never blue.
+    WarmPaper,
     /// Pass and fail. Deliberately neither metal nor gray; no channel predicate.
     Verdict,
     /// A tint carrying a sign column, not a hue in a role; no channel predicate.
@@ -179,10 +190,10 @@ pub const ALL: &[(&str, Color, Clamp)] = &[
     ("red", RED, Clamp::Verdict),
     ("diff-add-bg", DIFF_ADD_BG, Clamp::Surface),
     ("diff-del-bg", DIFF_DEL_BG, Clamp::Surface),
-    ("ink", INK, Clamp::NeutralGray),
-    ("paper", PAPER, Clamp::NeutralGray),
-    ("paper-panel", PAPER_PANEL, Clamp::NeutralGray),
-    ("paper-border", PAPER_BORDER, Clamp::NeutralGray),
+    ("ink", INK, Clamp::WarmPaper),
+    ("paper", PAPER, Clamp::WarmPaper),
+    ("paper-panel", PAPER_PANEL, Clamp::WarmPaper),
+    ("paper-border", PAPER_BORDER, Clamp::WarmPaper),
 ];
 
 // The predicates that read this table are in `crate::clamp`, and the

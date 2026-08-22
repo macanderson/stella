@@ -25,10 +25,10 @@
 :root {
   /* ---- brand core ------------------------------------------------------ */
   --stella-brand: #EFC53F;       /* gold — the brand metal */
-  --stella-brand-deep: #141416;  /* ink — brand *text* on light is never gold */
+  --stella-brand-deep: #141413;  /* ink — brand *text* on light is never gold */
   --stella-ink: #0A0A0C;         /* bg — the canvas */
-  --stella-paper: #E8E8EC;       /* text — primary text on dark */
-  --stella-paper-bg: #FFFFFF;    /* paper — light-mode surface */
+  --stella-paper: #F4F1EA;       /* text — primary text on dark */
+  --stella-paper-bg: #FFFCF5;    /* paper — light-mode surface */
 
   /* ---- brand ramp ------------------------------------------------------ */
   --st-bg: #0A0A0C;
@@ -40,7 +40,7 @@
   --st-gold-bright: #F7D96B;
   --st-silver: #A9AAB5;
   --st-silver-type: #BFC1CC;
-  --st-text: #E8E8EC;
+  --st-text: #F4F1EA;
   --st-muted: #777782;
   --st-dim: #4B4B56;
   --st-comment: #565660;
@@ -48,10 +48,10 @@
   --st-red: #E0687A;
   --st-diff-add: #10201A;
   --st-diff-del: #241019;
-  --st-ink: #141416;
-  --st-paper: #FFFFFF;
-  --st-paper-panel: #F6F6F8;
-  --st-paper-border: #E3E3E8;
+  --st-ink: #141413;
+  --st-paper: #FFFCF5;
+  --st-paper-panel: #F9F6EF;
+  --st-paper-border: #E6E3DD;
 
   /* ---- typography ------------------------------------------------------ */
   /* JetBrains Mono is the brand voice — the product lives in a terminal,
@@ -112,8 +112,8 @@
 :root {
   --stella-bg: var(--stella-paper-bg);
   --stella-fg: var(--stella-ink);
-  --stella-surface: #F6F6F8;
-  --stella-border: #E3E3E8;
+  --stella-surface: #F9F6EF;
+  --stella-border: #E6E3DD;
   --stella-muted-fg: #4B4B56;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand-deep); /* gold that passes on light */

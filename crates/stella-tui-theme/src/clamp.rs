@@ -79,6 +79,12 @@ pub const GOLD_BLUE_PCT: u32 = token::GOLD_BLUE_PCT;
 /// `#EF8A1F` sits 14.8° away and fails.
 pub const LIFT_HUE_TOLERANCE_DEG: f64 = token::GOLD_LIFT_HUE_TOLERANCE_DEG;
 
+/// The green floor warm paper must clear, as a percentage of red.
+pub const PAPER_GREEN_PCT: u32 = token::PAPER_GREEN_PCT;
+
+/// The blue floor warm paper must clear, as a percentage of red.
+pub const PAPER_BLUE_PCT: u32 = token::PAPER_BLUE_PCT;
+
 /// Does `color` satisfy the clamp its row in [`token::ALL`] declares?
 ///
 /// The bridge between the generated table and the predicates below, and the
@@ -103,6 +109,7 @@ pub fn satisfies(color: Color, clamp: token::Clamp) -> bool {
         },
         token::Clamp::CoolSilver => is_cool_silver(r, g, b),
         token::Clamp::NeutralGray => is_neutral_gray(r, g, b),
+        token::Clamp::WarmPaper => is_warm_paper(r, g, b),
         token::Clamp::Verdict | token::Clamp::Surface => true,
     }
 }
@@ -223,4 +230,18 @@ pub const fn is_neutral_gray(r: u8, g: u8, b: u8) -> bool {
 #[must_use]
 pub const fn is_cool_silver(r: u8, g: u8, b: u8) -> bool {
     b > r && g >= r
+}
+
+/// Is this colour warm paper — the light ground's clamp, off the deck?
+///
+/// `r >= g >= b`, with `g >= 0.97 r` and `b >= 0.93 r`. The mirror of
+/// [`is_neutral_gray`]: warm or neutral, never blue. The two floors keep paper
+/// from becoming tan, and are taken from brand v1.0's light neutrals, which sit
+/// at `g = 0.988 r` and `b = 0.960 r`.
+#[must_use]
+pub const fn is_warm_paper(r: u8, g: u8, b: u8) -> bool {
+    r >= g
+        && g >= b
+        && (g as u32) * 100 >= (r as u32) * PAPER_GREEN_PCT
+        && (b as u32) * 100 >= (r as u32) * PAPER_BLUE_PCT
 }
