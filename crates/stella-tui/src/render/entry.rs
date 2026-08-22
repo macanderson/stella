@@ -646,7 +646,36 @@ fn entry_body(
                 // diff under it in the same breath. The row carries only its
                 // metrics and gets out of the way.
                 let paint = body_paint(path.as_deref(), full);
-                let shown: Vec<&str> = if inline.is_some() {
+                // A file tool's own prose is never a transcript body.
+                //
+                // `read_file` returns the file, `edit_file` returns a sentence
+                // ("replaced 1 occurrence(s) in <path> at byte 1286 (file
+                // sha256/8 e951e674)"). Neither belongs under a head that
+                // already names the path:
+                //
+                // * A **read** changed nothing, and SPEC 2 collapses what did
+                //   not change — the head's `N lines` is the fact, and `↵ open`
+                //   is where the content lives. Five lines of a file the reader
+                //   did not ask to see is the transcript spending its scarcest
+                //   resource on the one event that has nothing to report.
+                // * A **mutation** has exactly one interesting body, its diff.
+                //   When the diff has not arrived yet — the measurement lands
+                //   with the `FileChange`, which can be a beat behind the
+                //   result — the honest row is quiet. Falling back to the
+                //   tool's sentence restates the path, adds a byte offset and a
+                //   truncated hash, and reads as though *that* were the report.
+                //   It is why the same edit looks informative on one turn and
+                //   useless on the next: nothing changed but the timing.
+                //
+                // A failure still shows its body whatever the tool: the point
+                // of reading a transcript at the moment something breaks is to
+                // see why, and that argument does not care which tool broke.
+                let body_is_tool_prose = *ok
+                    && matches!(
+                        name.as_str(),
+                        "read_file" | "edit_file" | "write_file" | "delete_file" | "apply_edits"
+                    );
+                let shown: Vec<&str> = if inline.is_some() || body_is_tool_prose {
                     Vec::new()
                 } else {
                     // A failure never collapses to a single line. The point of

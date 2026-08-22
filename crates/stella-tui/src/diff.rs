@@ -264,6 +264,13 @@ fn render_body(
         // Every line advances the gutter counters, shown or not — skipping a
         // line must not renumber the ones after it, and the numbers on the
         // far side of an elision have to be the file's real ones.
+        // Captured before `body_line` advances it: a `--- ` or `+++ ` line is
+        // plumbing only *outside* a hunk. Inside one it is body content that
+        // happens to look like a header — an SQL comment, a diff of a diff —
+        // and hunk position is the only thing that can tell them apart
+        // (`count_diff_lines` makes the same distinction for the same reason).
+        // Stripping on the text alone deletes real removed lines.
+        let was_in_hunk = in_hunk;
         // Read *before* `body_line` runs, because that call is what moves the
         // state this asks about. The same structural rule `body_line` itself
         // applies (only before a file's first hunk is `+++ `/`--- ` a header):
@@ -278,6 +285,20 @@ fn render_body(
             &mut in_hunk,
             emphasis.get(&i).copied(),
         );
+        // `index 74f38f3..9e6e426 100644`, `--- a/<path>`, `+++ b/<path>`:
+        // three rows of git plumbing at the head of every diff, saying the
+        // path the row above already names and a pair of blob hashes nobody
+        // can act on. They cost three of the handful of rows a collapsed diff
+        // gets, which is most of the budget spent before the first changed
+        // line. The counters above still advance over them, so the gutter's
+        // numbers stay the file's own.
+        //
+        // `@@` survives on the `hunk_headers` flag: it carries the enclosing
+        // scope (`@@ … const TYPEAHEAD_MAX_ROWS`), which is the one piece of
+        // context a hunk cannot reconstruct from its own lines.
+        if plan.shows(i)
+            && !(!was_in_hunk && is_meta(text))
+            && (hunk_headers || !text.starts_with("@@"))
         // Chrome is suppressed after planning rather than before it, so an
         // elided row's `⋯ n lines` count stays the one `stella_diff::view`
         // computed and every surface reports the same number for one change.
@@ -758,25 +779,64 @@ mod tests {
     fn body_numbers_added_lines_on_the_new_side_and_removed_on_the_old() {
         let lines = body_lines(SAMPLE, None);
         let texts: Vec<String> = lines.iter().map(line_text).collect();
+        // The `---`/`+++` pair is stripped, so the `@@` header leads and the
+        // first numbered row is at index 1.
         // "@@ -1,3 +1,4 @@" starts old=1/new=1; context takes new 1.
-        assert!(texts[3].starts_with("   1  context"), "{:?}", texts[3]);
+        assert!(texts[1].starts_with("   1  context"), "{:?}", texts[1]);
         // The removal is numbered on the OLD side (old line 2).
-        assert!(texts[4].starts_with("   2 -old line"), "{:?}", texts[4]);
+        assert!(texts[2].starts_with("   2 -old line"), "{:?}", texts[2]);
         // Additions continue on the NEW side (new lines 2, 3).
-        assert!(texts[5].starts_with("   2 +new line"), "{:?}", texts[5]);
-        assert!(texts[6].starts_with("   3 +another add"), "{:?}", texts[6]);
+        assert!(texts[3].starts_with("   2 +new line"), "{:?}", texts[3]);
+        assert!(texts[4].starts_with("   3 +another add"), "{:?}", texts[4]);
     }
 
+    /// Git plumbing does not render at all, and the hunk header — which does —
+    /// carries no line number.
+    ///
+    /// This used to assert the opposite half: that `--- a/x.rs` and
+    /// `+++ b/x.rs` rendered with a blank gutter. They render nowhere now. The
+    /// three rows they cost (`index …` joins them on a real git patch) are most
+    /// of the budget a collapsed diff has, spent restating the path the head
+    /// already names and a pair of blob hashes nobody can act on.
     #[test]
-    fn file_headers_and_hunks_get_no_number() {
+    fn plumbing_is_stripped_and_the_hunk_header_keeps_a_blank_gutter() {
         let lines = body_lines(SAMPLE, None);
-        for (i, line) in lines.iter().take(3).enumerate() {
+        let texts: Vec<String> = lines.iter().map(line_text).collect();
+        for meta in ["--- a/x.rs", "+++ b/x.rs"] {
             assert!(
-                line_text(line).starts_with("     "),
-                "line {i} has a blank gutter: {:?}",
-                line_text(line)
+                !texts.iter().any(|t| t.contains(meta)),
+                "{meta:?} still renders: {texts:?}"
             );
         }
+        assert!(texts[0].contains("@@ -1,3 +1,4 @@"), "{:?}", texts[0]);
+        assert!(
+            texts[0].starts_with("     "),
+            "the hunk header took a line number: {:?}",
+            texts[0]
+        );
+    }
+
+    /// A real git patch leads with `diff --git` and `index …` as well, and
+    /// neither reaches the row.
+    #[test]
+    fn a_full_git_patch_renders_only_its_hunk() {
+        let patch = "diff --git a/x.rs b/x.rs\n\
+                     index 74f38f3..9e6e426 100644\n\
+                     --- a/x.rs\n\
+                     +++ b/x.rs\n\
+                     @@ -1,2 +1,2 @@\n\
+                      keep\n\
+                     -old\n\
+                     +new";
+        let texts: Vec<String> = body_lines(patch, None).iter().map(line_text).collect();
+        for meta in ["diff --git", "index 74f38f3", "--- a/", "+++ b/"] {
+            assert!(
+                !texts.iter().any(|t| t.contains(meta)),
+                "{meta:?} still renders: {texts:?}"
+            );
+        }
+        assert!(texts.iter().any(|t| t.contains("-old")), "{texts:?}");
+        assert!(texts.iter().any(|t| t.contains("+new")), "{texts:?}");
     }
 
     #[test]
@@ -815,17 +875,17 @@ mod tests {
         let lines = body_lines(diff, None);
         let texts: Vec<String> = lines.iter().map(line_text).collect();
         assert!(
-            !texts[3].starts_with("     "),
+            !texts[1].starts_with("     "),
             "removed body line should get a gutter number, not read as a header: {:?}",
-            texts[3]
+            texts[1]
         );
         assert!(
-            !texts[4].starts_with("     "),
+            !texts[2].starts_with("     "),
             "added body line should get a gutter number, not read as a header: {:?}",
-            texts[4]
+            texts[2]
         );
-        assert!(texts[3].contains("was a rule"), "{:?}", texts[3]);
-        assert!(texts[4].contains("is a rule"), "{:?}", texts[4]);
+        assert!(texts[1].contains("was a rule"), "{:?}", texts[1]);
+        assert!(texts[2].contains("is a rule"), "{:?}", texts[2]);
     }
 
     #[test]
@@ -845,12 +905,12 @@ mod tests {
         let lines = body_lines(diff, None);
         let texts: Vec<String> = lines.iter().map(line_text).collect();
         assert!(
-            texts[4].starts_with("     "),
+            texts[2].starts_with("     "),
             "the marker line itself gets a blank gutter: {:?}",
-            texts[4]
+            texts[2]
         );
         assert!(
-            texts[5].starts_with("   1 +new"),
+            texts[3].starts_with("   1 +new"),
             "the marker must not have consumed a line number: {:?}",
             texts[5]
         );

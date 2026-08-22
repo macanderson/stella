@@ -93,7 +93,11 @@ fn a_mutations_whole_block_wears_one_metal() {
                 "applied\nline two\nline three",
             ),
         ],
-        false,
+        // Expanded, because a collapsed mutation with no diff now draws no
+        // body at all — and a block with no body rows cannot demonstrate that
+        // its rows share a metal. The invariant under test is unchanged; the
+        // fixture just has to be a block.
+        true,
     );
     assert!(metals.len() >= 4, "the block lost rows: {metals:?}");
     let distinct: std::collections::BTreeSet<String> =

@@ -119,12 +119,35 @@ pub struct ToolEntry {
     /// "turn off the whole family" to be one line, and because the settings
     /// UI groups its rows by exactly this.
     pub group: &'static str,
+    /// What a human surface calls this tool — the verb, not the identifier.
+    ///
+    /// A tool has three names now, answering three different questions.
+    /// [`Self::name`] is what the **model** must spell in a call; the
+    /// description is what the model reads to decide *whether* to call. This is
+    /// what a **reader** sees after it happened: `read`, `edit`, `write`,
+    /// `delete`, `run`.
+    ///
+    /// They diverge on purpose. `read_file` is a good wire identifier — unique,
+    /// unambiguous, obviously a file operation — and a poor transcript row,
+    /// because a transcript is a log of *actions* and the reader's first
+    /// question of any row is what kind of thing happened. `edit_file ·
+    /// edit_file · bash` spends three columns saying what `edit · edit · run`
+    /// says in one, and the underscore is an implementation detail in prose.
+    ///
+    /// Lowercase, deliberately: these sit inline in a sentence-shaped row
+    /// (`edit …/lifecycle.rs +3 -1`), never as a column heading.
+    ///
+    /// It does **not** reach the model. Every provider adapter builds its own
+    /// tool JSON from `name`/`description`/`input_schema` explicitly, so a field
+    /// here cannot perturb the prompt-cache prefix (invariant 7) — which is why
+    /// a display concern may live beside the dispatch ones at all.
+    pub label: &'static str,
 }
 
 /// Declares the canonical table once and derives every flat name list from it,
 /// so the two can never disagree.
 macro_rules! catalog {
-    ($($name:literal => ($read_only:expr, $speculation_safe:expr, $risk:expr, $availability:expr, $group:literal)),* $(,)?) => {
+    ($($name:literal => ($read_only:expr, $speculation_safe:expr, $risk:expr, $availability:expr, $group:literal, $label:literal)),* $(,)?) => {
         /// Every tool Stella can dispatch by name, sorted, declared once.
         ///
         /// See the [module docs](self) for how to add one.
@@ -136,6 +159,7 @@ macro_rules! catalog {
                 risk: $risk,
                 availability: $availability,
                 group: $group,
+                label: $label,
             }),*
         ];
 
@@ -148,7 +172,8 @@ macro_rules! catalog {
 use Availability::Always;
 use RiskLevel::{Destructive, High, Low, Medium};
 
-// Column order: (read_only, speculation_safe, risk, availability, group). The
+// Column order: (read_only, speculation_safe, risk, availability, group, label).
+// The
 // second column only ever narrows the first: `true` means the read is pure
 // enough to run twice per step (speculation + a stream retry — #923). The
 // third is the governance grade — see `ToolEntry::risk` for the rubric.
@@ -158,26 +183,26 @@ catalog! {
     // risk column earns its keep — `read_file` and `search` observe, the
     // three writers are bounded and locally undoable, and `bash` runs a
     // command nobody bounded at all.
-    "bash"                => (false, false, High, Always, "shell"),
-    "read_file"           => (true, true, Low, Always, "file"),
-    "write_file"          => (false, false, Medium, Always, "file"),
-    "edit_file"           => (false, false, Medium, Always, "file"),
+    "bash"                => (false, false, High, Always, "shell", "run"),
+    "read_file"           => (true, true, Low, Always, "file", "read"),
+    "write_file"          => (false, false, Medium, Always, "file", "write"),
+    "edit_file"           => (false, false, Medium, Always, "file", "edit"),
     // `Destructive` is the honest grade and the only one in the table: an
     // unlinked file is the one thing on this surface the agent cannot undo
     // from inside the turn.
-    "delete_file"         => (false, false, Destructive, Always, "file"),
+    "delete_file"         => (false, false, Destructive, Always, "file", "delete"),
     // Read-only, but NOT speculation-safe: the semantic rung writes
     // embeddings through into `codegraph.db` while it ranks.
-    "search"              => (true, false, Low, Always, "search"),
+    "search"              => (true, false, Low, Always, "search", "search"),
     // The session task board. In-memory and session-scoped: every row here is
     // `Low` because what it mutates cannot outlive the process, which is the
     // clearest demonstration that `risk` is not `read_only` spelled twice.
-    "task_create"         => (false, false, Low, Always, "task"),
-    "task_list"           => (true, true, Low, Always, "task"),
-    "task_start"          => (false, false, Low, Always, "task"),
-    "task_complete"       => (false, false, Low, Always, "task"),
-    "task_cancel"         => (false, false, Low, Always, "task"),
-    "task_assign"         => (false, false, Low, Always, "task"),
+    "task_create"         => (false, false, Low, Always, "task", "task"),
+    "task_list"           => (true, true, Low, Always, "task", "tasks"),
+    "task_start"          => (false, false, Low, Always, "task", "task"),
+    "task_complete"       => (false, false, Low, Always, "task", "task"),
+    "task_cancel"         => (false, false, Low, Always, "task", "task"),
+    "task_assign"         => (false, false, Low, Always, "task", "task"),
     // Sub-agent delegation (#922). NOT read_only — it spends money, and that
     // flag is also what caps nesting: children run behind `ReadOnlyTools`, so
     // a read-only `delegate` would let them spawn children of their own.
@@ -191,17 +216,17 @@ catalog! {
     // seven exactly as it always did. What it may NOT be is *named* `task`:
     // a switch key resolves exact-name-first, so a tool named after its own
     // group makes one key address two surfaces (#3192, the #3120 shape).
-    "delegate"            => (false, false, High, Always, "task"),
+    "delegate"            => (false, false, High, Always, "task", "delegate"),
     // Session scratch state (tempfile::TempDir, self-deleting) — the plane
     // dies with the session, `delete_state` included, so nothing here is
     // irreversible in any sense that outlives the run.
-    "save_state"          => (false, false, Low, Always, "scratch"),
-    "get_state"           => (true, true, Low, Always, "scratch"),
-    "list_state"          => (true, true, Low, Always, "scratch"),
-    "delete_state"        => (false, false, Low, Always, "scratch"),
+    "save_state"          => (false, false, Low, Always, "scratch", "save_state"),
+    "get_state"           => (true, true, Low, Always, "scratch", "get_state"),
+    "list_state"          => (true, true, Low, Always, "scratch", "list_state"),
+    "delete_state"        => (false, false, Low, Always, "scratch", "delete_state"),
     // One-shot environment report: workspace root, git/worktree bit,
     // platform, OS release, shell dialect, scratch dir (#2697).
-    "get_environment"     => (true, true, Low, Always, "environment"),
+    "get_environment"     => (true, true, Low, Always, "environment", "get_environment"),
     // Put a decision back to whoever is driving this agent (#4212).
     //
     // `read_only` is honest — it changes nothing — and load-bearing twice:
@@ -220,7 +245,7 @@ catalog! {
     // Its own group rather than `task`, so an operator can withhold
     // questions without withholding the coordination family: an unattended
     // fleet worker wants `"question": "off"` and its task board intact.
-    "ask_question"        => (true, false, Low, Always, "question"),
+    "ask_question"        => (true, false, Low, Always, "question", "ask_question"),
 }
 
 /// Tool names Stella once dispatched and no longer does.
@@ -350,6 +375,25 @@ pub fn group_for(name: &str) -> &'static str {
         return "mcp";
     }
     "custom"
+}
+
+/// What a human surface calls `name` — the verb, not the identifier.
+///
+/// Built-ins answer from [`CATALOG`]. Everything else answers with the most
+/// readable thing that is still *true*: an MCP tool's own trailing segment
+/// (`mcp__fs__read_file` → `read_file`), and anything else its bare name.
+///
+/// Deliberately not a guess dressed as knowledge. A server's `read_file` is not
+/// necessarily this workspace's `read`, and mapping it to one would put a
+/// familiar word on a row that did something else — the one failure a
+/// transcript cannot afford, since its whole job is to say what happened.
+/// Stripping the routing prefix is the most a caller can honestly do without
+/// asking the server, so that is where it stops.
+pub fn label_for(name: &str) -> &str {
+    if let Some(entry) = get(name) {
+        return entry.label;
+    }
+    name.rsplit("__").next().unwrap_or(name)
 }
 
 /// Every group name in the catalog plus the two dynamic ones, sorted and
