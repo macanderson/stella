@@ -213,6 +213,17 @@ pub struct Event {
     pub kind: EventKind,
     /// The object of the verb: a path, a command line, a skill name.
     pub subject: String,
+    /// Whether [`Event::subject`] names a file, so the head can let the
+    /// directory recede and the basename carry the emphasis.
+    ///
+    /// Carried from the producer rather than re-derived here: the only signal
+    /// left at this point is a `/`, and `sed -n '1,20p' foo/bar.rs` has one
+    /// without naming any file this row touched. The projection knows the
+    /// answer for free — [`super::transcript_source`]'s head takes the call's
+    /// own `path` and falls back to the raw input only when there is none —
+    /// so the fact travels instead of being guessed where it can no longer be
+    /// checked (#4168).
+    pub subject_is_path: bool,
     /// Wall time, rendered `⚡3ms`. Zero suppresses the metric.
     pub duration_ms: u64,
     /// The task this event is attributed to, rendered `→ task 3` when a plan
@@ -233,6 +244,7 @@ impl Event {
         Self {
             kind,
             subject: subject.into(),
+            subject_is_path: false,
             duration_ms: 0,
             task: None,
             collapsed: None,
@@ -448,7 +460,6 @@ pub fn rail_span(metal: Color) -> Span<'static> {
 /// `<rail> <glyph> <verb> <subject> … <metrics right-aligned>`.
 fn head_row(event: &Event, metal: Color, width: usize) -> Line<'static> {
     let dim = Style::new().fg(token::DIM);
-    let text = Style::new().fg(token::TEXT);
 
     let mut left = vec![
         rail_span(metal),
@@ -468,10 +479,10 @@ fn head_row(event: &Event, metal: Color, width: usize) -> Line<'static> {
             Style::new().fg(metal).add_modifier(Modifier::BOLD),
         ));
         if !event.subject.is_empty() {
-            left.push(Span::styled(format!(" {}", event.subject), text));
+            left.extend(subject_spans(" ", &event.subject, event.subject_is_path));
         }
     } else if !event.subject.is_empty() {
-        left.push(Span::styled(event.subject.clone(), text));
+        left.extend(subject_spans("", &event.subject, event.subject_is_path));
     }
     left.extend(kind_detail(&event.kind));
 
@@ -485,6 +496,42 @@ fn head_row(event: &Event, metal: Color, width: usize) -> Line<'static> {
         spans.extend(right);
     }
     Line::from(spans)
+}
+
+/// The object of the verb, split at the last separator when it names a file.
+///
+/// A path renders as a dim directory and a bright basename, because in a column
+/// of calls the file *identity* is what the eye is hunting and the shared
+/// `crates/stella-tui/src/…` prefix is context that only matters once the file
+/// has been found. Without the split a margin of paths reads as one string —
+/// the v1 row had it, and it was lost with the row (#4168).
+///
+/// Anything that is not a path stays one unemphasised span at the text tone it
+/// already had. The subject of a `run` head is a command line, not a file, and
+/// brightening a fragment of it would spend the contrast on the rows that least
+/// need it; dimming the whole of it would take the emphasis off a name that is
+/// the entire head, which is what an unrecognised tool's row is.
+///
+/// `prefix` is the separator the caller owes before the subject — a space after
+/// a verb, nothing at all when the subject *is* the head. It rides the leading
+/// span so an empty one never occupies an index.
+fn subject_spans(prefix: &str, subject: &str, is_path: bool) -> Vec<Span<'static>> {
+    let text = Style::new().fg(token::TEXT);
+    // A trailing separator has no basename to emphasise, so a directory renders
+    // whole rather than as a bright empty span.
+    match subject
+        .rfind('/')
+        .filter(|cut| is_path && cut + 1 < subject.len())
+    {
+        Some(cut) => vec![
+            Span::styled(
+                format!("{prefix}{}", &subject[..=cut]),
+                Style::new().fg(token::DIM),
+            ),
+            Span::styled(subject[cut + 1..].to_owned(), text),
+        ],
+        None => vec![Span::styled(format!("{prefix}{subject}"), text)],
+    }
 }
 
 /// The kind-specific tail of a head line (SPEC 6.3's per-event columns).

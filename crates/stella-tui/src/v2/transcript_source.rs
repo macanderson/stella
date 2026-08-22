@@ -51,8 +51,9 @@ pub fn head_rows(
     width: usize,
 ) -> Vec<Line<'static>> {
     let kind = kind_for(name, measured);
-    let subject = subject_for(name, path, input);
+    let (subject, subject_is_path) = subject_for(name, path, input);
     let mut event = Event::new(kind, subject);
+    event.subject_is_path = subject_is_path;
     // The head is drawn the moment the call dispatches, so it is never
     // "collapsed" in the fold sense — there is no body under it yet.
     event.collapsed = Some(false);
@@ -185,12 +186,19 @@ fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
     }
 }
 
-/// The object of the verb: the path for a file tool, the command for `bash`,
-/// the raw input for anything else.
-fn subject_for(name: &str, path: Option<&str>, input: &str) -> String {
+/// The object of the verb — the path for a file tool, the command for `bash`,
+/// the raw input for anything else — and whether it is a path.
+///
+/// The flag leaves with the text it describes, out of the one match that chose
+/// it, so the two cannot come to disagree. It is what lets
+/// [`super::transcript::Event::subject_is_path`] exist at all: downstream the
+/// only evidence left is a `/`, and re-deriving the answer from one would
+/// emphasise a fragment of `sed -n '1,20p' foo/bar.rs` — a command line that
+/// names no file this row touched (#4168).
+fn subject_for(name: &str, path: Option<&str>, input: &str) -> (String, bool) {
     match (name, path) {
-        (_, Some(p)) if !p.is_empty() => p.to_string(),
-        ("bash", _) => first_line(input).to_string(),
+        (_, Some(p)) if !p.is_empty() => (p.to_string(), true),
+        ("bash", _) => (first_line(input).to_string(), false),
         _ => {
             // A tool this host has no verb for is named by its own label, which
             // for an MCP tool is its trailing segment: the row read
@@ -203,10 +211,13 @@ fn subject_for(name: &str, path: Option<&str>, input: &str) -> String {
             // without asking the server.
             let label = stella_tools::catalog::label_for(name);
             let head = first_line(input);
+            // A raw input blob is not a path even when it contains one: the
+            // subject here opens with the tool's own name, so there is no file
+            // identity for a basename to carry.
             if head.is_empty() {
-                label.to_string()
+                (label.to_string(), false)
             } else {
-                format!("{label} {head}")
+                (format!("{label} {head}"), false)
             }
         }
     }
@@ -280,6 +291,7 @@ mod tests {
     use super::*;
     use crate::model::SessionModel;
     use stella_protocol::{AgentEvent, FileChangeKind, ToolCall, ToolOutput};
+    use stella_tui_theme::token;
 
     fn text_of(line: &Line<'static>) -> String {
         line.spans.iter().map(|s| s.content.clone()).collect()
@@ -530,6 +542,60 @@ mod tests {
         assert!(
             !first.contains("+20"),
             "the first head wears the second call's numbers: {first}"
+        );
+    }
+
+    /// Every span of a head, as `(content, foreground)`.
+    fn styled_spans(rows: &[Line<'static>]) -> Vec<(String, Option<Color>)> {
+        rows.iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| (span.content.to_string(), span.style.fg))
+            .collect()
+    }
+
+    /// The witness for #4168: a path subject renders as a dim directory and a
+    /// bright basename, so a column of calls is scanned by file identity rather
+    /// than by the `crates/stella-tui/src/…` prefix every one of them shares.
+    #[test]
+    fn a_path_subject_splits_dim_directory_from_bright_basename() {
+        let spans = styled_spans(&head_rows("read_file", Some("a/b/c.rs"), "{}", None, 120));
+        let cut = spans
+            .iter()
+            .position(|(content, _)| content.ends_with("a/b/"))
+            .unwrap_or_else(|| panic!("the path is not split at its last separator: {spans:?}"));
+        assert_eq!(
+            spans[cut],
+            (" a/b/".to_string(), Some(token::DIM)),
+            "the directory is context and recedes: {spans:?}"
+        );
+        assert_eq!(
+            spans.get(cut + 1),
+            Some(&("c.rs".to_string(), Some(token::TEXT))),
+            "the basename is the identity the eye is hunting: {spans:?}"
+        );
+    }
+
+    /// And the half that stops the fix over-reaching: a `bash` head's subject is
+    /// a command line, so a slash inside it names no file this row touched and
+    /// must not be emphasised. Derived from the call's `path` argument, never
+    /// from the presence of a separator.
+    #[test]
+    fn a_command_subject_stays_one_unemphasised_span() {
+        let spans = styled_spans(&head_rows("bash", None, "grep -r foo/ .", None, 120));
+        let subject: Vec<_> = spans
+            .iter()
+            .filter(|(content, _)| content.contains("foo/"))
+            .collect();
+        assert_eq!(
+            subject.len(),
+            1,
+            "the command was split as though it named a file: {spans:?}"
+        );
+        assert_eq!(subject[0].0, " grep -r foo/ .", "{spans:?}");
+        assert_eq!(
+            subject[0].1,
+            Some(token::TEXT),
+            "a command keeps the text tone: {spans:?}"
         );
     }
 
