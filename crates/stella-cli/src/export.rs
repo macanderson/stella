@@ -499,7 +499,11 @@ fn render_dashboard(
        --c1..--c4              categorical series, separated by LIGHTNESS not
                                hue, so a series survives greyscale printing,
                                colour-vision deficiency and a projector.
-       --identity              the wordmark and at most one primary action.
+       --identity              the wordmark's asterisk and at most one primary
+                               action. Not the word `stella` itself — the mark
+                               is `stella*`, word in --text and ornament in
+                               gold, and painting the whole word here is what
+                               this page used to do.
                                Never a state, and --warn was moved to keep
                                that honest: the gold identity sits at OKLCH
                                hue 73.2°, and the amber --warn it replaced sat
@@ -633,10 +637,23 @@ fn render_dashboard(
     background: var(--ground); color: var(--text);
     line-height: 1.55; padding: var(--sp3); max-width: 1280px; margin: 0 auto;
   }}
-  /* The masthead. `stella` is the wordmark in text form, which is the one
-     place --identity is permitted; the rest of the title is --text. */
+  /* The masthead. The wordmark is `stella*` — the word in --text, the
+     asterisk in --identity, no space between them. crates/stella-tui-theme/
+     src/wordmark.rs is the normative form (SPEC 3.3), and it exists as one
+     function precisely so no call site can render the mark all-gold. This
+     page was a call site that could: it painted the whole word --identity,
+     which is the specific mistake the mark is built to prevent. Gold is the
+     acting metal, and a mark that is on screen for the entire life of the
+     document would spend it on nothing — devaluing the hue everywhere else
+     here that it means something.
+
+     So the asterisk carries the identity and the word does not. It inverts
+     with the theme for free: --text is #E8E8EC on the dark ground and #0A0A0C
+     on the light one, which is the "white text, or black on a light
+     background" the brand asks for, without this rule naming either. */
   h1 {{ font-size: var(--fs-xl); font-weight: 600; letter-spacing: -.02em; margin-bottom: 4px; color: var(--text); }}
-  h1 .wordmark {{ color: var(--identity); }}
+  .wordmark {{ color: var(--text); font-weight: 600; }}
+  .wordmark .star {{ color: var(--identity); }}
   /* Section rules are boundaries, so they are hairlines and the heading is
      ordinary text. This heading used to be painted in the brand hue, which
      made every section title compete with the data underneath it. */
@@ -687,7 +704,12 @@ fn render_dashboard(
                             text-transform: uppercase; letter-spacing: .14em; }}
   .footer {{ margin-top: var(--sp4); padding-top: var(--sp2); border-top: 1px solid var(--hairline);
             color: var(--text-3); font-size: var(--fs-micro); }}
-  .footer b {{ color: var(--identity); font-weight: 600; }}
+  /* The footer says the product's name, so it says it as the wordmark — the
+     same two-part mark as the masthead, not a `<b>` painted gold. It was the
+     second all-gold `stella` on the page, and the reason the rule above is a
+     bare class rather than scoped to `h1`. --text against the footer's
+     --text-3 body is the intended contrast: the name is the one thing in that
+     line a reader is meant to see. */
 
   /* ── The transcript ─────────────────────────────────────────────────────
      Every entry is `.ev` with three parts: a timestamp, a kind label, and
@@ -822,7 +844,7 @@ fn render_dashboard(
 </head>
 <body>
 
-<h1><span class="wordmark">stella</span> session telemetry</h1>
+<h1><span class="wordmark">stella<span class="star">*</span></span> session telemetry</h1>
 <div class="watermark">session {session} · as of {watermark}</div>
 <div class="scope">This archive covers <strong>one session</strong> — {scope_note}.</div>
 
@@ -877,7 +899,7 @@ fn render_dashboard(
 </section>
 
 <div class="footer">
-  Exported by <b>stella</b> <code>/export</code> · {total_runs} executions ·
+  Exported by <span class="wordmark">stella<span class="star">*</span></span> <code>/export</code> · {total_runs} executions ·
   All data is local (no server, no account) · Dashboard is fully self-contained
 </div>
 
