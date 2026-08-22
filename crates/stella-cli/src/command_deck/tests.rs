@@ -1,3 +1,8 @@
+// Imported here rather than inherited through `use super::*`: the label
+// belongs to the deck's ask io, which lives in `mid_turn_ask` now, and this
+// module is its only remaining user in `command_deck`'s namespace.
+use crate::interactive::FREE_TEXT_LABEL;
+
 use super::pr_observe::scrub_gh_command;
 use super::skills::{
     build_skill_creation_prompt, extract_skill_md, extract_skill_md_from_use, parse_installs_count,
