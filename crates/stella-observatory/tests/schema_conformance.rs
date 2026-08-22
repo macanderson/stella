@@ -231,6 +231,7 @@ fn real_store_workspace() -> tempfile::TempDir {
                 description: None,
                 status: TaskStatus::Completed,
                 owner: Some("lead".into()),
+                contract: None,
             }],
             1_700_000_000_000,
         )

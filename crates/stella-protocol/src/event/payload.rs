@@ -28,6 +28,11 @@ use crate::ladder::LadderSnapshot;
 // and `agentevent.d.ts` (#3450).
 #[cfg(doc)]
 use super::AgentEvent;
+// Same `cfg(doc)` treatment, and for the same reason: `TaskItem::contract`'s
+// docs link it, and spelling the link as a path would put `crate::…` into the
+// published wire contract.
+#[cfg(doc)]
+use crate::TaskContract;
 
 /// What happened to a file in a [`AgentEvent::FileChange`] event.
 ///
@@ -286,6 +291,20 @@ pub struct TaskItem {
     /// dedicated worker for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// What this task means by done (SPEC 7.1).
+    ///
+    /// `None` is *nobody has said yet*, and is deliberately not the same fact
+    /// as [`TaskContract::ReadOnly`], which is *somebody looked and there is
+    /// nothing to prove*. A board that collapsed the two would let an
+    /// undeclared task close on the same terms as one declared harmless —
+    /// which is the self-report [`TaskContract`] exists to end.
+    ///
+    /// Optional because the board predates contracts and a session may still
+    /// create a task without one; `stella_core::tasks` refuses the *close*, not
+    /// the creation, so an undeclared task is visible on the board rather than
+    /// rejected at the door.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<crate::task_contract::TaskContract>,
 }
 
 /// Lifecycle of a `TaskItem`. Terminal states are `Completed` and

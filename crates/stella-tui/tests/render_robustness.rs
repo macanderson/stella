@@ -140,6 +140,7 @@ fn nasty_unicode_cards_never_panic_at_any_width() {
                         description: Some(text.clone()),
                         status: TaskStatus::InProgress,
                         owner: None,
+                        contract: None,
                     },
                     TaskItem {
                         id: "2".into(),
@@ -147,6 +148,7 @@ fn nasty_unicode_cards_never_panic_at_any_width() {
                         description: None,
                         status: TaskStatus::Pending,
                         owner: None,
+                        contract: None,
                     },
                 ],
             },

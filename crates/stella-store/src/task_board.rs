@@ -107,6 +107,19 @@ impl Store {
                 description,
                 status: task_status_from_string(&status)?,
                 owner,
+                // The `tasks` table has no contract column, so this record
+                // cannot carry one — `None` here means *this row does not
+                // record it*, not *the task promised nothing*.
+                //
+                // It weakens no guarantee. The live board lives in
+                // `stella_core::tasks::TaskBoard` for the length of the
+                // session and never rehydrates from here, so the refusal in
+                // `set_status` reads the real contract every time. What is
+                // lost is the audit view: a historical board cannot show what
+                // a task promised, only what became of it. Persisting it is a
+                // column-guarded `ADD COLUMN` away — see the issue on the PR
+                // that introduced the field.
+                contract: None,
             });
         }
         Ok(board)
@@ -142,6 +155,7 @@ mod tests {
             description: None,
             status: TaskStatus::Completed,
             owner: Some("sub:1".into()),
+            contract: None,
         }
     }
 

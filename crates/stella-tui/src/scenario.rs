@@ -648,6 +648,9 @@ pub fn demo_tasks(tasks_done: usize) -> Vec<stella_protocol::TaskItem> {
                 TaskStatus::Pending
             },
             owner: (i <= tasks_done).then(|| "lead".to_string()),
+            // The demo board predates contracts, and a fixture that invented
+            // one would put checks on screen that no scenario ran.
+            contract: None,
         })
         .collect()
 }

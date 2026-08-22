@@ -967,6 +967,7 @@ mod tests {
             description: None,
             status,
             owner: owner.map(str::to_string),
+            contract: None,
         }
     }
 

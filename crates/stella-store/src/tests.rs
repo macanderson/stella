@@ -587,6 +587,7 @@ fn task(id: &str, subject: &str, status: TaskStatus, owner: Option<&str>) -> Tas
         description: None,
         status,
         owner: owner.map(str::to_string),
+        contract: None,
     }
 }
 
