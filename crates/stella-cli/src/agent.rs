@@ -433,7 +433,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 // Same schedule as the plain prompts above (#1221): one
                 // interleaved sequence per workspace, not one per command.
                 m.arm_recall_control();
-                let recalled = m.recall_block_reported(goal).await;
+                let touched =
+                    stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
+                let recalled = m.recall_block_reported(goal, &touched).await;
                 recall_event = recalled.telemetry_event();
                 inject_recall_block(&mut messages, recalled.text);
             }
@@ -520,7 +522,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             // recalled turns. The suppressed flag rides with the turn for
             // attribution.
             m.arm_recall_control();
-            let recalled = m.recall_block_reported(input).await;
+            let touched =
+                stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
+            let recalled = m.recall_block_reported(input, &touched).await;
             recall_event = recalled.telemetry_event();
             inject_recall_block(&mut messages, recalled.text);
         }
