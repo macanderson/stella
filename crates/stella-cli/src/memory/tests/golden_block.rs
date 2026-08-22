@@ -83,7 +83,7 @@ async fn the_assembled_volatile_block_is_byte_identical_to_the_pinned_bytes() {
     // crosses UTC midnight between the two reads accepts either day.
     let before = render_today_section(unix_now_secs());
     let block = memory
-        .recall_block_reported("review the database migrations")
+        .recall_block_reported("review the database migrations", &[])
         .await
         .text
         .expect("all three sources render");

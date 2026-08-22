@@ -267,8 +267,10 @@ fn render_body(
         // Read *before* `body_line` runs, because that call is what moves the
         // state this asks about. The same structural rule `body_line` itself
         // applies (only before a file's first hunk is `+++ `/`--- ` a header):
-        // inside a hunk those bytes are added or removed source text, and
-        // dropping them would delete a line of the change.
+        // inside a hunk those bytes are added or removed source text that
+        // happens to look like a header — an SQL comment, a diff of a diff —
+        // and dropping them would delete a line of the change.
+        // (`count_diff_lines` makes the same distinction for the same reason.)
         let preamble = !in_hunk && is_meta(text);
         let line = body_line(
             text,
