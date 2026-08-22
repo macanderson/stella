@@ -270,9 +270,12 @@ pub fn turn_begin_rows(
 /// money to say.
 ///
 /// Everything the receipt cannot source is elided rather than zeroed. Only
-/// `spend_usd` is fed today: the deck does not fold `StepUsage` (it would
-/// double-count the spend the budget gauge tracks), keeps no per-turn clock,
-/// and counts no per-turn files, tests or memories. A receipt reading
+/// `spend_usd` is fed today: the deck folds `StepUsage` for the **model name
+/// alone** (#4183, so a turn's opening rule can name the call that answered it)
+/// and deliberately for nothing else — folding its `cost_usd` or token fields
+/// would double-count the spend the budget gauge already tracks. It keeps no
+/// per-turn clock, and counts no per-turn files, tests or memories. A receipt
+/// reading
 /// `0 tok · 0 files · 0/0 tests` would be four measurements nobody took, on the
 /// one line whose whole job is to be the settled account of a turn. Sourcing
 /// the other five — `det %` above all, which SPEC 5 moved off the status bar

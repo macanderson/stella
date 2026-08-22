@@ -12,8 +12,8 @@ use super::*;
 // them (#4217). Naming them keeps the tests independent of what the fold
 // happens to need.
 use stella_protocol::{
-    BudgetMode, ContextFrameRef, MediaArtifactRef, MediaJobState, MediaKind, PrStatus,
-    ProviderShare, ToolCall, VerdictEvidence,
+    BudgetMode, ContextFrameRef, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
+    PrStatus, ProviderShare, ToolCall, VerdictEvidence,
 };
 
 fn text(delta: &str) -> AgentEvent {
@@ -229,6 +229,194 @@ fn only_the_first_stage_of_a_turn_opens_a_turn_rule() {
     );
 }
 
+/// One `StepUsage`, with every metered field set to something non-zero so a
+/// test can prove the fold took the model name and nothing else.
+fn step_usage(role: ModelCallRole, model: &str) -> AgentEvent {
+    AgentEvent::StepUsage {
+        step: 1,
+        role,
+        provider: "openrouter".into(),
+        upstream_provider: None,
+        output_text: None,
+        model: model.into(),
+        input_tokens: 1_200,
+        output_tokens: 340,
+        cached_input_tokens: 900,
+        cache_write_tokens: 300,
+        reasoning_tokens: None,
+        estimated_input_tokens: 1_100,
+        cost_usd: 0.42,
+        duration_ms: 1_234,
+        retries: 0,
+        tool_calls: 1,
+        complete: true,
+        finish_reason: None,
+    }
+}
+
+/// Witness for #4183: the first turn's opening rule names the model that
+/// answered it, sourced from the call that actually happened.
+///
+/// Before this the only writes to `Hud::model` were `TurnComplete` and
+/// `RunComplete`, both of which land *after* the boundary they would have
+/// labelled — so turn 1 opened with no model for its whole life and turn 2
+/// opened naming turn 1's.
+#[test]
+fn a_first_turn_rule_names_the_model_that_answered_it() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    assert_eq!(
+        openings(&model)[0].model,
+        None,
+        "no call has reported a model yet"
+    );
+
+    model.apply(&step_usage(ModelCallRole::Worker, "kimi-k3"));
+
+    assert_eq!(
+        openings(&model)[0].model.as_deref(),
+        Some("kimi-k3"),
+        "the rule already on the transcript names the call that answered it",
+    );
+    assert_eq!(
+        model.hud.model.as_deref(),
+        Some("kimi-k3"),
+        "and the statline agrees, mid-turn"
+    );
+    // The model name only: `BudgetTick` owns the spend gauge, and folding
+    // `cost_usd` here would double-count it.
+    assert_eq!(model.hud.spent_usd, 0.0, "spend is BudgetTick's alone");
+    assert_eq!(model.hud.final_cost_usd, None);
+}
+
+/// The trap the fold has to survive: `StepUsage` carries every model call, not
+/// just the worker's. An overflow summarizer running mid-turn must not make the
+/// opening rule name the summarizer's model.
+#[test]
+fn an_auxiliary_call_never_supplies_the_turn_rules_model() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    model.apply(&step_usage(ModelCallRole::Summarization, "cheap-mini"));
+
+    assert_eq!(
+        openings(&model)[0].model,
+        None,
+        "the summarizer is not the model answering the turn",
+    );
+    assert_eq!(model.hud.model, None);
+
+    // …and the worker's own call, arriving after it, still lands.
+    model.apply(&step_usage(ModelCallRole::Worker, "kimi-k3"));
+    assert_eq!(openings(&model)[0].model.as_deref(), Some("kimi-k3"));
+}
+
+/// The turn's *first* answering call is the one the rule names. A settling
+/// re-route later in the same turn does not rewrite a boundary a reader has
+/// already scrolled past — the closing rule carries the corrected name.
+#[test]
+fn a_later_call_never_rewrites_a_rule_that_already_named_its_model() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    model.apply(&step_usage(ModelCallRole::Worker, "kimi-k3"));
+    model.apply(&step_usage(ModelCallRole::Worker, "glm-5.2"));
+
+    assert_eq!(
+        openings(&model)[0].model.as_deref(),
+        Some("kimi-k3"),
+        "the opening rule states the model that opened the turn",
+    );
+    assert_eq!(
+        model.hud.model.as_deref(),
+        Some("glm-5.2"),
+        "the live HUD follows the route as it settles",
+    );
+}
+
+/// A call landing between turns belongs to no open rule, so it back-patches
+/// nothing — the rule the previous turn already stamped is settled.
+#[test]
+fn a_call_after_the_turn_closed_patches_no_earlier_rule() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    model.apply(&AgentEvent::TurnComplete {
+        model: "kimi-k3".into(),
+        cost_usd: 0.11,
+    });
+    // Reflection runs after the turn has closed; so can a stray worker call.
+    model.apply(&step_usage(ModelCallRole::Worker, "glm-5.2"));
+
+    assert_eq!(
+        openings(&model)[0].model,
+        None,
+        "turn 1's rule was stamped before any call reported, and stays that way",
+    );
+}
+
+/// The back-patch holds an index into a vector front-eviction rewrites, so the
+/// rebase is the part that can be silently wrong: a stale index patches
+/// whichever unrelated entry inherited the slot.
+///
+/// Both branches, in one log. The first turn's rule is inside the drained range
+/// and is gone — nothing to patch, and nothing patched. The second turn's
+/// survives at a shifted position and must still be the entry that takes the
+/// model.
+#[test]
+fn front_eviction_moves_the_rule_the_back_patch_is_holding() {
+    // A one-entry-per-apply event, so the arithmetic below is exact.
+    fn filler(attempt: u32) -> AgentEvent {
+        AgentEvent::Retry {
+            attempt,
+            reason: "r".into(),
+        }
+    }
+
+    let mut model = SessionModel::new();
+    // Turn 1 opens at index 0 — inside the first drained chunk.
+    model.apply(&stage(StageKind::Execute));
+    for i in 0..(TRANSCRIPT_EVICTION_CHUNK as u32 + 100) {
+        model.apply(&filler(i));
+    }
+    model.apply(&AgentEvent::TurnComplete {
+        model: "kimi-k3".into(),
+        cost_usd: 0.11,
+    });
+    // Turn 2 opens well past the chunk boundary, so it survives the pass.
+    model.apply(&stage(StageKind::Execute));
+    let head_before = model
+        .transcript
+        .iter()
+        .position(|e| matches!(e, TranscriptEntry::Stage { opens: Some(_), .. }))
+        .expect("turn 1's rule is still here");
+    assert!(
+        head_before < TRANSCRIPT_EVICTION_CHUNK,
+        "turn 1's rule must be inside the chunk about to drain"
+    );
+
+    // Exactly enough to trip one pass — a `while len < MAX` loop would never
+    // terminate, since the pass itself drops the length back under the cap.
+    let before = model.transcript.len();
+    for _ in before..MAX_TRANSCRIPT_ENTRIES {
+        model.apply(&filler(0));
+    }
+    assert_eq!(
+        model.evicted_entries(),
+        TRANSCRIPT_EVICTION_CHUNK,
+        "exactly one pass fired"
+    );
+    assert_eq!(
+        openings(&model).len(),
+        1,
+        "turn 1's rule was evicted, turn 2's survived"
+    );
+
+    model.apply(&step_usage(ModelCallRole::Worker, "glm-5.2"));
+    assert_eq!(
+        openings(&model)[0].model.as_deref(),
+        Some("glm-5.2"),
+        "the surviving rule is the one patched, at its shifted position",
+    );
+}
+
 /// The opening rule states the budget the last `BudgetTick` reported and the
 /// model the HUD has observed — and states neither before anything reported
 /// one. `None` is "nobody said", not `$0.00` and not the configured default.
@@ -239,7 +427,7 @@ fn an_opening_rule_carries_only_facts_the_fold_was_given() {
     let first = openings(&model)[0].clone();
     assert_eq!(
         first.model, None,
-        "no turn has settled, so no model is known"
+        "no call has reported a model, so none is known"
     );
     assert_eq!(first.budget_usd, None, "no tick has armed a budget");
 

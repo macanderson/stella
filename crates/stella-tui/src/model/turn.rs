@@ -13,7 +13,48 @@
 //! the same cut `file_state` and `recall` already make, and along the same
 //! seam: a `TranscriptEntry`'s supporting types live beside it, not in it.
 
-use stella_protocol::{BudgetMode, StageKind, StageName};
+use stella_protocol::{BudgetMode, ModelCallRole, StageKind, StageName};
+
+/// Whether a call of this role is the one **answering the turn** — the model
+/// SPEC 6.1's opening rule names, and the one the statline means by "model".
+///
+/// `StepUsage` reports every committed model call, and most of them are not
+/// the answer: an overflow summarizer, a reflection pass, or a wrapper
+/// plugin's verdict call each name a model that has no business labelling the
+/// turn. An unfiltered fold would make a long turn's rule read as though the
+/// summarizer had done the work.
+///
+/// One named predicate rather than a `matches!` at the fold site, so the
+/// roleless-core churn (#3903) has exactly one place to land: the `match` is
+/// exhaustive, so a role added to the vocabulary is an `E0004` here and a
+/// maintainer has to answer "does this one answer a turn?" rather than
+/// inheriting a wildcard's guess.
+///
+/// [`ModelCallRole::Unknown`] counts, and deliberately: it is the
+/// `serde(default)` for an *absent* role on a stream recorded before call-role
+/// attribution existed, never a catch-all for a role this build does not know
+/// (an unrecognized token fails the whole event). On such a stream every call
+/// is `Unknown`, and the first one is the worker's — so admitting it is what
+/// keeps an old recording's opening rule readable, and it cannot admit a
+/// future auxiliary role.
+pub(super) fn answers_the_turn(role: ModelCallRole) -> bool {
+    match role {
+        ModelCallRole::Worker | ModelCallRole::Unknown => true,
+        ModelCallRole::Triage
+        | ModelCallRole::Research
+        | ModelCallRole::Plan
+        | ModelCallRole::PlanRepair
+        | ModelCallRole::WitnessAuthor
+        | ModelCallRole::WitnessRepair
+        | ModelCallRole::DistressGuidance
+        | ModelCallRole::Verdict
+        | ModelCallRole::AgentAuthor
+        | ModelCallRole::SkillAuthor
+        | ModelCallRole::DomainInference
+        | ModelCallRole::Reflection
+        | ModelCallRole::Summarization => false,
+    }
+}
 
 /// What SPEC 6.1's opening rule says out loud, stamped onto the stage boundary
 /// that opens a turn.
@@ -43,13 +84,41 @@ pub struct TurnOpening {
     /// ordinal — which is the honest reading of a counter that means "turns
     /// this session has finished", not a renumbering.
     pub turn: u32,
-    /// The model answering, as [`Hud::model`] last observed it.
+    /// The model answering this turn — the **first** committed call of the
+    /// turn whose role `answers_the_turn`, as reported by
+    /// `AgentEvent::StepUsage`.
     ///
-    /// `None` for the whole first turn of a session: `Hud::model` is fed by
-    /// `AgentEvent::TurnComplete`, which by definition has not arrived yet.
-    /// Elided rather than substituted — the configured default is not evidence
-    /// of what a router picked, and the rule would be asserting a routing
-    /// decision nothing recorded (#4183).
+    /// # Why `StepUsage` and not `StepManifest`
+    ///
+    /// The manifest arrives earlier — before the call, rather than after it —
+    /// and would spare the back-patch below. It names the model the engine
+    /// *asked for*, and this repo settles routing mid-turn, so the two can
+    /// disagree. A rule that stated what was asked and never what answered
+    /// would be asserting a routing decision that did not survive. `StepUsage`
+    /// reports a call that **committed**, so this only ever names a model that
+    /// actually ran.
+    ///
+    /// # Why it is back-patched
+    ///
+    /// The boundary has to appear where the stage arrived, which is before any
+    /// call can have reported. So it is stamped with whatever the last turn ran
+    /// on — `None` on the session's first turn — and
+    /// `super::SessionModel::turn_head_idx` holds the slot until this turn's
+    /// own first answering call overwrites it. That provisional label is a
+    /// sticky route's best guess for the few hundred milliseconds it stands,
+    /// never the rule's final word.
+    ///
+    /// Only the **first** such call settles it. A later re-route in the same
+    /// turn moves [`Hud::model`] and leaves this alone: a boundary the reader
+    /// has already scrolled past changing its mind silently is worse than two
+    /// rules that differ, and the correction is already visible on the closing
+    /// rule, whose `TurnComplete` names the model the turn ended on.
+    ///
+    /// `None` therefore means **no answering call has reported** — a turn still
+    /// waiting on its first commit, one that died before it, or a stream
+    /// carrying no `StepUsage` at all. Not substituted with the configured
+    /// default even then: that is not evidence of what a router picked
+    /// (#4183, #4124).
     pub model: Option<String>,
     /// This turn's spend ceiling, from [`Hud::limit_usd`].
     ///
@@ -109,6 +178,15 @@ pub struct Hud {
     /// it phase-less, and a phase-less stage falls back to phase 0 — the bar
     /// would snap back to "plan" and claim the run had gone backwards.
     pub host_stage: Option<StageKind>,
+    /// The model serving the turn, as the statline names it.
+    ///
+    /// Fed **during** the turn by every committed call that
+    /// `answers_the_turn`, so it tracks a mid-turn re-route as it settles,
+    /// and corrected at the end by `AgentEvent::TurnComplete`/`RunComplete`,
+    /// which are authoritative for the model the turn finished on (#4183).
+    /// Only the model name is taken from `StepUsage` — its token and cost
+    /// fields belong to `BudgetTick` and the store, and folding them here
+    /// would double-count the spend the gauge already shows.
     pub model: Option<String>,
     /// [`Hud::spent_usd`] as it stood when the current turn began, so live turn
     /// cost is the difference. Snapshotted in [`super::SessionModel::push_user_prompt`]

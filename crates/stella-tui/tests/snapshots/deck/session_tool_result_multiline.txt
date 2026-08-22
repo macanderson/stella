@@ -16,7 +16,7 @@
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
+│stage execute   model glm-5.2   turn $0.0390 / $2.50  ·  observed                                                                                             │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ transcript · 41 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
 │ │   crates/stella-transcript/src/grid.rs:436                                                                         ││Refactor the automations store into a…│

@@ -103,6 +103,21 @@ pub struct SessionModel {
     /// Cleared by whatever ends a turn — a `TurnComplete`, the `RunComplete`
     /// that ends the run, a terminal `Error`, and `/clear`.
     turn_head_stamped: bool,
+    /// Where in [`Self::transcript`] the turn in flight stamped its opening
+    /// rule, so the first answering call can fill in the model it was opened
+    /// without ([`TurnOpening::model`]).
+    ///
+    /// A back-patch rather than a deferred push: the boundary has to appear at
+    /// the position the stage arrived in, and the model is not knowable until a
+    /// call commits some way into the turn. Holding the entry back until then
+    /// would file the turn's own events above its rule.
+    ///
+    /// An index, and therefore something front-eviction has to maintain —
+    /// [`Self::evict_transcript_overflow`] rebases it and drops it outright
+    /// when the rule itself is the thing evicted. Cleared by everything that
+    /// clears `turn_head_stamped`, so a call landing between turns patches
+    /// nothing: the rule the previous turn stamped is settled.
+    turn_head_idx: Option<usize>,
     /// The scrollback transcript, oldest first. Streaming `Text`/`Reasoning`
     /// deltas are accumulated into the trailing entry rather than producing
     /// one line per token.
@@ -361,8 +376,17 @@ impl SessionModel {
                     None
                 } else {
                     self.turn_head_stamped = true;
+                    // Where the entry below is about to land, so the turn's
+                    // first answering call can name the model this rule opened
+                    // without — see `turn_head_idx`.
+                    self.turn_head_idx = Some(self.transcript.len());
                     Some(TurnOpening {
                         turn: self.turns_completed.saturating_add(1),
+                        // Provisional: whatever the last turn ran on, which is
+                        // `None` for the first turn of a session. The turn's
+                        // own first answering call settles it below, so this is
+                        // a label that holds for the few hundred ms before a
+                        // call commits, never the rule's final word.
                         model: self.hud.model.clone(),
                         budget_usd: self.hud.limit_usd,
                     })
@@ -852,9 +876,40 @@ impl SessionModel {
                 };
                 self.transcript.push(entry);
             }
-            // `StepUsage` is a metering/billing record consumed by
-            // `stella-store`; the HUD's live spend is driven by `BudgetTick`,
-            // so folding it here would double-count.
+            // The one fact the deck takes from a metering record: *which model
+            // is answering*, known here and nowhere earlier (#4183).
+            //
+            // Before this, `hud.model` was written only by `TurnComplete` and
+            // `RunComplete` — both of which land after the boundary they would
+            // have labelled — so every session's first turn opened with no
+            // model at all and every later one opened naming its predecessor's.
+            //
+            // The model name **only**. `StepUsage`'s tokens and `cost_usd` are
+            // the store's; the HUD's live spend is driven by `BudgetTick`, and
+            // folding them here would double-count the gauge.
+            //
+            // `answers_the_turn` is what keeps an overflow summarizer or a
+            // reflection pass from labelling the turn with its own model — see
+            // that predicate for why the filter is named rather than inlined.
+            AgentEvent::StepUsage { role, model, .. } if turn::answers_the_turn(*role) => {
+                self.hud.model = Some(model.clone());
+                // The turn's *first* answering call settles its opening rule,
+                // which was stamped before any call could report. `take` is
+                // what makes it the first: a mid-turn re-route moves the live
+                // HUD above but leaves a boundary the reader has already
+                // scrolled past alone, and the closing rule carries the
+                // correction.
+                if let Some(idx) = self.turn_head_idx.take()
+                    && let Some(TranscriptEntry::Stage {
+                        opens: Some(opening),
+                        ..
+                    }) = self.transcript.get_mut(idx)
+                {
+                    opening.model = Some(model.clone());
+                }
+            }
+            // Every other metering record, and the auxiliary-role calls the
+            // arm above declined.
             AgentEvent::StepUsage { .. }
             | AgentEvent::UsageIncomplete { .. }
             // Context receipts (spec §4/§5) are consumed by the store/inspector,
@@ -881,6 +936,7 @@ impl SessionModel {
                     // will clear the latch and the next turn would open with
                     // no rule at all.
                     self.turn_head_stamped = false;
+                    self.turn_head_idx = None;
                 }
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -912,8 +968,11 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.streaming_text.clear();
                 self.turns_completed += 1;
-                // The next stage boundary opens a new turn, and its rule.
+                // The next stage boundary opens a new turn, and its rule. This
+                // turn's rule is settled: a call arriving after the turn closed
+                // (a reflection pass, a stray retry) patches nothing.
                 self.turn_head_stamped = false;
+                self.turn_head_idx = None;
                 self.transcript.push(TranscriptEntry::Complete {
                     model: model.clone(),
                     cost_usd: *cost_usd,
@@ -932,6 +991,7 @@ impl SessionModel {
                 // clear the latch, and the next run's first stage must still
                 // open a rule (#4124).
                 self.turn_head_stamped = false;
+                self.turn_head_idx = None;
                 self.plan.finish();
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -1110,6 +1170,16 @@ impl SessionModel {
             .sum();
         self.transcript
             .insert(0, TranscriptEntry::Evicted { count: evicted });
+        // The one index into `transcript` the model holds has to move with it,
+        // or a long turn that outlives its own opening rule would back-patch
+        // whichever unrelated entry inherited the slot. The drain removes
+        // `TRANSCRIPT_EVICTION_CHUNK` entries and the marker puts one back;
+        // a rule inside the drained range is gone, and nothing to patch is the
+        // right answer, not a nearby row.
+        self.turn_head_idx = self
+            .turn_head_idx
+            .and_then(|idx| idx.checked_sub(TRANSCRIPT_EVICTION_CHUNK))
+            .map(|idx| idx + 1);
     }
 
     /// If tool call `call_id` was a *conventionally named* file mutation, the
