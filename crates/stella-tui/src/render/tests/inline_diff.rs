@@ -244,9 +244,17 @@ fn a_stale_or_unresolvable_diff_ref_renders_no_inline_diff() {
         !text.contains("later_edit_"),
         "and a newer one is never substituted for it:\n{text}"
     );
+    // It used to fall back to the tool's own text here. It does not any more:
+    // a mutation's one interesting body is its diff, and when that is gone —
+    // aged out, superseded, or simply not measured yet — the honest row is
+    // quiet. `edit_file` answers "replaced 1 occurrence(s) in <path> at byte
+    // 1286 (file sha256/8 e951e674)", which restates the path the head already
+    // names and adds an offset and a truncated hash. Rendering it read as
+    // though *that* were the report, and made the same edit look informative on
+    // one turn and useless on the next with nothing changed but the timing.
     assert!(
-        text.contains("ok"),
-        "the row falls back to naming the result:\n{text}"
+        !text.contains("ok"),
+        "a mutation with no diff must stay quiet, not print the tool's text:\n{text}"
     );
 
     // A ref whose path is no longer tracked resolves to nothing at all.

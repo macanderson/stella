@@ -177,6 +177,10 @@ fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
             extent: measured.map_or_else(Extent::default, |(_, removed)| Extent::removed(removed)),
         },
         "bash" => EventKind::Run,
+        // Never mapped onto one of the five above: a server's `read_file` is
+        // not necessarily this workspace's `read`, and a familiar verb on a row
+        // that did something else is the one error a transcript cannot afford.
+        // It keeps its name as the subject instead — see `subject_for`.
         _ => EventKind::Other,
     }
 }
@@ -188,11 +192,21 @@ fn subject_for(name: &str, path: Option<&str>, input: &str) -> String {
         (_, Some(p)) if !p.is_empty() => p.to_string(),
         ("bash", _) => first_line(input).to_string(),
         _ => {
+            // A tool this host has no verb for is named by its own label, which
+            // for an MCP tool is its trailing segment: the row read
+            // `mcp__fs__read_file apps/page.tsx`, and `mcp__fs__` is how the
+            // call was *addressed*, not what it did.
+            //
+            // Stripped rather than translated. A server's `read_file` is not
+            // necessarily this workspace's `read`, so the name survives and
+            // only the routing goes — the most a caller can honestly do
+            // without asking the server.
+            let label = stella_tools::catalog::label_for(name);
             let head = first_line(input);
             if head.is_empty() {
-                name.to_string()
+                label.to_string()
             } else {
-                format!("{name} {head}")
+                format!("{label} {head}")
             }
         }
     }
@@ -284,11 +298,16 @@ mod tests {
     fn an_unrecognised_tool_still_renders_a_head() {
         let rows = head_rows("mcp__fs__read_file", None, "apps/page.tsx", None, 80);
         assert_eq!(rows.len(), 1);
+        let text = text_of(&rows[0]);
+        // The tool's own name survives; the routing prefix does not. A reader
+        // wants to know what happened, and `mcp__fs__` is how the call was
+        // addressed rather than what it did.
+        assert!(text.contains("read_file"), "{text}");
         assert!(
-            text_of(&rows[0]).contains("mcp__fs__read_file"),
-            "{}",
-            text_of(&rows[0])
+            !text.contains("mcp__fs__"),
+            "the routing prefix leaked into the row: {text}"
         );
+        assert!(text.contains("apps/page.tsx"), "{text}");
     }
 
     /// A file tool names its path, not its raw argument blob.

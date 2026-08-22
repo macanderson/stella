@@ -24,6 +24,21 @@ fn read_result(path: &str, body: &str) -> TranscriptEntry {
     result_for(Some(path), body)
 }
 
+/// A result for an arbitrary tool, so a test can name the one it means.
+fn tool_result(name: &str, ok: bool, path: Option<&str>, body: &str) -> TranscriptEntry {
+    TranscriptEntry::ToolResult {
+        call_id: "c1".into(),
+        name: name.into(),
+        path: path.map(str::to_owned),
+        ok,
+        summary: "ok".into(),
+        full: body.into(),
+        duration_ms: 7,
+        speculated: false,
+        diff: None,
+    }
+}
+
 fn result_for(path: Option<&str>, body: &str) -> TranscriptEntry {
     TranscriptEntry::ToolResult {
         call_id: "c1".into(),
@@ -53,6 +68,29 @@ fn numbered(first: usize, source: &[&str]) -> String {
         .enumerate()
         .map(|(i, l)| format!("{:>6}\t{l}\n", first + i))
         .collect()
+}
+
+/// The same rows a reader gets after `ctrl+o`.
+///
+/// Three of the tests below moved here from [`collapsed`]. A `read_file`
+/// result no longer renders a body while collapsed — SPEC 2 folds what did not
+/// change, and a read changed nothing, so the head's `N lines` is the whole
+/// report and the file itself lives one keystroke away. The colouring those
+/// tests cover (#4019, #4020, #4036) is untouched and still worth pinning; it
+/// simply lives on the other side of that keystroke now, which is where they
+/// assert it.
+fn expanded(entry: &TranscriptEntry) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    entry_lines(
+        entry,
+        EntryView::default(),
+        false,
+        true,
+        false,
+        120,
+        &mut out,
+    );
+    out
 }
 
 fn collapsed(entry: &TranscriptEntry) -> Vec<Line<'static>> {
@@ -320,7 +358,7 @@ fn a_read_result_is_coloured_in_its_files_language() {
         780,
         &["#[test]", "fn a_verb_is_named() {", "    let x = 1;", "}"],
     );
-    let spans = colors(&collapsed(&read_result(
+    let spans = colors(&expanded(&read_result(
         "crates/stella-autonomy/src/tests.rs",
         &body,
     )));
@@ -346,7 +384,7 @@ fn a_read_result_is_coloured_in_its_files_language() {
 #[test]
 fn a_read_of_a_json_file_is_coloured_despite_its_gutter() {
     let body = numbered(1, &["{", "  \"name\": \"stella\",", "  \"count\": 12", "}"]);
-    let spans = colors(&collapsed(&read_result(".stella/settings.json", &body)));
+    let spans = colors(&expanded(&read_result(".stella/settings.json", &body)));
 
     assert!(
         spans
@@ -371,7 +409,7 @@ fn a_read_of_a_json_file_is_coloured_despite_its_gutter() {
 #[test]
 fn the_line_number_gutter_is_not_lexed_as_source() {
     let body = numbered(780, &["fn f() {}"]);
-    let spans = colors(&collapsed(&read_result("src/lib.rs", &body)));
+    let spans = colors(&expanded(&read_result("src/lib.rs", &body)));
 
     let number = syntax::tok_style(syntax::Tok::Number).fg;
     assert!(
@@ -391,7 +429,7 @@ fn the_line_number_gutter_is_not_lexed_as_source() {
 #[test]
 fn a_body_line_without_a_gutter_stays_plain() {
     let body = format!("{}(read 1/1 lines)", numbered(1, &["const X: u8 = 1;"]));
-    let spans = colors(&collapsed(&read_result("src/lib.rs", &body)));
+    let spans = colors(&expanded(&read_result("src/lib.rs", &body)));
 
     // The source line still colours...
     assert!(
@@ -443,7 +481,7 @@ fn a_read_of_an_unknown_extension_stays_plain() {
 #[test]
 fn no_tab_survives_into_a_drawn_span() {
     let body = numbered(780, &["#[test]", "\tfn tab_indented() {}"]);
-    let lines = collapsed(&read_result("src/tests.rs", &body));
+    let lines = expanded(&read_result("src/tests.rs", &body));
 
     for line in &lines {
         for span in &line.spans {
@@ -466,5 +504,99 @@ fn no_tab_survives_into_a_drawn_span() {
     assert!(
         after.starts_with(' '),
         "the line number is glued to the source it numbers: {row:?}"
+    );
+}
+
+/// SPEC 2 folds what did not change, and a read changed nothing.
+///
+/// The witness for the collapsed read. Before this the row printed five lines
+/// of a file nobody asked to see plus `⋯ 56 lines · ctrl+o`, which is the
+/// transcript spending its scarcest resource — rows — on the one event with
+/// nothing to report.
+#[test]
+fn a_collapsed_read_shows_no_body_at_all() {
+    let body = numbered(
+        20,
+        &[
+            "use crate::deck_ui::DeckUi;",
+            "use crate::theme;",
+            "",
+            "fn go() {}",
+        ],
+    );
+    let rows = collapsed(&read_result("crates/stella-tui/src/views/issues.rs", &body));
+    let text: String = rows
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(
+        !text.contains("use crate::deck_ui"),
+        "a collapsed read leaked its file into the transcript:\n{text}"
+    );
+    // Expanding is where the file lives, and it still carries its language.
+    let expanded_text: String =
+        expanded(&read_result("crates/stella-tui/src/views/issues.rs", &body))
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+    assert!(
+        expanded_text.contains("use crate::deck_ui"),
+        "ctrl+o must still show the file:\n{expanded_text}"
+    );
+}
+
+/// A mutation whose diff has not arrived stays quiet rather than printing the
+/// tool's sentence.
+///
+/// This is the row that made the same edit look informative on one turn and
+/// useless on the next: the diff lands with the `FileChange`, which can be a
+/// beat behind the result, and until it did the row fell back to
+/// `edit_file`'s own prose — the path the head already names, plus a byte
+/// offset and a truncated hash.
+#[test]
+fn an_edit_with_no_diff_yet_prints_no_prose() {
+    let rows = collapsed(&tool_result(
+        "edit_file",
+        true,
+        Some("crates/stella-tui/src/views/issues.rs"),
+        "replaced 1 occurrence(s) in crates/stella-tui/src/views/issues.rs \
+         at byte 1286 (file sha256/8 e951e674)",
+    ));
+    let text: String = rows
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.content.as_ref())
+        .collect();
+    for noise in ["replaced 1 occurrence", "byte 1286", "sha256"] {
+        assert!(
+            !text.contains(noise),
+            "{noise:?} reached the transcript:\n{text}"
+        );
+    }
+}
+
+/// A failure still shows its body, whatever the tool.
+///
+/// The point of reading a transcript at the moment something breaks is to see
+/// why, and that argument does not care which tool broke — so the rule above
+/// is scoped to successes.
+#[test]
+fn a_failed_edit_still_shows_why() {
+    let rows = collapsed(&tool_result(
+        "edit_file",
+        false,
+        Some("src/lib.rs"),
+        "no occurrence of `foo` in src/lib.rs",
+    ));
+    let text: String = rows
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(
+        text.contains("no occurrence"),
+        "a failure must still say why:\n{text}"
     );
 }
