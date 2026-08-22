@@ -35,9 +35,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Typecheck + build for every trigger; the deploy job below additionally
-# publishes to production on push-to-main / manual dispatch, holding only the
-# same read permission (Vercel auth rides the VERCEL_* secrets, not the
-# GITHUB_TOKEN).
+# publishes to production on push-to-main / manual dispatch.
+#
+# Read-only at the workflow level. The deploy job adds `id-token: write` to
+# itself rather than taking it here, so the build job — which runs on every
+# pull request, forks included — cannot mint an OIDC token at all.
 permissions:
   contents: read
 
@@ -96,41 +98,173 @@ jobs:
 
   # The production deploy (#561): how a merged docs change reaches
   # stella.oxagen.sh, in version control instead of only a hosting dashboard.
-  # Gated on the GitHub `production` environment so each deployment is
-  # auditable and revocable, and on three repo secrets (VERCEL_TOKEN,
-  # VERCEL_ORG_ID, VERCEL_PROJECT_ID — a Vercel account token plus the ids
-  # `vercel link` prints). Skips gracefully when they are not set, so a fork
-  # or a repo mid-setup is never blocked on a deploy it cannot perform —
-  # the same posture as release.yml's Homebrew publish.
+  #
+  # This targeted Vercel until Vercel suspended the account over an unpaid
+  # balance and every site began returning 402. The site now runs as a Node
+  # process on an AWS instance behind Caddy, and this job is what puts a merged
+  # commit there. Two things about that target are worth knowing before editing
+  # this job, because both have already cost a day each:
+  #
+  #   It is not Lambda, and not for want of trying. CloudFront in front of a
+  #   Lambda Function URL returns 403 for every request in that account —
+  #   including with the URL's own authorization disabled, which should serve.
+  #   The Stella stack still holds that Lambda; nothing is served from it.
+  #
+  #   The instance is a t4g.medium, which is arm64. This job therefore builds
+  #   on an arm runner. An x86 build produces an artifact that installs and
+  #   tests green and then fails to load a native module on the node, at first
+  #   request rather than at build.
+  #
+  # Authentication is OIDC, not a stored key: the job exchanges its GitHub
+  # token for a session on `gha-deploy-stella`. That role trusts exactly one
+  # subject — `repo:macanderson/stella:environment:production` — so the
+  # `environment: production` line below is load-bearing rather than
+  # decorative. Removing it does not weaken the deploy, it breaks it.
   deploy:
     name: deploy stella.oxagen.sh
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
     environment: production
+    permissions:
+      contents: read
+      # Mints the OIDC token the role trusts. Scoped to this job rather than
+      # granted at the workflow level, so the build job above — which runs on
+      # every pull request, including from a fork — cannot request one.
+      id-token: write
+    defaults:
+      run:
+        working-directory: website
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          package_json_file: website/package.json
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
 
-      - name: Deploy to Vercel production
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      # STANDALONE=1 is what switches `next.config.mjs` to `output: standalone`.
+      # It is opt-in rather than the default because `next dev` and a static
+      # export both want the ordinary output; only this deployment target wants
+      # a server bundle.
+      - name: build
+        run: STANDALONE=1 pnpm build
+
+      # Next's standalone output is deliberately incomplete: it excludes the
+      # static assets and everything under public/, expecting whatever serves
+      # it to supply them. Without this step the site renders with no CSS and
+      # every image broken — a failure that looks like a styling regression
+      # rather than a packaging one.
+      #
+      # Where `server.js` lands depends on the workspace layout, so it is found
+      # rather than assumed, and the assets go beside *it* rather than at the
+      # output root.
+      - name: assemble the artifact
         run: |
           set -euo pipefail
-          if [ -z "${VERCEL_TOKEN:-}" ]; then
-            echo "::warning::VERCEL_TOKEN is not set — skipping the production deploy." \
-                 "One-time setup (token + org/project ids) is documented in website/README.md."
-            exit 0
+          standalone=.next/standalone
+          server_rel=$(cd "$standalone" && find . -maxdepth 4 -name server.js \
+            -not -path '*/node_modules/*' | head -1 | sed 's|^\./||')
+          if [ -z "$server_rel" ]; then
+            echo "::error::no standalone server.js under $standalone — did the build run with STANDALONE=1?"
+            exit 1
           fi
-          # The Vercel project's Root Directory is `website`, so the CLI runs
-          # from the repo root and the project settings pulled below scope the
-          # build to that directory.
-          npx --yes vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-          npx --yes vercel build --prod --token="$VERCEL_TOKEN"
-          npx --yes vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+          app_rel=$(dirname "$server_rel")
+          echo "standalone entrypoint: $server_rel"
+
+          # Spelled as `if` rather than `[ -d x ] && cp`: under `set -e` the
+          # short-circuit form exits the whole script when the directory is
+          # absent, because a false `&&` chain is a non-zero command.
+          mkdir -p "$standalone/$app_rel/.next"
+          if [ -d .next/static ]; then cp -R .next/static "$standalone/$app_rel/.next/static"; fi
+          if [ -d public ]; then cp -R public "$standalone/$app_rel/public"; fi
+
+          # The manifest the node reads to learn how to run this. Its contract
+          # is documented in oxagen-aws-infra tools/node/README.md; the port
+          # must match the Caddyfile's reverse_proxy for stella.oxagen.sh.
+          #
+          # No `config_prefix`: the hit counter's Upstash credentials are not
+          # in Parameter Store, and the site already degrades without them.
+          # Adding one here before the parameters exist would fail the deploy,
+          # not the counter.
+          cat > "$standalone/oxagen-run.json" <<JSON
+          {
+            "port": 3001,
+            "image": "node:22-alpine",
+            "command": ["node", "$server_rel"],
+            "memory": "512m",
+            "health_path": "/",
+            "env": { "NEXT_TELEMETRY_DISABLED": "1" }
+          }
+          JSON
+
+          tar -czf /tmp/stella-standalone.tgz -C "$standalone" .
+          echo "packaged $(du -h /tmp/stella-standalone.tgz | cut -f1)"
+
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::578673726240:role/gha-deploy-stella
+          aws-region: us-east-1
+
+      # The role may write exactly this one object and send exactly one SSM
+      # document. It has no shell on the instance — which also runs Postgres,
+      # Neo4j and ClickHouse — and the document's only argument is a service
+      # name constrained by `allowedPattern` at the API.
+      - name: publish and restart
+        run: |
+          set -euo pipefail
+          aws s3 cp /tmp/stella-standalone.tgz \
+            s3://oxagen-deploy-578673726240/_deploy/stella-standalone.tgz \
+            --only-show-errors
+
+          command_id=$(aws ssm send-command \
+            --instance-ids i-023d002d6e44f8f84 \
+            --document-name oxagen-deploy-service \
+            --parameters 'service=stella' \
+            --query 'Command.CommandId' --output text)
+          echo "ssm command $command_id"
+
+          # Polled rather than waited on: `aws ssm wait` has no waiter for a
+          # command invocation, and the invocation is briefly not found at all
+          # right after send-command, which a naive first call reads as failure.
+          status=Pending
+          for _ in $(seq 1 60); do
+            status=$(aws ssm get-command-invocation \
+              --command-id "$command_id" --instance-id i-023d002d6e44f8f84 \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in InProgress|Pending|Delayed) sleep 10 ;; *) break ;; esac
+          done
+
+          aws ssm get-command-invocation --command-id "$command_id" \
+            --instance-id i-023d002d6e44f8f84 --query StandardOutputContent --output text || true
+          aws ssm get-command-invocation --command-id "$command_id" \
+            --instance-id i-023d002d6e44f8f84 --query StandardErrorContent --output text || true
+
+          if [ "$status" != "Success" ]; then
+            echo "::error::deploy finished as $status — the node rolls back to the previous release on a failed health check, so stella.oxagen.sh should still be serving the last good build."
+            exit 1
+          fi
+
+      # Asks the question the SSM command cannot: the node's health check is a
+      # loopback request, so it passes for a service that is up behind a broken
+      # front door. This goes through Caddy, DNS and TLS the way a reader does.
+      - name: verify through the public hostname
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 https://stella.oxagen.sh/ || echo 000)
+            [ "$code" = "200" ] && { echo "stella.oxagen.sh -> 200"; exit 0; }
+            echo "attempt $attempt: $code"
+            sleep 6
+          done
+          echo "::error::stella.oxagen.sh did not return 200 after the deploy (last status $code)"
+          exit 1
