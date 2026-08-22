@@ -19,6 +19,32 @@
 //! that both work, a constraint only they know — and never when the codebase,
 //! the tests or one `search` call would settle it.
 //!
+//! # Frequency is part of the contract, not a matter of taste
+//!
+//! Fitness and frequency are two different calibrations, and a description
+//! that carries only the first gets the tool called on every ambiguity. So
+//! the description states three things a fitness rule alone does not: that
+//! **deciding for yourself is the default**, that a call **stops the work**
+//! until someone answers, and — the half that keeps the rest honest — that
+//! being under the bar means *decide and surface the assumption*, never
+//! guess quietly. Without that last clause a raised bar does not reduce
+//! interruptions so much as convert them into silent guesses, which degrades
+//! the output and hides that it did.
+//!
+//! What it deliberately does **not** do is prescribe a rate. There is no
+//! "at most once per session" here and there should not be, for two reasons:
+//! the right frequency is a property of the work, not of the tool; and a
+//! workspace that wants a different posture already has the surface to say so
+//! — a context record in `.stella/rules/` steers the agent that reads it,
+//! where a number baked in here would steer every workspace equally and be
+//! wrong for most of them.
+//!
+//! The audience is deliberately absent too. This tool never learns whether a
+//! human or a parent agent will answer — that is the host's fact, resolved by
+//! whoever attached the responder ([`stella_protocol::question`]'s module
+//! docs make the same point from the type side) — so the description cannot
+//! and must not say "ask freely, it's only a sub-agent".
+//!
 //! # A batch, and a note per answer
 //!
 //! Both shapes are load-bearing rather than decoration. A batch because the
@@ -112,12 +138,17 @@ impl Tool for AskQuestion {
             name: NAME.to_string(),
             description: format!(
                 "Ask whoever is driving you to settle a decision you cannot settle yourself, \
-                 and wait for the answer. Use it when the answer is genuinely theirs to give — \
-                 a product or design choice where several options all work, a preference, \
-                 a constraint only they know, an ambiguity where two readings lead to \
-                 materially different work. Do NOT use it for anything the codebase, the tests, \
-                 or one search call would answer: read first, ask only what reading cannot \
-                 settle. Pose {MAX_QUESTIONS} questions at most, in one call rather than one \
+                 and wait for the answer. Deciding for yourself is the default; this is the \
+                 exception. The call stops the work until someone answers, so the bar has two \
+                 halves and needs both: you genuinely do not know something you need to know, \
+                 and the readings lead to materially different work. That is a product or \
+                 design choice where several options all work, a preference, a constraint only \
+                 they know — never anything the codebase, the tests, or one search call would \
+                 answer. Read first; ask only what reading cannot settle. Under that bar the \
+                 move is not silence: decide, keep going, and say in your final report which \
+                 way you went and what would change it — a stated assumption a human can \
+                 correct beats a question that stopped them. \
+                 Pose {MAX_QUESTIONS} questions at most, in one call rather than one \
                  per turn, each with {MIN_OPTIONS}-{MAX_OPTIONS} concrete options that name \
                  what would actually happen. Put your recommendation first and say so in its \
                  label. Never offer a free-text or 'other' option: one is always added for you. \
@@ -685,6 +716,41 @@ mod tests {
             schema.description.contains("Never offer a free-text"),
             "the runtime appends one; the asker must be told not to: {}",
             schema.description
+        );
+    }
+
+    /// **The description must calibrate frequency, not only fitness.**
+    ///
+    /// The model decides whether to call a tool on its description alone
+    /// (AGENTS.md invariant #9), and a description that says what a *good*
+    /// question looks like while saying nothing about how *often* to ask
+    /// gets called on every ambiguity — which is the failure mode that makes
+    /// an ask tool something a driver switches off. Three things carry the
+    /// calibration, and each is asserted because each does distinct work:
+    ///
+    /// - **the default** — acting, not asking, so the tool is the exception;
+    /// - **the cost** — the call stops the work, which is what makes the bar
+    ///   feel like a bar rather than a style note;
+    /// - **the alternative** — decide and surface the assumption. Without it
+    ///   a raised bar just converts questions into silent guesses, which is
+    ///   strictly worse than asking: it degrades output *and* hides that it
+    ///   did. This is the half that keeps the calibration honest.
+    #[test]
+    fn the_description_makes_deciding_the_default_and_names_the_alternative() {
+        let schema = AskQuestion::new(QuestionSlot::default()).schema();
+        let description = &schema.description;
+        assert!(
+            description.contains("Deciding for yourself is the default"),
+            "asking must read as the exception: {description}"
+        );
+        assert!(
+            description.contains("stops the work"),
+            "the cost of a question is what makes the bar a bar: {description}"
+        );
+        assert!(
+            description.contains("state") || description.contains("stated assumption"),
+            "not asking must mean deciding and surfacing the assumption, never \
+             guessing quietly: {description}"
         );
     }
 }
