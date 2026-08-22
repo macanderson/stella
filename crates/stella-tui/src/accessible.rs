@@ -309,13 +309,25 @@ fn settled_entry_count(transcript_len: usize, include_trailing: bool) -> usize {
 ///
 /// A row whose measurement has not arrived by flush time keeps no size column,
 /// permanently — scrollback is append-only, so what is written here is what a
-/// reader hears. That is the deliberate choice of the two on offer, and it is
-/// the same one the surface already makes for the v1 result row's `+N −M`,
-/// which resolves through the identical ledger. The alternative — holding a
-/// mutating head back until the turn boundary measures the tree — would trade a
-/// missing column for a silent reader through the whole of a long call, which
-/// is the one thing this mode exists to prevent. #4181 tracks the divergence
-/// from the pane, where the same row does fill in.
+/// reader hears, and holding a mutating head back until something measures the
+/// tree would trade a missing column for a silent reader through the whole of a
+/// long call, which is the one thing this mode exists to prevent.
+///
+/// That used to describe every mutating row, and no longer does. Per-call
+/// measurement (#4175) publishes a solo mutating call's `FileChange` on the
+/// channel the engine then sends its `ToolResult` on, so the change folds
+/// *before* the row that made it and the ledger already answers when the block
+/// flushes: the reader hears the same `+N −M` the pane draws. What is left is
+/// the set of changes only the turn boundary can claim — a concurrent
+/// `delegate`'s writes, a tool that mutated while advertising `read_only`, a
+/// human editing in another window — whose one aggregate `FileChange` per path
+/// lands after every `ToolResult` of the turn has folded (#4155/#4176), which
+/// is after the rows it would have sized were written. Those rows still state
+/// no size, and the pane still fills them in, because it re-resolves against
+/// the ledger every frame. Both halves are pinned by
+/// `tests::a_flushed_mutating_row_carries_the_size_its_call_measured` and
+/// `tests::a_boundary_measured_row_reaches_scrollback_without_its_size`, so the
+/// narrowed gap cannot silently widen back over the common case (#4181).
 pub fn block_lines(
     model: &WorkspaceModel,
     block: &FlushBlock,
