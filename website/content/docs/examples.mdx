@@ -38,17 +38,20 @@ window — see [the catalog](/docs/api-providers/models#the-catalog).
 
 ## Where the money goes
 
-<PipelineFlowDiagram />
+A plain `stella run` spends almost everything in the worker's own step loop. A
+run wrapped by a [verification plugin](/docs/plugins) adds that plugin's own
+roles around it — the shape below is typical, though what a wrapper actually
+runs is its manifest's business:
 
-| Stage | Model calls | Rough size | Cost share |
+| Role | Model calls | Rough size | Cost share |
 | --- | --- | --- | --- |
 | Triage | 1 | ~1–2k in, ~1 token out | negligible |
 | Plan | 1 (+1 repair, rarely) | ~5–15k in, ~1k out | small |
 | Witness | ~1 engine turn | ~10–30k in, ~1–2k out | only without `--test-command` |
-| **Execute** | **5–40+ steps** | **~100–500k in (mostly cached), ~5–30k out** | **most of the bill** |
+| **Worker steps** | **5–40+ steps** | **~100–500k in (mostly cached), ~5–30k out** | **most of the bill** |
 | Verify | 0 | — | free (deterministic ladder) |
 | Verifier | 0–1 per verification | ~3–10k in, ~0.5–1k out | cents |
-| Revise | 0–2 extra execute rounds | like Execute, smaller | proportional |
+| Revise | 0–2 extra worker rounds | like the worker, smaller | proportional |
 
 Three consequences:
 
@@ -59,11 +62,11 @@ Three consequences:
    and under a thousand out — 1–2¢ on `gpt-5.5`, 2–3¢ on `claude-fable-5`. Make it a
    *different family* than the worker. Arm `--test-command` and many runs skip it.
 3. **Prompt caching does the heavy lifting.** stella keeps the system prefix byte-stable
-   so most execute-step input bills at the cached rate, 4–10× cheaper. See the
+   so most worker-step input bills at the cached rate, 4–10× cheaper. See the
    [context engine](/docs/context-engine).
 
 Multipliers: [goal mode](/docs/agent-modes#outcome-driven-goal-mode) repeats rounds until
-the verifier signs off, up to 8. [Fleets](/docs/agent-fleets) run one pipeline per task, and
+the verifier signs off, up to 8. [Fleets](/docs/agent-fleets) run one worker per task, and
 `--spend-limit` is enforced fleet-wide across the concurrency width. Cap either with
 `--spend-limit <usd>`, a hard limit enforced between steps.
 
@@ -78,9 +81,9 @@ stella config                            # confirm provider, model, redacted key
 stella run "fix the flaky retry test"
 ```
 
-That is already a working setup — auto-detection does the rest, every pipeline role rides
+That is already a working setup — auto-detection does the rest, every seat rides
 the same model, and the deterministic half of the
-[verification ladder](/docs/inference-pipeline) still gates the result.
+[verification ladder](/docs/plugins) still gates the result.
 
 Two habits make one-key runs materially better:
 

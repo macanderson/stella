@@ -108,7 +108,7 @@ MCP tools are treated like any other tool once merged in: they follow the [per-t
 
 ## MCP in Best-of-N candidates
 
-A Best-of-N run (the pipeline's `candidates` setting) executes multiple
+A Best-of-N run (a wrapper plugin's `candidates` setting) executes multiple
 candidates in isolated git shadow worktrees, so a candidate's edits never
 leak into another's, or into your real tree, until a winner is adopted. MCP
 servers stay **withheld by default** in that isolation, because most

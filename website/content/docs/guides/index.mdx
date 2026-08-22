@@ -15,7 +15,7 @@ stop and read the whole flag surface at the moment you need it and not before.
 
 <CardGrid size="md">
   <SpecCard title="Fix a failing CI run" href="/docs/guides/fix-failing-ci">
-    The pipeline is red on a branch you own. `stella monitor` watches it, fixes root
+    CI is red on a branch you own. `stella monitor` watches it, fixes root
     causes, pushes, and re-checks — and stops only on a green run somebody else can
     see. Includes what to do when the fix doesn't hold.
   </SpecCard>
@@ -90,7 +90,7 @@ stella something deterministic to check.
 stella run --test-command "cargo test -p api" "add cursor pagination to /orders"
 ```
 
-The [inference pipeline](/docs/inference-pipeline) is the full account of how
+The [plugin socket](/docs/plugins) is the full account of how
 that works. You do not need it to follow any guide here.
 
 ## Related reading

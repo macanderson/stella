@@ -16,7 +16,7 @@ import {
  * file a readable size rather than one god page.
  *
  * Copy discipline: every mechanical claim here restates a documented one —
- * /docs/inference-pipeline for the loop and stages, /docs/agent-tools for the
+ * /docs/agent-engine-paths for the loop, /docs/agent-tools for the
  * bay. The tour is allowed to be theatrical about *presentation*, never about
  * *facts*.
  */
@@ -87,19 +87,6 @@ const LOOP_FEED = [
   '{"type":"step_usage","role":"worker","tokens_in":18204,"cached":17651}',
 ] as const;
 
-/** The staged pipeline, in canonical stage_rank order. Dashed = conditional. */
-const PIPELINE_STAGES = [
-  { name: "triage", conditional: false },
-  { name: "recall", conditional: false },
-  { name: "research", conditional: true },
-  { name: "plan", conditional: true },
-  { name: "scope", conditional: true },
-  { name: "execute", conditional: false },
-  { name: "witness", conditional: true },
-  { name: "verify", conditional: false },
-  { name: "verdict", conditional: false },
-] as const;
-
 export function TurnLoopStation() {
   return (
     <Station id="loop">
@@ -168,30 +155,6 @@ export function TurnLoopStation() {
             it and keeps going.
           </FactCard>
         </div>
-      </div>
-
-      {/* The staged pipeline the loop rides under `stella run`. */}
-      <div className="eng-pipeline">
-        <p className="eng-pipeline-label">
-          on <BrandFace>stella run</BrandFace>, the loop rides a staged
-          pipeline —
-        </p>
-        <ol className="eng-pipeline-strip">
-          {PIPELINE_STAGES.map((stage) => (
-            <li
-              key={stage.name}
-              className="eng-pipeline-stage"
-              data-conditional={stage.conditional || undefined}
-            >
-              {stage.name}
-            </li>
-          ))}
-        </ol>
-        <p className="eng-pipeline-note">
-          dashed stages are conditional: a task that does not need them skips
-          them — they are never performed for show.{" "}
-          <Link href="/docs/inference-pipeline">the full pipeline, staged</Link>
-        </p>
       </div>
 
       <EventFeed lines={LOOP_FEED} />

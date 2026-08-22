@@ -22,7 +22,7 @@ import { test } from "node:test";
  *
  * The subset's coverage is not the one you would guess. It carries `·`, `×`,
  * `—`, `…`, `↑` and `↓`, but **not `→` or `←`** — so the obvious character for
- * drawing a pipeline sequence is exactly the one that is missing. That is how
+ * drawing a step sequence is exactly the one that is missing. That is how
  * this got noticed: a stage strip written `triage → recall → …` looked correct
  * in every editor and would have shipped broken. Write `->` instead — JetBrains
  * Mono ligates it into an arrow, so it draws as one and measures as two

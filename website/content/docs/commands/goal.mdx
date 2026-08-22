@@ -8,12 +8,12 @@ Give stella a goal and let it work in **judged rounds** until a verifier model c
 ## Synopsis
 
 ```bash
-stella goal <goal> [--no-pipeline] [--pipeline <VARIANT>] [global flags]
+stella goal <goal> [--pipeline <VARIANT>] [global flags]
 ```
 
 ## What it does
 
-`stella goal` works in rounds, each a raw step-loop turn by default — pass `--pipeline <variant>` to bind an installed wrapper plugin once and dispatch it for the worker turn of every judged round. `classic` used to name a built-in staged pipeline; that crate is deleted from the workspace and `--pipeline classic` is refused outright, naming `stella plugin install` as the remedy. The plugin dispatched here must be a **steering/observer**-grade wrapper: `stella goal`'s own round loop is already this door's completion arbiter, so an arbiter-grade wrapper (one whose own `[oracle]` could hold a round open) is refused before the provider is even built — its designed home is [`stella run --pipeline <variant>`](/docs/commands/run) instead. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration; the verifier itself is never wrapped. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
+`stella goal` works in rounds, each a raw step-loop turn by default — pass `--pipeline <variant>` to bind an installed wrapper plugin once and dispatch it for the worker turn of every judged round. The plugin dispatched here must be a **steering/observer**-grade wrapper: `stella goal`'s own round loop is already this door's completion arbiter, so an arbiter-grade wrapper (one whose own `[oracle]` could hold a round open) is refused before the provider is even built — its designed home is [`stella run --pipeline <variant>`](/docs/commands/run) instead. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration; the verifier itself is never wrapped. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
 
 Crucially, the verifier is routed **cross-family** — it is a different model family than the worker, to avoid same-model bias. If only one provider family is configured, the worker doubles as its own verifier.
 
@@ -23,22 +23,15 @@ For the full explanation of judged rounds, the cross-family verifier, and the de
 
 ## Flags
 
-`stella goal` takes the [global flags](/docs/commands), plus two of its own:
+`stella goal` takes the [global flags](/docs/commands), plus three of its own:
 
 <CardGrid size="md">
-  <OptionCard name="--no-pipeline">
-    Deprecated, does nothing. The raw step-loop is the default now; pass
-    `--pipeline <VARIANT>` to opt into a wrapper instead. Kept parseable so no
-    script breaks — passing it prints a one-line notice and has no other
-    effect, including alongside `--pipeline`, which always wins.
-  </OptionCard>
   <OptionCard name="--pipeline <VARIANT>">
     Bind an installed wrapper plugin once, by the `[wrapper] id` its manifest
     declares, and dispatch it for the worker turn of every judged round. Only a
     steering/observer-grade wrapper is accepted here — an arbiter-grade wrapper
     is refused before the provider is built, since this door's own round loop
-    is already the completion arbiter. `classic` used to name a built-in staged
-    pipeline; that crate is deleted from the workspace and is refused outright.
+    is already the completion arbiter.
     Omitted, the raw step-loop runs with nothing over it.
   </OptionCard>
   <OptionCard name="--model <provider/model_id>">

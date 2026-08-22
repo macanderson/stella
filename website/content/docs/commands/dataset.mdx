@@ -216,7 +216,7 @@ The manifest's `redaction.behavior_digest` fingerprints the redactor by its **de
 
 ## Determinism
 
-The same store and the same filter produce byte-identical output on every run. Executions are ordered by id, tool calls and changes by journal sequence, and the record is serialized from its typed struct so the key order is the declaration order rather than a JSON map's. Nothing in the pipeline reads the clock or iterates a hash map into the output.
+The same store and the same filter produce byte-identical output on every run. Executions are ordered by id, tool calls and changes by journal sequence, and the record is serialized from its typed struct so the key order is the declaration order rather than a JSON map's. Nothing in the export path reads the clock or iterates a hash map into the output.
 
 ## See also
 
