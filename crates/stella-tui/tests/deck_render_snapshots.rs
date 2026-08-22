@@ -907,6 +907,80 @@ fn deck_render_snapshots_pin_the_question_overlay() {
     );
 }
 
+/// Golden frames for the approval card (#4240) — the yes/no a parked
+/// **dispatch** waits on.
+///
+/// The fields are the point. `read_only` renders as the word `mutating` or
+/// `read-only`, and `gate` gets a labelled row, precisely because the generic
+/// `AskUser` card this replaces carried neither to the person deciding. Both
+/// are words rather than colours so a style-stripped golden can pin them —
+/// if either stops rendering, this test says so.
+#[test]
+fn deck_render_snapshots_pin_the_approval_card() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let model = fixture_model();
+    let press = |ui: &mut DeckUi, code: KeyCode| {
+        ui.approval.key(KeyEvent::new(code, KeyModifiers::NONE));
+    };
+    let request = stella_tools::registry::approval::ApprovalRequest {
+        tool: "bash".into(),
+        read_only: false,
+        reason: "matched rule no-destructive-shell".into(),
+        gate: "command.started".into(),
+        subject: Some("rm -rf build/".into()),
+    };
+
+    // 1. The card as it first appears — cursor on Deny, never on Allow.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.approval.open(request.clone());
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_approval",
+        "a parked approval — tool, mutating mark, subject, gate, reason; cursor on deny",
+        W,
+        H,
+        &frame,
+    );
+
+    // 2. The reason editor, where a deny becomes a redirection the turn can
+    //    act on rather than a wall it has to guess around.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.approval.open(request);
+    press(&mut ui, KeyCode::Down);
+    press(&mut ui, KeyCode::Enter);
+    for c in "use the staging bucket instead".chars() {
+        press(&mut ui, KeyCode::Char(c));
+    }
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_approval_reason",
+        "denying with words — the reason editor open, mid-typing",
+        W,
+        H,
+        &frame,
+    );
+
+    // 3. A read-only call, so the mark's other value is pinned too. Nothing
+    //    else distinguishes "this reads a file" from "this rewrites one".
+    let mut ui = ui_for(DeckTab::Session);
+    ui.approval
+        .open(stella_tools::registry::approval::ApprovalRequest {
+            tool: "read_file".into(),
+            read_only: true,
+            reason: "matched rule secrets-are-off-limits".into(),
+            gate: "tool.call.requested".into(),
+            subject: Some(".stella/private/credentials.toml".into()),
+        });
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_approval_read_only",
+        "a read-only call — the other value of the mark the generic card never showed",
+        W,
+        H,
+        &frame,
+    );
+}
+
 // ─────────────────────────── the harness itself ───────────────────────────
 
 /// The suite's own guard: rendering the same fixture twice must produce the

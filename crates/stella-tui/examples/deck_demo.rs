@@ -170,6 +170,11 @@ async fn main() -> std::io::Result<()> {
                 WorkspaceInput::QuestionAnswered(_) => {
                     let _ = react_tx.send(Inbound::QuestionWithdrawn);
                 }
+                // Likewise for a settled approval: no real dispatch is parked
+                // here, so the demo just takes the card down.
+                WorkspaceInput::ApprovalAnswered(_) => {
+                    let _ = react_tx.send(Inbound::ApprovalWithdrawn);
+                }
                 // Queue edits are already reflected in the deck's local queue
                 // (the shell's out-of-band echo); a real engine would also
                 // drop the prompt from its own backlog here.

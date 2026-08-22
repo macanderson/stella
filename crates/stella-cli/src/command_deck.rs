@@ -77,6 +77,7 @@ use stella_store::Store;
 use stella_tools::ToolRegistry;
 use stella_tools::custom::CustomTool;
 use stella_tools::hook_runner::ShellHookRunner;
+use stella_tools::registry::approval::ApprovalResponse;
 use stella_tui::{
     AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound, SkillOp,
     SkillScope, SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput,
@@ -350,6 +351,7 @@ pub async fn run_deck_session(
     let (sub_tx, mut sub_rx) = mpsc::unbounded_channel::<WorkspaceInput>();
     let (ask_tx, ask_rx) = mpsc::unbounded_channel::<String>();
     let (question_tx, question_rx) = mpsc::unbounded_channel::<QuestionOutcome>();
+    let (approval_tx, approval_rx) = mpsc::unbounded_channel::<ApprovalResponse>();
 
     crate::subagent::install_for_session(cfg, &registry)?;
     // The deck can park a turn on a human, so it declares a surface rather
@@ -360,8 +362,13 @@ pub async fn run_deck_session(
     // Neither may be the plain-TTY responder — the deck holds the terminal
     // in raw mode, and a blocking stdin read behind its render loop would
     // fight it for every keystroke.
-    let (mid_turn_posture, ask_io) =
-        mid_turn_ask::surface(LEAD.to_string(), in_tx.clone(), ask_rx, question_rx);
+    let (mid_turn_posture, ask_io) = mid_turn_ask::surface(
+        LEAD.to_string(),
+        in_tx.clone(),
+        ask_rx,
+        approval_rx,
+        question_rx,
+    );
     let active_rules = rules::enforce_workspace_rules(
         &registry,
         &cfg.workspace_root,
@@ -1643,6 +1650,12 @@ pub async fn run_deck_session(
                         // what unblocks the tool call and the turn behind it.
                         Some(WorkspaceInput::QuestionAnswered(outcome)) => {
                             let _ = question_tx.send(*outcome);
+                        }
+                        // The decided approval card: hand the response to the
+                        // parked `DeckApprovalResponder`, which is what
+                        // releases (or refuses) the gated dispatch.
+                        Some(WorkspaceInput::ApprovalAnswered(response)) => {
+                            let _ = approval_tx.send(*response);
                         }
                         // A hunk decision answers no card this driver raises —
                         // journal replays can render the card, but nothing
