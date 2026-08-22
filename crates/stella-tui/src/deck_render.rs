@@ -207,7 +207,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
 
     if ui.help_open {
-        guarded_overlay(buf, area, "help", |b| render_help(ui, area, b));
+        guarded_overlay(buf, area, "help", |b| render_help(model, ui, area, b));
     }
 
     // Position the hardware cursor at the composer caret so the terminal (and
@@ -1317,14 +1317,18 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
     ("ctrl-c", "quit stella"),
 ];
 
-/// The help overlay: the active tab's keys first, then the deck-wide keys —
-/// one shortcut per line, key column aligned. Context-aware on purpose: only
-/// shortcuts that work on the tab the user is looking at are shown, so the
-/// overlay stays short enough to read at a glance. Opened by `?` (empty
-/// composer) or `/help`; scrolls with ↑/↓/⇞/⇟/Home/End on a short terminal;
-/// closes with esc/`q`/`?`.
-fn render_help(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
-    let mut lines: Vec<Line<'static>> = Vec::new();
+/// The help overlay: the session's metric detail first, then the active tab's
+/// keys, then the deck-wide keys — one shortcut per line, key column aligned.
+/// Context-aware on purpose: only shortcuts that work on the tab the user is
+/// looking at are shown, so the overlay stays short enough to read at a
+/// glance. Opened by `?` (empty composer) or `/help`; scrolls with
+/// ↑/↓/⇞/⇟/Home/End on a short terminal; closes with esc/`q`/`?`.
+///
+/// The metric block is [`help_metrics`] — SPEC 11 lists `?` as "help, full
+/// metric detail", and SPEC 5 sends MODEL detail, CPU, MEM, WARMTH and ENGINE
+/// here as well as to the AGENTS tab (#4188).
+fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+    let mut lines: Vec<Line<'static>> = help_metrics::rows(model, ui);
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
         format!("  {} tab", ui.tab.title()),
@@ -1377,6 +1381,7 @@ fn render_help(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
 }
 
 mod footer;
+mod help_metrics;
 mod parked;
 
 #[cfg(test)]
