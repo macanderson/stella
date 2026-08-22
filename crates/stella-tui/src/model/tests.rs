@@ -12,8 +12,8 @@ use super::*;
 // them (#4217). Naming them keeps the tests independent of what the fold
 // happens to need.
 use stella_protocol::{
-    BudgetMode, ContextFrameRef, MediaArtifactRef, MediaJobState, MediaKind, PrStatus,
-    ProviderShare, ToolCall, VerdictEvidence,
+    BudgetMode, ContextFrameRef, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
+    PrStatus, ProviderShare, ToolCall, VerdictEvidence,
 };
 
 fn text(delta: &str) -> AgentEvent {
@@ -229,9 +229,27 @@ fn only_the_first_stage_of_a_turn_opens_a_turn_rule() {
     );
 }
 
+/// One model call, for the opening-rule tests below.
+fn manifest(role: ModelCallRole, call_seq: u64, model: &str) -> AgentEvent {
+    AgentEvent::StepManifest {
+        turn_instance: 0,
+        step: 0,
+        call_seq,
+        role,
+        provider: "openrouter".into(),
+        model: model.into(),
+        blocks: Vec::new(),
+        effective_budget_tokens: 100_000,
+        calibration_factor: 1.0,
+        estimated_input_tokens: 40,
+        compiled_frame: None,
+    }
+}
+
 /// The opening rule states the budget the last `BudgetTick` reported and the
-/// model the HUD has observed — and states neither before anything reported
-/// one. `None` is "nobody said", not `$0.00` and not the configured default.
+/// model of the turn's own first worker call — and states neither before
+/// anything reported one. `None` is "nobody said", not `$0.00` and not the
+/// configured default.
 #[test]
 fn an_opening_rule_carries_only_facts_the_fold_was_given() {
     let mut model = SessionModel::new();
@@ -239,9 +257,25 @@ fn an_opening_rule_carries_only_facts_the_fold_was_given() {
     let first = openings(&model)[0].clone();
     assert_eq!(
         first.model, None,
-        "no turn has settled, so no model is known"
+        "no call has committed, so no model has answered"
     );
     assert_eq!(first.budget_usd, None, "no tick has armed a budget");
+
+    // The two facts reach the rule by different routes, and the difference is
+    // deliberate. A budget is armed before the turn opens, so it is *stamped*
+    // when the boundary is pushed. A model is not known until a call commits,
+    // which is strictly after that, so it is *back-filled* onto the same rule.
+    model.apply(&manifest(ModelCallRole::Worker, 0, "kimi-k3"));
+    assert_eq!(
+        openings(&model)[0].model.as_deref(),
+        Some("kimi-k3"),
+        "the turn's first worker call did not reach its own rule"
+    );
+    assert_eq!(
+        openings(&model)[0].budget_usd,
+        None,
+        "no tick armed a budget before this turn opened"
+    );
 
     model.apply(&AgentEvent::TurnComplete {
         model: "kimi-k3".into(),
@@ -257,8 +291,109 @@ fn an_opening_rule_carries_only_facts_the_fold_was_given() {
     });
     model.apply(&stage(StageKind::Execute));
     let second = openings(&model)[1].clone();
-    assert_eq!(second.model.as_deref(), Some("kimi-k3"));
-    assert_eq!(second.budget_usd, Some(0.60));
+    assert_eq!(second.budget_usd, Some(0.60), "the armed budget is stamped");
+    assert_eq!(
+        second.model, None,
+        "a settled TurnComplete is not evidence about the turn now opening — \
+         naming its model here is the defect #4183 closed"
+    );
+}
+
+/// #4183: the **first** turn names its model, which is the whole point.
+///
+/// `Hud::model`'s only writers are `TurnComplete` and `RunComplete`, both
+/// terminal, so sourcing the rule from it left turn 1 permanently blank and
+/// made every later turn name its predecessor's model. The manifest arrives
+/// *before* its call commits, which is what makes it early enough to label the
+/// turn it belongs to.
+#[test]
+fn the_first_turns_rule_names_the_model_that_is_answering_it() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    assert_eq!(
+        openings(&model)[0].model,
+        None,
+        "nothing has committed a call yet"
+    );
+
+    model.apply(&manifest(ModelCallRole::Worker, 0, "kimi-k3"));
+
+    assert_eq!(
+        openings(&model)[0].model.as_deref(),
+        Some("kimi-k3"),
+        "the turn's own first worker call did not reach its opening rule"
+    );
+}
+
+/// The trap the fold has to design around: a manifest is emitted for *every*
+/// model call, and an auxiliary one is not the turn's answer.
+///
+/// An unfiltered fold would let the overflow summarizer's model label the turn
+/// — a rule naming a model that never answered it, which is worse than the
+/// blank it replaces. Both halves of the predicate are exercised: a wrong role
+/// at the worker's `call_seq`, and the worker's own role at an auxiliary seq.
+#[test]
+fn an_auxiliary_call_never_supplies_the_opening_rules_model() {
+    for (role, call_seq) in [
+        (ModelCallRole::Summarization, 0),
+        (ModelCallRole::Verdict, 0),
+        // Legacy sessions recorded no role at all. A call this build cannot
+        // identify must not name the turn either — eliding beats asserting a
+        // routing decision nothing recorded.
+        (ModelCallRole::Unknown, 0),
+        // The worker's role riding an auxiliary seq is still not the engine's
+        // own call for the step.
+        (ModelCallRole::Worker, 1),
+    ] {
+        let mut model = SessionModel::new();
+        model.apply(&stage(StageKind::Execute));
+        model.apply(&manifest(role, call_seq, "cheap-summarizer"));
+        assert_eq!(
+            openings(&model)[0].model,
+            None,
+            "{role:?} at call_seq {call_seq} labelled the turn"
+        );
+    }
+}
+
+/// A later turn's call must not rewrite a settled rule, and a sub-agent's must
+/// not overwrite the lead's.
+///
+/// Both fall out of the same stop: the back-fill walks to the *nearest* opened
+/// turn and stops there whether or not it fills anything, so the first worker
+/// call of each turn claims that turn's rule and nothing later can take it.
+#[test]
+fn a_later_call_cannot_rewrite_a_rule_another_turn_already_claimed() {
+    let mut model = SessionModel::new();
+    model.apply(&stage(StageKind::Execute));
+    model.apply(&manifest(ModelCallRole::Worker, 0, "kimi-k3"));
+    // A delegated child's calls carry the worker role too, and may run on a
+    // different model.
+    model.apply(&manifest(ModelCallRole::Worker, 0, "child-model"));
+    assert_eq!(
+        openings(&model)[0].model.as_deref(),
+        Some("kimi-k3"),
+        "a second worker call overwrote the turn's model"
+    );
+
+    model.apply(&AgentEvent::TurnComplete {
+        model: "kimi-k3".into(),
+        cost_usd: 0.11,
+    });
+    model.apply(&stage(StageKind::Execute));
+    model.apply(&manifest(ModelCallRole::Worker, 0, "glm-5"));
+
+    let opened = openings(&model);
+    assert_eq!(
+        opened[0].model.as_deref(),
+        Some("kimi-k3"),
+        "turn 1's settled rule was rewritten by turn 2's call"
+    );
+    assert_eq!(
+        opened[1].model.as_deref(),
+        Some("glm-5"),
+        "turn 2's rule did not take its own turn's model"
+    );
 }
 
 /// A turn that died never emits `TurnComplete`, so nothing else clears the

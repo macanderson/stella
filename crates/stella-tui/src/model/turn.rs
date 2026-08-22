@@ -13,7 +13,39 @@
 //! the same cut `file_state` and `recall` already make, and along the same
 //! seam: a `TranscriptEntry`'s supporting types live beside it, not in it.
 
-use stella_protocol::{BudgetMode, StageKind, StageName};
+use stella_protocol::{BudgetMode, ModelCallRole, StageKind, StageName};
+
+/// Whether one model call is the one **answering the turn**, and so may supply
+/// the model name on SPEC 6.1's opening rule.
+///
+/// The one named place the fold asks this, deliberately. The role vocabulary is
+/// in flux — see the roleless-core work (#3903) — and a predicate spelled out at
+/// each call site is a predicate that gets updated at some of them.
+///
+/// Two conditions, and each excludes a different wrong answer:
+///
+/// * **[`ModelCallRole::Worker`]** is the ordinary execution role
+///   (`stella-core`'s `driver::capabilities`: "every call has a role, and
+///   `Worker` is the ordinary"). Every other role is auxiliary to the turn
+///   rather than the turn — a `Summarization` call is the overflow summarizer,
+///   a `Verdict` call is a verifier — and naming one of those on the rule would
+///   say the turn was answered by a model that never answered it.
+/// * **`call_seq == 0`** is the engine's own call for the step. Auxiliary calls
+///   riding the same `(turn_instance, step)` take 1, 2, … from a per-execution
+///   counter, so the zero is what separates the worker from whatever shared its
+///   step.
+///
+/// [`ModelCallRole::Unknown`] is deliberately **not** accepted, even though it
+/// is the `serde` default for an absent role and so covers every session
+/// recorded before call-role attribution existed. Naming a model from a call
+/// this build cannot identify is the same move #4124 refused when it declined
+/// to substitute the configured default: the rule would assert a routing
+/// decision nothing recorded. A replayed legacy session therefore keeps the
+/// blank it has today, which is the honest outcome rather than a regression.
+#[must_use]
+pub(crate) fn supplies_the_turns_model(role: ModelCallRole, call_seq: u64) -> bool {
+    matches!(role, ModelCallRole::Worker) && call_seq == 0
+}
 
 /// What SPEC 6.1's opening rule says out loud, stamped onto the stage boundary
 /// that opens a turn.
@@ -43,13 +75,26 @@ pub struct TurnOpening {
     /// ordinal — which is the honest reading of a counter that means "turns
     /// this session has finished", not a renumbering.
     pub turn: u32,
-    /// The model answering, as [`Hud::model`] last observed it.
+    /// The model answering **this** turn, from a call that actually happened.
     ///
-    /// `None` for the whole first turn of a session: `Hud::model` is fed by
-    /// `AgentEvent::TurnComplete`, which by definition has not arrived yet.
-    /// Elided rather than substituted — the configured default is not evidence
-    /// of what a router picked, and the rule would be asserting a routing
-    /// decision nothing recorded (#4183).
+    /// Opens as `None` and is back-filled by the turn's own first worker call
+    /// (`AgentEvent::StepManifest`, gated on `supplies_the_turns_model` below —
+    /// crate-private, so named rather than linked),
+    /// rather than being stamped from [`Hud::model`] when the boundary is
+    /// pushed. Two defects made that the wrong source (#4183): `Hud::model` is
+    /// written only by `TurnComplete` and `RunComplete`, both of which are
+    /// terminal, so it was empty for the whole of turn 1 and named *the
+    /// previous turn's* model from turn 2 on.
+    ///
+    /// Back-filled rather than deferred because the boundary is a settled
+    /// transcript entry: the rule renders the moment the stage lands, and the
+    /// deck's settled-prefix fold re-renders it when the manifest arrives — the
+    /// same shape the head's measured size uses (#4154).
+    ///
+    /// Still `None` when nothing has committed a worker call, which is honest:
+    /// a turn that ended before reaching the model has no model to name, and
+    /// eliding beats substituting the configured default, which is not evidence
+    /// of what a router picked (#4124).
     pub model: Option<String>,
     /// This turn's spend ceiling, from [`Hud::limit_usd`].
     ///
