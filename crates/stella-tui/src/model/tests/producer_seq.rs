@@ -184,6 +184,72 @@ fn a_failed_call_after_a_successful_one_claims_no_diff() {
     );
 }
 
+/// **Witness (#4227).** A successful mutating call that measured *nothing* must
+/// not adopt the next change to its path as its own.
+///
+/// `write_file` has no identical-content short-circuit
+/// (`stella_tools::write`), so writing the bytes already on disk succeeds and
+/// moves the tree not at all: the registry measures, finds nothing, and
+/// publishes no `FileChange`. The row's own measurement therefore came back
+/// empty — and the `else` arm used to answer that by stamping `recorded + 1`,
+/// a reference to a change that has not happened yet and that nothing binds to
+/// this call. Whatever touched the path next — a concurrent `delegate`'s
+/// writes, a human saving in another window — then rendered under this row: a
+/// real, correctly formatted diff under the wrong call, which no reader can
+/// detect.
+#[test]
+fn a_call_that_changed_nothing_must_not_adopt_a_later_boundary_change() {
+    let mut model = SessionModel::new();
+    // A real edit, measured per call — which is what establishes that the
+    // registry is measuring in this session at all.
+    fold_edit(&mut model, "c1", "src/a.rs", "@@\n+c1 wrote this", 1);
+
+    // `write_file` of bytes identical to what is on disk: it SUCCEEDS and
+    // moves nothing, so no `FileChange` rides with it.
+    model.apply(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "c2".into(),
+            name: "write_file".into(),
+            input: serde_json::json!({ "path": "src/a.rs" }),
+        },
+    });
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "c2".into(),
+        output: stella_protocol::ToolOutput::Ok {
+            content: "wrote 42 bytes to src/a.rs".into(),
+            data: None,
+        },
+        duration_ms: 1,
+        speculated: false,
+    });
+
+    // Something else touches the path and the boundary sweeps it up.
+    turn_boundary(
+        &mut model,
+        "src/a.rs",
+        Some("@@\n+someone else wrote this"),
+        9,
+        9,
+    );
+
+    assert!(
+        inline_ref(&model, "c2").is_none(),
+        "a call whose own measurement came back empty claims no change — \
+         stamping one would render the next writer's diff under this row"
+    );
+    let first = inline_ref(&model, "c1").expect("the measured row keeps its own ref");
+    let file = model
+        .files
+        .iter()
+        .find(|f| f.path == "src/a.rs")
+        .expect("the path is tracked");
+    assert_eq!(
+        file.diff_at(first.seq),
+        Some("@@\n+c1 wrote this"),
+        "and the row that did measure a change still resolves it"
+    );
+}
+
 /// **Witness for the discriminator.** One `edit_file` call resolves the change
 /// it made under *either* producer — the registry's per-call measurement, which
 /// publishes before the result folds (#4175), and the turn boundary's sweep,

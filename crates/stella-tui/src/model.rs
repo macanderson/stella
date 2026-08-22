@@ -133,6 +133,26 @@ pub struct SessionModel {
     /// abandoned mid-call leaves at most its own entry, cleared with the rest of
     /// the conversation.
     mutation_baselines: std::collections::HashMap<String, u32>,
+    /// Whether the registry's **per-call** measurement has ever been observed
+    /// answering in this session (#4227).
+    ///
+    /// Which producer measures is a property of the *session*, not of a call:
+    /// `SessionDurability::snapshot_worktree` either has a work journal or it
+    /// does not, so a session with one measures every solo mutating call and a
+    /// session without one measures none. One observed per-call answer settles
+    /// which of those a session is, and that is what makes a row's *empty* own
+    /// measurement readable: under a live per-call producer it means the call
+    /// genuinely moved nothing, and the change the turn boundary sweeps up next
+    /// belongs to somebody else.
+    ///
+    /// Latched, never cleared: a producer that answered once has demonstrated
+    /// it exists, and a later call it did not measure (a concurrently
+    /// dispatched group, which stays on the boundary sweep by #4175's own
+    /// scope note) is evidence about that call, not about the journal.
+    ///
+    /// Survives [`Self::reset_conversation`] with the file ledger it describes
+    /// — `/clear` un-writes no bytes and takes away no journal.
+    per_call_producer_seen: bool,
     /// Live HUD numbers: spend/limit/mode, current stage, model.
     pub hud: Hud,
     /// **The plan** — the one surface for what stella said it would do and how
@@ -261,11 +281,13 @@ impl SessionModel {
             files,
             files_evicted,
             file_touch_seq,
+            per_call_producer_seen,
             ..
         } = std::mem::take(self);
         self.files = files;
         self.files_evicted = files_evicted;
         self.file_touch_seq = file_touch_seq;
+        self.per_call_producer_seen = per_call_producer_seen;
     }
 
     /// Fold one event into the model. This is the **only** mutator; every
@@ -459,9 +481,21 @@ impl SessionModel {
                 // `diff_at` short by exactly one and **every** mutating row
                 // rendered diffless (#4155); adding `+1` under a per-call
                 // producer points one change into the future instead.
+                //
+                // A row states what it can attribute and predicts nothing
+                // (#4227). Stamping `recorded + 1` under a live per-call
+                // producer names a change that has not happened and that
+                // nothing binds to this call — a successful `write_file` of
+                // the bytes already on disk moves the tree not at all
+                // (`stella_tools::write` has no identical-content
+                // short-circuit), and the next writer's change then rendered
+                // under its row. So the prediction survives only while
+                // `per_call_producer_seen` is still false, which is exactly
+                // the session where the boundary is the *only* producer and
+                // the change it owes really is this call's.
                 let baseline = self.mutation_baselines.remove(call_id);
                 let diff = if ok {
-                    self.mutated_path_for(call_id).map(|path| {
+                    self.mutated_path_for(call_id).and_then(|path| {
                         let recorded = self
                             .files
                             .iter()
@@ -476,8 +510,22 @@ impl SessionModel {
                         // doc carries the full argument and the case that
                         // argues the other way.
                         let landed = baseline.is_some_and(|base| recorded > base);
-                        let seq = if landed { recorded } else { recorded + 1 };
-                        InlineDiffRef { path, seq }
+                        if landed {
+                            self.per_call_producer_seen = true;
+                            return Some(InlineDiffRef {
+                                path,
+                                seq: recorded,
+                            });
+                        }
+                        // The per-call producer has answered before, so its
+                        // silence here is a measurement: this call changed
+                        // nothing, and the row says so by claiming nothing.
+                        // A blank is a failure a reader can see; a plausible
+                        // diff under the wrong call is not.
+                        (!self.per_call_producer_seen).then(|| InlineDiffRef {
+                            path,
+                            seq: recorded + 1,
+                        })
                     })
                 } else {
                     None
