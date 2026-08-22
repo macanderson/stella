@@ -9,7 +9,7 @@
 //! ── turn 14 · execute · kimi-k3 · budget $0.60 ───────────────────────────
 //!  │ ✦ skill oxagen-feature · auto                              1.2k tok
 //!  │   injected 10-layer feature contract · used 42× this repo
-//!  │ ▸ read …/lifecycle.rs · 221 lines                    ⚡3ms · ↵ open
+//!  │ ▸ read …/lifecycle.rs                                ⚡3ms · ↵ open
 //!  │ ● edit …/self_driving_cmd.rs +3 -1              ⚡2ms · → task 3
 //! ── turn 14 done · 0:42 ──────────────────────────────────────────────────
 //!    receipt $0.11 · 18k tok · 4/4 tests · 2 files · ↵ audit
@@ -74,8 +74,8 @@ impl Extent {
         }
     }
 
-    /// A measured one-sided count — a read's or a new file's line count on the
-    /// `added` side, a deletion's on the `removed` side.
+    /// A measured one-sided count — a new file's line count on the `added`
+    /// side, a deletion's on the `removed` side.
     #[must_use]
     pub fn added(lines: u32) -> Self {
         Self {
@@ -103,11 +103,21 @@ impl Extent {
 /// as a plain muted row, which is the correct degradation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
-    /// `▸ read <path> · <n> lines` — folded by default. The count rides
-    /// `Extent::added` and has no producer today: only a *mutation* stamps the
-    /// inline-diff reference the head's measurement is resolved through, so a
-    /// read states its path and nothing about its size (#4180).
-    Read { extent: Extent },
+    /// `▸ read <path>` — folded by default, and deliberately **sizeless**.
+    ///
+    /// It carried an [`Extent`] until #4180 and could never fill one: the
+    /// head's measurement resolves through the inline-diff reference only a
+    /// *mutation* stamps, and a read emits no `FileChange` to stamp one from —
+    /// correctly, since it changes nothing. That left a size column that was
+    /// expressible, unreachable on every live path, and reached by nothing but
+    /// a test fixture, which is the "declared but inert" shape this repository
+    /// treats as debt rather than as a feature in waiting. The field is gone
+    /// rather than defaulted, so the column cannot be half-restored by a caller
+    /// that has a number to hand and no producer behind it. Giving a read a
+    /// real line count means giving `read_file` a wire-level producer first —
+    /// which must also settle what a *truncated* read states — and is tracked
+    /// separately (#4297).
+    Read,
     /// `● edit <path> +a -b`, both counts or neither — they are one reading.
     /// Absent until the emitter has measured the change (#4154), which is the
     /// turn boundary rather than the moment the call returns.
@@ -144,7 +154,7 @@ impl EventKind {
     #[must_use]
     pub fn metal(&self) -> Color {
         match self {
-            EventKind::Read { .. } => token::MUTED,
+            EventKind::Read => token::MUTED,
             EventKind::Edit { .. }
             | EventKind::Write { .. }
             | EventKind::Run
@@ -185,7 +195,7 @@ impl EventKind {
     #[must_use]
     pub fn verb(&self) -> &'static str {
         match self {
-            EventKind::Read { .. } => "read",
+            EventKind::Read => "read",
             EventKind::Edit { .. } => "edit",
             EventKind::Write { .. } => "write",
             EventKind::Delete { .. } => "delete",
@@ -203,7 +213,7 @@ impl EventKind {
     /// expand).
     #[must_use]
     pub fn collapses_by_default(&self) -> bool {
-        matches!(self, EventKind::Read { .. })
+        matches!(self, EventKind::Read)
     }
 }
 
@@ -257,6 +267,14 @@ impl<T: Into<String>> From<T> for Subject {
 pub struct Event {
     pub kind: EventKind,
     /// The object of the verb: a path, a command line, a skill name.
+    ///
+    /// [`Subject::is_path`] is carried from the producer rather than re-derived
+    /// here: the only signal left at this point is a `/`, and
+    /// `sed -n '1,20p' foo/bar.rs` has one without naming any file this row
+    /// touched. The projection knows the answer for free —
+    /// [`super::transcript_source`]'s head takes the call's own `path` and falls
+    /// back to the raw input only when there is none — so the fact travels
+    /// instead of being guessed where it can no longer be checked (#4168).
     pub subject: Subject,
     /// Wall time, rendered `⚡3ms`. Zero suppresses the metric.
     pub duration_ms: u64,
@@ -521,7 +539,13 @@ fn subject_spans(subject: &Subject, lead: &str) -> Vec<Span<'static>> {
     // Byte-index slicing is safe on the result of `rfind('/')`: `/` is ASCII,
     // so `cut` and `cut + 1` are both char boundaries whatever else the path
     // holds.
-    match subject.text.rfind('/').filter(|_| subject.is_path) {
+    // A trailing separator has no basename to emphasise, so a directory renders
+    // whole rather than as a bright empty span.
+    match subject
+        .text
+        .rfind('/')
+        .filter(|cut| subject.is_path && cut + 1 < subject.text.len())
+    {
         Some(cut) => vec![
             Span::styled(
                 format!("{lead}{}", &subject.text[..=cut]),
@@ -581,10 +605,10 @@ fn kind_detail(kind: &EventKind) -> Vec<Span<'static>> {
     let dim = Style::new().fg(token::DIM);
     let text = Style::new().fg(token::TEXT);
     match kind {
-        EventKind::Read { extent } => extent
-            .added
-            .map(|lines| vec![Span::styled(format!(" · {lines} lines"), dim)])
-            .unwrap_or_default(),
+        // A read has no size column at all — see [`EventKind::Read`] for why
+        // the field is gone rather than empty (#4180), and #4297 for the
+        // producer that would earn it back.
+        //
         // The separator spaces stay neutral: colour marks the count, not the
         // padding around it, and a red cell is a scarce thing on this screen
         // (prompt.md rule 5) that must not be spent on whitespace.
@@ -647,7 +671,7 @@ fn metrics(event: &Event) -> Vec<Span<'static>> {
     if event.duration_ms > 0 {
         spans.push(Span::styled(format!("⚡{}ms", event.duration_ms), dim));
     }
-    if matches!(event.kind, EventKind::Read { .. }) && event.is_collapsed() {
+    if matches!(event.kind, EventKind::Read) && event.is_collapsed() {
         if !spans.is_empty() {
             spans.push(Span::styled(" · ", dim));
         }

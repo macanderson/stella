@@ -574,8 +574,14 @@ fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
 /// (there can be more than one — see
 /// [`roster::read_tier`]'s collision notice, where only the last is in force
 /// and the others are installed and inert), plus the literal `<tier>/<name>`
-/// when it exists, which is how a package whose manifest no longer parses is
-/// still reachable.
+/// when it is a real directory, which is how a package whose manifest no
+/// longer parses is still reachable.
+///
+/// `symlink_metadata`, not `Path::is_dir`, which follows the link: a symlinked
+/// tier entry is not a plugin — [`roster::read_tier`] skips it and says so —
+/// so `remove` must not collect one either (#3530). Collected, it reached
+/// [`remove_plugin_dir`]'s refusal and turned an unremarkable "not installed"
+/// into a hard error about a package this CLI never installed.
 fn removable_dirs(tier: &Path, name: &str, installs: &[roster::InstalledPlugin]) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = installs
         .iter()
@@ -583,7 +589,9 @@ fn removable_dirs(tier: &Path, name: &str, installs: &[roster::InstalledPlugin])
         .map(|plugin| plugin.dir.clone())
         .collect();
     let by_path = tier.join(name);
-    if by_path.is_dir() && !dirs.contains(&by_path) {
+    let is_real_dir =
+        std::fs::symlink_metadata(&by_path).is_ok_and(|meta| meta.file_type().is_dir());
+    if is_real_dir && !dirs.contains(&by_path) {
         dirs.push(by_path);
     }
     dirs

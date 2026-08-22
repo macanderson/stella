@@ -1,3 +1,22 @@
+> **Superseded — kept for history, not for building.**
+>
+> `design/tui-v2/SPEC.md` §2–4 replaces this brief: §2 is the palette and the
+> hue clamp, §3 the wordmark, §4 the glyph language. Where this document and
+> that SPEC disagree, the SPEC is right. Two disagreements are load-bearing, so
+> they are named rather than left for a reader to discover:
+>
+> - **The lockup below is retired.** This brief specifies `≡✦ stella`; SPEC 3.3
+>   retires that form because `✦` is the **skill** glyph in SPEC 4, so the brand
+>   mark and the skill row collided on every screen. The wordmark is `stella*`.
+> - **The palette below was v4.0's.** Its retired hexes are removed rather than
+>   remapped — a brief with new numbers in old instructions still tells its
+>   reader to build the old system. The live values are generated from
+>   `design/tokens/stella-tokens.json`.
+>
+> Everything else here — the assemble-don't-spin principle, the capability
+> ladder, the degradation rules — is still the intent, and SPEC 2–4 states it
+> normatively.
+
 Restyle stella's TUI to the official brand. The brand is fixed; your job is translation to the terminal medium — keep the app's existing framework and behavior, change its presentation. Work within whatever TUI stack the codebase already uses (Ink / Textual / Ratatui / Bubble Tea / raw ANSI); everything below is framework-agnostic spec.
 
 ## brand in one line
@@ -18,11 +37,17 @@ The lockup in plain text is exactly this, and it's load-bearing everywhere:
 
 Detect capability in this order: `$COLORTERM` contains `truecolor`/`24bit` → use hex; else 256-color → use the index column; else basic ANSI → last column. Respect `NO_COLOR` (plain text, keep bold/dim). Never repaint the user's terminal background — the app inherits it; only panels/badges may set bg.
 
+The role table below keeps the roles and the fallback ladder, which are still
+right. Its three brand values were v4.0's and are **retired**: take gold,
+gold-dim and the light-ground accent from `design/tui-v2/SPEC.md` §2, which is
+generated from `design/tokens/stella-tokens.json` and clamped by the rules in
+§2's own hue argument. Do not copy a gold from anywhere else.
+
 | role | truecolor | 256 | 16-color |
 |---|---|---|---|
-| gold (brand accent) | `#C58A32` | 173 | yellow + bold |
-| gold-dim (secondary accent) | `#DFB473` | 179 | bright yellow |
-| brand-deep (accent on LIGHT terminals) | `#8B5E1A` | 94 | yellow |
+| gold (brand accent) | SPEC 2 | 173 | yellow + bold |
+| gold-dim (secondary accent) | SPEC 2 | 179 | bright yellow |
+| brand-deep (accent on LIGHT terminals) | SPEC 2 | 94 | yellow |
 | text | terminal default fg | default | default |
 | muted (chrome, labels, borders text) | `#A19A8E` | 246 | bright black |
 | border | `#2C2924` | 235 | bright black |
@@ -31,7 +56,7 @@ Detect capability in this order: `$COLORTERM` contains `truecolor`/`24bit` → u
 | success (semantic only) | terminal green | 71 | green |
 | diff add / del | green 71 / red 167 | 71 / 167 | green / red |
 
-Light-terminal adaptation: probe background via OSC 11 (fallback `$COLORFGBG`, config override `theme = auto|dark|light`). On light backgrounds swap gold→brand-deep for any colored TEXT and gold→`#8B5E1A` for the star/trail glyphs (full-strength gold is 2.63:1 on paper), and muted→`#61676F` (241).
+Light-terminal adaptation: probe background via OSC 11 (fallback `$COLORFGBG`, config override `theme = auto|dark|light`). On light backgrounds swap gold→brand-deep for any colored TEXT and for the mark glyphs, and muted→`#61676F` (241). The stop to swap to, and the measured ratio that justifies it, are SPEC 2's — the values this brief used to quote were v4.0's and no longer describe any pair in the system.
 
 Budget: gold appears in at most ~5 places per screen — the lockup, the prompt star, the spinner, one primary action, one key stat. Everything else is default text and muted. Gold is the signal, never the surface: no gold backgrounds except the single primary button/toast. Green and red exist only for semantic success/diff/error — never decoration. Warnings are amber (`⚠ lowercase message`) and are deliberately NOT the accent — a verdict may never be told from chrome; errors are red (`✕ message`); never color-only — always pair glyph + text.
 
@@ -65,7 +90,7 @@ Trails/star gold; the working loop is frames 1–6 only; on task completion run 
 - **diffs**: `+` lines green, `-` lines red, context default, file header bold, hunk `@@` muted. No colored backgrounds.
 - **markdown rendering**: headings bold (h1 prefixed with gold `#`), inline code on panel bg 233, code blocks in a bordered box with dim language tag, links underlined gold (brand-deep on light), bullets muted `·`, blockquote bar muted `▎`.
 - **lists/menus**: selected row = gold `✦` marker + bold text (no full-row gold bg); unselected marker is a muted `·`.
-- **primary action / confirm toast**: the one allowed gold fill — `[ install ]` gold bg, obsidian `#070B10` text. Secondary actions are bordered, no fill.
+- **primary action / confirm toast**: the one allowed gold fill — `[ install ]` gold bg, ground-colored text (SPEC 2's `bg`; the obsidian this brief named was v4.0's). Secondary actions are bordered, no fill.
 - **errors**: red `✕`, lowercase message, dim hint line under it. **empty states**: muted text + a single small `✧`.
 - **completion celebrations**: after a successful run, the comet flies off across the current line once (frames 7–12) — never confetti, never rainbow.
 

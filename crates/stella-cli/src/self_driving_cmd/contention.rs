@@ -5,22 +5,27 @@
 //! this module's job, and it does it for **two callers with different
 //! questions**:
 //!
-//! - `deliver::base_fix_contention` asks *before adopting a broken base*.
-//!   There, another self-driving process's worktree is the whole point of the
-//!   worktree signal: two loops against one clone would otherwise both adopt
-//!   the same breakage and race to fix it.
+//! - [`for_base_fix`] asks *before adopting a broken base*. There, another
+//!   self-driving process's worktree is the whole point of the worktree
+//!   signal: two loops against one clone would otherwise both adopt the same
+//!   breakage and race to fix it.
 //! - [`for_issue`] asks *before claiming an issue off the ranked queue*. There,
-//!   a worktree inside this verb's own root is very often **this loop's own
-//!   crashed run**, and deferring on it retires the issue permanently.
+//!   a worktree inside this verb's own root may be **this loop's own crashed
+//!   run**, and deferring on it retires the issue permanently.
 //!
 //! # Why the difference is an argument and not a second copy
 //!
 //! The two probes read the same `git ls-remote` and `git worktree list`
-//! output, so the parsing lives here once, pure, and the policy difference is
-//! [`worktrees_naming`]'s `own_root` argument — visible at both call sites
-//! rather than buried in a filter one of them cannot see. #4300 asks for
-//! exactly this shape: the claim site must not defer on the loop's own
-//! leftovers, and the base-fix site must keep seeing every worktree.
+//! output, so the gathering lives here once — [`gather`] — and the policy
+//! difference is its `own_root` argument, visible at both call sites rather
+//! than buried in a filter one of them cannot see. #4300 asks for exactly this
+//! shape: the claim site must not defer on the loop's own leftovers, and the
+//! base-fix site must keep seeing every worktree.
+//!
+//! The parsing is split out into pure functions ([`branches_naming`],
+//! [`worktrees_naming`], [`pr_numbers`], [`claims_naming`]) for the ordinary
+//! reason — the reads need a subprocess and the decisions do not, so only the
+//! decisions can be tested.
 //!
 //! # Why an own-root worktree is not evidence at claim time
 //!
@@ -65,15 +70,38 @@ use stella_autonomy::Contention;
 
 use super::state::git;
 
-/// Every contention signal for one issue key, at claim time.
+/// Every contention signal for one issue key, **at claim time**.
 ///
-/// Four reads, each cheap, and only for the one candidate about to be
-/// claimed — not for the whole ranked queue. Every one of them fails **open**:
-/// a probe that cannot answer contributes no evidence rather than a deferral,
-/// because "the forge is unreachable" is not a peer and a loop meant to run
-/// for days cannot treat a network blip as somebody else's work.
+/// Drops worktrees under this verb's own root, because there a leftover may be
+/// the loop's own crashed run and `work::start`'s `discard_undelivered_attempt`
+/// is what repairs it — one step further on than a deferral ever reaches
+/// (#4300).
 #[must_use]
 pub(super) fn for_issue(root: &Path, key: &str) -> Contention {
+    gather(root, key, Some(&super::work::worktrees_root(root)))
+}
+
+/// Every contention signal for one issue key, **before adopting a broken
+/// base**.
+///
+/// Keeps every worktree. A peer self-driving process is precisely the case
+/// this signal exists for: two loops against one clone would otherwise both
+/// adopt the same breakage and race to fix it, and unlike the claim site there
+/// is no recovery downstream that repairs a leftover of the loop's own.
+#[must_use]
+pub(super) fn for_base_fix(root: &Path, key: &str) -> Contention {
+    gather(root, key, None)
+}
+
+/// The four reads, with the one policy difference as an argument.
+///
+/// Each is cheap, and asked only for the one issue in question — not for the
+/// whole ranked queue. Every one of them fails **open**: a probe that cannot
+/// answer contributes no evidence rather than a deferral, because "the forge
+/// is unreachable" is not a peer and a loop meant to run for days cannot treat
+/// a network blip as somebody else's work.
+#[must_use]
+fn gather(root: &Path, key: &str, own_root: Option<&Path>) -> Contention {
     let mut contention = Contention::default();
 
     if let Some(out) = git(root, &["ls-remote", "--heads", "origin"]) {
@@ -85,8 +113,7 @@ pub(super) fn for_issue(root: &Path, key: &str) -> Contention {
     }
 
     if let Some(out) = git(root, &["worktree", "list", "--porcelain"]) {
-        contention.local_worktrees =
-            worktrees_naming(&out, key, Some(&super::work::worktrees_root(root)));
+        contention.local_worktrees = worktrees_naming(&out, key, own_root);
     }
 
     contention.ledger_claims = ledger_claims(root, key);

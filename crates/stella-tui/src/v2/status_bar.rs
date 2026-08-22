@@ -314,10 +314,10 @@ pub fn render_band(
     area: Rect,
     buf: &mut Buffer,
 ) {
-    // Projected once for the frame, then lent to the widget. `Status` borrows
-    // its two strings, so something has to own them for the length of the draw
-    // and it cannot be the widget — that purity is what keeps the golden frames
-    // fixture data all the way down.
+    // One projection, owned for the length of the draw. `Status` borrows both
+    // of its text cells, so something has to hold them — and after #4187 that
+    // is `StatusSource` and nothing else. It cannot be the widget: that purity
+    // is what keeps the golden frames fixture data all the way down.
     let source = super::status_source::StatusSource::project(model, ui);
     StatusBar(source.status()).render(Rect { height: 1, ..area }, buf);
     // The low-hit-rate diagnosis is prose, so it keeps a row of its own rather

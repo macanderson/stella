@@ -28,9 +28,10 @@
 //!   "match the neighbourhood", "no new dependencies casually" — that is
 //!   instruction for the judgement half, it already has a home in the context
 //!   record plane (`.stella/rules/*.toml`, `doc:context-pr`),
-//!   and duplicating it here would create the fifth plane. A `[doctrine]` block
-//!   that wanted to say something prose-shaped is a context record, and this
-//!   module's answer to that request is a pointer, not a field.
+//!   and duplicating it here would create the fifth plane. A
+//!   `[self_driving.doctrine]` block that wanted to say something prose-shaped
+//!   is a context record, and this module's answer to that request is a
+//!   pointer, not a field.
 //!
 //! The test for whether something belongs here is the same one invariant 5
 //! applies to error types: **does a caller branch on it?** A pure machine
@@ -141,9 +142,9 @@ pub enum ContentionPolicy {
 
 /// The operator's declared decision system.
 ///
-/// Source-tracked beside the provider and convention manifests under
-/// `.stella/issues/`, for the same reason: **the person who starts the loop is
-/// the person who decides how it decides**, and that is only true if what it
+/// Declared in `[self_driving.doctrine]` in `stella.toml`, source-tracked with
+/// the rest of the workspace's configuration: **the person who starts the loop
+/// is the person who decides how it decides**, and that is only true if what it
 /// will do is legible before it does it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -304,6 +305,49 @@ mod tests {
         assert_eq!(d.foreign_breakage, ForeignBreakage::FileAndAdopt);
         assert_eq!(d.contention, ContentionPolicy::Defer);
         assert!(!d.abandon_escalated);
+    }
+
+    /// ...and the spec says the same thing, on the one axis where saying the
+    /// other thing changes what the loop does to a red base.
+    ///
+    /// `doc:backlog-self-driving` §6.5 marked `file_and_wait` *(default)* for as
+    /// long as this crate shipped [`ForeignBreakage::FileAndAdopt`], so a reader
+    /// of the spec expected a loop that reports a base somebody else broke and
+    /// stops. The default is the operator-visible contract, and it is stated in
+    /// two places; this is the assertion that keeps them one answer.
+    ///
+    /// The predicate reads only the bullets naming a `foreign_breakage`
+    /// spelling and asks which carries the `*(default)*` marker. That marker
+    /// sits immediately after the code span, so it stays on the bullet's first
+    /// line however the prose after it is reflowed.
+    #[test]
+    fn doctrine_default_matches_the_spec() {
+        let spec = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("docs/spec/backlog-self-driving.md");
+        let text = std::fs::read_to_string(&spec)
+            .unwrap_or_else(|e| panic!("read {}: {e}", spec.display()));
+
+        let marked: Vec<&str> = ["file_and_wait", "file_and_adopt", "ignore"]
+            .into_iter()
+            .filter(|spelling| {
+                let bullet = format!("- `{spelling}`");
+                text.lines().any(|line| {
+                    line.trim_start().starts_with(&bullet) && line.contains("*(default)*")
+                })
+            })
+            .collect();
+
+        let shipped = serde_json::to_value(Doctrine::default().foreign_breakage)
+            .expect("serialize the default");
+        let shipped = shipped.as_str().expect("a snake_case string");
+
+        assert_eq!(
+            marked,
+            vec![shipped],
+            "exactly one `foreign_breakage` bullet in §6.5 is marked *(default)*, \
+             and it is the one `Doctrine::default()` ships"
+        );
     }
 
     /// The witness for collision avoidance: a worktree on this machine defers

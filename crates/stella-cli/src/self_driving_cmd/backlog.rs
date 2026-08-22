@@ -1,9 +1,11 @@
 //! The backlog half of the self-driving verbs, read through the issue port.
 //!
 //! `doc:backlog-self-driving` B1. Split out of `self_driving_cmd.rs` rather
-//! than added to it: that file is 1005 lines and #3599 records it as closed to
-//! growth, with new logic landing in siblings here (AGENTS.md § *God files* —
-//! plan around them, never into them).
+//! than added to it: that file is close enough to the 1500-line ceiling
+//! `make file-size` enforces that new logic lands in siblings here, and it
+//! carries no baseline entry, so a crossing fails the gate outright rather
+//! than being grandfathered (AGENTS.md § *God files* — plan around them,
+//! never into them).
 //!
 //! The parent keeps the two verb entry points, which name the concrete
 //! provider. Everything below takes a `&dyn IssueProvider` and has never heard
@@ -163,6 +165,22 @@ pub(super) enum Filed {
         /// Every violation, so a human fixes them in one pass.
         violations: Vec<Violation>,
     },
+}
+
+impl Filed {
+    /// This outcome's canonical name, for
+    /// [`stella_autonomy::SessionStats::record_filing`].
+    ///
+    /// A `&str` rather than the enum, because `stella-autonomy` is a leaf crate
+    /// with no workspace dependencies and must not learn what a `Filed` is —
+    /// the same boundary `record_closure` takes a resolution across.
+    pub(super) fn canonical(&self) -> &'static str {
+        match self {
+            Filed::New(_) => "new",
+            Filed::Duplicate { .. } => "duplicate",
+            Filed::Refused { .. } => "refused",
+        }
+    }
 }
 
 /// File a finding, if it is both novel and conformant.
@@ -805,6 +823,50 @@ mod tests {
 
         assert_eq!(outcome, Filed::New(IssueKey::from("1001")));
         assert_eq!(provider.filed().len(), 1);
+    }
+
+    /// **The witness.** Every filing outcome reaches the session's counters,
+    /// not just the one that got a key.
+    ///
+    /// `filings_refused` and `filings_duplicate` had a `println!` and no write
+    /// site anywhere in the workspace, so a loop whose every finding was being
+    /// refused rendered identically to a loop that found nothing — beside a
+    /// live `created` in the same block (#4118).
+    #[test]
+    fn every_filing_outcome_reaches_the_session_counters() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let st = super::super::state::LoopState {
+            dir: dir.path().to_path_buf(),
+            repo_root: dir.path().to_path_buf(),
+        };
+        let provider = FixtureProvider::default();
+        let title = "the retry counter survives a goal round";
+
+        for (seen, labels) in [
+            // conformant and novel — filed
+            (Vec::new(), &["bug", "P1"][..]),
+            // conformant but already filed — duplicate
+            (vec![finding_digest(title)], &["bug", "P1"][..]),
+            // novel but off-convention — refused
+            (Vec::new(), &["P1"][..]),
+        ] {
+            let outcome = block_on(file_finding(
+                &provider,
+                &convention(),
+                &seen,
+                &draft(title, labels),
+                "Created by stella.",
+            ))
+            .expect("the port was reachable");
+            st.update_stats(|s| s.record_filing(outcome.canonical()));
+        }
+
+        let stats = st.stats();
+        assert_eq!(stats.filings_attempted, 3);
+        assert_eq!(stats.issues_created, 1);
+        assert_eq!(stats.filings_duplicate, 1);
+        assert_eq!(stats.filings_refused, 1);
+        assert!(stats.filings_balance());
     }
 
     /// Re-filing what the loop already filed is the fastest way to make a

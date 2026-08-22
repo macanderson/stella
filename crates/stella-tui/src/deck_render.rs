@@ -24,7 +24,6 @@ use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
 use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
-use crate::textline;
 use crate::{notice, splash, theme, views};
 
 /// The accent prompt prefix on every composer row. Chrome, not content — it
@@ -119,7 +118,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         render_composer(&c_layout, bands[4], b)
     });
     guarded_band(buf, bands[5], "footer", |b| {
-        render_composer_footer(model, ui, &c_layout, bands[5], b)
+        footer::render_composer_footer(model, ui, &c_layout, bands[5], b)
     });
     guarded_band(buf, bands[6], "statline", |b| {
         crate::v2::status_bar::render_band(model, ui, bands[6], b)
@@ -1177,137 +1176,6 @@ fn render_scroll_gutter(first: usize, visible: usize, total: usize, area: Rect, 
     }
 }
 
-/// Total display width of a span run, in terminal columns.
-fn span_width(spans: &[Span]) -> usize {
-    spans.iter().map(|s| display_width(&s.content)).sum()
-}
-
-/// Render `spans` right-aligned at the end of `area` without clearing the rest
-/// of the row — draws only its own sub-rect, so a left-aligned line drawn first
-/// survives everywhere it doesn't overlap.
-fn render_right(spans: Vec<Span<'static>>, area: Rect, buf: &mut Buffer) {
-    let w = span_width(&spans).min(area.width as usize) as u16;
-    let rect = Rect {
-        x: area.x + area.width.saturating_sub(w),
-        y: area.y,
-        width: w,
-        height: 1,
-    };
-    Paragraph::new(Line::from(spans)).render(rect, buf);
-}
-
-/// The quiet keybind + line-counter row directly under the composer and above
-/// the statline. Keybind glyphs are violet; the right end carries the
-/// live line counter and the queue status.
-fn render_composer_footer(
-    model: &WorkspaceModel,
-    ui: &DeckUi,
-    _layout: &ComposerLayout,
-    area: Rect,
-    buf: &mut Buffer,
-) {
-    if area.height == 0 {
-        return;
-    }
-    let key = Style::default().fg(theme::VIOLET);
-    let dim = Style::default().fg(theme::TEXT_TERTIARY);
-    let sep = Style::default().fg(theme::HAIRLINE);
-
-    // Right: live logical-line counter · queue status. Built first so its width
-    // is known and the left affordances can be clipped to what remains.
-    let n_lines = ui.composer.buffer().split('\n').count().max(1);
-    let counter = format!("{n_lines} line{}", if n_lines == 1 { "" } else { "s" });
-    let pending = model.queue.pending();
-    let (q_text, q_style) = if pending > 0 && ui.dispatch_held {
-        (
-            format!("{pending} held"),
-            Style::default().fg(theme::DANGER),
-        )
-    } else if pending > 0 {
-        (
-            format!("{pending} queued"),
-            Style::default().fg(theme::WARNING_BRIGHT),
-        )
-    } else {
-        ("queue empty".to_string(), dim)
-    };
-    // Live turn cost, pinned nearest the composer's left edge of the right
-    // cluster — the readout that replaced the `◇ spend` rows the transcript
-    // used to print once per model call.
-    //
-    // A gauge, not an event: it updates in place as ticks land and settles on
-    // the turn's real total when `Complete` arrives, at which point the
-    // transcript prints the same figure in the same green (`✓ cost`) as the
-    // turn's permanent receipt. Four decimals, because the whole value of a
-    // live cost readout is watching it move, and at two decimals most turns
-    // never leave `$0.00`.
-    let turn_cost = model
-        .agents
-        .get(ui.focused)
-        .map_or(0.0, |a| a.model.hud.turn_spent_usd());
-    let right = vec![
-        Span::styled("turn ", dim),
-        Span::styled(
-            textline::fmt_cost(turn_cost),
-            Style::default()
-                .fg(theme::SUCCESS_BRIGHT)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  ·  ", sep),
-        Span::styled(counter, dim),
-        Span::styled("  ·  ", sep),
-        Span::styled(q_text, q_style),
-        Span::raw(" "),
-    ];
-    let right_w = span_width(&right) as u16;
-
-    // Advertise the newline chord the terminal can actually report: `⌘⏎`/`⌃⏎`
-    // where the kitty protocol is live, else the universally-safe `⌥⏎`. Drop
-    // the lower-value affordances first on a narrow row so nothing collides
-    // with the counter.
-    let newline = if ui.enter_submits { "⌥⏎" } else { "⌘⏎" };
-    let mut left = vec![
-        Span::raw(" "),
-        Span::styled(newline, key),
-        Span::styled(" new line", dim),
-        Span::styled("  ·  ", sep),
-        Span::styled("⏎", key),
-        Span::styled(" queue (never blocks)", dim),
-    ];
-    // `>` steers the running turn — the highest-value affordance on this row,
-    // and until now advertised nowhere at all (`esc` is the shorter reach for
-    // the same act). Shown only while the focused
-    // agent is actually running, because that is the only time it does
-    // anything: a `>` typed at an idle agent is just the next prompt. It also
-    // takes priority over `!`/`/` in the width budget below, since it is the
-    // one thing a user watching a turn go the wrong way needs to know.
-    if model
-        .agents
-        .get(ui.focused)
-        .is_some_and(|a| a.status == crate::AgentStatus::Running)
-    {
-        left.push(Span::styled("  ·  ", sep));
-        left.push(Span::styled("esc / >", key));
-        left.push(Span::styled(" steer this turn", dim));
-    }
-    let extras = [("!", " shell"), ("/", " commands")];
-    let left_budget = (area.width.saturating_sub(right_w + 1)) as usize;
-    for (glyph, word) in extras {
-        let add = 5 + glyph.chars().count() + word.chars().count(); // "  ·  " + glyph + word
-        if span_width(&left) + add <= left_budget {
-            left.push(Span::styled("  ·  ", sep));
-            left.push(Span::styled(glyph, key));
-            left.push(Span::styled(word, dim));
-        }
-    }
-    let left_area = Rect {
-        width: area.width.saturating_sub(right_w),
-        ..area
-    };
-    Paragraph::new(Line::from(left)).render(left_area, buf);
-    render_right(right, area, buf);
-}
-
 // The `?` overlay — SPEC 11's key sheet and SPEC 5's metric detail. Split out
 // rather than grown here: this file is a grandfathered god file closed to
 // growth, and the metric rows #4188 asks for do not fit in its four lines of
@@ -1315,6 +1183,7 @@ fn render_composer_footer(
 mod help;
 use help::render_help;
 
+mod footer;
 mod parked;
 
 #[cfg(test)]

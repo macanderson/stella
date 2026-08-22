@@ -113,6 +113,12 @@ pub(crate) struct ContributedDir {
     /// The contributing plugin's manifest `name` — the provenance, and the
     /// string `Principal::Plugin` carries for its tools.
     pub(crate) plugin: String,
+    /// The installed package's own root — `<plugin_dir>`, which [`Self::dir`]
+    /// sits inside. It is what `${plugin_dir}` expands to in a contributed
+    /// manifest, and it is carried explicitly so the layout is stated once,
+    /// here in [`dirs_of`], rather than re-derived from a parent path by every
+    /// surface that needs it.
+    pub(crate) package_dir: PathBuf,
     /// The directory itself. It may not exist: a plugin shipping no skills
     /// has no `skills/`, and every loader here treats an absent directory as
     /// an empty one rather than an error.
@@ -135,6 +141,7 @@ fn dirs_of(roster: &PluginRoster, kind: &str) -> Vec<ContributedDir> {
         .filter(|plugin| reconciles_with_disk(plugin))
         .map(|plugin| ContributedDir {
             plugin: plugin.manifest.name.clone(),
+            package_dir: plugin.dir.clone(),
             dir: plugin.dir.join(kind),
         })
         .collect()
@@ -191,6 +198,13 @@ fn session_roster(workspace_root: &Path) -> PluginRoster {
 /// Handed to [`stella_tools::custom::discover_with_plugins`], which scans
 /// them **last** so the user's own manifests keep their names — see that
 /// function for the precedence argument.
+///
+/// The package root rides along because a contributed manifest may name a
+/// script the package ships, and the child still runs from the *workspace*
+/// root — a linter a plugin contributes acts on the user's repository. So the
+/// package's own paths arrive as `${plugin_dir}`, which discovery expands
+/// against this directory (#3579), the same way [`super::roster`] expands it
+/// in a plugin's hook argv.
 pub(crate) fn contributed_tool_dirs(
     workspace_root: &Path,
 ) -> Vec<stella_tools::custom::PluginToolDir> {
@@ -198,6 +212,7 @@ pub(crate) fn contributed_tool_dirs(
         .into_iter()
         .map(|contributed| stella_tools::custom::PluginToolDir {
             plugin: contributed.plugin,
+            package_dir: contributed.package_dir,
             dir: contributed.dir,
         })
         .collect()

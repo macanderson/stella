@@ -28,6 +28,7 @@ use std::collections::VecDeque;
 pub mod entry;
 mod error_rows;
 pub mod file_state;
+mod inline_diff;
 pub mod recall;
 mod summarize;
 mod turn;
@@ -102,6 +103,21 @@ pub struct SessionModel {
     /// Cleared by whatever ends a turn — a `TurnComplete`, the `RunComplete`
     /// that ends the run, a terminal `Error`, and `/clear`.
     turn_head_stamped: bool,
+    /// Where in [`Self::transcript`] the turn in flight stamped its opening
+    /// rule, so the first answering call can fill in the model it was opened
+    /// without ([`TurnOpening::model`]).
+    ///
+    /// A back-patch rather than a deferred push: the boundary has to appear at
+    /// the position the stage arrived in, and the model is not knowable until a
+    /// call commits some way into the turn. Holding the entry back until then
+    /// would file the turn's own events above its rule.
+    ///
+    /// An index, and therefore something front-eviction has to maintain —
+    /// [`Self::evict_transcript_overflow`] rebases it and drops it outright
+    /// when the rule itself is the thing evicted. Cleared by everything that
+    /// clears `turn_head_stamped`, so a call landing between turns patches
+    /// nothing: the rule the previous turn stamped is settled.
+    turn_head_idx: Option<usize>,
     /// Per-turn counters SPEC 6.1's receipt is stamped from, reset at every
     /// turn boundary ([`TurnCounters`]).
     pub turn_counters: TurnCounters,
@@ -124,18 +140,42 @@ pub struct SessionModel {
     pub files_evicted: u32,
     /// Monotonic touch counter stamping [`FileState::touched_seq`].
     file_touch_seq: u64,
-    /// For each in-flight file-mutating call, its path's [`FileState::changes`]
-    /// at the moment the call dispatched.
+    /// Measured changes no transcript row has claimed yet, and the rule for
+    /// which row may claim one — see [`mod@inline_diff`].
+    claims: inline_diff::ClaimWindow,
+    /// For each in-flight call, whatever its tool, the position in `claims` at
+    /// the moment it dispatched.
     ///
     /// This is what lets a `ToolResult` tell *which producer owes it a change*:
-    /// a count that has moved since means the registry's per-call measurement
-    /// already published this call's change (#4175), so the row resolves at the
-    /// current seq; one that has not means the turn boundary still owes it and
-    /// will record it one past. Entered on the `ToolStart` and taken on the
-    /// matching result, so it holds only calls actually in flight — a turn
-    /// abandoned mid-call leaves at most its own entry, cleared with the rest of
-    /// the conversation.
-    mutation_baselines: std::collections::HashMap<String, u32>,
+    /// a measurement recorded above this mark folded between the call's start
+    /// and its result, which only the registry's per-call measurement does
+    /// (#4175), so the row claims it; nothing above the mark means the call
+    /// moved the tree not at all, and any change the turn boundary sweeps up
+    /// afterwards belongs to somebody else. Entered on the `ToolStart` and
+    /// taken on the matching result, so it holds only calls actually in flight
+    /// — a turn abandoned mid-call leaves at most its own entry, cleared with
+    /// the rest of the conversation.
+    claim_baselines: std::collections::HashMap<String, u64>,
+    /// Whether the registry's **per-call** measurement has ever been observed
+    /// answering in this session (#4227).
+    ///
+    /// Which producer measures is a property of the *session*, not of a call:
+    /// `SessionDurability::snapshot_worktree` either has a work journal or it
+    /// does not, so a session with one measures every solo mutating call and a
+    /// session without one measures none. One observed per-call answer settles
+    /// which of those a session is, and that is what makes a row's *empty* own
+    /// measurement readable: under a live per-call producer it means the call
+    /// genuinely moved nothing, and the change the turn boundary sweeps up next
+    /// belongs to somebody else.
+    ///
+    /// Latched, never cleared: a producer that answered once has demonstrated
+    /// it exists, and a later call it did not measure (a concurrently
+    /// dispatched group, which stays on the boundary sweep by #4175's own
+    /// scope note) is evidence about that call, not about the journal.
+    ///
+    /// Survives [`Self::reset_conversation`] with the file ledger it describes
+    /// — `/clear` un-writes no bytes and takes away no journal.
+    per_call_producer_seen: bool,
     /// Live HUD numbers: spend/limit/mode, current stage, model.
     pub hud: Hud,
     /// **The plan** — the one surface for what stella said it would do and how
@@ -264,11 +304,13 @@ impl SessionModel {
             files,
             files_evicted,
             file_touch_seq,
+            per_call_producer_seen,
             ..
         } = std::mem::take(self);
         self.files = files;
         self.files_evicted = files_evicted;
         self.file_touch_seq = file_touch_seq;
+        self.per_call_producer_seen = per_call_producer_seen;
     }
 
     /// Fold one event into the model. This is the **only** mutator; every
@@ -337,6 +379,10 @@ impl SessionModel {
                     None
                 } else {
                     self.turn_head_stamped = true;
+                    // Where the entry below is about to land, so the turn's
+                    // first answering call can name the model this rule opened
+                    // without — see `turn_head_idx`.
+                    self.turn_head_idx = Some(self.transcript.len());
                     Some(TurnOpening {
                         turn: self.turns_completed.saturating_add(1),
                         // Deliberately not `self.hud.model`: that field is
@@ -364,22 +410,14 @@ impl SessionModel {
             AgentEvent::Reasoning { delta } => self.push_reasoning(delta),
             AgentEvent::ToolStart { call } => {
                 let path = tool_input_path(&call.input);
-                // Take the path's change count *before* the call runs, so its
-                // result can tell a change of its own from the one already
-                // recorded — see `mutation_baselines`. Only mutating calls, and
-                // only ones that named a path: nothing else stamps a reference,
-                // so nothing else has a baseline to compare.
-                if is_file_mutation(&call.name)
-                    && let Some(path) = path.as_deref()
-                {
-                    let changes = self
-                        .files
-                        .iter()
-                        .find(|f| f.path == path)
-                        .map_or(0, |f| f.changes);
-                    self.mutation_baselines
-                        .insert(call.call_id.clone(), changes);
-                }
+                // Mark where the claim window stands *before* the call runs, so
+                // its result can tell a change of its own from one already
+                // recorded — see `claim_baselines`. Every call, whatever its
+                // tool: which calls are measured is decided from the schema by
+                // `ToolRegistry::measures_alone`, and a name list here could
+                // only disagree with it (#4213).
+                self.claim_baselines
+                    .insert(call.call_id.clone(), self.claims.open());
                 self.transcript.push(TranscriptEntry::ToolStart {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),
@@ -458,38 +496,53 @@ impl SessionModel {
                 //   every `ToolResult` of the turn has folded, so the change is
                 //   still to come and will be recorded one past `changes`.
                 //
-                // `mutation_baseline` is what distinguishes them: the path's
-                // `changes` when this call dispatched. A count that has moved
-                // since means this call's own change already folded; a count
-                // that has not means the boundary still owes it. Guessing
-                // either way is a live defect and both have been shipped —
-                // reading `changes` under a boundary-only producer left
-                // `diff_at` short by exactly one and **every** mutating row
-                // rendered diffless (#4155); adding `+1` under a per-call
-                // producer points one change into the future instead.
-                let baseline = self.mutation_baselines.remove(call_id);
-                let diff = if ok {
-                    self.mutated_path_for(call_id).map(|path| {
+                // The **claim window** is what distinguishes them, and it asks
+                // *where* a measurement folded rather than what the tool is
+                // called ([`mod@inline_diff`]). Anything recorded above this
+                // call's baseline landed between its start and its result,
+                // which only the per-call producer does; nothing there means
+                // this call moved the tree not at all. Guessing either way is a
+                // live defect and both have been shipped — reading `changes`
+                // under a boundary-only producer left `diff_at` short by
+                // exactly one and **every** mutating row rendered diffless
+                // (#4155); adding `+1` under a per-call producer points one
+                // change into the future instead.
+                //
+                // A row states what it can attribute and predicts nothing
+                // (#4227). Stamping `recorded + 1` under a live per-call
+                // producer names a change that has not happened and that
+                // nothing binds to this call — a successful `write_file` of
+                // the bytes already on disk moves the tree not at all
+                // (`stella_tools::write` has no identical-content
+                // short-circuit), and the next writer's change then rendered
+                // under its row. So the prediction survives only while
+                // `per_call_producer_seen` is still false, which is exactly
+                // the session where the boundary is the *only* producer and
+                // the change it owes really is this call's — and *there* the
+                // deck has nothing but the tool's name to go on, which is the
+                // one job `is_file_mutation` still holds.
+                let baseline = self.claim_baselines.remove(call_id);
+                let mut diff = None;
+                if ok {
+                    if let Some(since) = baseline {
+                        diff = self.claims.claim(since, path.as_deref());
+                    }
+                    if diff.is_some() {
+                        self.per_call_producer_seen = true;
+                    } else if !self.per_call_producer_seen
+                        && let Some(path) = self.mutated_path_for(call_id)
+                    {
                         let recorded = self
                             .files
                             .iter()
                             .find(|f| f.path == path)
                             .map_or(0, |f| f.changes);
-                        // `>`, deliberately, not `== base + 1`. One
-                        // `FileChange` per changed path is what the producer
-                        // does today, not something anything pins — and if
-                        // that ever changes, `>` degrades to a true-but-partial
-                        // answer while `==` degrades to naming a change that
-                        // does not exist yet. `tests::producer_seq`'s module
-                        // doc carries the full argument and the case that
-                        // argues the other way.
-                        let landed = baseline.is_some_and(|base| recorded > base);
-                        let seq = if landed { recorded } else { recorded + 1 };
-                        InlineDiffRef { path, seq }
-                    })
-                } else {
-                    None
-                };
+                        diff = Some(InlineDiffRef {
+                            path,
+                            seq: recorded + 1,
+                        });
+                    }
+                }
                 // Two calls can still land on one seq — several mutations to a
                 // path in a turn whose measurement only the boundary takes, so
                 // they all point at the single aggregate change it will emit.
@@ -831,11 +884,20 @@ impl SessionModel {
                 };
                 self.transcript.push(entry);
             }
-            // The **tokens** are folded; the cost deliberately is not. The
-            // HUD's live spend comes from `BudgetTick`, so folding
-            // `StepUsage::cost_usd` as well would double-count it — that
-            // hazard is why this event was ignored outright, and the token
-            // half was collateral (#4184).
+            // Two facts come off a metering record, and they have different
+            // scopes — which is why this is one arm and not two.
+            //
+            // The **tokens** are folded for every call, whatever its role: the
+            // receipt accounts for the whole turn, auxiliary work included
+            // (#4184). The **model name** is folded only for a call that
+            // answers the turn (#4183). Splitting them into a guarded arm and a
+            // fallthrough would silently stop counting an answering call's
+            // tokens, because the first matching arm wins.
+            //
+            // The cost deliberately is not folded either way. The HUD's live
+            // spend comes from `BudgetTick`, so folding `StepUsage::cost_usd`
+            // here would double-count it — that hazard is why this event was
+            // ignored outright, and the token half was collateral.
             AgentEvent::StepUsage {
                 input_tokens,
                 output_tokens,
@@ -888,6 +950,7 @@ impl SessionModel {
                     // will clear the latch and the next turn would open with
                     // no rule at all.
                     self.turn_head_stamped = false;
+                    self.turn_head_idx = None;
                 }
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -919,8 +982,11 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.streaming_text.clear();
                 self.turns_completed += 1;
-                // The next stage boundary opens a new turn, and its rule.
+                // The next stage boundary opens a new turn, and its rule. This
+                // turn's rule is settled: a call arriving after the turn closed
+                // (a reflection pass, a stray retry) patches nothing.
                 self.turn_head_stamped = false;
+                self.turn_head_idx = None;
                 self.transcript.push(TranscriptEntry::Complete {
                     model: model.clone(),
                     cost_usd: *cost_usd,
@@ -941,6 +1007,7 @@ impl SessionModel {
                 // clear the latch, and the next run's first stage must still
                 // open a rule (#4124).
                 self.turn_head_stamped = false;
+                self.turn_head_idx = None;
                 self.plan.finish();
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -1123,14 +1190,31 @@ impl SessionModel {
             .sum();
         self.transcript
             .insert(0, TranscriptEntry::Evicted { count: evicted });
+        // The one index into `transcript` the model holds has to move with it,
+        // or a long turn that outlives its own opening rule would back-patch
+        // whichever unrelated entry inherited the slot. The drain removes
+        // `TRANSCRIPT_EVICTION_CHUNK` entries and the marker puts one back;
+        // a rule inside the drained range is gone, and nothing to patch is the
+        // right answer, not a nearby row.
+        self.turn_head_idx = self
+            .turn_head_idx
+            .and_then(|idx| idx.checked_sub(TRANSCRIPT_EVICTION_CHUNK))
+            .map(|idx| idx + 1);
     }
 
-    /// If tool call `call_id` was a file mutation, the path it touched —
-    /// recovered by correlating back to its `ToolStart` (which is already on
-    /// the transcript by the time the result folds). `None` for reads and
-    /// non-file tools, which is what gates the transcript's inline diff to
-    /// mutations. The diff itself is *not* looked up here — the renderer reads
-    /// it from [`SessionModel::files`] at draw time (L-T5).
+    /// If tool call `call_id` was a *conventionally named* file mutation, the
+    /// path it touched — recovered by correlating back to its `ToolStart`
+    /// (which is already on the transcript by the time the result folds).
+    ///
+    /// This answers for the **turn-boundary producer only**: that change folds
+    /// after every result of the turn, so no claim window can hold it and the
+    /// tool's name is the only evidence the deck has that the call mutated
+    /// anything. Under a live per-call producer the claim window has already
+    /// answered and this is never reached, which is what lets a `bash` or MCP
+    /// call — measured, but on no name list — render its own change (#4213).
+    ///
+    /// The diff itself is *not* looked up here — the renderer reads it from
+    /// [`SessionModel::files`] at draw time (L-T5).
     fn mutated_path_for(&self, call_id: &str) -> Option<String> {
         self.transcript
             .iter()
@@ -1208,6 +1292,11 @@ impl SessionModel {
     /// A read on an already-tracked path only grows its read count — the
     /// mutation kind, diff, and `changes` (the inline-diff freshness tag)
     /// stay exactly as the last mutation left them.
+    ///
+    /// A *mutation* also enters the claim window, so whichever call is in
+    /// flight can render it ([`mod@inline_diff`]). Both producers pass through
+    /// here and neither is distinguishable at this point; which row may claim
+    /// the entry is decided from where it landed, on the result.
     fn touch_file(
         &mut self,
         path: &str,
@@ -1227,6 +1316,8 @@ impl SessionModel {
                 existing.added += added;
                 existing.removed += removed;
                 existing.remember_diff(diff, added, removed);
+                let seq = existing.changes;
+                self.claims.record(path, seq);
             } else {
                 existing.reads += 1;
             }
@@ -1248,6 +1339,7 @@ impl SessionModel {
             };
             if mutation {
                 state.remember_diff(diff, added, removed);
+                self.claims.record(path, state.changes);
             }
             self.files.push(state);
         }

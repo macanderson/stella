@@ -238,10 +238,16 @@ pub(super) fn tool_input_path(input: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Whether a tool name is one of the conventional file-*mutating* names —
-/// the only tools whose result should carry an inline diff (reads must
-/// not). No built-in carries these names; a custom tool that adopts one
-/// gets its `FileChange` diff rendered inline by construction.
+/// Whether a tool name is one of the conventional file-*mutating* names.
+///
+/// A naming convention, and no longer the gate on which results may carry an
+/// inline diff (#4213). That gate is positional now — a row claims the change
+/// that folded under its own call, whatever the tool is called, which is what
+/// lets a measured `bash`, MCP or custom-tool call render the change it made
+/// (`super::inline_diff`). This is consulted for the **turn-boundary producer
+/// only**, whose change folds after every result of the turn: nothing can have
+/// landed in a window, so a conventional name is the sole remaining evidence
+/// that the call mutated anything at all.
 pub(super) fn is_file_mutation(name: &str) -> bool {
     matches!(
         name,

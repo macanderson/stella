@@ -378,6 +378,18 @@ impl DurableQueue {
         self.items.front()
     }
 
+    /// The backlog in dispatch order, for a caller that has to *find* an entry
+    /// rather than take the head: an Esc-steer hands the deck's mirror back as
+    /// text, and the two sides share no indices, so the driver's copy of a
+    /// delivered prompt can only be located by matching on the words (#4026).
+    ///
+    /// Read-only by construction. Removing what it found still goes through
+    /// [`DurableQueue::remove`], which is what writes `queue.json` — a direct
+    /// mutation of `items` would leave the durable copy behind.
+    pub fn iter(&self) -> impl Iterator<Item = &String> {
+        self.items.iter()
+    }
+
     pub fn pop_front(&mut self) -> Option<String> {
         let item = self.items.pop_front();
         if item.is_some() {

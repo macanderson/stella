@@ -40,6 +40,15 @@
 //!   write `.stella/tools/` can already run code in the repo.
 //! - Sets the child's working directory to the **workspace root**, so a
 //!   relative `command[0]` like `./scripts/lint-fix.sh` resolves against it.
+//!   That holds for a plugin's tool too, because a contributed linter acts on
+//!   the *user's* repository. A package therefore names the scripts it ships
+//!   itself with `${plugin_dir}`, which discovery expands to the installed
+//!   package directory in every `command` element and every `[env]` value
+//!   before the tool is advertised — the same placeholder, expanded by the
+//!   same host, that `stella_plugin`'s `Runtime::argv` already documents for a
+//!   plugin's own process. The expansion is **only** for a contributed
+//!   manifest: under `.stella/tools/` there is no package for it to name, so
+//!   it is left verbatim rather than quietly becoming the empty string.
 //! - Delivers the model's input JSON to the child **two ways**, so trivial
 //!   scripts need no JSON parser:
 //!   1. The whole input object is written to the child's **stdin** as one JSON
@@ -133,12 +142,17 @@ pub struct CustomTool {
     /// Human description advertised to the model.
     pub description: String,
     /// argv to spawn directly (no shell). `command[0]` is the program.
+    ///
+    /// On a tool a package contributed, `${plugin_dir}` is already expanded
+    /// here — discovery resolves it against [`PluginToolDir::package_dir`], so
+    /// nothing downstream has to know a placeholder existed.
     pub command: Vec<String>,
     /// Resolved timeout (default applied, clamped to [`MAX_TIMEOUT_MS`]).
     pub timeout_ms: u64,
     /// JSON Schema for the tool's input, converted verbatim from TOML.
     pub input_schema: Value,
-    /// Extra environment variables applied to the child process.
+    /// Extra environment variables applied to the child process. Values carry
+    /// the same `${plugin_dir}` expansion [`Self::command`] does.
     pub env: HashMap<String, String>,
     /// Manifest file this tool was loaded from (for diagnostics / listing).
     pub source: PathBuf,
@@ -553,7 +567,8 @@ pub fn discover_in_scopes(
 }
 
 /// One installed plugin's contributed tool directory: the manifest `name`
-/// every tool found under it is attributed to, and `<plugin_dir>/tools`.
+/// every tool found under it is attributed to, the package it was installed
+/// as, and `<plugin_dir>/tools`.
 ///
 /// The host resolves these — only it knows what is installed, which tier a
 /// package came from, whether the workspace is trusted to run its code, and
@@ -564,9 +579,41 @@ pub struct PluginToolDir {
     /// The plugin's manifest `name`, as [`CustomTool::contributed_by`] and
     /// [`stella_core::ports::Principal::Plugin`] spell it.
     pub plugin: String,
+    /// `<plugin_dir>` — the installed package's own root, and what
+    /// `${plugin_dir}` expands to in the manifests found under [`Self::dir`].
+    ///
+    /// Carried alongside `dir` rather than derived from its parent: the host
+    /// is the one that knows where a package was installed, and a layout
+    /// re-derived here would be a second place to keep it true.
+    pub package_dir: PathBuf,
     /// `<plugin_dir>/tools`. A missing directory is a plugin that ships no
     /// tools, which is the ordinary case and not a diagnostic.
     pub dir: PathBuf,
+}
+
+/// The placeholder a package writes where its own installed directory
+/// belongs — the convention `stella_plugin`'s `Runtime::argv` documents for a
+/// plugin's process argv, applied to the tools that package ships. Expanding
+/// it is the host's job in both cases, because the plugin crate resolves no
+/// paths.
+const PLUGIN_DIR_PLACEHOLDER: &str = "${plugin_dir}";
+
+/// Expand [`PLUGIN_DIR_PLACEHOLDER`] through a contributed tool's `command`
+/// argv and `[env]` values.
+///
+/// Called only for a manifest read out of a package directory. A user's own
+/// `.stella/tools/` manifest is left verbatim: no package is in scope there,
+/// and expanding the placeholder to nothing would silently turn
+/// `${plugin_dir}/x.sh` into a different path rather than leaving a visible
+/// spawn failure naming what the manifest actually asked for.
+fn expand_package_dir(tool: &mut CustomTool, package_dir: &Path) {
+    let dir = package_dir.to_string_lossy();
+    for arg in &mut tool.command {
+        *arg = arg.replace(PLUGIN_DIR_PLACEHOLDER, &dir);
+    }
+    for value in tool.env.values_mut() {
+        *value = value.replace(PLUGIN_DIR_PLACEHOLDER, &dir);
+    }
 }
 
 /// [`discover_in_scopes`], plus the tools installed plugins contribute
@@ -601,7 +648,7 @@ pub fn discover_with_plugins(
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Workspace first so it wins collisions, then user-global.
-    let mut dirs: Vec<(PathBuf, Option<&str>)> = Vec::new();
+    let mut dirs: Vec<(PathBuf, Option<&PluginToolDir>)> = Vec::new();
     if include_workspace {
         dirs.push((workspace_root.join(".stella").join("tools"), None));
     }
@@ -610,11 +657,11 @@ pub fn discover_with_plugins(
     }
     // Last, so a plugin never takes a name the user's own manifests defined.
     for contributed in plugin_dirs {
-        dirs.push((contributed.dir.clone(), Some(contributed.plugin.as_str())));
+        dirs.push((contributed.dir.clone(), Some(contributed)));
     }
 
-    for (dir, plugin) in dirs {
-        load_dir(&dir, plugin, &mut seen, &mut report);
+    for (dir, contributor) in dirs {
+        load_dir(&dir, contributor, &mut seen, &mut report);
     }
     report
 }
@@ -623,13 +670,16 @@ pub fn discover_with_plugins(
 /// to `report`. Absent directories are silently ignored (having no tools dir is
 /// normal); files are processed in sorted order for deterministic output.
 ///
-/// `plugin` is the package this directory belongs to, or `None` for the
-/// user's own scopes — it becomes [`CustomTool::contributed_by`] on
+/// `contributor` is the package this directory belongs to, or `None` for the
+/// user's own scopes. Its `plugin` becomes [`CustomTool::contributed_by`] on
 /// everything found here, which is why provenance cannot be forged: it comes
-/// from the directory being read, not from anything inside the file.
+/// from the directory being read, not from anything inside the file. Its
+/// `package_dir` is what [`expand_package_dir`] resolves `${plugin_dir}`
+/// against, so the same fact decides both, and neither can apply to a
+/// manifest the user wrote.
 fn load_dir(
     dir: &Path,
-    plugin: Option<&str>,
+    contributor: Option<&PluginToolDir>,
     seen: &mut std::collections::HashSet<String>,
     report: &mut UngatedDiscovery,
 ) {
@@ -660,17 +710,18 @@ fn load_dir(
                 if seen.contains(&tool.name) {
                     report.diagnostics.push(ToolDiagnostic {
                         path: path.clone(),
-                        reason: match plugin {
+                        reason: match contributor {
                             // Never "and the plugin's copy won": a package
                             // silently replacing a name the user already
                             // defined is the one outcome the precedence rule
                             // exists to forbid, so the message says whose
                             // copy is running.
-                            Some(plugin) => format!(
+                            Some(contributor) => format!(
                                 "tool `{}` is already defined by a manifest you installed \
                                  yourself — the copy the `{plugin}` plugin ships is ignored, \
                                  and yours is the one that runs",
-                                tool.name
+                                tool.name,
+                                plugin = contributor.plugin
                             ),
                             None => format!(
                                 "tool `{}` already defined by an earlier (workspace) manifest \
@@ -682,7 +733,10 @@ fn load_dir(
                     continue;
                 }
                 seen.insert(tool.name.clone());
-                tool.contributed_by = plugin.map(str::to_string);
+                if let Some(contributor) = contributor {
+                    tool.contributed_by = Some(contributor.plugin.clone());
+                    expand_package_dir(&mut tool, &contributor.package_dir);
+                }
                 report.tools.push(tool);
             }
             Err(reason) => report.diagnostics.push(ToolDiagnostic { path, reason }),

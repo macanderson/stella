@@ -37,7 +37,7 @@
 //! a silent single point of failure whose failure mode is invisible until
 //! someone audits the backlog.
 
-use stella_autonomy::{CiConclusion, Contention, Mergeability, Observation, ReviewState};
+use stella_autonomy::{CiConclusion, Mergeability, Observation, ReviewState};
 
 use super::state::git;
 
@@ -784,46 +784,6 @@ pub(super) fn base_is_broken(branch: &str) -> bool {
     ci_from(&checks) == CiConclusion::Red
 }
 
-/// What else on this machine or this forge looks like a fix already in flight.
-///
-/// Four signals, and the doctrine decides what they mean — this only gathers
-/// them. Cheap reads, all of them, because this runs on every poll while the
-/// base is red.
-///
-/// `local_worktrees` is the one nobody checks, and the one most likely to
-/// matter: two self-driving processes against one clone each see the other's
-/// worktree here, and without it they would both adopt the same breakage and
-/// race to fix it.
-///
-/// **Passes `None` for the own-root exclusion deliberately.** The claim-time
-/// probe drops worktrees inside this verb's own root, because there a leftover
-/// is usually the loop's own crashed run (#4300); here it is the peer the
-/// signal exists to catch. The parsing is shared with
-/// [`super::contention`] so the two policies stay one argument apart rather
-/// than two copies.
-#[must_use]
-pub(super) fn base_fix_contention(root: &std::path::Path, key: &str) -> Contention {
-    let mut contention = Contention::default();
-
-    // A branch whose name carries the issue key. Remote only: a local branch
-    // of the loop's own is not another actor.
-    if let Some(out) = git(root, &["ls-remote", "--heads", "origin"]) {
-        contention.remote_branches = super::contention::branches_naming(&out, key);
-    }
-
-    // An open pull request that says it closes the issue, or names it.
-    if let Ok(raw) = prs_matching(key) {
-        contention.open_prs = raw;
-    }
-
-    // Worktrees on this machine holding a branch for the same key.
-    if let Some(out) = git(root, &["worktree", "list", "--porcelain"]) {
-        contention.local_worktrees = super::contention::worktrees_naming(&out, key, None);
-    }
-
-    contention
-}
-
 /// Open pull request numbers the forge's own search associates with `key`.
 ///
 /// Broader than [`open_prs_for_issue`] on purpose, and the two are not
@@ -832,6 +792,13 @@ pub(super) fn base_fix_contention(root: &std::path::Path, key: &str) -> Contenti
 /// there would refuse to clean up a dead branch. This one asks "is *anybody*
 /// on this", where a pull request that merely names the issue is exactly the
 /// actor worth deferring to.
+///
+/// The gathering that consumes it lives in [`super::contention`], along with
+/// the other three signals. It moved there when the claim site and the
+/// base-fix site stopped being able to share one probe unchanged: the claim
+/// site must drop worktrees under the loop's own root and the base-fix site
+/// must keep them, and that difference is an argument to one gatherer rather
+/// than a second copy of four reads (#4300).
 pub(super) fn prs_matching(key: &str) -> Result<Vec<String>, String> {
     let raw = gh(&[
         "pr", "list", "--state", "open", "--search", key, "--json", "number",

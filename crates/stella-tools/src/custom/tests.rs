@@ -1055,6 +1055,7 @@ fn a_plugin_contributes_a_tool_and_it_carries_the_plugin_name() {
         true,
         &[PluginToolDir {
             plugin: "vera".into(),
+            package_dir: root.path().join("plugins").join("vera"),
             dir: plugin_dir,
         }],
     );
@@ -1078,6 +1079,7 @@ fn a_contributed_tool_is_authorized_as_the_plugin_and_a_users_own_is_not() {
         true,
         &[PluginToolDir {
             plugin: "vera".into(),
+            package_dir: root.path().join("pkg"),
             dir: plugin_dir,
         }],
     )
@@ -1118,6 +1120,7 @@ fn a_plugin_never_takes_a_name_the_user_already_defined() {
         true,
         &[PluginToolDir {
             plugin: "vera".into(),
+            package_dir: root.path().join("pkg"),
             dir: plugin_dir,
         }],
     );
@@ -1157,10 +1160,12 @@ fn two_plugins_claiming_one_name_resolve_in_roster_order() {
         &[
             PluginToolDir {
                 plugin: "alpha".into(),
+                package_dir: root.path().join("alpha"),
                 dir: first,
             },
             PluginToolDir {
                 plugin: "zeta".into(),
+                package_dir: root.path().join("zeta"),
                 dir: second,
             },
         ],
@@ -1181,6 +1186,87 @@ fn a_manifest_cannot_claim_to_have_been_shipped_by_a_plugin() {
     )
     .expect("unknown fields are ignored, as they always have been");
     assert_eq!(tool.contributed_by, None);
+}
+
+/// **Witness for #3579: a package's tool can run a script the package ships.**
+///
+/// The child's working directory stays the workspace root — a linter a plugin
+/// contributes acts on the *user's* repository — so a package names its own
+/// files with `${plugin_dir}` and discovery resolves it against the installed
+/// package. Without that expansion `command[0]` resolved inside the user's
+/// repo, where the script is not, and the only shapes that could ever run were
+/// a program already on `PATH` or an absolute path a package cannot know when
+/// it is written.
+///
+/// The user's own manifest is the other half: `${plugin_dir}` names nothing
+/// under `.stella/tools/`, so it must survive verbatim rather than expand to
+/// the empty string and become a different path.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_contributed_tool_runs_a_script_its_own_package_ships() {
+    let root = tempfile::tempdir().unwrap();
+    let package = root.path().join("plugins").join("vera");
+    let script = package.join("scripts").join("x.sh");
+    std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+    std::fs::write(&script, "#!/bin/sh\necho shipped_script_ran\n").unwrap();
+    let mut perms = std::fs::metadata(&script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).unwrap();
+
+    // One manifest text, written into both scopes — so the only difference
+    // between the two tools below is the directory each was read from.
+    let manifest = |name: &str| {
+        format!(
+            "name = \"{name}\"\n\
+             description = \"d\"\n\
+             command = [\"${{plugin_dir}}/scripts/x.sh\"]\n\
+             \n\
+             [env]\n\
+             PKG_DATA = \"${{plugin_dir}}/data\"\n"
+        )
+    };
+    let contributed = package.join("tools");
+    std::fs::create_dir_all(&contributed).unwrap();
+    std::fs::write(contributed.join("theirs.toml"), manifest("theirs")).unwrap();
+    let own = root.path().join(".stella").join("tools");
+    std::fs::create_dir_all(&own).unwrap();
+    std::fs::write(own.join("mine.toml"), manifest("mine")).unwrap();
+
+    let (tools, _) = discover_with_plugins(
+        root.path(),
+        None,
+        true,
+        &[PluginToolDir {
+            plugin: "vera".into(),
+            package_dir: package.clone(),
+            dir: contributed,
+        }],
+    )
+    .into_parts();
+
+    let mine = tools.iter().find(|t| t.name == "mine").expect("mine");
+    assert_eq!(
+        mine.command[0], "${plugin_dir}/scripts/x.sh",
+        "no package is in scope for a manifest the user wrote"
+    );
+    assert_eq!(mine.env["PKG_DATA"], "${plugin_dir}/data");
+
+    let theirs = tools.iter().find(|t| t.name == "theirs").expect("theirs");
+    assert_eq!(theirs.command[0], script.to_string_lossy());
+    assert_eq!(
+        theirs.env["PKG_DATA"],
+        package.join("data").to_string_lossy()
+    );
+
+    // Run it from the workspace root, which is where it does NOT live.
+    match run_custom(theirs, &serde_json::json!({}), root.path()).await {
+        ToolOutput::Ok { content, .. } => {
+            assert!(content.contains("shipped_script_ran"), "{content}");
+        }
+        ToolOutput::Error { message, .. } => {
+            panic!("a package's own script must run: {message}")
+        }
+    }
 }
 
 // the shared dispatch gate (#2793)

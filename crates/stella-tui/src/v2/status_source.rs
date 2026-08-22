@@ -11,22 +11,30 @@
 //! it. Where the two rows disagree it is because SPEC 5 says so, and each of
 //! those is called out at its field below.
 //!
-//! # One projection, not two
+//! Nothing here reads a clock, the environment or the process table. The bar is
+//! a projection of the fold and the frame is a function of the bar, which is
+//! what makes a v2 frame reproducible from a scenario.
 //!
-//! A second projection of these same six values lived in a `v2::project`
-//! module and was the one the deck actually drew, while this one — written to
-//! get SPEC 5's stage words right — was exported and called by nothing outside
-//! its own tests. They were not copies: the live one rendered
-//! `StageName::as_str()`, the **wire** string, so the shipping bar printed
+//! # Why this is the only projection
+//!
+//! There were two. `src/v2/project.rs` held a second reading of the same six
+//! values — borrowing from the model rather than owning, and rendering the
+//! stage as [`stella_protocol::StageName::as_str`], which is the **wire**
+//! string. It was the one the deck actually drew, so the shipping bar printed
 //! `context_recall` and `scope_review` at a human where SPEC 5 says
-//! `context recall` and `scope review` (#4187).
+//! `context recall` and `scope review`, while the module that spelled them
+//! correctly was called by nothing but its own tests (#4187).
 //!
-//! This module won because [`Status`] borrows its strings and something has to
-//! own them, and because a contributed stage's word is lowercased at
-//! projection time (#3964) — an owned `String` that a borrowing projection has
-//! nowhere to put. The other module is deleted rather than synced: two answers
-//! to one question is the defect, and keeping both is how one of them goes
-//! stale again.
+//! This one survived rather than that one because the fix settles the argument
+//! between them: a stage word SPEC 5 can print is *computed*, not borrowed, so
+//! there is a `String` to own either way — a contributed stage's word is
+//! lowercased at projection time (#3964), which a borrowing projection has
+//! nowhere to put — and owning it here beats handing the draw path two
+//! out-of-band strings to compute in the right order. The other module is
+//! deleted rather than synced: two answers to one question is the defect, and
+//! keeping both is how one of them goes stale again. What did not survive is
+//! that module's `idle` for an unannounced stage; `stage_word` below carries
+//! the reason.
 
 use super::status_bar::{CTX_WINDOW, Status};
 use crate::WorkspaceModel;
@@ -139,10 +147,16 @@ fn worker_slug(model: &WorkspaceModel) -> String {
 /// values, so it takes the row's own case — `execute`, not `EXECUTE`.
 /// A plugin's contributed stage is passed through in the plugin's own word,
 /// lowercased for the same reason (the stage vocabulary is open, #3964).
+///
+/// An unannounced stage reads `—`, never a word. `idle` is a claim about the
+/// run and it is routinely false: a plain `stella run` is the raw step-loop and
+/// emits no stage boundaries at all (AGENTS.md's opening), so the bar would
+/// call a working turn idle for its whole length. A bar that guesses where the
+/// run is has spent the credibility the whole row exists to hold.
 fn stage_word(stage: Option<&stella_protocol::StageName>) -> String {
     use stella_protocol::StageKind as S;
     let Some(stage) = stage else {
-        return "idle".into();
+        return "—".into();
     };
     let Some(kind) = stage.kind() else {
         return stage.as_str().to_lowercase();
@@ -168,6 +182,57 @@ fn stage_word(stage: Option<&stella_protocol::StageName>) -> String {
 mod tests {
     use super::*;
 
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use stella_protocol::{AgentEvent, StageKind, StageScope};
+
+    use crate::envelope::{AgentMeta, Inbound};
+
+    /// The row `render_band` actually paints, as text.
+    fn live_bar(kind: StageKind) -> String {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Stage {
+                name: kind.into(),
+                scope: StageScope::Run,
+            },
+        });
+        let area = Rect::new(0, 0, 100, 1);
+        let mut buf = Buffer::empty(area);
+        super::super::status_bar::render_band(&model, &DeckUi::default(), area, &mut buf);
+        (0..area.width)
+            .map(|x| buf.cell((x, 0)).map_or(" ", ratatui::buffer::Cell::symbol))
+            .collect()
+    }
+
+    /// The bar draws SPEC 5's words, never the bytes the stage travels as.
+    ///
+    /// Drives `render_band` — the function `render_deck` calls — rather than
+    /// [`stage_word`] alone, because the defect #4187 records was never a wrong
+    /// mapping. It was a correct mapping that nothing on the draw path called,
+    /// and only a test that renders can tell those two apart.
+    #[test]
+    fn the_live_bar_never_prints_a_wire_string_at_a_human() {
+        for (kind, word) in [
+            (StageKind::ContextRecall, "context recall"),
+            (StageKind::ScopeReview, "scope review"),
+            (StageKind::ContextWrite, "context write"),
+        ] {
+            let row = live_bar(kind);
+            assert!(
+                row.contains(word),
+                "the bar must say {word:?}, SPEC 5's word:\n{row}"
+            );
+            assert!(
+                !row.contains(kind.as_wire_str()),
+                "the bar leaked the wire string {:?}:\n{row}",
+                kind.as_wire_str()
+            );
+        }
+    }
+
     /// No pins at all is the boot state, and the bar must still draw.
     #[test]
     fn an_unpinned_deck_reads_em_dash_not_empty() {
@@ -182,10 +247,10 @@ mod tests {
         assert_eq!(stage_word(Some(&stage)), "execute");
     }
 
-    /// No stage observed yet still names a state.
+    /// No stage observed is the one case the bar must not put a word to.
     #[test]
-    fn no_stage_reads_idle() {
-        assert_eq!(stage_word(None), "idle");
+    fn no_stage_reads_em_dash_rather_than_guessing_idle() {
+        assert_eq!(stage_word(None), "—");
     }
 
     /// A plugin's own stage word survives, lowercased (#3964).

@@ -69,8 +69,8 @@ const LEASE_TTL: Duration = Duration::from_secs(5 * 60);
 /// How often the heartbeat thread wakes to look at the stop flag.
 ///
 /// Independent of the beat cadence, and small, because it is also what
-/// [`Lease::drop`] waits for: a loop that finishes an issue should release the
-/// key immediately, not a heartbeat interval later.
+/// dropping a [`Lease`] waits for: a loop that finishes an issue should
+/// release the key immediately, not a heartbeat interval later.
 const STOP_POLL: Duration = Duration::from_millis(250);
 
 /// The answer to asking for an issue.

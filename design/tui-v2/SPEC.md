@@ -132,7 +132,7 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
 
 | Event | Head | Body | Notes |
 |---|---|---|---|
-| `read` | `▸ read <path> · <n> lines · ⚡ms · ↵ open` | none (collapsed by default) | expanding shows syntax-highlighted excerpt |
+| `read` | `▸ read <path> · ⚡ms · ↵ open` | none (collapsed by default) | expanding shows syntax-highlighted excerpt. **No size column**: the head's size is the emitter's measurement, resolved through the inline-diff reference only a *mutation* stamps, and a read emits no `FileChange` to stamp one from. An earlier draft of this row asked for `· <n> lines`; nothing could ever fill it, so the field was removed rather than defaulted (#4180). Restoring the column means giving `read_file` a wire-level producer — and settling which number a *truncated* read states — tracked in #4297 |
 | `edit` | `● edit <path> +a -b · ⚡ms` | syntax-highlighted diff (6.4) | expanded by default |
 | `write` | `＋ write <path> · new file · n lines` | first 5 highlighted lines, `⋯ n more · ↵ expand` | footer: `registered in graph as module node` |
 | `delete` | `✗ delete <path> · -n lines · git-backed · u undo` | one line: `graph check: 0 inbound refs · det` | graph check runs before the tool executes |

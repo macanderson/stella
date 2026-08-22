@@ -45,6 +45,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::ManifestError;
 use crate::host_call::HostCall;
 use crate::manifest::{OracleProcessSource, Participation, PluginManifest};
+use crate::wire::{WIRE_FIELDS, WrapperPoint};
 
 /// How bad one honest call of a tool is — re-exported from
 /// [`stella_protocol`], which is where the vocabulary lives.
@@ -195,6 +196,7 @@ pub fn consent_text(manifest: &PluginManifest) -> String {
     lines.extend(loop_say(manifest));
     lines.extend(driver_say(manifest));
     lines.extend(oracle_self_report(manifest));
+    lines.extend(data_that_leaves_the_process(manifest));
     lines.push(String::new());
     lines.extend(capability_grant(manifest));
     lines.extend(package_contributions(manifest));
@@ -345,6 +347,7 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
             stages.join(", ")
         ));
     }
+    lines.extend(role_spend(manifest));
 
     if let Some(wrapper) = &manifest.wrapper {
         // A contributed stage is named as the plugin's own rather than listed
@@ -371,6 +374,52 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
         ));
     }
 
+    lines
+}
+
+/// What each declared stage costs: the model tier its `[roles.<name>]` intent
+/// asks to be routed at (#3514).
+///
+/// Empty for a manifest declaring no `[roles]`, on
+/// `the_scope_disclaimer_appears_only_when_a_scope_was_declared`'s reasoning —
+/// a manifest written before this section renders byte-for-byte what it
+/// rendered before.
+///
+/// # Why the omission was a defect rather than a gap
+///
+/// `WrapperError::UndeclaredRole` refuses a role intent the manifest never
+/// declared, and justifies the refusal with "the roles a human consented to at
+/// install are the roles a wrapper may spend". That cited a document which
+/// named the stages and nothing about what they cost, so a user consented to a
+/// stage list without being told any of it spends at a premium tier — on their
+/// own BYOK key.
+///
+/// The tier is stated as the plugin's *ask*, not as a model, because that is
+/// what it is: [`crate::Role`] is a routing intent an open-vocabulary host
+/// resolves against the user's own providers, soft-failing to the session
+/// default. Rendering it as a model would be `capability_grant`'s claimed-limit
+/// error in the other direction — a promise this crate cannot keep.
+fn role_spend(manifest: &PluginManifest) -> Vec<String> {
+    let Some(roles) = &manifest.roles else {
+        return Vec::new();
+    };
+    if roles.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec!["  - spends each stage's model calls at a tier it names:".into()];
+    // A `BTreeMap`, so the order is the manifest's own and is stable.
+    for (name, role) in roles {
+        lines.push(format!(
+            "      {}: the `{}` tier",
+            one_line(name),
+            one_line(&role.tier)
+        ));
+    }
+    lines.push(
+        "      A tier is the name this plugin asks for, never a model: your own provider \
+         configuration decides what each one resolves to, and your key pays for it."
+            .into(),
+    );
     lines
 }
 
@@ -479,6 +528,85 @@ fn oracle_self_report(manifest: &PluginManifest) -> Vec<String> {
              own work."
         ),
     ]
+}
+
+/// What of the user's own work is handed to the plugin's process, at each
+/// point it is granted (#3514).
+///
+/// # The disclosure that matters most for a BYOK product
+///
+/// Every other section here enumerates a *power* — a grade, a hook, an argv, an
+/// environment slice, a capability. None of them names the **data**, and the
+/// wire ships the user's prompt, the model's whole reply, the tools the turn
+/// ran and the files it changed, as JSON on a third party's standard input. A
+/// plugin declaring no `[[capabilities]]` renders "It asks for no tool
+/// capabilities.", which reads as harmless and left a prompt-exfiltrating
+/// plugin indistinguishable from a benign one at the one moment a user gets to
+/// refuse.
+///
+/// # It reads off [`WIRE_FIELDS`] because a hand-written list rots
+///
+/// The sentences belong to [`crate::wire`], beside the types they describe, and
+/// `every_wire_field_is_in_the_table` destructures those types against the table
+/// — so a field added to the wire and disclosed to nobody fails a test. Spelling
+/// the list out here would make this document complete exactly until the next
+/// field landed.
+///
+/// # Empty when nothing is dispatched, per point
+///
+/// `LoopGrant::permits_point` is the filter `stella_runtime::wrapper` actually
+/// dispatches on, so it is the filter here: telling a user their prompt crosses
+/// to a plugin that answers no point would disclose something that does not
+/// happen, which is `a_declared_scope_is_labelled_as_the_plugins_claim`'s error
+/// with the sign flipped.
+fn data_that_leaves_the_process(manifest: &PluginManifest) -> Vec<String> {
+    // No `[runtime]` and no `[wrapper]` is no process of the plugin's own, so
+    // there is no other end of a pipe for any of this to reach.
+    if manifest.runtime.is_none() && manifest.wrapper.is_none() {
+        return Vec::new();
+    }
+    let disclosed: Vec<(WrapperPoint, &'static str)> = WIRE_FIELDS
+        .iter()
+        .filter(|field| manifest.loop_grant.permits_point(field.point))
+        .filter_map(|field| field.disclosure.map(|sentence| (field.point, sentence)))
+        .collect();
+    if disclosed.is_empty() {
+        return Vec::new();
+    }
+
+    let name = one_line(&manifest.name);
+    let mut lines = vec![
+        String::new(),
+        format!(
+            "Stella hands `{name}`'s own process your work, as JSON on that process's \
+             standard input. What crosses:"
+        ),
+    ];
+    let mut rendering = None;
+    for (point, sentence) in disclosed {
+        if rendering != Some(point) {
+            lines.push(format!("  - {} (`{point}`):", point_moment(point)));
+            rendering = Some(point);
+        }
+        lines.push(format!("      - {sentence}"));
+    }
+    lines.push(
+        "  Once it has been handed over, nothing in Stella bounds what that process does \
+         with it: a plugin asking for no tool capability at all can still send every line \
+         of it anywhere it can reach."
+            .into(),
+    );
+    lines
+}
+
+/// When each point's request is sent, in a reader's terms rather than the
+/// socket's. Exhaustive by construction: a third [`WrapperPoint`] does not
+/// compile until it has words here.
+fn point_moment(point: WrapperPoint) -> &'static str {
+    match point {
+        WrapperPoint::BeforeTurn => "before each turn runs",
+        WrapperPoint::AfterTurn => "once each turn has finished",
+    }
 }
 
 /// The "what it may reach outside your turn" half — the capability list, its
@@ -1011,6 +1139,95 @@ mod tests {
             !hostile_text.chars().any(|ch| ch.is_control() && ch != '\n'),
             "a control character survived into the prompt: {hostile_text:?}"
         );
+    }
+
+    /// **The #3514 tier witness.** A stage list says what a plugin spends
+    /// model calls on and said nothing about what those calls cost, so a user
+    /// consented to `triage` without being told it runs at a premium tier on
+    /// their own key — while `WrapperError::UndeclaredRole` cited this very
+    /// document as the thing that authorised the role.
+    ///
+    /// Anti-vacuity is the second half, on
+    /// [`the_scope_disclaimer_appears_only_when_a_scope_was_declared`]'s
+    /// reasoning: a manifest declaring no `[roles]` renders none of it.
+    #[test]
+    fn the_consent_prompt_names_the_tier_a_role_spends_at() {
+        let text = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"steering\"\n\n\
+             [subloop]\nstages = [\"triage\"]\n\n\
+             [roles.triage]\ntier = \"premium\"\n",
+        ));
+        assert!(
+            text.contains("spends each stage's model calls at a tier it names:"),
+            "{text}"
+        );
+        assert!(text.contains("triage: the `premium` tier"), "{text}");
+        assert!(
+            text.contains("your own provider configuration decides what each one resolves to"),
+            "a tier is the plugin's ask, not a model this crate can promise: {text}"
+        );
+
+        let tierless = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"steering\"\n\n[subloop]\nstages = [\"triage\"]\n",
+        ));
+        assert!(
+            !tierless.contains("at a tier it names"),
+            "a manifest with no [roles] must render what it always did: {tierless}"
+        );
+    }
+
+    /// **The #3514 disclosure witness.** The document enumerated powers and
+    /// never the data, so a plugin whose process is handed the user's prompt
+    /// and the model's whole reply rendered "It asks for no tool
+    /// capabilities." — which reads as harmless. For a BYOK product whose
+    /// promise is that prompts stay on the machine, this is the disclosure
+    /// that matters most.
+    ///
+    /// The assertions are on the disclosure's own fixed phrasing, which lives
+    /// in [`crate::wire::WIRE_FIELDS`] beside the fields it describes.
+    #[test]
+    fn a_wrapper_prompt_says_what_leaves_the_machine() {
+        let text = consent_text(&parse(
+            "name = \"vera\"\n[loop]\nparticipation = \"steering\"\n\
+             points = [\"before_turn\", \"after_turn\"]\n\n\
+             [wrapper]\nid = \"lite-v1\"\n[[wrapper.stages]]\nname = \"execute\"\n\n\
+             [runtime]\nargv = [\"python3\", \"main.py\"]\ntimeout_secs = 30\n",
+        ));
+        for expected in [
+            "Stella hands `vera`'s own process your work, as JSON on that process's standard \
+             input. What crosses:",
+            "before each turn runs (`before_turn`):",
+            "the goal you typed for this turn, in full",
+            "once each turn has finished (`after_turn`):",
+            "the model's full reply for the turn — the same text you were shown",
+            "the name of every tool the turn ran, in call order",
+            "the workspace-relative path of every file the turn changed",
+            "can still send every line of it anywhere it can reach",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+        }
+
+        let no_process = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\n",
+        ));
+        assert!(
+            !no_process.contains("as JSON on that process's standard input"),
+            "a plugin with no process of its own is handed nothing: {no_process}"
+        );
+    }
+
+    /// The other half of the filter: `permits_point` is what
+    /// `stella_runtime::wrapper` dispatches on, so a plugin that declares a
+    /// process and answers no point is handed none of this — and must not be
+    /// disclosed as though it were.
+    #[test]
+    fn a_process_that_answers_no_point_discloses_no_data() {
+        let text = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"observer\"\n\n\
+             [runtime]\nargv = [\"node\"]\ntimeout_secs = 5\n",
+        ));
+        assert!(!text.contains("What crosses:"), "{text}");
+        assert!(!text.contains("the goal you typed for this turn"), "{text}");
     }
 
     #[test]
