@@ -28,11 +28,14 @@ const TYPEAHEAD_MAX_ROWS: usize = 8;
 const FORM_BODY_MAX_LINES: usize = 6;
 
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
-    let title = if ui.issues.page > 0 {
+    // `loaded_page`, not `page`: the header describes the rows on screen, and
+    // `page` has already moved to whatever the last `]` asked for — which is a
+    // different number whenever that fetch failed or is still in flight.
+    let title = if ui.issues.loaded_page > 0 {
         format!(
             " ISSUES — {} listed · page {} ",
             ui.issues.rows.len(),
-            ui.issues.page + 1
+            ui.issues.loaded_page + 1
         )
     } else {
         format!(" ISSUES — {} listed ", ui.issues.rows.len())

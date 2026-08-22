@@ -618,3 +618,41 @@ fn issues_search_resets_the_page_and_remembers_the_query() {
     assert_eq!(ui.issues.page, 0, "a new search is a new list");
     assert_eq!(ui.issues.active_query.as_deref(), Some("race"));
 }
+
+#[test]
+fn a_failed_page_fetch_leaves_the_header_on_the_page_still_shown() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = (0..30).map(|i| a_issue(&format!("#{i}"))).collect();
+    ui.issues.loaded = true;
+
+    // Page forward, and let that fetch fail.
+    handle_deck_key(ch(']'), &model, &mut ui);
+    assert_eq!(ui.issues.page, 1, "the request asked for page 2");
+    let seq = ui.issues.list_wait;
+    ingest_inbound(
+        &Inbound::IssuesList {
+            seq,
+            outcome: Err("gh: could not connect".into()),
+        },
+        &mut model,
+        &mut ui,
+    );
+    assert_eq!(
+        ui.issues.loaded_page, 0,
+        "the rows on screen are still page 1, so the header must say so"
+    );
+
+    // A page that lands moves it.
+    handle_deck_key(ch(']'), &model, &mut ui);
+    let seq = ui.issues.list_wait;
+    ingest_inbound(
+        &Inbound::IssuesList {
+            seq,
+            outcome: Ok(vec![a_issue("#99")]),
+        },
+        &mut model,
+        &mut ui,
+    );
+    assert_eq!(ui.issues.loaded_page, ui.issues.page);
+}

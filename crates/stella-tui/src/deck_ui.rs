@@ -424,9 +424,17 @@ pub struct IssuesPanel {
     /// keys rather than indices because a refresh re-orders the list — the
     /// pick follows the issue, not the row.
     pub picked: std::collections::BTreeSet<String>,
-    /// The page the browse list is showing (0-based). `]`/`[` page forward
-    /// and back; a new search or refresh resets to the first page.
+    /// The page the browse list has *asked* for (0-based). `]`/`[` move it and
+    /// a new search or refresh resets it to the first page.
     pub page: usize,
+    /// The page the rows on screen actually came from — set only when a list
+    /// reply lands successfully.
+    ///
+    /// Separate from [`IssuesPanel::page`] because the two disagree exactly
+    /// when it matters: `]` moves `page` immediately, so if that fetch fails
+    /// the header must keep naming the page the reader is still looking at
+    /// rather than the one that never arrived.
+    pub loaded_page: usize,
     /// The query the current page was fetched with — paging re-issues it.
     pub active_query: Option<String>,
 }
@@ -453,6 +461,7 @@ impl Default for IssuesPanel {
             act_wait: 0,
             picked: std::collections::BTreeSet::new(),
             page: 0,
+            loaded_page: 0,
             active_query: None,
         }
     }
@@ -1287,6 +1296,11 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
                 ui.issues.rows = rows.clone();
                 ui.issues.sel = ui.issues.sel.min(rows.len().saturating_sub(1));
                 ui.issues.prune_picks();
+                // The title reads from this, never from `page`: `page` is what
+                // was *asked for* and moves on the keypress, so a fetch that
+                // failed would leave the header naming a page whose rows are
+                // not on screen.
+                ui.issues.loaded_page = ui.issues.page;
                 ui.issues.notice = Some(format!("{} issue(s)", rows.len()));
             }
             Err(e) => ui.issues.notice = Some(e.clone()),
