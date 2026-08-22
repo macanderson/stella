@@ -200,7 +200,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // cover the one overlay a turn is stopped on.
     if ui.question.is_open() {
         guarded_overlay(buf, area, "question", |b| {
-            views::question::render(&ui.question, area, b)
+            views::question::render(&ui.question, ui.accessible, area, b)
         });
     }
 

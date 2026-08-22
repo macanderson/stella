@@ -888,6 +888,23 @@ fn deck_render_snapshots_pin_the_question_overlay() {
         H,
         &frame,
     );
+
+    // 5. Accessible mode spans the card across the frame instead of floating
+    //    it. A float clips its rows at its right border, and this is the one
+    //    overlay where a half-heard option is a decision made on half the
+    //    facts — so the widening gets a golden of its own rather than living
+    //    on a `ui.accessible` nobody would notice going missing.
+    let mut ui = ui_for(DeckTab::Session);
+    ui.accessible = true;
+    ui.question.open(fixture_question_request(1));
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_question_accessible",
+        "accessible mode — the card spans the frame, so no option is clipped",
+        W,
+        H,
+        &frame,
+    );
 }
 
 // ─────────────────────────── the harness itself ───────────────────────────

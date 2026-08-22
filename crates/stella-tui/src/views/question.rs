@@ -502,15 +502,21 @@ fn cancelled() -> QuestionOutcome {
 // ───────────────────────────────── render ─────────────────────────────────
 
 /// Paint the overlay over `area`. A no-op when nothing is parked.
-pub fn render(overlay: &QuestionOverlay, area: Rect, buf: &mut Buffer) {
+///
+/// `accessible` spans the card across the frame instead of floating it, the
+/// same contract every other card here honours ([`cards::card_area`]). It
+/// matters more on this one than on any of them: a float clips its rows at
+/// its right border, and a screen reader that never reaches the end of an
+/// option is a driver answering a question they only half heard — on the one
+/// overlay where the answer stops a turn.
+pub fn render(overlay: &QuestionOverlay, accessible: bool, area: Rect, buf: &mut Buffer) {
     let Some(request) = &overlay.request else {
         return;
     };
-    let body = match overlay.mode {
+    let mut body = match overlay.mode {
         QuestionMode::Review | QuestionMode::Chat => review_body(overlay),
         _ => question_body(overlay, request),
     };
-    let mut body = body;
     // Attribution goes in the BODY, never the title row. It shares that row
     // with the right-aligned key hints, and at this card's width the hints
     // win: the first golden of this overlay rendered the chip as `fro`,
@@ -521,7 +527,7 @@ pub fn render(overlay: &QuestionOverlay, area: Rect, buf: &mut Buffer) {
         body.insert(1, Line::from(""));
     }
     let rows = u16::try_from(body.len()).unwrap_or(u16::MAX);
-    let card = cards::card_area(area, rows, QUESTION_CARD_W, false);
+    let card = cards::card_area(area, rows, QUESTION_CARD_W, accessible);
     let inner = cards::card_frame(card, "question", Vec::new(), hints(overlay.mode), buf);
     cards::render_body(body, None, inner, buf);
 }
