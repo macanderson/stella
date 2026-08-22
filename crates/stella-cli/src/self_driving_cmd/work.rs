@@ -70,7 +70,24 @@ use stella_protocol::issue::Issue;
 
 /// Where this verb's worktrees live — gitignored, and outside the fleet's
 /// namespace so `stella fleet gc` cannot see them.
+///
+/// Reached from outside this module only through [`worktrees_root`], so the
+/// literal has one home. A second copy is the failure mode AGENTS.md names for
+/// the lockfile and the file-size baseline: a shared cell written in two
+/// places, where both writers are individually correct and the composition is
+/// not.
 const WORKTREES_DIR: &str = ".stella/private/self-driving";
+
+/// This verb's worktrees root, resolved against a workspace.
+///
+/// `contention::for_issue` needs it to tell a crashed run of the loop's own
+/// from a peer's checkout (#4300): a leftover in here is something
+/// [`discard_undelivered_attempt`] repairs, not somebody else's work in
+/// flight.
+#[must_use]
+pub(super) fn worktrees_root(root: &Path) -> PathBuf {
+    root.join(WORKTREES_DIR)
+}
 
 /// What one unit of work did, measured from the tree.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -15,12 +15,14 @@
 
 mod audit;
 mod backlog;
+mod claim;
 // `pub(crate)` rather than private: `plugin_cmd::configure` asserts against
 // this reader directly (#3999). A package that configures attribution has to
 // be shown changing what the loop *reads*, not merely what a file *holds* —
 // a key written to the right path that nothing loads would pass every other
 // assertion. Read-only, so the wider visibility grants no authority.
 pub(crate) mod config;
+mod contention;
 mod convention;
 mod deliver;
 mod drive;
