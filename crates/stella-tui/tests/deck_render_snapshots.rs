@@ -688,6 +688,51 @@ fn deck_render_snapshots_pin_the_help_overlay() {
     );
 }
 
+/// SPEC 5 sends five status cells behind `?` **as well as** to the AGENTS tab,
+/// and until #4188 the overlay drew keybindings only.
+///
+/// A named assertion beside the golden, deliberately. #4186 is the cautionary
+/// tale: a golden pins the whole frame, so a row that quietly stops rendering
+/// moves it, and the reviewer's job becomes noticing an absence inside a
+/// hundred-line diff. This says which values have to be there, so their loss is
+/// a sentence rather than a shifted block.
+#[test]
+fn the_help_overlay_carries_the_metrics_spec_5_sends_behind_it() {
+    let model = fixture_model();
+    let mut ui = ui_for(DeckTab::Skills);
+    ui.help_open = true;
+    let frame = render_frame(&model, &mut ui, W, H);
+
+    for needle in [
+        // MODEL detail — which pin serves each role, the question the status
+        // bar's single slug cannot answer.
+        "worker",
+        "zai/glm-5.2-air",
+        // ENGINE, CPU and MEM.
+        "engine",
+        "3 active · 3 total",
+        "cpu",
+        "42%",
+        "mem",
+        "148M",
+    ] {
+        assert!(
+            frame.contains(needle),
+            "the ? overlay does not carry {needle:?}:\n{frame}"
+        );
+    }
+
+    // WARMTH is the fifth cell and is deliberately **absent** here: this
+    // fixture has no measured cache warmth, and `0s` would say the prompt
+    // cache has just expired rather than that nothing has been cached. The
+    // elision is the behaviour under test, so it is asserted rather than left
+    // to look like an oversight.
+    assert!(
+        !frame.contains("warmth"),
+        "an unmeasured warmth rendered a row anyway:\n{frame}"
+    );
+}
+
 /// The SKILLS create dialog, mid-description.
 ///
 /// A modal drawn over a populated list: the golden pins both the dialog and how

@@ -26,6 +26,5 @@
 1729 crates/stella-store/src/lib.rs
 2266 crates/stella-store/src/tests.rs
 1814 crates/stella-store/src/usage.rs
-1518 crates/stella-tui/src/deck_render.rs
 3991 crates/stella-tui/src/deck_ui.rs
 1599 crates/stella-tui/src/views/engine.rs
