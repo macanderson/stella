@@ -142,17 +142,25 @@ pub enum TranscriptEntry {
         /// marks these so overlap is visible, since `duration_ms` alone
         /// would read as ordinary post-stream latency.
         speculated: bool,
-        /// For a *successful* call that moved the work tree, the reference the
-        /// renderer uses to show this call's diff inline.
+        /// For a *successful* call that moved the work tree, one reference per
+        /// change it made — the whole call's measurement, not a sample of it.
         ///
         /// Gated on the change having folded under this very call, not on the
         /// tool's name (`super::inline_diff`) — so a measured `bash`, MCP or
         /// custom-tool call renders what it did, exactly as `edit_file` does
-        /// (#4213). `None` for reads, for failed calls, and for a call whose
+        /// (#4213). **Empty** for reads, for failed calls, and for a call whose
         /// own measurement came back empty, which is what keeps the inline diff
         /// to mutations that actually happened. The diff itself is never stored
         /// here (L-T5: one event-borne diff path).
-        diff: Option<InlineDiffRef>,
+        ///
+        /// A collection rather than an `Option` because one call can mutate
+        /// several paths — an `apply_edits` batch, a `bash` codemod — and the
+        /// per-call producer emits one `FileChange` for each (#4214). The
+        /// first entry is the change the row shows inline; the rest are
+        /// counted by the row and revealed with ctrl+o. The ordering is the
+        /// claim window's (`super::inline_diff::ClaimWindow::claim`) and the
+        /// renderer does not re-derive it.
+        diff: Vec<InlineDiffRef>,
     },
     /// A model call was retried (surfaced only once the step commits — the
     /// engine defers these, L-E10).

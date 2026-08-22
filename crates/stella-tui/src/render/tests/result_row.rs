@@ -44,7 +44,7 @@ fn result(name: &str, ok: bool, path: Option<&str>, body: &str) -> TranscriptEnt
         full: body.into(),
         duration_ms: 42,
         speculated: false,
-        diff: None,
+        diff: Vec::new(),
     }
 }
 
@@ -228,10 +228,10 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
         full: "ok".into(),
         duration_ms: 7,
         speculated: false,
-        diff: Some(InlineDiffRef {
+        diff: vec![InlineDiffRef {
             path: "src/x.rs".into(),
             seq: 1,
-        }),
+        }],
     };
     let mut out = Vec::new();
     entry_lines(
@@ -384,10 +384,10 @@ fn a_measured_change_with_no_patch_states_its_size_and_invents_no_diff() {
         full: "replaced 1 occurrence(s) in src/x.rs at byte 1286".into(),
         duration_ms: 7,
         speculated: false,
-        diff: Some(InlineDiffRef {
+        diff: vec![InlineDiffRef {
             path: "src/x.rs".into(),
             seq: 1,
-        }),
+        }],
     };
     let mut out = Vec::new();
     entry_lines(

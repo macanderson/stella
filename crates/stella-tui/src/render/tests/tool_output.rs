@@ -35,7 +35,7 @@ fn tool_result(name: &str, ok: bool, path: Option<&str>, body: &str) -> Transcri
         full: body.into(),
         duration_ms: 7,
         speculated: false,
-        diff: None,
+        diff: Vec::new(),
     }
 }
 
@@ -54,7 +54,7 @@ fn result_for(path: Option<&str>, body: &str) -> TranscriptEntry {
         full: body.into(),
         duration_ms: 7,
         speculated: false,
-        diff: None,
+        diff: Vec::new(),
     }
 }
 

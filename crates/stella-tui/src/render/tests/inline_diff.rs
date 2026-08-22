@@ -34,10 +34,10 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
         full: "ok".into(),
         duration_ms: 7,
         speculated: false,
-        diff: Some(InlineDiffRef {
+        diff: vec![InlineDiffRef {
             path: "src/x.rs".into(),
             seq: 1,
-        }),
+        }],
     };
     let (added, removed) = crate::diff::count_diff_lines(&diff_text);
     let files = vec![FileState {

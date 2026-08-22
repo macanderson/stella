@@ -1207,16 +1207,23 @@ fn turn_boundary(model: &mut SessionModel, path: &str, diff: Option<&str>, adds:
     });
 }
 
-/// The inline-diff reference that call's row kept, if any. Panics if the call
-/// folded no row at all — that would be a different defect.
+/// The *leading* inline-diff reference that call's row kept, if any — the one
+/// its body renders. Panics if the call folded no row at all, which would be a
+/// different defect. Use [`inline_refs`] for the whole claim.
 fn inline_ref<'a>(model: &'a SessionModel, call_id: &str) -> Option<&'a InlineDiffRef> {
+    inline_refs(model, call_id).first()
+}
+
+/// Every inline-diff reference that call's row claimed, in the order the row
+/// reads them (#4214).
+fn inline_refs<'a>(model: &'a SessionModel, call_id: &str) -> &'a [InlineDiffRef] {
     model
         .transcript
         .iter()
         .find_map(|e| match e {
             TranscriptEntry::ToolResult {
                 call_id: cid, diff, ..
-            } if cid == call_id => Some(diff.as_ref()),
+            } if cid == call_id => Some(diff.as_slice()),
             _ => None,
         })
         .expect("the call folded a result row")

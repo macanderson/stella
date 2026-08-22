@@ -113,7 +113,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             full: "done".into(),
             duration_ms: 3,
             speculated: false,
-            diff: None,
+            diff: Vec::new(),
         },
         TranscriptEntry::Retry {
             attempt: 1,

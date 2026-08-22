@@ -52,7 +52,7 @@ fn result(name: &str, ok: bool, body: &str) -> TranscriptEntry {
         full: body.into(),
         duration_ms: 17,
         speculated: false,
-        diff: None,
+        diff: Vec::new(),
     }
 }
 

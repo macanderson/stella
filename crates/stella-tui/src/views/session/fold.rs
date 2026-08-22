@@ -302,7 +302,7 @@ mod tests {
             full: body,
             duration_ms: 7,
             speculated: false,
-            diff: None,
+            diff: Vec::new(),
         }
     }
 
