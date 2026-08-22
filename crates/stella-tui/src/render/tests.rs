@@ -26,6 +26,7 @@ use stella_protocol::{
 
 mod block_rail;
 mod inline_diff;
+mod mutation_diff_e2e;
 mod palette;
 mod result_row;
 mod slash;
