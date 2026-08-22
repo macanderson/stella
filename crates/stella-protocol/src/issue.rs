@@ -273,6 +273,15 @@ pub struct IssueDraft {
     /// The epic or parent this hangs off, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<IssueKey>,
+    /// Who to assign the filed issue to, in the tracker's own spelling of a
+    /// user (a GitHub login, a Linear user id). `None` files it unassigned.
+    ///
+    /// Part of the draft rather than a follow-up edit because assigning is
+    /// part of *what is being filed*: a tracker that can assign at create
+    /// time does it in the same call, and one that cannot is the adapter's
+    /// problem to sequence, not the caller's to remember.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
 }
 
 /// The port every tracker is reached through — invariant 1 for the backlog

@@ -159,6 +159,13 @@ impl IssueProvider for GhIssueProvider {
             args.push("--label".into());
             args.push(label.name.clone());
         }
+        // Assigned in the create call rather than a follow-up `gh issue edit`:
+        // one call cannot half-succeed, and a second one could leave the issue
+        // filed but unassigned with nothing to retry against.
+        if let Some(assignee) = draft.assignee.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+            args.push("--assignee".into());
+            args.push(assignee.to_owned());
+        }
 
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         let raw = gh_json(&borrowed)?;

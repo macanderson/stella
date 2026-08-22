@@ -55,6 +55,7 @@ fn issues_first_tab_visit_queues_a_refresh() {
         [WorkspaceInput::IssuesRefresh {
             query: None,
             state: None,
+            page: 0,
             seq: 1,
         }]
     ));
@@ -474,17 +475,28 @@ fn issues_x_closes_an_open_issue_and_reopens_a_closed_one() {
         other => panic!("expected IssueAct::Close, got {other:?}"),
     }
 
-    // Cursor on the closed row: re-open (SetStatus("open") — the driver maps
-    // it to the provider's reopen).
+    // Cursor on the closed row: re-open. Its own variant, not
+    // `SetStatus("open")` — the driver selects the provider call by matching
+    // the action, never by comparing a status string.
     handle_deck_key(key(KeyCode::Down), &model, &mut ui);
     let action = handle_deck_key(ch('x'), &model, &mut ui);
     match action {
         DeckAction::Send(WorkspaceInput::IssueAct { key, action, .. }) => {
             assert_eq!(key, "#9");
-            assert_eq!(action, IssueAction::SetStatus("open".into()));
+            assert_eq!(action, IssueAction::Reopen);
         }
-        other => panic!("expected IssueAct::SetStatus(open), got {other:?}"),
+        other => panic!("expected IssueAct::Reopen, got {other:?}"),
     }
+    assert!(
+        ui.issues
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.starts_with("re-opening #9")),
+        // The row key already carries its `#`; a `#{key}` here would say
+        // "re-opening ##9".
+        "{:?}",
+        ui.issues.notice
+    );
 }
 
 #[test]
@@ -499,8 +511,10 @@ fn issues_p_submits_the_picked_issues_as_a_prompt() {
     let action = handle_deck_key(ch('p'), &model, &mut ui);
     match action {
         DeckAction::Send(WorkspaceInput::Enqueue { text }) => {
-            assert!(text.contains("#7 title of #7"), "{text}");
-            assert!(text.contains("#8 title of #8"), "{text}");
+            // Exact, not `contains`: the row key already carries its `#`, so a
+            // `#{key}` in the prompt builder would produce "##7 title of #7"
+            // — which a `contains("#7 title of #7")` still matches.
+            assert_eq!(text, "#7 title of #7\n#8 title of #8", "{text}");
         }
         other => panic!("expected an enqueued prompt, got {other:?}"),
     }
@@ -535,18 +549,24 @@ fn issues_brackets_page_the_active_query() {
 
     let action = handle_deck_key(ch(']'), &model, &mut ui);
     match action {
-        DeckAction::Send(WorkspaceInput::IssuesRefresh { query, .. }) => {
+        DeckAction::Send(WorkspaceInput::IssuesRefresh { query, page, .. }) => {
             assert_eq!(query.as_deref(), Some("flaky"), "paging re-issues the search");
+            // The witness for the paging defect. `page` has to ride the
+            // request: without it the driver read a literal offset 0, so `]`
+            // re-fetched page one under a notice that said "page 2".
+            assert_eq!(page, 1, "the request carries the page it is asking for");
         }
         other => panic!("expected IssuesRefresh, got {other:?}"),
     }
     assert_eq!(ui.issues.page, 1);
 
     let action = handle_deck_key(ch('['), &model, &mut ui);
-    assert!(matches!(
-        action,
-        DeckAction::Send(WorkspaceInput::IssuesRefresh { .. })
-    ));
+    match action {
+        DeckAction::Send(WorkspaceInput::IssuesRefresh { page, .. }) => {
+            assert_eq!(page, 0, "paging back asks for the page it moved to");
+        }
+        other => panic!("expected IssuesRefresh, got {other:?}"),
+    }
     assert_eq!(ui.issues.page, 0);
 
     // `[` on the first page goes nowhere.
