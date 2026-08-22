@@ -50,9 +50,12 @@ BASELINE = "scripts/prose-baseline.txt"
 SCANNED = (".md", ".mdx", ".rs", ".py", ".sh", ".ts", ".tsx", ".toml")
 
 # Paths that are generated, vendored, or are this guard's own subject matter.
-# A pattern list cannot scan the file that defines it without matching itself.
+# A pattern list cannot scan the file that defines it without matching itself,
+# and the test suite has to spell every banned construction to feed one to the
+# guard -- its heredocs are fixtures, not prose anyone reads for meaning.
 EXCLUDED_PREFIXES = (
     "scripts/check-prose.py",
+    "scripts/test-prose-guard.sh",
     "scripts/prose-baseline.txt",
     "docs/wire/",
 )
