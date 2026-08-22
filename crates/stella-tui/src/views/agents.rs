@@ -451,7 +451,7 @@ fn humanize_count(n: u64) -> String {
 }
 
 /// Bytes → `"212M"` style, binary (1024) units, whole numbers only.
-fn humanize_bytes(bytes: u64) -> String {
+pub(crate) fn humanize_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
     let mut val = bytes as f64;
     let mut unit = 0;

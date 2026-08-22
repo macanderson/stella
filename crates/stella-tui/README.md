@@ -122,9 +122,16 @@ key handling goes in a `src/deck_ui/` submodule the way
 buys headroom, not immunity, so code you touch inside any of these files is a
 candidate to extract.
 
-- [`src/deck_render.rs`](src/deck_render.rs)
 - [`src/deck_ui.rs`](src/deck_ui.rs)
 - [`src/views/engine.rs`](src/views/engine.rs)
+
+[`src/deck_render.rs`](src/deck_render.rs) was on this list and is not any
+more: extracting the `?` overlay to
+[`src/deck_render/help.rs`](src/deck_render/help.rs) took it under the 1500-line
+limit, so it lost its baseline entry and is now judged against the flat ceiling
+like any other file (#4188). It is still the largest file in the crate and the
+advice above applies to it in spirit — but the guard no longer grandfathers it,
+and it must not go back over.
 
 `src/views/session.rs` left this list in #4127: its incremental transcript fold
 moved to [`src/views/session/fold.rs`](src/views/session/fold.rs), which took it

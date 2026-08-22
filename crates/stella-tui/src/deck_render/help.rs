@@ -26,6 +26,94 @@
 
 use super::*;
 
+/// A pipeline role as this overlay names it.
+///
+/// The statline spends one cell per role and so uses
+/// [`crate::deck::PipelineRole::initial`] (`T`/`W`/`J`). An overlay has the
+/// width to say the word, and the whole point of this block is that it is the
+/// detail view the one-letter cells send you to.
+fn role_word(role: crate::deck::PipelineRole) -> &'static str {
+    use crate::deck::PipelineRole as R;
+    match role {
+        R::Triage => "triage",
+        R::Worker => "worker",
+        R::Verifier => "verifier",
+    }
+}
+
+/// SPEC 5's five re-homed cells, as `?` renders them.
+///
+/// # Every row here has a measured source, or it is absent
+///
+/// Nothing below substitutes a zero for an absent reading. `0%` CPU is a real
+/// and different claim from "no sample has been taken", and a cache warmth of
+/// `0s` says the prompt cache has just expired rather than that nothing has
+/// been cached — the distinction `cache_panel::fmt_warmth` and
+/// `AgentEntry::cache_warmth_secs` already draw with an `Option`, and the one
+/// #2290 and #4150 each cost a real defect to learn. A value with no source
+/// renders no row at all.
+///
+/// The numbers are the AGENTS tab's own, read the same way from the same
+/// fields (`views::agents`), because SPEC 5 sends these to two surfaces and two
+/// surfaces disagreeing about one number is worse than one surface missing it.
+fn metric_rows(model: &WorkspaceModel) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let now_ms = model.now_ms;
+
+    // MODEL detail: which pin serves *each* role. This is the row the status
+    // bar cannot carry — that names one slug, whichever pin is answering, and
+    // the AGENTS tab's per-row model column answers "which model is this lane
+    // on", a different question.
+    if !model.role_pins.is_empty() {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled("  model", theme::heading())));
+        for role in crate::deck::PipelineRole::ORDER {
+            let Some(pin) = model.role_pins.get(&role) else {
+                continue;
+            };
+            let active = if model.active_role == Some(role) {
+                " · answering"
+            } else {
+                ""
+            };
+            lines.push(help_row(
+                role_word(role),
+                &format!("{}{active}", pin.slug()),
+            ));
+        }
+    }
+
+    // ENGINE, CPU, MEM and WARMTH describe the machine and the focused lane.
+    let mut machine: Vec<Line<'static>> = Vec::new();
+    let total = model.agents.len();
+    if total > 0 {
+        let active = model.agents.iter().filter(|a| a.status.is_active()).count();
+        machine.push(help_row(
+            "engine",
+            &format!("{active} active · {total} total"),
+        ));
+    }
+    if let Some(entry) = model.agents.first() {
+        machine.push(help_row("cpu", &format!("{:.0}%", entry.res.cpu_pct)));
+        machine.push(help_row(
+            "mem",
+            &crate::views::agents::humanize_bytes(entry.res.mem_bytes),
+        ));
+        // Absent, not zero: no cached prefix at all and a prefix whose warmth
+        // has just run out are different facts about the next call's price.
+        if let Some(secs) = entry.cache_warmth_secs(now_ms) {
+            machine.push(help_row("warmth", &cache_panel::fmt_warmth(Some(secs))));
+        }
+    }
+    if !machine.is_empty() {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled("  machine", theme::heading())));
+        lines.extend(machine);
+    }
+
+    lines
+}
+
 /// One aligned `key → description` row of the help overlay. The key column is
 /// padded to a fixed width so the descriptions line up into a scannable
 /// second column.
@@ -173,7 +261,7 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
 /// overlay stays short enough to read at a glance. Opened by `?` (empty
 /// composer) or `/help`; scrolls with ↑/↓/⇞/⇟/Home/End on a short terminal;
 /// closes with esc/`q`/`?`.
-pub(super) fn render_help(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
@@ -193,6 +281,11 @@ pub(super) fn render_help(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         "  letter & arrow hotkeys apply while the prompt box is empty",
         theme::muted(),
     )));
+    // The metric detail last, under the keys. `?` is reached for as a key sheet
+    // far more often than as a dashboard, so the keys keep the top of a panel
+    // that has to be scrolled on a short terminal; SPEC 5 asks for the numbers
+    // to be *here*, not to be first.
+    lines.extend(metric_rows(model));
 
     // Size the panel to its content, capped to the frame.
     let w = area.width.min(68);

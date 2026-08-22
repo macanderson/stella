@@ -208,7 +208,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
 
     if ui.help_open {
-        guarded_overlay(buf, area, "help", |b| render_help(ui, area, b));
+        guarded_overlay(buf, area, "help", |b| render_help(model, ui, area, b));
     }
 
     // Position the hardware cursor at the composer caret so the terminal (and
@@ -1307,7 +1307,6 @@ fn render_composer_footer(
     Paragraph::new(Line::from(left)).render(left_area, buf);
     render_right(right, area, buf);
 }
-
 
 // The `?` overlay — SPEC 11's key sheet and SPEC 5's metric detail. Split out
 // rather than grown here: this file is a grandfathered god file closed to
