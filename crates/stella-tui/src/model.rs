@@ -1156,12 +1156,13 @@ impl SessionModel {
     ///
     /// * an earlier turn's rule is already settled and must not be rewritten by
     ///   a later turn's call;
-    /// * a sub-agent's calls also carry [`ModelCallRole::Worker`], and a child
-    ///   may well run on a different model. The lead has to call the model
-    ///   before it can decide to delegate, so the lead's own first worker call
-    ///   always precedes any child's and has already claimed the rule by the
-    ///   time one arrives. Depth is not on the wire here, so the ordering is the
-    ///   guarantee rather than a filter.
+    /// * a sub-agent's calls also carry
+    ///   [`stella_protocol::ModelCallRole::Worker`], and a child may well run on
+    ///   a different model. The lead has to call the model before it can decide
+    ///   to delegate, so the lead's own first worker call always precedes any
+    ///   child's and has already claimed the rule by the time one arrives. Depth
+    ///   is not on the wire here, so the ordering is the guarantee rather than a
+    ///   filter.
     ///
     /// A turn whose rule was never stamped (`turn_head_stamped` false — no stage
     /// boundary yet) simply finds nothing and leaves `hud.model` to carry it.
