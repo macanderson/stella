@@ -158,7 +158,7 @@ impl AskUserIo for DeckAskUserIo {
     }
 }
 
-/// [`QuestionResponder`] over the deck's channels (#4220): raise the question
+/// [`QuestionResponder`][r] over the deck's channels (#4220): raise the question
 /// overlay, park until the driver settles it, take the card down.
 ///
 /// The deck's counterpart to [`crate::question::TtyQuestionResponder`]. That
@@ -172,6 +172,8 @@ impl AskUserIo for DeckAskUserIo {
 /// may do — the note editor, the free-text row, the review pane's three ways
 /// out — lives in `stella_tui::views::question` and is unit-tested without a
 /// terminal. Nothing here interprets an answer; it only carries one.
+///
+/// [r]: stella_tools::registry::question::QuestionResponder
 pub(crate) struct DeckQuestionResponder {
     pub(crate) inbound: UnboundedSender<Inbound>,
     pub(crate) answers: Arc<tokio::sync::Mutex<UnboundedReceiver<QuestionOutcome>>>,

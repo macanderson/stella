@@ -27,12 +27,13 @@
 //!
 //! ## The two engine seams handled here
 //!
-//! - **Interactive questions** ([`DeckAskUserIo`]): the plain REPL reads
-//!   stdin, which raw mode owns in deck mode. The deck io emits its own
-//!   `AskUser` card, waits for the deck's `AskUserAnswer`, then echoes the
-//!   answer back as that card's `ToolResult` — the documented event-pure path
-//!   that clears the pending gate (`stella_tui::model`). Its consumer is the
-//!   approvals plane: scope review's confirm question routes through it.
+//! - **Mid-turn asks** ([`mid_turn_ask`]): the plain REPL reads stdin, which
+//!   raw mode owns in deck mode, so both places a tool call parks on a
+//!   person get a deck-backed responder instead. An approval rides the
+//!   `AskUser` card ([`mid_turn_ask::DeckAskUserIo`]) — emit, wait for the
+//!   deck's `AskUserAnswer`, echo the answer back as that card's
+//!   `ToolResult`, the documented event-pure path that clears the pending
+//!   gate (`stella_tui::model`); an `ask_question` rides the #4220 overlay.
 //! - **Cancel** (`Stop` / `UserInput::Cancel`): the engine has no abort input;
 //!   cancelling drops the in-flight turn future at its next await point and
 //!   truncates the partial turn out of the conversation so the next prompt
