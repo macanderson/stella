@@ -10,8 +10,24 @@
 //! so the migration changes the *shape* of the row and not a single number in
 //! it. Where the two rows disagree it is because SPEC 5 says so, and each of
 //! those is called out at its field below.
+//!
+//! # One projection, not two
+//!
+//! A second projection of these same six values lived in a `v2::project`
+//! module and was the one the deck actually drew, while this one — written to
+//! get SPEC 5's stage words right — was exported and called by nothing outside
+//! its own tests. They were not copies: the live one rendered
+//! `StageName::as_str()`, the **wire** string, so the shipping bar printed
+//! `context_recall` and `scope_review` at a human where SPEC 5 says
+//! `context recall` and `scope review` (#4187).
+//!
+//! This module won because [`Status`] borrows its strings and something has to
+//! own them, and because a contributed stage's word is lowercased at
+//! projection time (#3964) — an owned `String` that a borrowing projection has
+//! nowhere to put. The other module is deleted rather than synced: two answers
+//! to one question is the defect, and keeping both is how one of them goes
+//! stale again.
 
-use super::project::vendor_slug;
 use super::status_bar::{CTX_WINDOW, Status};
 use crate::WorkspaceModel;
 use crate::deck::PipelineRole;
@@ -68,6 +84,20 @@ impl StatusSource {
             inbox: self.inbox,
             deadline_remaining_ms: self.deadline_remaining_ms,
         }
+    }
+}
+
+/// A pin's slug with the API gateway stripped: the *model's own* vendor, not
+/// whoever proxied the call.
+///
+/// [`crate::deck::RolePin::slug`] answers "where did this call go", which is the
+/// right question for routing and the wrong one for a status bar — a reader
+/// wants to know which model is thinking, not which reseller billed it.
+fn vendor_slug(pin: &crate::deck::RolePin) -> String {
+    if pin.model.contains('/') || pin.provider.is_empty() {
+        pin.model.clone()
+    } else {
+        format!("{}/{}", pin.provider, pin.model)
     }
 }
 
