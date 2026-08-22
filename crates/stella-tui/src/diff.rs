@@ -110,8 +110,8 @@ pub fn footer_line(added: u32, removed: u32, width: usize) -> Line<'static> {
 /// The styled diff body: one `Line` per diff line, with a line-number gutter
 /// tracked from the `@@ -a,b +c,d @@` hunk headers — added/context lines are
 /// numbered on the new side, removed lines on the old side, exactly like a
-/// PR view. Lines outside any hunk (`diff --git`, `index`, `+++`/`---`
-/// headers, or a diff with no hunk header at all) simply get no number —
+/// PR view. A file's git plumbing (`diff --git`, `index`, `+++`/`---`) does
+/// not render at all; a diff with no hunk header simply gets no numbers —
 /// malformed input degrades to unnumbered styled text, never a panic.
 ///
 /// `path` is the file the diff belongs to (the diffs on stella's event path
@@ -151,23 +151,16 @@ pub fn body_lines_capped(
     render_body(diff, path, cap, Chrome::VIEWER, fold_hint)
 }
 
-/// [`body_lines_capped`] for the transcript's inline diffs, which drop a lone
-/// `@@ -a,b +c,d @@` header and a single file's `diff`/`index`/`---`/`+++`
-/// preamble.
+/// [`body_lines_capped`] for the transcript's inline diffs, which additionally
+/// drop a lone `@@ -a,b +c,d @@` header.
 ///
-/// In a diff *viewer* both are orientation. Inline under a tool call both are
-/// chrome restating what the row above and the gutter beside already say, and a
-/// two-line change should not cost six rows to read. The thresholds differ
-/// because what makes each one earn its space differs: a hunk header is a
-/// boundary between disjoint regions of one file, so it survives from two hunks
-/// up; a file preamble is a boundary between files, so it survives from two
-/// files up.
-///
-/// The preamble is what a real turn actually folds — `WorkJournal`'s
-/// `split_patch_per_file` cuts git's patch on the `diff --git` header and hands
-/// on everything after it, so `index <a>..<b> <mode>` / `--- a/p` / `+++ b/p`
-/// leads every inline diff in the deck. Three rows, on every mutating call,
-/// naming a path the call row already names and a blob hash nobody reads.
+/// The `diff`/`index`/`---`/`+++` preamble is dropped by every surface, not
+/// just this one — see [`render_body`]. What is left to decide here is the hunk
+/// header: in a diff *viewer* it is orientation, but inline under a tool call a
+/// single one restates what the row above and the gutter beside already say,
+/// and a two-line change should not cost six rows to read. It survives from two
+/// hunks up, because a hunk header is a boundary between disjoint regions and
+/// there is no boundary to draw when there is only one region.
 pub fn body_lines_inline(
     diff: &str,
     path: Option<&str>,
@@ -179,35 +172,28 @@ pub fn body_lines_inline(
 
 /// Which of a diff's structural rows earn their space in this rendering.
 ///
-/// A pair of bools rather than one: they answer different questions (how many
-/// hunks? how many files?) and a single "is this inline" flag would have to
-/// re-derive both at the point of use, which is where the two would drift.
+/// A struct around one bool rather than a bare argument: the two entry points
+/// pick between *policies*, and `render_body(.., true, ..)` at a call site says
+/// nothing about which question that `true` answers.
+///
+/// It carried a second bool, `file_headers`, until the per-file preamble
+/// stopped rendering on every surface (#4248) and left nothing for the flag to
+/// decide. Whether the standalone viewer should get it back is #4268.
 #[derive(Clone, Copy)]
 struct Chrome {
     /// Draw `@@ -a,b +c,d @@`.
     hunk_headers: bool,
-    /// Draw the per-file preamble (`diff `, `index `, `--- `, `+++ `).
-    file_headers: bool,
 }
 
 impl Chrome {
-    /// Everything, for the standalone viewer — a reader navigating a patch
-    /// needs the boundaries even when there is only one of them.
-    const VIEWER: Self = Self {
-        hunk_headers: true,
-        file_headers: true,
-    };
+    /// Everything a standalone viewer draws — a reader navigating a patch
+    /// needs the hunk boundaries even when there is only one of them.
+    const VIEWER: Self = Self { hunk_headers: true };
 
     /// Keep only the boundaries that separate more than one of something.
     fn inline_for(diff: &str) -> Self {
         Self {
             hunk_headers: diff.lines().filter(|l| l.starts_with("@@")).count() > 1,
-            // `diff `-prefixed lines are the only unambiguous per-file
-            // boundary; the count is 0 for the split-per-file shape the event
-            // path folds and 1 for a whole single-file patch, and both are one
-            // file. Counting `+++ ` instead would miscount, because added
-            // source text starting `++ ` is textually identical to a header.
-            file_headers: diff.lines().filter(|l| l.starts_with("diff ")).count() > 1,
         }
     }
 }
@@ -280,15 +266,24 @@ fn render_body(
             &mut in_hunk,
             emphasis.get(&i).copied(),
         );
+        // `index 74f38f3..9e6e426 100644`, `--- a/<path>`, `+++ b/<path>`:
+        // three rows of git plumbing at the head of every diff, saying the
+        // path the row above already names and a pair of blob hashes nobody
+        // can act on. They cost three of the handful of rows a collapsed diff
+        // gets, which is most of the budget spent before the first changed
+        // line. The counters above still advance over them, so the gutter's
+        // numbers stay the file's own.
+        //
+        // `@@` survives on the `hunk_headers` flag: it carries the enclosing
+        // scope (`@@ … const TYPEAHEAD_MAX_ROWS`), which is the one piece of
+        // context a hunk cannot reconstruct from its own lines.
+        //
         // Chrome is suppressed after planning rather than before it, so an
         // elided row's `⋯ n lines` count stays the one `stella_diff::view`
         // computed and every surface reports the same number for one change.
         // The cost is a dropped row's slot in the cap; the alternative is the
         // deck and the export disagreeing about the size of an edit.
-        if plan.shows(i)
-            && (chrome.hunk_headers || !text.starts_with("@@"))
-            && (chrome.file_headers || !preamble)
-        {
+        if plan.shows(i) && !preamble && (chrome.hunk_headers || !text.starts_with("@@")) {
             lines.push(line);
         }
     }
