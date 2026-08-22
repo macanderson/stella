@@ -1,0 +1,48 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.cheap-control-before-bisect"
+record_id = "rec_macanderson_stella_cheap_control_before_bisect_66851b31c756"
+record_hash = "sha256:7285357c12b4616dc2550b57ca559855eebb77810f1312470f57fb2607cd084a"
+kind = "procedure"
+statement = "Before any bisect, re-run the failing task alone on the old SUT as a cheap control."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "CLAUDE.md"
+source_digest = "sha256:5de1b8dc1e72abd504a708a727b54340ebb060894883c5e4e143fc91fab9eba3"
+source_lines = [
+    73,
+    76,
+]
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77ce42"
+extracted_at = "2026-08-09T00:48:02Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+tasks = [
+    "investigation",
+    "bisect",
+]
+keywords = [
+    "control",
+    "bisect",
+    "old SUT",
+]
+
+[record.enforcement]
+mode = "soft"
+
+[record.truth]
+basis = "decree"
+confidence = 92

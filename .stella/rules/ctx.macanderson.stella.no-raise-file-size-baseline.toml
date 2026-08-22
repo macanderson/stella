@@ -1,0 +1,49 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.no-raise-file-size-baseline"
+record_id = "rec_macanderson_stella_no_raise_file_size_baseline_f408e19e3f5c"
+record_hash = "sha256:3fded21fe3f9a45ab51e9f665c050d01d662c28c4609357410820df17faba97e"
+kind = "rule"
+statement = "Raising the ceiling in scripts/file-size-baseline.txt to turn a gate green is prohibited."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "CLAUDE.md"
+source_digest = "sha256:5de1b8dc1e72abd504a708a727b54340ebb060894883c5e4e143fc91fab9eba3"
+source_lines = [
+    26,
+    28,
+]
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77ce42"
+extracted_at = "2026-08-09T00:48:02Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+paths = ["scripts/file-size-baseline.txt"]
+keywords = [
+    "file-size-baseline",
+    "gate",
+]
+
+[record.enforcement]
+mode = "soft"
+
+[record.truth]
+basis = "decree"
+confidence = 90
+
+[record.truth.probe]
+kind = "path_exists"
+path = "scripts/file-size-baseline.txt"
+expect = "present"

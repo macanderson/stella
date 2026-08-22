@@ -1,0 +1,47 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.agents-md-wins-conflicts"
+record_id = "rec_macanderson_stella_agents_md_wins_conflicts_c3358525b085"
+record_hash = "sha256:b87a6841008b7dc780d7335668318e2c19d834400bde4801b617f10994b8e3b8"
+kind = "rule"
+statement = "When CLAUDE.md and AGENTS.md disagree, AGENTS.md wins."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "CLAUDE.md"
+source_digest = "sha256:5de1b8dc1e72abd504a708a727b54340ebb060894883c5e4e143fc91fab9eba3"
+source_lines = [
+    88,
+    89,
+]
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77ce42"
+extracted_at = "2026-08-09T00:48:02Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+paths = [
+    "CLAUDE.md",
+    "AGENTS.md",
+]
+keywords = [
+    "precedence",
+    "conflict",
+]
+
+[record.enforcement]
+mode = "soft"
+
+[record.truth]
+basis = "decree"
+confidence = 95

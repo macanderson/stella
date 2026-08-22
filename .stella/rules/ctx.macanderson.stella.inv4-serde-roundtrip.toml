@@ -1,0 +1,47 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.inv4-serde-roundtrip"
+record_id = "rec_macanderson_stella_inv4_serde_roundtrip_93a77f179150"
+record_hash = "sha256:13422cc6e35a72bd7579b38d53188fa66fea83c63333f8335363eae1efaf222f"
+kind = "constraint"
+statement = "Invariant 4: every type crossing a crate boundary round-trips through serde_json byte-for-byte, and a round-trip test is added whenever a type is added to stella-protocol."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+# Above the default 100 so this wins over ^protocol-types-only, which matches
+# the same crate at 100 with a different enforcement mode and would otherwise
+# suspend it. The two are complementary, not contradictory — "types only" says
+# what may live here, this says what a new type owes — and the more specific
+# rule (one crate plus one task) is the one that should apply.
+precedence = 110
+
+[record.steering.applies_to]
+paths = ["crates/stella-protocol"]
+tasks = ["add-protocol-type"]
+keywords = [
+    "serde",
+    "round-trip",
+    "byte-for-byte",
+]
+
+[record.enforcement]
+mode = "hard"
+
+[record.truth]
+basis = "decree"
+confidence = 92

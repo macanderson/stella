@@ -1,0 +1,43 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.witness-definition"
+record_id = "rec_macanderson_stella_witness_definition_5015b7eb5dd5"
+record_hash = "sha256:7e4b913db5177f7687c731f5211135fcc401956b428aa30e5e21351398a5bc84"
+kind = "constraint"
+statement = "A witness test is one that fails on main without the change and passes with the change, and a behavior change or feature PR should include one."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+# The extractor proposed tasks = ["pull-request", "feature"]; neither is a
+# recognized task, so both matched nothing and only skewed relevance. The
+# keywords below carry the selection instead.
+keywords = [
+    "witness test",
+    "done",
+    "fail-pass",
+]
+
+[record.enforcement]
+mode = "soft"
+
+[record.truth]
+basis = "decree"
+confidence = 95
