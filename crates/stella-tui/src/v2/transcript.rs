@@ -272,20 +272,36 @@ pub struct TurnHead {
 }
 
 /// The one receipt line under a turn's closing rule (SPEC 6.1).
+///
+/// Every field is fed from [`crate::model::TurnCounters`], counted at fold time
+/// and stamped onto the closing entry — except the tests, which have no source
+/// at all. A field with nothing behind it elides rather than printing a zero.
 #[derive(Clone, Debug, Default)]
 pub struct Receipt {
     pub spend_usd: f64,
-    /// Tokens this turn spent. `None` when nothing has counted them.
+    /// Tokens this turn spent, summed from its `StepUsage` events.
     ///
-    /// Optional because `StepUsage` is a
-    /// metering record the deck deliberately does not fold (it would
-    /// double-count the spend the budget gauge already tracks), so a turn's
-    /// token total has no source in the session model today. A receipt that
-    /// printed `0 tok` would be stating a measurement nobody took.
+    /// Only the **token** fields of that event are folded. Its `cost_usd` is
+    /// not, and must not be: the deck's spend comes from `BudgetTick`, so
+    /// folding both would double-count it.
+    ///
+    /// `None` is "no usage event arrived" — never `Some(0)` from an absence.
     pub tokens: Option<u64>,
+    /// Tests this turn ran and passed. **Nothing counts these.**
+    ///
+    /// They stay `0`/`0`, which elides, until an event states the numbers.
+    /// `AgentEvent::Verdict` carries a pass/fail and prose, not counts, and a
+    /// `bash` call running `cargo test` is opaque to the fold — its output is a
+    /// `ToolResult` string, and parsing one would be a scraper guessing at a
+    /// harness rather than a measurement. Feeding this needs either a
+    /// verification plugin reporting its `EvidenceSet` per check, or a
+    /// test-runner tool that returns structured results.
     pub tests_passed: u32,
     pub tests_total: u32,
+    /// Distinct paths this turn changed, from its `FileChange` events. A real
+    /// `0` — every mutation emits one, so nothing counted is nothing changed.
     pub files: u32,
+    /// Memories written, summed over the turn's `ContextWrite` upserts.
     pub memories: u32,
 }
 
@@ -344,9 +360,10 @@ pub fn turn_end(number: u32, elapsed: Option<&str>, width: usize) -> Line<'stati
         Span::styled(number.to_string(), Style::new().fg(token::GOLD)),
         Span::styled(" done", Style::new().fg(token::TEXT)),
     ];
-    // Elided rather than rendered as `0:00`, which is a duration nobody
-    // measured. The deck folds no per-turn clock today; when it does, this
-    // fills in without the rule changing shape.
+    // Elided rather than rendered as `0:00`, which would be a duration nobody
+    // measured. Fed from `crate::model::TurnReceipt::elapsed_ms`, which the
+    // deck stamps on the way past — the fold itself may not read a clock
+    // (L-T1), so `None` here is a turn the deck never timed.
     if let Some(elapsed) = elapsed {
         label.push(Span::styled(format!(" · {elapsed}"), dim));
     }

@@ -259,20 +259,23 @@ pub fn turn_begin_rows(
 /// Everything the receipt cannot source is elided rather than zeroed: a
 /// receipt reading `0 tok · 0/0 tests` would be measurements nobody took, on
 /// the one line whose whole job is to be the settled account of a turn.
-/// `files` and `memories` come from `turn_tally`; tokens and tests have no
-/// source in the session model yet.
+///
+/// `tally` is [`crate::model::TurnReceipt`] — counted at fold time and stamped
+/// onto the closing entry, because this renderer sees one entry and no session
+/// state. Tests are the one field still absent, and
+/// [`crate::model::TurnCounters`] states what would have to exist to feed it.
 #[must_use]
 pub fn turn_end_rows(
     turn: u32,
     cost_usd: f64,
-    preceding: &[TranscriptEntry],
+    tally: &crate::model::TurnReceipt,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let tally = turn_tally(preceding);
     vec![
-        turn_end(turn, None, width),
+        turn_end(turn, tally.elapsed_ms.map(human_elapsed).as_deref(), width),
         receipt(&Receipt {
             spend_usd: cost_usd,
+            tokens: tally.tokens,
             files: tally.files,
             memories: tally.memories,
             ..Receipt::default()
@@ -280,46 +283,9 @@ pub fn turn_end_rows(
     ]
 }
 
-/// What a turn's own entries can account for.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct TurnTally {
-    /// Distinct paths a mutating call touched.
-    pub files: u32,
-    /// Memories written, summed over the turn's `ContextWrite` upserts.
-    pub memories: u32,
-}
-
-/// Tally `preceding` back to the rule that opened this turn.
-///
-/// The scan stops at the opening `Stage`, so a receipt accounts for its own
-/// turn and never inherits the one before it. A path is counted once however
-/// many times it was edited — the receipt says how much of the tree moved, not
-/// how many calls it took.
-#[must_use]
-pub fn turn_tally(preceding: &[TranscriptEntry]) -> TurnTally {
-    let mut paths: Vec<&str> = Vec::new();
-    let mut memories = 0_u32;
-    for entry in preceding.iter().rev() {
-        match entry {
-            TranscriptEntry::Stage { opens: Some(_), .. } => break,
-            TranscriptEntry::ToolStart { name, path, .. } => {
-                if let Some(p) = path.as_deref()
-                    && matches!(name.as_str(), "edit_file" | "write_file" | "delete_file")
-                    && !paths.contains(&p)
-                {
-                    paths.push(p);
-                }
-            }
-            TranscriptEntry::ContextWrite { upserts, .. } => {
-                memories = memories.saturating_add(*upserts);
-            }
-            _ => {}
-        }
-    }
-    TurnTally {
-        files: u32::try_from(paths.len()).unwrap_or(u32::MAX),
-        memories,
-    }
+/// A turn's wall clock, in the deck's own duration wording.
+fn human_elapsed(ms: u64) -> String {
+    crate::render::human_duration(ms)
 }
 
 #[cfg(test)]
@@ -594,63 +560,5 @@ mod tests {
         let text = text_of_rows(&event_rows(&event, 120));
         assert!(text.contains("+3"), "{text}");
         assert!(text.contains("-1"), "{text}");
-    }
-
-    fn tool_start(name: &str, path: &str) -> TranscriptEntry {
-        TranscriptEntry::ToolStart {
-            call_id: String::new(),
-            name: name.to_string(),
-            input: path.to_string(),
-            raw: String::new(),
-            path: Some(path.to_string()),
-        }
-    }
-
-    /// The receipt reports the turn it closes: distinct files touched, and the
-    /// memories written.
-    #[test]
-    fn the_receipt_tallies_its_own_turn() {
-        let preceding = vec![
-            tool_start("edit_file", "src/a.rs"),
-            tool_start("read_file", "src/untouched.rs"),
-            tool_start("edit_file", "src/a.rs"),
-            tool_start("write_file", "src/b.rs"),
-            TranscriptEntry::ContextWrite {
-                provider: "memory".into(),
-                upserts: 2,
-                superseded: 0,
-            },
-        ];
-        let tally = turn_tally(&preceding);
-        assert_eq!(
-            tally,
-            TurnTally {
-                files: 2,
-                memories: 2
-            }
-        );
-
-        let text = text_of_rows(&turn_end_rows(7, 0.11, &preceding, 120));
-        assert!(text.contains("2 files"), "{text}");
-        assert!(text.contains("2 memories"), "{text}");
-    }
-
-    /// The scan stops at the rule that opened this turn — a receipt never
-    /// inherits the turn before it.
-    #[test]
-    fn the_tally_stops_at_the_turn_boundary() {
-        let preceding = vec![
-            tool_start("edit_file", "earlier/turn.rs"),
-            TranscriptEntry::Stage {
-                name: stella_protocol::StageName::from(stella_protocol::StageKind::Execute),
-                opens: Some(crate::model::TurnOpening {
-                    turn: 7,
-                    model: None,
-                    budget_usd: None,
-                }),
-            },
-            tool_start("edit_file", "this/turn.rs"),
-        ];
-        assert_eq!(turn_tally(&preceding).files, 1);
     }
 }
