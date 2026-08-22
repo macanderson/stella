@@ -37,7 +37,8 @@
 //! the same discipline `stella-protocol`'s event-consumer table uses (`E0004`
 //! over a red test) — the answer may be "nothing", but it may not be silence.
 
-use super::unknown::{PROVIDER_FIELDS, ROOT_FIELDS};
+use super::toml_config::{AgentsSection, TomlConfig};
+use super::unknown::{PROVIDER_FIELDS, ROOT_FIELDS, TOML_AGENTS_FIELDS, TOML_ROOT_FIELDS};
 use super::*;
 
 /// What the three-scope merge is expected to do with one field.
@@ -499,4 +500,154 @@ fn the_unknown_key_vocabulary_matches_the_structs() {
         provider_ledger(&ProviderSettings::default()),
         PROVIDER_FIELDS,
     );
+}
+
+/// Every root section of `stella.toml` is in the TOML vocabulary, and nothing
+/// else is.
+///
+/// The module docs name four edits a settings key needs, and until now this
+/// file compile-enforced three of them: the struct, the overlay, and the JSON
+/// vocabulary. The fourth — the TOML document — was enforced by a comment, and
+/// the comment lost three times:
+///
+/// - `[seats]` shipped absent from [`TOML_ROOT_FIELDS`] (#3908);
+/// - `[self_driving]` and `[issues]` shipped with the identical omission;
+/// - `[plugins]` made it three, and it is the worst of the set — the operator
+///   most likely to write that section is the one switching a plugin OFF, and
+///   the walker told them their working config was misspelled.
+///
+/// Each time the symptom is the same and is *not* a broken config: the loader
+/// reads the section correctly and the operator is advised to check the
+/// spelling of something that works. That is a warning which trains people to
+/// ignore warnings, which is what makes it worth a compile error.
+///
+/// The destructure below is exhaustive and carries no `..` rest pattern, so
+/// adding a section to [`TomlConfig`] stops this file compiling until its
+/// author places it — exactly the discipline [`settings_ledger`] applies to
+/// [`Settings`].
+///
+/// **Witness.** Fails on the base commit: `TOML_ROOT_FIELDS` omits `plugins`.
+#[test]
+fn the_toml_root_vocabulary_matches_the_document() {
+    let TomlConfig {
+        meta: _,
+        run: _,
+        workspace: _,
+        providers: _,
+        models: _,
+        agents: _,
+        seats: _,
+        tools: _,
+        hooks: _,
+        mcp: _,
+        context: _,
+        context_providers: _,
+        ui: _,
+        plugins: _,
+        reward: _,
+        authority: _,
+        enterprise_telemetry: _,
+        self_driving: _,
+        issues: _,
+    } = TomlConfig::default();
+
+    // One entry per field bound above, in the same order. Adding a field to
+    // the destructure without adding it here leaves the two lists different
+    // lengths, which the assertions below catch.
+    let declared = [
+        "meta",
+        "run",
+        "workspace",
+        "providers",
+        "models",
+        "agents",
+        "seats",
+        "tools",
+        "hooks",
+        "mcp",
+        "context",
+        "context_providers",
+        "ui",
+        "plugins",
+        "reward",
+        "authority",
+        "enterprise_telemetry",
+        "self_driving",
+        "issues",
+    ];
+
+    for key in &declared {
+        assert!(
+            TOML_ROOT_FIELDS.contains(key),
+            "`TomlConfig` has a root section `[{key}]` that `TOML_ROOT_FIELDS` does not \
+             list, so an operator who writes it correctly is told it is a possible typo"
+        );
+    }
+    for key in TOML_ROOT_FIELDS {
+        assert!(
+            declared.contains(key),
+            "`TOML_ROOT_FIELDS` lists `[{key}]`, which no `TomlConfig` field claims — a \
+             stale entry silences a real typo. Remove it, or move it to \
+             `unknown::RETIRED` with the sentence an operator needs."
+        );
+    }
+}
+
+/// Every key of `[agents]` is in the TOML vocabulary, and nothing else is.
+///
+/// The same check as above, one level down, and it needs its own test because
+/// this is where the two vocabularies genuinely diverge: `[agents]` flattens
+/// `agent_engine_config.agents.<name>` up a level, and three JSON keys are
+/// renamed into other sections entirely (`allowed_models` → `[models].allowed`,
+/// `model_output_caps` → `[models].output_caps`, `seat_models` → `[seats]`).
+///
+/// That divergence is deliberate — a JSON-only spelling must not look valid in
+/// TOML — and it is exactly what made the gap invisible: with the two lists
+/// legitimately different, nothing distinguished "renamed on purpose" from
+/// "forgotten". `model_timeout_secs`, `compaction_budget_tokens` and
+/// `tool_result_horizon_steps` were forgotten, so the same knob was accepted in
+/// `settings.json` and called a typo in `stella.toml`.
+///
+/// **Witness.** Fails on the base commit: `TOML_AGENTS_FIELDS` omits all three.
+#[test]
+fn the_toml_agents_vocabulary_matches_the_section() {
+    let AgentsSection {
+        default_model: _,
+        auto_mode: _,
+        effort_auto: _,
+        reasoning_auto: _,
+        headless_scope_bypass: _,
+        model_timeout_secs: _,
+        compaction_budget_tokens: _,
+        tool_result_horizon_steps: _,
+        default: _,
+    } = AgentsSection::default();
+
+    let declared = [
+        "default_model",
+        "auto_mode",
+        "effort_auto",
+        "reasoning_auto",
+        "headless_scope_bypass",
+        "model_timeout_secs",
+        "compaction_budget_tokens",
+        "tool_result_horizon_steps",
+        "default",
+    ];
+
+    for key in &declared {
+        assert!(
+            TOML_AGENTS_FIELDS.contains(key),
+            "`AgentsSection` has a field `agents.{key}` that `TOML_AGENTS_FIELDS` does not \
+             list, so writing it correctly in stella.toml is reported as a possible typo — \
+             while the same key is accepted in settings.json"
+        );
+    }
+    for key in TOML_AGENTS_FIELDS {
+        assert!(
+            declared.contains(key),
+            "`TOML_AGENTS_FIELDS` lists `agents.{key}`, which no `AgentsSection` field \
+             claims — a stale entry silences a real typo."
+        );
+    }
 }

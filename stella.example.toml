@@ -1,0 +1,642 @@
+# =============================================================================
+# stella.example.toml — the complete reference configuration
+#
+#   cp stella.example.toml stella.toml
+#
+# Then delete what you do not need. Every section below is optional: an empty
+# file is exactly the defaults, and each value shown is either the real shipped
+# default (marked "default") or a realistic example.
+#
+# WHERE THIS FILE GOES — three scopes, merged in this order:
+#
+#   1. ~/.stella/stella.toml     your settings, every workspace
+#   2. the org-managed file      set by STELLA_MANAGED_SETTINGS; see [authority]
+#   3. <repo>/stella.toml        this workspace — committed, reviewed like source
+#
+# Project wins per field, with two deliberate exceptions noted at [hooks]
+# (which concatenate) and [authority] (a ceiling nothing below can raise).
+#
+# CREDENTIALS DO NOT GO HERE. `~/.stella/credentials.toml` is a separate file,
+# 0600, zeroized on drop, never merged into this one. A literal
+# `providers.<id>.api_key` at project scope is REFUSED at load, because this
+# file belongs in version control — use `api_key_env`, or `stella auth set`.
+#
+# Every key in this file is verified against a serde struct by
+# `settings::tests::toml::the_shipped_reference_config_loads_with_no_unrecognized_keys`,
+# so it cannot drift from what stella actually reads. If you add a key here and
+# stella does not read it, that test fails.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# META — the migration seam
+# -----------------------------------------------------------------------------
+[meta]
+# The schema version this build writes and understands. A file with no [meta]
+# block is version 1 by definition. A version this build does not know is a
+# hard refusal, not a silent partial read.
+schema_version = 1
+
+# Optional self-declaration, checked against where the file was actually found.
+# The file's LOCATION decides its scope; this only restates it, and a mismatch
+# is an error — a project file claiming "managed" is borrowing authority.
+scope = "project"
+
+
+# -----------------------------------------------------------------------------
+# RUN — per-run behavior
+#
+# This table exists because a bare key at the TOML document root attaches to
+# whatever [table] precedes it: move one line and it silently becomes that
+# table's key. That is not hypothetical — drafting the first reference config,
+# a root-level `enable_recap` landed inside [authority] and configured nothing.
+# -----------------------------------------------------------------------------
+[run]
+# always | ask | never — whether a run works in a throwaway git worktree
+# instead of your checkout. Default: "ask". Consulted only when the run will
+# actually change files, and only when isolation is available.
+create_worktrees = "ask"
+
+# on (default) | off — the workspace probe skips paths your .gitignore excludes.
+ignore_gitignore = "on"
+
+# NOTE: `recap` and `trace_capture` used to live here. Both were retired in
+# #3870 — the code behind them was orphaned by the staged pipeline's removal
+# (#3865). Stella recognizes them, reads nothing, and says so on load rather
+# than pretending they still work.
+
+
+# -----------------------------------------------------------------------------
+# WORKSPACE — facts about the tree this config belongs to
+# -----------------------------------------------------------------------------
+[workspace]
+# Directories OUTSIDE the repository root that write tools may touch. Relative
+# entries resolve against the project root. Default: none — writes are confined
+# to the workspace.
+allowed_dirs = ["../shared-fixtures", "/tmp/stella-scratch"]
+
+
+# -----------------------------------------------------------------------------
+# PROVIDERS — BYOK model endpoints, keyed by id
+#
+# Merged per-id AND per-field across scopes, so an org base_url and a user
+# api_key_env compose instead of one replacing the whole entry.
+#
+# Built-in ids: openrouter, zai, anthropic, openai, xai, deepseek, gemini,
+# vertex, bedrock, local. Naming one here OVERRIDES its fields; naming anything
+# else DEFINES a new OpenAI-compatible provider.
+# -----------------------------------------------------------------------------
+[providers.anthropic]
+# Name an environment variable to read the credential from. Prefer this to a
+# literal for anything long-lived.
+api_key_env = "ANTHROPIC_API_KEY"
+default_model = "claude-fable-5"
+# Prompt-cache window pin: "5m" | "1h". Absent — the normal case — lets the
+# surface decide: the interactive deck asks for 1h (human-paced gaps outlive
+# 5 minutes), headless runs keep the 5m provider default. Honored by
+# `anthropic` only.
+cache_ttl = "1h"
+
+[providers.openrouter]
+api_key_env = "OPENROUTER_API_KEY"
+# Pin a GATEWAY to these upstreams in preference order and forbid it falling
+# back to any other. Set this when two runs must be comparable: a gateway can
+# serve the same slug from a different vendor between runs, which silently
+# varies the model a head-to-head claims to hold fixed. Inert on a direct
+# endpoint, which has no upstream to choose.
+upstream_pin = ["anthropic", "google-vertex"]
+
+# A provider stella has no built-in for. `dialect` defaults to
+# "openai-compatible" and is ignored when overriding a built-in (a built-in's
+# dialect is fixed by its adapter).
+[providers.my-vllm]
+name = "Internal vLLM"
+base_url = "http://vllm.internal:8000/v1"
+dialect = "openai-compatible"
+default_model = "qwen3-coder"
+api_key_env = "VLLM_TOKEN"
+
+
+# -----------------------------------------------------------------------------
+# MODELS — policy OVER the catalog, not a model table
+#
+# `~/.stella/catalog.db` is the authority on what models exist and what they
+# cost. This block says only which of them this workspace may use — which is
+# what stops a hand-written model list from rotting the week a model ships.
+# -----------------------------------------------------------------------------
+[models]
+# REPLACES wholesale across scopes rather than concatenating: it is one
+# vocabulary, and merging would make it impossible for a project to NARROW the
+# user's list. Absent = every model in the catalog is allowed.
+allowed = ["anthropic/claude-fable-5", "openrouter/moonshotai/kimi-k3"]
+
+# Deliberately spend FEWER output tokens than a model can write, per model.
+# Merges per KEY across scopes, unlike `allowed` above. An unlisted model needs
+# no entry — it gets its own maximum — so deleting a line restores the correct
+# default instead of leaving a stale number behind.
+[models.output_caps]
+"anthropic/claude-sonnet-5" = 64000
+"deepseek-chat" = 32000
+
+
+# -----------------------------------------------------------------------------
+# AGENTS — the engine config
+#
+# Core knows exactly ONE role: `default` (#3903). The five `pipeline_*_model`
+# keys and the [agents.worker] / [agents.verifier] / [agents.triage] tables were
+# retired in #3908 — they pinned models for the deleted staged pipeline's roles
+# and, on a workspace without it, bought nothing for the whole time they
+# existed. A plugin that wants a second model asks for a SEAT instead; see
+# [seats] below.
+# -----------------------------------------------------------------------------
+[agents]
+# The model every turn runs on, as `provider/slug`.
+default_model = "anthropic/claude-fable-5"
+
+# on | off (default off) — let stella pick the model per turn from the catalog
+# rather than always using `default_model`.
+auto_mode = "off"
+
+# on | off (default off) — let stella pick reasoning effort per turn. Overrides
+# an explicit `effort` under [agents.default] when on.
+effort_auto = "off"
+
+# on | off (default off) — let stella decide whether to think per turn.
+reasoning_auto = "off"
+
+# Seconds before a model call is abandoned.
+model_timeout_secs = 600
+
+# Token budget the compactor aims to leave free before it summarizes.
+compaction_budget_tokens = 120000
+
+# How many steps a tool result stays verbatim in the transcript before it is
+# elided to a digest.
+tool_result_horizon_steps = 12
+
+# NOTE: `headless_scope_bypass` still parses and does nothing. The headless
+# scope-review stage it steered went with the staged pipeline (#3865); the key
+# is kept only because a published benchmark posture hashes it. Do not read it
+# as a knob you can turn.
+
+# The built-in agent. Written LAST in this table on purpose: TOML would read
+# any flat scalar placed after a table header as a key of that table.
+[agents.default]
+# Reasoning effort: low | medium | high | xhigh | max. Overridden by
+# `effort_auto = "on"`.
+effort = "high"
+# on | off — thinking mode. Absent = the provider's default.
+reasoning = "on"
+# Replace the built-in system prompt for this agent. Workspace memories and
+# rules still append to it — they are additive context, not part of the base
+# instruction set. PROJECT SCOPE CANNOT SET THIS unless the workspace is
+# trusted; see [authority].
+# prompt = "Prefer small, reviewable diffs."
+
+# Generation parameters — the "include" model: a value set here goes on the
+# wire where the provider's dialect supports it; anything absent leaves the
+# provider default untouched.
+[agents.default.params]
+temperature = 0.2
+top_p = 0.9
+max_tokens = 8192
+# top_k = 40
+# frequency_penalty = 0.0
+# presence_penalty = 0.0
+# repetition_penalty = 1.0
+# seed = 42
+# verbosity = "medium"
+# service_tier = "default"
+
+
+# -----------------------------------------------------------------------------
+# SEATS — which model each PLUGIN-declared seat runs on
+#
+# Keys are `<plugin-id>/<role>`. The plugin declares only the bare role name and
+# the host applies the prefix, so one plugin cannot forge another's namespace.
+#
+# Its own top-level table rather than part of [agents] on purpose: the [agents]
+# set is CLOSED (its names are struct fields), which is what makes flattening
+# safe there. Seat names are an OPEN set chosen by whatever you installed, so a
+# plugin author could ship a seat called `auto_mode` tomorrow.
+# -----------------------------------------------------------------------------
+[seats]
+"vera/verifier" = "anthropic/claude-opus-5"
+"stella-plan/planner" = "openrouter/openai/gpt-5.5"
+
+
+# -----------------------------------------------------------------------------
+# TOOLS — per-tool and per-group switches
+#
+# An open map of `"<key>" = "on" | "off"`. A key is a tool name, a group name,
+# or the wildcard. Every built-in is registered by default.
+#
+# Keys: the shell (`bash`), the file quartet (`read_file`, `write_file`,
+# `edit_file`, `delete_file`), `search`, `delegate`, the task board, the scratch
+# state plane (`save_state` / `get_state` / `list_state` / `delete_state`), and
+# `get_environment`. The authoritative list is
+# `crates/stella-tools/src/catalog.rs` — never a number written in prose.
+# -----------------------------------------------------------------------------
+[tools]
+delegate = "off"      # one tool
+scratch = "off"       # one whole group
+"*" = "on"            # the wildcard — quoted, because bare * is not a TOML key
+
+
+# -----------------------------------------------------------------------------
+# HOOKS — lifecycle shell-outs
+#
+# THE ONE BLOCK THAT DOES NOT FOLLOW LAST-WINS: hooks CONCATENATE across scopes.
+# Any scope may add a gate; no scope can remove another's.
+#
+# Event keys are PascalCase, matching what you already type in settings.json.
+# `matcher` globs the TOOL name for the two ToolUse events; SessionStart ignores
+# it and runs every action. `timeoutMs` is camelCase, defaults to 60_000, and is
+# hard-capped at 600_000. The command receives the event payload as JSON on
+# stdin.
+#
+# TRUST: project-scope hooks are NOT loaded unless STELLA_PROJECT_HOOKS=1 or
+# STELLA_TRUST_PROJECT=1. A hook is arbitrary code execution on `git clone`.
+# -----------------------------------------------------------------------------
+[[hooks.SessionStart]]
+  [[hooks.SessionStart.hooks]]
+  type = "command"
+  command = "./scripts/session-context.sh"
+
+[[hooks.PreToolUse]]
+matcher = "delegate"
+  [[hooks.PreToolUse.hooks]]
+  type = "command"
+  command = "./scripts/audit-spawns.sh"
+  timeoutMs = 5000
+
+[[hooks.PostToolUse]]
+matcher = "write_file"
+  [[hooks.PostToolUse.hooks]]
+  type = "command"
+  command = "./scripts/fmt-on-write.sh"
+
+
+# -----------------------------------------------------------------------------
+# MCP — external tool servers
+#
+# `[mcp.servers.<name>]` is the whole of `.stella/mcp.toml` under a prefix.
+#
+# HEADS UP: this block PARSES but is NOT YET CONSUMED — MCP servers still load
+# from `.stella/mcp.toml`. Stella says so loudly at startup rather than dropping
+# them silently. `registry_url` below IS live.
+#
+# TRUST: MCP servers sit on the same code-execution boundary as hooks; project
+# scope needs STELLA_TRUST_PROJECT=1.
+#
+# CREDENTIAL SCRUB: a stdio child inherits NO ambient environment except the
+# keys in its own `env` table, plus PATH (the one exception, without which
+# npx/uvx/docker could not resolve). An ANTHROPIC_API_KEY in your shell can
+# never reach an MCP subprocess.
+# -----------------------------------------------------------------------------
+[mcp]
+# Base URL of an MCP Server Registry API. Unset = the official registry.
+registry_url = "https://registry.modelcontextprotocol.io"
+
+[mcp.servers.filesystem]
+transport = "stdio"
+cmd = "mcp-server-filesystem"
+args = ["--root", "/workspace"]
+env = { LOG_LEVEL = "info" }
+# Explicit opt-in for Best-of-N candidate sharing. NEVER inferred from the
+# server's own `read_only_hint`, which is untrusted and cannot tell "reads an
+# external system" (safe across candidates) from "reads the local tree" (would
+# read stale bytes from an isolated snapshot).
+candidate_safe = false
+
+[mcp.servers.github]
+transport = "http"
+url = "https://mcp.example.com/mcp"
+headers = { Authorization = "Bearer ${GITHUB_MCP_TOKEN}" }
+
+
+# -----------------------------------------------------------------------------
+# CONTEXT — the retrieval and adaptive-context planes
+#
+# Whole-block last-wins across scopes (not per-field). Enums are "loud": an
+# unrecognized value is a hard parse error, never a silent fallback.
+# -----------------------------------------------------------------------------
+[context.lifecycle]
+# Ships ON. Setting it false restores every pre-adaptive-context behavior. Every
+# other block here EXCEPT `retrieval` is ignored while this is off.
+enabled = true
+
+[context.learning]
+# off (default) | record_only | advisory
+#   off         — no mining, no proposal induction, no efficacy learning
+#   record_only — capture observations and outcomes, but never select or
+#                 promote inferred records
+#   advisory    — governed inferred advisory use
+mode = "off"
+
+[context.governance]
+# solo (default) | team | regulated
+mode = "solo"
+
+[context.promotion.inferred_directive]
+min_observations = 3
+min_distinct_tasks = 3
+auto_activate_at_confidence = 85          # 0..=100
+# An inferred directive can never START blocking.
+initial_enforcement = "advisory"          # advisory | blocking
+
+[context.promotion.blocking_directive]
+# A blocking directive always requires explicit human confirmation. Do not turn
+# this off lightly.
+requires_explicit_confirmation = true
+
+[context.efficacy]
+min_attributable_uses = 5
+not_helpful_ratio_threshold = 0.8         # 0.0..=1.0
+min_attribution_confidence = 80           # 0..=100
+receipt_display_min_attribution_confidence = 80
+
+[context.retention]
+raw_observation_days = 30
+proposal_days = 30
+inferred_directive_review_days = 180
+
+# UNLIKE the rest of this block, retrieval is LIVE regardless of
+# `lifecycle.enabled` — it configures the retrieval plane that already runs for
+# every user. Every value below is the real shipped constant, so a workspace
+# configuring nothing behaves identically.
+#
+# Out-of-range values are CLAMPED, not rejected: this is a file a person edits,
+# and failing a turn over a typo in a tuning knob is a worse answer.
+[context.retrieval]
+max_frames = 5
+max_tokens = 1200
+rrf_k = 60.0                  # higher flattens the ranking
+recency_weight = 0.25         # damped on purpose: at parity the newest rows
+                              # take every slot no matter what was asked
+mmr_lambda = 0.7              # relevance vs. diversity
+min_coverage = 0.3
+coverage_topk = 5
+max_vector_seeds = 32
+lexical_limit = 64
+mmr_candidate_multiple = 3
+
+# OFF by default, deliberately: this is the one knob here that changes WHICH
+# memories a turn can recall rather than how they are ordered. An approximate
+# index considers a subset, so a frame the exact scan would find can be missed.
+# It also does nothing until `stella memory index` has built one.
+ann_enabled = false
+ann_probes = 8
+
+# ON by default (#2289). With it off, `max_frames` is a cap that always fills,
+# so a small workspace surfaces the same frames on every prompt no matter what
+# was asked. `false` is the escape hatch back to that padding behavior.
+require_evidence = true
+
+# A/B recall control: every Nth turn runs with recall suppressed so recall's
+# value is readable from the two arms. 0 (and 1) disable it entirely.
+ab_recall_rate = 0
+
+[context.steering]
+# The steering plane's master switch (#3243). Ships ON. Setting it false
+# withholds every non-prefix injection — recalled frames, the volatile record
+# channel, and skills — and leaves the byte-stable system prefix untouched,
+# which is what makes it a clean control arm rather than a different agent.
+#
+# Precedence: anyone may turn steering OFF; only the org may prevent it being
+# turned back on.
+enabled = true
+
+
+# -----------------------------------------------------------------------------
+# CONTEXT PROVIDERS — third-party CGP context sources
+#
+# The map key is the host's routing AND consent key, so renaming an entry makes
+# it a new provider whose consent must be granted afresh.
+#
+# Two properties are not optional: conformance is an ADMISSION GATE (a provider
+# is run through the protocol's conformance suite before it is registered, so
+# one that lies about token cost or serves uncited frames never serves a turn),
+# and egress is CONSENTED, never assumed. An untrusted project scope
+# contributes nothing here.
+# -----------------------------------------------------------------------------
+[context_providers.acme-docs]
+transport = "stdio"           # stdio | http
+command = "acme-context-server"
+args = ["--index", "./docs"]
+enabled = true
+
+[context_providers.corp-kb]
+transport = "http"
+url = "https://kb.corp.example/cgp"
+enabled = false
+# Hosts this provider may send workspace content to. Empty = no egress.
+egress_consent = ["kb.corp.example"]
+consent_grantor = "security@corp.example"
+
+
+# -----------------------------------------------------------------------------
+# UI
+# -----------------------------------------------------------------------------
+[ui]
+# stella-dark (default) | stella-light. An unrecognized slug falls back to the
+# default rather than failing.
+theme = "stella-dark"
+
+
+# -----------------------------------------------------------------------------
+# PLUGINS — the per-plugin retraction switches
+#
+# `"<plugin-name>" = "on" | "off"`, where the name is what `stella plugin list`
+# prints. Installed plugins are on by default; "off" retracts one without
+# uninstalling it.
+#
+# Plugins themselves are installed with `stella plugin install <dir>`, from
+# `.stella/plugins/` (this workspace) or `~/.stella/plugins/` (every
+# workspace) — not declared here. This table only switches them.
+# -----------------------------------------------------------------------------
+[plugins]
+vera = "on"
+some-noisy-observer = "off"
+
+
+# -----------------------------------------------------------------------------
+# REWARD — what a finished turn's verdict is worth as a training label (#1043)
+#
+# *** NOTHING CONSUMES THIS TODAY (#4224). *** These keys parse and resolve into
+# a `RewardPolicy`, but the code that applied that policy to a finished turn's
+# verdict was deleted with the staged pipeline (#3865). A reward label is a
+# verdict, and verdicts are now a wrapper plugin's to report — so setting a
+# weight here changes nothing until that path is rebuilt or the block is
+# retired. Documented rather than hidden, because a config block that silently
+# steers nothing is worse than one that says so.
+#
+# Carries no credential or egress authority, so no trust restoration: a project
+# setting a weight is stating an opinion about its own evidence, not borrowing
+# permission.
+#
+# RETIRED: `verifier_weight` priced a model verifier's opinion against a test's
+# observation. No rung carries that magnitude any more, so a label is priced by
+# `deterministic_weight` alone.
+# -----------------------------------------------------------------------------
+[reward]
+deterministic_weight = 1.0    # magnitude of a deterministic pass or fail
+per_step = 0.02               # subtracted per model call
+per_usd = 0.5                 # subtracted per USD spent
+per_revision = 0.1            # subtracted per verification round beyond the first
+
+
+# -----------------------------------------------------------------------------
+# SELF-DRIVING — the autonomous loop's own configuration
+#
+# Here rather than in a file of its own because everything configurable about
+# stella comes from stella.toml: a second config system is a second place to
+# look, and the one thing worse than a setting nobody can find is two settings
+# that disagree.
+#
+# This whole block is strict — an unknown key is a load error, not a warning.
+# -----------------------------------------------------------------------------
+[self_driving.attribution]
+# What the loop appends to what it writes. Source-tracked so it travels with the
+# repository, and rewritable by an installed plugin — a downstream distribution
+# signs in its own name, and that is configuration rather than a fork.
+commit = "created by stella*"
+pull_request = "created by stella*"
+issue = "created by stella*"
+issue_comment = "created by stella*"
+# A prefix that does not end in `/` is used verbatim rather than corrected:
+# some teams namespace with `-`, and silently rewriting your choice is worse
+# than honouring an unusual one.
+branch_prefix = "stella/"
+# Prefixes the PR TITLE, so an autonomous PR is distinguishable in the list,
+# where a maintainer actually triages. Deliberately NOT applied to commit
+# messages: those follow Conventional Commits, the scope is load-bearing, and a
+# prefix in front of it would break the convention.
+title_prefix = "stella self-driving:"
+
+[self_driving.merge]
+# Checks that never block a merge, whatever their history. The operator's escape
+# hatch: automatic detection needs several commits of evidence, and somebody who
+# already knows their deploy provider is suspended should not have to wait for
+# the loop to infer it.
+ignore_checks = ["Vercel", "license/cla"]
+# Consecutive failing base commits after which a check is treated as unwinnable.
+# Default 3. `0` disables the inference, leaving only `ignore_checks`.
+#
+# Why this exists: a required check fails identically whether the code is wrong
+# or the billing account is suspended, and only one of those is fixable by a
+# pull request.
+stuck_after = 3
+
+[self_driving.verify]
+# The command that proves a change, run in the work worktree. Absent = auto-
+# detect from the project's own tooling.
+#
+# A repository whose remote checks cannot go green — a suspended account, an
+# exhausted quota — still has a test suite. Running it here is a weaker signal
+# than a clean CI run and a far stronger one than nothing.
+command = "make gate"
+# Seconds before the command is abandoned. Default 1800 — long enough for a
+# monorepo suite, short enough that a wedged process does not hold the loop
+# overnight.
+timeout_secs = 1800
+
+[self_driving.doctrine]
+# How the loop decides, where two operators would decide differently. These are
+# judgement calls about YOUR team's norms, not facts about the code.
+
+# file_and_adopt (default) | file_and_wait | ignore — what to do about breakage
+# the loop did not cause. A red base blocks this loop exactly as hard as it
+# blocks its author, so a loop that files and waits has handed its throughput to
+# somebody else's response time. `ignore` exists for completeness and is
+# deliberately not the default: a system that notices breakage and says nothing
+# is the worst of the three.
+foreign_breakage = "file_and_adopt"
+
+# defer (default) | claims_only | proceed — how much weight another actor's
+# apparent work carries.
+contention = "defer"
+
+# Whether an escalated PR parks the loop (false, the default) or is abandoned so
+# it can carry on. A PR a human must look at is usually a sign the loop should
+# stop making more of them.
+abandon_escalated = false
+
+[self_driving.triage]
+# The vocabulary the loop places issues in. Here rather than in the tracker
+# manifest because these are YOUR judgements about your own backlog — which
+# labels mean urgent, which mean "not ours" — not how the tracker spells a
+# concept every tracker has.
+#
+# Declaring any one of these REPLACES that list wholesale rather than adding to
+# it: a partial override would leave you unable to remove a built-in you
+# disagree with. Every field defaults, so writing none of it gets a working loop
+# on GitHub's common conventions.
+priorities = ["P0", "P1", "P2", "P3"]           # most urgent first
+defect_kinds = ["bug", "triage"]                # "this loop works this"
+excluded_kinds = ["enhancement", "feature", "documentation", "question"]
+
+
+# -----------------------------------------------------------------------------
+# ISSUES — the active tracker
+#
+# Two fields and no more, deliberately. WHICH tracker is a stella-level decision
+# and belongs here; HOW that tracker spells things is the tracker's own
+# vocabulary and belongs in its manifest, which this points at. Putting the
+# spellings here too would leave a customer with two trackers nowhere to put the
+# second one's words.
+# -----------------------------------------------------------------------------
+[issues]
+provider = "github"
+# Path to the provider's manifest, relative to the workspace root. Absent
+# resolves to `.stella/issues/<provider>.toml`, and an absent FILE yields the
+# built-in defaults — so a workspace that has configured nothing still works.
+manifest = ".stella/issues/github.toml"
+
+
+# -----------------------------------------------------------------------------
+# AUTHORITY — ***MANAGED SCOPE ONLY***
+#
+# Honored ONLY from the org-managed settings file. Present in a user or project
+# file it is ignored, because the containing file IS the policy source.
+#
+# It is a CEILING, not a default: computed from the managed snapshot alone, so
+# no later fold — including an explicitly trusted project — can raise it.
+#
+# This is the block that makes the whole scope model safe, and it is the ONE
+# strict object in the schema: a misspelled ceiling fails loudly rather than
+# silently not applying.
+#
+# Managed file location:
+#   macOS   /Library/Application Support/stella/settings.json
+#   else    /etc/stella/settings.json
+#   override with STELLA_MANAGED_SETTINGS
+#
+# Left commented out because THIS file declares `scope = "project"`, where the
+# block would do nothing. Uncomment it in the managed file.
+# -----------------------------------------------------------------------------
+# [authority]
+# project_prompts = "off"               # may a repo replace an agent's prompt?
+# project_custom_tools = "off"          # may a repo's .stella/tools/*.toml load?
+# media_requires_host_approval = "on"
+
+
+# -----------------------------------------------------------------------------
+# ENTERPRISE TELEMETRY — ***MANAGED SCOPE ONLY***
+#
+# Community/default Stella sends NO telemetry anywhere (architectural invariant
+# 3). The sole additional egress is an explicitly enrolled Oxagen Enterprise
+# managed mode, where a signed org-managed document may authorize a minimal
+# operational rollup to one exact allowlisted HTTPS sink.
+#
+# Prompts, paths, tool payloads and results, reasoning, errors, git state,
+# memories, rules and local identifiers are NEVER exportable — enforced by an
+# allowlist and a sentinel harness in `crates/stella-store/src/content_free.rs`,
+# not by convention.
+#
+# Assigned from the managed snapshot alone, bypassing the scope overlay: the
+# enrollment is what the ORG said, and a project file offering one would be
+# forging authority. Left commented out for that reason.
+# -----------------------------------------------------------------------------
+# [enterprise_telemetry]
+# ...enrollment document, as supplied by your organization

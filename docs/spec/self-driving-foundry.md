@@ -59,11 +59,11 @@ each row is a dependency of a later section.
 | Match configuration and artifacts (seats, attempts, `stella-events.jsonl` per trial, `result.json`, reward at `verifier_result.rewards.reward`) | `arenabench/arenabench/{config,model,runner,telemetry}.py` | Shipped. |
 | Paired statistical comparison with guard metrics and a `GuardBlocked` verdict | `crates/stella-core/src/comparison.rs` + `self_tuning::select_winner` | Shipped, deterministic, unused by arenabench (§5.4). |
 | Byte-exact model-call reconstruction, digest-verified | `crates/stella-store/src/reconstruct.rs` | Shipped. |
-| Full-transcript trace capture with reward labels | `crates/stella-cli/src/trace.rs` (#1042), `crates/stella-pipeline/src/reward.rs` (#1043) | Shipped; `trace_capture` defaults off, so no corpus accumulates. |
+| Full-transcript trace capture with reward labels | `crates/stella-cli/src/trace.rs` (#1042); the reward-labelling half was `crates/stella-pipeline/src/reward.rs` (#1043) | **Half gone.** Trace capture ships and still defaults off, so no corpus accumulates. Reward labelling went with `stella-pipeline` (#3865) — a captured trace now carries no reward label, so this row cannot be read as "shipped". |
 | SFT dataset exporter with named acceptance predicate and manifest | `stella dataset export`, `crates/stella-cli/src/dataset_cmd.rs` (#872) | Shipped; predates reward labels and transcript reconstruction — carries neither. |
 | Flip proof, tamper exclusion, verdict evidence | `crates/stella-protocol/src/proof.rs`, `ladder.rs`; doc:witness-protocol, doc:verification-gate | Shipped. |
 | Local/OpenAI-compatible serving of arbitrary weights | reserved `local` provider (`crates/stella-model/src/factory.rs`), custom providers in `settings.json` | Shipped. |
-| Event-stream replay and equivalence checking | `crates/stella-pipeline/src/replay.rs`; doc:replay-golden-trajectories | Shipped (stream conformance, not model-response replay). |
+| Event-stream replay and equivalence checking | was `crates/stella-pipeline/src/replay.rs`; doc:replay-golden-trajectories | **Gone** (#3865). Shipped as stream conformance, never as model-response replay; the committed `docs/wire/` schema gate is all that survives. |
 | Closed-loop playbook prose | `docs/playbooks/self-improving-model.html` | Written; not code. |
 
 Gaps, in one line each: no manifest; no generation layer above cycles; no
@@ -453,10 +453,12 @@ an answer" is a property of the pipeline, not a slogan.
 Two exporter upgrades fall out immediately (they are Phase 0, §12,
 because they are valuable independent of campaigns):
 
-- `stella dataset export` gains `reward` (from
-  `stella-pipeline/src/reward.rs`) and `prompt_messages` (from
+- `stella dataset export` gains `reward` and `prompt_messages` (from
   `Store::reconstruct_call`, gated on `is_verified()`), closing the two
-  gaps it shipped with.
+  gaps it shipped with. **The `reward` half now needs a source:** it was to
+  come from `stella-pipeline/src/reward.rs`, deleted in #3865. A reward label
+  is a verdict, and verdicts are now a verification plugin's to report, so
+  this reads a plugin's evidence rather than a host module.
 - A **preference-pair emitter**: two twins attempting the same task in
   the same generation with divergent rewards are a natural DPO pair —
   same prompt, chosen/rejected trajectories, plus the paired metadata

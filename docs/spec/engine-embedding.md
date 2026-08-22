@@ -57,7 +57,7 @@ flowchart TB
         MODEL["stella-model<br/>provider adapters + parity matrix"]
         TOOLS["stella-tools<br/>sandboxed tool registry"]
         STORE["stella-store<br/>sessions, telemetry, drift samples"]
-        PIPE["stella-pipeline<br/>plan → witness → verify → verdict"]
+        PLUG["stella-plugin<br/>plugin manifest + wrapper wire contract<br/>(the socket itself is stella-runtime::wrapper)"]
         MCP["stella-mcp"]
         CTX["stella-context / stella-graph"]
     end
@@ -68,13 +68,13 @@ flowchart TB
     end
 
     CLI --> RUNTIME
-    CLI --> PIPE
+    CLI --> PLUG
     CLI --> CORE
     SERVE --> ENGINE
-    RUNTIME --> MODEL & TOOLS & STORE & MCP & CTX & PIPE
+    RUNTIME --> MODEL & TOOLS & STORE & MCP & CTX & PLUG
     ENGINE --> CORE
     RUNTIME --> CORE
-    MODEL & TOOLS & STORE & PIPE & MCP & CTX --> PROTO
+    MODEL & TOOLS & STORE & PLUG & MCP & CTX --> PROTO
     CORE --> PROTO
 ```
 
@@ -160,9 +160,11 @@ Wire contract artifacts already exist: `docs/wire/serveframe.schema.json`,
 ### Mode C — the community CLI (the reference host)
 
 `stella` itself is Mode A taken to its richest conclusion: the CLI is the
-one host that wires *everything* — the staged pipeline (including its
-witness/verify stages), memory, skills, MCP, fleet, the deck. Treat it as the
-living reference implementation for what a full embedding looks like; the parity matrix below is what keeps the
+one host that wires *everything* — installed wrapper plugins over the wrapper
+socket (`stella run --pipeline <plugin-id>`; the built-in staged pipeline this
+line used to name was deleted in #3865), memory, skills, MCP, fleet, the deck.
+Treat it as the living reference implementation for what a full embedding looks
+like; the parity matrix below is what keeps the
 API surface from quietly falling behind it.
 
 ---

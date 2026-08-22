@@ -35,8 +35,10 @@ a clock.
 | 5 | Selection / lifecycle | `four_class_certification` and `time_lapse_certification` — `crates/stella-core/src/records/tests.rs:462`, `:709` | none — landed in #2306 |
 
 So exactly one seam needs a test double, and the double already exists:
-`ScriptedProvider` appears in 42 files across `stella-core`, `stella-pipeline`,
-`stella-engine` and `stella-cli` (canonically
+`ScriptedProvider` appeared in 42 files across `stella-core`, `stella-pipeline`,
+`stella-engine` and `stella-cli` when this was measured — `stella-pipeline` has
+since been deleted (#3865), so the count is lower and the seam is unchanged
+(canonically
 `crates/stella-core/src/subagent/tests.rs:36`). Replaying canned reflection
 outputs per turn **is** the no-model harness.
 

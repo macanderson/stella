@@ -427,6 +427,34 @@ fn unknown_toml_roots_are_flagged() {
     );
 }
 
+/// `[plugins]` is read by the loader, so it must not be reported as a typo.
+///
+/// The third instance of the omission `unknown::TOML_ROOT_FIELDS` already
+/// documents twice — `[seats]` (#3908) and `[self_driving]`/`[issues]` — and it
+/// bites hardest here: `plugins.<name> = "off"` is the per-plugin retraction
+/// switch, so the operator most likely to hit the warning is the one switching
+/// a plugin OFF, being told the section they used to do it is misspelled.
+#[test]
+fn the_plugin_retraction_table_is_a_recognized_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "stella.toml", "[plugins]\nvera = \"off\"\n");
+
+    // It really is read: the switch survives into `Settings`.
+    let settings = load_toml(&path, ConfigScope::Project).expect("should load");
+    assert_eq!(
+        settings.plugins.get("vera"),
+        Some(&Toggle::Off),
+        "the loader lowers [plugins] into Settings"
+    );
+
+    // ...so the walker must not call it a typo.
+    assert_eq!(
+        super::unknown::unknown_toml_keys_in(&path),
+        Vec::<String>::new(),
+        "a section the loader reads was reported as an unrecognized key"
+    );
+}
+
 /// The two vocabularies are genuinely different, and each must reject the
 /// other's spelling — otherwise the warning would bless a key that configures
 /// nothing in the format actually being read.
@@ -642,6 +670,57 @@ fn the_shipped_reference_config_loads_with_no_unrecognized_keys() {
     // It declares scope = "project", so it must load as one — and refuse to
     // load as anything else.
     load_toml(&path, ConfigScope::Project).expect("reference config should load");
+}
+
+/// `stella.example.toml` is the file people copy, so it gets the strictest
+/// check in this module: it must load, use no key stella ignores, and — unlike
+/// `stella.today.toml` — carry **every** root section the document has.
+///
+/// The completeness half is the point. `stella.today.toml` is a design-era
+/// artifact and was missing five sections outright (`workspace`, `plugins`,
+/// `self_driving`, `issues`, `enterprise_telemetry`) while the repository's own
+/// `stella.toml` pointed at it as the "full reference". A reference that
+/// silently omits the section you need is how an operator concludes a feature
+/// does not exist.
+///
+/// A section may be *commented out* with a reason — `[authority]` and
+/// `[enterprise_telemetry]` are managed-scope-only and would do nothing in a
+/// project file — so the check reads the raw text rather than the parsed
+/// document. That is deliberate: the obligation is that the example **shows**
+/// every section, not that it sets one.
+#[test]
+fn the_copy_paste_example_covers_every_root_section() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("stella.example.toml");
+    assert!(
+        path.exists(),
+        "example config missing at {}",
+        path.display()
+    );
+
+    let text = std::fs::read_to_string(&path).expect("example config should be readable");
+
+    for section in super::unknown::TOML_ROOT_FIELDS {
+        assert!(
+            text.contains(&format!("[{section}")),
+            "stella.example.toml never mentions the `[{section}]` section. Every root \
+             section of `TomlConfig` must appear — set, or commented out with the reason \
+             it would do nothing here."
+        );
+    }
+
+    // No key stella does not read.
+    assert_eq!(
+        super::unknown::unknown_toml_keys_in(&path),
+        Vec::<String>::new(),
+        "the copy-paste example uses keys stella does not read"
+    );
+
+    // And it is a working project config, not just well-formed TOML. This also
+    // exercises `validate_project_secrets`: a literal api_key in the example
+    // would be refused here, which is the mistake a copied file propagates.
+    load_toml(&path, ConfigScope::Project).expect("example config should load as a project");
 }
 
 // ── Migration ───────────────────────────────────────────────────────────────

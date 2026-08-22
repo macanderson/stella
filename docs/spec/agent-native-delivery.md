@@ -762,7 +762,7 @@ P4 is the phase that pays for the document. P0–P3 are the substrate it needs.
 |---|---|
 | `Issue`, `IssueState`, `IssueClass`, `ResidueItem` | `stella-protocol` (wire types) |
 | Residue detection Pass 1 + Pass 2, policy evaluation, discharge rules | `stella-core` (pure, proptestable, no I/O) |
-| The gate stage, Pass 3's verifier call | `stella-pipeline`, beside `verify` and `witness` |
+| The gate stage, Pass 3's verifier call | **Homeless.** This row named `stella-pipeline`, deleted in #3865 — a home has to be picked before it can be built: a wrapper plugin's own side of the socket, or a `stella-cli` check over the turn's transcript. Same open question as `doc:backlog-self-driving`'s residue-gate row. |
 | Provider manifests, transports, the `exec` adapter | `stella-tools`, as new code — no issue surface exists to generalize |
 | `[delivery]`, `.stella/issues/*.toml` discovery | `crates/stella-cli/src/settings` |
 | Issue claims | `stella-fleet` ledger |

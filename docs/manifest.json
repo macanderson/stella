@@ -397,19 +397,10 @@
         1,
         2,
         3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        12,
-        13
+        4
       ],
       "status": "living",
-      "title": "The journey of a prompt \u2014 full pipeline mode, in plain language"
+      "title": "The journey of a prompt \u2014 the raw loop, and what a wrapper plugin adds"
     },
     "plugin-completion-plan": {
       "path": "docs/spec/plugin-completion-plan.md",

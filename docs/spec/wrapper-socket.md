@@ -180,8 +180,10 @@ declared role instead of being described as a `judge`.
 ### `judge` — synchronous, host-run, total
 
 Evidence in, verdict out. §4. No arm escalates to a model — the same property
-`ladder_decision` already has (`crates/stella-pipeline/src/verify.rs`), which is
-why porting it is a re-home rather than a rewrite.
+`ladder_decision` had (`crates/stella-pipeline/src/verify.rs`, deleted in
+#3865), which is why porting it is a re-home rather than a rewrite. The property
+is the thing being ported; the code is no longer here to copy, so a plugin
+implements it from this contract.
 
 ### `again?` — synchronous, host-run, total
 
@@ -223,8 +225,9 @@ The design rules that make it passable:
   constraint #3387 answered for `TurnCapabilities` with owned slots, applied
   one layer out.
 - **The candidate worktree crosses as a serializable handle, not as a port.**
-  `CandidateWorkspacePort` + `CandidateWorkspace` are 19 methods returning
-  borrowed trait objects (`crates/stella-pipeline/src/ports/workspace.rs:94-335`).
+  `CandidateWorkspacePort` + `CandidateWorkspace` were 19 methods returning
+  borrowed trait objects (`crates/stella-pipeline/src/ports/workspace.rs:94-335`,
+  as measured before the crate's deletion in #3865).
   The socket takes the minimum serializable subset — create, root path,
   run-test, seal, adopt, remove — and the **host** fences filesystem access.
   Tamper snapshotting stays host-side, which `TamperPolicy::ArtifactIdentity`

@@ -438,7 +438,7 @@ pub(super) fn unknown_keys_in(path: &Path) -> Vec<String> {
 /// `allowed_models` → `models.allowed`) and adds `meta`. Sharing one list
 /// would make a JSON-only key look valid in TOML and vice versa, which is the
 /// exact confusion this pass exists to prevent.
-const TOML_ROOT_FIELDS: &[&str] = &[
+pub(super) const TOML_ROOT_FIELDS: &[&str] = &[
     "meta",
     "run",
     "workspace",
@@ -471,6 +471,18 @@ const TOML_ROOT_FIELDS: &[&str] = &[
     // change, or this walker tells people their working config is a typo.
     "self_driving",
     "issues",
+    // `[plugins]` — the per-plugin retraction switches
+    // (`TomlConfig::plugins`). The THIRD instance of the omission the two
+    // comments above record, and the one that bites hardest: the operator most
+    // likely to write this section is the one switching a plugin OFF, and the
+    // walker told them the section they used to do it was a typo while the
+    // loader was reading it correctly the whole time.
+    //
+    // Twice was a pattern; three times is a missing guard. See
+    // `toml_root_vocabulary_is_total` in `super::completeness`, which now
+    // destructures `TomlConfig` exhaustively so a root section added without an
+    // entry here stops the crate compiling instead of shipping this warning.
+    "plugins",
 ];
 
 const META_FIELDS: &[&str] = &["schema_version", "scope"];
@@ -485,12 +497,27 @@ const TOML_MCP_FIELDS: &[&str] = &["registry_url", "servers"];
 /// `[agents]` — the flat engine fields plus the four agent tables, which live
 /// in the same table because the TOML shape flattens
 /// `agent_engine_config.agents.<name>` up one level.
-const TOML_AGENTS_FIELDS: &[&str] = &[
+pub(super) const TOML_AGENTS_FIELDS: &[&str] = &[
     "default_model",
     "auto_mode",
     "effort_auto",
     "reasoning_auto",
     "headless_scope_bypass",
+    // The three engine budgets. Present in `ENGINE_ROOT_FIELDS` since they
+    // shipped, and absent here until the reference config was written against
+    // the struct rather than against this list — so the SAME knob was accepted
+    // in `settings.json` and reported as a possible typo in `stella.toml`.
+    //
+    // That is the worst shape this divergence can take. The two vocabularies
+    // are deliberately separate (a JSON-only key must not look valid in TOML
+    // and vice versa), which makes every intentional difference load-bearing
+    // and every accidental one invisible: nothing distinguishes "renamed on
+    // purpose" from "forgotten" except a human reading both lists.
+    // `AgentsSection` is now destructured against this one in
+    // `super::completeness`, so the compiler makes that distinction instead.
+    "model_timeout_secs",
+    "compaction_budget_tokens",
+    "tool_result_horizon_steps",
     "default",
 ];
 

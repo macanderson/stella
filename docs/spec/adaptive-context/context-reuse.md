@@ -16,8 +16,9 @@ status: vendored
   Rev:    c5fb2fec5820494ab6921dc088c03d7f43301fa7
 
   This is the normative contract cited by 23 rustdoc comments across five
-  crates (stella-cli, stella-context, stella-graph, stella-pipeline,
-  stella-protocol). It lived only upstream, so every one of those citations
+  crates as counted at the time (stella-cli, stella-context, stella-graph,
+  stella-pipeline, stella-protocol; the fourth was deleted in #3865, so the
+  count is lower today). It lived only upstream, so every one of those citations
   dangled: `cargo doc` rendered them as plain text. Vendoring makes them
   resolve offline for a reader working without a network.
 

@@ -1,6 +1,13 @@
 # =============================================================================
 # stella.next.toml
 #
+# *** DO NOT COPY THIS FILE INTO A PROJECT. ***
+#
+# It describes config that DOES NOT EXIST. Blocks marked NEW parse as
+# unrecognized keys and configure nothing. The file you want is
+# `stella.example.toml` at the repository root — every section stella actually
+# reads, commented, and gate-checked against the loader so it cannot drift.
+#
 # The config shape AFTER the five features in DESIGN.md are built. This is a
 # TARGET, not a plan of record — every block marked NEW needs the
 # corresponding phase in DESIGN.md before it does anything.

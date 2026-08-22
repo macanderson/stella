@@ -1,6 +1,14 @@
 # =============================================================================
 # stella.today.toml
 #
+# *** NOT THE COPY-PASTE REFERENCE — use `stella.example.toml` at the repo
+# root. *** This file is a design-era artifact: it records the phase-1
+# transliteration and the reasoning behind it, and it is deliberately
+# INCOMPLETE as a reference. It has never carried `[workspace]`, `[plugins]`,
+# `[self_driving]`, `[issues]` or `[enterprise_telemetry]`, so an operator
+# reading it as "everything stella reads" concludes five features do not exist.
+# `stella.example.toml` covers every root section and is gate-checked for it.
+#
 # Every knob Stella ACTUALLY READS as of 2026-07, rendered in the proposed
 # single-file TOML shape. This is the migration target for phase 1: a pure
 # transliteration, no new semantics, no invented keys.
