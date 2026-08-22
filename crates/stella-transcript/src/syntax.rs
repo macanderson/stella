@@ -24,6 +24,26 @@
 //! lexer, three palettes — and no surface can differ on *classification* any
 //! more, only on hue.
 //!
+//! ## The grammar, and why it landed here too (#4283)
+//!
+//! The lexer that arrived by those two moves was hand-written, knew six
+//! languages, and guessed inside them. #4283 asked whether to replace it with a
+//! grammar-backed one and — the part that mattered — *where* such a thing may
+//! land. The answer was the same as above, for the same reason: here, so all
+//! three surfaces gain it at once. A deck-local highlighting crate would have
+//! been a fourth copy of a rendering decision this tree has already
+//! de-duplicated twice.
+//!
+//! What shipped is tree-sitter in the private `grammar` module, covering the
+//! eight languages whose grammars this workspace already compiles for
+//! `stella-graph`, and the hand-written scans in `lang` surviving for the
+//! three with no resident
+//! grammar (Markdown, TOML, JSON). syntect was declined: it loads grammar and
+//! theme assets at runtime, which invariant #2 forbids in this layer. The two
+//! token classes only a grammar can produce — [`Tok::Type`] and
+//! [`Tok::Function`] — grew the shared vocabulary, so all three palettes moved
+//! in that same change.
+//!
 //! ## Contract
 //!
 //! Carried over verbatim from the original, because three surfaces now depend
@@ -36,6 +56,7 @@
 //! - **Panic-free.** An unterminated string runs to end of line; a trailing
 //!   lone backslash cannot step past the end.
 
+mod grammar;
 mod lang;
 
 pub use lang::{Highlighter, Lang, lang_from_ext, lang_from_fence, lang_from_path, tokenize};
@@ -59,6 +80,22 @@ pub enum Tok {
     Number,
     /// Line comments. JSON has none; the other lexers do.
     Comment,
+    /// Type positions — a declared type, a primitive, a type parameter.
+    ///
+    /// Grammar-only, and one of the two reasons the grammar was worth taking
+    /// (#4283): a keyword table sees `Duration` and an ordinary variable as the
+    /// same identifier, so the hand-written scan could never have produced this
+    /// class. Languages still lexed by hand (Markdown, TOML, JSON) never emit
+    /// it, which is not a gap — none of the three has type syntax.
+    Type,
+    /// A function or method *name* — the one being declared, or the one being
+    /// called.
+    ///
+    /// The other grammar-only class. It earns a palette entry because in Java,
+    /// C and Go most lines are declarations or calls, and without it the name
+    /// that says what the line *does* wears the same tone as every local around
+    /// it.
+    Function,
 }
 
 /// The tagged runs for one source line: consecutive text slices, each with an
