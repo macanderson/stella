@@ -311,3 +311,131 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
         );
     }
 }
+
+/// **The witness for #4155's render half.** A change the emitter *measured* but
+/// could not attach a patch for states its size, and invents no diff.
+///
+/// The two facts arrive independently — a producer builds each change from a
+/// name-status listing and then attaches numstat and diff text in two separate
+/// calls, either of which can fail — so [`FileState::delta_at`] can answer
+/// `Some((added, removed))` on a `seq` whose [`FileState::diff_at`] answers
+/// `None`. The fixture below is exactly that shape, and the assertion at the
+/// top of the test pins it: if the two ever resolved together, this test would
+/// be watching the ordinary case and proving nothing.
+///
+/// The metric column therefore gates on the *measurement*, not on the text
+/// (`render/entry.rs`, `if let Some((added, removed)) = inline_delta`). Both
+/// halves of that expression are asserted here, because the two known ways to
+/// get it wrong fail different halves:
+///
+/// * The pre-#4155 form — `if inline.is_some()` with `unwrap_or((0, 0))` —
+///   fails the first half: `inline` is `None` here, so the row rendered no size
+///   at all despite knowing one. (Its other defect, a fabricated `+0 −0` over a
+///   real edit, is the one #4156 removed from the head row.)
+/// * A "fix" that reached for the patch it does not have — falling back to the
+///   file's `latest_diff`, or recounting a rendered hunk — fails the second: no
+///   diff ground may be painted for a mutation with no diff.
+///
+/// The third assertion is the body. A successful file tool's own prose is never
+/// a transcript body (`body_is_tool_prose` in `render/entry.rs`): an `edit_file`
+/// returns a sentence restating the path with a byte offset and a truncated
+/// hash, and a row that falls back to it reads as though *that* were the report.
+/// So the honest row here is the head, its size, and nothing else.
+///
+/// Worth pinning rather than shrugging at: the expression already survived one
+/// silent near-revert, when #4198 moved the tool block to a new path carrying a
+/// pre-fix copy. Git reported no conflict, because the two versions were never
+/// at the same path — it was caught by hand-diffing the decision points.
+#[test]
+fn a_measured_change_with_no_patch_states_its_size_and_invents_no_diff() {
+    let files = vec![FileState {
+        path: "src/x.rs".into(),
+        kind: FileChangeKind::Modified,
+        // No patch anywhere on the path — not on the mutation, not as a
+        // fallback — so nothing the row could reach for would produce one.
+        latest_diff: None,
+        added: 3,
+        removed: 1,
+        recent_diffs: [crate::model::RememberedDiff {
+            seq: 1,
+            text: None,
+            added: 3,
+            removed: 1,
+        }]
+        .into_iter()
+        .collect(),
+        changes: 1,
+        reads: 0,
+        touched_seq: 1,
+    }];
+    assert_eq!(
+        (files[0].diff_at(1), files[0].delta_at(1)),
+        (None, Some((3, 1))),
+        "the fixture is not a measured-but-patchless change, so the row's two \
+         gates would resolve together and the test would prove nothing"
+    );
+
+    let entry = TranscriptEntry::ToolResult {
+        call_id: "c1".into(),
+        name: "edit_file".into(),
+        path: None,
+        ok: true,
+        summary: "ok".into(),
+        full: "replaced 1 occurrence(s) in src/x.rs at byte 1286".into(),
+        duration_ms: 7,
+        speculated: false,
+        diff: Some(InlineDiffRef {
+            path: "src/x.rs".into(),
+            seq: 1,
+        }),
+    };
+    let mut out = Vec::new();
+    entry_lines(
+        &entry,
+        EntryView::of(&files),
+        false,
+        false,
+        false,
+        WIDTH,
+        &mut out,
+    );
+
+    // 1. The size the emitter measured, in the metric column's own tones.
+    let styled = |text: &str, fg: Color| -> bool {
+        out.iter().any(|l| {
+            l.spans
+                .iter()
+                .any(|s| s.content.trim() == text && s.style.fg == Some(fg))
+        })
+    };
+    let rendered: Vec<String> = out
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    assert!(
+        styled("+3", theme::OK),
+        "the row knows the change added 3 lines and does not say so: {rendered:?}"
+    );
+    assert!(
+        styled("−1", theme::BAD),
+        "the row knows the change removed 1 line and does not say so: {rendered:?}"
+    );
+
+    // 2. And it invents no patch to go with them.
+    let ground = |bg: Color| -> usize {
+        out.iter()
+            .filter(|l| l.spans.iter().any(|s| s.style.bg == Some(bg)))
+            .count()
+    };
+    assert_eq!(
+        (ground(theme::DIFF_ADD_BG), ground(theme::DIFF_DEL_BG)),
+        (0, 0),
+        "a mutation with no patch rendered diff rows anyway: {rendered:?}"
+    );
+
+    // 3. Nor does it fall back to the tool's sentence about itself.
+    assert!(
+        !rendered.iter().any(|l| l.contains("byte 1286")),
+        "the row fell back to the tool's own prose: {rendered:?}"
+    );
+}
