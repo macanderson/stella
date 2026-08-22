@@ -474,6 +474,35 @@ mod tests {
         assert_eq!(back, issue);
     }
 
+    /// Invariant 4 for the write side. An unassigned draft must not serialize
+    /// a null `assignee` either: the field was added after providers were
+    /// already reading this shape, so an omitted one has to stay omitted.
+    #[test]
+    fn a_draft_round_trips_and_omits_an_absent_assignee() {
+        let unassigned = IssueDraft {
+            title: "a title".into(),
+            body: "a handoff".into(),
+            labels: vec![IssueLabel::from("bug")],
+            parent: None,
+            assignee: None,
+        };
+        let json = serde_json::to_string(&unassigned).expect("serialize");
+        assert!(!json.contains("assignee"), "{json}");
+        assert_eq!(
+            serde_json::from_str::<IssueDraft>(&json).expect("deserialize"),
+            unassigned
+        );
+
+        let assigned = IssueDraft {
+            assignee: Some("octocat".into()),
+            ..unassigned
+        };
+        let json = serde_json::to_string(&assigned).expect("serialize");
+        let back: IssueDraft = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, assigned);
+        assert_eq!(serde_json::to_string(&back).expect("re-serialize"), json);
+    }
+
     /// The wire spellings are pinned. These cross a process boundary into
     /// provider manifests and stored records, so a rename is a breaking change
     /// and should have to edit this test to happen.

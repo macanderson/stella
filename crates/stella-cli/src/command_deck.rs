@@ -78,9 +78,8 @@ use stella_tools::ToolRegistry;
 use stella_tools::custom::CustomTool;
 use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{
-    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityHit, Inbound, SkillOp,
-    SkillScope, SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput,
-    run_deck,
+    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityHit, Inbound, SkillOp, SkillScope,
+    SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -2938,10 +2937,12 @@ fn spawn_notification_poller(in_tx: mpsc::UnboundedSender<Inbound>) {
 
 // ── ISSUES tab: tracker-backed operations ───────────────────────────────────
 
-
 /// Installed agents whose name or description contains `query`
 /// (case-insensitive; an empty query matches all) as "Agent" hits.
-pub(super) fn agent_entity_hits(entries: &[stella_tui::InstalledAgentEntry], query: &str) -> Vec<EntityHit> {
+pub(super) fn agent_entity_hits(
+    entries: &[stella_tui::InstalledAgentEntry],
+    query: &str,
+) -> Vec<EntityHit> {
     let needle = query.trim().to_lowercase();
     entries
         .iter()

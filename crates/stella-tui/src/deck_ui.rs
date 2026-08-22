@@ -2845,7 +2845,6 @@ fn handle_issue_form_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     }
 }
 
-
 /// SKILLS-tab keys. Returns `Some` for keys the tab claims ahead of the
 /// composer (nav, manage hotkeys, the search query, overlays), `None` for keys
 /// that should fall through to the deck-global handlers — Tab still leaves the

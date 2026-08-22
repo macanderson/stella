@@ -423,7 +423,10 @@ fn issues_space_toggles_a_pick_and_the_pick_follows_the_key() {
     ui.issues.loaded = true;
 
     handle_deck_key(key(KeyCode::Char(' ')), &model, &mut ui);
-    assert!(ui.issues.picked.contains("#7"), "space picks the cursor row");
+    assert!(
+        ui.issues.picked.contains("#7"),
+        "space picks the cursor row"
+    );
 
     // Moving the cursor leaves the pick on the issue, not the row index.
     handle_deck_key(key(KeyCode::Down), &model, &mut ui);
@@ -452,7 +455,10 @@ fn issues_refresh_prunes_picks_that_left_the_list() {
         &mut model,
         &mut ui,
     );
-    assert!(!ui.issues.picked.contains("#7"), "gone from the list, gone from the picks");
+    assert!(
+        !ui.issues.picked.contains("#7"),
+        "gone from the list, gone from the picks"
+    );
     assert!(ui.issues.picked.contains("#8"));
 }
 
@@ -550,7 +556,11 @@ fn issues_brackets_page_the_active_query() {
     let action = handle_deck_key(ch(']'), &model, &mut ui);
     match action {
         DeckAction::Send(WorkspaceInput::IssuesRefresh { query, page, .. }) => {
-            assert_eq!(query.as_deref(), Some("flaky"), "paging re-issues the search");
+            assert_eq!(
+                query.as_deref(),
+                Some("flaky"),
+                "paging re-issues the search"
+            );
             // The witness for the paging defect. `page` has to ride the
             // request: without it the driver read a literal offset 0, so `]`
             // re-fetched page one under a notice that said "page 2".
@@ -586,7 +596,10 @@ fn issues_bracket_on_a_short_page_says_there_is_no_next() {
     assert_eq!(action, DeckAction::Handled, "a short page is the last page");
     assert_eq!(ui.issues.page, 0);
     assert!(
-        ui.issues.notice.as_deref().is_some_and(|n| n.contains("no next page")),
+        ui.issues
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("no next page")),
         "{:?}",
         ui.issues.notice
     );

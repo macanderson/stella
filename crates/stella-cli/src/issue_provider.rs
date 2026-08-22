@@ -162,7 +162,12 @@ impl IssueProvider for GhIssueProvider {
         // Assigned in the create call rather than a follow-up `gh issue edit`:
         // one call cannot half-succeed, and a second one could leave the issue
         // filed but unassigned with nothing to retry against.
-        if let Some(assignee) = draft.assignee.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+        if let Some(assignee) = draft
+            .assignee
+            .as_deref()
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+        {
             args.push("--assignee".into());
             args.push(assignee.to_owned());
         }

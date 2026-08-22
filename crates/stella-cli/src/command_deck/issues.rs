@@ -74,7 +74,10 @@ pub(super) fn issues_create<P: IssueProvider + ?Sized>(
     let draft = IssueDraft {
         title: title.to_owned(),
         body: body.to_owned(),
-        labels: labels.iter().map(|l| IssueLabel::from(l.as_str())).collect(),
+        labels: labels
+            .iter()
+            .map(|l| IssueLabel::from(l.as_str()))
+            .collect(),
         parent: None,
         // Empty is the create form's "left blank", which is not the same
         // request as assigning someone named "".
@@ -174,8 +177,7 @@ pub(super) fn handle_issues_input(
             let query = query.clone();
             let state = state.clone();
             tokio::task::spawn_blocking(move || {
-                let outcome =
-                    issues_list(&GhIssueProvider, query.as_deref(), state, page);
+                let outcome = issues_list(&GhIssueProvider, query.as_deref(), state, page);
                 let _ = in_tx.send(Inbound::IssuesList { seq, outcome });
             });
             true
@@ -188,8 +190,12 @@ pub(super) fn handle_issues_input(
             seq,
         } => {
             let (in_tx, seq) = (in_tx.clone(), *seq);
-            let (title, body, labels, assignee) =
-                (title.clone(), body.clone(), labels.clone(), assignee.clone());
+            let (title, body, labels, assignee) = (
+                title.clone(),
+                body.clone(),
+                labels.clone(),
+                assignee.clone(),
+            );
             tokio::task::spawn_blocking(move || {
                 let (key, outcome) = issues_create(
                     &GhIssueProvider,
@@ -294,10 +300,11 @@ mod tests {
             title: format!("issue {number}"),
             body: String::new(),
             state,
-            class: IssueClass::Defect,
+            class: IssueClass::Bug,
             labels: vec![IssueLabel::from("bug")],
             created_at: String::new(),
             url: format!("https://github.com/o/r/issues/{number}"),
+            parent: None,
         }
     }
 
@@ -345,6 +352,25 @@ mod tests {
 
         async fn reopen(&self, key: &IssueKey) -> Result<(), IssueError> {
             self.calls().reopened.push(key.as_str().to_owned());
+            Ok(())
+        }
+
+        // Not reachable from the ISSUES tab's verbs; the trait requires them.
+        async fn relabel(
+            &self,
+            _key: &IssueKey,
+            _add: &[String],
+            _remove: &[String],
+        ) -> Result<(), IssueError> {
+            Ok(())
+        }
+
+        async fn edit(
+            &self,
+            _key: &IssueKey,
+            _title: Option<&str>,
+            _body: Option<&str>,
+        ) -> Result<(), IssueError> {
             Ok(())
         }
     }
@@ -407,7 +433,8 @@ mod tests {
     fn a_blank_assignee_files_unassigned() {
         let tracker = FakeTracker::default();
         for blank in [None, Some(""), Some("   ")] {
-            issues_create(&tracker, "t", "b", &[], blank);
+            let (_, outcome) = issues_create(&tracker, "t", "b", &[], blank);
+            outcome.expect("the fake files successfully");
         }
         let calls = tracker.calls();
         assert!(
