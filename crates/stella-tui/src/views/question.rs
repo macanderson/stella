@@ -490,32 +490,33 @@ pub fn render(overlay: &QuestionOverlay, area: Rect, buf: &mut Buffer) {
         QuestionMode::Review | QuestionMode::Chat => review_body(overlay),
         _ => question_body(overlay, request),
     };
+    let mut body = body;
+    // Attribution goes in the BODY, never the title row. It shares that row
+    // with the right-aligned key hints, and at this card's width the hints
+    // win: the first golden of this overlay rendered the chip as `fro`,
+    // silently amputating the one fact that tells a driver which fanned-out
+    // child is asking. A body row cannot be squeezed by a neighbour.
+    if let Some(row) = asker_row(request.asker.as_deref()) {
+        body.insert(0, row);
+        body.insert(1, Line::from(""));
+    }
     let rows = u16::try_from(body.len()).unwrap_or(u16::MAX);
     let card = cards::card_area(area, rows, QUESTION_CARD_W, false);
-    let inner = cards::card_frame(
-        card,
-        "question",
-        asker_context(request.asker.as_deref()),
-        hints(overlay.mode),
-        buf,
-    );
+    let inner = cards::card_frame(card, "question", Vec::new(), hints(overlay.mode), buf);
     cards::render_body(body, None, inner, buf);
 }
 
-/// The title's context spans: who is asking, when a sub-agent is.
+/// Who is asking, when a sub-agent is.
 ///
-/// Empty for a top-level turn — the driver's own agent needs no attribution,
-/// and a "(from the lead)" chip on every card would train the eye to skip the
-/// one place the answer matters.
-fn asker_context(asker: Option<&str>) -> Vec<Span<'static>> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
-    match asker {
-        Some(agent) => vec![Span::styled(
-            format!("from the `{agent}` sub-agent"),
-            dim,
-        )],
-        None => Vec::new(),
-    }
+/// `None` for a top-level turn — the driver's own agent needs no
+/// attribution, and a "from the lead" chip on every card would train the eye
+/// to skip the one place the answer matters.
+fn asker_row(asker: Option<&str>) -> Option<Line<'static>> {
+    let agent = asker?;
+    Some(Line::from(Span::styled(
+        format!("from the `{agent}` sub-agent"),
+        Style::new().fg(theme::TEXT_TERTIARY),
+    )))
 }
 
 /// The right-aligned key hints for the mode that owns the keyboard.
@@ -1023,13 +1024,13 @@ mod tests {
     /// answering a coin flip.
     #[test]
     fn a_sub_agents_question_says_whose_it_is() {
-        let spans = asker_context(Some("research-child"));
-        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        let row = asker_row(Some("research-child")).expect("a sub-agent is attributed");
+        let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(text.contains("research-child"), "{text}");
         assert!(text.contains("sub-agent"), "{text}");
         assert!(
-            asker_context(None).is_empty(),
-            "a top-level turn needs no attribution chip"
+            asker_row(None).is_none(),
+            "a top-level turn needs no attribution row"
         );
     }
 }
