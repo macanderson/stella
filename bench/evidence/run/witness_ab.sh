@@ -40,14 +40,25 @@ AUTHOR="${STELLA_WITNESS_AUTHOR_MODEL:-}"
 case "$ARM" in
   off) unset STELLA_WITNESS_AUTHOR_MODEL ;;
   on)
-    test -n "$AUTHOR" || {
-      echo "FATAL: arm 'on' needs STELLA_WITNESS_AUTHOR_MODEL exported"
-      echo "       (a second provider/model on TB_MODEL's provider — one"
-      echo "       credential reaches the container, so it must be the same"
-      echo "       provider as the worker)"
-      exit 1
-    }
-    export STELLA_WITNESS_AUTHOR_MODEL="$AUTHOR"
+    # #4103: refused before the "did you export an author?" check below, and
+    # deliberately so — that check tells an operator to go and set a variable
+    # that would not help. The engine has one role, so the author reaches no
+    # model call, and this arm would execute the CONTROL arm under a
+    # treatment-arm digest (#1147). Refusing here rather than letting the
+    # adapter's own gate do it: by then env.sh has sourced, a job tree exists
+    # and Harbor is pulling task images, all for a run that cannot produce a
+    # number.
+    echo "FATAL: arm 'on' cannot run on this workspace's Stella (#4103)."
+    echo "       AgentEngineConfig::model_for resolves agents.default.model >"
+    echo "       default_model with no role argument, and pipeline_verifier_model"
+    echo "       is a retired key the launcher recognizes and ignores, so no"
+    echo "       author${AUTHOR:+ (including '$AUTHOR')} reaches a model call."
+    echo
+    echo "       The control arm still runs: witness_ab.sh off <job> [tasks]"
+    echo "       An independent author needs a verification plugin over the"
+    echo "       wrapper socket (doc:pipeline-as-plugins §8), not an engine key."
+    echo "       See bench/evidence/witness-ab/README.md."
+    exit 1
     ;;
   *) echo "FATAL: arm must be 'off' or 'on'"; exit 1 ;;
 esac

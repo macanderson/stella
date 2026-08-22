@@ -29,4 +29,3 @@
 1518 crates/stella-tui/src/deck_render.rs
 3991 crates/stella-tui/src/deck_ui.rs
 1599 crates/stella-tui/src/views/engine.rs
-1587 crates/stella-tui/src/views/session.rs

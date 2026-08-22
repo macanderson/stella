@@ -36,6 +36,8 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
     _stream_to_envelope,
+    assurance_tiers_from_posture,
+    refuse_unauthorable_witness_arm,
 )
 
 # Imported from the module rather than the package: internals of the posture's
@@ -774,19 +776,94 @@ class TestSelfVerdictStreamObservation:
         assert stream["self_verdict_state"] == "not_reported"
 
 
-class TestWitnessArmEndToEnd:
-    """Env knob -> posture -> container -> trial metadata."""
+class TestWitnessArmIsUnlaunchable:
+    """#4103: the arm can still be described, and can no longer be run.
 
-    def test_witness_arm_reaches_the_container_and_the_trial_metadata(
+    The gate is tested here, on the declaration alone, as well as through the
+    two run paths below and in `test_assurance_tiers.py`. That is deliberate
+    rather than redundant: the run-path tests prove the gate is *wired* into
+    every channel, and these prove it says the right thing about a declaration
+    it is handed — which is what a future caller (a new harness, a manifest
+    tool) will depend on.
+    """
+
+    def test_a_witness_on_declaration_is_refused(self) -> None:
+        """The predicate, and the reason an operator has to act on."""
+        worker = "openrouter/z-ai/glm-5.1"
+        author = "openrouter/deepseek/deepseek-v4-pro"
+        tiers, _json, _digest = _benchmark_assurance_tiers(worker, verifier=author)
+        assert tiers["arm"] == "witness-on", "precondition: the declaration is on"
+
+        with pytest.raises(RuntimeError) as refusal:
+            refuse_unauthorable_witness_arm(tiers)
+
+        reason = str(refusal.value)
+        # Both models, the knob, and the issue — an operator must be able to
+        # act on the refusal without opening this file.
+        assert author in reason
+        assert worker in reason
+        assert _WITNESS_AUTHOR_ENV in reason
+        assert "#4103" in reason
+        assert "model_for" in reason, (
+            "the reason must name the engine function whose collapse makes the "
+            "arm unrunnable, or the next reader cannot check the claim"
+        )
+
+    def test_the_control_arm_passes_the_gate_untouched(self) -> None:
+        """Every run this binary can honestly record still launches.
+
+        The half that keeps this from being a bench-wide outage: the control
+        arm is what every published Terminal-Bench number used, and the gate
+        must be invisible to it.
+        """
+        tiers, _json, _digest = _benchmark_assurance_tiers("openrouter/z-ai/glm-5.1")
+        assert tiers["arm"] == "witness-off"
+        assert refuse_unauthorable_witness_arm(tiers) is None
+
+    def test_a_recorded_declaration_still_reads_without_being_relaunched(self) -> None:
+        """Reading is not launching, which is the whole shape of the decision.
+
+        A witness-on declaration recorded before the collapse must still parse,
+        still name its two models and still report its tiers — `compare_arms.py`
+        and any forensic on an archived `result.json` depend on it. The gate is
+        a launch-time question asked somewhere else; nothing about holding this
+        dict may raise.
+        """
+        recorded = {
+            "default_model": "openrouter/z-ai/glm-5.1",
+            "pipeline_verifier_model": "openrouter/deepseek/deepseek-v4-pro",
+        }
+        tiers, _json, _digest = assurance_tiers_from_posture(recorded)
+
+        assert tiers["arm"] == "witness-on"
+        assert tiers["worker_model"] == "openrouter/z-ai/glm-5.1"
+        assert tiers["verifier_model"] == "openrouter/deepseek/deepseek-v4-pro"
+        assert tiers["authored_witness_off_reason"] is None
+
+
+class TestWitnessArmEndToEnd:
+    """Env knob -> the refusal that now ends it, and the control arm beside it."""
+
+    def test_witness_arm_env_knob_refuses_the_run_before_the_container(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The treatment arm, end to end: env knob → posture → container → metadata.
+        """The treatment arm, end to end, now ends at the refusal (#4103).
 
-        The interesting hop is the middle one. `_secure_exec_with_credential_fd`
-        deliberately *recomputes* the posture from argv at the process boundary
-        rather than trusting the caller, so before #1007 an arm expressed only
-        in `run()` would have been rebuilt as the control posture and shipped —
-        the container running witness-off while the trial recorded witness-on.
+        This used to assert the whole hop — env knob → posture → container →
+        metadata — and the interesting middle one was that
+        `_secure_exec_with_credential_fd` *recomputes* the posture from argv at
+        the process boundary rather than trusting the caller (#1007).
+
+        That hop is no longer reachable and asserting it would be asserting a
+        fiction. The engine has one role, so the author this knob pins reaches
+        no model call; a run that proceeded would put a control arm's
+        configuration in the container under a treatment arm's digest, which is
+        #1147 with the guard that used to catch it deleted (#3865). So the
+        end-to-end claim this test makes is the one that is still true and
+        still worth guarding: **asking for the arm stops the run, and stops it
+        before the container is touched at all.**
+
+        The exec stub asserts its own absence — reaching it is the failure.
         """
         worker = "openrouter/z-ai/glm-5.1"
         author = "openrouter/deepseek/deepseek-v4-pro"
@@ -794,71 +871,68 @@ class TestWitnessArmEndToEnd:
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.setenv(_WITNESS_AUTHOR_ENV, author)
 
-        events = [
-            {
-                "type": "proof",
-                "step": {"kind": "warrant", "required": True, "diff_lines": 30},
-            },
-            {
-                "type": "proof",
-                "step": {
-                    "kind": "witness_authored",
-                    "path": "tests/test_fix.py",
-                    "command": "pytest tests/test_fix.py",
-                    "fingerprint": "f" * 64,
-                },
-            },
-            {"type": "complete", "status": "completed", "cost_usd": 0.42},
-        ]
-        (tmp_path / "stella-events.jsonl").write_text(
-            "\n".join(json.dumps(event) for event in events)
-        )
-
         agent = _bare_agent()
         agent.logs_dir = tmp_path
         agent.model_name = worker
         agent._extra_env = {}
         agent._version = "stella 0.6.21"
 
-        _posture, posture_json, posture_digest = _benchmark_engine_posture(
-            worker, verifier=author
-        )
-        seen: dict[str, str] = {}
-
         class _Environment:
             async def _stella_secure_exec_with_stdin(
                 self, *, command: list[str], env: dict[str, str], stdin: bytes
             ):
-                seen["posture"] = env[_ENGINE_CONFIG_ENV]
-                # The author must never travel as its own container variable:
-                # the posture is the single channel, so there is exactly one
-                # thing to hash and exactly one thing that can disagree.
-                assert _WITNESS_AUTHOR_ENV not in env
-                return SimpleNamespace(stdout=None, stderr=None, return_code=0)
+                raise AssertionError(
+                    "the refused witness arm reached the container: the guard "
+                    "must fire before any exec, not after"
+                )
 
         context = AgentContext()
-        asyncio.run(
-            StellaAgent.run.__wrapped__(agent, "Fix the task.", _Environment(), context)
-        )
+        with pytest.raises(RuntimeError) as refusal:
+            asyncio.run(
+                StellaAgent.run.__wrapped__(
+                    agent, "Fix the task.", _Environment(), context
+                )
+            )
 
-        assert seen["posture"] == posture_json
-        assert json.loads(seen["posture"])["pipeline_verifier_model"] == author
-        assert agent._engine_posture_sha256 == posture_digest
+        reason = str(refusal.value)
+        assert author in reason and worker in reason, (
+            "the refusal must name both models, so an operator reads which two "
+            "the posture believed it had rather than a bare policy sentence"
+        )
+        assert _WITNESS_AUTHOR_ENV in reason, "it must name the knob to unset"
+        assert "#4103" in reason
+        assert not context.metadata, "a refused arm records no trial metadata"
 
-        assert context.metadata["stella_assurance_arm"] == "witness-on"
-        assert context.metadata["stella_verifier_model"] == author
-        assert context.metadata["stella_assurance_tiers_version"] == (
-            _ASSURANCE_TIERS_VERSION
-        )
-        assert (
-            context.metadata["stella_assurance_tiers"]["tiers"]["authored_witness"]
-            == "on"
-        )
-        assert len(context.metadata["stella_assurance_tiers_sha256"]) == 64
-        # Declared *and* observed, which are different claims: the posture
-        # enabled the tier, and this trial's proof stream shows it ran.
-        assert context.metadata["stella_witness_authored_state"] == "authored"
-        assert context.metadata["stella_stream"]["witness_authored"] is True
+    def test_the_treatment_posture_still_builds_so_its_digests_re_derive(
+        self,
+    ) -> None:
+        """Refusing the launch must not silence the builder (#4103).
+
+        The two halves of the decision, in one assertion. Running the arm is
+        refused because this binary cannot honor it; *describing* it stays
+        total, because `bench/READINESS.md` §8.4 and §9 register digests
+        computed from this exact function and a reader must be able to
+        reproduce them byte for byte years later. Collapsing the builder to
+        match the engine would have re-characterised recorded evidence nobody
+        re-ran, which is the option #4103 declined.
+
+        The digest is asserted against the control arm rather than a literal:
+        a frozen hash here would pin the posture's *contents*, which is
+        `TestBenchmarkPosture`'s job, and would fail for reasons that have
+        nothing to do with this claim.
+        """
+        worker = "openrouter/z-ai/glm-5.1"
+        author = "openrouter/deepseek/deepseek-v4-pro"
+
+        arm, arm_json, arm_digest = _benchmark_engine_posture(worker, verifier=author)
+        _control, _control_json, control_digest = _benchmark_engine_posture(worker)
+
+        assert arm["pipeline_verifier_model"] == author
+        assert json.loads(arm_json) == arm
+        assert arm_digest != control_digest
+        # Deterministic across calls: a digest that moved between two builds in
+        # one process could never reproduce one recorded a year ago.
+        assert _benchmark_engine_posture(worker, verifier=author)[2] == arm_digest
 
     def test_control_arm_metadata_declares_the_witness_off(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

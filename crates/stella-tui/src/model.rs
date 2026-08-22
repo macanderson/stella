@@ -117,6 +117,18 @@ pub struct SessionModel {
     pub files_evicted: u32,
     /// Monotonic touch counter stamping [`FileState::touched_seq`].
     file_touch_seq: u64,
+    /// For each in-flight file-mutating call, its path's [`FileState::changes`]
+    /// at the moment the call dispatched.
+    ///
+    /// This is what lets a `ToolResult` tell *which producer owes it a change*:
+    /// a count that has moved since means the registry's per-call measurement
+    /// already published this call's change (#4175), so the row resolves at the
+    /// current seq; one that has not means the turn boundary still owes it and
+    /// will record it one past. Entered on the `ToolStart` and taken on the
+    /// matching result, so it holds only calls actually in flight — a turn
+    /// abandoned mid-call leaves at most its own entry, cleared with the rest of
+    /// the conversation.
+    mutation_baselines: std::collections::HashMap<String, u32>,
     /// Live HUD numbers: spend/limit/mode, current stage, model.
     pub hud: Hud,
     /// **The plan** — the one surface for what stella said it would do and how
@@ -508,10 +520,19 @@ pub struct InlineDiffRef {
     /// The key into [`SessionModel::files`].
     pub path: String,
     /// The [`FileState::changes`] value this call's own mutation is recorded
-    /// at — one past the counter at fold time, because the surviving producer
-    /// emits at the turn boundary, *after* this result folds (#4155). It
-    /// resolves for as long as that mutation is remembered, and dangles
-    /// (rendering nothing) when the turn measured no net change to the path.
+    /// at.
+    ///
+    /// Which value that is depends on **which producer measured the call**,
+    /// and the fold decides it per call rather than assuming either (#4205).
+    /// The registry measures a solo mutating call the moment it returns, so
+    /// that change folds *before* this result and the seq is the counter as it
+    /// stands; the turn boundary sweeps whatever no single call can own
+    /// (`delegate`, a concurrent group, an external edit) and folds *after*
+    /// every result, so there the seq is one past. See the `ToolResult` arm in
+    /// [`SessionModel::apply`], and `tests::producer_seq` for both directions.
+    ///
+    /// It resolves for as long as that mutation is remembered, and dangles
+    /// (rendering nothing) when nothing measured a net change to the path.
     pub seq: u32,
 }
 
@@ -651,12 +672,29 @@ impl SessionModel {
             AgentEvent::TextDelta { delta } => self.push_streaming_delta(delta),
             AgentEvent::Reasoning { delta } => self.push_reasoning(delta),
             AgentEvent::ToolStart { call } => {
+                let path = tool_input_path(&call.input);
+                // Take the path's change count *before* the call runs, so its
+                // result can tell a change of its own from the one already
+                // recorded — see `mutation_baselines`. Only mutating calls, and
+                // only ones that named a path: nothing else stamps a reference,
+                // so nothing else has a baseline to compare.
+                if is_file_mutation(&call.name)
+                    && let Some(path) = path.as_deref()
+                {
+                    let changes = self
+                        .files
+                        .iter()
+                        .find(|f| f.path == path)
+                        .map_or(0, |f| f.changes);
+                    self.mutation_baselines
+                        .insert(call.call_id.clone(), changes);
+                }
                 self.transcript.push(TranscriptEntry::ToolStart {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),
                     input: format_tool_input(&call.input),
                     raw: cap_input_json(&call.input, INPUT_BUDGET),
-                    path: tool_input_path(&call.input),
+                    path,
                 });
             }
             AgentEvent::ToolResult {
@@ -711,41 +749,66 @@ impl SessionModel {
                 // path's previous diff under its ✗ would attribute a change
                 // the call never made.
                 //
-                // The seq names the change this call *will* produce, not the
-                // one already recorded. `stella-pipeline`, which emitted one
-                // `FileChange` per adopted change during delivery, is deleted
-                // (#3865); the only producer left is
-                // `stella_cli::turn_files::emit_shared_tree_changes`, which
-                // emits one aggregate change per path at the **turn boundary**
-                // — after every `ToolResult` of the turn has folded — and
-                // `touch_file` records it at the *bumped* `changes`. Stamping
-                // the pre-bump value therefore pointed one change into the
-                // past: a path's first turn resolved to nothing, and every
-                // later turn rendered the PREVIOUS turn's diff under this
-                // turn's edit, which is exactly the misattribution
-                // `render::resolve_inline_diff` exists to prevent (#4155).
+                // The seq names the change **this call** produced, and there are
+                // now two producers publishing it at two different moments, so
+                // the stamp asks which one is answering rather than assuming
+                // (#4175 against #4155/#4176):
+                //
+                // - The **registry** measures the work tree the moment a solo
+                //   mutating call returns and publishes on the channel the
+                //   engine then sends this `ToolResult` on, so the `FileChange`
+                //   arrives *first*: `touch_file` has already bumped `changes`
+                //   and `remember_diff` recorded at the value read here
+                //   (`stella_tools::call_measure`).
+                // - The **turn boundary** reports whatever the per-call
+                //   readings did not claim — a concurrent `delegate`'s writes,
+                //   a tool that mutated while advertising `read_only`, a human
+                //   editing in another window — and that emit lands *after*
+                //   every `ToolResult` of the turn has folded, so the change is
+                //   still to come and will be recorded one past `changes`.
+                //
+                // `mutation_baseline` is what distinguishes them: the path's
+                // `changes` when this call dispatched. A count that has moved
+                // since means this call's own change already folded; a count
+                // that has not means the boundary still owes it. Guessing
+                // either way is a live defect and both have been shipped —
+                // reading `changes` under a boundary-only producer left
+                // `diff_at` short by exactly one and **every** mutating row
+                // rendered diffless (#4155); adding `+1` under a per-call
+                // producer points one change into the future instead.
+                let baseline = self.mutation_baselines.remove(call_id);
                 let diff = if ok {
                     self.mutated_path_for(call_id).map(|path| {
-                        let seq = self
+                        let recorded = self
                             .files
                             .iter()
                             .find(|f| f.path == path)
-                            .map_or(0, |f| f.changes)
-                            + 1;
+                            .map_or(0, |f| f.changes);
+                        // `>`, deliberately, not `== base + 1`. One
+                        // `FileChange` per changed path is what the producer
+                        // does today, not something anything pins — and if
+                        // that ever changes, `>` degrades to a true-but-partial
+                        // answer while `==` degrades to naming a change that
+                        // does not exist yet. `tests::producer_seq`'s module
+                        // doc carries the full argument and the case that
+                        // argues the other way.
+                        let landed = baseline.is_some_and(|base| recorded > base);
+                        let seq = if landed { recorded } else { recorded + 1 };
                         InlineDiffRef { path, seq }
                     })
                 } else {
                     None
                 };
-                // Several calls may mutate one path in a turn, and they all
-                // compute the same seq — `changes` does not move until the
-                // boundary. Exactly one row may claim that single aggregate
-                // change: the last, whose post-state the diff actually
-                // describes. Earlier rows give up their reference and degrade
-                // to naming their change, the same degradation `DIFF_HISTORY`
-                // aging and `MAX_TRACKED_FILES` eviction already have. The
-                // alternative is every one of them rendering the whole turn's
-                // change as its own.
+                // Two calls can still land on one seq — several mutations to a
+                // path in a turn whose measurement only the boundary takes, so
+                // they all point at the single aggregate change it will emit.
+                // Exactly one row may claim it: the last, whose post-state the
+                // diff actually describes. Earlier rows give up their reference
+                // and degrade to naming their change, the same degradation
+                // `DIFF_HISTORY` aging and `MAX_TRACKED_FILES` eviction already
+                // have. Per-call measurement makes this the rarer path rather
+                // than the only one — two measured calls hold two distinct
+                // seqs and neither supersedes the other.
                 if let Some(dref) = diff.as_ref() {
                     self.supersede_inline_diff(dref);
                 }
@@ -1357,12 +1420,14 @@ impl SessionModel {
     /// Drop the inline-diff reference from every earlier result that pointed
     /// at the same change as `dref`, so one change is claimed by one row.
     ///
-    /// The turn boundary emits **one** aggregate `FileChange` per path, so
-    /// every call that mutated that path in the turn stamps an identical
-    /// `(path, seq)`. Left alone they would each render the turn's whole
-    /// change to that file as their own. The last call keeps it because the
-    /// measured post-state is the one its edit left behind; the earlier rows
-    /// degrade to naming their change rather than showing it.
+    /// Reachable whenever a path's mutations in a turn are measured only by the
+    /// turn boundary, which emits **one** aggregate `FileChange` per path: every
+    /// such call stamps an identical `(path, seq)`, and left alone they would
+    /// each render the turn's whole change to that file as their own. The last
+    /// call keeps it because the measured post-state is the one its edit left
+    /// behind; the earlier rows degrade to naming their change rather than
+    /// showing it. Per-call measurement (#4175) gives each call its own seq and
+    /// so never reaches here.
     ///
     /// Called before the new result is pushed, so it never clears its own ref.
     fn supersede_inline_diff(&mut self, dref: &InlineDiffRef) {

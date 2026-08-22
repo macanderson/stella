@@ -163,9 +163,20 @@ pub(crate) async fn close_event_stream(
 /// journalled one and not the other would render a transcript that disagrees
 /// with its own replay. Both of `agent.rs`'s run paths had carried a verbatim
 /// copy of this pairing and of the comment explaining it.
-pub(crate) fn attach_run_streams(registry: &ToolRegistry, tx: &stella_core::EventSender) {
+///
+/// The registry half — the events and this turn's per-call work-tree
+/// measurement (#4175) — is delegated to `turn_files::open_turn_streams`
+/// rather than restated, so the engine path and the deck's lead turn cannot
+/// open a stream with different debts paid. This function is what the engine
+/// path adds on top: the policy/extension audit bridge.
+pub(crate) fn attach_run_streams(
+    registry: &ToolRegistry,
+    cfg: &crate::config::Config,
+    tx: &stella_core::EventSender,
+    execution: Option<&(Arc<Store>, i64)>,
+) {
     registry.bridge_policy_plane(tx.clone());
-    registry.attach_events(tx.clone());
+    crate::turn_files::open_turn_streams(registry, cfg, tx, execution);
 }
 
 /// `durable_pre_persisted` is set when [`super::output::event_sender_for_run`]

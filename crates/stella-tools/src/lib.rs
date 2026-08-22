@@ -42,6 +42,7 @@ pub mod agent_use;
 pub mod ask;
 pub mod bash;
 pub mod batch;
+pub mod call_measure;
 pub mod catalog;
 pub mod contracts;
 pub mod ctx;
