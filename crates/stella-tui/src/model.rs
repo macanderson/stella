@@ -19,13 +19,13 @@
 
 use crate::ansi::strip_ansi;
 use stella_protocol::{
-    AgentEvent, BudgetMode, CiStatus, FileChangeKind, HunkProposal, MediaJobState, MediaKind,
-    PrStatus, ScopeProposal, StageKind, StageName, StageScope, SubAgentPhase, SubAgentStatus,
+    AgentEvent, FileChangeKind, HunkProposal, ScopeProposal, StageKind, StageScope, SubAgentPhase,
     TaskItem, TaskStatus, ToolOutput,
 };
 
 use std::collections::VecDeque;
 
+pub mod entry;
 mod error_rows;
 pub mod file_state;
 pub mod recall;
@@ -34,6 +34,10 @@ mod turn;
 
 #[cfg(test)]
 pub use file_state::DIFF_HISTORY;
+// Re-exported flat, so `crate::model::TranscriptEntry` still resolves and the
+// split moved no call site — same discipline as `file_state` and `turn` below
+// (#4217). `entry`'s module doc carries why the seam is declarations-vs-logic.
+pub use entry::{AskUserPrompt, InlineDiffRef, OpenPark, SubAgentSummary, TranscriptEntry};
 pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
 pub use recall::{RecallBudget, RecalledFrameRow};
 pub use turn::{Hud, TurnOpening};

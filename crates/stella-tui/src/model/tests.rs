@@ -6,8 +6,14 @@
 //! or removed.
 
 use super::*;
+// `BudgetMode`, `MediaKind` and `PrStatus` are named here rather than reached
+// through `use super::*`: they are used only to build entries, so they moved to
+// `model::entry` with the types that hold them and `model.rs` no longer imports
+// them (#4217). Naming them keeps the tests independent of what the fold
+// happens to need.
 use stella_protocol::{
-    ContextFrameRef, MediaArtifactRef, MediaJobState, ProviderShare, ToolCall, VerdictEvidence,
+    BudgetMode, ContextFrameRef, MediaArtifactRef, MediaJobState, MediaKind, PrStatus,
+    ProviderShare, ToolCall, VerdictEvidence,
 };
 
 fn text(delta: &str) -> AgentEvent {
@@ -487,141 +493,6 @@ fn files_are_kept_in_first_touched_order() {
     assert_eq!(order, vec!["z.rs", "a.rs", "m.rs"]);
 }
 
-#[test]
-fn scope_review_sets_then_clears_on_next_stage() {
-    let mut model = SessionModel::new();
-    model.apply(&AgentEvent::ScopeReview {
-        proposal: ScopeProposal {
-            summary: "big refactor".into(),
-            steps: vec!["s1".into(), "s2".into()],
-            estimated_files: 12,
-            estimated_cost_usd: Some(1.0),
-            ..Default::default()
-        },
-    });
-    assert!(model.pending_scope_review.is_some());
-    // The scope-review stage marker itself must NOT clear it.
-    model.apply(&AgentEvent::Stage {
-        name: StageKind::ScopeReview.into(),
-        scope: stella_protocol::StageScope::Run,
-    });
-    assert!(model.pending_scope_review.is_some());
-    // The engine moving on to execute clears it.
-    model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute.into(),
-        scope: stella_protocol::StageScope::Run,
-    });
-    assert!(model.pending_scope_review.is_none());
-    // …but the plan itself survives: the gate closing is the approval, and the
-    // approved steps have to stay recallable for the rest of the turn.
-    let approved = model.approved_scope.as_ref().expect("the plan is kept");
-    assert_eq!(approved.steps, vec!["s1".to_string(), "s2".to_string()]);
-}
-
-/// The reported defect, isolated: the steps a user consented to were the one
-/// thing the session could no longer show them one minute later. The scrollback
-/// record keeps a summary and two counts — never the steps — so dropping the
-/// proposal destroyed the only copy.
-#[test]
-fn an_approved_plan_outlives_the_gate_that_carried_it() {
-    let mut model = SessionModel::new();
-    model.apply(&AgentEvent::ScopeReview {
-        proposal: ScopeProposal {
-            summary: "collapse the panels".into(),
-            steps: vec!["gate on relevance".into(), "pin the scope".into()],
-            estimated_files: 9,
-            estimated_cost_usd: Some(1.4),
-            ..Default::default()
-        },
-    });
-    model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute.into(),
-        scope: stella_protocol::StageScope::Run,
-    });
-    model.apply(&AgentEvent::RunComplete {
-        model: "glm".into(),
-        cost_usd: 0.5,
-    });
-    let approved = model
-        .approved_scope
-        .as_ref()
-        .expect("the plan survives the whole turn, not just the gate");
-    assert_eq!(approved.summary, "collapse the panels");
-    assert_eq!(approved.steps.len(), 2);
-
-    // And it belongs to *that* turn: the next one starts unapproved rather
-    // than inheriting consent it was never given.
-    model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute.into(),
-        scope: stella_protocol::StageScope::Run,
-    });
-    assert!(
-        model.approved_scope.is_none(),
-        "a new turn inherited the previous turn's approval"
-    );
-}
-
-/// A turn that died at the gate was never approved, and must not be recorded
-/// as though it were — an abandoned proposal is not a plan.
-#[test]
-fn a_turn_that_dies_at_the_gate_records_no_approval() {
-    for terminal in [
-        AgentEvent::Error {
-            message: "aborted".into(),
-            retryable: false,
-        },
-        AgentEvent::RunComplete {
-            model: "glm".into(),
-            cost_usd: 0.01,
-        },
-    ] {
-        let mut model = SessionModel::new();
-        model.apply(&AgentEvent::ScopeReview {
-            proposal: ScopeProposal {
-                summary: "never approved".into(),
-                steps: vec!["s1".into()],
-                estimated_files: 1,
-                estimated_cost_usd: None,
-                ..Default::default()
-            },
-        });
-        model.apply(&terminal);
-        assert!(model.pending_scope_review.is_none());
-        assert!(
-            model.approved_scope.is_none(),
-            "an abandoned proposal was promoted to an approved plan"
-        );
-    }
-}
-
-#[test]
-fn scope_review_clears_on_error_and_complete() {
-    for terminal in [
-        AgentEvent::Error {
-            message: "aborted".into(),
-            retryable: false,
-        },
-        AgentEvent::RunComplete {
-            model: "glm".into(),
-            cost_usd: 0.01,
-        },
-    ] {
-        let mut model = SessionModel::new();
-        model.apply(&AgentEvent::ScopeReview {
-            proposal: ScopeProposal {
-                summary: "x".into(),
-                steps: vec![],
-                estimated_files: 1,
-                estimated_cost_usd: None,
-                ..Default::default()
-            },
-        });
-        assert!(model.pending_scope_review.is_some());
-        model.apply(&terminal);
-        assert!(model.pending_scope_review.is_none());
-    }
-}
-
 /// One abort, one row. The pipeline emits `Error` for an abort it decided
 /// and also returns `Aborted`, which the host re-emits — the reported
 /// screenshot showed "aborted at scope review" twice and it read as two
@@ -1095,129 +966,6 @@ fn a_terminal_event_clears_a_pending_hunk_review() {
     }
 }
 
-/// A non-coalescing one-entry event, for growing the transcript by
-/// exactly one entry per apply.
-fn retry(attempt: u32) -> AgentEvent {
-    AgentEvent::Retry {
-        attempt,
-        reason: "r".into(),
-    }
-}
-
-#[test]
-fn below_the_cap_nothing_evicts() {
-    let mut model = SessionModel::new();
-    for i in 0..(MAX_TRANSCRIPT_ENTRIES - 1) {
-        model.apply(&retry(i as u32));
-    }
-    assert_eq!(model.transcript.len(), MAX_TRANSCRIPT_ENTRIES - 1);
-    assert_eq!(model.evicted_entries(), 0);
-    assert!(matches!(
-        model.transcript[0],
-        TranscriptEntry::Retry { attempt: 0, .. }
-    ));
-}
-
-#[test]
-fn transcript_caps_with_a_front_eviction_marker() {
-    let mut model = SessionModel::new();
-    let total = MAX_TRANSCRIPT_ENTRIES + 250;
-    for i in 0..total {
-        model.apply(&retry(i as u32));
-    }
-    assert!(model.transcript.len() <= MAX_TRANSCRIPT_ENTRIES);
-    let count = match model.transcript[0] {
-        TranscriptEntry::Evicted { count } => count,
-        ref other => panic!("expected the eviction marker first, got {other:?}"),
-    };
-    // The marker plus the retained entries account for every entry pushed.
-    assert_eq!(count + (model.transcript.len() - 1), total);
-    // The tail is untouched: the newest event is still the last entry.
-    match model.transcript.last() {
-        Some(TranscriptEntry::Retry { attempt, .. }) => {
-            assert_eq!(*attempt, (total - 1) as u32);
-        }
-        other => panic!("expected the newest retry last, got {other:?}"),
-    }
-}
-
-#[test]
-fn eviction_marker_accumulates_across_passes() {
-    let mut model = SessionModel::new();
-    // Enough to trigger a second pass, which drains the first marker.
-    let total = MAX_TRANSCRIPT_ENTRIES + TRANSCRIPT_EVICTION_CHUNK + 10;
-    for i in 0..total {
-        model.apply(&retry(i as u32));
-    }
-    let count = model.evicted_entries();
-    assert!(
-        count > TRANSCRIPT_EVICTION_CHUNK,
-        "second pass absorbed the first marker's count: {count}"
-    );
-    assert_eq!(count + (model.transcript.len() - 1), total);
-    // Exactly one marker survives, at the front.
-    let markers = model
-        .transcript
-        .iter()
-        .filter(|e| matches!(e, TranscriptEntry::Evicted { .. }))
-        .count();
-    assert_eq!(markers, 1);
-}
-
-#[test]
-fn user_prompts_count_against_the_cap() {
-    let mut model = SessionModel::new();
-    for i in 0..(MAX_TRANSCRIPT_ENTRIES + 5) {
-        model.push_user_prompt(&format!("prompt {i}"));
-    }
-    assert!(model.transcript.len() <= MAX_TRANSCRIPT_ENTRIES);
-    assert!(model.evicted_entries() >= TRANSCRIPT_EVICTION_CHUNK);
-}
-
-#[test]
-fn replay_past_the_cap_stays_deterministic() {
-    let log: Vec<AgentEvent> = (0..(MAX_TRANSCRIPT_ENTRIES + TRANSCRIPT_EVICTION_CHUNK + 3))
-        .map(|i| retry(i as u32))
-        .collect();
-    let a = SessionModel::replay(&log);
-    let b = SessionModel::replay(&log);
-    assert_eq!(a, b);
-    assert!(a.transcript.len() <= MAX_TRANSCRIPT_ENTRIES);
-}
-
-#[test]
-fn replay_of_the_same_log_yields_identical_models() {
-    let log = vec![
-        AgentEvent::Stage {
-            name: StageKind::Execute.into(),
-            scope: stella_protocol::StageScope::Run,
-        },
-        text("hi "),
-        text("there"),
-        AgentEvent::ToolStart {
-            call: ToolCall {
-                call_id: "c1".into(),
-                name: "read_file".into(),
-                input: serde_json::json!({"path": "src/lib.rs"}),
-            },
-        },
-        AgentEvent::FileChange {
-            path: "src/lib.rs".into(),
-            kind: FileChangeKind::Modified,
-            added: 1,
-            removed: 1,
-            diff: Some("@@\n-a\n+b".into()),
-        },
-        AgentEvent::RunComplete {
-            model: "glm".into(),
-            cost_usd: 0.01,
-        },
-    ];
-    let a = SessionModel::replay(&log);
-    let b = SessionModel::replay(&log);
-    assert_eq!(a, b);
-}
-
 /// Witness: a long pass's live counter occupies ONE transcript line however
 /// many times it ticks, and its last value survives the milestone that follows.
 ///
@@ -1490,3 +1238,5 @@ fn a_measured_change_with_no_patch_still_reports_its_delta() {
 }
 
 mod producer_seq;
+mod retention;
+mod scope_review;
