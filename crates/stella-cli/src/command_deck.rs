@@ -1445,7 +1445,17 @@ pub async fn run_deck_session(
         if let Some(m) = &mut memory {
             // The A/B control, armed before recall (#1221).
             m.arm_recall_control();
-            let recalled = m.recall_block_reported(&prompt).await;
+            // Anchors from what the conversation has already touched, not the
+            // prompt alone. A prompt that names no path used to leave recall
+            // unscoped across the whole index, where a common word matches an
+            // unrelated subtree as well as the file being edited — see #4249.
+            //
+            // The same derivation the mid-turn re-query uses, over the same
+            // messages, so the two cannot disagree about what this turn is
+            // about.
+            let touched =
+                stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
+            let recalled = m.recall_block_reported(&prompt, &touched).await;
             recall_event = recalled.telemetry_event();
             inject_recall_block(&mut messages, recalled.text);
         }

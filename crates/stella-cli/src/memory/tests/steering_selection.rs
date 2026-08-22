@@ -347,3 +347,57 @@ async fn a_frame_the_host_merge_evicted_reaches_the_ledger() {
         set.dropped
     );
 }
+
+/// A prompt naming no path still anchors, on what the turn has touched.
+///
+/// The witness for #4249. A live turn resolving a merge conflict in
+/// `views/issues.rs` asked:
+///
+/// > Upstream renamed `_model` to `model` and added a PR strip.
+///
+/// It names no path, so the anchor set came out empty and retrieval ran
+/// unscoped across the whole index — which returned 1133 tokens of an
+/// unrelated Python benchmark harness, because `model` is a common word and
+/// unscoped lexical similarity has nothing to lose against.
+///
+/// `anchors_for` is the fix and this is what it buys: the same prompt, the same
+/// workspace, and the anchor set is the file the turn is actually editing.
+#[test]
+fn a_pathless_prompt_anchors_on_what_the_turn_touched() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let root = dir.path();
+    let edited = root.join("crates/stella-tui/src/views/issues.rs");
+    std::fs::create_dir_all(edited.parent().expect("parent")).expect("mkdir");
+    std::fs::write(&edited, "fn render() {}").expect("write");
+
+    let memory = session(root);
+    let prompt = "Upstream renamed `_model` to `model` and added a PR strip.";
+
+    assert!(
+        memory.anchors_for(prompt, &[]).is_empty(),
+        "the prompt names no path — unanchored is exactly the state that let \
+         an unrelated subtree answer"
+    );
+
+    let touched = vec!["crates/stella-tui/src/views/issues.rs".to_string()];
+    let anchored = memory.anchors_for(prompt, &touched);
+    assert_eq!(
+        anchored,
+        vec!["crates/stella-tui/src/views/issues.rs".to_string()],
+        "the turn's own file is the anchor the prompt could not contribute"
+    );
+}
+
+/// An anchor has to name a file that exists — one that names nothing scopes
+/// nothing, and would widen the query while looking like it narrowed it.
+#[test]
+fn a_touched_path_that_is_not_a_file_is_not_an_anchor() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let memory = session(dir.path());
+    let touched = vec!["crates/gone/vanished.rs".to_string()];
+    assert!(
+        memory
+            .anchors_for("resolve the conflict", &touched)
+            .is_empty()
+    );
+}

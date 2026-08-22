@@ -703,7 +703,7 @@ async fn a_worker_mines_its_lesson_into_the_invocation_root_not_its_worktree() {
     let after_the_run =
         crate::memory::SessionMemory::open(&invocation_root, false).expect("primary workspace");
     let recalled = after_the_run
-        .recall_block_reported("a task touches the billing migration")
+        .recall_block_reported("a task touches the billing migration", &[])
         .await
         .text
         .unwrap_or_default();

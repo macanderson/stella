@@ -141,7 +141,7 @@ impl SessionMemory {
     /// from production would let the next recall site reintroduce it silently.
     #[cfg(test)]
     pub async fn recall_block(&self, prompt: &str) -> Option<String> {
-        self.recall_block_reported(prompt).await.text
+        self.recall_block_reported(prompt, &[]).await.text
     }
 
     /// The recalled-context block **without throwing the recall away**.
@@ -158,7 +158,13 @@ impl SessionMemory {
     /// reason [`Recall`] itself carries frames and usage together: they are
     /// answers to different questions about one request, and separating them
     /// means either re-running recall to report it or losing it entirely.
-    pub async fn recall_block_reported(&self, prompt: &str) -> RecalledBlock {
+    /// `touched` is what the conversation has already changed — the anchor
+    /// set's second half, and the difference between a scoped recall and one
+    /// that matches a word anywhere in the index. Empty is the honest argument
+    /// for a turn that has touched nothing yet; callers with a live
+    /// conversation should derive it (see
+    /// `stella_core::driver::loop_evidence::turn_evidence`).
+    pub async fn recall_block_reported(&self, prompt: &str, touched: &[String]) -> RecalledBlock {
         // Two switches, one gate. `ab_suppressed` withholds injection for ONE
         // turn to build a control arm; `steering_enabled` withholds it for the
         // session because an operator or their org asked (#3243). Both stop
@@ -170,7 +176,11 @@ impl SessionMemory {
         let RecalledFrames {
             recall,
             dropped: frame_drops,
-        } = self.recalled_frames(prompt).await;
+        } = self
+            .recalled_frames_anchored(prompt, self.anchors_for(prompt, touched), |message| {
+                eprintln!("  {} {message}", "!".yellow())
+            })
+            .await;
 
         let all_skills = self.load_skills();
         let selected = skills::select_skills_reporting(
@@ -262,18 +272,7 @@ impl SessionMemory {
         }
         let prompt = signal.prompt;
 
-        // Anchors: what the goal names, then what the turn touched — capped
-        // so a busy turn cannot turn one re-query into a full-graph walk.
-        const MAX_SIGNAL_ANCHORS: usize = 8;
-        let mut anchors = goal_path_anchors(prompt, &self.workspace_root);
-        for path in signal.touched_paths {
-            if anchors.len() >= MAX_SIGNAL_ANCHORS {
-                break;
-            }
-            if !anchors.contains(path) && self.workspace_root.join(path).is_file() {
-                anchors.push(path.clone());
-            }
-        }
+        let anchors = self.anchors_for(prompt, signal.touched_paths);
         let domains = crate::contextgraph::query_domain_scope(&self.domains, &anchors);
 
         let RecalledFrames {
@@ -445,6 +444,40 @@ impl SessionMemory {
 
     /// Authoritative prompt and pipeline recall, including a fresh quarantine
     /// read so prior-turn feedback applies immediately.
+    /// What this turn is *about*, as paths: what the prompt names, then what
+    /// the conversation has already touched.
+    ///
+    /// Capped so a busy turn cannot turn one query into a full-graph walk, and
+    /// every anchor must be a file that exists — an anchor naming nothing
+    /// scopes nothing.
+    ///
+    /// The second half is what the per-turn recall was missing, and it is why a
+    /// turn could pull five frames of unrelated Python into a Rust task. A
+    /// prompt like *"Upstream renamed `_model` to `model` and added a PR
+    /// strip"* names no path at all, so the anchor set came out empty and
+    /// retrieval ran unscoped across the whole index — where the word `model`
+    /// matches a benchmark harness's `model.py` exactly as well as the file the
+    /// turn is editing. Unscoped, lexical similarity has nothing to lose
+    /// against, so it returns its top-k however weak the top is.
+    ///
+    /// The paths a turn has touched are the strongest available statement of
+    /// what it is working on. `signal_recall_block` has composed anchors this
+    /// way since #3243; this is that composition extracted, so the two callers
+    /// cannot drift into disagreeing about what "about" means.
+    pub(super) fn anchors_for(&self, prompt: &str, touched: &[String]) -> Vec<String> {
+        const MAX_ANCHORS: usize = 8;
+        let mut anchors = goal_path_anchors(prompt, &self.workspace_root);
+        for path in touched {
+            if anchors.len() >= MAX_ANCHORS {
+                break;
+            }
+            if !anchors.contains(path) && self.workspace_root.join(path).is_file() {
+                anchors.push(path.clone());
+            }
+        }
+        anchors
+    }
+
     async fn recalled_frames(&self, goal: &str) -> RecalledFrames {
         let anchors = goal_path_anchors(goal, &self.workspace_root);
         self.recalled_frames_anchored(goal, anchors, |message| {
