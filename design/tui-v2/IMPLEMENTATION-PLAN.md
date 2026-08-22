@@ -8,7 +8,7 @@ Companion to `SPEC-stella-tui-v2.md`. Phases are ordered so each ships value alo
 - **State crate boundaries** (adjust names to the existing workspace):
   - `stella-tui-theme`: palette consts, hue clamp tests, glyph consts, 16-color fallback map.
   - `stella-tui-widgets`: transcript, plan panel, task zoom, tabs, palette overlay, plugin panel host. Each widget implements `Widget` or `StatefulWidget` and renders into `Buffer` directly.
-  - `stella-tui-highlight`: syntect wrapper, theme build, per-event cache.
+  - Syntax highlighting is **not** a deck crate. The lexer is `stella_transcript::syntax`, shared with the export grid and the Observatory HTML renderer; the deck owns only the palette that turns a `Tok` into a ratatui `Style` (`stella-tui/src/syntax.rs`). The per-event cache is the deck's (P2 below).
   - `stella-cli`: event loop, key routing, state reduction from AEP events.
 - **Event model**: every transcript event is a struct with `turn_id`, `task_id: Option<TaskId>`, `kind`, timing, and a lazily built `rendered: OnceCell<Vec<Line<'static>>>`. Rendering an event never recomputes highlights.
 - **Async boundary**: registry searches (skills, MCP), tracker sync, and oauth run as tokio tasks that post results back into state between ticks. The draw path never awaits.
@@ -18,7 +18,6 @@ Companion to `SPEC-stella-tui-v2.md`. Phases are ordered so each ships value alo
 | Crate | Purpose | Notes |
 |---|---|---|
 | `ratatui` + `crossterm` | already in use | `BorderType::Rounded` for panels |
-| `syntect` | syntax highlighting | `fancy-regex` feature to avoid oniguruma on Windows |
 | `nucleo` | fuzzy matching for the palette | match indices drive gold letters |
 | `insta` | snapshot tests | pairs with `TestBackend` |
 | `tokio` | async registry, tracker, oauth | already likely present |
@@ -47,11 +46,11 @@ Acceptance: snapshots for a scripted turn (begin, skill, read, run, receipt); fo
 
 ### P2: highlighting and code events
 
-- `stella-tui-highlight`: build the syntect theme from the palette (SPEC 6.4), highlight-on-arrival cache, language detection by extension with plain-text fallback.
+- Highlight-on-arrival cache in the deck. The lexer and the extension/fence language detection are `stella_transcript::syntax`'s already, by the decision #3644 and #4036 landed — a deck-local highlighter would be a fourth copy of the same rendering decision and is forbidden here (#4196). What P2 builds is the half the deck actually owns: the palette wired to SPEC 6.4 (`stella-tui/src/syntax.rs::tok_style`) and the cache that keeps an unchanged tail from re-lexing every frame.
 - Diff rendering: two-layer rows, sign column, line-number gutter.
 - `edit`, `write`, `delete` (with the pre-execution graph check line), and expanded `read` bodies.
 
-Acceptance: snapshot of a Rust diff with add and remove rows; benchmark proving highlight runs once per event (call counter in tests); delete event refuses to render without a graph check result in state.
+Acceptance: snapshot of a Rust diff with add and remove rows; a call-counter test proving highlight runs once per event rather than once per frame — shipped as `an_unchanged_tail_is_highlighted_once_not_once_per_frame` in `crates/stella-tui/src/views/session/fold.rs`; delete event refuses to render without a graph check result in state.
 
 ### P3: plan panel and task contracts
 
@@ -103,7 +102,7 @@ Acceptance: palette snapshot for query `ga` during a verify turn showing `/gates
 
 ## 5. Risks and mitigations
 
-- **syntect grammar accuracy**: good for Rust and TS, not tree-sitter grade. Mitigation: highlighter is behind a trait; swap to tree-sitter per-language later without touching widgets.
+- **Shared-lexer coverage**: `stella_transcript::syntax::Lang` is hand-written and recognises six languages (Rust, TS/JS, Python, Markdown, TOML, JSON) across four token classes; anything else renders as flat text, and inside those six the lexing is heuristic rather than grammar-accurate. Mitigation: the deck consumes it through `Tok`, not through a parser, so an upgrade to a grammar-backed lexer is a change inside `stella-transcript` that all three renderers gain at once and no widget notices. Whether to make that upgrade is #4283 — it lands there or not at all, never as a deck-local crate.
 - **Terminal variance on Windows**: legacy conhost degrades truecolor. Mitigation: fallback map plus recommending Windows Terminal; the desktop shell solves it permanently later.
 - **Registry and tracker latency**: never block the draw path; all remote work is async with visible `◐` states and stale-data tags.
 - **Scope creep in tabs**: AGENTS and SETTINGS are restyle-only in this cycle (SPEC 9.5).
