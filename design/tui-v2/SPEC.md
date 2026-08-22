@@ -11,7 +11,9 @@ Companion docs: `IMPLEMENTATION-PLAN.md`, `renderings/`
 
 Every screen exists to make these four claims visible without saying them:
 
-1. **Deterministic first, model last.** Anything answerable by computation never goes to a model. The UI prices deterministic work at $0.00 and shows the det/model split everywhere work is summarized.
+1. **Deterministic first, model last.** Anything answerable by computation never goes to a model. The UI prices deterministic work at $0.00 wherever it happens — a gate, a graph query — and marks each check with the kind of judge that settles it.
+
+   It does **not** report a `det %`. An earlier draft asked for the deterministic share of a turn's work as a percentage on the receipt, the task card and the start-work estimate; nothing in the workspace measures that, and this project does not build a metric to satisfy a layout. The thesis is carried by facts that already exist — a `$0.00` price on work that cost nothing, and a per-check `deterministic`/`model` tag the mechanism itself defines — not by a ratio over them.
 2. **Tasks close on checks, not on model self-report.** A task is a contract (definition of done), evidence, and cost. The model cannot mark its own homework.
 3. **Drift is recorded, not hidden.** The plan graph distinguishes `[:NEXT]` (planned) from `[:THEN]` (actual). Divergence is rendered, causal, and feeds the learner.
 4. **Traces are the product.** Verified traces train the customer's private model. The UI shows trace capture, learned skills, and receipts as first-class objects.
@@ -110,14 +112,14 @@ Top to bottom:
    - **PR** moves to the ISSUES tab (§9.4). A pull request is a tracker-side artifact of the current work, and that tab is where tracker-side artifacts live.
    - **LANES** moves to the AGENTS tab (§9.5), onto the EXECUTIONS header beside the active/total count that ENGINE became.
 
-   The status bar deliberately carries **no `det %`**. An earlier draft placed the deterministic/model split here; it was removed (2026-08-19, owner's call) rather than plumbed. Do not restore it — a permanent row is the wrong home for a number that changes meaning with scope, and the thesis it serves is expressed where work is actually summarized (the turn receipt, §6.1) and where deterministic work is priced (`$0.00 · det` on gates, §6.3; the graph footer, §9.1). Note that those `det` *tags* are booleans — this call did or did not reach a model — and need no computed ratio behind them.
+   No `det %` here, or anywhere — see §1. The `det` tags that remain (`$0.00 · det` on a gate, §6.3; the graph footer, §9.1) are **booleans**: this call did or did not reach a model. They need no ratio behind them and are not summed into one.
 
 ## 6. Transcript
 
 ### 6.1 Turn boundaries
 
 - **Turn begin**: full-width rule in `rule` color with an embedded label: `turn 14 · execute · kimi-k3 · budget $0.60`. If a queued steer is being consumed, append it: `queued: "<message>"`, so queue-never-blocks has a visible payoff.
-- **Turn end receipt**: rule labeled `turn 14 done · 0:42`, followed by one receipt line: `$0.11 · 18k tok · det 86% · 2 files · 4/4 tests · 1 memory · ↵ audit`. `↵ audit` opens the full trace.
+- **Turn end receipt**: rule labeled `turn 14 done · 0:42`, followed by one receipt line: `$0.11 · 18k tok · 2 files · 4/4 tests · 1 memory · ↵ audit`. Every field elides when nothing measured it, so the line states what a turn actually cost rather than a fixed shape with holes in it. `↵ audit` opens the full trace.
 - `^Z` folds an entire turn (everything between two rules).
 
 ### 6.2 Event anatomy
@@ -159,7 +161,7 @@ A task has three parts:
 
   Implemented in `stella_protocol::task_contract`, and the rule is the type rather than a validator: `TaskContract::ReadOnly` has no field a check could go in, and `DefinitionOfDone` is non-empty by construction in Rust and on the wire. Closure is **derived** (`TaskContract::closure`), never stored — there is no field a caller can set to mean done. `TaskBoard::set_status` refuses `Completed` while any check is outstanding, which is where "the model cannot mark its own homework" stops being a slogan. `Cancelled` is deliberately not gated: it is not a claim the work was done, and it has to stay available exactly when checks are failing.
 - **evidence**: the ledger of events tagged with this task id (edits, runs, graph writes).
-- **cost**: `$ · tok · cache rd% · det/model split · model calls · est remain`.
+- **cost**: `$ · tok · cache rd% · model calls · est remain`.
 
 Rule: contracts are **required only for tasks that produce diffs**. Read-only tasks close on completion of their events. This prevents fake checks written to satisfy the UI.
 
@@ -169,7 +171,7 @@ Rule: contracts are **required only for tasks that produce diffs**. Read-only ta
 
 ### 7.3 Plan panel
 
-Collapsed: the breadcrumb strip. Expanded (tab): task list with per-task right-aligned economics (`9k tok`, `det 94%`), the running task as a highlighted card showing its contract line, evidence line, and cost line. Drift-inserted tasks render with `⑂` in gold_bright and an `inserted` tag. Footer: `planned 6 · actual 7 · ⑂ 1 drift`, then `drift is recorded, not hidden. it trains your model.`
+Collapsed: the breadcrumb strip. Expanded (tab): task list with per-task right-aligned economics (`9k tok`), the running task as a highlighted card showing its contract line, evidence line, and cost line. Drift-inserted tasks render with `⑂` in gold_bright and an `inserted` tag. Footer: `planned 6 · actual 7 · ⑂ 1 drift`, then `drift is recorded, not hidden. it trains your model.`
 
 ### 7.4 Drift
 
@@ -202,7 +204,7 @@ The single best demo moment: an issue becomes a plan while the user watches, and
 2. Header: `w start work · <issue id> <title>`, subtitle `draft plan r1 · built from issue text + graph + memory`.
 3. Sources line names exactly what was used: the issue, the coupled files from the graph, and any applied memory RULEs with their text.
 4. Task list with contract previews: read-only tasks marked `read only · no contract`, diff-producing tasks each show one `definition of done` line with its mechanism and `det` tag, final task is `◇ verify · n gates · blocks merge`.
-5. Estimate line: `~$ · ~tok · det est % · ~minutes`.
+5. Estimate line: `~$ · ~tok · ~minutes`.
 6. Action row: `a approve and start · e edit tasks · x cancel`. Footer states plainly: `nothing runs before approval`.
 7. On approval, stella creates the branch, the plan becomes r1 with `[:NEXT]` edges, and the breadcrumb strip updates.
 

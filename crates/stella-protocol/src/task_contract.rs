@@ -41,9 +41,15 @@
 //! # Deterministic where it can be, and it says which
 //!
 //! Every check names the [`Judge`] that decides it. That is not decoration: it
-//! is the split SPEC 1's first thesis is about, and the number the turn receipt
-//! (SPEC 6.1) reports as `det %`. A check a machine settles costs `$0.00`; one
-//! a model settles costs a call, and the contract says out loud which it bought.
+//! is the split SPEC 1's first thesis is about.
+//! A check a machine settles costs `$0.00`; one a model settles costs a call,
+//! and the contract says out loud which it bought.
+//!
+//! Per check, and deliberately not summed into a ratio. A `det %` over a
+//! turn's work was specified once and removed: it has no source, and a
+//! number nothing measures is worse on a receipt than an absent one. What
+//! survives is the fact each check already carries — a reader can see that a
+//! contract is all `review` without being told a percentage nobody computed.
 //!
 //! [`CheckMechanism`] is an **open** vocabulary over a closed [`CheckKind`],
 //! the shape [`crate::StageName`] already uses and for the same reason: a
@@ -584,22 +590,6 @@ impl TaskContract {
         .into_iter()
         .flat_map(DefinitionOfDone::iter)
     }
-
-    /// How many clauses a machine settles, and how many a model does.
-    ///
-    /// The numerator and denominator of SPEC 6.1's `det %`, computed where the
-    /// contract is rather than re-derived by each surface that wants to show
-    /// it.
-    #[must_use]
-    pub fn judge_split(&self) -> (usize, usize) {
-        self.checks().fold((0, 0), |(det, model), check| {
-            if check.mechanism.judge().is_deterministic() {
-                (det + 1, model)
-            } else {
-                (det, model + 1)
-            }
-        })
-    }
 }
 
 #[cfg(test)]
@@ -745,19 +735,6 @@ mod tests {
     }
 
     // ── the det/model split (SPEC 1 thesis 1, SPEC 6.1's `det %`) ───────────
-
-    #[test]
-    fn the_judge_split_counts_machines_and_models_apart() {
-        let contract = TaskContract::DefinitionOfDone(DefinitionOfDone::new(
-            unit("a"),
-            vec![
-                Check::new("b", CheckMechanism::Known(CheckKind::Graph)),
-                Check::new("c", CheckMechanism::Known(CheckKind::Review)),
-            ],
-        ));
-        assert_eq!(contract.judge_split(), (2, 1));
-        assert_eq!(TaskContract::ReadOnly.judge_split(), (0, 0));
-    }
 
     /// A contributed mechanism carries its judge, so the split stays answerable
     /// for a plugin's own check.

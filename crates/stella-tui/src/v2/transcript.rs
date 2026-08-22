@@ -12,7 +12,7 @@
 //!  │ ▸ read …/lifecycle.rs · 221 lines                    ⚡3ms · ↵ open
 //!  │ ● edit …/self_driving_cmd.rs +3 -1              ⚡2ms · → task 3
 //! ── turn 14 done · 0:42 ──────────────────────────────────────────────────
-//!    receipt $0.11 · 18k tok · det 86% · 4/4 tests · 2 files · ↵ audit
+//!    receipt $0.11 · 18k tok · 4/4 tests · 2 files · ↵ audit
 //! ```
 //!
 //! ## Why a rail and a glyph, never a colour alone
@@ -277,15 +277,12 @@ pub struct Receipt {
     pub spend_usd: f64,
     /// Tokens this turn spent. `None` when nothing has counted them.
     ///
-    /// Optional for the same reason [`Receipt::det_pct`] is: `StepUsage` is a
+    /// Optional because `StepUsage` is a
     /// metering record the deck deliberately does not fold (it would
     /// double-count the spend the budget gauge already tracks), so a turn's
     /// token total has no source in the session model today. A receipt that
     /// printed `0 tok` would be stating a measurement nobody took.
     pub tokens: Option<u64>,
-    /// The deterministic share of the turn's work. This is `det %`'s home —
-    /// SPEC 5 removed it from the status bar and named the receipt instead.
-    pub det_pct: Option<u32>,
     pub tests_passed: u32,
     pub tests_total: u32,
     pub files: u32,
@@ -373,10 +370,6 @@ pub fn receipt(r: &Receipt) -> Line<'static> {
         spans.push(Span::styled(" · ", dim));
         spans.push(Span::styled(fmt_tokens(tokens), text));
         spans.push(Span::styled(" tok", dim));
-    }
-    if let Some(det) = r.det_pct {
-        spans.push(Span::styled(" · det ", dim));
-        spans.push(Span::styled(format!("{det}%"), text));
     }
     if r.tests_total > 0 {
         let all_passed = r.tests_passed == r.tests_total;
