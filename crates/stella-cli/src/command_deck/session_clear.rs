@@ -553,11 +553,11 @@ mod tests {
         );
         // The cleared session goes on to plan again — and ordinal ids
         // restart, so this brand-new task is also "1".
-        registry
-            .task_board()
-            .lock()
-            .unwrap()
-            .create("a task the user created after clearing", None);
+        registry.task_board().lock().unwrap().create(
+            "a task the user created after clearing",
+            None,
+            None,
+        );
         while in_rx.try_recv().is_ok() {}
 
         settle_worker_task(
@@ -639,7 +639,7 @@ mod tests {
             .task_board()
             .lock()
             .unwrap()
-            .create("post-clear work", None);
+            .create("post-clear work", None, None);
         let fresh = subs.started_for_test("sub:1");
         registry
             .task_board()
@@ -698,7 +698,7 @@ mod tests {
             let board = registry.task_board();
             let mut guard = board.lock().unwrap();
             for subject in subjects {
-                guard.create(*subject, None);
+                guard.create(*subject, None, None);
             }
         }
         (registry, SubSessions::new())

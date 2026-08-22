@@ -583,6 +583,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                     description: Some("it loops on 302".into()),
                     status: TaskStatus::InProgress,
                     owner: Some("lead".into()),
+                    contract: None,
                 },
                 TaskItem {
                     id: "2".into(),
@@ -590,6 +591,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                     description: None,
                     status: TaskStatus::Pending,
                     owner: None,
+                    contract: None,
                 },
             ],
         },
@@ -951,6 +953,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                     description: None,
                     status,
                     owner: None,
+                    contract: None,
                 }],
             }),
     );

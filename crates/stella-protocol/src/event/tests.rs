@@ -784,6 +784,7 @@ fn task_update_roundtrips_a_full_board_snapshot() {
                 description: None,
                 status: TaskStatus::Completed,
                 owner: Some("lead".into()),
+                contract: None,
             },
             TaskItem {
                 id: "2".into(),
@@ -791,6 +792,7 @@ fn task_update_roundtrips_a_full_board_snapshot() {
                 description: Some("token refresh races the redirect".into()),
                 status: TaskStatus::InProgress,
                 owner: Some("sub:2".into()),
+                contract: None,
             },
             TaskItem {
                 id: "3".into(),
@@ -798,6 +800,7 @@ fn task_update_roundtrips_a_full_board_snapshot() {
                 description: None,
                 status: TaskStatus::Pending,
                 owner: None,
+                contract: None,
             },
         ],
     };
