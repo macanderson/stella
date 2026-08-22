@@ -1,0 +1,41 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.inv5-typed-errors-no-panic"
+record_id = "rec_macanderson_stella_inv5_typed_errors_no_panic_0bb306da7419"
+record_hash = "sha256:bda4fcf3a225afe44a116bf5ec8b73833a60e71d3c03ef23f0a534926a815d5b"
+kind = "constraint"
+statement = "Invariant 5: library code returns typed named errors and never uses a bare String error or unwrap/expect on runtime data such as network payloads, tool arguments, or parsed source files."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+keywords = [
+    "typed errors",
+    "unwrap",
+    "expect",
+    "panic",
+]
+
+[record.enforcement]
+mode = "hard"
+
+[record.truth]
+basis = "decree"
+confidence = 92

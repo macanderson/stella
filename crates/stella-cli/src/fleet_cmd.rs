@@ -751,7 +751,10 @@ async fn worker_recall_block(
         return (None, None);
     };
     memory.arm_recall_control();
-    let recalled = memory.recall_block_reported(prompt).await;
+    // A fleet attempt recalls before its engine has messages, so there is no
+    // conversation to derive touched paths from — the empty anchor set is the
+    // honest argument here, and the same scoping the prompt alone always gave.
+    let recalled = memory.recall_block_reported(prompt, &[]).await;
     let event = recalled.telemetry_event();
     // `memory` is dropped here, and deliberately not carried to the reflection
     // below: this handle is rooted at the attempt's own tree, and a lesson

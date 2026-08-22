@@ -1,0 +1,41 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.left-behind-fix-is-file-issue"
+record_id = "rec_macanderson_stella_left_behind_fix_is_file_issue_328ec0b9f0c2"
+record_hash = "sha256:973c897bc3c40cd35faa54674a791c7743d7d851d03d153059fd04716d81774a"
+kind = "rule"
+statement = "The fix for a left-behind marker is always to file the issue and reference it — never to delete the marker and never to add a baseline entry, since that baseline started empty and is meant to stay empty."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+paths = ["scripts/check-left-behind.sh"]
+keywords = [
+    "baseline",
+    "marker",
+    "issue reference",
+]
+
+[record.enforcement]
+mode = "hard"
+
+[record.truth]
+basis = "decree"
+confidence = 90

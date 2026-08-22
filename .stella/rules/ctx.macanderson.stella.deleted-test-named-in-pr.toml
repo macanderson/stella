@@ -1,0 +1,40 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.deleted-test-named-in-pr"
+kind = "rule"
+statement = "Deleting a test is permitted but must be named in the PR description so an invisible deletion becomes a sentence a reviewer reads."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+# Retargeted from the extractor's ["pull-request", "delete-test"], neither
+# of which is a ratified task name.
+tasks = ["test", "review"]
+keywords = [
+    "deleted test",
+    "PR description",
+]
+
+[record.enforcement]
+mode = "hard"
+
+[record.truth]
+basis = "decree"
+confidence = 90

@@ -1,0 +1,40 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.nothing-left-behind"
+record_id = "rec_macanderson_stella_nothing_left_behind_37aca87900cc"
+record_hash = "sha256:a611e18229d4a3efed39ef155ac07f98fd8fdd4eca962178e0e1bd14024d16a2"
+kind = "rule"
+statement = "Work is not finished while anything noticed during the session lives only in the author's head, a chat transcript, or a worktree about to be deleted."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+keywords = [
+    "left behind",
+    "session",
+    "handoff",
+]
+
+[record.enforcement]
+mode = "soft"
+
+[record.truth]
+basis = "decree"
+confidence = 90

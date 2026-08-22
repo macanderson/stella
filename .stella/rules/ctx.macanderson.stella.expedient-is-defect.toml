@@ -1,0 +1,44 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.expedient-is-defect"
+record_id = "rec_macanderson_stella_expedient_is_defect_7db78f4ae8d1"
+record_hash = "sha256:361cf7defa9e34782c809b3ba4b2c6160a5e5c8585f46aa95880e16fff8f869c"
+kind = "constraint"
+statement = "An expedient shortcut is treated as a defect rather than an acceptable tradeoff."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "CLAUDE.md"
+source_digest = "sha256:5de1b8dc1e72abd504a708a727b54340ebb060894883c5e4e143fc91fab9eba3"
+source_lines = [
+    23,
+    32,
+]
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77ce42"
+extracted_at = "2026-08-09T00:48:02Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+keywords = [
+    "expedient",
+    "shortcut",
+    "defect",
+]
+
+[record.enforcement]
+mode = "soft"
+
+[record.truth]
+basis = "decree"
+confidence = 90

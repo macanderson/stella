@@ -1,0 +1,44 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.now-vs-right-is-maintainers-call"
+record_id = "rec_macanderson_stella_now_vs_right_is_maintainers_call_b12f8fb1ad3b"
+record_hash = "sha256:bfc63dc1675f9459a49cdb69819e72d4dab1bb3f4ebfcd2a8cdc02db84d7c07f"
+kind = "rule"
+statement = 'When "now" and "right" cannot both be had, the agent must state which one is being given up and why and let a human maintainer choose rather than deciding silently.'
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "CLAUDE.md"
+source_digest = "sha256:5de1b8dc1e72abd504a708a727b54340ebb060894883c5e4e143fc91fab9eba3"
+source_lines = [
+    48,
+    52,
+]
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77ce42"
+extracted_at = "2026-08-09T00:48:02Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+keywords = [
+    "escalation",
+    "maintainer",
+    "tradeoff",
+]
+
+[record.enforcement]
+mode = "soft"
+
+[record.truth]
+basis = "decree"
+confidence = 90
