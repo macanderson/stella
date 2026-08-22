@@ -29,12 +29,7 @@ fn scripted_turn() -> (TurnHead, Vec<Event>, Receipt) {
     );
     skill.footer = Some("  injected 10-layer feature contract · used 42× this repo".into());
 
-    let mut read = Event::new(
-        EventKind::Read {
-            extent: Extent::added(221),
-        },
-        "…/lifecycle.rs",
-    );
+    let mut read = Event::new(EventKind::Read, "…/lifecycle.rs");
     read.duration_ms = 3;
 
     let mut edit = Event::new(
@@ -101,7 +96,9 @@ fn a_scripted_turn_renders_begin_events_and_receipt() {
         "── turn 14 execute · kimi-k3 · budget $0.60",
         "✦ skill oxagen-feature · auto",
         "injected 10-layer feature contract",
-        "▸ read …/lifecycle.rs · 221 lines",
+        // No size column: a read has no producer for one, so the head states
+        // its path and stops (#4180).
+        "▸ read …/lifecycle.rs",
         "● edit …/self_driving_cmd.rs +3 -1",
         "● run cargo test -p stella-core",
         "── turn 14 done · 0:42",
@@ -126,12 +123,7 @@ fn a_turn_rule_spans_the_full_width() {
 #[test]
 fn every_event_row_shows_its_rail_in_the_correct_metal() {
     let cases = [
-        (
-            EventKind::Read {
-                extent: Extent::added(1),
-            },
-            token::MUTED,
-        ),
+        (EventKind::Read, token::MUTED),
         (
             EventKind::Edit {
                 extent: Extent::delta(1, 0),
@@ -190,12 +182,7 @@ fn every_event_row_shows_its_rail_in_the_correct_metal() {
 /// SPEC 6.3: reads collapse by default, edits expand.
 #[test]
 fn reads_collapse_and_edits_expand_by_default() {
-    assert!(
-        EventKind::Read {
-            extent: Extent::added(1)
-        }
-        .collapses_by_default()
-    );
+    assert!(EventKind::Read.collapses_by_default());
     assert!(
         !EventKind::Edit {
             extent: Extent::delta(1, 1)
