@@ -267,8 +267,10 @@ fn parse_questions(input: &Value) -> Result<Vec<Question>, String> {
     })?;
 
     if raw.is_empty() {
-        return Err("`questions` is empty — ask at least one question, or do not call this tool"
-            .to_string());
+        return Err(
+            "`questions` is empty — ask at least one question, or do not call this tool"
+                .to_string(),
+        );
     }
     if raw.len() > MAX_QUESTIONS {
         return Err(format!(
@@ -377,7 +379,9 @@ fn non_empty_str<'a>(value: &'a Value, field: &str, at: &str) -> Result<&'a str,
         )
     })?;
     if text.trim().is_empty() {
-        return Err(format!("field `{at}.{field}` is empty — it must say something"));
+        return Err(format!(
+            "field `{at}.{field}` is empty — it must say something"
+        ));
     }
     Ok(text)
 }
@@ -478,9 +482,10 @@ mod tests {
             outcome,
             seen: std::sync::Mutex::new(None),
         });
-        let slot: QuestionSlot = Arc::new(std::sync::RwLock::new(
-            QuestionBroker::interactive(responder.clone(), Duration::from_secs(5)),
-        ));
+        let slot: QuestionSlot = Arc::new(std::sync::RwLock::new(QuestionBroker::interactive(
+            responder.clone(),
+            Duration::from_secs(5),
+        )));
         (AskQuestion::new(slot), responder)
     }
 
@@ -515,8 +520,14 @@ mod tests {
         // The question reached the responder intact, description included.
         let seen = responder.seen.lock().unwrap().clone().expect("asked");
         assert_eq!(seen.questions.len(), 1);
-        assert_eq!(seen.questions[0].options[0].description, "Matches the rest of the app");
-        assert!(!seen.questions[0].multi_select, "absent means single-select");
+        assert_eq!(
+            seen.questions[0].options[0].description,
+            "Matches the rest of the app"
+        );
+        assert!(
+            !seen.questions[0].multi_select,
+            "absent means single-select"
+        );
     }
 
     /// "Chat about this" is not a refusal, and the model must not read it as

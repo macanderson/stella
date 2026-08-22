@@ -109,13 +109,19 @@ pub fn parse_answer(line: &str, question: &Question) -> ParsedAnswer {
             .map(|o| o.label.clone())
             .unwrap_or_default();
         return ParsedAnswer {
-            chosen: if first.is_empty() { Vec::new() } else { vec![first] },
+            chosen: if first.is_empty() {
+                Vec::new()
+            } else {
+                vec![first]
+            },
             note,
         };
     }
 
     let tokens: Vec<&str> = choice.split(',').map(str::trim).collect();
-    let all_numeric = tokens.iter().all(|t| !t.is_empty() && t.parse::<usize>().is_ok());
+    let all_numeric = tokens
+        .iter()
+        .all(|t| !t.is_empty() && t.parse::<usize>().is_ok());
     if all_numeric {
         // The row the runtime appends after the asker's options. Naming it
         // is a real selection — it means "none of these, let me type" — and
@@ -576,7 +582,10 @@ mod tests {
         let review = cards.last().expect("a review card was rendered");
         assert!(review.contains("Review your answers"), "{review}");
         assert!(review.contains("Session cookie"), "{review}");
-        assert!(review.contains("note: only for the admin routes"), "{review}");
+        assert!(
+            review.contains("note: only for the admin routes"),
+            "{review}"
+        );
         assert!(review.contains("How should it roll out?"), "{review}");
     }
 
@@ -647,7 +656,10 @@ mod tests {
     #[test]
     fn a_sub_agents_question_says_whose_it_is() {
         let card = question_card(0, 1, &question(false), Some("research-child"));
-        assert!(card.contains("from the `research-child` sub-agent"), "{card}");
+        assert!(
+            card.contains("from the `research-child` sub-agent"),
+            "{card}"
+        );
         let top = question_card(0, 1, &question(false), None);
         assert!(!top.contains("sub-agent"), "{top}");
     }

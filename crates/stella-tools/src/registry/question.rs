@@ -37,7 +37,7 @@
 //! their prompts, and the driver would answer a card assembled from two
 //! agents' questions at once.
 //!
-//! So the broker holds a fairness gate ([`QuestionBroker::gate`]) and takes
+//! So [`QuestionBroker`] holds a private fairness gate and takes
 //! it before asking. A concurrent second question waits for the first to
 //! resolve and is then asked on its own. The TTL starts **after** the gate is
 //! acquired, so time spent queueing never counts against the driver's time to
@@ -69,8 +69,7 @@ pub const DEFAULT_QUESTION_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// The [`QuestionOutcome::Declined`] reason of a TTL expiry — the exact
 /// string, so callers and tests match it instead of parsing prose.
-pub const QUESTION_TIMED_OUT: &str =
-    "no answer came back in time — nobody appears to be at the controls; \
+pub const QUESTION_TIMED_OUT: &str = "no answer came back in time — nobody appears to be at the controls; \
      decide it yourself and say which way you went and why";
 
 /// How a question reaches whoever is driving — the port a surface implements
@@ -138,17 +137,6 @@ impl QuestionBroker {
             ttl,
             gate: Arc::new(tokio::sync::Mutex::new(())),
         }
-    }
-
-    /// Whether a driver is attached at all.
-    ///
-    /// The tool reads this to shape its refusal, not to decide whether to
-    /// ask: [`Self::ask`] answers correctly either way. A separate accessor
-    /// exists so a caller can say "no driver" without first constructing a
-    /// question nobody will read.
-    #[must_use]
-    pub fn has_responder(&self) -> bool {
-        self.responder.is_some()
     }
 
     /// Ask `request` and return how it resolved.
@@ -290,10 +278,9 @@ mod tests {
             ask_a.asker = Some("a".into());
             let mut ask_b = one_question();
             ask_b.asker = Some("b".into());
-            tokio::join!(
-                async move { a.ask(&ask_a).await },
-                async move { b.ask(&ask_b).await },
-            )
+            tokio::join!(async move { a.ask(&ask_a).await }, async move {
+                b.ask(&ask_b).await
+            },)
         };
 
         assert!(matches!(first, QuestionOutcome::Answered { .. }));
@@ -334,7 +321,10 @@ mod tests {
             .await
             .is_err();
         drop(held);
-        assert!(blocked, "a clone acquired its own gate — nothing serializes");
+        assert!(
+            blocked,
+            "a clone acquired its own gate — nothing serializes"
+        );
     }
 
     /// Headless is not a hang and not a bare wall: the decline names what to
@@ -342,7 +332,6 @@ mod tests {
     #[tokio::test]
     async fn a_headless_broker_declines_with_an_instruction() {
         let broker = QuestionBroker::default();
-        assert!(!broker.has_responder());
         match broker.ask(&one_question()).await {
             QuestionOutcome::Declined { reason } => {
                 assert!(reason.contains("no driver is attached"), "{reason}");
@@ -403,15 +392,13 @@ mod tests {
         let mut second = one_question();
         second.asker = Some("second".into());
 
-        let (first_out, second_out) = tokio::join!(
-            async move { a.ask(&first).await },
-            async move {
+        let (first_out, second_out) =
+            tokio::join!(async move { a.ask(&first).await }, async move {
                 // Make the ordering deterministic: the first ask takes the
                 // gate before this one is submitted.
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 b.ask(&second).await
-            },
-        );
+            },);
 
         assert!(
             matches!(&first_out, QuestionOutcome::Declined { reason } if reason == QUESTION_TIMED_OUT),

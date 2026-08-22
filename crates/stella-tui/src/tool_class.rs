@@ -145,6 +145,13 @@ pub fn classify(name: &str) -> ToolClass {
         "search" => ToolClass::Inspect,
         "environment" => ToolClass::Inspect,
         "task" => ToolClass::Delegate,
+        // `ask_question` is `read_only`, so the fallback below would render it
+        // as an inspection — and a row that reads like a file read is exactly
+        // wrong for the one call where the agent stopped and put a decision to
+        // a person. Nothing in the workspace was examined; another party was
+        // engaged, which is what `Delegate` says on every other row that
+        // carries it.
+        "question" => ToolClass::Delegate,
         // `mcp`, `custom`, and any group added to the catalog without a class
         // here. A read stays a read; everything else promises the least.
         _ if read_only => ToolClass::Inspect,
@@ -188,6 +195,10 @@ mod tests {
             ("task_list", ToolClass::Delegate),
             ("task_complete", ToolClass::Delegate),
             ("task_assign", ToolClass::Delegate),
+            // Read-only, and deliberately NOT `Inspect`: the fallback arm
+            // would paint the one call where the agent stopped and asked a
+            // person in the same colour as reading a file.
+            ("ask_question", ToolClass::Delegate),
         ] {
             assert_eq!(classify(name), class, "{name}");
         }
@@ -208,7 +219,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("group `{group}` is empty"));
             let explicit = matches!(
                 group,
-                "scratch" | "environment" | "task" | "file" | "shell" | "search"
+                "scratch" | "environment" | "task" | "file" | "shell" | "search" | "question"
             );
             assert!(
                 explicit,
