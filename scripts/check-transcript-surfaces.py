@@ -129,9 +129,15 @@ SURFACES: list[Surface] = [
         path="crates/stella-tui/src/v2/transcript.rs",
         entry=GRID,
         shared=False,
-        issue=4271,
-        note="The v2 deck's SPEC 6 frame. Whether SPEC 6 or `grid.rs` is the "
-        "one frame is an open design decision, not a wiring task.",
+        issue=4289,
+        note="The v2 deck's SPEC 6 frame. The design question is settled — "
+        "SPEC 6 is the one frame and `grid.rs` is changed to draw it, not the "
+        "other way round (#4271, recorded in stella-transcript's charter). "
+        "What is left is the migration, and its first step is a correctness "
+        "precondition rather than wiring: `model` has no notion of an "
+        "*unmeasured* row, so moving the deck across before that lands would "
+        "reintroduce the fabricated `+0 -0` its `Option` fields exist to "
+        "prevent.",
     ),
     Surface(
         ident="export-html",
