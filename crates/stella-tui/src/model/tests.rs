@@ -1488,3 +1488,5 @@ fn a_measured_change_with_no_patch_still_reports_its_delta() {
         "and no patch is invented for it"
     );
 }
+
+mod producer_seq;
