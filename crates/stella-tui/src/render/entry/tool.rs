@@ -392,8 +392,9 @@ pub(super) fn result_body(
     // looks"), gated on freshness: a later mutation of the same path
     // bumps `FileState::changes` past the recorded seq and the diff
     // no longer belongs to this call, so it is hidden rather than
-    // misattributed. Collapsed shows at most [`INLINE_DIFF_CAP`]
-    // styled lines; ctrl+o reveals the whole diff.
+    // misattributed. Collapsed shows the lead change, at most
+    // [`INLINE_DIFF_CAP`] styled lines of it; ctrl+o reveals every
+    // change the call made, whole.
     if expanded {
         // ctrl+o is where the elided files live, so expanded draws every
         // one of them — an affordance that revealed only the lead file's
