@@ -339,7 +339,12 @@ impl SessionModel {
                     self.turn_head_stamped = true;
                     Some(TurnOpening {
                         turn: self.turns_completed.saturating_add(1),
-                        model: self.hud.model.clone(),
+                        // Deliberately not `self.hud.model`: that field is
+                        // written only by `TurnComplete`/`RunComplete`, so at
+                        // this instant it holds either nothing (turn 1) or the
+                        // *previous* turn's model. The turn's own first worker
+                        // call back-fills it — see `TurnOpening::model`.
+                        model: None,
                         budget_usd: self.hud.limit_usd,
                     })
                 };
@@ -850,8 +855,28 @@ impl SessionModel {
             // (#3511), and the crate itself was deleted in #3865, so nothing
             // emits `Proof` today. The step survives in the traces tab and the transcript
             // export, which read the raw stream.
-            | AgentEvent::Proof { .. }
-            | AgentEvent::StepManifest { .. } => {}
+            | AgentEvent::Proof { .. } => {}
+            // The one field of a manifest the deck folds: **which model is
+            // answering this turn**. Its token, cost and block fields are
+            // pointedly still ignored, for the reason the group above states —
+            // the live spend is `BudgetTick`'s and folding a second source
+            // would double-count it.
+            //
+            // The manifest is emitted immediately *before* its call commits,
+            // which is what makes it early enough to label a turn that has only
+            // just started — the whole point, since `Hud::model`'s existing
+            // writers are both terminal (#4183).
+            AgentEvent::StepManifest {
+                role,
+                model,
+                call_seq,
+                ..
+            } => {
+                if turn::supplies_the_turns_model(*role, *call_seq) {
+                    self.hud.model = Some(model.clone());
+                    self.name_the_open_turns_model(model);
+                }
+            }
             AgentEvent::Error { message, retryable } => {
                 // A terminal error ends the turn without a `Complete`, so the
                 // plan has to close here too: a step left `working` on a turn
@@ -1120,6 +1145,40 @@ impl SessionModel {
                 _ => None,
             })
             .and_then(|(name, path)| is_file_mutation(&name).then_some(path).flatten())
+    }
+
+    /// Name `model` on the opening rule of the turn now in flight, if that rule
+    /// has not been given one yet.
+    ///
+    /// Walks back to the **nearest** stage boundary that opened a turn and stops
+    /// there, whether or not it fills anything. That single stop is what makes
+    /// this first-write-wins per turn, and it is doing two jobs:
+    ///
+    /// * an earlier turn's rule is already settled and must not be rewritten by
+    ///   a later turn's call;
+    /// * a sub-agent's calls also carry
+    ///   [`stella_protocol::ModelCallRole::Worker`], and a child may well run on
+    ///   a different model. The lead has to call the model before it can decide
+    ///   to delegate, so the lead's own first worker call always precedes any
+    ///   child's and has already claimed the rule by the time one arrives. Depth
+    ///   is not on the wire here, so the ordering is the guarantee rather than a
+    ///   filter.
+    ///
+    /// A turn whose rule was never stamped (`turn_head_stamped` false — no stage
+    /// boundary yet) simply finds nothing and leaves `hud.model` to carry it.
+    fn name_the_open_turns_model(&mut self, model: &str) {
+        if let Some(TranscriptEntry::Stage {
+            opens: Some(opening),
+            ..
+        }) = self
+            .transcript
+            .iter_mut()
+            .rev()
+            .find(|e| matches!(e, TranscriptEntry::Stage { opens: Some(_), .. }))
+            && opening.model.is_none()
+        {
+            opening.model = Some(model.to_owned());
+        }
     }
 
     /// Drop the inline-diff reference from every earlier result that pointed
