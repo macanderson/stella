@@ -747,6 +747,52 @@ export type BudgetScope = "turn" | "session";
 export type CacheZone = "stable_prefix" | "cacheable" | "volatile" | "other";
 
 /**
+ * One clause of a task's definition of done.
+ */
+export interface Check {
+  /**
+   * How it is settled.
+   */
+  mechanism: CheckMechanism;
+  /**
+   * Where it stands. Defaults to [`CheckOutcome::Pending`] so a plan can be
+   * written before anything has run.
+   */
+  outcome?: CheckOutcome;
+  /**
+   * What must be true, in the author's words: "no inbound refs to the
+   * removed symbol", "the auth suite is green".
+   */
+  statement: string;
+}
+
+/**
+ * How a check is settled — an OPEN vocabulary. The mechanisms this host runs itself are listed in `examples` and imply their own judge; any other name is a contributed mechanism and MUST carry `judge`, so a consumer can always tell whether a machine or a model decided.
+ */
+export interface CheckMechanism {
+  judge?: Judge;
+  name: string;
+}
+
+/**
+ * Where a check stands.
+ *
+ * [`CheckOutcome::Passed`] and [`CheckOutcome::Failed`] both carry evidence
+ * because an outcome without it is exactly the self-report this module exists
+ * to replace — "it passed" is a claim, and "42 tests, 0 failures" is the thing
+ * that makes it checkable by someone else.
+ */
+export type CheckOutcome = {
+  state: "pending";
+} | {
+  evidence: string;
+  state: "passed";
+} | {
+  evidence: string;
+  state: "failed";
+};
+
+/**
  * Aggregate CI verdict for a PR's head commit, as observed by the
  * fleet monitor (`gh pr checks`). Reconciled against the live source
  * before rendering, never served from cache alone (L-V3).
@@ -1043,6 +1089,11 @@ export interface ContextUsage {
 }
 
 /**
+ * What a diff-producing task means by done: at least one check, always. An empty array is refused rather than accepted as a contract that promises nothing.
+ */
+export type DefinitionOfDone = Check[];
+
+/**
  * Why a candidate's work did not reach the real tree.
  *
  * Exhaustive over the pipeline's decision: the three arms are the two
@@ -1213,6 +1264,14 @@ export interface HunkProposal {
    */
   tool: string;
 }
+
+/**
+ * Who settles a check.
+ *
+ * The axis SPEC 1's first thesis prices: deterministic work never reaches a
+ * model and costs `$0.00`.
+ */
+export type Judge = "deterministic" | "model";
 
 /**
  * Which rung of the evidence ladder a `verdict` event actually came to rest on. The verdict's `passed` and `deterministic` flags cannot express this on their own: several distinct outcomes share the same pair of booleans, so the rung is carried explicitly rather than inferred. Read this field, not the flags, when you need to know what was established.
@@ -1868,11 +1927,36 @@ export type SubAgentPhase = {
 export type SubAgentStatus = "completed" | "incomplete" | "refused";
 
 /**
+ * What a task means by done (SPEC 7.1).
+ */
+export type TaskContract = {
+  kind: "read_only";
+} | {
+  checks: DefinitionOfDone;
+  kind: "definition_of_done";
+};
+
+/**
  * One entry on the turn's task board (the `task_*` tools). The board is
  * session-scoped working state — what the agent has planned, is doing,
  * and has finished — mirrored to the store for cross-session findability.
  */
 export interface TaskItem {
+  /**
+   * What this task means by done (SPEC 7.1).
+   *
+   * `None` is *nobody has said yet*, and is deliberately not the same fact
+   * as [`TaskContract::ReadOnly`], which is *somebody looked and there is
+   * nothing to prove*. A board that collapsed the two would let an
+   * undeclared task close on the same terms as one declared harmless —
+   * which is the self-report [`TaskContract`] exists to end.
+   *
+   * Optional because the board predates contracts and a session may still
+   * create a task without one; `stella_core::tasks` refuses the *close*, not
+   * the creation, so an undeclared task is visible on the board rather than
+   * rejected at the door.
+   */
+  contract?: TaskContract | null;
   /**
    * What needs to be done, if the creator elaborated beyond the subject.
    */

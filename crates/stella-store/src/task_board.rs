@@ -155,6 +155,7 @@ mod tests {
             description: None,
             status: TaskStatus::Completed,
             owner: Some("sub:1".into()),
+            contract: None,
         }
     }
 

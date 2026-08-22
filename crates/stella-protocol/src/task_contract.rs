@@ -261,6 +261,66 @@ impl<'de> Deserialize<'de> for CheckMechanism {
     }
 }
 
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for CheckMechanism {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CheckMechanism".into()
+    }
+
+    /// An object with a free-form `name`, **not** an enum of the four.
+    ///
+    /// The schema is the contract a non-Rust reader validates against, and a
+    /// closed enum there would make a plugin's own mechanism a schema
+    /// violation — re-closing on the wire exactly the vocabulary this type
+    /// opened. The four the host runs ride along as `examples`, which
+    /// documents without constraining.
+    ///
+    /// `judge` is optional here rather than required, because a known name
+    /// carries no judge on the wire: the mechanism defines it. A reader that
+    /// sees a name it does not recognise and no `judge` is looking at a
+    /// malformed message, and `Deserialize` rejects it for the same reason —
+    /// the det/model split has to stay answerable for every check.
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // `subschema_for` both registers `Judge` in `$defs` and returns the
+        // reference to it. A hand-written `$ref` would compile and then dangle,
+        // because nothing would have put the definition there.
+        let judge = generator.subschema_for::<Judge>();
+        let mut schema = schemars::json_schema!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "judge": judge
+            },
+            "required": ["name"]
+        });
+        schema.insert(
+            "description".to_owned(),
+            serde_json::Value::String(
+                "How a check is settled — an OPEN vocabulary. The mechanisms this host runs \
+                 itself are listed in `examples` and imply their own judge; any other name is a \
+                 contributed mechanism and MUST carry `judge`, so a consumer can always tell \
+                 whether a machine or a model decided."
+                    .to_owned(),
+            ),
+        );
+        schema.insert(
+            "examples".to_owned(),
+            serde_json::Value::Array(
+                [
+                    CheckKind::Graph,
+                    CheckKind::Unit,
+                    CheckKind::Harness,
+                    CheckKind::Review,
+                ]
+                .iter()
+                .map(|k| serde_json::json!({ "name": k.as_wire_str() }))
+                .collect(),
+            ),
+        );
+        schema
+    }
+}
+
 /// Where a check stands.
 ///
 /// [`CheckOutcome::Passed`] and [`CheckOutcome::Failed`] both carry evidence
@@ -335,7 +395,6 @@ impl Check {
 /// On the wire it is a plain JSON array, so the shape is what a reader would
 /// expect; the emptiness rule is enforced on the way in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(into = "Vec<Check>")]
 pub struct DefinitionOfDone {
     head: Check,
@@ -406,6 +465,38 @@ impl<'de> Deserialize<'de> for DefinitionOfDone {
                  anything but a self-report",
             )
         })
+    }
+}
+
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for DefinitionOfDone {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "DefinitionOfDone".into()
+    }
+
+    /// A non-empty **array** of checks, not the `{head, tail}` struct.
+    ///
+    /// Hand-written because `serde(into = "Vec<Check>")` moves the wire shape
+    /// away from the Rust shape, and a derived schema would describe the
+    /// latter — publishing a contract no message this type emits could ever
+    /// satisfy. `minItems: 1` is the non-emptiness rule stated where a
+    /// non-Rust reader can enforce it, so the guarantee survives the crate
+    /// boundary instead of stopping at it.
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let mut schema = schemars::json_schema!({
+            "type": "array",
+            "minItems": 1,
+            "items": generator.subschema_for::<Check>()
+        });
+        schema.insert(
+            "description".to_owned(),
+            serde_json::Value::String(
+                "What a diff-producing task means by done: at least one check, always. An empty \
+                 array is refused rather than accepted as a contract that promises nothing."
+                    .to_owned(),
+            ),
+        );
+        schema
     }
 }
 

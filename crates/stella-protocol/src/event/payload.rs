@@ -28,6 +28,11 @@ use crate::ladder::LadderSnapshot;
 // and `agentevent.d.ts` (#3450).
 #[cfg(doc)]
 use super::AgentEvent;
+// Same `cfg(doc)` treatment, and for the same reason: `TaskItem::contract`'s
+// docs link it, and spelling the link as a path would put `crate::…` into the
+// published wire contract.
+#[cfg(doc)]
+use crate::TaskContract;
 
 /// What happened to a file in a [`AgentEvent::FileChange`] event.
 ///
@@ -299,7 +304,7 @@ pub struct TaskItem {
     /// the creation, so an undeclared task is visible on the board rather than
     /// rejected at the door.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub contract: Option<crate::TaskContract>,
+    pub contract: Option<crate::task_contract::TaskContract>,
 }
 
 /// Lifecycle of a `TaskItem`. Terminal states are `Completed` and
