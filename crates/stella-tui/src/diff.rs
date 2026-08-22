@@ -148,25 +148,68 @@ pub fn body_lines_capped(
     cap: usize,
     fold_hint: Option<&str>,
 ) -> (Vec<Line<'static>>, usize) {
-    render_body(diff, path, cap, true, fold_hint)
+    render_body(diff, path, cap, Chrome::VIEWER, fold_hint)
 }
 
 /// [`body_lines_capped`] for the transcript's inline diffs, which drop a lone
-/// `@@ -a,b +c,d @@` header.
+/// `@@ -a,b +c,d @@` header and a single file's `diff`/`index`/`---`/`+++`
+/// preamble.
 ///
-/// In a diff *viewer* the hunk header is orientation. Inline under a tool call
-/// it is a row of chrome restating what the line-number gutter beside it
-/// already says, and a two-line change should not cost three rows. With more
-/// than one hunk the headers stay: there they earn their space as the boundary
-/// between two disjoint regions of the file.
+/// In a diff *viewer* both are orientation. Inline under a tool call both are
+/// chrome restating what the row above and the gutter beside already say, and a
+/// two-line change should not cost six rows to read. The thresholds differ
+/// because what makes each one earn its space differs: a hunk header is a
+/// boundary between disjoint regions of one file, so it survives from two hunks
+/// up; a file preamble is a boundary between files, so it survives from two
+/// files up.
+///
+/// The preamble is what a real turn actually folds — `WorkJournal`'s
+/// `split_patch_per_file` cuts git's patch on the `diff --git` header and hands
+/// on everything after it, so `index <a>..<b> <mode>` / `--- a/p` / `+++ b/p`
+/// leads every inline diff in the deck. Three rows, on every mutating call,
+/// naming a path the call row already names and a blob hash nobody reads.
 pub fn body_lines_inline(
     diff: &str,
     path: Option<&str>,
     cap: usize,
     fold_hint: Option<&str>,
 ) -> (Vec<Line<'static>>, usize) {
-    let multi = diff.lines().filter(|l| l.starts_with("@@")).count() > 1;
-    render_body(diff, path, cap, multi, fold_hint)
+    render_body(diff, path, cap, Chrome::inline_for(diff), fold_hint)
+}
+
+/// Which of a diff's structural rows earn their space in this rendering.
+///
+/// A pair of bools rather than one: they answer different questions (how many
+/// hunks? how many files?) and a single "is this inline" flag would have to
+/// re-derive both at the point of use, which is where the two would drift.
+#[derive(Clone, Copy)]
+struct Chrome {
+    /// Draw `@@ -a,b +c,d @@`.
+    hunk_headers: bool,
+    /// Draw the per-file preamble (`diff `, `index `, `--- `, `+++ `).
+    file_headers: bool,
+}
+
+impl Chrome {
+    /// Everything, for the standalone viewer — a reader navigating a patch
+    /// needs the boundaries even when there is only one of them.
+    const VIEWER: Self = Self {
+        hunk_headers: true,
+        file_headers: true,
+    };
+
+    /// Keep only the boundaries that separate more than one of something.
+    fn inline_for(diff: &str) -> Self {
+        Self {
+            hunk_headers: diff.lines().filter(|l| l.starts_with("@@")).count() > 1,
+            // `diff `-prefixed lines are the only unambiguous per-file
+            // boundary; the count is 0 for the split-per-file shape the event
+            // path folds and 1 for a whole single-file patch, and both are one
+            // file. Counting `+++ ` instead would miscount, because added
+            // source text starting `++ ` is textually identical to a header.
+            file_headers: diff.lines().filter(|l| l.starts_with("diff ")).count() > 1,
+        }
+    }
 }
 
 /// [`body_lines_inline`] dressed as ANSI strings for the plain surface
@@ -197,7 +240,7 @@ fn render_body(
     diff: &str,
     path: Option<&str>,
     cap: usize,
-    hunk_headers: bool,
+    chrome: Chrome,
     fold_hint: Option<&str>,
 ) -> (Vec<Line<'static>>, usize) {
     let lang = match path {
@@ -221,6 +264,12 @@ fn render_body(
         // Every line advances the gutter counters, shown or not — skipping a
         // line must not renumber the ones after it, and the numbers on the
         // far side of an elision have to be the file's real ones.
+        // Read *before* `body_line` runs, because that call is what moves the
+        // state this asks about. The same structural rule `body_line` itself
+        // applies (only before a file's first hunk is `+++ `/`--- ` a header):
+        // inside a hunk those bytes are added or removed source text, and
+        // dropping them would delete a line of the change.
+        let preamble = !in_hunk && is_meta(text);
         let line = body_line(
             text,
             lang,
@@ -229,7 +278,15 @@ fn render_body(
             &mut in_hunk,
             emphasis.get(&i).copied(),
         );
-        if plan.shows(i) && (hunk_headers || !text.starts_with("@@")) {
+        // Chrome is suppressed after planning rather than before it, so an
+        // elided row's `⋯ n lines` count stays the one `stella_diff::view`
+        // computed and every surface reports the same number for one change.
+        // The cost is a dropped row's slot in the cap; the alternative is the
+        // deck and the export disagreeing about the size of an edit.
+        if plan.shows(i)
+            && (chrome.hunk_headers || !text.starts_with("@@"))
+            && (chrome.file_headers || !preamble)
+        {
             lines.push(line);
         }
     }
