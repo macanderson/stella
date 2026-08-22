@@ -707,25 +707,28 @@ repository's, and it is written down in `CLAUDE.md`. Another's is *"ship the
 smallest diff that closes the ticket"*. **Both are legitimate, and a loop that
 hardcodes either is a loop that can only replace one of them.**
 
-So the tie-breakers are configuration: a `[doctrine]` manifest, source-tracked
-beside the provider and convention manifests under `.stella/issues/`, because the
-person who starts the loop is the person who decides how it decides — and that is
-only true if what it will do is legible *before* it does it.
+So the tie-breakers are configuration: a `[self_driving.doctrine]` block in
+`stella.toml`, source-tracked with the rest of the workspace's configuration,
+because the person who starts the loop is the person who decides how it decides —
+and that is only true if what it will do is legible *before* it does it. It is
+not a manifest under `.stella/issues/` beside the provider and convention ones:
+everything configurable about stella comes from `stella.toml`, and a second
+config system is a second place to search.
 
 **The line is machine-readability, and it is drawn to avoid a fifth steering
 plane.** This repository already carries four that do not know about each other
 (#3243), and the fastest way to make it five is a free-text "how should I decide
 things" field. So:
 
-| Belongs in `[doctrine]` | Belongs in a context record |
+| Belongs in `[self_driving.doctrine]` | Belongs in a context record |
 |---|---|
 | Closed enums and numbers a **pure machine** branches on — `foreign_breakage`, `contention`, `queue_order`, `abandon_escalated`, the `deliver` ceilings | Prose instruction for the **judgement half** — "prefer the architecturally sound option", "match the neighbourhood", "no new dependencies casually" |
 | No model ever reads it. An operator's declared preference becomes *testable*: you can assert `FileAndWait` does not adopt, and the assertion cannot be talked out of. | Already has a home (`.stella/rules/*.toml`, `doc:context-pr`), already governed, already versioned. |
 
 The test is invariant 5's: **does a caller branch on it?** A pure machine
 branching on a closed enum belongs; a sentence a model reads does not. A
-`[doctrine]` field that wants to say something prose-shaped **is** a context
-record, and the answer to that request is a pointer, not a field.
+`[self_driving.doctrine]` field that wants to say something prose-shaped **is** a
+context record, and the answer to that request is a pointer, not a field.
 
 #### The loop exhausts its permitted channels before it parks
 
@@ -735,8 +738,10 @@ for its author has a throughput equal to somebody else's response time. But a
 loop wandering into unrelated code is also how an autonomous system becomes a
 liability — so this is exactly a doctrine axis, not a rule:
 
-- `file_and_wait` *(default)* — make it visible, leave the fix to a human.
-- `file_and_adopt` — make it visible, then fix it at the top of the queue.
+- `file_and_adopt` *(default)* — make it visible, then fix it at the top of the
+  queue. A loop that files and waits has handed its own throughput to somebody
+  else's response time.
+- `file_and_wait` — make it visible, leave the fix to a human.
 - `ignore` — neither. Present for the operator who wants a silent loop, and
   deliberately **not** the default: a system that notices breakage and says
   nothing is the worst of the three.
@@ -751,8 +756,9 @@ Three orderings inside that are load-bearing:
 3. **Unblock before claiming.** A red base makes every PR the loop produces fail
    CI, so it is dealt with before more are made.
 
-And a red base stops *merges*, not *authoring* — so under `file_and_wait`, once
-filed, the loop carries on with ordinary work rather than parking.
+And a red base stops *merges*, not *authoring* — so even under `file_and_wait`,
+where the fix is somebody else's, the loop carries on with ordinary work once it
+has filed rather than parking.
 
 #### Collision avoidance, and the signal nobody checks
 

@@ -332,6 +332,17 @@ fn read_project_tier(workspace_root: &Path, notices: &mut Vec<String>) -> Vec<In
 /// a plugin sitting in a workspace the operator has *not* trusted — deleting a
 /// package is the one operation an untrusted tier must never be able to
 /// refuse. Reading a manifest parses TOML; it spawns nothing.
+///
+/// # Why a symlinked entry is not a plugin
+///
+/// A tier holds packages `stella plugin install` copied there, and install
+/// refuses a symlink inside one (`super::copy_tree`) because a link is a
+/// request to run something the package's author does not ship. A link *as*
+/// the entry is the same request one level up, so it gets the same answer:
+/// skipped, and said out loud (#3530). Admitted, it loaded, listed, and
+/// routed an `argv` with `${plugin_dir}` interpolated to the link path —
+/// while `super::remove_plugin_dir` refused to delete it, leaving a package
+/// that ran and could not be uninstalled.
 pub(crate) fn read_tier(
     dir: &Path,
     scope: PluginScope,
@@ -347,23 +358,51 @@ pub(crate) fn read_tier(
     };
     // Collected and sorted rather than taken in readdir order: the roster is
     // shown to humans and folded into routes, and directory order is not
-    // stable across filesystems.
-    let mut dirs: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
+    // stable across filesystems. Both lists are sorted for the same reason —
+    // the notices are read by a human too.
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut links: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
         // A leading dot is never a plugin: `super::checked_name` refuses such
         // a manifest name, so no install can produce one — and `install`
         // stages its copy under exactly that spelling, so this is what keeps a
         // half-copied tree from being loaded and routed in the window before
-        // it is renamed into place.
-        .filter(|path| {
-            !path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with('.'))
-        })
-        .collect();
+        // it is renamed into place. Checked first, so a staging directory is
+        // skipped in silence whatever it turns out to be.
+        if path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+        {
+            continue;
+        }
+        // `DirEntry::file_type` describes the entry; `Path::is_dir` describes
+        // whatever it resolves to, which is how a link to a directory was read
+        // as an installed package. An entry whose type cannot be read is
+        // skipped like any other non-directory.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            links.push(path);
+        } else if file_type.is_dir() {
+            dirs.push(path);
+        }
+    }
     dirs.sort();
+    links.sort();
+    // Spoken, not silent, for the reason [`read_project_tier`] argues: a
+    // plugin that vanishes with no message is indistinguishable from a broken
+    // one, and a hand-linked entry is exactly the case where the user believes
+    // they installed something. A stray *file* stays silent — nobody links a
+    // regular file into a tier meaning it as a package.
+    for path in links {
+        notices.push(format!(
+            "  ! {} is a symlink, not an installed package — it is not loaded or routed; \
+             `stella plugin install` copies packages, it never links them",
+            path.display()
+        ));
+    }
 
     let mut found: Vec<InstalledPlugin> = Vec::new();
     for path in dirs {

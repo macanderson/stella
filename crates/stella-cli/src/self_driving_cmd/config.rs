@@ -280,6 +280,43 @@ body = "description"
         assert!(load(ws.path()).vocabulary.is_open("To Do"));
     }
 
+    /// The doctrine is read from `stella.toml`, like everything else
+    /// configurable about stella, and an unconfigured workspace gets the
+    /// shipped default.
+    ///
+    /// A regression guard on a seam nothing asserted, not a witness — `load`
+    /// already carries the value. It is worth pinning because this axis decides
+    /// whether the loop repairs a base somebody else broke, and because #3943
+    /// proposes reading it from a `.stella/issues/` manifest instead: a second
+    /// place to declare it is how the two would come to disagree.
+    #[test]
+    fn the_doctrine_is_read_from_stella_toml() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            r#"
+[meta]
+schema_version = 1
+scope = "project"
+
+[self_driving.doctrine]
+foreign_breakage = "file_and_wait"
+"#,
+        );
+
+        assert_eq!(
+            load(ws.path()).doctrine.foreign_breakage,
+            stella_autonomy::ForeignBreakage::FileAndWait,
+            "an operator's declared axis must reach the loop"
+        );
+        assert_eq!(
+            load(workspace().path()).doctrine,
+            stella_autonomy::Doctrine::default(),
+            "and a workspace that declares nothing gets the shipped default"
+        );
+    }
+
     /// A malformed manifest falls back to a working vocabulary rather than
     /// stopping the loop, and the operator is told.
     #[test]
