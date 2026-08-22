@@ -12,7 +12,7 @@ Companion docs: `IMPLEMENTATION-PLAN.md`, `renderings/`
 Every screen exists to make these four claims visible without saying them:
 
 1. **Deterministic first, model last.** Anything answerable by computation never goes to a model. The UI prices deterministic work at $0.00 and shows the det/model split everywhere work is summarized.
-2. **Tasks close on checks, not on model self-report.** A task is a contract (done means), evidence, and cost. The model cannot mark its own homework.
+2. **Tasks close on checks, not on model self-report.** A task is a contract (definition of done), evidence, and cost. The model cannot mark its own homework.
 3. **Drift is recorded, not hidden.** The plan graph distinguishes `[:NEXT]` (planned) from `[:THEN]` (actual). Divergence is rendered, causal, and feeds the learner.
 4. **Traces are the product.** Verified traces train the customer's private model. The UI shows trace capture, learned skills, and receipts as first-class objects.
 
@@ -155,7 +155,9 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
 
 A task has three parts:
 
-- **done means**: the contract. A list of checks, each deterministic (`graph`, `unit`, `harness`) where possible, model-judged only when irreducible. A task closes when its checks pass, never when the model says so.
+- **definition of done**: the contract. A list of checks, each deterministic (`graph`, `unit`, `harness`) where possible, model-judged only when irreducible. A task closes when its checks pass, never when the model says so.
+
+  Implemented in `stella_protocol::task_contract`, and the rule is the type rather than a validator: `TaskContract::ReadOnly` has no field a check could go in, and `DefinitionOfDone` is non-empty by construction in Rust and on the wire. Closure is **derived** (`TaskContract::closure`), never stored — there is no field a caller can set to mean done. `TaskBoard::set_status` refuses `Completed` while any check is outstanding, which is where "the model cannot mark its own homework" stops being a slogan. `Cancelled` is deliberately not gated: it is not a claim the work was done, and it has to stay available exactly when checks are failing.
 - **evidence**: the ledger of events tagged with this task id (edits, runs, graph writes).
 - **cost**: `$ · tok · cache rd% · det/model split · model calls · est remain`.
 
@@ -199,7 +201,7 @@ The single best demo moment: an issue becomes a plan while the user watches, and
 1. In ISSUES, `w` on a triaged issue opens a centered overlay (ratatui `Clear` over a centered `Rect`).
 2. Header: `w start work · <issue id> <title>`, subtitle `draft plan r1 · built from issue text + graph + memory`.
 3. Sources line names exactly what was used: the issue, the coupled files from the graph, and any applied memory RULEs with their text.
-4. Task list with contract previews: read-only tasks marked `read only · no contract`, diff-producing tasks each show one `done means` line with its mechanism and `det` tag, final task is `◇ verify · n gates · blocks merge`.
+4. Task list with contract previews: read-only tasks marked `read only · no contract`, diff-producing tasks each show one `definition of done` line with its mechanism and `det` tag, final task is `◇ verify · n gates · blocks merge`.
 5. Estimate line: `~$ · ~tok · det est % · ~minutes`.
 6. Action row: `a approve and start · e edit tasks · x cancel`. Footer states plainly: `nothing runs before approval`.
 7. On approval, stella creates the branch, the plan becomes r1 with `[:NEXT]` edges, and the breadcrumb strip updates.
@@ -299,7 +301,7 @@ Keep current information architecture (executions table, installed agents, agent
 |---|---|
 | `01-session-turn-lifecycle` | turn begin, skill, collapsed read, highlighted edit diff, receipt, verify turn, single-line status |
 | `02-event-vocabulary` | write, delete with graph check, memory log, memory promotion, compaction, queued-steer consumption, rail legend |
-| `03-task-zoom` | task contract view: done means, evidence, planned vs actual, spend strip |
+| `03-task-zoom` | task contract view: definition of done, evidence, planned vs actual, spend strip |
 | `04-graph` | graph tab: grouped relations, reverse edges, coupling ranking |
 | `05-skills` | unified installed + registry search, learned skills, signature policy |
 | `06-mcp` | server table, oauth flow, registry install, sandbox-until-review |

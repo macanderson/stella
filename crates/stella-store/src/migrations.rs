@@ -57,6 +57,7 @@ mod pipeline_variant;
 pub(crate) mod pragmas;
 mod receipts;
 mod schema_removal;
+mod task_contract;
 mod token_unit;
 
 // `Durability` is deliberately NOT re-exported alongside the runner: its only
@@ -95,7 +96,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 28] = [
+pub(crate) const MIGRATIONS: [Migration; 29] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -233,6 +234,14 @@ pub(crate) const MIGRATIONS: [Migration; 28] = [
     // uniqueness assumption dropped from the index, and a re-fold of every
     // history the old key collapsed; see the module's own doc.
     call_identity::migrate_v27_to_v28,
+    // v28 → v29: `tasks` grows `contract` — what a task promised, not only what
+    // became of it (#4238). Additive, column-guarded ADD COLUMN, nullable with
+    // no default and no backfill: NULL means "this row records no contract",
+    // which is deliberately NOT the stored `read_only` (someone looked and
+    // there was nothing to prove). A default would have to invent one of those
+    // two for every pre-contract row, and inventing the second is the
+    // self-report `TaskContract` exists to end.
+    task_contract::migrate_v28_to_v29,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -313,7 +322,7 @@ pub(crate) fn create_latest_schema(tx: &rusqlite::Transaction<'_>) -> Result<()>
     Ok(())
 }
 
-fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
+pub(super) fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
     let count: i64 = conn.query_row(
         "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
         params![table],
@@ -337,7 +346,7 @@ pub(crate) fn any_store_table_exists(conn: &Connection) -> Result<bool> {
     Ok(count > 0)
 }
 
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+pub(super) fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let count: i64 = conn.query_row(
         "SELECT count(*) FROM pragma_table_info(?) WHERE name = ?",
         params![table, column],

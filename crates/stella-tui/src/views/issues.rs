@@ -28,7 +28,18 @@ const TYPEAHEAD_MAX_ROWS: usize = 8;
 const FORM_BODY_MAX_LINES: usize = 6;
 
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
-    let title = format!(" ISSUES — {} listed ", ui.issues.rows.len());
+    // `loaded_page`, not `page`: the header describes the rows on screen, and
+    // `page` has already moved to whatever the last `]` asked for — which is a
+    // different number whenever that fetch failed or is still in flight.
+    let title = if ui.issues.loaded_page > 0 {
+        format!(
+            " ISSUES — {} listed · page {} ",
+            ui.issues.rows.len(),
+            ui.issues.loaded_page + 1
+        )
+    } else {
+        format!(" ISSUES — {} listed ", ui.issues.rows.len())
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -198,10 +209,11 @@ fn render_list(
     let last = (first + visible).min(issues.rows.len());
     for (i, row) in issues.rows.iter().enumerate().take(last).skip(first) {
         let width = inner.width as usize;
+        let picked = issues.picked.contains(&row.key);
         lines.push(if accessible {
             issue_record(row, i == selected, width)
         } else {
-            issue_line(row, i == selected, width)
+            issue_line(row, i == selected, picked, width)
         });
     }
     if last < issues.rows.len() {
@@ -232,9 +244,11 @@ fn issue_record(row: &IssueRow, selected: bool, width: usize) -> Line<'static> {
     )
 }
 
-/// One issue row: `▸ KEY [state] title · assignee · labels`.
-fn issue_line(row: &IssueRow, selected: bool, width: usize) -> Line<'static> {
+/// One issue row: `▸ ● #KEY [state] title · assignee · labels` — `●` marks a
+/// multiselect pick, `▸` the cursor.
+fn issue_line(row: &IssueRow, selected: bool, picked: bool, width: usize) -> Line<'static> {
     let marker = if selected { "▸ " } else { "  " };
+    let pick = if picked { "● " } else { "  " };
     let mut key_style = theme::accent();
     let mut body_style = Style::default().fg(theme::INK);
     let mut dim_style = theme::muted();
@@ -250,7 +264,7 @@ fn issue_line(row: &IssueRow, selected: bool, width: usize) -> Line<'static> {
     if !row.labels.is_empty() {
         tail.push_str(&format!(" · {}", row.labels.join(", ")));
     }
-    let head = format!("{marker}{} ", row.key);
+    let head = format!("{marker}{pick}{} ", row.key);
     let state = format!("[{}] ", row.state);
     let budget = width
         .saturating_sub(head.chars().count() + state.chars().count() + tail.chars().count())
@@ -451,11 +465,16 @@ fn footer(mode: IssuesMode) -> Line<'static> {
     let pairs: &[(&str, &str)] = match mode {
         IssuesMode::Browse => &[
             ("↑↓", "select"),
+            ("space", "pick"),
             ("r", "refresh"),
-            ("/", "search tracker"),
-            ("n", "new issue"),
+            ("/", "search"),
+            ("]/[", "page"),
+            ("o", "open"),
+            ("p", "to prompt"),
+            ("n", "new"),
             ("c", "comment"),
-            ("s", "set status"),
+            ("x", "close/reopen"),
+            ("s", "status"),
             ("w", "start work"),
         ],
         IssuesMode::SearchTracker => &[("type", "query"), ("enter", "search"), ("esc", "back")],
@@ -533,12 +552,15 @@ mod tests {
         };
         let text =
             |line: Line<'_>| -> String { line.spans.iter().map(|s| s.content.clone()).collect() };
-        let selected = text(issue_line(&row, true, 120));
-        assert!(selected.starts_with("▸ ENG-42"), "{selected}");
+        let selected = text(issue_line(&row, true, false, 120));
+        assert!(selected.starts_with("▸   ENG-42"), "{selected}");
         assert!(selected.contains("[In Progress]"), "{selected}");
         assert!(selected.contains("mona@example.com"), "{selected}");
         assert!(selected.contains("bug, ci"), "{selected}");
-        let plain = text(issue_line(&row, false, 120));
-        assert!(plain.starts_with("  ENG-42"), "{plain}");
+        let plain = text(issue_line(&row, false, false, 120));
+        assert!(plain.starts_with("    ENG-42"), "{plain}");
+        // A multiselect pick shows its marker whether or not it is the cursor.
+        let picked = text(issue_line(&row, false, true, 120));
+        assert!(picked.starts_with("  ● ENG-42"), "{picked}");
     }
 }

@@ -335,6 +335,7 @@ mod tests {
             description: None,
             status,
             owner: None,
+            contract: None,
         }
     }
 

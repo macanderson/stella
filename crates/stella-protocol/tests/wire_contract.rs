@@ -144,6 +144,7 @@ fn errors(root: &Value, schema: &Value, instance: &Value, path: &str) -> Vec<Str
                         | "required"
                         | "additionalProperties"
                         | "items"
+                        | "minItems"
                 ),
             "{path}: unmodelled JSON Schema keyword `{key}` — extend this validator \
              rather than letting the proof silently weaken"
@@ -248,6 +249,25 @@ fn errors(root: &Value, schema: &Value, instance: &Value, path: &str) -> Vec<Str
     {
         for (i, element) in array.iter().enumerate() {
             out.extend(errors(root, items, element, &format!("{path}/{i}")));
+        }
+    }
+
+    // `minItems` is how a non-empty list states its guarantee to a reader who
+    // is not compiling our Rust — `DefinitionOfDone` is the first, and the
+    // whole point of it is that an empty contract is not merely discouraged.
+    // Modelled rather than ignored, so the committed schema is proved to
+    // reject the case the type refuses.
+    if let Some(min) = map.get("minItems")
+        && let Some(array) = instance.as_array()
+    {
+        let min = min
+            .as_u64()
+            .unwrap_or_else(|| panic!("{path}: minItems is not a non-negative integer"));
+        if (array.len() as u64) < min {
+            out.push(format!(
+                "{path}: {} item(s), schema requires at least {min}",
+                array.len()
+            ));
         }
     }
 
@@ -514,6 +534,9 @@ fn every_nested_vocabulary_is_fully_sampled() {
         "PrStatus",
         "CiStatus",
         "TaskStatus",
+        "TaskContract",
+        "Judge",
+        "CheckOutcome",
         "BlockKind",
         "CacheZone",
         "SubAgentStatus",

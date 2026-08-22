@@ -530,9 +530,19 @@ impl EntityField {
 pub enum IssueAction {
     /// Add a comment (the deck's `c` prompt).
     Comment(String),
-    /// Move to a named status (`open`/`closed` on GitHub; any workflow-state
-    /// word on Linear).
+    /// Move to a named status (any workflow-state word on Linear; on GitHub
+    /// only the two states below exist, and they have their own variants).
     SetStatus(String),
+    /// Close the issue (the deck's `x` on an open row).
+    Close,
+    /// Re-open a closed issue (the deck's `x` on a closed row).
+    ///
+    /// Its own variant rather than `SetStatus("open")` so the driver selects
+    /// the provider call by matching a variant instead of comparing a status
+    /// string — the same reason [`IssueAction::Close`] is not
+    /// `SetStatus("closed")`, and why the port grew
+    /// `IssueProvider::reopen` rather than a status setter.
+    Reopen,
     /// Start work: the driver moves the issue to in-progress (`w`).
     StartWork,
 }
@@ -902,9 +912,16 @@ pub enum WorkspaceInput {
     /// ISSUES tab: list (or tracker-search) issues. `query`/`state` are the
     /// tracker-side filters; the driver answers with [`Inbound::IssuesList`]
     /// echoing `seq` so stale replies can be dropped.
+    ///
+    /// `page` is 0-based and is what the tab's `]`/`[` move. It rides the
+    /// request rather than being held driver-side because the panel is the
+    /// only thing that knows which page the human is looking at — and a
+    /// paging key that could not say so would re-fetch page one under a
+    /// notice claiming otherwise.
     IssuesRefresh {
         query: Option<String>,
         state: Option<String>,
+        page: usize,
         seq: u64,
     },
     /// ISSUES tab: create an issue from the `n` form. The driver answers

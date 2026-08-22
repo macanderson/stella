@@ -16,7 +16,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::tasks::{SpawnRequest, TaskBoard};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
-use stella_protocol::{TaskItem, TaskStatus};
+use stella_protocol::{
+    Check, CheckMechanism, DefinitionOfDone, Judge, TaskContract, TaskItem, TaskStatus,
+};
 
 use crate::registry::Tool;
 
@@ -121,7 +123,26 @@ impl Tool for TaskCreate {
                         }
                     },
                     "subject": { "type": "string", "description": "Imperative title (e.g. \"Fix the auth redirect loop\")" },
-                    "description": { "type": "string", "description": "What needs to be done, if the subject alone is not enough" }
+                    "description": { "type": "string", "description": "What needs to be done, if the subject alone is not enough" },
+                    "definition_of_done": {
+                        "description": "What would make this task done. \"read_only\" if it produces no diff; otherwise a non-empty array of checks. A task that produces a diff closes when these pass — task_complete is refused while any is outstanding.",
+                        "oneOf": [
+                            { "const": "read_only" },
+                            {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "statement": { "type": "string", "description": "What must be true (e.g. \"the auth suite is green\")" },
+                                        "mechanism": { "type": "string", "description": "How it is settled: graph | unit | harness | review, or a plugin's own name" },
+                                        "judge": { "type": "string", "enum": ["deterministic", "model"], "description": "Only read for a mechanism this host does not know; the four above judge themselves" }
+                                    },
+                                    "required": ["statement"]
+                                }
+                            }
+                        ]
+                    }
                 }
             }),
             read_only: false,
@@ -156,7 +177,11 @@ impl Tool for TaskCreate {
                         ));
                     }
                 };
-                let item = board.create(subject, description);
+                let contract = match parse_contract(entry) {
+                    Ok(c) => c,
+                    Err(e) => return e,
+                };
+                let item = board.create(subject, description, contract);
                 created.push(serde_json::json!({
                     "id": item.id,
                     "subject": item.subject,
@@ -178,8 +203,12 @@ impl Tool for TaskCreate {
             Err(e) => return e,
         };
         let description = optional_str(input, "description");
+        let contract = match parse_contract(input) {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
         let mut board = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        let item = board.create(subject, description);
+        let item = board.create(subject, description, contract);
         let payload = serde_json::json!({
             "id": item.id,
             "subject": item.subject,
@@ -277,6 +306,74 @@ impl Tool for TaskStart {
             },
             Err(e) => ToolOutput::error(e.to_string()),
         }
+    }
+}
+
+/// Read a task's `definition_of_done` from tool input (SPEC 7.1).
+///
+/// Three answers, and they are three different facts:
+///
+/// * `Ok(None)` — the key is absent. Nobody said. The board records that as
+///   `None` and lets the task close, because refusing every task that predates
+///   contracts would break every existing board.
+/// * `Ok(Some(TaskContract::ReadOnly))` — declared as producing no diff. It
+///   closes on its events, and it cannot carry checks.
+/// * `Ok(Some(TaskContract::DefinitionOfDone(..)))` — at least one check, by
+///   construction.
+///
+/// The refusal path matters as much as the happy one: `definition_of_done: []`
+/// is a caller promising nothing while appearing to promise something, and it
+/// is rejected here rather than stored as an empty contract that would close on
+/// the first `task_complete`.
+fn parse_contract(input: &Value) -> Result<Option<TaskContract>, ToolOutput> {
+    let Some(raw) = input.get("definition_of_done") else {
+        return Ok(None);
+    };
+    if raw.is_null() {
+        return Ok(None);
+    }
+    if raw.as_str() == Some("read_only") {
+        return Ok(Some(TaskContract::ReadOnly));
+    }
+    let Some(items) = raw.as_array() else {
+        return Err(ToolOutput::error(
+            "definition_of_done must be \"read_only\" for a task that produces no \
+             diff, or a non-empty array of checks",
+        ));
+    };
+    let mut checks = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let statement = match item.get("statement").and_then(Value::as_str) {
+            Some(t) if !t.trim().is_empty() => t.to_string(),
+            _ => {
+                return Err(ToolOutput::error(format!(
+                    "definition_of_done[{i}] needs a non-empty `statement` saying what must be true"
+                )));
+            }
+        };
+        let mechanism = item
+            .get("mechanism")
+            .and_then(Value::as_str)
+            .unwrap_or("harness");
+        // A contributed mechanism must say who settles it; a known one already
+        // does, and `CheckMechanism::new` ignores the argument for those.
+        let judge = match item.get("judge").and_then(Value::as_str) {
+            Some("model") => Judge::Model,
+            Some("deterministic") | None => Judge::Deterministic,
+            Some(other) => {
+                return Err(ToolOutput::error(format!(
+                    "definition_of_done[{i}].judge must be \"deterministic\" or \"model\", got {other:?}"
+                )));
+            }
+        };
+        checks.push(Check::new(statement, CheckMechanism::new(mechanism, judge)));
+    }
+    match DefinitionOfDone::from_vec(checks) {
+        Some(dod) => Ok(Some(TaskContract::DefinitionOfDone(dod))),
+        None => Err(ToolOutput::error(
+            "definition_of_done was an empty array — a task that produces diffs \
+             must say what would make it done, or declare \"read_only\"",
+        )),
     }
 }
 
@@ -981,7 +1078,7 @@ mod tests {
     #[tokio::test]
     async fn task_assign_refusal_tells_the_model_to_do_the_work_itself() {
         let (board, queue) = handles();
-        board.lock().unwrap().create("do a thing", None);
+        board.lock().unwrap().create("do a thing", None, None);
         let out = TaskAssign(board.clone(), queue.clone(), dispatch_off())
             .execute(
                 &serde_json::json!({"id": "1", "briefing": "b"}),
