@@ -5,6 +5,10 @@
 /.next/
 /out/
 
+# OpenNext build output — the Lambda bundle and assets the AWS deploy uploads.
+# Reproducible from `.next/` by `open-next build`, and tens of megabytes.
+/.open-next/
+
 # fumadocs-mdx generated source
 /.source/
 
