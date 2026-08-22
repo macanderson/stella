@@ -156,14 +156,16 @@ pub fn compaction_rows(
 /// Which half of the pair a kind states is a property of the verb, and lives
 /// here so one measurement cannot be read two ways: an edit states both sides
 /// (they are one reading), a write states what it wrote, a deletion what it
-/// removed. A read never resolves one at all — only a *mutation* stamps an
-/// inline-diff reference, so a read's line count has no source on this path and
-/// stays honestly absent (#4180).
+/// removed. A read states **no size**, and [`EventKind::Read`] carries no field
+/// to state one with: only a *mutation* stamps the inline-diff reference
+/// [`measured_delta`] resolves through, so `measured` is `None` for a read on
+/// every live path and always was. The field was removed rather than left
+/// defaulted so that the absence is structural instead of conventional
+/// (#4180); #4297 tracks the wire-level producer that would earn the column
+/// back.
 fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
     match name {
-        "read_file" => EventKind::Read {
-            extent: Extent::default(),
-        },
+        "read_file" => EventKind::Read,
         "edit_file" => EventKind::Edit {
             extent: measured.map_or_else(Extent::default, |(added, removed)| {
                 Extent::delta(added, removed)
@@ -626,5 +628,43 @@ mod tests {
         let text = text_of_rows(&event_rows(&event, 120));
         assert!(text.contains("+3"), "{text}");
         assert!(text.contains("-1"), "{text}");
+    }
+
+    /// The witness for #4180: a kind carries an [`Extent`] only where
+    /// [`kind_for`] can fill one.
+    ///
+    /// Both halves are asserted from the production constructor, so neither can
+    /// drift into a claim the other does not back. The left half — does this
+    /// kind *declare* a size at all — is read off the value's `Debug`
+    /// projection, because field presence is the one property of an enum
+    /// variant a test cannot otherwise observe without naming the field, and
+    /// naming it is exactly what must stop compiling. The right half is
+    /// behavioural: a kind that declares a size must render something different
+    /// once a measurement exists.
+    ///
+    /// `read_file` failed the left half for as long as `EventKind::Read` had an
+    /// `extent`: [`kind_for`] handed it `Extent::default()` unconditionally
+    /// because only a *mutation* stamps the inline-diff reference
+    /// [`measured_delta`] resolves through, so the column was expressible,
+    /// unreachable, and reached by nothing but a fixture.
+    #[test]
+    fn a_size_field_exists_only_where_a_producer_fills_it() {
+        for (tool, path) in [
+            ("read_file", "src/read.rs"),
+            ("edit_file", "src/edit.rs"),
+            ("write_file", "src/new.rs"),
+            ("delete_file", "src/old.rs"),
+        ] {
+            let declares_a_size = format!("{:?}", kind_for(tool, None)).contains("Extent");
+            let unmeasured = text_of_rows(&head_rows(tool, Some(path), "{}", None, 120));
+            let measured = text_of_rows(&head_rows(tool, Some(path), "{}", Some((7, 3)), 120));
+            assert_eq!(
+                declares_a_size,
+                measured != unmeasured,
+                "`{tool}` declares a size column its producer cannot fill \
+                 (declares: {declares_a_size}), so the row states the same \
+                 thing measured as unmeasured: {measured}"
+            );
+        }
     }
 }

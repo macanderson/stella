@@ -40,7 +40,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
                     dead-code-allows diagnostic-codes bench-suites tokens \
-                    transcript-surfaces
+                    hue-separation transcript-surfaces
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -314,6 +314,15 @@ tokens: ## Validate the colour system: hue clamp, generated-file sync, no retire
 .PHONY: tokens-update
 tokens-update: ## Regenerate every colour artifact from design/tokens/stella-tokens.json
 	@python3 ./scripts/gen-tokens.py
+
+# Separate from `tokens` on purpose. `tokens` asks whether each value is the
+# right *kind* of colour — one value at a time, against its clamp. This asks
+# whether any two of them can be told apart, which is a question about pairs and
+# has its own ruler (OKLCH, read out of the Rust implementation rather than
+# copied). Folding it into `tokens` would hide which of the two a red gate meant.
+.PHONY: hue-separation
+hue-separation: ## Assert no two web semantic roles sit within 30° of each other in OKLCH (#4071)
+	@python3 ./scripts/check-hue-separation.py
 
 .PHONY: typed-errors
 typed-errors: ## Assert no library crate's public API returns Result<_, String> (invariant #5)

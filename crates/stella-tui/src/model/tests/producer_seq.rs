@@ -10,47 +10,33 @@
 //! orders around the `ToolResult` they belong to: the registry measures a solo
 //! mutating call the moment it returns (#4175), and the turn boundary sweeps
 //! whatever no single call can own. `SessionModel` tells them apart from
-//! `mutation_baselines` rather than from anything on the wire (#4205), so this
-//! is where that discrimination is pinned — in both directions.
+//! *where the change folded* — the claim window in `model::inline_diff` —
+//! rather than from anything on the wire (#4205, #4213), so this is where that
+//! discrimination is pinned, in both directions.
 //!
-//! # Why `landed` is `recorded > base` and not `== base + 1`
+//! # Why the discriminator is positional and not a name
 //!
-//! Both forms agree on every input reachable today, so the choice is decided
-//! by which one fails better — worth writing down, because neither predicate
-//! shows it on its face.
+//! Which calls are *measured* is decided in another crate, from each tool's own
+//! schema (`ToolRegistry::measures_alone` reads `read_only`/`parallel_safe`).
+//! Which rows may *claim* was decided here, from a four-name list — and nothing
+//! checked the two against each other, so every measured `bash`, MCP and custom
+//! tool call had its change counted by the Files tab and claimed by no row at
+//! all (#4213).
 //!
-//! A landed change currently moves a path's `changes` by exactly one:
-//! `turn_files::emit_measured_tree_changes` sends one `FileChange` per changed
-//! path, because `WorkJournal::diff_trees` parses `git diff --name-status`,
-//! which names a path once. Nothing *pins* that — it is a property of the
-//! implementation, not an asserted invariant — and a per-hunk producer, a tool
-//! that triggers two measurements, or another partial producer would each
-//! break it.
+//! Asking where a measurement landed needs no list: it landed inside some
+//! call's window or it did not, and only the per-call producer can put one
+//! there. The two predicates still fail safe in both directions — a measured
+//! call the deck cannot name claims a real change of its own, and an unmeasured
+//! call finds nothing to claim.
 //!
-//! Suppose it breaks, so `recorded > base + 1`:
-//!
-//! - `>` still says landed and stamps `recorded` — the last change recorded
-//!   for this path, which is one of the changes this call really made.
-//!   Partial, but true.
-//! - `==` says NOT landed and stamps `recorded + 1`, naming a change that does
-//!   not exist yet. The row goes diffless, and if the boundary later records
-//!   there it resolves to a change made *after* this call — the misattribution
-//!   this whole mechanism exists to prevent.
-//!
-//! So the looser test is the safer one, and `==` is the form that quietly
-//! depends on one-`FileChange`-per-call holding forever.
-//!
-//! The case that argues the other way is a baseline stranded by a turn
-//! cancelled between `ToolStart` and `ToolResult`, then read by a provider
-//! recycling the `call_id` — real enough that this repository's own telemetry
-//! shows kimi reusing `read_file:0`..`:3` across messages. Under `>` that
-//! would read the path's grown count as this call's own change. It is shut
-//! twice over: the re-dispatched call's own `ToolStart` overwrites the entry
-//! before anything reads it, and the one path that folds a result with no
-//! start (the halted arm in `driver::dispatch`) answers `Err`, so it never
-//! stamps. A witness for it was written and then deleted — it passed under
-//! *both* predicates, which is how the unreachability was established rather
-//! than assumed.
+//! The case that argues for a name is a baseline stranded by a turn cancelled
+//! between `ToolStart` and `ToolResult`, then read by a provider recycling the
+//! `call_id` — real enough that this repository's own telemetry shows kimi
+//! reusing `read_file:0`..`:3` across messages. It is shut three times over:
+//! the re-dispatched call's own `ToolStart` overwrites the baseline before
+//! anything reads it, the one path that folds a result with no start (the
+//! halted arm in `driver::dispatch`) answers `Err` and so never stamps, and a
+//! claim is consumed by the first row that takes it.
 
 use super::*;
 
@@ -247,6 +233,100 @@ fn a_call_that_changed_nothing_must_not_adopt_a_later_boundary_change() {
         file.diff_at(first.seq),
         Some("@@\n+c1 wrote this"),
         "and the row that did measure a change still resolves it"
+    );
+}
+
+/// **Witness (#4213).** A `bash` call renders the change the registry measured
+/// under it, with that measurement's own `+N −M`.
+///
+/// `ToolRegistry::measures_alone` reads `read_only`/`parallel_safe` off each
+/// tool's schema, so a solo `bash` call is measured exactly as `edit_file` is —
+/// and its `FileChange` was then dropped on the floor by the one surface a
+/// reader consults, because attribution was gated on a four-name list that
+/// `bash` is not on. A `bash` call also names no path in its arguments, so the
+/// row has to take the path from the *measurement* rather than from the call.
+#[test]
+fn a_bash_call_renders_the_change_it_measured() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "c1".into(),
+            name: "bash".into(),
+            input: serde_json::json!({ "command": "sed -i 's/a/b/' src/a.rs" }),
+        },
+    });
+    model.apply(&AgentEvent::FileChange {
+        path: "src/a.rs".into(),
+        kind: FileChangeKind::Modified,
+        added: 3,
+        removed: 1,
+        diff: Some("@@ sed did this @@\n".into()),
+    });
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "c1".into(),
+        output: stella_protocol::ToolOutput::ok(""),
+        duration_ms: 12,
+        speculated: false,
+    });
+
+    let dref = inline_ref(&model, "c1").expect("the bash row claims the change it measured");
+    assert_eq!(
+        dref.path, "src/a.rs",
+        "the path comes from the measurement — a bash call names none of its own"
+    );
+    let file = model
+        .files
+        .iter()
+        .find(|f| f.path == "src/a.rs")
+        .expect("the path is tracked");
+    assert_eq!(
+        file.diff_at(dref.seq),
+        Some("@@ sed did this @@\n"),
+        "and the row resolves that measurement's diff"
+    );
+    assert_eq!(
+        file.delta_at(dref.seq),
+        Some((3, 1)),
+        "with the emitter's own +N −M, not one synthesized from arguments"
+    );
+}
+
+/// The other half of #4213's definition of done, and #4150's rule: a `bash`
+/// call that moved nothing renders no size at all.
+///
+/// This is what keeps the widening safe. The claim is scoped to what folded
+/// *under this call* rather than to the tool's name, so a `bash` that only read
+/// has nothing to claim — where a widened name list would have sent it looking
+/// for the path's latest change and rendered somebody else's work under it.
+#[test]
+fn a_bash_call_that_measured_nothing_claims_no_change() {
+    let mut model = SessionModel::new();
+    // A real measured change first, so the per-call producer is demonstrably
+    // live in this session — otherwise the assertion below is vacuous.
+    fold_edit(&mut model, "c1", "src/a.rs", "@@\n+c1 wrote this", 1);
+
+    model.apply(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "c2".into(),
+            name: "bash".into(),
+            input: serde_json::json!({ "command": "cargo test" }),
+        },
+    });
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "c2".into(),
+        output: stella_protocol::ToolOutput::ok("test result: ok."),
+        duration_ms: 900,
+        speculated: false,
+    });
+
+    assert!(
+        inline_ref(&model, "c2").is_none(),
+        "a bash call whose own measurement came back empty claims nothing — a \
+         head is never asked to guess (#4150)"
+    );
+    assert!(
+        inline_ref(&model, "c1").is_some(),
+        "and the call that did measure a change keeps its own ref"
     );
 }
 
