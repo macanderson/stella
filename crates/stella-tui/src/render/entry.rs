@@ -161,6 +161,9 @@ pub(crate) struct EntryView<'a> {
     pub files: &'a [FileState],
     /// The lane's entries *after* the one being rendered, in order.
     pub following: &'a [TranscriptEntry],
+    /// The lane's entries *before* the one being rendered, in order. The turn
+    /// receipt tallies its own turn out of these.
+    pub preceding: &'a [TranscriptEntry],
 }
 
 impl<'a> EntryView<'a> {
@@ -169,6 +172,7 @@ impl<'a> EntryView<'a> {
         Self {
             files,
             following: transcript.get(idx.saturating_add(1)..).unwrap_or_default(),
+            preceding: transcript.get(..idx).unwrap_or_default(),
         }
     }
 
@@ -178,6 +182,7 @@ impl<'a> EntryView<'a> {
         Self {
             files,
             following: &[],
+            preceding: &[],
         }
     }
 }
@@ -337,7 +342,7 @@ fn v2_rows(
             true
         }
         TranscriptEntry::Complete { cost_usd, turn, .. } => {
-            out.extend(v2::turn_end_rows(*turn, *cost_usd, width));
+            out.extend(v2::turn_end_rows(*turn, *cost_usd, view.preceding, width));
             true
         }
         // Only the boundary that *opens* the turn. A later stage of the same
