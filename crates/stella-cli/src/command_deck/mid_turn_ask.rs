@@ -47,6 +47,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use stella_protocol::{AgentEvent, QuestionOutcome, QuestionRequest, ToolOutput};
@@ -61,6 +62,40 @@ use crate::interactive::{AskUserIo, FREE_TEXT_LABEL};
 /// rather than per-session: a stale answer from a cancelled turn must never
 /// match a live card's id.
 static NEXT_DECK_ASK: AtomicU64 = AtomicU64::new(0);
+
+/// How long the driver gets to answer an approval **on the deck** (#4253).
+///
+/// Longer than [`stella_tools::registry::approval::DEFAULT_APPROVAL_TTL`],
+/// which is the number for a line-oriented prompt — one sentence and a `y`.
+/// The deck's card (#4240) is a different question to answer: five fields to
+/// read, a gate to weigh, often a path or command line worth going and
+/// looking at before you decide, and a third row that opens a text editor for
+/// the refusal reason. Two minutes covers reading it and nothing else.
+///
+/// Ten, not thirty. The upper bound is not the driver's patience but the cost
+/// of being wrong in the other direction: this TTL is how long a wedged or
+/// abandoned surface can hold a tool call parked, and an approval — unlike a
+/// question — interrupts someone who is already watching the turn. It stays
+/// **below** [`DECK_QUESTION_TTL`] on purpose; see
+/// `stella_tui::deck_ui::parked`, whose precedence rule leans on the approval
+/// being the tighter of the two deadlines.
+///
+/// An expiry denies, so the failure direction is safe either way. What the
+/// old number cost was not safety but *silence*: the card vanished mid-read
+/// and the turn proceeded on a decision the driver never made.
+pub(crate) const DECK_APPROVAL_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// How long the driver gets to answer a question on the deck.
+///
+/// The same thirty minutes the port defaults to — the deck's overlay presents
+/// what the plain-TTY card presents, so nothing about this surface changes
+/// the reasoning in
+/// [`stella_tools::registry::question::DEFAULT_QUESTION_TTL`]. Named here
+/// anyway rather than reaching for the default at the call site, so both of
+/// the deck's deadlines are stated in one place and a future change to either
+/// is a visible edit rather than a silently inherited constant.
+pub(crate) const DECK_QUESTION_TTL: Duration =
+    stella_tools::registry::question::DEFAULT_QUESTION_TTL;
 
 /// Both of the deck's mid-turn ask responders, as the one posture
 /// `enforce_workspace_rules` consumes — plus the [`DeckAskUserIo`] the
@@ -94,10 +129,12 @@ pub(crate) fn surface(
             inbound: inbound.clone(),
             answers: Arc::new(tokio::sync::Mutex::new(approvals)),
         }),
+        approval_ttl: DECK_APPROVAL_TTL,
         question: Arc::new(DeckQuestionResponder {
             inbound,
             answers: Arc::new(tokio::sync::Mutex::new(questions)),
         }),
+        question_ttl: DECK_QUESTION_TTL,
     };
     (posture, ask_io)
 }
@@ -253,9 +290,8 @@ pub(crate) struct DeckQuestionResponder {
 /// over a call that had already given up on it, and a driver's considered
 /// answer would go into a oneshot nobody was holding.
 ///
-/// Both TTLs need it and they are far apart — thirty minutes for a question,
-/// two for an approval — so the approval card is the one a driver is far more
-/// likely to watch expire.
+/// Both TTLs need it, and [`DECK_APPROVAL_TTL`] is the shorter, so the
+/// approval card is the one a driver is more likely to watch expire.
 struct WithdrawOnDrop {
     inbound: UnboundedSender<Inbound>,
     withdraw: Inbound,
@@ -317,6 +353,50 @@ mod tests {
             gate: "command.started".into(),
             subject: Some("rm -rf build/".into()),
         }
+    }
+
+    /// **The #4253 witness.** The deck asks for more time to answer an
+    /// approval than the line-oriented default allows.
+    ///
+    /// `DEFAULT_APPROVAL_TTL` was chosen for a one-line prompt and a `y`.
+    /// #4240 replaced that with a card carrying five fields and a typed
+    /// refusal, and left the deadline alone — so a driver who went to look at
+    /// what `rm -rf build/` would actually delete could come back to a card
+    /// that had already denied on their behalf, with no signal that it had.
+    ///
+    /// Asserted through `surface()` rather than on the constant, because the
+    /// constant being large proves nothing: the defect was that the *wiring*
+    /// reached past the surface's number for the port default.
+    #[test]
+    fn the_deck_asks_for_longer_than_a_line_oriented_prompt_would() {
+        let (in_tx, _in_rx) = mpsc::unbounded_channel();
+        let (_a, asks) = mpsc::unbounded_channel();
+        let (_b, approvals) = mpsc::unbounded_channel();
+        let (_c, questions) = mpsc::unbounded_channel();
+        let (posture, _io) = surface("lead".into(), in_tx, asks, approvals, questions);
+
+        let crate::rules::MidTurnAsk::Surface {
+            approval_ttl,
+            question_ttl,
+            ..
+        } = posture
+        else {
+            panic!("the deck declares a surface, not a headless or tty posture");
+        };
+
+        assert!(
+            approval_ttl > stella_tools::registry::approval::DEFAULT_APPROVAL_TTL,
+            "the deck's card takes longer to read than the prompt the default was chosen for"
+        );
+        // …and still the tighter of the two. `stella_tui::deck_ui::parked`
+        // gives approval the keyboard ahead of a parked question partly
+        // because it is the deadline that runs out first; flipping this
+        // ordering would make that routing rule wrong without touching it.
+        assert!(
+            approval_ttl < question_ttl,
+            "an approval interrupts someone already watching the turn — it must not \
+             outlast a question, which asks them to go away and think"
+        );
     }
 
     fn approval_responder() -> (
@@ -412,9 +492,9 @@ mod tests {
         assert_eq!(reason, "the real answer");
     }
 
-    /// The approval card comes down when its wait is abandoned, exactly like
-    /// the question overlay's. Its TTL is `DEFAULT_APPROVAL_TTL` — two
-    /// minutes, not thirty — so this is the card a driver is far more likely
+    /// The approval card comes down when its wait is abandoned, exactly
+    /// like the question overlay's. [`DECK_APPROVAL_TTL`] is the shorter of
+    /// the deck's two deadlines, so this is the card a driver is more likely
     /// to watch expire.
     #[tokio::test]
     async fn an_abandoned_approval_withdraws_the_card() {

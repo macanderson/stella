@@ -402,11 +402,23 @@ pub(crate) enum MidTurnAsk {
     /// A surface that owns its own input loop and brings its own responders
     /// — the Command Deck. The host builds them over its channels and hands
     /// them in, because only it knows how to reach its own driver.
+    ///
+    /// It brings its own **deadlines** too (#4253). A TTL is how long the
+    /// driver gets to answer, so it is a fact about the thing they are
+    /// answering — and a surface that renders a card with five fields to read
+    /// needs longer than one that prints a line and waits for `y`. Carrying
+    /// them here keeps that number in the same place as the responder whose
+    /// presentation it bounds: `command_deck::mid_turn_ask::surface` builds
+    /// both together, so they cannot drift apart.
     Surface {
         /// Answers a gate's `RequireApproval`.
         approval: std::sync::Arc<dyn stella_tools::registry::approval::ApprovalResponder>,
+        /// How long the driver gets to answer an approval on this surface.
+        approval_ttl: std::time::Duration,
         /// Answers an agent's `ask_question`.
         question: std::sync::Arc<dyn stella_tools::registry::question::QuestionResponder>,
+        /// How long the driver gets to answer a question on this surface.
+        question_ttl: std::time::Duration,
     },
 }
 
@@ -444,15 +456,14 @@ pub(crate) fn enforce_workspace_rules(
             crate::approval::attach_interactive_approvals(registry);
             crate::question::attach_interactive_questions(registry);
         }
-        MidTurnAsk::Surface { approval, question } => {
-            registry.attach_approval_responder(
-                approval,
-                stella_tools::registry::approval::DEFAULT_APPROVAL_TTL,
-            );
-            registry.attach_question_responder(
-                question,
-                stella_tools::registry::question::DEFAULT_QUESTION_TTL,
-            );
+        MidTurnAsk::Surface {
+            approval,
+            approval_ttl,
+            question,
+            question_ttl,
+        } => {
+            registry.attach_approval_responder(approval, approval_ttl);
+            registry.attach_question_responder(question, question_ttl);
         }
     }
     let rules = load_workspace_rules(workspace_root, authority);

@@ -71,14 +71,42 @@ use stella_protocol::tool::ToolOutput;
 use super::ToolRegistry;
 
 /// How long a parked dispatch waits for a human answer before the flow
-/// resolves to a deny ([`APPROVAL_TIMED_OUT`]). Hosts pass their own TTL to
-/// [`ToolRegistry::attach_approval_responder`]; this is the default they
-/// reach for absent a better-informed number.
+/// resolves to a deny ([`APPROVAL_TIMED_OUT`]).
+///
+/// **This is the number for a line-oriented surface** — a one-line question
+/// and a `y`/`n`, which is what the plain-TTY responder renders and what this
+/// value was chosen against. It is a default, not a policy: a surface that
+/// presents *more* to read needs longer, and says so at attachment time
+/// through [`ToolRegistry::attach_approval_responder`].
+///
+/// The Command Deck is exactly that case (#4253). Its card lays out five
+/// fields and offers a typed refusal, so `stella-cli` attaches it with its
+/// own, longer TTL rather than this one. Two minutes was correct for the
+/// prompt this constant was born with, and quietly wrong for a card you have
+/// to read — which is the shape of bug a "default" hides when nothing says
+/// what it was defaulted *for*.
 pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(120);
 
-/// The deny reason of a TTL expiry — the exact string, so callers and tests
-/// can match it instead of parsing prose.
-pub const APPROVAL_TIMED_OUT: &str = "approval timed out";
+/// The deny reason of a TTL expiry.
+///
+/// Instructive rather than a bare label, and for the reason this module's
+/// headless refusal and [`super::question::QUESTION_TIMED_OUT`] both give:
+/// a refusal that only says *no* leaves the model to invent a recovery, and
+/// the one it invents is to try the same call again. The recovery here is
+/// **not** the question flow's "decide it yourself" — a gate demanded a human
+/// and did not get one, so the call must not run in any form; what the model
+/// can usefully do is take a route that needs no approval, or stop and report.
+///
+/// Callers and tests match on [`APPROVAL_TIMED_OUT_TAG`], the stable leading
+/// phrase, so the guidance can be reworded without breaking them.
+pub const APPROVAL_TIMED_OUT: &str = "approval timed out — nobody answered in time; this is not a \
+     refusal of the idea, so do not re-request the same approval: either take a route that needs \
+     none, or stop and report what you were about to do and why it needed one";
+
+/// The stable leading phrase of [`APPROVAL_TIMED_OUT`] — what a consumer
+/// matches on, so the instruction after it stays editable prose rather than a
+/// string three tests pin verbatim.
+pub const APPROVAL_TIMED_OUT_TAG: &str = "approval timed out";
 
 /// One approval question, as the responder and the bus both see it. Crosses
 /// the crate boundary (the CLI implements [`ApprovalResponder`] over it),
@@ -574,8 +602,15 @@ mod tests {
         match reg.execute("task_list", &serde_json::json!({})).await {
             ToolOutput::Error { message, .. } => {
                 assert!(
-                    message.contains(APPROVAL_TIMED_OUT),
+                    message.contains(APPROVAL_TIMED_OUT_TAG),
                     "the timeout is named: {message}"
+                );
+                // …and names a next move. A bare "timed out" leaves the
+                // model to invent a recovery, and the one it invents is to
+                // ask for the same approval again.
+                assert!(
+                    message.contains("do not re-request"),
+                    "an expiry must instruct, not just label: {message}"
                 );
             }
             other => panic!("a timed-out approval must deny: {other:?}"),
