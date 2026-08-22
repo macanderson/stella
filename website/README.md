@@ -76,7 +76,7 @@ content/docs/            # all documentation (MDX + meta.json ordering)
   index.mdx              # Introduction
   getting-started/       # installation, initialization, providers
   api-providers/         # per-provider pages + the live model catalog
-  inference-pipeline.mdx # the staged pipeline: triage → … → verifier
+  plugins.mdx            # the wrapper socket and installed verification plugins
   context-engine.mdx     # bi-temporal memory, recall, citation loop
   agent-modes.mdx        # chat / run / goal / monitor / fleet, and which to use
   agent-engine-paths.mdx # which engine path a given invocation actually takes
@@ -126,17 +126,41 @@ src/mdx-components.tsx   # MDX component map
 
 ## Deploy
 
-Deploys as a standard Next.js app. On Vercel, the project auto-detects Next.js + pnpm; set
-the production domain to `stella.oxagen.sh` and the **Root Directory to `website`**, since
-that is where the manifest and lockfile live. `pnpm-workspace.yaml` (in this directory)
-approves the `esbuild` / `sharp` build scripts so `pnpm install` exits cleanly in CI.
+`stella.oxagen.sh` is a Node process on an AWS instance behind Caddy, in
+account `578673726240`. It was on Vercel until that account was suspended over
+an unpaid balance and every site began answering `402`; Vercel is not a
+fallback and nothing here may depend on it.
 
 **The deploy step lives in `.github/workflows/docs.yml`** (#561): its `deploy`
-job publishes to Vercel production on every push to `main` that touches the
-site (and on manual dispatch), through the GitHub `production` environment so
-each deployment is auditable and revocable. One-time setup: create a Vercel
-account token and run `vercel link` in `website/` to get the org and project
-ids, then add them as the `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and
-`VERCEL_PROJECT_ID` repository secrets. Until the secrets exist the job skips
-with a warning rather than failing — but nothing publishes, so the dashboard
-wiring remains the fallback.
+job publishes on every push to `main` that touches the site, and on manual
+dispatch. It builds with `STANDALONE=1` — which is what switches
+`next.config.mjs` to `output: standalone` — packages the server together with
+the static assets and `public/` that the standalone output deliberately omits,
+uploads one tarball to the deploy bucket, and sends one SSM command that
+restarts the service on the node. `pnpm-workspace.yaml` (in this directory)
+approves the `esbuild` / `sharp` build scripts so `pnpm install` exits cleanly.
+
+Three constraints on that job, each of which has already been paid for once:
+
+- **It builds on an arm runner.** The instance is a `t4g.medium`. An artifact
+  built on x86 passes every test and then fails to load a native module on the
+  node, at first request rather than at build.
+- **`environment: production` is load-bearing.** There is no stored AWS key.
+  The job exchanges its GitHub OIDC token for a session on the
+  `gha-deploy-stella` role, which trusts exactly one subject:
+  `repo:macanderson/stella:environment:production`. Deleting that line does not
+  loosen the deploy, it breaks it. The environment must exist in repository
+  settings for the exchange to succeed at all.
+- **The role has no shell on the instance.** It may write one S3 object and
+  send one SSM document whose only argument is a service name constrained at
+  the API. That instance also runs Postgres, Neo4j and ClickHouse.
+
+If the new build does not answer a health check within 60 seconds the node puts
+the previous release back and the job goes red, so a bad merge costs a minute
+of degraded service rather than an outage lasting until someone notices. The
+last step then re-checks `https://stella.oxagen.sh/` through DNS, TLS and Caddy,
+because the node's own health check is a loopback request and would pass for a
+service that is up behind a broken front door.
+
+The infrastructure, the node-side script and its `oxagen-run.json` contract
+live in the `oxagen-aws-infra` repository (`stacks/ci-deploy`, `tools/node/`).

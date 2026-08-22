@@ -282,6 +282,22 @@ impl AgentEntry {
         }
     }
 
+    /// Copy the just-frozen turn duration onto the receipt of the `Complete`
+    /// entry the fold pushed for this same event.
+    ///
+    /// Ordering is the contract: `WorkspaceModel::apply_event` runs the pure
+    /// fold *before* this derived pass, so the entry is already there. A no-op
+    /// if it is not — a `TurnComplete` the fold declined to record is not a
+    /// turn this may stamp.
+    fn stamp_turn_elapsed(&mut self) {
+        let elapsed = self.last_turn_ms;
+        if let Some(crate::model::TranscriptEntry::Complete { receipt, .. }) =
+            self.model.transcript.last_mut()
+        {
+            receipt.elapsed_ms = elapsed;
+        }
+    }
+
     /// The parked wait currently open and how long it has been running in ms,
     /// or `None` when this agent is not parked (#2007).
     ///
@@ -902,6 +918,11 @@ impl WorkspaceModel {
                     // The turn-completion event: freeze the header clock at its
                     // final elapsed so it holds the last turn's duration.
                     entry.end_turn(now);
+                    // …and stamp that elapsed onto the receipt the fold just
+                    // pushed. The fold may not read a clock (L-T1), so this is
+                    // the only place the number exists and the entry is the
+                    // only place the renderer can see it.
+                    entry.stamp_turn_elapsed();
                 }
                 // The RUN's ending carries the whole run's cost, which is >= any
                 // single turn's (#3379). `max` so a wrapped run's total replaces

@@ -41,7 +41,7 @@ pub use file_state::DIFF_HISTORY;
 pub use entry::{AskUserPrompt, InlineDiffRef, OpenPark, SubAgentSummary, TranscriptEntry};
 pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
 pub use recall::{RecallBudget, RecalledFrameRow};
-pub use turn::{Hud, TurnOpening};
+pub use turn::{Hud, TurnCounters, TurnOpening, TurnReceipt};
 // Re-imported rather than left qualified, so the split was a pure move: every
 // call site in the fold reads exactly as it did before (#2958). See
 // `summarize`'s module doc for why the seam is there and not elsewhere.
@@ -118,6 +118,9 @@ pub struct SessionModel {
     /// clears `turn_head_stamped`, so a call landing between turns patches
     /// nothing: the rule the previous turn stamped is settled.
     turn_head_idx: Option<usize>,
+    /// Per-turn counters SPEC 6.1's receipt is stamped from, reset at every
+    /// turn boundary ([`TurnCounters`]).
+    pub turn_counters: TurnCounters,
     /// The scrollback transcript, oldest first. Streaming `Text`/`Reasoning`
     /// deltas are accumulated into the trailing entry rather than producing
     /// one line per token.
@@ -683,7 +686,10 @@ impl SessionModel {
                 added,
                 removed,
                 diff,
-            } => self.touch_file(path, *kind, *added, *removed, diff),
+            } => {
+                self.turn_counters.touch(path);
+                self.touch_file(path, *kind, *added, *removed, diff);
+            }
             // Every field is carried through. The old fold projected the
             // frames down to their labels here, which is where the deck's
             // recall row lost the ability to be anything but a paragraph —
@@ -714,6 +720,8 @@ impl SessionModel {
                 upserts,
                 superseded,
             } => {
+                self.turn_counters.memories =
+                    self.turn_counters.memories.saturating_add(*upserts);
                 self.transcript.push(TranscriptEntry::ContextWrite {
                     provider: provider.clone(),
                     upserts: *upserts,
@@ -876,42 +884,58 @@ impl SessionModel {
                 };
                 self.transcript.push(entry);
             }
-            // The one fact the deck takes from a metering record: *which model
-            // is answering*, known here and nowhere earlier (#4183).
+            // Two facts come off a metering record, and they have different
+            // scopes — which is why this is one arm and not two.
             //
-            // Before this, `hud.model` was written only by `TurnComplete` and
-            // `RunComplete` — both of which land after the boundary they would
-            // have labelled — so every session's first turn opened with no
-            // model at all and every later one opened naming its predecessor's.
+            // The **tokens** are folded for every call, whatever its role: the
+            // receipt accounts for the whole turn, auxiliary work included
+            // (#4184). The **model name** is folded only for a call that
+            // answers the turn (#4183). Splitting them into a guarded arm and a
+            // fallthrough would silently stop counting an answering call's
+            // tokens, because the first matching arm wins.
             //
-            // The model name **only**. `StepUsage`'s tokens and `cost_usd` are
-            // the store's; the HUD's live spend is driven by `BudgetTick`, and
-            // folding them here would double-count the gauge.
-            //
-            // `answers_the_turn` is what keeps an overflow summarizer or a
-            // reflection pass from labelling the turn with its own model — see
-            // that predicate for why the filter is named rather than inlined.
-            AgentEvent::StepUsage { role, model, .. } if turn::answers_the_turn(*role) => {
-                self.hud.model = Some(model.clone());
-                // The turn's *first* answering call settles its opening rule,
-                // which was stamped before any call could report. `take` is
-                // what makes it the first: a mid-turn re-route moves the live
-                // HUD above but leaves a boundary the reader has already
-                // scrolled past alone, and the closing rule carries the
-                // correction.
-                if let Some(idx) = self.turn_head_idx.take()
-                    && let Some(TranscriptEntry::Stage {
-                        opens: Some(opening),
-                        ..
-                    }) = self.transcript.get_mut(idx)
-                {
-                    opening.model = Some(model.clone());
+            // The cost deliberately is not folded either way. The HUD's live
+            // spend comes from `BudgetTick`, so folding `StepUsage::cost_usd`
+            // here would double-count it — that hazard is why this event was
+            // ignored outright, and the token half was collateral.
+            AgentEvent::StepUsage {
+                role,
+                model,
+                input_tokens,
+                output_tokens,
+                ..
+            } => {
+                self.turn_counters.add_tokens(*input_tokens, *output_tokens);
+                // Which model is *answering*, known here and nowhere earlier.
+                // Before this, `hud.model` was written only by `TurnComplete`
+                // and `RunComplete` — both of which land after the boundary
+                // they would have labelled — so every session's first turn
+                // opened with no model at all and every later one opened
+                // naming its predecessor's.
+                //
+                // `answers_the_turn` is what keeps an overflow summarizer or a
+                // reflection pass from labelling the turn with its own model;
+                // see that predicate for why the filter is named rather than
+                // inlined.
+                if turn::answers_the_turn(*role) {
+                    self.hud.model = Some(model.clone());
+                    // The turn's *first* answering call settles its opening
+                    // rule, which was stamped before any call could report.
+                    // `take` is what makes it the first: a mid-turn re-route
+                    // moves the live HUD above but leaves a boundary the reader
+                    // has already scrolled past alone, and the closing rule
+                    // carries the correction.
+                    if let Some(idx) = self.turn_head_idx.take()
+                        && let Some(TranscriptEntry::Stage {
+                            opens: Some(opening),
+                            ..
+                        }) = self.transcript.get_mut(idx)
+                    {
+                        opening.model = Some(model.clone());
+                    }
                 }
             }
-            // Every other metering record, and the auxiliary-role calls the
-            // arm above declined.
-            AgentEvent::StepUsage { .. }
-            | AgentEvent::UsageIncomplete { .. }
+            AgentEvent::UsageIncomplete { .. }
             // Context receipts (spec §4/§5) are consumed by the store/inspector,
             // not folded into TUI panel state — the model stays a pure function
             // of the user-visible event sequence.
@@ -977,7 +1001,9 @@ impl SessionModel {
                     model: model.clone(),
                     cost_usd: *cost_usd,
                     turn: self.turns_completed,
+                    receipt: self.turn_counters.settle(),
                 });
+                self.turn_counters = TurnCounters::default();
             }
             // The RUN ended — the only event that means nothing more is
             // coming, and so the only one that may settle terminal state.
@@ -1120,6 +1146,10 @@ impl SessionModel {
         // session, so without this the composer's cost cell would open every
         // turn already showing the session total.
         self.hud.turn_start_spent_usd = self.hud.spent_usd;
+        // The same rebase for the receipt's counters: a turn that died without
+        // a `TurnComplete` never settled them, and its tokens and files must
+        // not be billed to the next turn's receipt.
+        self.turn_counters = TurnCounters::default();
         // A preview surviving into the next turn could only be stale — the
         // prior turn either committed (cleared on `Text`) or aborted.
         self.streaming_text.clear();

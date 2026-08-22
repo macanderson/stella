@@ -216,6 +216,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             retryable: false,
         },
         TranscriptEntry::Complete {
+            receipt: Default::default(),
             model: "glm-5.2".into(),
             cost_usd: 0.1,
             turn: 1,
@@ -403,6 +404,7 @@ fn screenshot_recall() -> TranscriptEntry {
 #[test]
 fn a_completed_turn_closes_on_a_rule_and_a_receipt() {
     let entry = TranscriptEntry::Complete {
+        receipt: Default::default(),
         model: "glm-5.2".into(),
         cost_usd: 0.11,
         turn: 14,
@@ -424,16 +426,163 @@ fn a_completed_turn_closes_on_a_rule_and_a_receipt() {
         "the receipt lost its affordance:\n{text}"
     );
 
-    // Nothing the deck cannot measure. `StepUsage` is deliberately unfolded,
-    // there is no per-turn clock, and no per-turn file/test/memory count — so a
-    // receipt claiming any of them would be reporting a measurement nobody
-    // took. They elide until something counts them.
+    // A turn that counted nothing still claims nothing. `det %` is gone from
+    // the design outright; tests have no source at all
+    // ([`crate::model::TurnCounters`] states what would have to exist); and
+    // tokens, files, memories and the clock are counted now but were zero here,
+    // which elides identically. A number nobody took never reaches this line.
     for absent in ["tok", "det ", "tests", "file", "memory", "0:00"] {
         assert!(
             !text.contains(absent),
             "the receipt invented {absent:?}:\n{text}"
         );
     }
+}
+
+/// SPEC 6.1's receipt, fed. The witness for #4184: every field below names the
+/// event it is summed from, and each was absent from this line before the fold
+/// counted it.
+#[test]
+fn the_receipt_reports_what_the_turn_measured() {
+    use crate::deck::WorkspaceModel;
+    use crate::envelope::{AgentMeta, Inbound};
+
+    let mut deck = WorkspaceModel::new();
+    deck.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+    let mut send = |event: AgentEvent| {
+        deck.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event,
+        });
+    };
+
+    // tokens ← StepUsage's token fields (never its cost_usd)
+    send(AgentEvent::StepUsage {
+        step: 1,
+        role: Default::default(),
+        provider: "openrouter".into(),
+        upstream_provider: None,
+        output_text: None,
+        model: "glm-5.2".into(),
+        input_tokens: 12_000,
+        output_tokens: 6_000,
+        cached_input_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: None,
+        estimated_input_tokens: 0,
+        cost_usd: 99.0,
+        duration_ms: 0,
+        retries: 0,
+        tool_calls: 0,
+        complete: true,
+        finish_reason: None,
+    });
+    // files ← FileChange, distinct paths
+    for path in ["src/a.rs", "src/b.rs", "src/a.rs"] {
+        send(AgentEvent::FileChange {
+            path: path.into(),
+            kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
+            diff: None,
+        });
+    }
+    // memories ← ContextWrite's upserts
+    send(AgentEvent::ContextWrite {
+        provider: "memory".into(),
+        upserts: 2,
+        superseded: 0,
+    });
+    send(AgentEvent::TurnComplete {
+        model: "glm-5.2".into(),
+        cost_usd: 0.11,
+    });
+
+    let entry = deck.agents[0]
+        .model
+        .transcript
+        .iter()
+        .rev()
+        .find(|e| matches!(e, TranscriptEntry::Complete { .. }))
+        .expect("the turn closed");
+    let text = recall_text(entry, false, 120);
+
+    assert!(text.contains("18k tok"), "tokens not summed:\n{text}");
+    assert!(text.contains("2 files"), "files not counted:\n{text}");
+    assert!(text.contains("2 memories"), "memories not counted:\n{text}");
+    // The cost is the turn's, never StepUsage's — folding that would
+    // double-count the spend BudgetTick already drives.
+    assert!(text.contains("$0.11"), "{text}");
+    assert!(
+        !text.contains("$99"),
+        "usage cost leaked into the receipt:\n{text}"
+    );
+    // Still no source, still absent.
+    assert!(
+        !text.contains("tests"),
+        "the receipt invented a test tally:\n{text}"
+    );
+}
+
+/// The elapsed is the one receipt field the fold may not measure (L-T1), so it
+/// is stamped by the deck on the way past. The witness is that it arrives.
+#[test]
+fn the_closing_rule_carries_the_turn_clock() {
+    use crate::deck::WorkspaceModel;
+    use crate::envelope::{AgentMeta, Inbound};
+
+    let mut deck = WorkspaceModel::new();
+    deck.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+    deck.now_ms = 1_000;
+    deck.apply_inbound(&Inbound::PromptStarted {
+        agent: "lead".into(),
+        text: "do the thing".into(),
+    });
+    deck.now_ms = 8_500;
+    deck.apply_inbound(&Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::TurnComplete {
+            model: "glm-5.2".into(),
+            cost_usd: 0.11,
+        },
+    });
+
+    let entry = deck.agents[0]
+        .model
+        .transcript
+        .iter()
+        .rev()
+        .find(|e| matches!(e, TranscriptEntry::Complete { .. }))
+        .expect("the turn closed");
+    let TranscriptEntry::Complete { receipt, .. } = entry else {
+        unreachable!()
+    };
+    assert_eq!(
+        receipt.elapsed_ms,
+        Some(7_500),
+        "the deck did not stamp the turn clock onto the receipt"
+    );
+    assert!(
+        recall_text(entry, false, 120).contains("7"),
+        "the closing rule dropped the elapsed"
+    );
+}
+
+/// A turn that dies without a `TurnComplete` must not bill its tokens to the
+/// next turn's receipt.
+#[test]
+fn counters_reset_at_the_turn_boundary() {
+    use crate::model::SessionModel;
+
+    let mut sm = SessionModel::default();
+    sm.apply(&AgentEvent::ContextWrite {
+        provider: "memory".into(),
+        upserts: 5,
+        superseded: 0,
+    });
+    assert_eq!(sm.turn_counters.memories, 5);
+    sm.push_user_prompt("a new turn");
+    assert_eq!(sm.turn_counters.memories, 0);
 }
 
 /// SPEC 6.1: a turn opens on a labelled rule naming the turn, its stage, the
@@ -604,6 +753,7 @@ fn the_turn_receipt_prices_in_gold_not_in_the_pass_colour() {
     let mut out = Vec::new();
     entry_lines(
         &TranscriptEntry::Complete {
+            receipt: Default::default(),
             model: "glm-5.2".into(),
             cost_usd: 0.11,
             turn: 14,

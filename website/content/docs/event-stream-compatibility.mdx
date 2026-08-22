@@ -60,7 +60,7 @@ accepts the reverse.
 **Event type names are a weaker promise, and one rename has happened.** The
 terminal event was `complete` until [#3379](https://github.com/macanderson/stella/issues/3379).
 The problem it fixed: one word meant "this turn is over" when the engine said it
-and "the whole job is over" when a wrapper — the staged pipeline, goal mode — said
+and "the whole job is over" when a wrapper — a wrapper plugin, goal mode — said
 it, and nothing reading the journal could tell which contract it was holding. So
 the word was split in two:
 
@@ -212,11 +212,11 @@ anchor.
 
 ## What is *not* guaranteed
 
-- **Ordering between event types** beyond what the pipeline documents. `text_delta`
+- **Ordering between event types** beyond what this page documents. `text_delta`
   lines interleave with other events.
 - **That `stage` events form one sequence.** Two disjoint authorities emit them,
   and `scope` says which: the engine emits its own vocabulary once per turn with
-  `"scope":"turn"`, while a wrapper — the staged pipeline, a goal loop — emits its
+  `"scope":"turn"`, while a wrapper — a wrapper plugin, a goal loop — emits its
   own once per run with `"scope":"run"`. A client that branches on stage
   transitions must select on `scope` first, or it reads two interleaved
   vocabularies as one and sees a wrapper's backwards-looking boundary as an engine
@@ -234,19 +234,15 @@ anchor.
 
 ## Conformance
 
-The repository ships a fixture whose only purpose is to break clients that get
-rule 1 wrong:
-
-```text
-crates/stella-pipeline/tests/fixtures/from_a_newer_stella.jsonl
-```
+The repository ships a `from_a_newer_stella.jsonl` fixture whose only purpose is
+to break clients that get rule 1 wrong.
 
 It is a well-formed turn containing two event types that do not exist. A client
 that parses it end to end, reports two unrecognized events, and reconstructs the
 run from the rest is forward compatible. A client that throws is not — however
 well it handles today's vocabulary.
 
-If you maintain a stella client, run it against that file in CI. It is the
+If you maintain a stella client, run it against that fixture in CI. It is the
 cheapest possible guard against the failure mode this contract exists to
 prevent, and it costs one test.
 

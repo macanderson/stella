@@ -1,6 +1,6 @@
 ---
 title: stella run
-description: Send a one-shot prompt through the raw step loop (or an installed pipeline wrapper) and let stella work to completion, no back-and-forth — built for scripts, CI jobs, and git hooks.
+description: Send a one-shot prompt through the raw step loop (or an installed wrapper plugin) and let stella work to completion, no back-and-forth — built for scripts, CI jobs, and git hooks.
 ---
 
 Send a one-shot prompt and let the agent work to completion without any interactive back-and-forth. This is the command to reach for in scripts, CI jobs, and Git hooks.
@@ -8,14 +8,14 @@ Send a one-shot prompt and let the agent work to completion without any interact
 ## Synopsis
 
 ```bash
-stella run <prompt> [--no-pipeline] [--pipeline <VARIANT>] [--test-command <CMD>] [--keep-witness] [--require-verified] [global flags]
+stella run <prompt> [--pipeline <VARIANT>] [--test-command <CMD>] [global flags]
 ```
 
 ## What it does
 
 By default `stella run` sends the prompt through the **raw step loop**: the model proposes tool calls, the tools execute, results feed back, and the loop repeats until the model stops proposing actions. There is no REPL and no prompt for further input; it is the non-interactive counterpart to [`stella chat`](/docs/commands/chat).
 
-Pass `--pipeline <variant>` to run the turn under an installed [wrapper plugin](/docs/inference-pipeline) instead — the plugin contributes context before the turn and reports its own evidence after it. `classic` used to name a built-in staged pipeline that shipped this verification in-tree; that crate is deleted from the workspace, and `--pipeline classic` is refused outright, naming `stella plugin install` as the remedy. `--no-pipeline` is a deprecated no-op kept only so an existing script does not break; it has no effect either way.
+Pass `--pipeline <variant>` to run the turn under an installed [wrapper plugin](/docs/plugins) instead — the plugin contributes context before the turn and reports its own evidence after it.
 
 Because it is non-interactive, `stella run` is the natural place to combine `--output-format json` or `--output-format stream-json` for headless automation, and `--spend-limit` for a hard spend cap.
 
@@ -27,24 +27,15 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
 
 ## Flags
 
-`stella run` adds five command-specific flags on top of the [global flags](/docs/commands):
+`stella run` adds two command-specific flags on top of the [global flags](/docs/commands):
 
 <CardGrid size="md">
-  <OptionCard name="--no-pipeline">
-    Deprecated, does nothing. The raw step loop is the default now; pass
-    `--pipeline <VARIANT>` to opt into a wrapper instead. Kept parseable so no
-    script breaks — passing it prints a one-line notice and has no other
-    effect, including alongside `--pipeline`, which always wins.
-  </OptionCard>
   <OptionCard name="--pipeline <VARIANT>">
     Run the turn under an installed **wrapper plugin**, named by the `[wrapper] id` its
     manifest declares (`stella plugin list`). The plugin contributes context before the
     turn and gathers evidence after it; the rule it declared at install — evaluated by
     stella, never by the plugin — decides whether another turn runs. The variant id is
     recorded on the execution row, so two variants can be compared side by side.
-    `classic` used to name a built-in staged pipeline (triage, plan, execute, verify,
-    verifier); that crate is deleted from the workspace and `classic` is refused
-    outright — install a verification plugin instead (`stella plugin install`).
     Omitted, the raw step loop runs with nothing over it.
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
@@ -52,17 +43,6 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
     deterministically — e.g. `"cargo test -p my-crate"`. Refused on the raw loop
     (no plugin named); passes through to a named `--pipeline <variant>` plugin's own
     oracle when one is installed.
-  </OptionCard>
-  <OptionCard name="--keep-witness">
-    Kept for compatibility only. Refused unconditionally now — the built-in staged
-    pipeline that authored a scaffolding witness test and could promote it to your
-    working tree is deleted from the workspace; a verification plugin decides its own
-    witness-handling policy on its own side of the wrapper socket.
-  </OptionCard>
-  <OptionCard name="--require-verified">
-    Kept for compatibility only. Refused unconditionally now, same as
-    `--keep-witness` — the built-in staged pipeline it gated is deleted from the
-    workspace.
   </OptionCard>
 </CardGrid>
 
@@ -124,10 +104,7 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 \
   run "Explain what main.rs does"
 ```
 
-`--keep-witness` and `--require-verified` belonged to the built-in staged pipeline's
-verify/witness machinery, which is deleted from the workspace — both are refused
-unconditionally now, on the raw loop and on every `--pipeline <variant>` alike.
-`--test-command` still passes through to a named plugin's own `[oracle]`; it is
+`--test-command` passes through to a named plugin's own `[oracle]`; it is
 refused only on the raw loop, which has no oracle to arm.
 
 Hand an installed verification plugin's oracle a deterministic test, so a fixed

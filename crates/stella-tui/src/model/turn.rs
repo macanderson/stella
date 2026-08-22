@@ -135,6 +135,98 @@ pub struct TurnOpening {
     pub budget_usd: Option<f64>,
 }
 
+/// What SPEC 6.1's receipt says, stamped onto the entry that closes a turn.
+///
+/// Rides the entry for the same reason [`TurnOpening`] does: `render::entry`
+/// renders one entry and holds no session state, so a fact that is not on the
+/// entry is a fact the receipt cannot say.
+///
+/// Every field here was counted. A field with no source is **absent from this
+/// struct** rather than present and zero — see [`TurnCounters`] for what is
+/// counted and `crate::v2::transcript::Receipt` for what is still missing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnReceipt {
+    /// Tokens this turn spent, summed from its `StepUsage` events.
+    ///
+    /// `None` when no usage event arrived — a turn answered from cache, or one
+    /// whose provider reported none. Never `Some(0)` from an absence.
+    pub tokens: Option<u64>,
+    /// Distinct paths the turn changed, from its `FileChange` events.
+    ///
+    /// A genuine `0` now — every mutation emits a `FileChange`, so a turn that
+    /// changed nothing counted zero rather than failing to count.
+    pub files: u32,
+    /// Memories written, summed over the turn's `ContextWrite` upserts.
+    pub memories: u32,
+    /// Wall clock the turn took, in milliseconds.
+    ///
+    /// `None` inside the fold, always: [`super::SessionModel`] reads no clock
+    /// by contract (L-T1, `replay(&log) == replay(&log)`). The deck stamps it
+    /// from `deck::AgentEntry::turn_clock_ms` on the way past, which is the
+    /// same shape `parked_since_ms` already uses.
+    pub elapsed_ms: Option<u64>,
+}
+
+/// The per-turn counters [`TurnReceipt`] is stamped from, reset at each turn
+/// boundary.
+///
+/// # What is not here
+///
+/// **Tests.** SPEC 6.1's `4/4 tests` has no source: nothing in the event
+/// stream reports a test tally. `AgentEvent::Verdict` carries a
+/// pass/fail plus prose, not counts, and a `bash` call running `cargo test` is
+/// opaque to the fold — its output is a `ToolResult` string nobody parses, and
+/// parsing one would be a scraper guessing at a harness rather than a
+/// measurement. Feeding this field needs an event that states the counts:
+/// either a verification plugin reporting its `EvidenceSet` per check, or a
+/// test-runner tool that returns structured results instead of text.
+///
+/// **`det %`.** Removed from the design; see `crate::v2::transcript::Receipt`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnCounters {
+    /// Summed from `AgentEvent::StepUsage`'s **token** fields only.
+    ///
+    /// Never its `cost_usd`: the deck's spend is driven by `BudgetTick`, and
+    /// folding usage cost as well would double-count it. That hazard is why
+    /// the deck ignored `StepUsage` outright, and the token half was collateral.
+    pub tokens: Option<u64>,
+    /// Distinct paths this turn's `FileChange` events named, in first-touched
+    /// order.
+    ///
+    /// Distinct, not a call count: the receipt says how much of the tree moved,
+    /// not how many edits it took. Bounded by the turn, so unlike
+    /// [`super::SessionModel::files`] it does not outlive a `/clear`.
+    pub files: Vec<String>,
+    /// Summed over `AgentEvent::ContextWrite::upserts`.
+    pub memories: u32,
+}
+
+impl TurnCounters {
+    /// Fold one usage event's tokens in, leaving its cost alone.
+    pub fn add_tokens(&mut self, input: u64, output: u64) {
+        let sum = input.saturating_add(output);
+        self.tokens = Some(self.tokens.unwrap_or(0).saturating_add(sum));
+    }
+
+    /// Record a path this turn changed, once however often it is touched.
+    pub fn touch(&mut self, path: &str) {
+        if !self.files.iter().any(|p| p == path) {
+            self.files.push(path.to_string());
+        }
+    }
+
+    /// The settled receipt, minus the elapsed the fold may not measure.
+    #[must_use]
+    pub fn settle(&self) -> TurnReceipt {
+        TurnReceipt {
+            tokens: self.tokens,
+            files: u32::try_from(self.files.len()).unwrap_or(u32::MAX),
+            memories: self.memories,
+            elapsed_ms: None,
+        }
+    }
+}
+
 /// Live HUD numbers, all folded from the event stream.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Hud {

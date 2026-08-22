@@ -61,7 +61,7 @@
   --st-gold-bright: #f7d96b; /* tiny live indicators only */
   --st-silver: #a9aab5; /* secondary emphasis, incoming context */
   --st-silver-type: #bfc1cc; /* syntax types, tertiary labels */
-  --st-text: #e8e8ec; /* primary text on dark */
+  --st-text: #f4f1ea; /* primary text on dark */
   --st-muted: #777782; /* secondary text */
   --st-dim: #4b4b56; /* hints, captions, line numbers */
   --st-comment: #565660; /* code comments */
@@ -69,10 +69,11 @@
   --st-red: #e0687a; /* fail, destructive, removal diff sign */
   --st-diff-add: #10201a; /* added diff row background */
   --st-diff-del: #241019; /* removed diff row background */
-  --st-ink: #141416; /* primary text on light surfaces */
-  --st-paper: #ffffff; /* light canvas */
-  --st-paper-panel: #f6f6f8; /* light panel */
-  --st-paper-border: #e3e3e8; /* light border */
+  --st-ink: #141413; /* primary text on light surfaces */
+  --st-paper: #fffcf5; /* light canvas */
+  --st-paper-text: #f4f1ea; /* primary text on dark, off the deck */
+  --st-paper-panel: #f9f6ef; /* light panel */
+  --st-paper-border: #e6e3dd; /* light border */
 
   /* ── brand core, named by role ──────────────────────────────────────── */
   --stella-brand: var(--st-gold);
@@ -81,7 +82,7 @@
      logotype; a word is not. */
   --stella-brand-deep: var(--st-ink);
   --stella-ink: var(--st-bg);
-  --stella-paper: var(--st-text);
+  --stella-paper: var(--st-paper-text);
   --stella-paper-bg: var(--st-paper);
 
   /* ── product palette ────────────────────────────────────────────────
@@ -133,15 +134,15 @@
   --stella-signal: var(--st-gold); /* 11.99:1 on canvas */
   --stella-signal-live: var(--st-gold-bright); /* 14.22:1 — small, and moving */
   --stella-signal-ink: #725a00; /* gold TEXT on the paper ground, 6.02:1 */
-  --stella-text: var(--st-text); /* 16.19:1 on canvas */
+  --stella-text: var(--st-paper-text); /* 16.19:1 on canvas */
   --stella-text-2: var(--st-silver); /* 8.58:1 — the safe small-text tone */
   --stella-text-3: var(--st-muted); /* 4.47:1 — caption/UI tier, under AA body */
   --stella-text-dim: var(--st-dim); /* 2.30:1 — chrome only, never words */
-  --stella-paper-2: #f4f4f6; /* the cool paper ground */
-  --stella-paper-3: #fafafc; /* paper surface */
-  --stella-paper-row: #e6e6ea; /* paper hover / raised */
-  --stella-paper-edge: #dddde3; /* paper seam */
-  --stella-ink-2: #5e5e69; /* paper secondary text, 5.83:1 */
+  --stella-paper-2: #f7f4ed; /* the warm paper ground */
+  --stella-paper-3: #fdfaf3; /* paper surface */
+  --stella-paper-row: #e9e6e0; /* paper hover / raised */
+  --stella-paper-edge: #e0ddd7; /* paper seam */
+  --stella-ink-2: #605f5c; /* paper secondary text, 5.83:1 */
 
   /* ── status. Not part of the brand kit's one-color law: these are
    *    FUNCTIONAL hues (a warning must not read as decoration), and each has

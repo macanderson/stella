@@ -305,7 +305,11 @@ test("no retired brand value survives anywhere in the site", () => {
     // skips it; the values below are the v1.0 ones they were before.
     "#ffb000",
     "#0b0b0c",
-    "#f4f1ea",
+    // #f4f1ea — v1.0's warm Paper — is **live again** as v5.1's `paper-text`,
+    // the white every surface off the deck draws on dark. It leaves this list
+    // on the rule stated above. The gold and the ground beside it do not: v1.0's
+    // phosphor gold fails the resting-gold clamp and its ink is superseded, so
+    // this restores one value rather than the kit.
     "#f6f2e9",
     "#a37200",
     // Both spellings of the channel triple. The space-separated form is the

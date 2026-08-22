@@ -21,15 +21,20 @@
 //! values — borrowing from the model rather than owning, and rendering the
 //! stage as [`stella_protocol::StageName::as_str`], which is the **wire**
 //! string. It was the one the deck actually drew, so the shipping bar printed
-//! `context_recall` where SPEC 5 says `context recall`, while the module that
-//! spelled it correctly was called by nothing but its own tests (#4187).
+//! `context_recall` and `scope_review` at a human where SPEC 5 says
+//! `context recall` and `scope review`, while the module that spelled them
+//! correctly was called by nothing but its own tests (#4187).
 //!
 //! This one survived rather than that one because the fix settles the argument
 //! between them: a stage word SPEC 5 can print is *computed*, not borrowed, so
-//! there is a `String` to own either way — and owning it here beats handing the
-//! draw path two out-of-band strings to compute in the right order. What did
-//! not survive is that module's `idle` for an unannounced stage; `stage_word`
-//! below carries the reason.
+//! there is a `String` to own either way — a contributed stage's word is
+//! lowercased at projection time (#3964), which a borrowing projection has
+//! nowhere to put — and owning it here beats handing the draw path two
+//! out-of-band strings to compute in the right order. The other module is
+//! deleted rather than synced: two answers to one question is the defect, and
+//! keeping both is how one of them goes stale again. What did not survive is
+//! that module's `idle` for an unannounced stage; `stage_word` below carries
+//! the reason.
 
 use super::status_bar::{CTX_WINDOW, Status};
 use crate::WorkspaceModel;

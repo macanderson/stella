@@ -12,7 +12,7 @@
 //!  │ ▸ read …/lifecycle.rs                                ⚡3ms · ↵ open
 //!  │ ● edit …/self_driving_cmd.rs +3 -1              ⚡2ms · → task 3
 //! ── turn 14 done · 0:42 ──────────────────────────────────────────────────
-//!    receipt $0.11 · 18k tok · det 86% · 4/4 tests · 2 files · ↵ audit
+//!    receipt $0.11 · 18k tok · 4/4 tests · 2 files · ↵ audit
 //! ```
 //!
 //! ## Why a rail and a glyph, never a colour alone
@@ -217,23 +217,65 @@ impl EventKind {
     }
 }
 
+/// The object of a head's verb, and whether it is a **path**.
+///
+/// The flag rides the subject rather than being re-derived from the string at
+/// render time, because "contains a slash" is not the same question. A `bash`
+/// head's subject is a command line, and `sed -n '1,20p' foo/bar.rs` contains a
+/// slash while being no more a path than `grep -r foo/ .` is. Brightening the
+/// tail of either would spend the row's emphasis on the text least able to use
+/// it.
+///
+/// The distinction is free where it is decided: `transcript_source::subject_for`
+/// (module-private, so named rather than linked) already branches on
+/// `path: Option<&str>` and falls back to the raw input only when there is
+/// none, so it *knows* — it simply used to discard the answer.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Subject {
+    /// The rendered text.
+    pub text: String,
+    /// Whether [`Self::text`] is a filesystem path, and so gets the
+    /// dim-directory / bright-basename split (SPEC 6.2).
+    pub is_path: bool,
+}
+
+impl Subject {
+    /// A subject that is a path.
+    #[must_use]
+    pub fn path(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_path: true,
+        }
+    }
+}
+
+/// Anything string-shaped is a **non-path** subject. Deliberately the default:
+/// a command line, a skill name or a tool's own label is the common case, and
+/// the emphasis split is the exception that has to be asked for.
+impl<T: Into<String>> From<T> for Subject {
+    fn from(text: T) -> Self {
+        Self {
+            text: text.into(),
+            is_path: false,
+        }
+    }
+}
+
 /// One transcript event, already projected — no borrowed model state.
 #[derive(Clone, Debug)]
 pub struct Event {
     pub kind: EventKind,
     /// The object of the verb: a path, a command line, a skill name.
-    pub subject: String,
-    /// Whether [`Event::subject`] names a file, so the head can let the
-    /// directory recede and the basename carry the emphasis.
     ///
-    /// Carried from the producer rather than re-derived here: the only signal
-    /// left at this point is a `/`, and `sed -n '1,20p' foo/bar.rs` has one
-    /// without naming any file this row touched. The projection knows the
-    /// answer for free — [`super::transcript_source`]'s head takes the call's
-    /// own `path` and falls back to the raw input only when there is none —
-    /// so the fact travels instead of being guessed where it can no longer be
-    /// checked (#4168).
-    pub subject_is_path: bool,
+    /// [`Subject::is_path`] is carried from the producer rather than re-derived
+    /// here: the only signal left at this point is a `/`, and
+    /// `sed -n '1,20p' foo/bar.rs` has one without naming any file this row
+    /// touched. The projection knows the answer for free —
+    /// [`super::transcript_source`]'s head takes the call's own `path` and falls
+    /// back to the raw input only when there is none — so the fact travels
+    /// instead of being guessed where it can no longer be checked (#4168).
+    pub subject: Subject,
     /// Wall time, rendered `⚡3ms`. Zero suppresses the metric.
     pub duration_ms: u64,
     /// The task this event is attributed to, rendered `→ task 3` when a plan
@@ -250,11 +292,10 @@ pub struct Event {
 impl Event {
     /// A minimal event; the builders below are for tests and the live source.
     #[must_use]
-    pub fn new(kind: EventKind, subject: impl Into<String>) -> Self {
+    pub fn new(kind: EventKind, subject: impl Into<Subject>) -> Self {
         Self {
             kind,
             subject: subject.into(),
-            subject_is_path: false,
             duration_ms: 0,
             task: None,
             collapsed: None,
@@ -294,23 +335,36 @@ pub struct TurnHead {
 }
 
 /// The one receipt line under a turn's closing rule (SPEC 6.1).
+///
+/// Every field is fed from [`crate::model::TurnCounters`], counted at fold time
+/// and stamped onto the closing entry — except the tests, which have no source
+/// at all. A field with nothing behind it elides rather than printing a zero.
 #[derive(Clone, Debug, Default)]
 pub struct Receipt {
     pub spend_usd: f64,
-    /// Tokens this turn spent. `None` when nothing has counted them.
+    /// Tokens this turn spent, summed from its `StepUsage` events.
     ///
-    /// Optional for the same reason [`Receipt::det_pct`] is: `StepUsage` is a
-    /// metering record the deck deliberately does not fold (it would
-    /// double-count the spend the budget gauge already tracks), so a turn's
-    /// token total has no source in the session model today. A receipt that
-    /// printed `0 tok` would be stating a measurement nobody took.
+    /// Only the **token** fields of that event are folded. Its `cost_usd` is
+    /// not, and must not be: the deck's spend comes from `BudgetTick`, so
+    /// folding both would double-count it.
+    ///
+    /// `None` is "no usage event arrived" — never `Some(0)` from an absence.
     pub tokens: Option<u64>,
-    /// The deterministic share of the turn's work. This is `det %`'s home —
-    /// SPEC 5 removed it from the status bar and named the receipt instead.
-    pub det_pct: Option<u32>,
+    /// Tests this turn ran and passed. **Nothing counts these.**
+    ///
+    /// They stay `0`/`0`, which elides, until an event states the numbers.
+    /// `AgentEvent::Verdict` carries a pass/fail and prose, not counts, and a
+    /// `bash` call running `cargo test` is opaque to the fold — its output is a
+    /// `ToolResult` string, and parsing one would be a scraper guessing at a
+    /// harness rather than a measurement. Feeding this needs either a
+    /// verification plugin reporting its `EvidenceSet` per check, or a
+    /// test-runner tool that returns structured results.
     pub tests_passed: u32,
     pub tests_total: u32,
+    /// Distinct paths this turn changed, from its `FileChange` events. A real
+    /// `0` — every mutation emits one, so nothing counted is nothing changed.
     pub files: u32,
+    /// Memories written, summed over the turn's `ContextWrite` upserts.
     pub memories: u32,
 }
 
@@ -369,9 +423,10 @@ pub fn turn_end(number: u32, elapsed: Option<&str>, width: usize) -> Line<'stati
         Span::styled(number.to_string(), Style::new().fg(token::GOLD)),
         Span::styled(" done", Style::new().fg(token::TEXT)),
     ];
-    // Elided rather than rendered as `0:00`, which is a duration nobody
-    // measured. The deck folds no per-turn clock today; when it does, this
-    // fills in without the rule changing shape.
+    // Elided rather than rendered as `0:00`, which would be a duration nobody
+    // measured. Fed from `crate::model::TurnReceipt::elapsed_ms`, which the
+    // deck stamps on the way past — the fold itself may not read a clock
+    // (L-T1), so `None` here is a turn the deck never timed.
     if let Some(elapsed) = elapsed {
         label.push(Span::styled(format!(" · {elapsed}"), dim));
     }
@@ -395,10 +450,6 @@ pub fn receipt(r: &Receipt) -> Line<'static> {
         spans.push(Span::styled(" · ", dim));
         spans.push(Span::styled(fmt_tokens(tokens), text));
         spans.push(Span::styled(" tok", dim));
-    }
-    if let Some(det) = r.det_pct {
-        spans.push(Span::styled(" · det ", dim));
-        spans.push(Span::styled(format!("{det}%"), text));
     }
     if r.tests_total > 0 {
         let all_passed = r.tests_passed == r.tests_total;
@@ -467,6 +518,47 @@ pub fn rail_span(metal: Color) -> Span<'static> {
     Span::styled(" │", Style::new().fg(metal))
 }
 
+/// The subject, split so a **path**'s basename carries the emphasis.
+///
+/// In a scan down the margin the eye is hunting the file *identity*; the
+/// directory is context that only matters once the file is found, so it
+/// recedes. Without this a column of calls in one workspace reads as a column
+/// of near-identical `crates/stella-tui/src/render/…` strings, all the same
+/// weight, differing only in the last few cells (#4168).
+///
+/// Non-path text is deliberately left as one unemphasised span. The subject of
+/// a `bash` head is a command, not a file, and brightening its tail would spend
+/// the contrast on the rows least able to use it — the rule the v1 row encoded
+/// in `render::row::path_spans` before it was deleted, third arm included.
+///
+/// `lead` is the separator owned by whatever precedes the subject, carried into
+/// the first span rather than pushed as one of its own: an empty span would
+/// still occupy an index the palette tests count past.
+fn subject_spans(subject: &Subject, lead: &str) -> Vec<Span<'static>> {
+    let text = Style::new().fg(token::TEXT);
+    // Byte-index slicing is safe on the result of `rfind('/')`: `/` is ASCII,
+    // so `cut` and `cut + 1` are both char boundaries whatever else the path
+    // holds.
+    // A trailing separator has no basename to emphasise, so a directory renders
+    // whole rather than as a bright empty span.
+    match subject
+        .text
+        .rfind('/')
+        .filter(|cut| subject.is_path && cut + 1 < subject.text.len())
+    {
+        Some(cut) => vec![
+            Span::styled(
+                format!("{lead}{}", &subject.text[..=cut]),
+                Style::new().fg(token::DIM),
+            ),
+            Span::styled(subject.text[cut + 1..].to_owned(), text),
+        ],
+        // A basename with no directory is already the identity — bright, whole,
+        // and nothing to recede. A non-path renders exactly as it did before.
+        _ => vec![Span::styled(format!("{lead}{}", subject.text), text)],
+    }
+}
+
 /// `<rail> <glyph> <verb> <subject> … <metrics right-aligned>`.
 fn head_row(event: &Event, metal: Color, width: usize) -> Line<'static> {
     let dim = Style::new().fg(token::DIM);
@@ -488,11 +580,11 @@ fn head_row(event: &Event, metal: Color, width: usize) -> Line<'static> {
             event.kind.verb().to_string(),
             Style::new().fg(metal).add_modifier(Modifier::BOLD),
         ));
-        if !event.subject.is_empty() {
-            left.extend(subject_spans(" ", &event.subject, event.subject_is_path));
+        if !event.subject.text.is_empty() {
+            left.extend(subject_spans(&event.subject, " "));
         }
-    } else if !event.subject.is_empty() {
-        left.extend(subject_spans("", &event.subject, event.subject_is_path));
+    } else if !event.subject.text.is_empty() {
+        left.extend(subject_spans(&event.subject, ""));
     }
     left.extend(kind_detail(&event.kind));
 
@@ -506,42 +598,6 @@ fn head_row(event: &Event, metal: Color, width: usize) -> Line<'static> {
         spans.extend(right);
     }
     Line::from(spans)
-}
-
-/// The object of the verb, split at the last separator when it names a file.
-///
-/// A path renders as a dim directory and a bright basename, because in a column
-/// of calls the file *identity* is what the eye is hunting and the shared
-/// `crates/stella-tui/src/…` prefix is context that only matters once the file
-/// has been found. Without the split a margin of paths reads as one string —
-/// the v1 row had it, and it was lost with the row (#4168).
-///
-/// Anything that is not a path stays one unemphasised span at the text tone it
-/// already had. The subject of a `run` head is a command line, not a file, and
-/// brightening a fragment of it would spend the contrast on the rows that least
-/// need it; dimming the whole of it would take the emphasis off a name that is
-/// the entire head, which is what an unrecognised tool's row is.
-///
-/// `prefix` is the separator the caller owes before the subject — a space after
-/// a verb, nothing at all when the subject *is* the head. It rides the leading
-/// span so an empty one never occupies an index.
-fn subject_spans(prefix: &str, subject: &str, is_path: bool) -> Vec<Span<'static>> {
-    let text = Style::new().fg(token::TEXT);
-    // A trailing separator has no basename to emphasise, so a directory renders
-    // whole rather than as a bright empty span.
-    match subject
-        .rfind('/')
-        .filter(|cut| is_path && cut + 1 < subject.len())
-    {
-        Some(cut) => vec![
-            Span::styled(
-                format!("{prefix}{}", &subject[..=cut]),
-                Style::new().fg(token::DIM),
-            ),
-            Span::styled(subject[cut + 1..].to_owned(), text),
-        ],
-        None => vec![Span::styled(format!("{prefix}{subject}"), text)],
-    }
 }
 
 /// The kind-specific tail of a head line (SPEC 6.3's per-event columns).

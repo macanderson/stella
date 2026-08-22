@@ -693,6 +693,20 @@ fn deck_render_snapshots_pin_the_help_overlay() {
         entry.cache_ttl_secs = 300;
         entry.last_provider_call_ms = Some(264_000);
     }
+    // A second role pin, so the MODEL block is drawn in the shape SPEC 5 asks
+    // for — one row per role — rather than the single row a scenario that only
+    // ever served a worker call happens to produce. The demo scenario folds one
+    // `StepUsage`, so the verifier pin is written here like the cache anchor
+    // above it. This is the pin the statline can never show: it names whichever
+    // slug is answering, and the verifier is by definition not that one.
+    model.role_pins.insert(
+        stella_tui::deck::PipelineRole::Verifier,
+        stella_tui::deck::RolePin {
+            provider: "anthropic".to_string(),
+            model: "claude-opus-5".to_string(),
+            served: true,
+        },
+    );
     let mut ui = ui_for(DeckTab::Skills);
     ui.help_open = true;
     let frame = render_frame(&model, &mut ui, W, H);
@@ -704,7 +718,7 @@ fn deck_render_snapshots_pin_the_help_overlay() {
         "42%",                     // CPU — the focused agent's sample
         "148M",                    // MEM
         "4:12",                    // WARMTH
-        "3 active / 3 total",      // ENGINE
+        "3 active · 3 total",      // ENGINE
         "anthropic/claude-opus-5", // MODEL detail — a pin the statline never shows
     ] {
         assert!(
@@ -721,6 +735,51 @@ fn deck_render_snapshots_pin_the_help_overlay() {
         W,
         H,
         &frame,
+    );
+}
+
+/// SPEC 5 sends five status cells behind `?` **as well as** to the AGENTS tab,
+/// and until #4188 the overlay drew keybindings only.
+///
+/// A named assertion beside the golden, deliberately. #4186 is the cautionary
+/// tale: a golden pins the whole frame, so a row that quietly stops rendering
+/// moves it, and the reviewer's job becomes noticing an absence inside a
+/// hundred-line diff. This says which values have to be there, so their loss is
+/// a sentence rather than a shifted block.
+#[test]
+fn the_help_overlay_carries_the_metrics_spec_5_sends_behind_it() {
+    let model = fixture_model();
+    let mut ui = ui_for(DeckTab::Skills);
+    ui.help_open = true;
+    let frame = render_frame(&model, &mut ui, W, H);
+
+    for needle in [
+        // MODEL detail — which pin serves each role, the question the status
+        // bar's single slug cannot answer.
+        "worker",
+        "zai/glm-5.2-air",
+        // ENGINE, CPU and MEM.
+        "engine",
+        "3 active · 3 total",
+        "cpu",
+        "42%",
+        "mem",
+        "148M",
+    ] {
+        assert!(
+            frame.contains(needle),
+            "the ? overlay does not carry {needle:?}:\n{frame}"
+        );
+    }
+
+    // WARMTH is the fifth cell and is deliberately **absent** here: this
+    // fixture has no measured cache warmth, and `0s` would say the prompt
+    // cache has just expired rather than that nothing has been cached. The
+    // elision is the behaviour under test, so it is asserted rather than left
+    // to look like an oversight.
+    assert!(
+        !frame.contains("warmth"),
+        "an unmeasured warmth rendered a row anyway:\n{frame}"
     );
 }
 

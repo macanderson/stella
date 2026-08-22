@@ -23,18 +23,11 @@ Every field is optional, and it merges across the same user → org-managed →
 project scope chain as the rest of `settings.json`, per field — a project can
 pin the model while your user scope keeps everything else.
 
-<Callout type="warn">
-**`pipeline_worker_model`, `pipeline_verifier_model`, `pipeline_triage_model`,
-`pipeline_research_model`, `pipeline_plan_model` and the `agents.worker` /
-`agents.verifier` / `agents.triage` / `agents.research` / `agents.plan` blocks
-are retired.** They configured the staged pipeline's roles; that pipeline was
-removed, and the keys had stopped steering anything well before they were
-taken out.
-
-A settings file that still carries one **loads normally and prints a line per
-key naming what it did and what to write instead** — nothing breaks, and
-nothing is silently ignored either. Set `default_model` for the session's own
-model, and a [seat](#seats) for anything a plugin runs.
+<Callout type="info">
+An unrecognized key **loads normally and prints a line naming what to write
+instead** — nothing breaks, and nothing is silently ignored either. Set
+`default_model` for the session's own model, and a [seat](#seats) for anything
+a plugin runs.
 </Callout>
 
 ## The full schema
@@ -212,12 +205,8 @@ Set any of the three autos to `"on"` and stop thinking about it:
 
 <CardGrid size="md">
   <OptionCard name="auto_mode" defaultValue="off">
-    **Diminished — it no longer selects a model.** It used to pick the
-    verifier out of `allowed_models`, preferring a different family than the
-    worker's; the role that pin staffed is gone, and the selector went with
-    it rather than being left as a switch that does nothing on the wire. What
-    it still does is mark whether a [`/profile`](/docs/commands/config) holds
-    the dials or stella does.
+    **It does not select a model.** What it marks is whether a
+    [`/profile`](/docs/commands/config) holds the dials or stella does.
   </OptionCard>
   <OptionCard name="effort_auto" defaultValue="off">
     Reasoning effort chosen for you, overriding `agents.default.effort`.
@@ -226,17 +215,14 @@ Set any of the three autos to `"on"` and stop thinking about it:
     Thinking mode chosen for you, overriding `agents.default.reasoning`.
   </OptionCard>
   <OptionCard name="headless_scope_bypass" defaultValue="off">
-    **Inert — setting this changes nothing.** It used to let a headless run
-    proceed past the staged pipeline's scope-review gate instead of stopping at
-    a gate with nobody to ask. That gate was deleted along with the staged
-    pipeline itself, so nothing reads the value any more, at any setting.
+    **Inert — setting this changes nothing.** Nothing reads the value, at any
+    setting.
 
     The key still parses and merges rather than being rejected as unknown, and
     that is deliberate: it is part of a registered benchmark posture whose
     digest is published, so removing it would invalidate numbers that have
-    already been reported. Whether to retire it and re-hash those arms is
-    tracked separately. Nothing here is waiting on you — if you set it, delete
-    it.
+    already been reported. Nothing here is waiting on you — if you set it,
+    delete it.
   </OptionCard>
   <OptionCard name="model_timeout_secs" defaultValue="816">
     Seconds of provider **silence** that end a single generation — it bounds
@@ -476,6 +462,17 @@ Configuration can never turn a runnable session into an error. A configured
 model whose provider has no resolvable credential — or whose adapter fails to
 build — is skipped with a visible notice, and rides the session's model
 exactly as it would with no config at all.
+
+The router that resolves each seat carries the same posture at run time:
+
+- **Per-provider circuit breakers.** Three consecutive transport failures open
+  a provider's breaker; routing skips it and reports the fallback visibly —
+  never a silent mid-session switch. After a cooldown, one trial call decides
+  whether the breaker closes. See
+  [Troubleshooting](/docs/guides/troubleshooting) for what an open breaker
+  looks like.
+- **Soft degradation everywhere.** A configured seat model whose provider has
+  no credential falls back to the session's model with a notice.
 
 <Callout type="info">
   `agent_engine_config` carries no credential routing of its own — an

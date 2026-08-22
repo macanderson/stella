@@ -320,6 +320,9 @@ pub enum TranscriptEntry {
         model: String,
         cost_usd: f64,
         turn: u32,
+        /// What the turn's own counters settled to — SPEC 6.1's receipt.
+        /// Rides the entry because `render::entry` holds no session state.
+        receipt: super::TurnReceipt,
     },
 }
 

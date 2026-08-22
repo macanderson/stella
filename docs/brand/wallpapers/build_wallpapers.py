@@ -126,11 +126,11 @@ DARK = Ground(
     haze_op=0.11,
     bloom="#F0C070",
     bloom_op=0.30,
-    speck="#E8E8EC",
+    speck="#F4F1EA",
     speck_op=0.55,
     warm_speck="#EFC53F",
     streak_core="#FFE9C2",
-    grid="#E8E8EC",
+    grid="#F4F1EA",
     grid_op=0.022,
     vignette_op=0.55,
 )
@@ -145,11 +145,11 @@ LIGHT = Ground(
     bloom_op=0.20,
     speck="#7A8492",
     speck_op=0.34,
-    warm_speck="#141416",
+    warm_speck="#141413",
     # On paper the head cannot be the *lightest* point — white on warm white is
     # nothing, and the trail loses its direction of travel. It deepens instead:
     # the same ramp, run toward saturation rather than toward light.
-    streak_core="#141416",
+    streak_core="#141413",
     grid="#0A0A0C",
     grid_op=0.030,
     vignette_op=0.16,

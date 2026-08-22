@@ -65,9 +65,9 @@ BRAND = "#EFC53F"  # gold — the comet, on either ground
 BRAND_ON_LIGHT = BRAND
 # Small brand *text* on light surfaces is not gold at all — rule 6 forbids it,
 # and at 1.65:1 the measurement agrees. Brand text on paper is `ink`.
-BRAND_DEEP = "#141416"  # ink
+BRAND_DEEP = "#141413"  # ink
 INK = "#0A0A0C"  # bg — the canvas
-PAPER = "#E8E8EC"  # text — primary text on dark
+PAPER = "#F4F1EA"  # text — primary text on dark
 PAPER_BG = "#FFFFFF"  # paper — the light-mode surface
 MUTED_ON_DARK = "#777782"  # muted
 # `dim` rather than `muted` on light. Both are tokens; this one is the pairing

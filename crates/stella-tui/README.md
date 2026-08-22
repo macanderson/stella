@@ -125,13 +125,20 @@ candidate to extract.
 - [`src/deck_ui.rs`](src/deck_ui.rs)
 - [`src/views/engine.rs`](src/views/engine.rs)
 
-Two files have left this list, both the same way. `src/views/session.rs` left in
-#4127: its incremental transcript fold moved to
-[`src/views/session/fold.rs`](src/views/session/fold.rs), which took it under the
-limit. `src/deck_render.rs` left in #3591: the composer footer's affordance
-budgeting moved to [`src/deck_render/footer.rs`](src/deck_render/footer.rs),
-taking it from 1518 to 1383. That is the shape a split is meant to have — a
-self-contained concern leaving, not lines redistributed.
+[`src/deck_render.rs`](src/deck_render.rs) was on this list and is not any
+more, and it took two extractions to get there: the composer footer's
+affordance budgeting moved to
+[`src/deck_render/footer.rs`](src/deck_render/footer.rs) in #3591, and the `?`
+overlay moved to [`src/deck_render/help.rs`](src/deck_render/help.rs) in #4188.
+Between them the file lost its baseline entry and is now judged against the
+flat ceiling like any other file. It is still one of the largest files in the
+crate and the advice above applies to it in spirit — but the guard no longer
+grandfathers it, and it must not go back over.
+
+`src/views/session.rs` left this list in #4127: its incremental transcript fold
+moved to [`src/views/session/fold.rs`](src/views/session/fold.rs), which took it
+under the limit. That is the shape a split is meant to have — a self-contained
+concern leaving, not lines redistributed.
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an

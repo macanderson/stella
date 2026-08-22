@@ -92,7 +92,7 @@ What makes a task earn its place:
   </SpecCard>
   <SpecCard title="It fails before the change">
     A verifier that was already passing proves nothing about the work. This is the
-    same flip-oracle discipline the [pipeline](/docs/inference-pipeline#6-verify--the-deterministic-ladder)
+    same flip-oracle discipline a [verification plugin](/docs/plugins)
     uses internally, and it applies just as much to your harness.
   </SpecCard>
 </CardGrid>
@@ -170,9 +170,9 @@ served the worker turns, which a
 [worker-model route](/docs/configuration/agent-engine-config) can change out from
 under your `--model` argument. Attribute spend to what the receipt says.
 
-**`files_touched` is not on the pipeline path.** The default (raw) run
+**`files_touched` is not on the wrapped path.** The default (raw) run
 summarizes with a top-level `files_touched` key; `task_class`, `verdict`,
-`revisions`, and `candidates_run` appear only on `--pipeline classic`
+`revisions`, and `candidates_run` appear only on `--pipeline <variant>`
 runs, and the array itself
 sits one level in at `.files_touched.files_touched`. Counting `tool_start` events
 works on both paths, which is why the assertions below use events.
@@ -412,7 +412,7 @@ itself is worse than none.
   <SpecCard title="Fix a failing CI run" href="/docs/guides/fix-failing-ci">
     The other side of this coin: what to do when the gate you just built goes red.
   </SpecCard>
-  <SpecCard title="Inference pipeline" href="/docs/inference-pipeline">
+  <SpecCard title="Plugins" href="/docs/plugins">
     The verify ladder and the flip oracle — the deterministic-evidence discipline
     this page borrows for its own harness.
   </SpecCard>

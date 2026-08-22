@@ -1,6 +1,6 @@
 ---
 title: Agent Modes
-description: The ways to drive stella — Command Deck chat, one-shot raw or staged-pipeline runs, judged goal mode, CI monitoring, and parallel fleets — and how to pick between them.
+description: The ways to drive stella — Command Deck chat, one-shot raw or plugin-wrapped runs, judged goal mode, CI monitoring, and parallel fleets — and how to pick between them.
 ---
 
 stella has one engine and several ways to drive it. Pick the mode by how much
@@ -29,14 +29,14 @@ engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
     Scripts, CI, a single well-defined task, quick questions and cheap edits.
   </SpecCard>
   <SpecCard
-    title="Staged pipeline run"
+    title="Wrapped run"
     meta={[
-      { label: "Command", value: "stella run --pipeline classic \"…\"" },
-      { label: "Verified by", value: "the staged pipeline", mono: false },
+      { label: "Command", value: "stella run --pipeline <variant> \"…\"" },
+      { label: "Verified by", value: "an installed wrapper plugin", mono: false },
     ]}
   >
-    Opt-in ceremony where the result must be *provably* right — full triage,
-    witness, and the deterministic verify ladder.
+    Opt-in ceremony where the result must carry evidence — the plugin gathers
+    it and stella evaluates it against the plugin's declared rule.
   </SpecCard>
   <SpecCard
     title="Goal mode"
@@ -46,8 +46,8 @@ engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
       { label: "Verified by", value: "an independent verifier, over raw step-loop rounds", mono: false },
     ]}
   >
-    An outcome, not a task list. `--pipeline classic` makes each round a
-    staged pipeline run instead.
+    An outcome, not a task list. `--pipeline <variant>` runs each round's
+    worker turn under a wrapper plugin instead.
   </SpecCard>
   <SpecCard
     title="CI monitor"
@@ -103,7 +103,6 @@ The full slash-command set — including `/inspect` and `/context` — is on
     The SETTINGS tab — home of all config, including the
     [engine-config panel](/docs/configuration/agent-engine-config).
   </OptionCard>
-  <OptionCard name="/pipeline">Toggle staged-pipeline turns. Off by default.</OptionCard>
   <OptionCard name="/sessions · /inbox">Every session on this machine; notifications.</OptionCard>
   <OptionCard name="/export">
     Export **this session's** telemetry to a ZIP plus an
@@ -120,22 +119,20 @@ immediately, inline in the session transcript, skipping the queue. A single **Es
 **double-Esc** cancels *and holds* dispatch so what you type next runs first.
 Prefer a plain line-based REPL? `stella --plain` (or `STELLA_PLAIN=1`).
 
-Deck turns run the raw step loop by default; `/pipeline` flips to the
-[staged pipeline](/docs/inference-pipeline).
-
 ## One-shot: `stella run`
 
 The non-interactive workhorse: one prompt in, verified work out, exit code
-back. Defaults to the raw step loop; pass `--pipeline classic` for the
-staged pipeline, where `--test-command` arms the deterministic fail→pass
-flip oracle (refused on the raw default). Combine with
+back. Defaults to the raw step loop; pass `--pipeline <variant>` to run the
+turn under an installed [wrapper plugin](/docs/plugins), where
+`--test-command` hands that plugin's own oracle a command to check against
+(refused on the raw default). Combine with
 `--output-format json|stream-json` and `--spend-limit` for headless
 automation — see [`stella run`](/docs/commands/run) and
 [Scripting](/docs/scripting).
 
 ```bash
 stella run "add a --json flag to the export command and update the tests" \
-  --pipeline classic --test-command "cargo test -p exporter"
+  --pipeline my-verifier --test-command "cargo test -p exporter"
 ```
 
 ## Outcome-driven: goal mode
@@ -144,8 +141,8 @@ stella run "add a --json flag to the export command and update the tests" \
 judged rounds until an independent verifier (routed to a different model family
 than the worker whenever possible) confirms the objective is met *from
 evidence*. Each round is a raw step-loop turn by default; pass
-`--pipeline classic` to run every round through the full
-[staged pipeline](/docs/inference-pipeline) instead. Backstops — a
+`--pipeline <variant>` to run every round's worker turn under an installed
+[wrapper plugin](/docs/plugins) instead. Backstops — a
 round cap, `--spend-limit`, worker aborts — end the run honestly as "not met"
 rather than optimistically.
 
@@ -155,7 +152,7 @@ stella goal "the test suite passes and there are no clippy warnings"
 
 Where `stella run` executes a single one-shot prompt, `stella goal` runs
 **judged rounds**. Each round the worker agent makes progress using the normal
-[agent step loop](/docs/inference-pipeline), and then a separate verifier model
+[agent step loop](/docs/agent-engine-paths), and then a separate verifier model
 reviews the evidence and decides whether the objective has been satisfied. The
 loop ends when the verifier confirms — or when a backstop trips: a hard round cap
 (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching
@@ -221,7 +218,7 @@ more on `--model` and `--spend-limit`.
 
 `stella monitor` is goal mode specialized for continuous integration. It
 watches CI for a branch or PR (default `main`) and keeps fixing failures until
-the pipeline is fully green.
+the latest run is fully green.
 
 ```bash
 stella monitor
@@ -243,8 +240,8 @@ on its own branch.
 
 - **You know the change and want to watch** → the Command Deck.
 - **You know the change and don't need to watch** → `stella run` (the raw
-  default is fastest; add `--pipeline classic --test-command` for the
-  strongest verification).
+  default is fastest; add `--pipeline <variant> --test-command` to run it
+  under a wrapper plugin that gathers evidence).
 - **You know the outcome but not the steps** → `stella goal`.
 - **CI is red and you want it green** → `stella monitor`.
 - **You have a backlog** → `stella fleet --plan`.

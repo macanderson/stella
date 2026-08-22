@@ -15,7 +15,7 @@
     "crates/stella-tui-theme/src/clamp.rs and mirrored by scripts/check-tokens.py;",
     "both are held to this file's `clamps` block below."
   ],
-  "version": "5.0.0",
+  "version": "5.1.0",
   "name": "stella black and gold",
   "supersedes": {
     "kit": "brand v4.0 (\"the comet\")",
@@ -90,7 +90,13 @@
     },
     "neutral-gray": {
       "predicate": "r == g AND b >= g",
-      "why": "Neutral, or tipped toward blue; never toward red. A gray one point warm is what makes a black-and-gold scheme read as sepia."
+      "why": "Neutral, or tipped toward blue; never toward red. A gray one point warm is what makes a black-and-gold scheme read as sepia. Scoped to the deck's near-black ground; the light ramp carries `warm-paper`."
+    },
+    "warm-paper": {
+      "predicate": "r >= g >= b AND 100*g >= 97*r AND 100*b >= 93*r",
+      "green_pct": 97,
+      "blue_pct": 93,
+      "why": "The light ground's clamp: warm or neutral, never blue. The floors keep paper from becoming tan, and are taken from brand v1.0's own light neutrals, which sit at g = 0.988 r and b = 0.960 r."
     },
     "verdict": {
       "predicate": "none",
@@ -189,8 +195,16 @@
       "clamp": "neutral-gray",
       "css": "--st-text",
       "rust": "TEXT",
-      "role": "primary text on dark",
-      "surfaces": ["tui", "web-dark", "asset"]
+      "role": "primary text on dark, in the deck",
+      "surfaces": ["tui"]
+    },
+    {
+      "name": "paper-text",
+      "hex": "#F4F1EA",
+      "clamp": "warm-paper",
+      "css": "--st-paper-text",
+      "role": "primary text on dark, off the deck",
+      "surfaces": ["web-dark", "asset"]
     },
     {
       "name": "muted",
@@ -257,8 +271,8 @@
     },
     {
       "name": "ink",
-      "hex": "#141416",
-      "clamp": "neutral-gray",
+      "hex": "#141413",
+      "clamp": "warm-paper",
       "css": "--st-ink",
       "rust": "INK",
       "role": "primary text on light surfaces (web light mode only)",
@@ -266,17 +280,17 @@
     },
     {
       "name": "paper",
-      "hex": "#FFFFFF",
-      "clamp": "neutral-gray",
+      "hex": "#FFFCF5",
+      "clamp": "warm-paper",
       "css": "--st-paper",
       "rust": "PAPER",
-      "role": "light canvas",
+      "role": "the warm light canvas",
       "surfaces": ["web-light", "asset"]
     },
     {
       "name": "paper-panel",
-      "hex": "#F6F6F8",
-      "clamp": "neutral-gray",
+      "hex": "#F9F6EF",
+      "clamp": "warm-paper",
       "css": "--st-paper-panel",
       "rust": "PAPER_PANEL",
       "role": "light panel",
@@ -284,8 +298,8 @@
     },
     {
       "name": "paper-border",
-      "hex": "#E3E3E8",
-      "clamp": "neutral-gray",
+      "hex": "#E6E3DD",
+      "clamp": "warm-paper",
       "css": "--st-paper-border",
       "rust": "PAPER_BORDER",
       "role": "light border",
@@ -327,40 +341,40 @@
     },
     {
       "name": "paper-ground",
-      "hex": "#F4F4F6",
-      "clamp": "neutral-gray",
+      "hex": "#F7F4ED",
+      "clamp": "warm-paper",
       "css": "--st-paper-ground",
-      "role": "the cool paper page ground, one step under the panel",
+      "role": "the warm paper page ground, one step under the panel",
       "surfaces": ["web-light"]
     },
     {
       "name": "paper-raised",
-      "hex": "#FAFAFC",
-      "clamp": "neutral-gray",
+      "hex": "#FDFAF3",
+      "clamp": "warm-paper",
       "css": "--st-paper-raised",
       "role": "light surface raised above the page ground",
       "surfaces": ["web-light"]
     },
     {
       "name": "paper-row",
-      "hex": "#E6E6EA",
-      "clamp": "neutral-gray",
+      "hex": "#E9E6E0",
+      "clamp": "warm-paper",
       "css": "--st-paper-row",
       "role": "light hover and selected rows",
       "surfaces": ["web-light"]
     },
     {
       "name": "paper-seam",
-      "hex": "#DDDDE3",
-      "clamp": "neutral-gray",
+      "hex": "#E0DDD7",
+      "clamp": "warm-paper",
       "css": "--st-paper-seam",
       "role": "light seam: the hairline under a border",
       "surfaces": ["web-light"]
     },
     {
       "name": "ink-muted",
-      "hex": "#5E5E69",
-      "clamp": "neutral-gray",
+      "hex": "#605F5C",
+      "clamp": "warm-paper",
       "css": "--st-ink-muted",
       "role": "secondary text on light surfaces",
       "surfaces": ["web-light"]
@@ -420,7 +434,7 @@
       { "hex": "#DFB473", "was": "brand v4.0 gold tint" },
       { "hex": "#EBCB9D", "was": "brand v4.0 gold tint" },
       { "hex": "#F3DEC0", "was": "brand v4.0 gold tint" },
-      { "hex": "#FBF3E3", "was": "brand v4.0 warm paper -- warm ground, banned outright" },
+      { "hex": "#FBF3E3", "was": "brand v4.0 warm paper" },
       { "hex": "#A97227", "was": "brand v4.0 gold shade" },
       { "hex": "#674415", "was": "brand v4.0 gold shade" },
       { "hex": "#462E10", "was": "brand v4.0 gold shade" },

@@ -65,30 +65,31 @@ declares `schema_version` (see [The envelope contract](#the-envelope-contract) b
 summary's other keys depend on the execution path: a default run drives the raw step loop
 and summarizes as `status`, `text`, `cost_usd`, `reason`, `model`, and `events`, plus a
 top-level `files_touched` key holding the
-[file-touch telemetry](/docs/telemetry) payload; `--pipeline classic` runs the staged
-pipeline instead and summarizes as `status`, `text`, `cost_usd`, `reason`, `task_class`,
+[file-touch telemetry](/docs/telemetry) payload; `--pipeline <variant>` runs the turn under
+an installed [wrapper plugin](/docs/plugins) instead and summarizes as `status`, `text`,
+`cost_usd`, `reason`, `task_class`,
 `verdict`, `revisions`, `candidates_run`, `model`, `events`, and `reflection` — which does
 **not** carry `files_touched`. The `files_touched` payload is the serialized telemetry
 object, so the array of records sits one level in, at `.files_touched.files_touched`.
 
 The `model` value is `provider/model_id` for the model that **actually ran** —
-on the pipeline path that is the model serving the worker turns, which is what
+on the wrapped path that is the model serving the worker turns, which is what
 `cost_usd` was spent on. It is not an echo of what you requested: a
 [`default_model`](/docs/configuration/agent-engine-config) that routes
 the worker somewhere other than the session default is reflected here. Read
 this key, not your own `--model` argument, when attributing spend.
 
 The `status` value is the first thing most scripts branch on. A raw run
-reports one of three, since no verification ladder ran; a `--pipeline classic`
+reports one of three, since nothing verified it; a `--pipeline <variant>`
 run reports one of four:
 
 <CardGrid size="sm">
   <OptionCard name="completed">
-    The turn finished. On the pipeline path this also means verification
+    The turn finished. On the wrapped path this also means verification
     passed — check `verdict.deterministic` to see whether a verifier was spent.
   </OptionCard>
   <OptionCard name="verification_failed">
-    Pipeline only. The work happened but did not verify; `reason` carries the
+    Wrapped runs only. The work happened but did not verify; `reason` carries the
     verdict summary. Exits non-zero.
   </OptionCard>
   <OptionCard name="aborted">
@@ -102,8 +103,8 @@ run reports one of four:
   </OptionCard>
 </CardGrid>
 
-**Failures keep the same key set.** A `--pipeline classic` run that errors emits every key
-above, with `text` and the pipeline-only keys (`task_class`, `verdict`, `revisions`,
+**Failures keep the same key set.** A `--pipeline <variant>` run that errors emits every key
+above, with `text` and the wrapper-only keys (`task_class`, `verdict`, `revisions`,
 `candidates_run`) as explicit `null` rather than missing — so a strict deserializer written against the
 success shape still parses. A failure *before* the agent is constructed — no API key
 configured, an unknown provider or model, a malformed `settings.json` — has no
@@ -119,7 +120,7 @@ line.
 
 ## The envelope contract
 
-Every summary object above — the raw-loop summary, the `--pipeline classic` summary, and the
+Every summary object above — the raw-loop summary, the `--pipeline <variant>` summary, and the
 pre-flight error envelope — carries a `schema_version` integer. It is **1** today. The
 three shapes always declare the same value: it versions the envelope contract, not the
 execution path, so you never have to special-case which run you got.
@@ -296,7 +297,7 @@ stella --spend-limit 10 fleet --plan cleanup.toml --max-concurrency 4
 
 <CardGrid size="sm">
   <OptionCard name="0">
-    Success. On the pipeline path that means verification passed, not merely
+    Success. On the wrapped path that means verification passed, not merely
     that the model stopped talking.
   </OptionCard>
   <OptionCard name="1">
@@ -319,7 +320,7 @@ stella --spend-limit 10 fleet --plan cleanup.toml --max-concurrency 4
 
 ```bash
 stella --spend-limit 3 run --output-format json \
-  --pipeline classic --test-command "cargo test -p stella-store" \
+  --pipeline my-verifier --test-command "cargo test -p stella-store" \
   "make the store migration idempotent on an already-v2 file" > result.json
 case $? in
   0)   echo "verified" ;;
@@ -387,13 +388,11 @@ jobs:
 ```
 
 <Callout type="warn">
-  There is no built-in headless-only gate to configure here. The scope review
-  that used to end a CI run rather than auto-approve a large plan was a stage of
-  the staged pipeline and went with it, and
-  `agent_engine_config.headless_scope_bypass` — the key that waved a run past it
-  — is inert, so setting it neither loosens nor tightens anything. A run under a
-  verification plugin can still refuse on the plugin's own rule; read that
-  plugin's manifest for what it refuses and when.
+  There is no built-in headless-only gate to configure here.
+  `agent_engine_config.headless_scope_bypass` is inert, so setting it neither
+  loosens nor tightens anything. A run under a verification plugin can still
+  refuse on the plugin's own rule; read that plugin's manifest for what it
+  refuses and when.
 </Callout>
 
 ## Parsing the output with jq
@@ -403,7 +402,7 @@ pipelines worth keeping:
 
 ```bash
 # Gate a script on deterministic evidence only — refuse a verifier-only pass.
-stella run --output-format json --pipeline classic --test-command "make test" "$TASK" \
+stella run --output-format json --pipeline my-verifier --test-command "make test" "$TASK" \
   | jq -e '.status == "completed" and .verdict.deterministic == true' >/dev/null \
   || { echo "no deterministic proof — not merging" >&2; exit 1; }
 ```

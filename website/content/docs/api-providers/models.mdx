@@ -1,6 +1,6 @@
 ---
 title: Model guide
-description: The master model catalog — context windows, list prices per million tokens, release timing, and which model to use for which role in the pipeline.
+description: The master model catalog — context windows, list prices per million tokens, release timing, and which model to use for which seat.
 ---
 
 This is the master list. Every model stella seeds into its catalog, with the numbers you
@@ -36,8 +36,8 @@ your provider before budgeting — prices and lineups drift.
 
 ## Which model for which role
 
-stella's [pipeline](/docs/inference-pipeline) runs three distinct roles, and they want
-different things from a model:
+A run distributes across distinct roles, and they want different things from a
+model:
 
 - **Worker** — writes the code. It wants the strongest coding model you can afford; this
   is where quality is bought. Worker tokens dominate a run, but most of them are
@@ -46,10 +46,11 @@ different things from a model:
 - **Verifier** — verifies the work at high effort. It wants a **different family** than the
   worker: cross-family judging resists same-model bias, where a model forgives the
   mistakes it would itself have made. A Claude worker with a GPT verifier (or vice versa)
-  catches more than either family judging itself.
-- **Triage** — classifies the task. It emits one token under a 10-second ceiling, so it
-  wants the cheapest fast model you have a key for. Paying flagship prices here buys
-  nothing.
+  catches more than either family judging itself. This is
+  [goal mode](/docs/agent-modes#outcome-driven-goal-mode)'s standing verifier.
+
+An installed [wrapper plugin](/docs/plugins) may staff further roles of its own;
+what it runs and how it routes them is its manifest's business, not stella's.
 
 Three named lineups, ready to copy:
 

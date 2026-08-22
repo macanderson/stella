@@ -3,24 +3,14 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ ┌ help — SKILLS · esc close ───────────────────────────────────────┐                                             │
-└─────────────────────────────────────────────│                                                                  │─────────────────────────────────────────────┘
-┌ Installed — 4 (user + project) ─────────────│  session metrics                                                 │─────────────────────────────────────────────┐
-│  [x] release-checklist v3  (project·workspac│  cpu       42%                                                   │                                             │
-│▸ [x] rust-review v2/4  (user·user)  Review R│  mem       148M                                                  │                                             │
-│  [ ] sql-tuning v1  (user·installed)  Read a│  warmth    4:12                                                  │o search                                     │
-│  [x] bench-rig-access v1  (project·auto)  Re│  engine    3 active / 3 total                                    │                                             │
-│                                             │  model     zai/glm-5.2-air  default · worker · research · plan   │                                             │
-│                                             │            anthropic/claude-opus-5  verifier                     │                                             │
-│                                             │            z-ai/glm-5.2  triage                                  │                                             │
-│                                             │                                                                  │                                             │
-│                                             │  SKILLS tab                                                      │                                             │
-│                                             │  ← →           switch panes                                      │                                             │
-│                                             │  ↑ ↓           select a skill                                    │                                             │
-│                                             │  space         enable / disable                                  │                                             │
-│                                             │  e             edit the selected skill                           │                                             │
-│                                             │  p             pin / unpin                                       │                                             │
+┌─────────────────────────────────────────────┌ help — SKILLS · esc close ───────────────────────────────────────┐─────────────────────────────────────stella* ┐
+│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ │                                                                  │                                             │
+└─────────────────────────────────────────────│  SKILLS tab                                                      │─────────────────────────────────────────────┘
+┌ Installed — 4 (user + project) ─────────────│  ← →           switch panes                                      │─────────────────────────────────────────────┐
+│  [x] release-checklist v3  (project·workspac│  ↑ ↓           select a skill                                    │                                             │
+│▸ [x] rust-review v2/4  (user·user)  Review R│  space         enable / disable                                  │                                             │
+│  [ ] sql-tuning v1  (user·installed)  Read a│  e             edit the selected skill                           │o search                                     │
+│  [x] bench-rig-access v1  (project·auto)  Re│  p             pin / unpin                                       │                                             │
 │                                             │  n             new skill — drafted by the LLM                    │                                             │
 │                                             │  ctrl-o        preview                                           │                                             │
 │                                             │  ctrl-x ×2     delete (press twice to confirm)                   │                                             │
@@ -35,11 +25,21 @@
 │                                             │  ctrl-v        paste — a copied image is attached to the prompt  │                                             │
 │                                             │  ctrl-t        open the queue editor                             │                                             │
 │                                             │  ctrl-s        PLAN — every step of the approved plan, in full   │                                             │
-└─────────────────────────────────────────────│  >text         steer the running turn — lands at the next step bo│─────────────────────────────────────────────┘
- space on/off · ctrl+o preview · ctrl+x×2 dele│  esc           steer: your draft + queue go INTO the running turn│
-──────────────────────────────────────────────│  esc esc       cancel NOW & hold — nothing runs until your next p│──────────────────────────────────────────────
- ▸ stage  Refactor the automations store into │  ctrl-c        quit stella                                       │
-✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50│                                                                  │
->>>                                           │  letter & arrow hotkeys apply while the prompt box is empty      │
+│                                             │  >text         steer the running turn — lands at the next step bo│                                             │
+│                                             │  esc           steer: your draft + queue go INTO the running turn│                                             │
+│                                             │  esc esc       cancel NOW & hold — nothing runs until your next p│                                             │
+│                                             │  ctrl-c        quit stella                                       │                                             │
+│                                             │                                                                  │                                             │
+│                                             │  letter & arrow hotkeys apply while the prompt box is empty      │                                             │
+│                                             │                                                                  │                                             │
+│                                             │  model                                                           │                                             │
+│                                             │  worker        zai/glm-5.2-air · answering                       │                                             │
+│                                             │  verifier      anthropic/claude-opus-5                           │                                             │
+└─────────────────────────────────────────────│                                                                  │─────────────────────────────────────────────┘
+ space on/off · ctrl+o preview · ctrl+x×2 dele│  machine                                                         │
+──────────────────────────────────────────────│  engine        3 active · 3 total                                │──────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into │  cpu           42%                                               │
+✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50│  mem           148M                                              │
+>>>                                           │  warmth        4:12                                              │
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! └──────────────────────────────────────────────────────────────────┘      turn $0.0390  ·  1 line  ·  queue empty
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help
