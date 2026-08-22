@@ -10,6 +10,9 @@
 // a rendered shape, and a property wants room to state itself.
 mod json_reindent;
 
+// The turn frame, and the append-only property the plain surface streams on.
+mod frame;
+
 use crate::digest::{self, format_cost, format_duration, format_tokens};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::{Command, Cursor, FoldState, Zoom, apply};
@@ -1190,23 +1193,6 @@ fn double_width_text_keeps_every_row_inside_the_grid() {
         lines.len(),
         overruns.join("\n")
     );
-}
-
-/// The turn frame's two rails are one box: a top that reserves fewer cells for
-/// its `─╮` cap than it emits is two cells longer than the bottom it meets.
-#[test]
-fn the_turn_frame_rails_are_the_same_width() {
-    const WIDTH: usize = 100;
-    let run = run_with(vec![step(edit("src/lib.rs", "a\n", "b\n"), 1_000)]);
-    let lines = grid::render(&run, &FoldState::new(), WIDTH);
-    let rail = |corner: char| {
-        lines
-            .iter()
-            .find(|l| l.first().is_some_and(|c| c.text.starts_with(corner)))
-            .map(grid::line_width)
-    };
-    assert_eq!(rail('╭'), Some(WIDTH), "the frame's top rail");
-    assert_eq!(rail('╰'), Some(WIDTH), "the frame's bottom rail");
 }
 
 /// The step digest's chips are flush right, and a double-width object must not

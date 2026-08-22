@@ -86,8 +86,13 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
 /// The transcript evidence a steering re-query reads (#3243 Phase 3): the
 /// prompt that opened this turn, the tools it has called (most recent last),
 /// and the error classes it has seen — assembled fresh each step from the
-/// same window [`turn_start_index`] gives loop detection, so the two planes
+/// same window `turn_start_index` gives loop detection, so the two planes
 /// cannot disagree about what "this turn" means.
+///
+/// `turn_start_index` is deliberately not linked: it is `pub(super)`, and this
+/// type is `pub` (#4258), so an intra-doc link from here would point a reader
+/// of the public API at an item they cannot reach — which is the error
+/// `cargo doc -D warnings` raises.
 pub struct TurnEvidence {
     /// Index of the real user message that bounds this turn, when one exists.
     pub prompt_index: Option<usize>,

@@ -97,7 +97,8 @@ number_word() {
   23) echo twenty-three ;; 24) echo twenty-four ;; 25) echo twenty-five ;;
   26) echo twenty-six ;; 27) echo twenty-seven ;; 28) echo twenty-eight ;;
   29) echo twenty-nine ;; 30) echo thirty ;; 31) echo thirty-one ;;
-  32) echo thirty-two ;;
+  32) echo thirty-two ;; 33) echo thirty-three ;; 34) echo thirty-four ;;
+  35) echo thirty-five ;; 36) echo thirty-six ;;
   *) echo "" ;;
   esac
 }
@@ -117,12 +118,13 @@ fi
 contributing_alias() {
   case "$1" in
   shellcheck) echo 'shellcheck ' ;;
-  # Five Python guards, so the `.sh` default below does not fit them.
+  # Six Python guards, so the `.sh` default below does not fit them.
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
   typed-errors) echo 'check-typed-errors' ;;
   dead-code-allows) echo 'check-dead-code-allows' ;;
   tokens) echo 'check-tokens' ;;
+  transcript-surfaces) echo 'check-transcript-surfaces' ;;
   doc-warnings) echo 'cargo doc' ;;
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;

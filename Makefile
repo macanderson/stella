@@ -39,7 +39,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    dead-code-allows diagnostic-codes bench-suites tokens
+                    dead-code-allows diagnostic-codes bench-suites tokens \
+                    transcript-surfaces
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -468,6 +469,14 @@ module-reachability-test: ## Test the module-reachability walker (hermetic; not 
 .PHONY: god-files
 god-files: ## Assert AGENTS.md and the crate READMEs name the baselined god files (#1435)
 	@./scripts/check-god-files.sh
+
+.PHONY: transcript-surfaces
+transcript-surfaces: ## Assert every transcript surface declares whether it draws through stella-transcript (#3764)
+	@./scripts/check-transcript-surfaces.py
+
+.PHONY: transcript-surfaces-test
+transcript-surfaces-test: ## Test the transcript-surface guard's failure directions (hermetic; not part of `gate`)
+	./scripts/test-transcript-surfaces.py
 
 .PHONY: lockfile-sync
 lockfile-sync: ## Assert Cargo.lock resolves against the manifests as committed (#3332)

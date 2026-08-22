@@ -130,8 +130,15 @@ fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index
             );
         }
         out.push_str("</span>");
+        // Only a collapsed turn puts its accounting on the summary, because
+        // the summary is the only thing a collapsed `<details>` renders — a
+        // turn that showed no cost until you opened it would hide exactly what
+        // a reader scans a transcript for. An expanded turn closes with the
+        // receipt below instead, in the same place `grid`'s bottom rail puts
+        // it, so the two shared renderers agree about where a turn's outcome
+        // is read. Rendering both would state it twice on one open turn.
+        chips(out, &dig.chips);
     }
-    chips(out, &dig.chips);
     out.push_str("</div></summary>");
 
     role_block(out, "you", "YOU", &escape_paragraphs(&turn.prompt), false);
@@ -139,7 +146,30 @@ fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index
     if let Some(answer) = &turn.answer {
         role_block(out, "agent", "AGENT", &escape_paragraphs(answer), true);
     }
+    if open {
+        turn_receipt(out, turn, &dig.chips);
+    }
     out.push_str("</details>");
+}
+
+/// The expanded turn's closing receipt — `grid::turn_frame_bottom`'s counterpart.
+///
+/// The two renderers deliberately agree on *what* closes a turn (its status
+/// word and its chips) and on *where* (after the last thing the turn did).
+/// `grid` has no choice about it: its frame has to be printable a line at a
+/// time as the turn runs, and neither fact exists when the top rail goes out.
+/// Keeping the web surface in step is what stops a reader who compares
+/// `stella run`'s scrollback with `stella observe` from finding two documents.
+fn turn_receipt(out: &mut String, turn: &Turn, chip_list: &[Chip]) {
+    let _ = write!(
+        out,
+        "<div class=\"turnreceipt\"><span class=\"st {}\">{} {}</span>",
+        turn.status.token(),
+        turn.status.glyph(),
+        status_word(turn.status),
+    );
+    chips(out, chip_list);
+    out.push_str("</div>");
 }
 
 fn steps_and_prose(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, ti: usize) {

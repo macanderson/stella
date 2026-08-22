@@ -175,6 +175,51 @@ impl RunBuilder {
         run
     }
 
+    /// Whether a turn is currently accumulating.
+    #[must_use]
+    pub fn is_turn_open(&self) -> bool {
+        self.turn.is_some()
+    }
+
+    /// The run so far, cut back to the part that **cannot change again**.
+    ///
+    /// [`Self::snapshot`] is for a surface that repaints — the deck redraws
+    /// every frame, so a row that is still moving is fine there. An
+    /// append-only surface cannot take a line back once it has written it, so
+    /// it needs the other question answered: what is finished?
+    ///
+    /// Three things are excluded, and each is excluded because it is still
+    /// being written:
+    ///
+    /// - **In-flight calls.** A step's row gains its duration, its output fold
+    ///   and its cost chips when the result arrives, so a row emitted at
+    ///   dispatch would have to be rewritten. `snapshot` shows them as
+    ///   `Running` on purpose; here they are simply not yet part of the turn.
+    /// - **The reasoning block at the frontier.** [`Self::push`] appends
+    ///   `Reasoning` deltas into the block belonging to the current step
+    ///   count, so that one block grows a token at a time. Every earlier block
+    ///   is closed by definition: once a step lands, nothing can append to the
+    ///   prose before it.
+    /// - **The answer.** It streams as `TextDelta` previews that the
+    ///   consolidated `Text` event then *replaces* rather than extends (see
+    ///   `AgentEvent::Text`'s contract), so no prefix of it is safe to commit.
+    ///
+    /// Notes are kept. A note is complete when it is created, and a trailing
+    /// note keeps its position when the frontier advances past it — it renders
+    /// after the same steps either way.
+    #[must_use]
+    pub fn settled(&self) -> Run {
+        let mut run = self.run.clone();
+        if let Some(turn) = &self.turn {
+            let mut turn = turn.clone();
+            let frontier = turn.steps.len();
+            turn.prose.retain(|p| p.before_step < frontier);
+            turn.answer = None;
+            run.turns.push(turn);
+        }
+        run
+    }
+
     /// Close the open turn, if any.
     pub fn finish_turn(&mut self, status: Status) {
         let Some(mut turn) = self.turn.take() else {
