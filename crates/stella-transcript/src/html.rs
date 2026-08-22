@@ -506,6 +506,9 @@ fn tok_class(t: syntax::Tok) -> &'static str {
         syntax::Tok::Str => "ts",
         syntax::Tok::Number => "tn",
         syntax::Tok::Comment => "tc",
+        // The two classes the grammar-backed lexer added (#4283).
+        syntax::Tok::Type => "ty",
+        syntax::Tok::Function => "tf",
     }
 }
 

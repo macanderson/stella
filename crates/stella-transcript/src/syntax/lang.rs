@@ -1,12 +1,24 @@
-//! Lightweight syntax highlighting — the one source-coloring engine every
-//! transcript surface lexes with.
+//! Syntax highlighting — the one source-coloring engine every transcript
+//! surface lexes with.
 //!
-//! A compact, dependency-free lexer (no `syntect`, no tree-sitter) that colors
-//! keywords, string/char literals, line comments, and numbers for the languages
-//! this workspace edits most, plus structural coloring for Markdown and TOML
-//! sources. It is intentionally *not* a parser: one left-to-right scan per line,
-//! so a line sliced out of context (a diff hunk cutting a block comment in half)
-//! degrades to slightly-off coloring, never a wrong render or a panic.
+//! **Two engines, and the line between them is which grammars are resident.**
+//! Eleven languages are covered. Eight of them — Rust, TypeScript/JavaScript,
+//! Python, Go, Java, C, SQL, PHP — go through tree-sitter in [`super::grammar`],
+//! which is where the accuracy and every language added after #4283 lives. The
+//! remaining three — Markdown, TOML, JSON — have no grammar in this workspace
+//! and are lexed by the hand-written scans below; adding a grammar for them
+//! would be new supply chain, which is exactly what the resident-grammar
+//! argument in `Cargo.toml` does not license.
+//!
+//! That split is a fact about the dependency tree, not a taste: a language is
+//! grammar-backed here if and only if `stella-graph` already compiles its
+//! grammar. See [`super::grammar`] for why tree-sitter rather than syntect, and
+//! for how per-line parsing stays cheap.
+//!
+//! Both engines keep the same contract: one line at a time, no state carried
+//! between lines, so a line sliced out of context (a diff hunk cutting a block
+//! comment in half) degrades to slightly-off coloring, never a wrong render or
+//! a panic.
 //!
 //! ## Why this lives here and not in `stella-tui`
 //!
@@ -31,6 +43,7 @@
 //! [`Highlighter`], which tracks that state and lights fence interiors up in
 //! their own language.
 
+use super::grammar::{self, Grammar};
 use super::{Runs, Tok};
 
 /// A language we can syntax-highlight.
@@ -42,6 +55,16 @@ pub enum Lang {
     TsJs,
     /// Python.
     Python,
+    /// Go.
+    Go,
+    /// Java.
+    Java,
+    /// C (and the C-family headers a `read_file` most often lands on).
+    C,
+    /// SQL.
+    Sql,
+    /// PHP.
+    Php,
     /// Markdown *source* (headings, list markers, fences, inline code) — the
     /// skills/agents definition format.
     Markdown,
@@ -60,6 +83,16 @@ pub fn lang_from_ext(ext: &str) -> Option<Lang> {
         "rs" => Some(Lang::Rust),
         "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts" => Some(Lang::TsJs),
         "py" | "pyi" => Some(Lang::Python),
+        "go" => Some(Lang::Go),
+        "java" => Some(Lang::Java),
+        // The C-family extensions `stella-graph` routes to the same grammar.
+        // C++ is a genuine approximation rather than a match — the C grammar
+        // recovers through what it cannot parse, so a `.cpp` file lexes its
+        // strings, comments, numbers and keywords and mis-structures the rest,
+        // which is strictly more than the flat text it rendered as before.
+        "c" | "h" | "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some(Lang::C),
+        "sql" => Some(Lang::Sql),
+        "php" => Some(Lang::Php),
         "md" | "markdown" => Some(Lang::Markdown),
         "toml" => Some(Lang::Toml),
         "json" | "jsonl" | "ndjson" => Some(Lang::Json),
@@ -92,10 +125,37 @@ pub fn lang_from_fence(tag: &str) -> Option<Lang> {
             Some(Lang::TsJs)
         }
         "py" | "python" | "python3" => Some(Lang::Python),
+        "go" | "golang" => Some(Lang::Go),
+        "java" => Some(Lang::Java),
+        "c" | "h" | "cpp" | "c++" | "cc" => Some(Lang::C),
+        "sql" | "postgres" | "postgresql" | "mysql" | "sqlite" => Some(Lang::Sql),
+        "php" => Some(Lang::Php),
         "md" | "markdown" => Some(Lang::Markdown),
         "toml" => Some(Lang::Toml),
         "json" | "jsonl" | "ndjson" => Some(Lang::Json),
         _ => None,
+    }
+}
+
+impl Lang {
+    /// The grammar that lexes this language, or `None` when it is one of the
+    /// three lexed by hand.
+    ///
+    /// The whole of the two-engine split, in one function. `None` is a claim
+    /// about this workspace's dependency tree — no resident grammar — and not
+    /// about the language being simple.
+    fn grammar(self) -> Option<Grammar> {
+        match self {
+            Lang::Rust => Some(Grammar::Rust),
+            Lang::TsJs => Some(Grammar::Tsx),
+            Lang::Python => Some(Grammar::Python),
+            Lang::Go => Some(Grammar::Go),
+            Lang::Java => Some(Grammar::Java),
+            Lang::C => Some(Grammar::C),
+            Lang::Sql => Some(Grammar::Sql),
+            Lang::Php => Some(Grammar::Php),
+            Lang::Markdown | Lang::Toml | Lang::Json => None,
+        }
     }
 }
 
@@ -105,11 +165,22 @@ pub fn lang_from_fence(tag: &str) -> Option<Lang> {
 /// panic-free. Stateless: markdown scans as body prose (fence lines read as
 /// markers, but their interiors are unknown here — [`Highlighter`] knows).
 pub fn tokenize(code: &str, lang: Lang) -> Runs {
+    if let Some(g) = lang.grammar() {
+        // `None` only when a grammar will not install, which is a build-time
+        // version skew rather than anything about this line. One untinted line
+        // is the right degradation for it, and `every_grammar_arms` is what
+        // stops it being discovered on a user's screen.
+        return grammar::runs(code, g).unwrap_or_else(|| vec![(code.to_string(), None)]);
+    }
     match lang {
         Lang::Markdown => md_line(code).0,
         Lang::Toml => toml_runs(code),
         Lang::Json => super::json_runs(code),
-        Lang::Rust | Lang::TsJs | Lang::Python => code_runs(code, lang),
+        // Unreachable: every remaining variant answered `Some` above. Stated as
+        // a plain fallback rather than an `unreachable!` because this is a
+        // rendering path, and a panic here would take the deck down over a
+        // token colour.
+        _ => vec![(code.to_string(), None)],
     }
 }
 
@@ -307,10 +378,10 @@ fn frontmatter_runs(line: &str) -> Runs {
         }
         runs.push((key.to_string(), Some(Tok::Keyword)));
         runs.push((":".to_string(), None));
-        runs.extend(code_runs(rest, Lang::Toml));
+        runs.extend(value_runs(rest));
         return runs;
     }
-    code_runs(line, Lang::Toml)
+    value_runs(line)
 }
 
 /// A horizontal rule: 3+ of the same `-`/`*`/`_` (spaces allowed between).
@@ -383,7 +454,7 @@ fn toml_runs(code: &str) -> Runs {
             runs.push((chars[..end].iter().collect(), Some(Tok::Keyword)));
             let rest: String = chars[end..].iter().collect();
             if !rest.is_empty() {
-                runs.extend(code_runs(&rest, Lang::Toml));
+                runs.extend(value_runs(&rest));
             }
             return runs;
         }
@@ -404,18 +475,25 @@ fn toml_runs(code: &str) -> Runs {
             }
             runs.push((key.to_string(), Some(Tok::Keyword)));
             runs.push((format!("{}=", &key_part[key.len()..]), None));
-            runs.extend(code_runs(&lead[eq + 1..], Lang::Toml));
+            runs.extend(value_runs(&lead[eq + 1..]));
             return runs;
         }
     }
-    code_runs(code, Lang::Toml)
+    value_runs(code)
 }
 
-// ── The generic code scan ───────────────────────────────────────────────────
+// ── The value scan ──────────────────────────────────────────────────────────
 
-/// The left-to-right run scan for code-shaped languages (Rust, TS/JS, Python,
-/// and TOML values): line comments, string/char literals, numbers, keywords.
-fn code_runs(code: &str, lang: Lang) -> Runs {
+/// The left-to-right run scan for a **config value**: `#` line comments,
+/// quoted strings, numbers, and the four TOML scalar constants.
+///
+/// This is all that is left of the hand-written scan that once served Rust,
+/// TS/JS and Python too. Those three are grammar-backed now (#4283), and their
+/// keyword tables went with them — a keyword table is precisely what a grammar
+/// replaces. What survives is the half no grammar in this workspace covers:
+/// TOML values, and the YAML frontmatter values [`frontmatter_runs`] lexes by
+/// the same rules because the two scalar syntaxes agree closely enough.
+fn value_runs(code: &str) -> Runs {
     let chars: Vec<char> = code.chars().collect();
     let n = chars.len();
     let mut runs: Runs = Vec::new();
@@ -425,21 +503,21 @@ fn code_runs(code: &str, lang: Lang) -> Runs {
     while i < n {
         let c = chars[i];
 
-        // Line comment: `//` (Rust/TS/JS) or `#` (Python/TOML) to end of line.
-        if is_comment_start(&chars, i, lang) {
+        // Line comment: `#` to end of line, in TOML and YAML alike.
+        if c == '#' {
             flush(&mut plain, &mut runs);
             runs.push((chars[i..].iter().collect(), Some(Tok::Comment)));
             return runs;
         }
 
-        // String / char literal.
-        if is_string_start(&chars, i, lang) {
+        // String literal.
+        if matches!(c, '"' | '\'') {
             let (end, closed) = scan_string(&chars, i);
-            // An unterminated single quote is far more often a contraction in
-            // prose ("Don't" in JSX text or a docstring) than a string the
-            // hunk cut in half — leave it plain instead of swallowing the
-            // rest of the line. Double quotes and backticks keep the
-            // string-to-end-of-line reading (a cut hunk is the likely cause).
+            // An unterminated single quote is far more often an apostrophe in
+            // a prose value than a string a hunk cut in half — leave it plain
+            // instead of swallowing the rest of the line. A double quote keeps
+            // the string-to-end-of-line reading (a cut hunk is the likely
+            // cause).
             if closed || c != '\'' {
                 flush(&mut plain, &mut runs);
                 runs.push((chars[i..end].iter().collect(), Some(Tok::Str)));
@@ -468,7 +546,7 @@ fn code_runs(code: &str, lang: Lang) -> Runs {
                 j += 1;
             }
             let word: String = chars[i..j].iter().collect();
-            if is_keyword(&word, lang) {
+            if TOML_KEYWORDS.contains(&word.as_str()) {
                 flush(&mut plain, &mut runs);
                 runs.push((word, Some(Tok::Keyword)));
             } else {
@@ -490,43 +568,6 @@ fn code_runs(code: &str, lang: Lang) -> Runs {
 fn flush(plain: &mut String, runs: &mut Runs) {
     if !plain.is_empty() {
         runs.push((std::mem::take(plain), None));
-    }
-}
-
-fn is_comment_start(chars: &[char], i: usize, lang: Lang) -> bool {
-    match lang {
-        Lang::Python | Lang::Toml => chars[i] == '#',
-        Lang::Rust | Lang::TsJs => chars[i] == '/' && chars.get(i + 1) == Some(&'/'),
-        // Markdown and JSON never reach the generic scan ([`tokenize`]
-        // dispatches them to [`md_line`] and [`json_runs`]); the arms exist for
-        // exhaustiveness only. JSON has no comment syntax in any case.
-        Lang::Markdown | Lang::Json => false,
-    }
-}
-
-/// Whether position `i` opens a string/char literal. Double quotes (and TS/JS
-/// template backticks) always do; the single quote is ambiguous in Rust
-/// (lifetimes like `&'a T`, `derive('...')`), so there it only counts when it
-/// matches a char-literal shape — otherwise the whole line would mis-color.
-fn is_string_start(chars: &[char], i: usize, lang: Lang) -> bool {
-    match chars[i] {
-        '"' => true,
-        '`' => lang == Lang::TsJs,
-        '\'' => match lang {
-            Lang::Rust => is_rust_char_literal(chars, i),
-            Lang::Markdown => false,
-            _ => true,
-        },
-        _ => false,
-    }
-}
-
-/// A Rust char literal at `i`: `'x'` or an escaped `'\n'` / `'\''` / `'\\'`.
-fn is_rust_char_literal(chars: &[char], i: usize) -> bool {
-    if chars.get(i + 1) == Some(&'\\') {
-        chars.get(i + 3) == Some(&'\'')
-    } else {
-        matches!(chars.get(i + 1), Some(c) if *c != '\'') && chars.get(i + 2) == Some(&'\'')
     }
 }
 
@@ -575,83 +616,6 @@ fn is_ident_continue(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// Whether `word` is a keyword in `lang`. Linear scans over small, fixed
-/// slices — cheap enough for the handful of identifiers on a line.
-fn is_keyword(word: &str, lang: Lang) -> bool {
-    let table: &[&str] = match lang {
-        Lang::Rust => &RUST_KEYWORDS,
-        Lang::TsJs => &TSJS_KEYWORDS,
-        Lang::Python => &PYTHON_KEYWORDS,
-        Lang::Toml => &TOML_KEYWORDS,
-        // Neither reaches the generic scan; JSON's three bare words are
-        // classified by [`json_runs`] as the scalar constants they are.
-        Lang::Markdown | Lang::Json => &[],
-    };
-    table.contains(&word)
-}
-
-const RUST_KEYWORDS: [&str; 39] = [
-    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
-    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
-    "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type",
-    "unsafe", "use", "where", "while", "yield",
-];
-
-const TSJS_KEYWORDS: [&str; 45] = [
-    "as",
-    "async",
-    "await",
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "debugger",
-    "default",
-    "delete",
-    "do",
-    "else",
-    "enum",
-    "export",
-    "extends",
-    "false",
-    "finally",
-    "for",
-    "from",
-    "function",
-    "if",
-    "implements",
-    "import",
-    "in",
-    "instanceof",
-    "interface",
-    "let",
-    "new",
-    "null",
-    "of",
-    "readonly",
-    "return",
-    "super",
-    "switch",
-    "this",
-    "throw",
-    "true",
-    "try",
-    "typeof",
-    "undefined",
-    "var",
-    "void",
-    "while",
-];
-
-const PYTHON_KEYWORDS: [&str; 35] = [
-    "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif",
-    "else", "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
-    "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try", "while",
-    "with", "yield",
-];
-
 /// TOML value constants (booleans and the special floats).
 const TOML_KEYWORDS: [&str; 4] = ["true", "false", "inf", "nan"];
 
@@ -688,12 +652,22 @@ mod tests {
         }
     }
 
-    const ALL_LANGS: [Lang; 5] = [
+    /// Every language, both engines. The grammar-backed ones joined this list
+    /// with #4283, which matters more than it looks: the losslessness property
+    /// below is the one contract a tree-sitter walk could plausibly break, and
+    /// it now runs over arbitrary text through all eight grammars.
+    const ALL_LANGS: [Lang; 11] = [
         Lang::Rust,
         Lang::TsJs,
         Lang::Python,
+        Lang::Go,
+        Lang::Java,
+        Lang::C,
+        Lang::Sql,
+        Lang::Php,
         Lang::Markdown,
         Lang::Toml,
+        Lang::Json,
     ];
 
     // Losslessness as a property, not a list of examples.
@@ -806,6 +780,118 @@ mod tests {
         }
     }
 
+    /// **The #4283 witness, one row per language the upgrade added.**
+    ///
+    /// Each row is a `read_file` of a real source line, reached the way a
+    /// surface reaches it: extension → [`Lang`] → [`tokenize`]. On the
+    /// hand-written lexer every one of these fails at the *first* step —
+    /// `lang_from_ext` answered `None` for `go`, `java`, `c`, `sql` and `php`,
+    /// so `BodyPaint::lang` was `None` and the body rendered as flat text on
+    /// the deck, the export grid and the Observatory alike. That is the cost
+    /// this issue named, and this is the test that says it is paid.
+    #[test]
+    fn every_newly_supported_language_lexes_where_the_old_lexer_saw_nothing() {
+        for (ext, src, want) in [
+            (
+                "go",
+                "func Sum(a int) error { return fmt.Errorf(\"x\", 1) }",
+                &["func", "Sum", "int", "Errorf", "\"x\"", "1"][..],
+            ),
+            (
+                "java",
+                "public static void main(String[] args) { System.out.println(\"hi\"); }",
+                &["public", "void", "main", "String", "println", "\"hi\""][..],
+            ),
+            (
+                "c",
+                "static int add(int a) { /* c */ return 0x1F; }",
+                &["static", "int", "add", "/* c */", "return", "0x1F"][..],
+            ),
+            (
+                "sql",
+                "SELECT id FROM users WHERE age > 21",
+                &["SELECT", "FROM", "WHERE"][..],
+            ),
+            (
+                "php",
+                "<?php function greet(string $n) { return \"hi\"; }",
+                &["function", "greet", "string", "return", "\"hi\""][..],
+            ),
+        ] {
+            let lang = lang_from_ext(ext)
+                .unwrap_or_else(|| panic!(".{ext} maps to no language, so its body renders flat"));
+            let runs = tokenize(src, lang);
+            assert_eq!(rebuilt(&runs), src, ".{ext} lexed lossily: {runs:?}");
+            for text in want {
+                assert!(
+                    runs.iter().any(|(t, tok)| t == text && tok.is_some()),
+                    ".{ext} left {text:?} untinted — the grammar is not reaching this line: {runs:?}"
+                );
+            }
+        }
+    }
+
+    /// The two token classes a keyword table cannot produce.
+    ///
+    /// This is what justifies growing [`Tok`] — and growing it is a three-site
+    /// change (`tok_style`, `tok_color`, `tok_class`), so the payoff had better
+    /// be visible. A hand-written scan sees `Duration`, `total` and `compute`
+    /// as one thing: an identifier.
+    #[test]
+    fn the_grammar_names_types_and_functions_a_keyword_table_could_not() {
+        let runs = tokenize("fn main() { let s = parse(x); }", Lang::Rust);
+        assert_eq!(
+            run_tok(&runs, "main"),
+            Some(&Some(Tok::Function)),
+            "the declared name: {runs:?}"
+        );
+        assert_eq!(
+            run_tok(&runs, "parse"),
+            Some(&Some(Tok::Function)),
+            "the callee: {runs:?}"
+        );
+        // ...and the identifier beside them stays plain, which is the half that
+        // makes the distinction worth a colour.
+        assert_eq!(run_tok(&runs, "x"), None, "a bare identifier: {runs:?}");
+
+        let runs = tokenize("var d time.Duration = readAll(f)", Lang::Go);
+        assert_eq!(
+            run_tok(&runs, "Duration"),
+            Some(&Some(Tok::Type)),
+            "a named type: {runs:?}"
+        );
+        assert_eq!(
+            run_tok(&runs, "readAll"),
+            Some(&Some(Tok::Function)),
+            "a callee through a package selector: {runs:?}"
+        );
+    }
+
+    /// A fragment lexes as a fragment.
+    ///
+    /// The stateless, one-line contract survives the move to a whole-file
+    /// parser only because tree-sitter recovers: a line sliced out of a body —
+    /// which is every line of a middle-elided tool result — still lexes its
+    /// leaves correctly inside the `ERROR` node wrapping them. If this ever
+    /// regresses, every transcript body loses its colour below the first line
+    /// that is not a complete item.
+    #[test]
+    fn a_line_sliced_out_of_a_body_still_lexes_its_tokens() {
+        for (src, lang, want) in [
+            ("    let total = compute(items);", Lang::Rust, "let"),
+            ("} else if (x) {", Lang::TsJs, "else"),
+            ("        return helper(n)  # tail", Lang::Python, "# tail"),
+            ("    } // close", Lang::Java, "// close"),
+        ] {
+            let runs = tokenize(src, lang);
+            assert_eq!(rebuilt(&runs), src, "{lang:?} lexed lossily: {runs:?}");
+            assert!(
+                runs.iter().any(|(t, tok)| t == want && tok.is_some()),
+                "{lang:?} left {want:?} untinted in a fragment: {runs:?}"
+            );
+        }
+    }
+
     #[test]
     fn markdown_and_toml_map_from_extensions_and_fence_tags() {
         assert_eq!(lang_from_fence("json"), Some(Lang::Json));
@@ -820,6 +906,21 @@ mod tests {
         assert_eq!(lang_from_fence("rust ignore"), Some(Lang::Rust));
         assert_eq!(lang_from_fence(""), None);
         assert_eq!(lang_from_fence("mermaid"), None);
+        // The languages #4283 added reach both doors, so a fenced block in a
+        // SKILL.md lights up the same way a `read_file` of the same source
+        // does.
+        assert_eq!(lang_from_fence("go"), Some(Lang::Go));
+        assert_eq!(lang_from_fence("java"), Some(Lang::Java));
+        assert_eq!(lang_from_fence("sql"), Some(Lang::Sql));
+        assert_eq!(lang_from_fence("php"), Some(Lang::Php));
+        assert_eq!(lang_from_path("cmd/serve/main.go"), Some(Lang::Go));
+        assert_eq!(lang_from_path("src/Main.java"), Some(Lang::Java));
+        assert_eq!(lang_from_path("lib/parse.h"), Some(Lang::C));
+        assert_eq!(lang_from_path("migrations/001.sql"), Some(Lang::Sql));
+        // Still not covered, and saying so is the point: a language with no
+        // resident grammar renders plain rather than wrong.
+        assert_eq!(lang_from_fence("yaml"), None);
+        assert_eq!(lang_from_fence("bash"), None);
     }
 
     #[test]
