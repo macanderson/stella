@@ -359,9 +359,9 @@ pub enum Inbound {
     /// siblings so the per-token [`Inbound::Event`] does not grow to the size
     /// of the rarest variant.
     ApprovalAsked(Box<stella_tools::registry::approval::ApprovalRequest>),
-    /// The parked approval is no longer answerable — its TTL expired (a much
-    /// shorter one than a question's: `DEFAULT_APPROVAL_TTL` is two minutes)
-    /// or the turn holding it was cancelled — so take the card down.
+    /// The parked approval is no longer answerable — its TTL expired (the
+    /// shorter of the two deadlines; `stella-cli` sets the deck's) or the turn
+    /// holding it was cancelled — so take the card down.
     ///
     /// The dispatch is denied on that path, never approved, so this is
     /// strictly about not leaving a card up that offers to decide something

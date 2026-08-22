@@ -30,9 +30,9 @@ use super::{DeckAction, DeckUi};
 /// takes the same line for the same reason).
 ///
 /// **Approval is asked first.** It gates a call that is about to execute,
-/// where a question is a decision still being deliberated; and its TTL is
-/// two minutes against the question's thirty, so it is also the one that
-/// expires out from under the driver if made to wait its turn. Rendering
+/// where a question is a decision still being deliberated; and it carries
+/// the shorter of the two deadlines, so it is also the one that expires out
+/// from under the driver if made to wait its turn. Rendering
 /// mirrors this — `deck_render` draws the approval card last, so it lands on
 /// top of the overlay whose keys it is already taking.
 pub(super) fn handle_key(key: KeyEvent, ui: &mut DeckUi) -> Option<DeckAction> {
@@ -104,10 +104,10 @@ mod tests {
         }
     }
 
-    /// **Approval wins the keyboard when both are up.** Its TTL is two
-    /// minutes against the question's thirty, so a card made to wait its turn
-    /// is a card that expires under the driver — and the call it gates is
-    /// about to run either way.
+    /// **Approval wins the keyboard when both are up.** It carries the
+    /// shorter of the two deadlines, so a card made to wait its turn is a
+    /// card that expires under the driver — and the call it gates is about
+    /// to run either way.
     #[test]
     fn an_approval_takes_the_keyboard_from_a_parked_question() {
         let mut ui = DeckUi::default();

@@ -811,8 +811,8 @@ pub struct DeckUi {
     pub question: crate::views::question::QuestionOverlay,
     /// The approval card (#4240): the yes/no a parked **dispatch** waits on.
     /// Outranks `question` for the keyboard — a call about to execute is a
-    /// tighter gate than a decision being deliberated, and its TTL is two
-    /// minutes against the question's thirty.
+    /// tighter gate than a decision being deliberated, and it carries the
+    /// shorter of the two deadlines.
     pub approval: crate::views::approval::ApprovalOverlay,
 }
 
