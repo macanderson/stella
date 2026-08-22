@@ -878,9 +878,39 @@ fn the_dashboard_spells_the_wordmark_lowercase() {
     // where `--identity` gold is permitted — the rule is identity only, never a
     // state. A bare `<h1>stella session —` cannot carry that, and asserting it
     // is what put this test on the opposite side of `export.rs` from #2597.
+    //
+    // The mark is `stella*`, and its two halves are separate elements because
+    // they take different colours: the word is --text and only the asterisk is
+    // gold. Asserting the nesting is what stops the page reverting to the
+    // all-gold word it shipped — the mistake `stella-tui-theme::wordmark` was
+    // built as one function to make impossible, which it cannot enforce
+    // through a `format!` template over here.
+    const MARK: &str = r#"<span class="wordmark">stella<span class="star">*</span></span>"#;
     assert!(
-        html.contains(r#"<span class="wordmark">stella</span>"#),
-        "the masthead does not carry the lowercase wordmark as its own element"
+        html.contains(MARK),
+        "the masthead does not carry the `stella*` wordmark as word + ornament"
+    );
+    // Matched against the *rendered* CSS, where `format!` has already
+    // collapsed the template's doubled braces to single ones.
+    assert!(
+        !html.contains(".wordmark { color: var(--identity)"),
+        "the wordmark's word is painted --identity; only its asterisk may be"
+    );
+    assert!(
+        html.contains(".wordmark .star { color: var(--identity); }"),
+        "the wordmark's asterisk does not carry the identity gold"
+    );
+    // Both places that say the product's name say it as the mark. The footer
+    // used to render `<b>stella</b>`, painted gold by a `.footer b` rule — a
+    // second all-gold word one scroll below the first.
+    assert_eq!(
+        html.matches(MARK).count(),
+        2,
+        "the masthead and the footer should both carry the full wordmark"
+    );
+    assert!(
+        !html.contains("<b>stella</b>"),
+        "the footer still says the name as bold text rather than as the mark"
     );
 }
 
