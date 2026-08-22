@@ -37,7 +37,7 @@
 //! a silent single point of failure whose failure mode is invisible until
 //! someone audits the backlog.
 
-use stella_autonomy::{CiConclusion, Contention, Mergeability, Observation, ReviewState};
+use stella_autonomy::{CiConclusion, Mergeability, Observation, ReviewState};
 
 use super::state::git;
 
@@ -784,106 +784,26 @@ pub(super) fn base_is_broken(branch: &str) -> bool {
     ci_from(&checks) == CiConclusion::Red
 }
 
-/// What else on this machine or this forge looks like work on `key` already in
-/// flight.
+/// Open pull request numbers the forge's own search associates with `key`.
 ///
-/// Four signals, and the doctrine decides what they mean — this only gathers
-/// them. Cheap reads, all of them, because this runs on every poll while the
-/// base is red, and once per candidate before an issue is claimed.
+/// Broader than [`open_prs_for_issue`] on purpose, and the two are not
+/// interchangeable: that one asks "did *this loop* deliver an attempt", so it
+/// searches the `Closes #key` trailer it writes itself, and a false positive
+/// there would refuse to clean up a dead branch. This one asks "is *anybody*
+/// on this", where a pull request that merely names the issue is exactly the
+/// actor worth deferring to.
 ///
-/// Nothing here is about the *subject* of the issue: `key` is only ever matched
-/// as text against branch names, pull-request search results, worktree paths and
-/// the ledger's `issue:<key>` claim key. That is what lets one function serve
-/// both the base-breakage adoption and the claim queue.
-///
-/// `local_worktrees` is the one nobody checks, and the one most likely to
-/// matter: two self-driving processes against one clone each see the other's
-/// worktree here, and without it they would both adopt the same breakage and
-/// race to fix it.
-///
-/// `ledger_claims` is the only **authoritative** one — a lease with an owner and
-/// an expiry rather than a name that resembles the work — and the only one
-/// `ContentionPolicy::ClaimsOnly` reads. Until it was gathered, that policy
-/// selected an always-empty set and so meant *proceed regardless*.
-#[must_use]
-pub(super) fn contention_for_issue(root: &std::path::Path, key: &str) -> Contention {
-    let mut contention = Contention::default();
-
-    // A branch whose name carries the issue key. Remote only: a local branch
-    // of the loop's own is not another actor.
-    if let Some(out) = git(root, &["ls-remote", "--heads", "origin"]) {
-        contention.remote_branches = out
-            .lines()
-            .filter(|line| line.contains(key))
-            .filter_map(|line| line.split("refs/heads/").nth(1))
-            .map(str::to_owned)
-            .collect();
-    }
-
-    // An open pull request that says it closes the issue, or names it.
-    if let Ok(raw) = gh(&[
+/// The gathering that consumes it lives in [`super::contention`], along with
+/// the other three signals. It moved there when the claim site and the
+/// base-fix site stopped being able to share one probe unchanged: the claim
+/// site must drop worktrees under the loop's own root and the base-fix site
+/// must keep them, and that difference is an argument to one gatherer rather
+/// than a second copy of four reads (#4300).
+pub(super) fn prs_matching(key: &str) -> Result<Vec<String>, String> {
+    let raw = gh(&[
         "pr", "list", "--state", "open", "--search", key, "--json", "number",
-    ]) && let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(&raw)
-    {
-        contention.open_prs = rows
-            .iter()
-            .filter_map(|row| row.get("number").and_then(serde_json::Value::as_u64))
-            .map(|n| n.to_string())
-            .collect();
-    }
-
-    // Worktrees on this machine holding a branch for the same key.
-    if let Some(out) = git(root, &["worktree", "list", "--porcelain"]) {
-        contention.local_worktrees = out
-            .lines()
-            .filter(|line| line.starts_with("worktree "))
-            .filter(|line| line.contains(key))
-            .map(|line| line.trim_start_matches("worktree ").to_owned())
-            .collect();
-    }
-
-    // A dispatch lease another worker is holding on this exact issue.
-    contention.ledger_claims = live_issue_claims(root, key);
-
-    contention
-}
-
-/// Owners of live dispatch leases on `issue:<key>`.
-///
-/// The same read `stella fleet claims` performs (`crate::fleet_claims`), narrowed
-/// to one claim key and reporting the owner, because a run id embeds the minting
-/// process's pid and so names a session a human can go and look at.
-///
-/// **Fails open, in every direction**: a workspace with no ledger has never run
-/// a fan-out, and one whose ledger cannot be opened or read is a workspace this
-/// probe knows nothing about. Neither is evidence that somebody else is working
-/// the issue, and reporting one as if it were would deadlock the loop against a
-/// file it cannot read. That is the stance the other three signals already take.
-fn live_issue_claims(root: &std::path::Path, key: &str) -> Vec<String> {
-    let Ok(ledger_path) = stella_store::workspace_private_sqlite_path(root, "fleet.db") else {
-        return Vec::new();
-    };
-    if !ledger_path.exists() {
-        return Vec::new();
-    }
-    let Ok(now_ms) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
-        return Vec::new();
-    };
-    let now_ms = now_ms.as_millis().min(u128::from(u64::MAX)) as u64;
-
-    let Ok(ledger) = stella_fleet::Ledger::open(&ledger_path) else {
-        return Vec::new();
-    };
-    let Ok(claims) = ledger.live_dispatch_claims(now_ms) else {
-        return Vec::new();
-    };
-
-    let wanted = format!("issue:{key}");
-    claims
-        .into_iter()
-        .filter(|claim| claim.claim_key == wanted)
-        .map(|claim| claim.owner)
-        .collect()
+    ])?;
+    Ok(super::contention::pr_numbers(&raw))
 }
 
 /// Open pull requests that say they close `key`.

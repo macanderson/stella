@@ -1233,10 +1233,22 @@ mod tests {
              changed from unchanged: {:?}",
             context.spans
         );
-        // The un-tokenized remainder falls back to the muted body colour, so
-        // context still reads a shade quieter than a changed line overall.
+        // The function's *name* is a token now, not part of the remainder —
+        // the grammar-backed lexer classifies it where the keyword table could
+        // only see an identifier (#4283).
         assert_eq!(
-            span_with(context, " unchanged() {}").map(|s| s.style.fg),
+            span_with(context, "unchanged").map(|s| s.style.fg),
+            Some(Some(theme::SYNTAX_FUNCTION)),
+            "the declared name is a function token: {:?}",
+            context.spans
+        );
+        // The un-tokenized remainder still falls back to the muted body colour,
+        // so context reads a shade quieter than a changed line overall. This is
+        // the assertion the line above narrowed: it used to name
+        // `" unchanged() {}"` as one plain run, and only the punctuation is
+        // plain now.
+        assert_eq!(
+            span_with(context, "() {}").map(|s| s.style.fg),
             Some(Some(theme::MUTED)),
             "plain runs stay muted: {:?}",
             context.spans

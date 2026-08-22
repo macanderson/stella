@@ -742,7 +742,7 @@ editing Stella's own code should know what lives where:
 | `.stella/private/store.db` | Canonical local SQLite telemetry (executions, events, cost/tokens). Community/default has zero telemetry egress; an enrolled Enterprise seat may derive only the documented content-free operational rollup. Retention is opt-in via `stella stats prune` (`Store::prune`): dropping an execution explicitly cascades to the 13 tables keyed off `executions.id` — the schema declares no foreign keys — and never destroys telemetry the usage hub has not replicated yet without `--force`. |
 | `.stella/private/context.db` | Recallable memories, episodes, facts, and temporal context. |
 | `.stella/private/codegraph.db` | Tree-sitter code-graph index, built on `stella init`. |
-| `.stella/private/fleet.db` | Fleet run, attempt, commit, and spend ledger. |
+| `.stella/private/fleet.db` | Fleet run, attempt, commit, and spend ledger — plus the `dispatch_claims` lease table, which is **not** the fleet's alone: `stella self-driving drive` claims `issue:<n>` there for as long as a turn is in flight, so two loops against one clone can see each other (#4300). A workspace that has never run `stella fleet` can therefore still have one. |
 | `.stella/private/mcp_oauth.json` | MCP OAuth tokens. Secret local state; never commit it. |
 | `.stella/private/mcp_auth_probes.json` | Connect-time 401 cache for MCP auth-probe suppression (#2687): server names + timestamps, 15-minute TTL, fails open. Not secret, but lives with the rest of the MCP auth state. |
 

@@ -389,6 +389,14 @@ pub const SYNTAX_NUMBER: Color = VIOLET;
 /// Line comment (rendered dimmed + italic) — the caption tier, which is
 /// "comments dim toward the caption tier" made literal.
 pub const SYNTAX_COMMENT: Color = palette::TEXT_TERTIARY;
+/// A type position — teal, the categorical hue already carried for
+/// [`SUBAGENT`]. Arrived with the grammar-backed lexer (#4283), which is the
+/// first thing here able to tell a type from any other identifier.
+pub const SYNTAX_TYPE: Color = TEAL;
+/// A function or method *name* — magenta, the remaining categorical hue, and
+/// the one furthest from both the neutral keyword stop and the violet
+/// literals it will sit beside on the same line.
+pub const SYNTAX_FUNCTION: Color = MAGENTA;
 
 /// Inline code spans and fenced-code plain runs (`crate::markdown`). A calm
 /// sage green — quiet enough that a backticked word reads as *technical*

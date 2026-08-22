@@ -171,6 +171,17 @@ holding what. That surface is not decoration: #1136's collision was two
 *human-dispatched* sessions, and a claim nobody can read is one somebody
 collides with by hand.
 
+**The claim table has a second dispatcher, and it is not in this crate.**
+`stella self-driving drive` claims `issue:<n>` ([`issue_claim_key`](src/fleet.rs),
+the sibling of `dispatch_claim_key`) for as long as a turn is in flight on that
+issue — so `stella fleet claims` in a workspace that has never run `stella fleet`
+is not a bug, and neither is a `fleet.db` there. It matters here because the
+namespace is the only thing keeping the two apart: a bare id under both would
+collide by accident, which is why neither dispatcher formats its key by hand.
+The loop's reason for holding one is the reason the lease shape was chosen —
+its own crashed run and a live peer leave identical worktrees under identical
+paths, and expiry is the only difference between them (#4300).
+
 **What `dispatch` does, in order** ([`fleet.rs:463`](src/fleet.rs)): check the
 aggregate parent budget; take the task's dispatch lease; claim its declared paths; allocate the
 workspace (a worktree only for `Isolation::Isolated`, otherwise the repo root);

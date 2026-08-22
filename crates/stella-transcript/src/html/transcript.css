@@ -83,6 +83,7 @@
      and deliberately outside the parity matrix. */
   --cyan: #4ed6e0;
   --violet: #a8a3f5;
+  --magenta: #e08ac0;
   /* The three semantic colours: instrument `--ok` / `--bad` / `--warn`. */
   --green: #74c991;
   --red: #e0687a;
@@ -520,3 +521,9 @@ table.diff { border-collapse: collapse; width: 100%; font: 12.5px/1.65 var(--mon
 .out .ts { color: var(--green); }
 .out .tn { color: var(--violet); }
 .out .tc { color: var(--faint); font-style: italic; }
+/* The two classes the grammar-backed lexer added (#4283). They ride `--cyan`
+   and `--magenta`, the categorical pair that is deliberately scheme-invariant
+   (see the header note), so a type and a function name read the same on paper
+   as they do on the dark ground. */
+.out .ty { color: var(--cyan); }
+.out .tf { color: var(--magenta); }

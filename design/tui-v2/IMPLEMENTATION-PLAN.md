@@ -114,15 +114,26 @@ Acceptance: palette snapshot for query `ga` during a verify turn showing `/gates
 
 ## 5. Risks and mitigations
 
-- **Lexer accuracy**: `stella_transcript::syntax` is hand-written and covers a
-  fixed `Lang` set, so it is heuristic where a grammar-based lexer (syntect,
-  tree-sitter) would be accurate, and silent on languages it does not know.
-  That is a real cost and it is accepted for now. Mitigation is about **where** a
-  better lexer lands, not whether: it goes into `stella-transcript`, so the deck,
-  the export grid and the Observatory gain it together — that upgrade is tracked
-  as #4283, and it lands there or not at all. A deck-local highlighter buys the
-  deck accuracy by making the three surfaces disagree again, which is the one
-  outcome #4036 forbade (#4196).
+- **Lexer accuracy**: ~~a real cost, accepted for now~~ — **paid, in
+  `stella-transcript`, by #4283.** `stella_transcript::syntax` is now
+  grammar-backed: tree-sitter lexes Rust, TypeScript/JavaScript, Python, Go,
+  Java, C, SQL and PHP, and the hand-written scans survive only for Markdown,
+  TOML and JSON, which have no grammar resident in this workspace. Two token
+  classes a keyword table cannot produce — `Tok::Type` and `Tok::Function` —
+  joined the shared vocabulary, and all three palettes (`tok_style`,
+  `tok_color`, `tok_class`) moved in the same PR.
+
+  The mitigation held as written: it landed **in `stella-transcript`**, so the
+  deck, the export grid and the Observatory gained it together rather than a
+  deck-local highlighter buying the deck accuracy by making the three surfaces
+  disagree again (#4036, #4196). syntect was declined — it loads grammar and
+  theme assets at runtime, which invariant #2 forbids in this layer — and
+  tree-sitter cost no new supply chain, because `stella-graph` already compiles
+  every one of those grammars as a default feature.
+
+  What is still flat: any language with no grammar in this tree, shell, YAML
+  and HTML among them. Adding one is new supply chain and a fresh
+  `cargo deny check licenses` decision, not a change this bullet pre-approves.
 - **Terminal variance on Windows**: legacy conhost degrades truecolor. Mitigation: fallback map plus recommending Windows Terminal; the desktop shell solves it permanently later.
 - **Registry and tracker latency**: never block the draw path; all remote work is async with visible `◐` states and stale-data tags.
 - **Scope creep in tabs**: AGENTS and SETTINGS are restyle-only in this cycle (SPEC 9.5).
