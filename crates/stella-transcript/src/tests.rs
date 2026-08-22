@@ -258,6 +258,47 @@ fn an_exported_read_of_an_unknown_extension_is_numbered_but_not_coloured() {
     }
 }
 
+/// **Both export renderers gain the grammar in one change (#4283).**
+///
+/// The issue's whole point was *where* the upgrade lands. A deck-local
+/// highlighter would have left this test impossible to write: a Go body would
+/// light up on the deck and stay flat in an exported transcript and in the
+/// Observatory, which is the drift #3644 and #4036 each closed once. So the
+/// witness is stated against the two surfaces that are not the deck, and it
+/// covers both classes the upgrade added — a class with no palette entry in one
+/// renderer is a surface disagreeing about hue, which is the other half of what
+/// the palette split is allowed to differ on.
+#[test]
+fn a_go_read_reaches_both_export_renderers_with_the_grammars_classes() {
+    let source = numbered(1, &["func Sum(a int) error {", "\treturn nil", "}"]);
+    let (_, markup) = rendered(read_call("cmd/serve/main.go", source.clone()));
+    for (class, what) in [
+        ("\"tk\"", "the `func` keyword"),
+        ("\"ty\"", "the `int` type"),
+        ("\"tf\"", "the `Sum` function name"),
+    ] {
+        assert!(
+            markup.contains(class),
+            "the Observatory renderer lost {what} ({class}):\n{markup}"
+        );
+    }
+
+    let run = run_with(vec![step(read_call("cmd/serve/main.go", source), 0)]);
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Everything);
+    let lines = grid::render(&run, &state, 100);
+    for (color, what) in [
+        (grid::Color::Cyan, "a type"),
+        (grid::Color::Magenta, "a function name"),
+    ] {
+        assert!(
+            lines.iter().flatten().any(|cell| cell.fg == color),
+            "the export grid painted no cell as {what} ({color:?}) — a Go body \
+             reached it uncoloured"
+        );
+    }
+}
+
 /// A grid row's measured width is the width it draws at.
 ///
 /// A tab is zero columns to `unicode-width` and a real stop to a terminal, so a

@@ -767,10 +767,10 @@ doctrine. Four signals, and only one is authoritative:
 
 | Signal | Weight |
 |---|---|
-| **Ledger claim** | Authoritative — a lease with an owner and an expiry. |
+| **Ledger claim** | Authoritative — a lease with an owner and an expiry, held for as long as a turn is in flight. The only signal that carries a *time*, and therefore the only one that survives the ambiguity below. |
 | Open PR | Strong hint. |
 | Remote branch | A name that resembles the work. |
-| **Worktree on this machine** | The one nobody remembers to check — and the one most likely to be the loop's *own other session*. Two self-driving processes against one clone see each other **only** here. |
+| **Worktree on this machine** | The one nobody remembers to check — and the one most likely to be the loop's *own other session*. |
 
 `ContentionPolicy` weighs them: `defer` on any signal (the default — a duplicated
 fix costs two workers and a conflict, a deferred one costs a poll interval);
@@ -779,6 +779,31 @@ branches, where deferring on branch names would deadlock the loop against itself
 `proceed` regardless, recorded and never silent. A deferral carries the evidence
 that caused it, because "deferred" with no evidence is indistinguishable from
 never having looked.
+
+##### Why the loop takes a claim, and not only reads one
+
+This section used to say that two self-driving processes against one clone see
+each other **only** in the worktree signal. That was true, and it was the
+defect: it made the worktree signal answer a question it cannot answer.
+
+A crashed run leaves a registered worktree at
+`.stella/private/self-driving/stella-<key>-<slug>`. So does a live peer running
+the same verb against the same clone — same root, same shape, same string. Read
+as a name, the two are one case, and either reading is wrong for the other: keep
+them and the loop defers its own wreckage forever, because a deferral writes no
+`spent` entry and `work::start`'s recovery is one step further on than the
+deferral ever reaches (#4300); drop them and a live peer stops deferring, which
+is the thing this section exists to prevent.
+
+The question is *liveness*, so it is asked of the signal that carries liveness.
+The loop **takes** the `issue:<n>` lease before a turn starts, heartbeats it
+while the turn runs, and releases it when the turn settles. A crashed run's
+lease lapses with nothing having to clean it up; a live peer's does not. That is
+what lets the claim-time probe exclude the loop's own worktrees root and still
+defer to a peer standing in exactly the same place — and it is what makes
+`claims_only` a real policy rather than one that could never defer, since before
+a producer existed nothing in a self-driving workspace ever wrote a claim for it
+to read.
 
 ---
 

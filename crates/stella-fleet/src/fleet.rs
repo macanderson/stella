@@ -289,11 +289,28 @@ const DISPATCH_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(1
 /// The ledger key one fleet task is claimed under (#1136).
 ///
 /// Namespaced because the claim table is shared with every other kind of
-/// dispatcher in a workspace — an issue-driven session claims `issue:<n>` —
-/// and a bare task id could collide with one of those by accident.
+/// dispatcher in a workspace — an issue-driven session claims
+/// [`issue_claim_key`] — and a bare task id could collide with one of those
+/// by accident.
 #[must_use]
 pub fn dispatch_claim_key(task_id: &str) -> String {
     format!("task:{task_id}")
+}
+
+/// The ledger key one **issue** is claimed under (#4300).
+///
+/// The sibling of [`dispatch_claim_key`] for the other kind of dispatcher a
+/// workspace runs: the self-driving loop, which works one tracker issue at a
+/// time and holds this key for as long as a turn is in flight on it.
+///
+/// It is a function rather than a `format!` at each site because two of them
+/// now exist — the loop that *takes* the key and the claim-time probe that
+/// *reads* it — and the two must agree exactly or the probe silently stops
+/// seeing live peers. That is the shared-cell failure AGENTS.md names for the
+/// lockfile and the file-size baseline, and one home is the fix.
+#[must_use]
+pub fn issue_claim_key(issue_key: &str) -> String {
+    format!("issue:{issue_key}")
 }
 
 /// The completed record of one dispatched task: what the worker produced, the
