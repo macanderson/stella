@@ -15,13 +15,17 @@
 //! the row to its right, so [`width`] states the width rather than leaving
 //! each call site to measure. Nothing else here is fullwidth.
 //!
-//! Three glyphs — [`QUEUED`], [`MEMORY`] and [`TOOL_EXECUTE`] — carry East
-//! Asian Width `A` (*ambiguous*) rather than `N`, so a terminal configured for
-//! CJK double-width ambiguity draws them in two cells. [`width`] answers one
-//! for them because that is what every non-CJK configuration draws and what
-//! the layout budgets. The hazard is named here rather than silently
-//! inherited; it predates the tool-class rows below rather than arriving with
-//! them.
+//! [`WRITE`] is the only *unconditionally* wide one. Seven others carry East
+//! Asian Width `A` (**ambiguous**) rather than `N`, so a terminal configured
+//! for CJK double-width ambiguity draws them in two cells: [`RUNNING`],
+//! [`QUEUED`], [`GATE`], [`MEMORY`], [`NODE_FILE`], [`TOOL_EXECUTE`], and
+//! `BLOCK_EIGHTHS[8]`. [`width`] answers one for all of them, because that is
+//! what every non-CJK configuration draws and what the layout budgets.
+//!
+//! The hazard is named rather than silently inherited, and it predates the
+//! tool-class rows below: six of those seven shipped before them. It is not
+//! guarded, because nothing here knows the terminal's ambiguous-width setting
+//! — a real fix means asking the terminal, not asserting a number.
 
 /// Done, pass. Green.
 pub const DONE: char = '✓';
