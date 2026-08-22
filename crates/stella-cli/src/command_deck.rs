@@ -64,16 +64,14 @@ use skills::{deck_slash_commands, handle_skills_input, skills_snapshot};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use stella_core::ports::{Principal, ToolExecutor};
 use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
 use stella_model::provider::Provider;
 use stella_protocol::{
-    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, QuestionOutcome,
-    QuestionRequest, TaskItem, ToolOutput,
+    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, QuestionOutcome, TaskItem,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -84,11 +82,11 @@ use stella_tui::{
     SkillScope, SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput,
     run_deck,
 };
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedSender};
 
 use crate::claims::ClaimTap;
 use crate::config::Config;
-use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, SkillRegistry};
+use crate::interactive::{AskUserIo, SkillRegistry};
 use crate::{agent, rules};
 
 mod add_dir;
