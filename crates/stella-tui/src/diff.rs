@@ -155,8 +155,8 @@ pub fn body_lines_capped(
 /// drop a lone `@@ -a,b +c,d @@` header.
 ///
 /// The `diff`/`index`/`---`/`+++` preamble is dropped by every surface, not
-/// just this one — see `render_body`, which is private, so this names it
-/// rather than linking to it. What is left to decide here is the hunk
+/// just this one — see `render_body` below (not a link: it is private, and
+/// this is a `pub fn`). What is left to decide here is the hunk
 /// header: in a diff *viewer* it is orientation, but inline under a tool call a
 /// single one restates what the row above and the gutter beside already say,
 /// and a two-line change should not cost six rows to read. It survives from two
