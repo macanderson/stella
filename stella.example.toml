@@ -463,6 +463,14 @@ some-noisy-observer = "off"
 # -----------------------------------------------------------------------------
 # REWARD — what a finished turn's verdict is worth as a training label (#1043)
 #
+# *** NOTHING CONSUMES THIS TODAY (#4224). *** These keys parse and resolve into
+# a `RewardPolicy`, but the code that applied that policy to a finished turn's
+# verdict was deleted with the staged pipeline (#3865). A reward label is a
+# verdict, and verdicts are now a wrapper plugin's to report — so setting a
+# weight here changes nothing until that path is rebuilt or the block is
+# retired. Documented rather than hidden, because a config block that silently
+# steers nothing is worse than one that says so.
+#
 # Carries no credential or egress authority, so no trust restoration: a project
 # setting a weight is stating an opinion about its own evidence, not borrowing
 # permission.
