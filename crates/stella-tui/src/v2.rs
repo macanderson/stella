@@ -19,7 +19,6 @@
 //! in `tests/v2_status_bar.rs` is what says so.
 
 pub mod graph;
-pub mod project;
 pub mod status_bar;
 pub mod status_source;
 pub mod transcript;

@@ -314,8 +314,11 @@ pub fn render_band(
     area: Rect,
     buf: &mut Buffer,
 ) {
-    let worker = super::project::worker(model);
-    StatusBar(super::project::status(model, ui, &worker)).render(Rect { height: 1, ..area }, buf);
+    // One projection, owned for the length of the draw. `Status` borrows both
+    // of its text cells, so something has to hold them — and after #4187 that
+    // is `StatusSource` and nothing else.
+    let source = super::status_source::StatusSource::project(model, ui);
+    StatusBar(source.status()).render(Rect { height: 1, ..area }, buf);
     // The low-hit-rate diagnosis is prose, so it keeps a row of its own rather
     // than a cell on a row of glanceable values.
     if let Some(rest) = area.rows().nth(1) {
