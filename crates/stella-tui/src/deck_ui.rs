@@ -420,6 +420,23 @@ pub struct IssuesPanel {
     pub list_wait: u64,
     /// Newest seq expected to answer with [`Inbound::IssueActDone`].
     pub act_wait: u64,
+    /// Keys of the rows the multiselect has picked (Space toggles). A set of
+    /// keys rather than indices because a refresh re-orders the list — the
+    /// pick follows the issue, not the row.
+    pub picked: std::collections::BTreeSet<String>,
+    /// The page the browse list has *asked* for (0-based). `]`/`[` move it and
+    /// a new search or refresh resets it to the first page.
+    pub page: usize,
+    /// The page the rows on screen actually came from — set only when a list
+    /// reply lands successfully.
+    ///
+    /// Separate from [`IssuesPanel::page`] because the two disagree exactly
+    /// when it matters: `]` moves `page` immediately, so if that fetch fails
+    /// the header must keep naming the page the reader is still looking at
+    /// rather than the one that never arrived.
+    pub loaded_page: usize,
+    /// The query the current page was fetched with — paging re-issues it.
+    pub active_query: Option<String>,
 }
 
 impl Default for IssuesPanel {
@@ -442,6 +459,10 @@ impl Default for IssuesPanel {
             next_seq: 0,
             list_wait: 0,
             act_wait: 0,
+            picked: std::collections::BTreeSet::new(),
+            page: 0,
+            loaded_page: 0,
+            active_query: None,
         }
     }
 }
@@ -783,6 +804,16 @@ pub struct DeckUi {
     /// driver-owned snapshot ([`Inbound::ToolPolicy`]). Modal while open, and
     /// mutually exclusive with `engine`: one editor owns the tab's keyboard.
     pub tools: crate::views::tools::ToolsOverlay,
+    /// The `ask_question` overlay (#4220): the wizard a **parked turn** waits
+    /// on. Modal ahead of everything but Ctrl-C while a question is up —
+    /// nothing else in this struct holds a live tool call open, which is why
+    /// it wins the keyboard over every other modal here.
+    pub question: crate::views::question::QuestionOverlay,
+    /// The approval card (#4240): the yes/no a parked **dispatch** waits on.
+    /// Outranks `question` for the keyboard — a call about to execute is a
+    /// tighter gate than a decision being deliberated, and its TTL is two
+    /// minutes against the question's thirty.
+    pub approval: crate::views::approval::ApprovalOverlay,
 }
 
 impl Default for DeckUi {
@@ -862,6 +893,8 @@ impl Default for DeckUi {
             pending_inputs: Vec::new(),
             engine: crate::views::engine::EngineOverlay::default(),
             tools: crate::views::tools::ToolsOverlay::default(),
+            question: crate::views::question::QuestionOverlay::default(),
+            approval: crate::views::approval::ApprovalOverlay::default(),
         }
     }
 }
@@ -1190,6 +1223,13 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
         ui.mcp.apply_detail(detail.as_ref().clone());
         return;
     }
+    // A parked question raises its overlay and nothing else: out-of-band view
+    // state, deliberately never folded into the transcript. Nothing has been
+    // *said* yet — the turn is stopped waiting — and writing an unanswered
+    // question into the history would leave one there if the answer never came.
+    if ui.question.ingest(inbound) || ui.approval.ingest(inbound) {
+        return;
+    }
     // `/help` from the driver opens the same overlay the `?` key opens. Reset
     // to the top so re-opening via the command always lands at the start.
     if let Inbound::ShowHelp = inbound {
@@ -1274,6 +1314,12 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
             Ok(rows) => {
                 ui.issues.rows = rows.clone();
                 ui.issues.sel = ui.issues.sel.min(rows.len().saturating_sub(1));
+                ui.issues.prune_picks();
+                // The title reads from this, never from `page`: `page` is what
+                // was *asked for* and moves on the keypress, so a fetch that
+                // failed would leave the header naming a page whose rows are
+                // not on screen.
+                ui.issues.loaded_page = ui.issues.page;
                 ui.issues.notice = Some(format!("{} issue(s)", rows.len()));
             }
             Err(e) => ui.issues.notice = Some(e.clone()),
@@ -1499,6 +1545,7 @@ pub mod cards;
 mod create;
 pub mod dispatch;
 mod gates;
+mod parked;
 /// Esc-with-something-to-say — see [`steer`].
 mod steer;
 pub use gates::HunkMarks;
@@ -1521,6 +1568,13 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
 fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     if key.kind == KeyEventKind::Release {
         return DeckAction::Ignored;
+    }
+
+    // The parked asks (#4220, #4240) outrank every other modal here, the
+    // routing card below included — see `parked` for why, and for why
+    // approval is asked before question.
+    if let Some(action) = parked::handle_key(key, ui) {
+        return action;
     }
 
     // The routing card owns every key while it is up — it is holding the
@@ -1884,7 +1938,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         DeckTab::Graph => handle_graph_key(key, ui, composer_empty),
         DeckTab::Files => handle_files_key(key, model, ui, composer_empty),
         DeckTab::Mcp => handle_mcp_key(key, ui, composer_empty),
-        DeckTab::Issues => handle_issues_browse_key(key, ui, composer_empty),
+        DeckTab::Issues => handle_issues_browse_key(key, model, ui, composer_empty),
         DeckTab::Session => handle_session_key(key, model, ui),
         DeckTab::Settings => handle_settings_key(key, ui, composer_empty),
         // The SKILLS tab claims its keys earlier (before the composer), so a
@@ -2529,6 +2583,7 @@ fn queue_issues_first_load(ui: &mut DeckUi) {
         ui.pending_inputs.push(WorkspaceInput::IssuesRefresh {
             query: None,
             state: None,
+            page: 0,
             seq,
         });
     }
@@ -2557,20 +2612,20 @@ fn handle_issues_search_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
         }
         KeyCode::Enter => {
             let query = ui.issues.search_query.trim().to_string();
-            let seq = ui.issues.bump_seq();
-            ui.issues.list_wait = seq;
-            ui.issues.busy = true;
             ui.issues.mode = IssuesMode::Browse;
+            // A new search is a new list: back to page one, and remember the
+            // query so `]` pages the results rather than the unfiltered list.
+            ui.issues.page = 0;
+            ui.issues.active_query = (!query.is_empty()).then_some(query.clone());
             ui.issues.notice = Some(if query.is_empty() {
                 "refreshing…".to_string()
             } else {
                 format!("searching “{query}”…")
             });
-            DeckAction::Send(WorkspaceInput::IssuesRefresh {
-                query: (!query.is_empty()).then_some(query),
-                state: None,
-                seq,
-            })
+            // The one browse-list read: it sends whatever `active_query` and
+            // `page` were just set to, so the search line and the paging keys
+            // cannot drift apart on what a request carries.
+            issues_page_request(ui)
         }
         KeyCode::Backspace => {
             ui.issues.search_query.pop();
@@ -2828,87 +2883,6 @@ fn handle_issue_form_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
             }
             DeckAction::Handled
         }
-    }
-}
-
-/// The ISSUES tab's browse keys (non-modal — the composer stays live, so
-/// every letter verb is gated on a blank composer, exactly like the MCP
-/// tab): ↑/↓ select · `r` refresh · `/` tracker search · `n` create ·
-/// `c` comment · `s` set status · `w` start work.
-fn handle_issues_browse_key(
-    key: KeyEvent,
-    ui: &mut DeckUi,
-    composer_empty: bool,
-) -> Option<DeckAction> {
-    let count = ui.issues.rows.len();
-    match key.code {
-        KeyCode::Up => {
-            ui.issues.sel = ui.issues.sel.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.issues.sel = (ui.issues.sel + 1).min(count - 1);
-            }
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Char('r') if composer_empty => {
-            let seq = ui.issues.bump_seq();
-            ui.issues.list_wait = seq;
-            ui.issues.busy = true;
-            ui.issues.notice = Some("refreshing…".into());
-            Some(DeckAction::Send(WorkspaceInput::IssuesRefresh {
-                query: None,
-                state: None,
-                seq,
-            }))
-        }
-        KeyCode::Char('/') if composer_empty => {
-            ui.issues.mode = IssuesMode::SearchTracker;
-            ui.issues.search_query.clear();
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Char('n') if composer_empty => {
-            ui.issues.clear_form();
-            ui.issues.mode = IssuesMode::Create;
-            ui.issues.notice = None;
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Char('c') if composer_empty => {
-            if ui.issues.selected().is_some() {
-                ui.issues.input.clear();
-                ui.issues.mode = IssuesMode::Comment;
-            } else {
-                ui.issues.notice = Some("no issue selected — r loads the list".into());
-            }
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Char('s') if composer_empty => {
-            if ui.issues.selected().is_some() {
-                ui.issues.input.clear();
-                ui.issues.mode = IssuesMode::SetStatus;
-            } else {
-                ui.issues.notice = Some("no issue selected — r loads the list".into());
-            }
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Char('w') if composer_empty => {
-            let Some(row) = ui.issues.selected() else {
-                ui.issues.notice = Some("no issue selected — r loads the list".into());
-                return Some(DeckAction::Handled);
-            };
-            let issue_key = row.key.clone();
-            let seq = ui.issues.bump_seq();
-            ui.issues.act_wait = seq;
-            ui.issues.busy = true;
-            ui.issues.notice = Some(format!("starting work on {issue_key}…"));
-            Some(DeckAction::Send(WorkspaceInput::IssueAct {
-                key: issue_key,
-                action: IssueAction::StartWork,
-                seq,
-            }))
-        }
-        _ => None,
     }
 }
 
@@ -3958,6 +3932,10 @@ fn cycle_filter(model: &WorkspaceModel, current: Option<&str>) -> Option<AgentId
 /// MCP-tab key handling (inspector / browse / search / auth).
 mod mcp_keys;
 use mcp_keys::handle_mcp_key;
+
+/// ISSUES-tab browse keys and the multiselect they drive.
+mod issues_keys;
+use issues_keys::{handle_issues_browse_key, issues_page_request};
 
 #[cfg(test)]
 mod tests;

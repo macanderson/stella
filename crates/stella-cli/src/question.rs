@@ -379,18 +379,20 @@ fn cancelled() -> QuestionOutcome {
     }
 }
 
-/// Attach the TTY-backed question responder to `registry` when a human is
-/// present to answer.
+/// Attach the TTY-backed question responder to `registry`.
 ///
-/// `human_present` is [`crate::interactive::human_can_answer`]'s answer,
-/// derived once by the session driver and passed down — never re-derived
-/// here, which is the #3035 discipline. Without a human the broker stays
-/// headless and the tool tells the model to decide for itself, rather than
-/// reading a stdin nobody is holding.
-pub(crate) fn attach_interactive_questions(registry: &ToolRegistry, human_present: bool) {
-    if !human_present {
-        return;
-    }
+/// Called only for [`crate::rules::MidTurnAsk::Tty`] — whether a human is
+/// present is decided once by the session driver
+/// ([`crate::interactive::human_can_answer`]) and expressed in that value,
+/// never re-derived here, which is the #3035 discipline. Without a human the
+/// broker is left headless and the tool tells the model to decide for
+/// itself, rather than reading a stdin nobody is holding.
+///
+/// The Command Deck takes [`crate::rules::MidTurnAsk::Surface`] instead and
+/// brings its own card-backed responder (#4220): it owns the terminal in raw
+/// mode, so [`TtyLineIo`]'s blocking stdin read would fight its input loop
+/// for every keystroke.
+pub(crate) fn attach_interactive_questions(registry: &ToolRegistry) {
     registry.attach_question_responder(
         Arc::new(TtyQuestionResponder::new(Box::new(TtyLineIo))),
         DEFAULT_QUESTION_TTL,

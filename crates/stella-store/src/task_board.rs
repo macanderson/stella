@@ -25,7 +25,7 @@
 use rusqlite::params;
 use stella_protocol::TaskItem;
 
-use crate::{Result, Store, task_status_from_string, task_status_to_string};
+use crate::{Result, Store, StoreError, task_status_from_string, task_status_to_string};
 
 impl Store {
     /// Mirror one task-board snapshot into `tasks`: every item is upserted
@@ -53,15 +53,26 @@ impl Store {
         let tx = conn.transaction()?;
         for item in tasks {
             let status = task_status_to_string(item.status)?;
+            // The contract rides as its own JSON, which round-trips
+            // byte-for-byte (invariant 4). `None` writes SQL NULL and means
+            // *this row records no contract* — never `read_only`, which is a
+            // declaration somebody made.
+            let contract = item
+                .contract
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|e| StoreError::serde("encoding a task contract", e))?;
             tx.execute(
                 "INSERT INTO tasks \
                  (execution_id, session_id, task_id, subject, description, status, owner, \
-                  updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+                  contract, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
                  ON CONFLICT (session_id, task_id) DO UPDATE SET \
                  execution_id = excluded.execution_id, subject = excluded.subject, \
                  description = excluded.description, status = excluded.status, \
-                 owner = excluded.owner, updated_at = excluded.updated_at",
+                 owner = excluded.owner, contract = excluded.contract, \
+                 updated_at = excluded.updated_at",
                 params![
                     execution_id,
                     session_id,
@@ -70,6 +81,7 @@ impl Store {
                     item.description,
                     status,
                     item.owner,
+                    contract,
                     now_ms as i64,
                 ],
             )?;
@@ -86,7 +98,7 @@ impl Store {
     pub fn list_session_tasks(&self, session_id: &str) -> Result<Vec<TaskItem>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT task_id, subject, description, status, owner FROM tasks \
+            "SELECT task_id, subject, description, status, owner, contract FROM tasks \
              WHERE session_id = ? ORDER BY CAST(task_id AS INTEGER) ASC, task_id ASC",
         )?;
         let rows = stmt.query_map(params![session_id], |row| {
@@ -96,17 +108,26 @@ impl Store {
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         })?;
         let mut board = Vec::new();
         for row in rows {
-            let (task_id, subject, description, status, owner) = row?;
+            let (task_id, subject, description, status, owner, contract) = row?;
             board.push(TaskItem {
                 id: task_id,
                 subject,
                 description,
                 status: task_status_from_string(&status)?,
                 owner,
+                // A stored contract that no longer parses is corruption, not
+                // drift — this store wrote it, and the same reasoning the
+                // status column carries above applies here.
+                contract: contract
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()
+                    .map_err(|e| StoreError::serde("decoding a stored task contract", e))?,
             });
         }
         Ok(board)
@@ -142,6 +163,7 @@ mod tests {
             description: None,
             status: TaskStatus::Completed,
             owner: Some("sub:1".into()),
+            contract: None,
         }
     }
 
@@ -179,5 +201,120 @@ mod tests {
         // And a second clear is a no-op rather than an error, so the clear
         // path never has to know whether a board was ever mirrored.
         assert_eq!(store.clear_session_tasks("ses-clear").unwrap(), 0);
+    }
+
+    /// The witness for #4238: what a task promised survives the round trip.
+    ///
+    /// Before the `contract` column this returned `None` for every task, so a
+    /// recorded board could say what became of a task and never what it
+    /// undertook to prove — the half a reader wants when asking whether a
+    /// closed task deserved to close.
+    #[test]
+    fn a_recorded_contract_survives_the_round_trip() {
+        use stella_protocol::{
+            Check, CheckKind, CheckMechanism, CheckOutcome, DefinitionOfDone, Judge, TaskContract,
+            TaskItem,
+        };
+
+        let store = Store::in_memory().expect("store");
+        let exec = store
+            .begin_execution("run", "p", "zai", "glm-5.2")
+            .expect("exec");
+        let contract = TaskContract::DefinitionOfDone(DefinitionOfDone::new(
+            Check {
+                statement: "the auth suite is green".into(),
+                mechanism: CheckMechanism::Known(CheckKind::Unit),
+                outcome: CheckOutcome::Passed {
+                    evidence: "42 tests, 0 failures".into(),
+                },
+            },
+            vec![Check::new(
+                "the migration reads as reversible",
+                CheckMechanism::new("vera:reversibility", Judge::Model),
+            )],
+        ));
+        let board = vec![
+            TaskItem {
+                id: "1".into(),
+                subject: "wire the dedup digest".into(),
+                description: None,
+                status: stella_protocol::TaskStatus::InProgress,
+                owner: None,
+                contract: Some(contract.clone()),
+            },
+            TaskItem {
+                id: "2".into(),
+                subject: "read the retry policy".into(),
+                description: None,
+                status: stella_protocol::TaskStatus::Pending,
+                owner: None,
+                contract: Some(TaskContract::ReadOnly),
+            },
+            TaskItem {
+                id: "3".into(),
+                subject: "a task from before contracts".into(),
+                description: None,
+                status: stella_protocol::TaskStatus::Pending,
+                owner: None,
+                contract: None,
+            },
+        ];
+        store
+            .record_task_board(exec, Some("ses-contract"), &board, 1)
+            .expect("record");
+
+        let back = store.list_session_tasks("ses-contract").expect("read back");
+        assert_eq!(back.len(), 3);
+        assert_eq!(back[0].contract, Some(contract), "the contract was lost");
+        assert_eq!(
+            back[1].contract,
+            Some(TaskContract::ReadOnly),
+            "a read-only declaration is a fact and must survive"
+        );
+        // The three-way distinction the column exists to keep: `None` is *no
+        // contract recorded*, and must never read back as `ReadOnly`.
+        assert_eq!(
+            back[2].contract, None,
+            "an undeclared task must not gain a declaration by being stored"
+        );
+    }
+
+    /// An upsert carries the contract forward, so recording a board twice does
+    /// not quietly drop what the second snapshot still promises.
+    #[test]
+    fn re_recording_a_board_updates_its_contract() {
+        use stella_protocol::{
+            Check, CheckKind, CheckMechanism, DefinitionOfDone, TaskContract, TaskItem,
+        };
+
+        let store = Store::in_memory().expect("store");
+        let exec = store
+            .begin_execution("run", "p", "zai", "glm-5.2")
+            .expect("exec");
+        let mut item = TaskItem {
+            id: "1".into(),
+            subject: "wire the dedup digest".into(),
+            description: None,
+            status: stella_protocol::TaskStatus::InProgress,
+            owner: None,
+            contract: None,
+        };
+        store
+            .record_task_board(exec, Some("ses-upsert"), std::slice::from_ref(&item), 1)
+            .expect("first");
+
+        item.contract = Some(TaskContract::DefinitionOfDone(DefinitionOfDone::new(
+            Check::new(
+                "the dedup suite is green",
+                CheckMechanism::Known(CheckKind::Unit),
+            ),
+            Vec::new(),
+        )));
+        store
+            .record_task_board(exec, Some("ses-upsert"), std::slice::from_ref(&item), 2)
+            .expect("second");
+
+        let back = store.list_session_tasks("ses-upsert").expect("read back");
+        assert_eq!(back[0].contract, item.contract);
     }
 }

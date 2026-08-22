@@ -97,22 +97,19 @@ impl ApprovalResponder for AskUserApprovalResponder {
     }
 }
 
-/// Attach the TTY-backed approval responder to `registry` when a human is
-/// present to answer.
+/// Attach the TTY-backed approval responder to `registry`.
 ///
-/// `human_present` is [`crate::interactive::human_can_answer`]'s answer,
-/// derived once by the session driver and passed down — never re-derived
-/// here. Without a human the broker stays headless and refuses with the
-/// grant-path message (`tools.<name>` policy, or rerunning interactively)
-/// instead of reading a stdin nobody is holding.
+/// Called only for [`crate::rules::MidTurnAsk::Tty`] — whether a human is
+/// present is decided once by the session driver
+/// ([`crate::interactive::human_can_answer`]) and expressed in that value,
+/// never re-derived here. Without a human the broker is left headless and
+/// refuses with the grant-path message (`tools.<name>` policy, or rerunning
+/// interactively) instead of reading a stdin nobody is holding.
 ///
-/// A supervised child never reaches this attachment with `true`: its
-/// approvals ride the sidecar transport (#1585), and its staged stdin could
-/// not pass the terminal test in any case.
-pub(crate) fn attach_interactive_approvals(registry: &ToolRegistry, human_present: bool) {
-    if !human_present {
-        return;
-    }
+/// A supervised child never reaches this attachment: its approvals ride the
+/// sidecar transport (#1585), and its staged stdin could not pass the
+/// terminal test in any case.
+pub(crate) fn attach_interactive_approvals(registry: &ToolRegistry) {
     registry.attach_approval_responder(
         Arc::new(AskUserApprovalResponder::new(Box::new(TtyAskUserIo))),
         DEFAULT_APPROVAL_TTL,

@@ -1,0 +1,45 @@
+# deck golden · overlay_question_review
+# the review pane — every answer with its note, then submit / chat / cancel
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
+│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ ? lead  ·  needs input   0:00:00
+└─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
+     model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
+     ⚒ search_code trigger
+     returns: wire automations triggers API → lead inbox
+└─ ◆ sub:ci  subagent · running                                                                                                                             5:12
+     model glm-5.2-air · ctx 3.0k/200k · spend $0.00
+     ⚒ no tool calls yet
+     returns: watch CI + open PR → lead inbox
+┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│    ⋯ ctrl+o for provenance and budget                                                                                ││Refactor the automations store into a…│
+│                                                                                                                      ││○ 1. extract types                    │
+│── PLAN ─────────────────────────────────┌ question ────────────────────── ↑↓ move · ⏎ choose · ⇥ back · esc cancel ┐─││○ 2. move hooks                       │
+│                                         │from the `research-child` sub-agent                                       │ ││○ 3. update 9 imports                 │
+│  Planning the automations cluster: list,│                                                                          │ ││                                      │
+│                                         │Review your answers                                                       │ ││                                      │
+│☰  plan  4/7  ·  Wire the triggers API   │                                                                          │ ││                                      │
+│                                         │  • Which auth should the new endpoint use?                               │ ││                                      │
+│── EXECUTE ──────────────────────────────│      → Session cookie                                                    │─││                                      │
+│                                         │        note: admin routes only                                           │ ││                                      │
+│ │ ● apps/app/automations/page.tsx       │                                                                          │ ││                                      │
+│ │ ⎿ 312 lines                           │  • Which environments should it reach first?                             │s││                                      │
+│                                         │      → staging                                                           │ ││                                      │
+│☰  plan  5/7  ·  Workflows canvas        │                                                                          │ ││                                      │
+│                                         │▸ Submit answers                                                          │ ││                                      │
+│⏸ plan  Refactor the automations store in│  Chat about this instead                                                 │ ││                                      │
+│                                         │  Cancel — no answer                                                      │ ││                                      │
+└─────────────────────────────────────────└──────────────────────────────────────────────────────────────────────────┘ ┘└────────────────────── /plan reads it ┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shared workspace package
+✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
+>>>
+ ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

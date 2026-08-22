@@ -78,6 +78,7 @@ pub mod role;
 pub mod schema_export;
 pub mod stage;
 pub mod subagent_event;
+pub mod task_contract;
 pub mod tokens;
 pub mod tool;
 
@@ -117,6 +118,9 @@ pub use event::{
 // the closed set of boundaries this host emits; `StageName` is what the wire
 // carries, so a stage a plugin contributed can be named at all.
 pub use stage::StageName;
+pub use task_contract::{
+    Check, CheckKind, CheckMechanism, CheckOutcome, Closure, DefinitionOfDone, Judge, TaskContract,
+};
 // The journal line is the event plus the wall-clock stamp its sink adds
 // (#2111). Deliberately a separate type from `AgentEvent`: a stamp is a fact
 // about a write, and the engine that produces events owns no clock.
@@ -129,7 +133,9 @@ pub use lane::{BuiltinLane, LaneId, TurnLane};
 // The `ask_question` vocabulary (#4212). Re-exported flat because both the
 // tool that raises a question and every surface that renders one name these
 // types constantly, and neither should have to spell the module path.
-pub use question::{Answer, Question, QuestionOption, QuestionOutcome, QuestionRequest};
+pub use question::{
+    Answer, FREE_TEXT_LABEL, Question, QuestionOption, QuestionOutcome, QuestionRequest,
+};
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
 pub use issue::{Issue, IssueClass, IssueError, IssueKey, IssueLabel, IssueProvider, IssueState};

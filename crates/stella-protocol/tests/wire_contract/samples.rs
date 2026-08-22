@@ -25,6 +25,9 @@ use stella_protocol::{
     AgentEvent, CompiledContextFrameBuilt, ErrorClass, MediaArtifactRef, StageScope, SubAgentPhase,
     SubAgentStatus, ToolCall, ToolOutput, VerdictEvidence,
 };
+use stella_protocol::{
+    Check, CheckKind, CheckMechanism, CheckOutcome, DefinitionOfDone, Judge, TaskContract,
+};
 
 /// Both scopes an [`AgentEvent::Stage`] can report (#3398). Enumerated like
 /// every other nested vocabulary so the wire contract fails if a third is
@@ -577,19 +580,63 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
         },
         AgentEvent::TaskUpdate {
             tasks: vec![
+                // A diff-producing task, mid-contract: one check settled, one
+                // still to run, and a contributed mechanism carrying the judge
+                // its contributor declared. Covers `definition_of_done`,
+                // `passed` and `pending` in one row, which is the shape a real
+                // board is in most of the time.
                 TaskItem {
                     id: "1".into(),
                     subject: "fix the redirect loop".into(),
                     description: Some("it loops on 302".into()),
                     status: TaskStatus::InProgress,
                     owner: Some("lead".into()),
+                    contract: Some(TaskContract::DefinitionOfDone(DefinitionOfDone::new(
+                        Check {
+                            statement: "the auth suite is green".into(),
+                            mechanism: CheckMechanism::Known(CheckKind::Unit),
+                            outcome: CheckOutcome::Passed {
+                                evidence: "42 tests, 0 failures".into(),
+                            },
+                        },
+                        vec![
+                            Check::new(
+                                "no inbound refs to the removed handler",
+                                CheckMechanism::new("vera:flip-oracle", Judge::Deterministic),
+                            ),
+                            // The irreducible one. Deliberately a *contributed*
+                            // mechanism rather than `CheckKind::Review`,
+                            // because `Judge::Model` only ever reaches the wire
+                            // this way: a known kind implies its judge and
+                            // writes no field, so a sample built from one would
+                            // leave the arm unproven while looking like it
+                            // covered it.
+                            Check::new(
+                                "the migration reads as reversible",
+                                CheckMechanism::new("vera:reversibility", Judge::Model),
+                            ),
+                        ],
+                    ))),
                 },
+                // Declared as producing no diff: it closes on its events and
+                // has nowhere to put a check.
                 TaskItem {
                     id: "2".into(),
+                    subject: "read the retry policy".into(),
+                    description: None,
+                    status: TaskStatus::Pending,
+                    owner: None,
+                    contract: Some(TaskContract::ReadOnly),
+                },
+                // Undeclared — nobody has said yet, which is deliberately not
+                // the same fact as `ReadOnly`.
+                TaskItem {
+                    id: "3".into(),
                     subject: "a bare task".into(),
                     description: None,
                     status: TaskStatus::Pending,
                     owner: None,
+                    contract: None,
                 },
             ],
         },
@@ -951,6 +998,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                     description: None,
                     status,
                     owner: None,
+                    contract: None,
                 }],
             }),
     );

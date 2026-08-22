@@ -195,6 +195,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
 
+    // The parked asks (#4220, #4240) — see `parked` for the stacking rule.
+    parked::render(ui, area, buf);
+
     // Startup system notifications: a transient dialog over the deck, drawn
     // last but one so help — which the user asked for — still wins the top.
     // It is a no-op once dismissed or expired — asked here rather than left to
@@ -217,6 +220,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // notice is deliberately excluded: it is non-modal, and a key still
     // reaches the composer while it's showing (see `handle_key`).
     let overlay_owns_keyboard = ui.help_open
+        // Both parked asks are claimed ahead of everything else in
+        // `handle_key_inner`, so either owns the keyboard while it is up.
+        || parked::owns_keyboard(ui)
         || ui.queue_open
         || ui.graph_picker_open
         || ui.sessions_open
@@ -1501,6 +1507,8 @@ fn render_help(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         .scroll((window.start as u16, 0))
         .render(inner, buf);
 }
+
+mod parked;
 
 #[cfg(test)]
 mod tests;

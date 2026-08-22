@@ -151,6 +151,112 @@
         }
       ]
     },
+    "Check": {
+      "description": "One clause of a task's definition of done.",
+      "properties": {
+        "mechanism": {
+          "$ref": "#/$defs/CheckMechanism",
+          "description": "How it is settled."
+        },
+        "outcome": {
+          "$ref": "#/$defs/CheckOutcome",
+          "default": {
+            "state": "pending"
+          },
+          "description": "Where it stands. Defaults to [`CheckOutcome::Pending`] so a plan can be\nwritten before anything has run."
+        },
+        "statement": {
+          "description": "What must be true, in the author's words: \"no inbound refs to the\nremoved symbol\", \"the auth suite is green\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "statement",
+        "mechanism"
+      ],
+      "type": "object"
+    },
+    "CheckMechanism": {
+      "description": "How a check is settled — an OPEN vocabulary. The mechanisms this host runs itself are listed in `examples` and imply their own judge; any other name is a contributed mechanism and MUST carry `judge`, so a consumer can always tell whether a machine or a model decided.",
+      "examples": [
+        {
+          "name": "graph"
+        },
+        {
+          "name": "unit"
+        },
+        {
+          "name": "harness"
+        },
+        {
+          "name": "review"
+        }
+      ],
+      "properties": {
+        "judge": {
+          "$ref": "#/$defs/Judge"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "CheckOutcome": {
+      "description": "Where a check stands.\n\n[`CheckOutcome::Passed`] and [`CheckOutcome::Failed`] both carry evidence\nbecause an outcome without it is exactly the self-report this module exists\nto replace — \"it passed\" is a claim, and \"42 tests, 0 failures\" is the thing\nthat makes it checkable by someone else.",
+      "oneOf": [
+        {
+          "description": "Not run yet.",
+          "properties": {
+            "state": {
+              "const": "pending",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Ran and passed. `evidence` is what the judge saw.",
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "state": {
+              "const": "passed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Ran and did not pass. `evidence` is what the judge saw.",
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "state": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "evidence"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "CiStatus": {
       "description": "Aggregate CI verdict for a PR's head commit, as observed by the\nfleet monitor (`gh pr checks`). Reconciled against the live source\nbefore rendering, never served from cache alone (L-V3).",
       "oneOf": [
@@ -404,6 +510,14 @@
       ],
       "type": "object"
     },
+    "DefinitionOfDone": {
+      "description": "What a diff-producing task means by done: at least one check, always. An empty array is refused rather than accepted as a contract that promises nothing.",
+      "items": {
+        "$ref": "#/$defs/Check"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
     "DeliveryDecline": {
       "description": "Why a candidate's work did not reach the real tree.\n\nExhaustive over the pipeline's decision: the three arms are the two\n`Withhold` paths of `pipeline::delivery::decide` plus the one way a\nsanctioned delivery can still fail at the git layer.",
       "oneOf": [
@@ -640,6 +754,21 @@
         "hunks"
       ],
       "type": "object"
+    },
+    "Judge": {
+      "description": "Who settles a check.\n\nThe axis SPEC 1's first thesis prices: deterministic work never reaches a\nmodel and costs `$0.00`.",
+      "oneOf": [
+        {
+          "const": "deterministic",
+          "description": "A machine decided: an exit status, a count, a graph query. No model call,\nand the same inputs give the same answer on any run.",
+          "type": "string"
+        },
+        {
+          "const": "model",
+          "description": "A model decided, because the property is not reducible to a check.\n\nSPEC 7.1 permits this \"only when irreducible\", which is a review\njudgement rather than something a type can enforce. What the type does\nis make the choice **visible**: a contract full of model-judged checks\nis a contract that proves very little, and it says so on its face.",
+          "type": "string"
+        }
+      ]
     },
     "LadderRung": {
       "description": "Which rung of the evidence ladder a `verdict` event actually came to rest on. The verdict's `passed` and `deterministic` flags cannot express this on their own: several distinct outcomes share the same pair of booleans, so the rung is carried explicitly rather than inferred. Read this field, not the flags, when you need to know what was established.",
@@ -1683,9 +1812,55 @@
         }
       ]
     },
+    "TaskContract": {
+      "description": "What a task means by done (SPEC 7.1).",
+      "oneOf": [
+        {
+          "description": "The task produces no diff. It closes when its own events are done, and\nit carries no checks — there is nowhere here to put one.",
+          "properties": {
+            "kind": {
+              "const": "read_only",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The task produces a diff. It closes when every check passes.",
+          "properties": {
+            "checks": {
+              "$ref": "#/$defs/DefinitionOfDone"
+            },
+            "kind": {
+              "const": "definition_of_done",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "checks"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "TaskItem": {
       "description": "One entry on the turn's task board (the `task_*` tools). The board is\nsession-scoped working state — what the agent has planned, is doing,\nand has finished — mirrored to the store for cross-session findability.",
       "properties": {
+        "contract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskContract"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What this task means by done (SPEC 7.1).\n\n`None` is *nobody has said yet*, and is deliberately not the same fact\nas [`TaskContract::ReadOnly`], which is *somebody looked and there is\nnothing to prove*. A board that collapsed the two would let an\nundeclared task close on the same terms as one declared harmless —\nwhich is the self-report [`TaskContract`] exists to end.\n\nOptional because the board predates contracts and a session may still\ncreate a task without one; `stella_core::tasks` refuses the *close*, not\nthe creation, so an undeclared task is visible on the board rather than\nrejected at the door."
+        },
         "description": {
           "description": "What needs to be done, if the creator elaborated beyond the subject.",
           "type": [

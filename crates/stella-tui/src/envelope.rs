@@ -318,6 +318,55 @@ pub enum Inbound {
     /// [`crate::deck_ui::ingest_inbound`]. Out-of-band view state, ignored by
     /// the model fold — like [`Inbound::GraphSnapshot`].
     ShowHelp,
+    /// An agent asked the driver a question and its turn is **parked** on the
+    /// answer (#4220). Raises the question overlay
+    /// ([`crate::views::question`]); the driver is holding a `QuestionResponder`
+    /// open on the other side and unblocks only on
+    /// [`WorkspaceInput::QuestionAnswered`] or its own TTL.
+    ///
+    /// Out-of-band view state like [`Inbound::ShowHelp`] — the model fold
+    /// ignores it. A parked tool call is not conversation: nothing is said
+    /// until the answer comes back, and folding a pending question into the
+    /// transcript would put a question in the history that may never have
+    /// been answered.
+    ///
+    /// Boxed for the same reason as [`Inbound::McpDetail`]: it carries a
+    /// whole batch of questions with their option lists, and the per-token
+    /// [`Inbound::Event`] must not grow to the size of the rarest variant.
+    QuestionAsked(Box<stella_protocol::QuestionRequest>),
+    /// The parked question is no longer answerable — its TTL expired, or the
+    /// turn holding it was cancelled — so take the card down.
+    ///
+    /// The half that makes the overlay safe to leave up for the full
+    /// thirty-minute TTL: without it a card would outlive its broker and
+    /// still offer to resolve, and the driver would type a considered answer
+    /// into a oneshot nobody is holding. Sent by the responder's own drop
+    /// path, so it fires on every way the wait can end rather than only the
+    /// ones somebody remembered to handle.
+    QuestionWithdrawn,
+    /// A gate demands a human yes/no before a tool call may run, and that
+    /// dispatch is **parked** on the answer (#4240). Raises the approval card
+    /// ([`crate::views::approval`]).
+    ///
+    /// Separate from [`Inbound::QuestionAsked`] because the two asks are
+    /// different decisions: this one is a yes/no over a call already chosen,
+    /// where the whole job is showing enough of the request — the tool,
+    /// whether it mutates, the gate that stopped it — to make a refusal
+    /// defensible. It rode the generic `AskUser` card until #4240, which
+    /// flattened all five fields into one line of prose.
+    ///
+    /// Out-of-band view state; the model fold ignores it. Boxed like its
+    /// siblings so the per-token [`Inbound::Event`] does not grow to the size
+    /// of the rarest variant.
+    ApprovalAsked(Box<stella_tools::registry::approval::ApprovalRequest>),
+    /// The parked approval is no longer answerable — its TTL expired (a much
+    /// shorter one than a question's: `DEFAULT_APPROVAL_TTL` is two minutes)
+    /// or the turn holding it was cancelled — so take the card down.
+    ///
+    /// The dispatch is denied on that path, never approved, so this is
+    /// strictly about not leaving a card up that offers to decide something
+    /// already decided.
+    ApprovalWithdrawn,
     /// A launch-mark cue (see [`SplashCue`]): the driver holds the mark
     /// open over a running init (session startup, `/init`) and
     /// releases it when init finishes. Out-of-band view state, applied
@@ -481,9 +530,19 @@ impl EntityField {
 pub enum IssueAction {
     /// Add a comment (the deck's `c` prompt).
     Comment(String),
-    /// Move to a named status (`open`/`closed` on GitHub; any workflow-state
-    /// word on Linear).
+    /// Move to a named status (any workflow-state word on Linear; on GitHub
+    /// only the two states below exist, and they have their own variants).
     SetStatus(String),
+    /// Close the issue (the deck's `x` on an open row).
+    Close,
+    /// Re-open a closed issue (the deck's `x` on a closed row).
+    ///
+    /// Its own variant rather than `SetStatus("open")` so the driver selects
+    /// the provider call by matching a variant instead of comparing a status
+    /// string — the same reason [`IssueAction::Close`] is not
+    /// `SetStatus("closed")`, and why the port grew
+    /// `IssueProvider::reopen` rather than a status setter.
+    Reopen,
     /// Start work: the driver moves the issue to in-progress (`w`).
     StartWork,
 }
@@ -677,6 +736,25 @@ pub enum WorkspaceInput {
     /// the deck's only optimistic mirror is dropping its queue view, since a
     /// session reset to seq-0 has no backlog by definition.
     SessionClear,
+    /// How the driver settled the parked question the overlay was showing
+    /// (#4220) — the return leg of [`Inbound::QuestionAsked`].
+    ///
+    /// The whole outcome travels, not just the answers: `Deferred` ("the
+    /// options are the wrong shape, let's talk") and `Declined` (cancelled)
+    /// are real answers the asking model acts on differently, and collapsing
+    /// them into "no answers" would tell it the same thing three ways.
+    ///
+    /// Boxed to match [`Inbound::QuestionAsked`]: the answer set carries a
+    /// note and free text per question.
+    QuestionAnswered(Box<stella_protocol::QuestionOutcome>),
+    /// How the driver decided the parked approval the card was showing
+    /// (#4240) — the return leg of [`Inbound::ApprovalAsked`].
+    ///
+    /// A `Deny` carries the driver's own words when they gave any, and the
+    /// broker forwards them to the model verbatim: "no, use the staging
+    /// bucket" is a redirection the turn can act on, where a bare refusal is
+    /// a wall it has to guess its way around.
+    ApprovalAnswered(Box<stella_tools::registry::approval::ApprovalResponse>),
     /// Pause / resume / stop / restart a specific agent.
     Control {
         agent: AgentId,
@@ -834,9 +912,16 @@ pub enum WorkspaceInput {
     /// ISSUES tab: list (or tracker-search) issues. `query`/`state` are the
     /// tracker-side filters; the driver answers with [`Inbound::IssuesList`]
     /// echoing `seq` so stale replies can be dropped.
+    ///
+    /// `page` is 0-based and is what the tab's `]`/`[` move. It rides the
+    /// request rather than being held driver-side because the panel is the
+    /// only thing that knows which page the human is looking at — and a
+    /// paging key that could not say so would re-fetch page one under a
+    /// notice claiming otherwise.
     IssuesRefresh {
         query: Option<String>,
         state: Option<String>,
+        page: usize,
         seq: u64,
     },
     /// ISSUES tab: create an issue from the `n` form. The driver answers

@@ -84,7 +84,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         &tools_registry,
         &cfg.workspace_root,
         &cfg.authority,
-        false,
+        crate::rules::MidTurnAsk::Headless,
     );
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,

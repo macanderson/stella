@@ -273,6 +273,15 @@ pub struct IssueDraft {
     /// The epic or parent this hangs off, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<IssueKey>,
+    /// Who to assign the filed issue to, in the tracker's own spelling of a
+    /// user (a GitHub login, a Linear user id). `None` files it unassigned.
+    ///
+    /// Part of the draft rather than a follow-up edit because assigning is
+    /// part of *what is being filed*: a tracker that can assign at create
+    /// time does it in the same call, and one that cannot is the adapter's
+    /// problem to sequence, not the caller's to remember.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
 }
 
 /// The port every tracker is reached through — invariant 1 for the backlog
@@ -380,6 +389,46 @@ pub trait IssueProvider: Send + Sync {
         title: Option<&str>,
         body: Option<&str>,
     ) -> Result<(), IssueError>;
+
+    /// Re-open a closed issue.
+    ///
+    /// The inverse of [`IssueProvider::close`] and deliberately a separate
+    /// method rather than a `SetStatus("open")`: re-opening is how a human
+    /// (or a regression sweep) says the closure's receipt did not hold, which
+    /// is a different event in the issue's history than any other status move.
+    ///
+    /// Default is a typed refusal so a provider that predates the method —
+    /// or a tracker with no re-open transition — fails loudly instead of
+    /// silently doing nothing.
+    async fn reopen(&self, key: &IssueKey) -> Result<(), IssueError> {
+        Err(IssueError::Failed {
+            provider: self.id().to_owned(),
+            reason: format!("re-opening issues is not supported (tried `{key}`)"),
+        })
+    }
+
+    /// Full-text search, in either state, one page at a time.
+    ///
+    /// `list_open` is the loop's queue read; this is the human's browse read
+    /// (the command deck's ISSUES tab). The differences are the point:
+    /// `state = None` means *all* states rather than open-only, the query is
+    /// passed through to the tracker's own search syntax rather than filtered
+    /// client-side, and `offset` pages a large result set without the caller
+    /// holding every row. Ordering stays the tracker's, exactly as
+    /// [`IssueProvider::list_open`].
+    ///
+    /// Default falls back to the queue read with the query ignored — a
+    /// provider that cannot search still lists, and the caller can see the
+    /// query had no effect rather than receive a fabricated empty page.
+    async fn search(
+        &self,
+        _query: &str,
+        _state: Option<IssueState>,
+        limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<Issue>, IssueError> {
+        self.list_open(limit).await
+    }
 }
 
 #[cfg(test)]
@@ -423,6 +472,35 @@ mod tests {
         assert!(!json.contains("parent"), "{json}");
         let back: Issue = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, issue);
+    }
+
+    /// Invariant 4 for the write side. An unassigned draft must not serialize
+    /// a null `assignee` either: the field was added after providers were
+    /// already reading this shape, so an omitted one has to stay omitted.
+    #[test]
+    fn a_draft_round_trips_and_omits_an_absent_assignee() {
+        let unassigned = IssueDraft {
+            title: "a title".into(),
+            body: "a handoff".into(),
+            labels: vec![IssueLabel::from("bug")],
+            parent: None,
+            assignee: None,
+        };
+        let json = serde_json::to_string(&unassigned).expect("serialize");
+        assert!(!json.contains("assignee"), "{json}");
+        assert_eq!(
+            serde_json::from_str::<IssueDraft>(&json).expect("deserialize"),
+            unassigned
+        );
+
+        let assigned = IssueDraft {
+            assignee: Some("octocat".into()),
+            ..unassigned
+        };
+        let json = serde_json::to_string(&assigned).expect("serialize");
+        let back: IssueDraft = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, assigned);
+        assert_eq!(serde_json::to_string(&back).expect("re-serialize"), json);
     }
 
     /// The wire spellings are pinned. These cross a process boundary into
