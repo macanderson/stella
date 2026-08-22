@@ -60,14 +60,20 @@ REPO = Path(__file__).resolve().parent.parent
 RENDERER_CRATE = "crates/stella-transcript/"
 
 # The shared entry points a surface is expected to draw through.
-GRID = "stella_transcript::grid::render"
+GRID = "stella_transcript::grid::render{,_turn_lines}"
 HTML = "stella_transcript::html::render_page"
 
 # What a reference to each entry point looks like in source, once comments are
 # stripped. The `use stella_transcript::grid;` form means a call site reads
 # `grid::render(...)`, so the crate-qualified prefix cannot be required.
+#
+# `render` and `render_turn_lines` both count, because both are the shared
+# painter: the first draws a finished run, the second one turn of a run that is
+# still going. A live surface has to use the second — an append-only one cannot
+# redraw a whole run per event — and refusing to count it would have read a
+# surface's move *onto* the streaming API as a regression away from sharing.
 PATTERNS = {
-    GRID: re.compile(r"\bgrid::render\s*\("),
+    GRID: re.compile(r"\bgrid::render(_turn_lines)?\s*\("),
     HTML: re.compile(r"\bhtml::render_page\s*\("),
 }
 
