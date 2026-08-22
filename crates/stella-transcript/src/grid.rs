@@ -239,7 +239,7 @@ pub fn render(run: &Run, state: &FoldState, width: usize) -> Vec<Line> {
 /// printed, and a top rail that claimed them would freeze `running` and a
 /// partial cost into scrollback forever. It is a real constraint on this
 /// function, not a layout preference — moving either back onto
-/// [`turn_frame_top`] makes the frame unstreamable, and
+/// `turn_frame_top` makes the frame unstreamable, and
 /// `render_turn_is_append_only_as_a_turn_grows` fails.
 #[must_use]
 pub fn render_turn_lines(run: &Run, state: &FoldState, index: usize, width: usize) -> Vec<Line> {
