@@ -142,11 +142,15 @@ pub enum TranscriptEntry {
         /// marks these so overlap is visible, since `duration_ms` alone
         /// would read as ordinary post-stream latency.
         speculated: bool,
-        /// For a *successful* call of a conventionally-named file-mutating
-        /// tool (see `summarize::is_file_mutation`), the reference the
-        /// renderer uses to show this call's diff inline. `None` for reads,
-        /// non-file tools, and failed calls — which gates the inline diff to
-        /// mutations that actually happened. The diff itself is never stored
+        /// For a *successful* call that moved the work tree, the reference the
+        /// renderer uses to show this call's diff inline.
+        ///
+        /// Gated on the change having folded under this very call, not on the
+        /// tool's name (`super::inline_diff`) — so a measured `bash`, MCP or
+        /// custom-tool call renders what it did, exactly as `edit_file` does
+        /// (#4213). `None` for reads, for failed calls, and for a call whose
+        /// own measurement came back empty, which is what keeps the inline diff
+        /// to mutations that actually happened. The diff itself is never stored
         /// here (L-T5: one event-borne diff path).
         diff: Option<InlineDiffRef>,
     },
