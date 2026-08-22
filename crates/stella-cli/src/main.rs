@@ -95,6 +95,7 @@ mod profile;
 mod prompt_source;
 mod proposals_cmd;
 mod query_format;
+mod question;
 mod resume_frame;
 mod reward;
 mod rules;

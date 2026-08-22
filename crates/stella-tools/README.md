@@ -7,7 +7,8 @@ tool — built-in, custom, or MCP — runs through. Every tool implements the
 `ToolRegistry` is the crate's public face and the adapter behind
 `stella-core`'s `ToolExecutor` port.
 
-The dispatchable surface is eighteen tools, in six groups. The first three are
+The dispatchable surface is the rows of [`src/catalog.rs`](src/catalog.rs) —
+that table is the count — in the groups below. The first three are
 the **working surface** — the rows that touch the world outside the process,
 and the reason the risk column in [`src/catalog.rs`](src/catalog.rs) earns its
 keep; the rest are coordination state that dies with the session:
@@ -33,18 +34,48 @@ keep; the rest are coordination state that dies with the session:
   self-deleting `TempDir` the registry owns.
 - **The environment report** — `get_environment`
   ([`src/environment.rs`](src/environment.rs)).
+- **One question back to the driver** — `ask_question`
+  ([`src/ask.rs`](src/ask.rs)), answered through the host-attached responder
+  in [`src/registry/question.rs`](src/registry/question.rs).
 
 ## Direction — this surface is closed
 
 Stella's product goal is an extensible turn loop whose extension happens *outside*
 the binary: capabilities arrive as MCP servers, workspace custom tools, or plugins
-(`doc:turn-loop-wrappers`, #3246), never as a nineteenth built-in. The list above
+(`doc:turn-loop-wrappers`, #3246), never as one more built-in. The list above
 is the set of verbs an agent needs to do work in a repository — run a command,
 read and change files, find code, coordinate itself — and nothing beyond it. It
 is closed rather than merely short: a built-in is a thing every
 embedding host pays for whether it wanted it or not, and the mechanisms in this
 crate (the registry, the sandbox, the read-only contract, the subprocess-env
 scrub) are what a third-party tool inherits by going through the same door.
+
+### The one row added since that was written, and why it could not be a plugin
+
+`ask_question` (#4212) is the exception, and it is recorded here rather than
+quietly absorbed, because "the surface is closed" is only worth anything if
+crossing it costs an argument. The test the rule sets is whether the
+capability is one an agent *fundamentally cannot work without*. Three things
+make this one structurally un-outsourceable rather than merely desirable:
+
+- **It needs the host's driver, which no plugin has.** Answering means
+  rendering a card on the Command Deck's own render loop, or on the plain
+  TTY's stdin — surfaces inside this binary. An MCP server can ask a question
+  of *its* operator; it cannot ask the human watching this turn.
+- **It needs the attribution stack to know who is asking.** The
+  agent-to-agent case is the whole point, and it is resolved from
+  `HookBus::current_agent()` — runtime state a tool outside the process
+  cannot read and, more importantly, that a model must not be able to forge.
+- **It reaches a sub-agent only by being `read_only`.** `ReadOnlyTools`
+  filters the child's surface on that flag. A delegated child's tool set is
+  assembled by the engine, so a capability that is not a built-in is not in
+  it at all — an MCP `ask` tool would be invisible to exactly the agent that
+  most needs to ask.
+
+What the rule still buys, and what this row honours: it is one tool, not a
+family (`ask_question`, not `ask` + `confirm` + `choose`), and it is
+single-purpose — the batch is one operation, and no parameter selects a
+different one.
 
 Two rules that follow, and that this crate is the enforcement point for. The
 **single-purpose rule** (invariant #9) is not style: per-tool policy has to be able

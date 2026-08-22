@@ -3,7 +3,7 @@
 //!
 //! `tool_steering!()` is the one place a prompt can say what the schemas
 //! cannot — which tool to reach for first, and where each capability comes
-//! from. To do that it names all eighteen built-ins in prose, and until this
+//! from. To do that it names every built-in in prose, and until this
 //! module existed that prose was tied to nothing:
 //!
 //! - **A retired name could linger.** This is the defect #3557 was filed for,

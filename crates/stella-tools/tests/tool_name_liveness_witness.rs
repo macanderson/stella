@@ -2,7 +2,7 @@
 //!
 //! `bash`'s long-sleep advisory told the model to *"poll with
 //! `read_output`/`wait_for` instead"* for weeks after #3244 deleted both
-//! tools and the eighteen-tool restore declined to bring them back. Every
+//! tools and the restore that followed declined to bring them back. Every
 //! bare `sleep` over the threshold handed the model a directive with nothing
 //! behind it — worse than the silence it replaced, because a directive the
 //! model cannot follow teaches it to discount the next one too (#3031).

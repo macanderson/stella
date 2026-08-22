@@ -108,10 +108,12 @@
   surface, and nothing else.** The working half is one shell (`bash`), the
   file CRUD quartet (`read_file` / `write_file` / `edit_file` /
   `delete_file`), and one unified `search`; the coordination half is
-  sub-agent delegation, the task board, the scratch state plane, and the
-  environment probe. Eighteen tools in six groups, declared once in
-  `crates/stella-tools/src/catalog.rs` — that table is the count, never a
-  number written in prose here.
+  sub-agent delegation, the task board, the scratch state plane, the
+  environment probe, and one question back to whoever is driving
+  (`ask_question`, #4212). Declared once in
+  `crates/stella-tools/src/catalog.rs` — that table is the count, and the
+  number is deliberately not written here, because the last three times it
+  was, it drifted the moment a tool landed.
 
   The rule is **one tool per job, not a fixed total**: one shell rather than a
   family of structured runners, one search rather than a `grep`/`glob`/

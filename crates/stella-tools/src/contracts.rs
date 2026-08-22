@@ -102,6 +102,43 @@ fn declared_output_schema(name: &str) -> Option<serde_json::Value> {
             },
             "required": ["status", "steps", "cost_usd", "report_chars", "truncated"]
         })),
+        // How the question resolved, and — when it was answered — every
+        // answer with the note attached to it (#4212). Declared because this
+        // is the one built-in whose result is authored *outside the process*
+        // by a person, so the prose in `content` is the only other record of
+        // what they said: a consumer that needs to know whether a decision
+        // was actually made (a transcript, a receipt, an audit of what the
+        // agent was told to do) cannot get that by reading English.
+        //
+        // The three outcomes are a closed set here on purpose. `deferred` and
+        // `declined` are behaviourally different — one says "keep talking",
+        // the other says "no answer is coming" — and an enum is what stops a
+        // reader collapsing them into "not answered".
+        "ask_question" => Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "outcome": {
+                    "type": "string",
+                    "enum": ["answered", "deferred", "declined"]
+                },
+                "answers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "header": { "type": "string" },
+                            "question": { "type": "string" },
+                            "chosen": { "type": "array", "items": { "type": "string" } },
+                            "note": { "type": "string" }
+                        },
+                        "required": ["header", "question", "chosen"]
+                    }
+                },
+                "note": { "type": "string" },
+                "reason": { "type": "string" }
+            },
+            "required": ["outcome"]
+        })),
         _ => None,
     }
 }
