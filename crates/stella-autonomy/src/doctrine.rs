@@ -101,7 +101,19 @@ pub enum ContentionPolicy {
     /// Any sign of another actor on this subject defers.
     ///
     /// The default. A duplicated fix costs two workers' time and produces a
-    /// merge conflict; a deferred one costs a poll interval.
+    /// merge conflict; a deferral costs a poll interval **only while the
+    /// evidence can go away on its own**, which is what makes the default
+    /// safe and is a claim about the evidence rather than about deferring.
+    ///
+    /// It is false for evidence the loop produced itself and nothing else
+    /// clears: a crashed run's leftover worktree carries the issue key
+    /// forever, and because a deferral writes no `spent` entry it is re-read
+    /// on every pass, so the issue costs not a poll interval but the rest of
+    /// the run (#4300). The claim-time probe therefore excludes the loop's own
+    /// worktrees root before this policy ever sees it, leaving the recovery in
+    /// `work::start` reachable — the fix belongs at the gathering site because
+    /// weighing evidence is this enum's job and deciding what counts as
+    /// evidence is not.
     Defer,
     /// Only a held ledger claim defers; branches and worktrees are advisory.
     ///

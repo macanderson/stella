@@ -60,13 +60,23 @@
 use std::collections::HashMap;
 
 use stella_autonomy::{
-    Action, Attempts, CarriedPr, CiConclusion, Contention, DeliverPolicy, IssueRef,
-    LoopObservation, LoopState, LoopStep, PrDisposition, PrRef, PrState, UnblockAttempt,
-    deliver_next, step,
+    Action, Attempts, CarriedPr, CiConclusion, Contention, ContentionVerdict, DeliverPolicy,
+    IssueRef, LoopObservation, LoopState, LoopStep, PrDisposition, PrRef, PrState, UnblockAttempt,
+    contention_verdict, deliver_next, step,
 };
 
 use super::audit::{self, Action as Audit};
 use super::state::LoopState as Durable;
+
+/// How many ranked candidates one pass will probe for contention before it
+/// waits instead.
+///
+/// Each probe is a `gh` call plus two `git` reads, and a deferral deliberately
+/// leaves no `spent` entry, so an unbounded scan would re-ask the forge about
+/// every issue in a backlog somebody else is working — on every poll, forever.
+/// Five is enough to walk past a peer or two at the top of the queue and small
+/// enough that a busy backlog costs a poll interval rather than a rate limit.
+const MAX_CONTENTION_PROBES: u32 = 5;
 
 /// Attempts spent on one pull request, carried across polls.
 ///
@@ -330,10 +340,66 @@ pub(super) fn drive(
                     }
                 };
 
-                let Some(key) = ranked
+                // Contention is asked here, before any git state exists.
+                //
+                // Until #4002 the loop discovered a peer as a `git worktree
+                // add` failure inside `work::start`, which could see only the
+                // contention that manifests as a branch-name collision — and
+                // could not put the evidence anywhere a human reviewing the
+                // ledger would find it. The branch-collision guard stays: it
+                // is the last line and it refuses to discard an unfinished
+                // attempt's work. This is a first line in front of it.
+                //
+                // Probed one candidate at a time, in ranked order, because
+                // each probe is a `gh` call and the answer is only needed for
+                // the issue actually about to be taken.
+                let mut candidates = ranked
                     .into_iter()
-                    .find(|k| !state.claimed.iter().any(|c| &c.0 == k) && !spent.contains_key(k))
-                else {
+                    .filter(|k| !state.claimed.iter().any(|c| &c.0 == k) && !spent.contains_key(k));
+
+                let mut probes = 0_u32;
+                let taken = loop {
+                    let Some(candidate) = candidates.next() else {
+                        break None;
+                    };
+                    // A deferral writes no `spent` entry — the peer finishing
+                    // must let the loop take the issue on a later pass — so
+                    // the queue is re-probed every time. The cap bounds that
+                    // cost against a backlog somebody else is working wholesale;
+                    // it is announced rather than silent, because a truncated
+                    // scan that reported nothing would read as an empty queue.
+                    if probes >= MAX_CONTENTION_PROBES {
+                        audit::record(
+                            durable,
+                            Audit::Deferred,
+                            None,
+                            &format!(
+                                "the top {MAX_CONTENTION_PROBES} of the queue all look taken by \
+                                 somebody else; re-asking in {poll_secs}s rather than probing \
+                                 the whole backlog"
+                            ),
+                        );
+                        break None;
+                    }
+                    probes += 1;
+
+                    let seen = super::contention::for_issue(&root, &candidate);
+                    match contention_verdict(doctrine.contention, &seen) {
+                        ContentionVerdict::Proceed => break Some(candidate),
+                        ContentionVerdict::Defer { evidence } => audit::record(
+                            durable,
+                            Audit::Deferred,
+                            Some(&candidate),
+                            &format!(
+                                "somebody else appears to be on it ({}); taking the next \
+                                 candidate rather than duplicating",
+                                evidence.join(", ")
+                            ),
+                        ),
+                    }
+                };
+
+                let Some(key) = taken else {
                     // An empty queue is a state, not an ending.
                     //
                     // Returning here made "there is nothing to do right now"
@@ -352,9 +418,9 @@ pub(super) fn drive(
                         Audit::Waited,
                         None,
                         &format!(
-                            "the queue offers nothing this run has not already taken; \
-                             re-asking in {poll_secs}s — a new issue, or an escalation \
-                             label removed, is all it takes"
+                            "the queue offers nothing this run has not already taken or \
+                             deferred; re-asking in {poll_secs}s — a new issue, an \
+                             escalation label removed, or a peer finishing is all it takes"
                         ),
                     );
                     sleep(poll_secs);

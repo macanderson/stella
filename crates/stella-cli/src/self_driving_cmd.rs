@@ -21,6 +21,7 @@ mod backlog;
 // a key written to the right path that nothing loads would pass every other
 // assertion. Read-only, so the wider visibility grants no authority.
 pub(crate) mod config;
+mod contention;
 mod convention;
 mod deliver;
 mod drive;
