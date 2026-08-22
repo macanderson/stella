@@ -88,7 +88,7 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
 /// and the error classes it has seen — assembled fresh each step from the
 /// same window [`turn_start_index`] gives loop detection, so the two planes
 /// cannot disagree about what "this turn" means.
-pub(super) struct TurnEvidence {
+pub struct TurnEvidence {
     /// Index of the real user message that bounds this turn, when one exists.
     pub prompt_index: Option<usize>,
     /// Tool names in call order, most recent last.
@@ -111,7 +111,7 @@ pub(super) struct TurnEvidence {
 /// full-graph walk — the same reasoning as recall's own anchor cap.
 const MAX_TOUCHED_PATHS: usize = 16;
 
-pub(super) fn turn_evidence(messages: &[CompletionMessage]) -> TurnEvidence {
+pub fn turn_evidence(messages: &[CompletionMessage]) -> TurnEvidence {
     let start = turn_start_index(messages);
     let mut evidence = TurnEvidence {
         prompt_index: start.checked_sub(1),

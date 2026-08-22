@@ -258,7 +258,8 @@ pub(crate) async fn run_raw_one_shot(
     // contributes to have been assembled.
     let mut recall_event = None;
     if let Some(m) = &memory {
-        let recalled = m.recall_block_reported(prompt).await;
+        let touched = stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
+        let recalled = m.recall_block_reported(prompt, &touched).await;
         recall_event = recalled.telemetry_event();
         inject_recall_block(&mut messages, recalled.text);
     }
@@ -572,7 +573,8 @@ pub async fn run_goal_cmd(
         // share its arm, and re-arming per round would count one prompt as N
         // turns of the schedule.
         m.arm_recall_control();
-        let recalled = m.recall_block_reported(goal).await;
+        let touched = stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
+        let recalled = m.recall_block_reported(goal, &touched).await;
         recall_event = recalled.telemetry_event();
         inject_recall_block(&mut messages, recalled.text);
     }
