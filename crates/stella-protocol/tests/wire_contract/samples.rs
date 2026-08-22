@@ -63,6 +63,16 @@ pub(crate) fn all_delivery_declines() -> Vec<DeliveryDecline> {
     vec![NothingCreated, IntegrityRefusal, AdoptFailed]
 }
 
+/// Every reason a turn can be steered (#3622).
+///
+/// `Unknown` is in the list because it is the wire value a stream recorded
+/// before the field existed decodes to, so it reaches consumers exactly as the
+/// three real causes do.
+pub(crate) fn all_steer_causes() -> Vec<SteerCause> {
+    use SteerCause::*;
+    vec![Unknown, User, Loop, Stall]
+}
+
 pub(crate) fn all_policy_kinds() -> Vec<PolicyKind> {
     use PolicyKind::*;
     vec![Evaluated, Blocked, ApprovalRequested, SecretDetected]
@@ -305,10 +315,6 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
         AgentEvent::Retry {
             attempt: 1,
             reason: "429 from the provider".into(),
-        },
-        AgentEvent::Steered {
-            text: "actually, use the other file".into(),
-            cause: SteerCause::User,
         },
         AgentEvent::TurnParked {
             description: "CI for branch main settles".into(),
@@ -762,6 +768,14 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             delivery: DeliveryOutcome::Declined { reason },
         }
     }));
+    events.extend(
+        all_steer_causes()
+            .into_iter()
+            .map(|cause| AgentEvent::Steered {
+                text: "actually, use the other file".into(),
+                cause,
+            }),
+    );
     events.extend(
         all_policy_kinds()
             .into_iter()
