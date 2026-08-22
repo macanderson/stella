@@ -25,6 +25,7 @@ mod convention;
 mod deliver;
 mod drive;
 mod hooks;
+mod learning;
 mod lifecycle;
 pub(crate) mod probes;
 mod report;
@@ -1283,9 +1284,14 @@ fn file_finding(
         ))
         .map_err(|error| error.to_string())?;
 
+    // Every outcome is counted, not just the one that reached the tracker: a
+    // refusal and a duplicate are what a filing *did*, and a report that showed
+    // only `created` beside two permanent zeros made a loop whose findings were
+    // all being refused look like a loop that found nothing (#4118).
+    st.update_stats(|s| s.record_filing(outcome.canonical()));
+
     if let backlog::Filed::New(key) = &outcome {
         st.add_seen(&stella_autonomy::finding_digest(title))?;
-        st.update_stats(|s| s.issues_created += 1);
         if format == QueryFormat::Json {
             println!(r#"{{"filed":"{key}"}}"#);
         } else {

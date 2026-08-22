@@ -884,7 +884,7 @@ drew its batch from. Both numbers are now folds of one ranking of one read.
 | `Issue`, `IssueState`, `IssueClass`, `PrId`, receipts | `stella-protocol` (types only) |
 | Residue detection, discharge rules | `stella-core` (pure, no I/O) |
 | The residue gate stage | **Homeless.** `stella-pipeline` is deleted (#3852/#3865) and this row named it; B5 has to pick a home before it can be built — a wrapper plugin's own side, or a `stella-cli` check over the turn's transcript. Tracked in #3901's sweep of the same stale claim. |
-| `backlog`/`work`/`deliver`/`sweep`/`curate` verbs, the forge adapter, provider manifests | `stella-cli` (`self_driving_cmd/` — note `self_driving_cmd.rs` is 1005 lines and new logic lands in siblings) |
+| `backlog`/`work`/`deliver`/`sweep`/`curate` verbs, the forge adapter, provider manifests | `stella-cli` (`self_driving_cmd/` — `self_driving_cmd.rs` is close enough to the 1500-line ceiling that new logic lands in siblings; it carries no baseline entry, so a crossing fails the gate rather than being grandfathered) |
 | Issue claims | `stella-fleet` ledger |
 | The driver channel: dispatch context, `[driver]` block, `permits_call` | `stella-plugin` (wire + gate), `stella-runtime` (`src/wrapper/`, beside the existing host-call dispatch) |
 | The policy loop | `plugins/stella-selfdriving/` |

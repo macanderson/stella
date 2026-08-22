@@ -441,6 +441,12 @@ pub(super) fn drive(
                     &format!("began work — {}", resolved.title),
                 );
 
+                // What the turn is about to learn, measured either side of it.
+                // The turn is a child process writing into the repository's
+                // own state root, so a delta over that state is the only
+                // producer these counters can have — see `learning`.
+                let learned_before = super::learning::tally(&root);
+
                 // A `work` that cannot start is one issue's problem, not the
                 // loop's: a single leftover branch must not halt a run that has
                 // other issues to get on with.
@@ -458,10 +464,12 @@ pub(super) fn drive(
                             continue;
                         }
                     };
+                let learned = super::learning::tally(&root).since(learned_before);
 
                 durable.update_stats(|s| {
                     s.issues_attempted += 1;
                     s.turns_run += 1;
+                    learned.add_to(s);
                 });
 
                 match outcome {
