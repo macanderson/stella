@@ -23,6 +23,31 @@ serde = { workspace = true }
 # reason, so it is resident in the tree rather than new supply chain, and it is
 # a pure table lookup over `&str` — no I/O, no allocation, invariant #2 intact.
 unicode-width = { workspace = true }
+# The grammar-backed half of the shared lexer (#4283). The near-leaf contract
+# above is weakened by this, not waived, and three things pay for it:
+#
+# - **It is resident supply chain, not new.** Every crate below is already in
+#   the root `[workspace.dependencies]` and is a *default* feature of
+#   `stella-graph`, which `stella-cli` takes with defaults — so the shipping
+#   binary already compiles this exact C, and `cargo deny check licenses` has
+#   already passed on all of it. `stella-observatory` is the one consumer that
+#   newly pays a compile cost, and it pays it to stop rendering Go, Java, C,
+#   SQL and PHP as flat text.
+# - **It lands here or nowhere.** A deck-local highlighter would buy the deck
+#   accuracy by making the three transcript surfaces disagree on classification
+#   again — the drift #3644 and #4036 each closed once, and #4196 forbade.
+# - **Grammars are compiled in, so nothing is loaded at runtime** (which is why
+#   syntect was declined): the lexer stays a pure function over borrowed text,
+#   invariant #2 intact.
+tree-sitter = { workspace = true }
+tree-sitter-rust = { workspace = true }
+tree-sitter-typescript = { workspace = true }
+tree-sitter-python = { workspace = true }
+tree-sitter-go = { workspace = true }
+tree-sitter-java = { workspace = true }
+tree-sitter-c = { workspace = true }
+tree-sitter-sequel = { workspace = true }
+tree-sitter-php = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
