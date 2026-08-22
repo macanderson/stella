@@ -1,34 +1,41 @@
-//! The plain surface's transcript frames — the character-grid renderer, on
-//! scrollback.
+//! The plain surface's transcript — the character-grid renderer, streamed onto
+//! scrollback as the turn happens.
 //!
-//! # The tension this module resolves
+//! # One rendering, not two
 //!
-//! [`stella_transcript::grid::render`] draws a *whole* turn: the header rail
-//! states the turn's step count, wall time and cost, and the frame closes with
-//! a matching bottom rail. None of those numbers exist until the turn ends. The
-//! plain surface, by contrast, is append-only — it writes into the user's own
-//! scrollback and can never revisit a line it has printed (see the parent
-//! module's header). A streamed frame is therefore not merely awkward, it is
-//! unrepresentable: the top rail would have to be printed before its own
-//! contents are known.
+//! This surface is append-only: it writes into the user's own scrollback and
+//! can never revisit a line it has printed. That used to be read as "a frame
+//! cannot be streamed", because [`stella_transcript::grid`]'s turn frame put
+//! the turn's status and accounting on its *top* rail and neither exists when
+//! the turn opens. So the frame was emitted once, at `TurnComplete`, and a
+//! terse `· {tool}` progress row was printed per call in the meantime and then
+//! erased.
 //!
-//! So the frame is emitted **once, when the turn completes**, and what happens
-//! before that depends on who is watching:
+//! That produced two renderings of one turn, and the user saw the worse one
+//! for the entire run — minutes of `· bash` on a terminal, while the very same
+//! code printed the real transcript to a daemon's console file, where nobody
+//! was watching it happen. It also could not erase correctly: the cursor-up
+//! that removed the progress rows was unbounded, so a turn with more tool calls
+//! than the terminal had rows walked off the top of the screen and cleared
+//! whatever was there instead.
 //!
-//! - **On a terminal**, a terse progress line per tool call is printed while
-//!   the turn runs, then erased immediately before the frame replaces it. Each
-//!   is truncated to the terminal width so it occupies exactly one physical
-//!   row — the cursor-up erase is only correct if the count of rows printed
-//!   equals the count of lines printed, which wrapping would break.
-//! - **Anywhere else** — a log file, a supervised child's console file, the
-//!   bytes `stella daemon logs` replays — nothing is printed until the frame.
-//!   A reader of those bytes arrives after the fact and wants the transcript,
-//!   not a progress trace that the frame below then repeats.
+//! The frame is streamable now — its status and chips moved to the closing
+//! rail, which is the only place they are knowable
+//! ([`grid::render_turn_lines`]'s contract, pinned by
+//! `render_turn_is_append_only_as_a_turn_grows`). So there is one rendering:
+//! the transcript itself, written a line at a time as the turn produces it. A
+//! terminal and a log file receive the same bytes, which is the property the
+//! two used to differ on most visibly.
 //!
-//! `STELLA_PLAIN_STREAM=1` restores the pre-frame line-by-line rendering for a
-//! caller that genuinely wants tokens as they arrive.
+//! # What "as the turn produces it" means
+//!
+//! Only lines that can never change are written, which is
+//! [`RunBuilder::settled`]'s job: a tool call reaches scrollback when its
+//! result does, not when it dispatches, because the row carries its duration,
+//! output fold and cost. The closing rail is withheld until the turn ends for
+//! the same reason.
 
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 
 use stella_protocol::AgentEvent;
 use stella_transcript::{FoldState, Run, Status, Zoom, grid};
@@ -41,30 +48,37 @@ const FALLBACK_WIDTH: usize = 100;
 /// chips so far from its verb that the row stops reading as one thing.
 const MAX_WIDTH: usize = 120;
 
-/// Accumulates a turn and prints its frame when it closes.
+/// Accumulates a turn and writes its frame to scrollback as it settles.
 pub struct TranscriptPrinter {
     builder: RunBuilder,
-    /// How many progress rows are on screen awaiting erasure. Always `0` when
-    /// not writing to a terminal.
-    progress_rows: usize,
-    interactive: bool,
-    /// How many turns have been printed, so a frame is never re-printed.
+    /// Lines of the turn currently open that are already on scrollback.
+    emitted: usize,
+    /// Turns written in full, so a frame is never written twice.
     printed_turns: usize,
+    /// The column count every frame is drawn to, resolved once.
+    ///
+    /// Read at construction rather than per line, because a streamed frame is
+    /// the one thing that cannot survive a mid-turn resize: the rails and the
+    /// chip column of the lines already written are fixed, and re-measuring
+    /// would close a frame at a width its own top rail was not drawn to. A
+    /// pinned width means a resize takes effect on the next run instead of
+    /// tearing the one in progress.
+    width: usize,
 }
 
 impl TranscriptPrinter {
-    /// A printer for a run, deciding once whether a human is watching.
+    /// A printer for a run, measuring the terminal once.
     #[must_use]
     pub fn new(name: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             builder: RunBuilder::new(name, model),
-            progress_rows: 0,
-            interactive: std::io::stdout().is_terminal(),
+            emitted: 0,
             printed_turns: 0,
+            width: width(),
         }
     }
 
-    /// Whether the caller asked for the legacy line-by-line rendering.
+    /// Whether the caller asked for the legacy line-by-line card rendering.
     #[must_use]
     pub fn streaming_requested() -> bool {
         std::env::var("STELLA_PLAIN_STREAM").is_ok_and(|v| v == "1")
@@ -73,80 +87,118 @@ impl TranscriptPrinter {
     /// Open a turn around the user's prompt.
     pub fn start_turn(&mut self, prompt: &str) {
         self.builder.start_turn(prompt);
+        self.emitted = 0;
     }
 
-    /// Fold one event in, and show progress if a human is watching.
+    /// Fold one event in and write whatever it settled.
     pub fn observe(&mut self, event: &AgentEvent) {
-        self.builder.push(event);
-        if let AgentEvent::ToolStart { call } = event {
-            self.progress(&call.name);
-        }
-        if matches!(event, AgentEvent::TurnComplete { .. }) {
-            self.flush();
-        }
+        let text = self.observed(event);
+        write(&text);
     }
 
-    /// Close the open turn and print every frame not yet printed.
+    /// Close the open turn and write every line not yet written.
     pub fn flush(&mut self) {
+        let text = self.flushed();
+        write(&text);
+    }
+
+    // The two above are the whole I/O surface of this module: everything that
+    // decides *what* to print is below and returns it, so a test can read the
+    // scrollback this surface would produce without capturing a file
+    // descriptor (invariant #2's discipline, one crate out).
+
+    /// What [`Self::observe`] would write.
+    fn observed(&mut self, event: &AgentEvent) -> String {
+        self.builder.push(event);
+        if matches!(event, AgentEvent::TurnComplete { .. }) {
+            return self.flushed();
+        }
+        // A reasoning or text delta can settle nothing — `settled` withholds
+        // the block each one appends to — so re-rendering the turn for one is
+        // pure work. They are also the two events that arrive at token rate,
+        // which is what makes the exclusion worth stating rather than leaving
+        // to the suffix arithmetic to discover.
+        if matches!(
+            event,
+            AgentEvent::TextDelta { .. } | AgentEvent::Reasoning { .. }
+        ) {
+            return String::new();
+        }
+        self.advance()
+    }
+
+    /// What [`Self::flush`] would write.
+    fn flushed(&mut self) -> String {
         self.builder.finish_turn(Status::Ok);
-        self.erase_progress();
         let run = self.builder.snapshot();
+        let mut out = String::new();
         for index in self.printed_turns..run.turns.len() {
-            print!("{}", frame(&run, index, width()));
+            // The first unwritten turn is the one that was open, so its already
+            // streamed prefix is skipped; any later turn is written whole.
+            let from = if index == self.printed_turns {
+                self.emitted
+            } else {
+                0
+            };
+            append(&mut out, &frame(&run, index, self.width), from);
         }
         self.printed_turns = run.turns.len();
-        let _ = std::io::stdout().flush();
+        self.emitted = 0;
+        out
     }
 
-    fn progress(&mut self, tool: &str) {
-        if !self.interactive {
-            return;
+    /// The lines the open turn has settled since the last call.
+    fn advance(&mut self) -> String {
+        if !self.builder.is_turn_open() {
+            return String::new();
         }
-        // Truncated so the row cannot wrap; see the module doc on why the
-        // erase depends on that.
-        let mut line = format!("  · {tool}");
-        line.truncate(width());
-        println!("{line}");
-        self.progress_rows += 1;
-    }
-
-    fn erase_progress(&mut self) {
-        if self.progress_rows == 0 {
-            return;
-        }
-        // Up N rows, then clear from the cursor to the end of the screen.
-        print!("\x1b[{}A\x1b[J", self.progress_rows);
-        self.progress_rows = 0;
+        let run = self.builder.settled();
+        let Some(index) = run.turns.len().checked_sub(1) else {
+            return String::new();
+        };
+        let lines = frame(&run, index, self.width);
+        // The closing rail is withheld while the turn is open: it carries the
+        // status and the cost, and a turn that is still running has neither.
+        let body = &lines[..lines.len().saturating_sub(1)];
+        let mut out = String::new();
+        append(&mut out, body, self.emitted);
+        self.emitted = body.len();
+        out
     }
 }
 
-/// One turn's frame, as ANSI text ending in a newline.
+/// One turn's frame, as ANSI lines.
 ///
-/// Rendered from a run holding only that turn, because `grid::render` draws
-/// every turn it is given and this surface has already printed the earlier
-/// ones. The trailing status line `grid::render` appends is dropped for the
-/// same reason: it is a whole-run footer, and printing "1 turns" under every
-/// frame would state something false about the session.
-fn frame(run: &Run, index: usize, width: usize) -> String {
-    let Some(turn) = run.turns.get(index) else {
-        return String::new();
-    };
-    let single = Run {
-        name: run.name.clone(),
-        model: run.model.clone(),
-        started_at: run.started_at.clone(),
-        turns: vec![turn.clone()],
-    };
+/// Rendered one turn at a time rather than through `grid::render`, which draws
+/// the whole run and appends a keybinding footer. Both are wrong here: the
+/// earlier turns are already on scrollback and cannot be redrawn, and the
+/// footer describes a fold cursor this surface does not have.
+fn frame(run: &Run, index: usize, width: usize) -> Vec<String> {
     let mut state = FoldState::new();
     state.set_zoom(Zoom::Steps);
-    let mut lines = grid::render(&single, &state, width);
-    lines.pop();
-    let body = grid::to_ansi256(&lines);
-    if body.is_empty() {
-        body
-    } else {
-        format!("{body}\n")
+    grid::render_turn_lines(run, &state, index, width)
+        .iter()
+        .map(|line| grid::to_ansi256(std::slice::from_ref(line)))
+        .collect()
+}
+
+/// Push `lines[from..]` onto `out`, one per row.
+fn append(out: &mut String, lines: &[String], from: usize) {
+    for line in lines.iter().skip(from) {
+        out.push_str(line);
+        out.push('\n');
     }
+}
+
+/// One write per batch. A turn can settle several lines at once, and a partial
+/// line reaching a reader that is tailing the file would tear the frame.
+fn write(text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let mut stdout = std::io::stdout();
+    let _ = stdout.write_all(text.as_bytes());
+    let _ = stdout.flush();
 }
 
 /// The width to draw at: the terminal's, clamped, or a fixed fallback when
