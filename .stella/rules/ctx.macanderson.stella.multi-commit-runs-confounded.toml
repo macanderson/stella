@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.multi-commit-runs-confounded"
-record_id = "rec_macanderson_stella_multi_commit_runs_confounded_6520806908a7"
-record_hash = "sha256:939080bf74fed65d01a3eebe842a7aa0332305dbd05f8a737ff5ad84b0cc4631"
 kind = "rule"
 statement = "Any two runs differing by more than one commit are confounded and must be reported as such."
 origin = "imported"
@@ -30,7 +28,9 @@ force = "must"
 precedence = 100
 
 [record.steering.applies_to]
-tasks = ["benchmark"]
+# The extractor proposed tasks = ["benchmark"]; no such task is in the ratified
+# applies_to.tasks vocabulary, so it matched nothing. Paths and keywords
+# carry the selection instead.
 keywords = [
     "confounded",
     "commit",

@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.bench-conclusion-from-trace"
-record_id = "rec_macanderson_stella_bench_conclusion_from_trace_ee4128b37c74"
-record_hash = "sha256:23a2f1e8f0c7cf18162de6c3b400c3d01492d55476770f3ac4b095beac56365f"
 kind = "rule"
 statement = "A bench conclusion must be drawn from the trace, never from a surface signal."
 origin = "imported"
@@ -30,7 +28,9 @@ force = "must"
 precedence = 100
 
 [record.steering.applies_to]
-tasks = ["benchmark"]
+# The extractor proposed tasks = ["benchmark"]; no such task is in the ratified
+# applies_to.tasks vocabulary, so it matched nothing. Paths and keywords
+# carry the selection instead.
 keywords = [
     "bench",
     "trace",

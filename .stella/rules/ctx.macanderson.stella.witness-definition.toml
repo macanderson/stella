@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.witness-definition"
-record_id = "rec_macanderson_stella_witness_definition_5015b7eb5dd5"
-record_hash = "sha256:7e4b913db5177f7687c731f5211135fcc401956b428aa30e5e21351398a5bc84"
 kind = "constraint"
 statement = "A witness test is one that fails on main without the change and passes with the change, and a behavior change or feature PR should include one."
 origin = "imported"

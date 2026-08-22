@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.inv1-core-no-sdk-imports"
-record_id = "rec_macanderson_stella_inv1_core_no_sdk_imports_44895607e35f"
-record_hash = "sha256:718a3fc6b794eb14de0580a848996fd4f7c5bdb87ff4a493005e64bdfe79061c"
 kind = "constraint"
 statement = "Invariant 1: stella-core never imports a provider SDK, a filesystem API, or a terminal library; models go through the Provider trait and tools through ToolExecutor."
 origin = "imported"

@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.deleted-test-named-in-pr"
-record_id = "rec_macanderson_stella_deleted_test_named_in_pr_947f153bc7d4"
-record_hash = "sha256:22c94b6cc571743fe3fa1c83f955fb5c847b2c4951106ce2b8f61279833f856e"
 kind = "rule"
 statement = "Deleting a test is permitted but must be named in the PR description so an invisible deletion becomes a sentence a reviewer reads."
 origin = "imported"
@@ -26,10 +24,9 @@ force = "must"
 precedence = 100
 
 [record.steering.applies_to]
-tasks = [
-    "pull-request",
-    "delete-test",
-]
+# Retargeted from the extractor's ["pull-request", "delete-test"], neither
+# of which is a ratified task name.
+tasks = ["test", "review"]
 keywords = [
     "deleted test",
     "PR description",

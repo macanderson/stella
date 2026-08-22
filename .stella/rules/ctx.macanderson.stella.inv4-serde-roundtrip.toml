@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.inv4-serde-roundtrip"
-record_id = "rec_macanderson_stella_inv4_serde_roundtrip_93a77f179150"
-record_hash = "sha256:13422cc6e35a72bd7579b38d53188fa66fea83c63333f8335363eae1efaf222f"
 kind = "constraint"
 statement = "Invariant 4: every type crossing a crate boundary round-trips through serde_json byte-for-byte, and a round-trip test is added whenever a type is added to stella-protocol."
 origin = "imported"
@@ -27,12 +25,14 @@ force = "must"
 # the same crate at 100 with a different enforcement mode and would otherwise
 # suspend it. The two are complementary, not contradictory — "types only" says
 # what may live here, this says what a new type owes — and the more specific
-# rule (one crate plus one task) is the one that should apply.
+# rule — this one names a single crate — is the one that should apply.
 precedence = 110
 
 [record.steering.applies_to]
 paths = ["crates/stella-protocol"]
-tasks = ["add-protocol-type"]
+# The extractor proposed tasks = ["add-protocol-type"]; no such task is in the ratified
+# applies_to.tasks vocabulary, so it matched nothing. Paths and keywords
+# carry the selection instead.
 keywords = [
     "serde",
     "round-trip",

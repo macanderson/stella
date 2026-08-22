@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.census-role-model-from-step-usage"
-record_id = "rec_macanderson_stella_census_role_model_from_step_usage_34881e1008e9"
-record_hash = "sha256:7c5692a3c6efb77c804c2d92659f9729c2c9638b2cc92a8680439574ad6008b8"
 kind = "procedure"
 statement = "Census (role, model) from step_usage before believing a claim about which model ran."
 origin = "imported"
@@ -30,10 +28,9 @@ force = "must"
 precedence = 100
 
 [record.steering.applies_to]
-tasks = [
-    "benchmark",
-    "investigation",
-]
+# The extractor proposed tasks = [ "benchmark", "investigation", ]; no such task is in the ratified
+# applies_to.tasks vocabulary, so it matched nothing. Paths and keywords
+# carry the selection instead.
 keywords = [
     "step_usage",
     "role",

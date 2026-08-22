@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.cheap-control-before-bisect"
-record_id = "rec_macanderson_stella_cheap_control_before_bisect_66851b31c756"
-record_hash = "sha256:7285357c12b4616dc2550b57ca559855eebb77810f1312470f57fb2607cd084a"
 kind = "procedure"
 statement = "Before any bisect, re-run the failing task alone on the old SUT as a cheap control."
 origin = "imported"
@@ -30,10 +28,9 @@ force = "must"
 precedence = 100
 
 [record.steering.applies_to]
-tasks = [
-    "investigation",
-    "bisect",
-]
+# The extractor proposed tasks = [ "investigation", "bisect", ]; no such task is in the ratified
+# applies_to.tasks vocabulary, so it matched nothing. Paths and keywords
+# carry the selection instead.
 keywords = [
     "control",
     "bisect",

@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.inv8-posture-every-axis"
-record_id = "rec_macanderson_stella_inv8_posture_every_axis_3ba2ee8e2de8"
-record_hash = "sha256:eeb530f623e436a02cb764433c08ec45a19a412e230b6784ead78d1b9f1704a3"
 kind = "rule"
 statement = "Each provider id declares a posture on every parity axis and, for a controllable/opt-in/implicit posture, names the witness test proving it on the wire."
 origin = "imported"
@@ -27,7 +25,9 @@ precedence = 100
 
 [record.steering.applies_to]
 paths = ["crates/stella-model/src/provider_parity.rs"]
-tasks = ["add-provider"]
+# The extractor proposed tasks = ["add-provider"]; no such task is in the ratified
+# applies_to.tasks vocabulary, so it matched nothing. Paths and keywords
+# carry the selection instead.
 keywords = [
     "posture",
     "witness test",

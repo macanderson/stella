@@ -3,8 +3,6 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.inv8-matrix-same-pr"
-record_id = "rec_macanderson_stella_inv8_matrix_same_pr_6087a2fde1e7"
-record_hash = "sha256:936f194921be6c069b6866557ee670338b57edddd512f5bffe33b3416aa4da7d"
 kind = "rule"
 statement = "Adding a provider or a new divergent feature axis requires updating the parity matrix in the same PR."
 origin = "imported"
@@ -30,7 +28,9 @@ paths = [
     "crates/stella-model/src/provider_parity.rs",
     "crates/stella-cli",
 ]
-tasks = ["add-provider"]
+# The extractor proposed tasks = ["add-provider"]; no such task is in the ratified
+# applies_to.tasks vocabulary, so it matched nothing. Paths and keywords
+# carry the selection instead.
 keywords = [
     "parity matrix",
     "same PR",
