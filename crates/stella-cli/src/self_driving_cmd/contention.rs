@@ -185,10 +185,11 @@ pub(super) fn ledger_claims(root: &Path, key: &str) -> Vec<String> {
     let Ok(claims) = ledger.live_dispatch_claims(now_ms) else {
         return Vec::new();
     };
-    claims_naming(&claims, key)
+    claims_naming(&claims, key, &super::claim::owner())
 }
 
-/// The live claims that name this issue, as evidence strings.
+/// The live claims that name this issue and are somebody else's, as evidence
+/// strings.
 ///
 /// The key comes from [`issue_claim_key`], the same function
 /// [`super::claim::acquire`] takes the lease under, so the reader and the
@@ -197,13 +198,35 @@ pub(super) fn ledger_claims(root: &Path, key: &str) -> Vec<String> {
 /// here: `issue:41` answering for `issue:410` would defer a real issue on
 /// somebody else's unrelated work.
 ///
+/// `own_owner` is the mirror of [`worktrees_naming`]'s `own_root`, and exists
+/// for the same reason: **contention is other people.** Now that this loop
+/// mints the claims it also reads, a probe that counted its own would be the
+/// #4300 shape again through the authoritative signal — the loop deferring
+/// forever on evidence only it produces. The candidate filter in `drive`
+/// already keeps a claimed or spent key out of the queue, so this is not
+/// reachable today; it is here because "the loop never defers on its own
+/// lease" should be a property of this function rather than a coincidence of
+/// a filter two modules away, and because it is the half of #4309 that a
+/// later change to that filter would silently take back.
+///
+/// It is the *owner string* that is compared, not liveness: a crashed run of
+/// this loop had a different pid, so its lapsing lease is somebody else's
+/// claim as far as this is concerned, and it stops mattering by expiring.
+/// A recycled pid can make a dead run's live claim read as this process's
+/// own — which is the recovery that case wants anyway.
+///
 /// [`issue_claim_key`]: stella_fleet::issue_claim_key
 #[must_use]
-pub(super) fn claims_naming(claims: &[stella_fleet::DispatchClaim], key: &str) -> Vec<String> {
+pub(super) fn claims_naming(
+    claims: &[stella_fleet::DispatchClaim],
+    key: &str,
+    own_owner: &str,
+) -> Vec<String> {
     let wanted = stella_fleet::issue_claim_key(key);
     claims
         .iter()
         .filter(|claim| claim.claim_key == wanted)
+        .filter(|claim| claim.owner != own_owner)
         .map(|claim| format!("{} held by {}", claim.claim_key, claim.owner))
         .collect()
 }
@@ -361,8 +384,9 @@ mod tests {
         );
 
         // The live peer: same worktree, same root, same string — and a lease
-        // it is holding.
-        let peer = super::super::claim::acquire(root.path(), "4300");
+        // it is holding. Minted under another owner, because that is what
+        // makes it a peer rather than this process.
+        let peer = super::super::claim::acquire_as(root.path(), "4300", "self-driving:99999");
         assert!(matches!(peer, super::super::claim::Claim::Granted(_)));
 
         assert!(
@@ -401,7 +425,7 @@ mod tests {
             ContentionVerdict::Proceed
         );
 
-        let _peer = super::super::claim::acquire(root.path(), "4300");
+        let _peer = super::super::claim::acquire_as(root.path(), "4300", "self-driving:99999");
         let claimed = Contention {
             ledger_claims: ledger_claims(root.path(), "4300"),
             ..Contention::default()
@@ -430,20 +454,45 @@ mod tests {
         assert!(pr_numbers("not json at all").is_empty());
     }
 
-    /// A ledger claim is matched exactly: `issue:41` must not answer for
-    /// `issue:410`, which a substring match would have it do.
-    #[test]
-    fn a_ledger_claim_matches_its_issue_and_no_longer_one() {
-        let claim = |claim_key: &str| stella_fleet::DispatchClaim {
+    /// One claim, as the ledger would hand it back.
+    fn claim(claim_key: &str, owner: &str) -> stella_fleet::DispatchClaim {
+        stella_fleet::DispatchClaim {
             claim_key: claim_key.to_string(),
-            owner: "run-b".to_string(),
+            owner: owner.to_string(),
             fence: 1,
             acquired_at_ms: 0,
             renewed_at_ms: 0,
             expires_at_ms: 900_000,
-        };
-        let claims = [claim("issue:410"), claim("issue:41"), claim("task:41")];
+        }
+    }
 
-        assert_eq!(claims_naming(&claims, "41"), vec!["issue:41 held by run-b"]);
+    /// A ledger claim is matched exactly: `issue:41` must not answer for
+    /// `issue:410`, which a substring match would have it do.
+    #[test]
+    fn a_ledger_claim_matches_its_issue_and_no_longer_one() {
+        let claims = [
+            claim("issue:410", "run-b"),
+            claim("issue:41", "run-b"),
+            claim("task:41", "run-b"),
+        ];
+
+        assert_eq!(
+            claims_naming(&claims, "41", "run-a"),
+            vec!["issue:41 held by run-b"]
+        );
+    }
+
+    /// The owner-side mirror of the own-root worktree exclusion (#4309):
+    /// a claim this process holds is not another actor, and a peer's is —
+    /// on the same key, in the same read.
+    #[test]
+    fn a_claim_of_our_own_is_not_contention_but_a_peers_is() {
+        let claims = [claim("issue:41", "run-a"), claim("issue:41", "run-b")];
+
+        assert_eq!(
+            claims_naming(&claims, "41", "run-a"),
+            vec!["issue:41 held by run-b"]
+        );
+        assert!(claims_naming(&[claim("issue:41", "run-a")], "41", "run-a").is_empty());
     }
 }

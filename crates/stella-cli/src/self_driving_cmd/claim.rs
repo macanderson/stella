@@ -134,6 +134,17 @@ impl Drop for Lease {
 /// Every failure is [`Claim::Unavailable`] rather than an error: see that
 /// variant for why a probe that cannot answer must not defer.
 pub(super) fn acquire(root: &Path, key: &str) -> Claim {
+    acquire_as(root, key, &owner())
+}
+
+/// [`acquire`], with the holder's identity given rather than derived.
+///
+/// The identity is a parameter because a peer is *defined* by being a
+/// different one, and a test that mints a peer's claim under this process's
+/// own owner string would be testing the loop against itself — which
+/// [`super::contention::claims_naming`] deliberately treats as no contention
+/// at all.
+pub(super) fn acquire_as(root: &Path, key: &str, owner: &str) -> Claim {
     let Ok(path) = stella_store::workspace_private_sqlite_path(root, "fleet.db") else {
         return Claim::Unavailable;
     };
@@ -145,7 +156,7 @@ pub(super) fn acquire(root: &Path, key: &str) -> Claim {
     };
 
     let ttl_ms = u64::try_from(LEASE_TTL.as_millis()).unwrap_or(u64::MAX);
-    match ledger.claim_dispatch(&issue_claim_key(key), &owner(), now_ms, ttl_ms) {
+    match ledger.claim_dispatch(&issue_claim_key(key), owner, now_ms, ttl_ms) {
         Ok(ClaimOutcome::Granted(lease)) => Claim::Granted(hold(path, lease)),
         Ok(ClaimOutcome::Held(who)) => Claim::HeldBy(
             who.map(|claim| claim.owner)
@@ -242,23 +253,26 @@ mod tests {
         tempfile::tempdir().expect("tempdir")
     }
 
-    /// The producer half of #4300: taking an issue writes a claim a *reader*
-    /// can see.
+    /// A second self-driving process, as far as the ledger can tell.
+    const PEER: &str = "self-driving:99999";
+
+    /// The producer half of #4300: taking an issue writes a claim the
+    /// claim-time *reader* can see.
     ///
-    /// Asserted through `contention::for_issue`'s own reader rather than by
-    /// querying the ledger directly, because the defect this closes was
-    /// precisely that the reader existed and nothing ever fed it: a probe
-    /// that always returns empty passes every test written about the probe.
+    /// Asserted through `contention::ledger_claims` rather than by querying
+    /// the ledger directly, because the defect this closes was precisely that
+    /// the reader existed and nothing ever fed it: a probe that always returns
+    /// empty passes every test written about the probe.
     #[test]
     fn a_held_claim_is_visible_to_the_claim_time_reader() {
         let root = workspace();
 
-        let held = acquire(root.path(), "4300");
+        let held = acquire_as(root.path(), "4300", PEER);
         assert!(matches!(held, Claim::Granted(_)));
 
         assert_eq!(
             super::super::contention::ledger_claims(root.path(), "4300"),
-            vec![format!("issue:4300 held by {}", owner())]
+            vec![format!("issue:4300 held by {PEER}")]
         );
     }
 
@@ -268,7 +282,7 @@ mod tests {
     fn dropping_the_lease_frees_the_key_at_once() {
         let root = workspace();
 
-        drop(acquire(root.path(), "4300"));
+        drop(acquire_as(root.path(), "4300", PEER));
 
         assert!(super::super::contention::ledger_claims(root.path(), "4300").is_empty());
         assert!(matches!(acquire(root.path(), "4300"), Claim::Granted(_)));
@@ -281,11 +295,11 @@ mod tests {
     fn a_second_claimant_loses_and_is_told_who_holds_it() {
         let root = workspace();
 
-        let _first = acquire(root.path(), "4300");
-        let second = acquire(root.path(), "4300");
+        let _peer = acquire_as(root.path(), "4300", PEER);
+        let ours = acquire(root.path(), "4300");
 
-        match second {
-            Claim::HeldBy(who) => assert_eq!(who, owner()),
+        match ours {
+            Claim::HeldBy(who) => assert_eq!(who, PEER),
             other => panic!("expected the key to be held, got {other:?}"),
         }
     }
@@ -295,9 +309,26 @@ mod tests {
     fn a_claim_is_scoped_to_its_own_issue() {
         let root = workspace();
 
-        let _held = acquire(root.path(), "4300");
+        let _held = acquire_as(root.path(), "4300", PEER);
 
         assert!(super::super::contention::ledger_claims(root.path(), "4301").is_empty());
         assert!(matches!(acquire(root.path(), "4301"), Claim::Granted(_)));
+    }
+
+    /// #4309's third requirement: the loop never defers on its own lease.
+    ///
+    /// The claim this process holds is real, live, and names the issue — and
+    /// reads as no contention, because contention is other people. Without
+    /// this the producer would hand the loop a new way to defer forever on
+    /// evidence only it produces, which is #4300 again through the one signal
+    /// that is supposed to be authoritative.
+    #[test]
+    fn the_loop_never_defers_on_its_own_lease() {
+        let root = workspace();
+
+        let ours = acquire(root.path(), "4300");
+        assert!(matches!(ours, Claim::Granted(_)));
+
+        assert!(super::super::contention::ledger_claims(root.path(), "4300").is_empty());
     }
 }
