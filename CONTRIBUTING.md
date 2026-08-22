@@ -90,6 +90,7 @@ python3 ./scripts/check-dead-code-allows.py
 ./scripts/check-bench-suites.sh
 python3 ./scripts/gen-tokens.py --check
 python3 ./scripts/check-tokens.py
+python3 ./scripts/check-hue-separation.py
 python3 ./scripts/check-transcript-surfaces.py
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
