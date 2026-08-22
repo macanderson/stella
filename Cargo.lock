@@ -3310,6 +3310,15 @@ dependencies = [
  "serde",
  "serde_json",
  "stella-diff",
+ "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-go",
+ "tree-sitter-java",
+ "tree-sitter-php",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-sequel",
+ "tree-sitter-typescript",
  "unicode-width",
 ]
 

@@ -58,6 +58,13 @@ pub enum Color {
     Violet,
     /// Hunk headers.
     Blue,
+    /// Function and method names in highlighted source.
+    ///
+    /// The deck spends `theme::MAGENTA` here, and this is the entry that lets
+    /// the grid say the same thing — `Tok::Function` arrived with the
+    /// grammar-backed lexer (#4283) and had no hue in this palette's
+    /// vocabulary.
+    Magenta,
 }
 
 impl Color {
@@ -74,6 +81,8 @@ impl Color {
             Color::Amber => 179,
             Color::Violet => 141,
             Color::Blue => 111,
+            // 168 is the cube entry `theme::MAGENTA` already falls back to.
+            Color::Magenta => 168,
         }
     }
 
@@ -89,6 +98,7 @@ impl Color {
             Color::Amber => 33,
             Color::Violet => 35,
             Color::Blue => 34,
+            Color::Magenta => 35,
         }
     }
 }
@@ -637,6 +647,11 @@ fn tok_color(t: syntax::Tok) -> Color {
         syntax::Tok::Str => Color::Green,
         syntax::Tok::Number => Color::Violet,
         syntax::Tok::Comment => Color::Faint,
+        // The two classes the grammar-backed lexer added (#4283), on the deck's
+        // own hues for them: `theme::TEAL` for a type, `theme::MAGENTA` for a
+        // function name.
+        syntax::Tok::Type => Color::Cyan,
+        syntax::Tok::Function => Color::Magenta,
     }
 }
 

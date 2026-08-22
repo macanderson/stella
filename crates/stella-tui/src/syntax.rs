@@ -35,6 +35,8 @@ pub fn tok_style(t: Tok) -> Style {
         Tok::Comment => Style::default()
             .fg(theme::SYNTAX_COMMENT)
             .add_modifier(Modifier::ITALIC),
+        Tok::Type => Style::default().fg(theme::SYNTAX_TYPE),
+        Tok::Function => Style::default().fg(theme::SYNTAX_FUNCTION),
     }
 }
 
@@ -126,10 +128,17 @@ mod tests {
     /// would have closed half the gap #3644 and #4036 exist to close.
     #[test]
     fn every_token_class_wears_its_own_colour() {
-        let hues: Vec<_> = [Tok::Keyword, Tok::Str, Tok::Number, Tok::Comment]
-            .into_iter()
-            .map(|t| tok_style(t).fg)
-            .collect();
+        let hues: Vec<_> = [
+            Tok::Keyword,
+            Tok::Str,
+            Tok::Number,
+            Tok::Comment,
+            Tok::Type,
+            Tok::Function,
+        ]
+        .into_iter()
+        .map(|t| tok_style(t).fg)
+        .collect();
         for (i, a) in hues.iter().enumerate() {
             for b in hues.iter().skip(i + 1) {
                 assert_ne!(a, b, "two token classes share a colour: {hues:?}");
