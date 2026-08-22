@@ -1,8 +1,8 @@
 //! ISSUES-tab driver half: the deck's requests, served by the workspace's
 //! issue provider.
 //!
-//! Every function here is generic over [`IssueProvider`] rather than reaching
-//! for [`crate::issue_provider::GhIssueProvider`] itself (invariant 1 — the
+//! Every function here is generic over `IssueProvider` rather than reaching
+//! for `crate::issue_provider::GhIssueProvider` itself (invariant 1 — the
 //! tracker is a port, and GitHub is one adapter behind it). That is also what
 //! makes the mapping testable without a network, a `gh` binary, or a
 //! repository: the tests below drive a recording fake and assert on the exact
@@ -227,7 +227,7 @@ pub(super) fn handle_issues_input(
                     // reaches it), but nothing reads it into this popup yet —
                     // it would be a `gh label list` behind a port method the
                     // `IssueProvider` trait does not have. Declared gap, not a
-                    // silence: the popup shows "no matches" until #4246 adds
+                    // silence: the popup shows "no matches" until #4251 adds
                     // the read.
                     EntityField::Label => Vec::new(),
                     EntityField::Assignee => {

@@ -6,13 +6,12 @@
 //! comment/status prompts, the tracker search line) are modal and stay in
 //! `deck_ui.rs` beside the state they drive.
 //!
-//! **Row keys carry their `#`.** [`IssueRow::key`] is the *display* spelling —
+//! **Row keys carry their `#`.** `IssueRow::key` is the *display* spelling —
 //! the driver's `issue_row` puts the `#` on at the boundary and strips it
 //! again before the key reaches the tracker. So everything here interpolates
 //! `{key}` bare; a `#{key}` would render `##874`.
 //!
-//! Split from `deck_ui.rs` (#629's 1500-line ratchet), same as
-//! [`super::mcp_keys`].
+//! Split from `deck_ui.rs` (#629's 1500-line ratchet), same as `mcp_keys`.
 
 use crossterm::event::{KeyCode, KeyEvent};
 
