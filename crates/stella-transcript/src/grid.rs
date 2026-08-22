@@ -957,6 +957,46 @@ pub fn to_ansi16(lines: &[Line]) -> String {
     encode(lines, true)
 }
 
+fn encode(lines: &[Line], basic: bool) -> String {
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        for cell in line {
+            let mut codes: Vec<String> = Vec::new();
+            if cell.bold {
+                codes.push("1".to_string());
+            }
+            if basic {
+                codes.push(cell.fg.ansi16().to_string());
+                match cell.tint {
+                    Tint::DelWord | Tint::AddWord => {
+                        codes.push("1".to_string());
+                        codes.push("4".to_string());
+                    }
+                    Tint::Badge(_) => codes.push("7".to_string()),
+                    _ => {}
+                }
+            } else {
+                codes.push(format!("38;5;{}", cell.fg.ansi256()));
+                if let Some(bg) = cell.tint.ansi256() {
+                    codes.push(format!("48;5;{bg}"));
+                }
+                if matches!(cell.tint, Tint::Badge(_)) {
+                    codes.push("30".to_string());
+                }
+            }
+            out.push_str(&format!(
+                "\u{1b}[{}m{}\u{1b}[0m",
+                codes.join(";"),
+                cell.text
+            ));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1024,44 +1064,4 @@ mod tests {
             );
         }
     }
-}
-
-fn encode(lines: &[Line], basic: bool) -> String {
-    let mut out = String::new();
-    for (i, line) in lines.iter().enumerate() {
-        if i > 0 {
-            out.push('\n');
-        }
-        for cell in line {
-            let mut codes: Vec<String> = Vec::new();
-            if cell.bold {
-                codes.push("1".to_string());
-            }
-            if basic {
-                codes.push(cell.fg.ansi16().to_string());
-                match cell.tint {
-                    Tint::DelWord | Tint::AddWord => {
-                        codes.push("1".to_string());
-                        codes.push("4".to_string());
-                    }
-                    Tint::Badge(_) => codes.push("7".to_string()),
-                    _ => {}
-                }
-            } else {
-                codes.push(format!("38;5;{}", cell.fg.ansi256()));
-                if let Some(bg) = cell.tint.ansi256() {
-                    codes.push(format!("48;5;{bg}"));
-                }
-                if matches!(cell.tint, Tint::Badge(_)) {
-                    codes.push("30".to_string());
-                }
-            }
-            out.push_str(&format!(
-                "\u{1b}[{}m{}\u{1b}[0m",
-                codes.join(";"),
-                cell.text
-            ));
-        }
-    }
-    out
 }

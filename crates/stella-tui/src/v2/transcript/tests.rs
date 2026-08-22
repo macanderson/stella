@@ -299,12 +299,7 @@ fn a_partial_test_pass_is_not_green() {
 /// `crates/stella-tui/src/render/…` strings differing only in their last cells.
 #[test]
 fn a_path_subject_dims_its_directory_and_brightens_its_basename() {
-    let mut event = Event::new(
-        EventKind::Read {
-            extent: Extent::default(),
-        },
-        Subject::path("a/b/c.rs"),
-    );
+    let mut event = Event::new(EventKind::Read, Subject::path("a/b/c.rs"));
     event.collapsed = Some(false);
     let spans = head_row(&event, token::SILVER, W).spans;
 
