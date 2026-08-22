@@ -85,6 +85,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + diagnostic-codes
                          #   + bench-suites
                          #   + tokens (hue clamp + no retired hex)
+                         #   + transcript-surfaces
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)

@@ -223,6 +223,34 @@ pub fn render(run: &Run, state: &FoldState, width: usize) -> Vec<Line> {
     lines
 }
 
+/// One turn's frame, top rail to bottom rail, with no whole-run footer.
+///
+/// # The streaming contract
+///
+/// Every line this returns is **final the moment it is produced**, and the
+/// sequence only ever grows at the tail as the turn does. That is what lets an
+/// append-only surface — a terminal's scrollback, a log file — print a turn as
+/// it happens by re-rendering and emitting the suffix it has not printed yet,
+/// instead of inventing a second, terser rendering to show in the meantime
+/// (`stella-cli`'s `plain::transcript` does exactly this).
+///
+/// The contract is why the turn's status and accounting sit on the **bottom**
+/// rail rather than the top: neither exists when the first line has to be
+/// printed, and a top rail that claimed them would freeze `running` and a
+/// partial cost into scrollback forever. It is a real constraint on this
+/// function, not a layout preference — moving either back onto
+/// `turn_frame_top` makes the frame unstreamable, and
+/// `render_turn_is_append_only_as_a_turn_grows` fails.
+#[must_use]
+pub fn render_turn_lines(run: &Run, state: &FoldState, index: usize, width: usize) -> Vec<Line> {
+    let ctx = Ctx { run, state, width };
+    let mut lines = Vec::new();
+    if let Some(turn) = run.turns.get(index) {
+        render_turn(&mut lines, &ctx, turn, index);
+    }
+    lines
+}
+
 fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
     let width = ctx.width;
     let open = ctx.open(NodeId::Turn(index));
@@ -232,7 +260,7 @@ fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
             Cell::new("│ ", Color::Faint),
             Cell::new("…", Color::Dim),
         ]);
-        out.push(turn_frame_bottom(width));
+        out.push(turn_frame_bottom(turn, width));
         return;
     }
 
@@ -272,19 +300,21 @@ fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
         out.push(spine_blank());
         role_lines(out, "agent", Color::Violet, answer, width);
     }
-    out.push(turn_frame_bottom(width));
+    out.push(turn_frame_bottom(turn, width));
 }
 
+/// The turn's opening rail: everything about a turn that is knowable before it
+/// runs, and nothing that is not.
+///
+/// Deliberately carries no status and no chips. See [`render_turn_lines`]'s
+/// streaming contract — this is the line a live surface has to print first,
+/// when the only true answers to "how did it go" and "what did it cost" are
+/// "unknown".
 fn turn_frame_top(turn: &Turn, open: bool, width: usize) -> Line {
     let dig = digest::turn_digest(turn, 40, digest::ChipStyle::Tight);
     let mut line = vec![
         Cell::new("╭─ ", Color::Faint),
         Cell::new(&turn.name, Color::Violet).bold(),
-        Cell::new(" ", Color::Faint),
-        Cell::new(
-            format!("{} {}", turn.status.glyph(), status_word(turn.status)),
-            status_color(turn.status),
-        ),
         Cell::new(" ", Color::Faint),
     ];
     // An expanded turn shows its content in full, so a fold marker on its own
@@ -296,24 +326,36 @@ fn turn_frame_top(turn: &Turn, open: bool, width: usize) -> Line {
         line.push(Cell::new(format!("\"{}\" ", dig.prompt_line), Color::Dim));
     }
 
+    // The three cells after the fill — the ` ─╮` cap — are reserved here, not
+    // discovered later: a top rail that reserves less than it emits is longer
+    // than the bottom one it has to meet.
+    let used = line_width(&line) + 3;
+    let fill = width.saturating_sub(used).max(1);
+    line.push(Cell::new("─".repeat(fill), Color::Faint));
+    line.push(Cell::new(" ─╮", Color::Faint));
+    line
+}
+
+/// The turn's closing rail, carrying the two facts that only exist once the
+/// turn is over: how it ended, and what it spent.
+fn turn_frame_bottom(turn: &Turn, width: usize) -> Line {
+    let dig = digest::turn_digest(turn, 40, digest::ChipStyle::Tight);
+    let mut line = vec![
+        Cell::new("╰─ ", Color::Faint),
+        Cell::new(
+            format!("{} {}", turn.status.glyph(), status_word(turn.status)),
+            status_color(turn.status),
+        ),
+        Cell::new(" ", Color::Faint),
+    ];
     let chips = chips_text(&dig.chips);
-    // The four cells after the fill — the separating space and the ` ─╮` cap —
-    // are reserved here, not discovered later: a top rail that reserves less
-    // than it emits is two cells longer than the bottom one it has to meet.
     let used = line_width(&line) + cells(&chips) + 4;
     let fill = width.saturating_sub(used).max(1);
     line.push(Cell::new("─".repeat(fill), Color::Faint));
     line.push(Cell::new(" ", Color::Faint));
     line.push(Cell::new(chips, Color::Dim));
-    line.push(Cell::new(" ─╮", Color::Faint));
+    line.push(Cell::new(" ─╯", Color::Faint));
     line
-}
-
-fn turn_frame_bottom(width: usize) -> Line {
-    vec![Cell::new(
-        format!("╰{}╯", "─".repeat(width.saturating_sub(2))),
-        Color::Faint,
-    )]
 }
 
 fn spine_blank() -> Line {

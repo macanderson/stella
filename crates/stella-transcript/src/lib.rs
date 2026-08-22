@@ -26,6 +26,29 @@
 //! re-implementing the TUI's renderer in JavaScript, and that copy had silently
 //! drifted to the point of having no diff rendering at all.
 //!
+//! ## Which surfaces actually draw through this crate
+//!
+//! Extracting the crate proved nothing on its own, and the gap between "the
+//! crate exists" and "every surface uses it" went unnoticed for long enough to
+//! close #3578 as completed twice while the deck had never called
+//! [`grid::render`]. The adoption ledger is
+//! `scripts/check-transcript-surfaces.py` (`make transcript-surfaces`): one row
+//! per surface, a row that claims to share must really reference the entry
+//! point, a row that does not must cite the issue deciding it, and the caller
+//! sets must match in both directions. That file is the current answer; this
+//! paragraph deliberately does not repeat a count, because a number in two
+//! places is how the last one died.
+//!
+//! ## A turn closes with its outcome, on both renderers
+//!
+//! Neither a turn's status nor its accounting exists when the turn opens, so
+//! both live at the *end* of a turn — [`grid`]'s bottom rail, and [`html`]'s
+//! receipt. That is a constraint before it is a layout: it is the only thing
+//! that lets an append-only surface write a frame a line at a time as the turn
+//! runs, instead of showing a placeholder until it can draw the whole thing
+//! (see [`grid::render_turn_lines`]). A collapsed `<details>` is the one
+//! exception, and only because it renders nothing but its summary.
+//!
 //! ## Purity
 //!
 //! Nothing here reads a file, spawns a process, formats a timestamp or touches
