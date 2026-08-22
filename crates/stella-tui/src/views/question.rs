@@ -45,8 +45,11 @@
 //! - **Who is asking.** [`QuestionRequest::asker`] names the sub-agent when a
 //!   delegated child raised the question. A driver answering a fanned-out
 //!   delegation who cannot see which child is asking is answering a coin
-//!   flip, so the title carries it — the same fact the TTY card renders as
-//!   "(from the `<id>` sub-agent)".
+//!   flip, so the card carries it as its first body row — the same fact the
+//!   TTY card renders as "(from the `<id>` sub-agent)". A **body** row, not
+//!   the title: the title shares its width with the right-aligned key hints,
+//!   and this overlay's first golden caught the hints winning and the chip
+//!   rendering as `fro`.
 //! - **That nothing is running.** The turn is parked. The overlay owns the
 //!   keyboard ahead of the composer while it is up, which is what makes that
 //!   legible without a word of chrome saying so.
@@ -72,9 +75,11 @@ const QUESTION_CARD_W: u16 = 76;
 /// exclusive and the text-entry ones all borrow the same buffer — three
 /// `bool`s would make "note editor open while the review pane is up" a
 /// representable state that means nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum QuestionMode {
-    /// Moving over one question's options.
+    /// Moving over one question's options. Where a freshly raised card
+    /// starts, and where every editor returns to.
+    #[default]
     Answering,
     /// Typing a note for the focused question's answer.
     Note,
@@ -143,12 +148,6 @@ pub struct QuestionOverlay {
     editor: String,
 }
 
-impl Default for QuestionMode {
-    fn default() -> Self {
-        Self::Answering
-    }
-}
-
 impl QuestionOverlay {
     /// Whether a question is parked and the overlay owns the keyboard.
     #[must_use]
@@ -185,6 +184,29 @@ impl QuestionOverlay {
         self.review_row = 0;
         self.mode = QuestionMode::Answering;
         self.editor.clear();
+    }
+
+    /// Apply an inbound envelope, reporting whether it was one of ours.
+    ///
+    /// The overlay owns **both** directions of its own envelope contract:
+    /// `QuestionAsked` / `QuestionWithdrawn` in here, `QuestionAnswered` out
+    /// of [`Self::key`]. Keeping the mapping beside the state it drives is
+    /// what lets `deck_ui`'s fold spend two lines on it rather than a dozen
+    /// — that file is a god file closed to growth
+    /// (`scripts/file-size-baseline.txt`), and this is the shape the
+    /// constraint asks for rather than a workaround for it.
+    pub fn ingest(&mut self, inbound: &crate::envelope::Inbound) -> bool {
+        match inbound {
+            crate::envelope::Inbound::QuestionAsked(request) => {
+                self.open(request.as_ref().clone());
+                true
+            }
+            crate::envelope::Inbound::QuestionWithdrawn => {
+                self.close();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The focused question, when one is parked.
@@ -335,9 +357,7 @@ impl QuestionOverlay {
         if self.request.is_none() {
             return QuestionAction::Ignored;
         }
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('c'))
-        {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
             return QuestionAction::Ignored;
         }
 
@@ -570,7 +590,10 @@ fn question_body(overlay: &QuestionOverlay, request: &QuestionRequest) -> Vec<Li
     };
     rows.push(Line::from(vec![
         Span::styled(position, dim),
-        Span::styled(question.question.clone(), Style::new().fg(theme::TEXT_PRIMARY)),
+        Span::styled(
+            question.question.clone(),
+            Style::new().fg(theme::TEXT_PRIMARY),
+        ),
     ]));
     if question.multi_select {
         rows.push(Line::from(Span::styled(
@@ -580,7 +603,11 @@ fn question_body(overlay: &QuestionOverlay, request: &QuestionRequest) -> Vec<Li
     }
     rows.push(Line::from(""));
 
-    let pick = overlay.picks.get(overlay.focus).cloned().unwrap_or_default();
+    let pick = overlay
+        .picks
+        .get(overlay.focus)
+        .cloned()
+        .unwrap_or_default();
     let inner_w = usize::from(QUESTION_CARD_W) - 2;
     for (i, option) in question.options.iter().enumerate() {
         let chosen = pick.chosen.contains(&i);
@@ -682,13 +709,18 @@ fn review_body(overlay: &QuestionOverlay) -> Vec<Line<'static>> {
     let inner_w = usize::from(QUESTION_CARD_W) - 2;
     let mut rows = vec![Line::from(Span::styled(
         "Review your answers",
-        Style::new().fg(theme::TEXT_PRIMARY).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(theme::TEXT_PRIMARY)
+            .add_modifier(Modifier::BOLD),
     ))];
 
     for answer in overlay.answers() {
         rows.push(Line::from(""));
         rows.push(Line::from(Span::styled(
-            format!("  • {}", cards::truncate_cols(&answer.question, inner_w - 4)),
+            format!(
+                "  • {}",
+                cards::truncate_cols(&answer.question, inner_w - 4)
+            ),
             Style::new().fg(theme::TEXT_PRIMARY),
         )));
         if answer.chosen.is_empty() {
@@ -710,7 +742,11 @@ fn review_body(overlay: &QuestionOverlay) -> Vec<Line<'static>> {
 
     rows.push(Line::from(""));
     if overlay.mode == QuestionMode::Chat {
-        rows.push(editor_row("what would you like to say", &overlay.editor, inner_w));
+        rows.push(editor_row(
+            "what would you like to say",
+            &overlay.editor,
+            inner_w,
+        ));
         return rows;
     }
     for (i, label) in REVIEW_ROWS.iter().enumerate() {
@@ -794,14 +830,20 @@ mod tests {
         assert_eq!(overlay.focus, 0);
 
         // Attach the note the option list could not hold.
-        assert_eq!(overlay.key(key(KeyCode::Char('n'))), QuestionAction::Handled);
+        assert_eq!(
+            overlay.key(key(KeyCode::Char('n'))),
+            QuestionAction::Handled
+        );
         assert_eq!(overlay.mode, QuestionMode::Note);
         typing(&mut overlay, "only for the admin routes");
         assert_eq!(overlay.key(key(KeyCode::Enter)), QuestionAction::Handled);
         assert_eq!(overlay.mode, QuestionMode::Answering);
 
         // Review, submit.
-        assert_eq!(overlay.key(key(KeyCode::Char('r'))), QuestionAction::Handled);
+        assert_eq!(
+            overlay.key(key(KeyCode::Char('r'))),
+            QuestionAction::Handled
+        );
         let QuestionAction::Resolve(QuestionOutcome::Answered { answers }) =
             overlay.key(key(KeyCode::Enter))
         else {
@@ -810,7 +852,10 @@ mod tests {
         assert_eq!(answers.len(), 1);
         assert_eq!(answers[0].header, "Auth method");
         assert_eq!(answers[0].chosen, vec!["Bearer token"]);
-        assert_eq!(answers[0].note.as_deref(), Some("only for the admin routes"));
+        assert_eq!(
+            answers[0].note.as_deref(),
+            Some("only for the admin routes")
+        );
     }
 
     /// A note typed into the editor must not be readable as a navigation key.
@@ -862,7 +907,11 @@ mod tests {
         multi.key(key(KeyCode::Enter));
         multi.key(key(KeyCode::Down));
         multi.key(key(KeyCode::Enter));
-        assert_eq!(multi.mode, QuestionMode::Answering, "multi-select stays put");
+        assert_eq!(
+            multi.mode,
+            QuestionMode::Answering,
+            "multi-select stays put"
+        );
         assert_eq!(
             multi.answers()[0].chosen,
             vec!["Session cookie", "Bearer token"]

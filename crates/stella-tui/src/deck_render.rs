@@ -195,10 +195,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
 
-    // The parked question (#4220). Drawn above the cards and below help: the
-    // user can still open help over it (they may need to read what a key
-    // does before answering), but nothing else may cover the one overlay a
-    // turn is stopped on.
+    // The parked question (#4220): above the cards, below help — a user may
+    // need to read what a key does before answering, but nothing else may
+    // cover the one overlay a turn is stopped on.
     if ui.question.is_open() {
         guarded_overlay(buf, area, "question", |b| {
             views::question::render(&ui.question, area, b)

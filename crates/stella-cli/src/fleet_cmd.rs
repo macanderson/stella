@@ -925,7 +925,12 @@ async fn run_task(
     // reach. A worker's children inherit its headless posture through the
     // registry they run against.
     crate::subagent::install_for_session(&cfg, &registry)?;
-    let active_rules = rules::enforce_workspace_rules(&registry, root, &cfg.authority, rules::MidTurnAsk::Headless);
+    let active_rules = rules::enforce_workspace_rules(
+        &registry,
+        root,
+        &cfg.authority,
+        rules::MidTurnAsk::Headless,
+    );
     // Commit attribution (#1216): records the `HEAD` advance this worker is
     // observed making. It sits UNDER the claim tap on purpose — the tap holds
     // the workspace-wide commit lane across the call, so the window this

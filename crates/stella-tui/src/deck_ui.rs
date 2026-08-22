@@ -1199,14 +1199,8 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // A parked question raises its overlay and nothing else: out-of-band view
     // state, deliberately never folded into the transcript. Nothing has been
     // *said* yet — the turn is stopped waiting — and writing an unanswered
-    // question into the history would leave one there if the answer never
-    // comes.
-    if let Inbound::QuestionAsked(request) = inbound {
-        ui.question.open(request.as_ref().clone());
-        return;
-    }
-    if let Inbound::QuestionWithdrawn = inbound {
-        ui.question.close();
+    // question into the history would leave one there if the answer never came.
+    if ui.question.ingest(inbound) {
         return;
     }
     // `/help` from the driver opens the same overlay the `?` key opens. Reset

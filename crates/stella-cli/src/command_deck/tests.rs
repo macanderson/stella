@@ -288,7 +288,7 @@ fn mcp_outcome_report_names_every_claimant_of_a_contested_wire_name() {
 async fn run_prompt(options: &[&str], answer: &str) -> (Result<String, String>, Vec<Inbound>) {
     let (in_tx, mut in_rx) = mpsc::unbounded_channel();
     let (ans_tx, ans_rx) = mpsc::unbounded_channel();
-    let io = DeckAskUserIo {
+    let io = super::mid_turn_ask::DeckAskUserIo {
         agent: "lead".into(),
         inbound: in_tx,
         answers: Arc::new(tokio::sync::Mutex::new(ans_rx)),

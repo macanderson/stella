@@ -121,12 +121,6 @@ mod steer;
 /// The lead agent's id — the one conversation this driver runs.
 pub(crate) const LEAD: &str = "lead";
 
-/// Ids for the cards [`DeckAskUserIo`] mints (`deck-ask-N`). Process-unique
-/// like `interactive::NEXT_ASK_ID`, and deliberately a different namespace:
-/// the deck io's card must be cleared by the deck io's own echoed
-/// `ToolResult`, never by an unrelated result.
-static NEXT_DECK_ASK: AtomicU64 = AtomicU64::new(0);
-
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -367,24 +361,13 @@ pub async fn run_deck_session(
     // Neither may be the plain-TTY responder — the deck holds the terminal
     // in raw mode, and a blocking stdin read behind its render loop would
     // fight it for every keystroke.
-    let ask_io = DeckAskUserIo {
-        agent: LEAD.to_string(),
-        inbound: in_tx.clone(),
-        answers: Arc::new(tokio::sync::Mutex::new(ask_rx)),
-    };
+    let (mid_turn_posture, ask_io) =
+        mid_turn_ask::surface(LEAD.to_string(), in_tx.clone(), ask_rx, question_rx);
     let active_rules = rules::enforce_workspace_rules(
         &registry,
         &cfg.workspace_root,
         &cfg.authority,
-        rules::MidTurnAsk::Surface {
-            approval: Arc::new(crate::approval::AskUserApprovalResponder::new(Box::new(
-                ask_io.clone(),
-            ))),
-            question: Arc::new(DeckQuestionResponder {
-                inbound: in_tx.clone(),
-                answers: Arc::new(tokio::sync::Mutex::new(question_rx)),
-            }),
-        },
+        mid_turn_posture,
     );
     let custom_tools = agent::discover_custom_tools(cfg, true).await;
     let mut budget = agent::build_budget_guard(budget_limit);
@@ -3859,143 +3842,7 @@ async fn run_lead_turn(
     agent::outcome::turn_outcome_result(&outcome)
 }
 
-// ── interactive questions through the deck ──────────────────────────────────
-
-/// [`AskUserIo`] over the deck's channels — how the approvals plane's
-/// questions (scope review's confirm) reach the human at the deck. `prompt`
-/// emits an `AskUser` card, awaits the user's `AskUserAnswer`, echoes the
-/// answer back as the card's own `ToolResult` (the event-pure clear), and
-/// returns the answer with an exact option match becoming its 1-based index
-/// (the numeric quick-pick), anything else passing verbatim as free text.
-#[derive(Clone)]
-struct DeckAskUserIo {
-    agent: String,
-    inbound: UnboundedSender<Inbound>,
-    answers: Arc<tokio::sync::Mutex<UnboundedReceiver<String>>>,
-}
-
-#[async_trait]
-impl AskUserIo for DeckAskUserIo {
-    async fn prompt(&self, question: &str, options: &[String]) -> Result<String, String> {
-        // A caller may append the free-text affordance; the deck's card
-        // renders its own (Enter submits the composer), so presenting the
-        // label as a pickable option would double it — and picking it would
-        // return the label itself as an "answer". Strip it; every other
-        // option passes through untouched.
-        let mut presented: Vec<String> = options.to_vec();
-        if presented
-            .last()
-            .is_some_and(|o| o.starts_with(FREE_TEXT_LABEL))
-        {
-            presented.pop();
-        }
-
-        let id = format!("deck-ask-{}", NEXT_DECK_ASK.fetch_add(1, Ordering::Relaxed));
-        let mut answers = self.answers.lock().await;
-        // Drop answers stranded by a cancelled turn — they belong to a card
-        // that no longer exists.
-        while answers.try_recv().is_ok() {}
-
-        let _ = self.inbound.send(Inbound::Event {
-            agent: self.agent.clone(),
-            event: AgentEvent::AskUser {
-                id: id.clone(),
-                question: question.to_string(),
-                options: presented.clone(),
-            },
-        });
-
-        let answer = answers
-            .recv()
-            .await
-            .ok_or_else(|| "the deck closed before the question was answered".to_string())?;
-
-        // The echoed ToolResult is what clears the pending card in the fold
-        // (matched by this exact id) — without it the gate would keep eating
-        // keys for the rest of the turn.
-        let _ = self.inbound.send(Inbound::Event {
-            agent: self.agent.clone(),
-            event: AgentEvent::ToolResult {
-                call_id: id,
-                output: ToolOutput::Ok {
-                    content: answer.clone(),
-                    data: None,
-                },
-                duration_ms: 0,
-                speculated: false,
-            },
-        });
-
-        match presented.iter().position(|option| *option == answer) {
-            Some(i) => Ok((i + 1).to_string()),
-            None => Ok(answer),
-        }
-    }
-}
-
-/// [`QuestionResponder`] over the deck's channels (#4220): raise the question
-/// overlay, park until the driver settles it, take the card down.
-///
-/// The deck's counterpart to [`crate::question::TtyQuestionResponder`]. That
-/// one renders a card to stdout and blocks on a stdin line; this one hands
-/// the whole [`QuestionRequest`] to the render loop as
-/// [`Inbound::QuestionAsked`] and waits for the [`QuestionOutcome`] the
-/// overlay folds out — so the wait never touches the terminal the deck is
-/// holding, and the deck keeps rendering (and stays Ctrl-C-able) throughout.
-///
-/// The overlay is a pure fold, so **every** decision about what the driver
-/// may do — the note editor, the free-text row, the review pane's three ways
-/// out — lives in `stella_tui::views::question` and is unit-tested without a
-/// terminal. Nothing here interprets an answer; it only carries one.
-struct DeckQuestionResponder {
-    inbound: UnboundedSender<Inbound>,
-    answers: Arc<tokio::sync::Mutex<UnboundedReceiver<QuestionOutcome>>>,
-}
-
-/// Takes the card down however the wait ends.
-///
-/// A `Drop` guard rather than a line at each exit, because the exit that
-/// matters is the one with no line to put it on: at the 30-minute
-/// `DEFAULT_QUESTION_TTL` the broker's `timeout` drops the `respond` future
-/// where it stands, and no code in this file runs again. Without this the
-/// deck would keep a live-looking card up over a turn that had already given
-/// up on it, and a driver's considered answer would go into a oneshot nobody
-/// was holding.
-struct WithdrawOnDrop(UnboundedSender<Inbound>);
-
-impl Drop for WithdrawOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.send(Inbound::QuestionWithdrawn);
-    }
-}
-
-#[async_trait]
-impl stella_tools::registry::question::QuestionResponder for DeckQuestionResponder {
-    async fn respond(&self, request: &QuestionRequest) -> QuestionOutcome {
-        let mut answers = self.answers.lock().await;
-        // Drop outcomes stranded by a cancelled turn — they answer a card
-        // that no longer exists, and reading one as this question's answer
-        // would resolve it without the driver having looked at it.
-        while answers.try_recv().is_ok() {}
-
-        let _withdraw = WithdrawOnDrop(self.inbound.clone());
-        let _ = self
-            .inbound
-            .send(Inbound::QuestionAsked(Box::new(request.clone())));
-
-        match answers.recv().await {
-            Some(outcome) => outcome,
-            // The deck went away mid-question. Declined, never a silent
-            // default: the model must hear that no answer is coming rather
-            // than act on one nobody gave.
-            None => QuestionOutcome::Declined {
-                reason: "the deck closed before the question was answered — do not re-ask; \
-                         proceed with your best judgement and state the assumption you made"
-                    .to_string(),
-            },
-        }
-    }
-}
+mod mid_turn_ask;
 
 #[cfg(test)]
 mod tests;

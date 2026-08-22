@@ -197,13 +197,12 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
 
     crate::subagent::install_for_session(cfg, &registry)?;
     let ask = human_is_present(true);
-    let active_rules =
-        crate::rules::enforce_workspace_rules(
-            &registry,
-            &cfg.workspace_root,
-            &cfg.authority,
-            crate::rules::MidTurnAsk::tty_when(ask),
-        );
+    let active_rules = crate::rules::enforce_workspace_rules(
+        &registry,
+        &cfg.workspace_root,
+        &cfg.authority,
+        crate::rules::MidTurnAsk::tty_when(ask),
+    );
     // Auto-build the code-graph index in the background (a cheap incremental
     // refresh if it already exists) and keep it fresh via the live watcher, so
     // `stella search` and the deck's Graph tab have an index this session

@@ -417,7 +417,11 @@ impl MidTurnAsk {
     /// derived once by the session driver and passed down — never re-derived
     /// here, which is the #3035 discipline.
     pub(crate) fn tty_when(human_present: bool) -> Self {
-        if human_present { Self::Tty } else { Self::Headless }
+        if human_present {
+            Self::Tty
+        } else {
+            Self::Headless
+        }
     }
 }
 
@@ -897,7 +901,12 @@ mod tests {
                 .unwrap();
         }
         let registry = ToolRegistry::new(root.path().to_path_buf());
-        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), MidTurnAsk::Headless);
+        enforce_workspace_rules(
+            &registry,
+            root.path(),
+            &trusted_project_authority(),
+            MidTurnAsk::Headless,
+        );
 
         let denied = registry
             .execute(
@@ -931,7 +940,12 @@ mod tests {
         std::fs::write(&target, "SELECT 1;\n").unwrap();
 
         let registry = ToolRegistry::new(root.path().to_path_buf());
-        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), MidTurnAsk::Headless);
+        enforce_workspace_rules(
+            &registry,
+            root.path(),
+            &trusted_project_authority(),
+            MidTurnAsk::Headless,
+        );
 
         let denied = registry
             .execute(
@@ -981,7 +995,12 @@ mod tests {
         // tool resolution — a shell-shaped custom or MCP tool carrying that
         // name is denied before it can run.
         let registry = ToolRegistry::new(root.path().to_path_buf());
-        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), MidTurnAsk::Headless);
+        enforce_workspace_rules(
+            &registry,
+            root.path(),
+            &trusted_project_authority(),
+            MidTurnAsk::Headless,
+        );
 
         let denied = registry
             .execute(
