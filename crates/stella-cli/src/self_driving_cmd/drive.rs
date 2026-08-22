@@ -1254,6 +1254,11 @@ fn report(durable: &Durable, tally: &Tally) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Named rather than reached through `super::claim`: inside this module
+    // `super` is `drive`, not `self_driving_cmd`, and `crate::ingest_cmd`
+    // has a private `Claim` of its own that rustc offers when the path is
+    // wrong — a confusing suggestion for a plain scoping slip.
+    use crate::self_driving_cmd::claim::Claim;
 
     /// A ranked queue whose top entry a peer is holding yields the next one,
     /// and says why it skipped.
@@ -1282,7 +1287,7 @@ mod tests {
             |_| false,
             ContentionPolicy::Defer,
             seen,
-            |_| super::claim::Claim::Unavailable,
+            |_| Claim::Unavailable,
             |key, evidence| skipped.push((key.to_owned(), evidence.to_vec())),
         );
 
@@ -1301,7 +1306,7 @@ mod tests {
             |_| false,
             ContentionPolicy::Proceed,
             seen,
-            |_| super::claim::Claim::Unavailable,
+            |_| Claim::Unavailable,
             |key, _| skipped_under_proceed.push(key.to_owned()),
         );
 
@@ -1326,9 +1331,9 @@ mod tests {
             |_| Contention::default(),
             |key| {
                 if key == "1" {
-                    super::claim::Claim::HeldBy("self-driving:99999".to_owned())
+                    Claim::HeldBy("self-driving:99999".to_owned())
                 } else {
-                    super::claim::Claim::Unavailable
+                    Claim::Unavailable
                 }
             },
             |key, evidence| skipped.push((key.to_owned(), evidence.to_vec())),
@@ -1357,7 +1362,7 @@ mod tests {
                 ledger_claims: vec!["fleet-run-7".to_owned()],
                 ..Contention::default()
             },
-            |_| super::claim::Claim::Unavailable,
+            |_| Claim::Unavailable,
             |key, _| skipped.push(key.to_owned()),
         );
 
