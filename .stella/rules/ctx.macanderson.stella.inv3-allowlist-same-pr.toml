@@ -1,0 +1,42 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.inv3-allowlist-same-pr"
+record_id = "rec_macanderson_stella_inv3_allowlist_same_pr_38b7d6b446b7"
+record_hash = "sha256:b99610532bb3772f8717b036d9e941d88154c7643d03f52be1460602b40a692c"
+kind = "rule"
+statement = "Adding a hub telemetry column or a key to an egress encoder fails the gate until the reviewed allowlist in crates/stella-store/src/content_free.rs is edited in the same PR."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+paths = ["crates/stella-store/src/content_free.rs"]
+keywords = [
+    "allowlist",
+    "hub column",
+    "encoder",
+    "sentinel harness",
+]
+
+[record.enforcement]
+mode = "hard"
+
+[record.truth]
+basis = "measured"
+confidence = 88

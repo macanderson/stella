@@ -1,0 +1,44 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.announce-deferred-fix"
+record_id = "rec_macanderson_stella_announce_deferred_fix_e91bdcc10043"
+record_hash = "sha256:1523f28af6e7bfb3a74786d37c84a9367e01963ec75add1c7e5ad954103288c2"
+kind = "rule"
+statement = "If the correct fix is bigger than the session, the deferral must be stated out loud in the final message."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "CLAUDE.md"
+source_digest = "sha256:5de1b8dc1e72abd504a708a727b54340ebb060894883c5e4e143fc91fab9eba3"
+source_lines = [
+    29,
+    32,
+]
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77ce42"
+extracted_at = "2026-08-09T00:48:02Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+keywords = [
+    "final message",
+    "deferral",
+    "disclosure",
+]
+
+[record.enforcement]
+mode = "soft"
+
+[record.truth]
+basis = "decree"
+confidence = 90

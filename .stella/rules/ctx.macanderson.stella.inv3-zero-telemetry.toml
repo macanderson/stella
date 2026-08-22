@@ -1,0 +1,47 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.inv3-zero-telemetry"
+record_id = "rec_macanderson_stella_inv3_zero_telemetry_82782f2f11b9"
+record_hash = "sha256:ec6c360eb9fd651dec78a2437611d8317454d41e987e951de250aaf398c4db59"
+kind = "constraint"
+statement = "Invariant 3: community/default Stella sends no telemetry anywhere, and update checks and anonymous analytics remain prohibited."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+paths = ["crates/stella-store/src/content_free.rs"]
+keywords = [
+    "telemetry",
+    "egress",
+    "analytics",
+    "update check",
+]
+
+[record.enforcement]
+mode = "hard"
+
+[record.truth]
+basis = "decree"
+confidence = 92
+
+[record.truth.probe]
+kind = "path_exists"
+path = "crates/stella-store/src/content_free.rs"
+expect = "present"

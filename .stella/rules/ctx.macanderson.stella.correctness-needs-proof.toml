@@ -1,0 +1,45 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.correctness-needs-proof"
+record_id = "rec_macanderson_stella_correctness_needs_proof_cc6cc06a0929"
+record_hash = "sha256:11ccb7b11c8ab5cd9967a55942313c2b5ccb95996f74848a48568bc47197541a"
+kind = "rule"
+statement = "Correctness must be demonstrated with a witness test, a property, or a golden diff someone actually read, not merely asserted in a PR description."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "CLAUDE.md"
+source_digest = "sha256:5de1b8dc1e72abd504a708a727b54340ebb060894883c5e4e143fc91fab9eba3"
+source_lines = [
+    33,
+    37,
+]
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77ce42"
+extracted_at = "2026-08-09T00:48:02Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+keywords = [
+    "witness test",
+    "property",
+    "golden diff",
+    "proof",
+]
+
+[record.enforcement]
+mode = "soft"
+
+[record.truth]
+basis = "decree"
+confidence = 90
