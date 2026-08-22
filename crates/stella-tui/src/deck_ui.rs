@@ -783,6 +783,11 @@ pub struct DeckUi {
     /// driver-owned snapshot ([`Inbound::ToolPolicy`]). Modal while open, and
     /// mutually exclusive with `engine`: one editor owns the tab's keyboard.
     pub tools: crate::views::tools::ToolsOverlay,
+    /// The `ask_question` overlay (#4220): the wizard a **parked turn** waits
+    /// on. Modal ahead of everything but Ctrl-C while a question is up —
+    /// nothing else in this struct holds a live tool call open, which is why
+    /// it wins the keyboard over every other modal here.
+    pub question: crate::views::question::QuestionOverlay,
 }
 
 impl Default for DeckUi {
@@ -862,6 +867,7 @@ impl Default for DeckUi {
             pending_inputs: Vec::new(),
             engine: crate::views::engine::EngineOverlay::default(),
             tools: crate::views::tools::ToolsOverlay::default(),
+            question: crate::views::question::QuestionOverlay::default(),
         }
     }
 }
@@ -1188,6 +1194,19 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
         // reply can outlive the inspector that asked for it when a registry
         // lookup is in the middle.
         ui.mcp.apply_detail(detail.as_ref().clone());
+        return;
+    }
+    // A parked question raises its overlay and nothing else: out-of-band view
+    // state, deliberately never folded into the transcript. Nothing has been
+    // *said* yet — the turn is stopped waiting — and writing an unanswered
+    // question into the history would leave one there if the answer never
+    // comes.
+    if let Inbound::QuestionAsked(request) = inbound {
+        ui.question.open(request.as_ref().clone());
+        return;
+    }
+    if let Inbound::QuestionWithdrawn = inbound {
+        ui.question.close();
         return;
     }
     // `/help` from the driver opens the same overlay the `?` key opens. Reset
@@ -1521,6 +1540,20 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
 fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     if key.kind == KeyEventKind::Release {
         return DeckAction::Ignored;
+    }
+
+    // A parked question outranks every other modal here, including the
+    // routing card below: it is the only one holding a live tool call open,
+    // and a turn that is stopped waiting for an answer cannot make progress
+    // on any key that is not that answer. Like the routing card it declines
+    // Ctrl-C, so the quit branch below still fires.
+    match ui.question.key(key) {
+        crate::views::question::QuestionAction::Ignored => {}
+        crate::views::question::QuestionAction::Handled => return DeckAction::Handled,
+        crate::views::question::QuestionAction::Resolve(outcome) => {
+            ui.question.close();
+            return DeckAction::Send(WorkspaceInput::QuestionAnswered(Box::new(outcome)));
+        }
     }
 
     // The routing card owns every key while it is up — it is holding the

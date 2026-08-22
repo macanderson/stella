@@ -67,7 +67,12 @@ pub fn human_is_present(interactive_output: bool) -> bool {
 /// interactive question card: whatever the structured options are, the human
 /// can always answer in their own words, and the affordance is appended by
 /// the runtime, never listed by the asker.
-pub const FREE_TEXT_LABEL: &str = "Type your own answer";
+///
+/// Re-exported rather than defined here: the Command Deck's question overlay
+/// ([`stella_tui::views::question`]) draws the same row, and `stella-tui`
+/// cannot depend on this crate — so the one copy lives in `stella-protocol`
+/// beside the question types both surfaces render.
+pub use stella_protocol::FREE_TEXT_LABEL;
 
 /// How an interactive question — an approval (#2676), a scope-review confirm
 /// — reaches the human. Injectable so the decision logic is unit-testable
@@ -294,9 +299,20 @@ mod tests {
         // Consumer 1 — the #2676 approval responder is not attached, so the
         // broker refuses with the grant-path message instead of parking on a
         // stdin nobody is holding.
+        //
+        // Asked through `MidTurnAsk::tty_when`, which is where the fact is
+        // turned into a posture since #4220 replaced the boolean parameter.
+        // That is the seam the production callers use, so this is the same
+        // question they ask rather than a re-derivation beside it.
+        assert!(
+            matches!(
+                crate::rules::MidTurnAsk::tty_when(present),
+                crate::rules::MidTurnAsk::Headless
+            ),
+            "no human means no surface to attach"
+        );
         let workspace = tempfile::tempdir().expect("workspace tempdir");
         let registry = stella_tools::ToolRegistry::new(workspace.path().to_path_buf());
-        crate::approval::attach_interactive_approvals(&registry, present);
         let outcome = registry
             .approval_broker()
             .resolve(None, &approval_request())

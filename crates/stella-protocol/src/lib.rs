@@ -129,7 +129,9 @@ pub use lane::{BuiltinLane, LaneId, TurnLane};
 // The `ask_question` vocabulary (#4212). Re-exported flat because both the
 // tool that raises a question and every surface that renders one name these
 // types constantly, and neither should have to spell the module path.
-pub use question::{Answer, Question, QuestionOption, QuestionOutcome, QuestionRequest};
+pub use question::{
+    Answer, FREE_TEXT_LABEL, Question, QuestionOption, QuestionOutcome, QuestionRequest,
+};
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
 pub use issue::{Issue, IssueClass, IssueError, IssueKey, IssueLabel, IssueProvider, IssueState};

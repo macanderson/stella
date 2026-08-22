@@ -373,37 +373,84 @@ fn merge_rule_trust_tiers(mut user_rules: Vec<Rule>, project_rules: Vec<Rule>) -
     user_rules
 }
 
+/// Who answers a mid-turn ask on this driver's surface, and through what.
+///
+/// One value, consulted once, arming **both** mid-turn asks: a gate's
+/// `RequireApproval` (#2676) and an agent's `ask_question` (#4212). They are
+/// one fact — a surface that can park a tool call on a human yes/no is
+/// exactly a surface that can park one on a question — and deriving it twice
+/// is what let two consumers of "is anyone here?" disagree before #3035.
+///
+/// It replaces the `bool` this parameter used to be, because a boolean can
+/// say *whether* a human is reachable but not *how to reach them*, and the
+/// two surfaces that can reach one do it in incompatible ways. `true` meant
+/// "attach the stdin-reading TTY responder", so the Command Deck — which
+/// owns the terminal in raw mode and would have fought that reader for every
+/// keystroke — had no answer but `false`, and every question on Stella's
+/// default interactive shell resolved to the headless decline (#4220). An
+/// enum lets the deck say the true thing.
+pub(crate) enum MidTurnAsk {
+    /// Nobody is at the controls: fleet workers, sub-agent lanes,
+    /// machine-output runs, a daemon-resumed turn. Both brokers stay
+    /// headless — the approval refusal names the grant path, and the
+    /// question decline tells the model to decide and state its assumption.
+    /// Never a hang on a stdin nobody is holding.
+    Headless,
+    /// A plain terminal: line-oriented cards on stdout, one line of stdin
+    /// back. The non-deck REPL, `stella run` on a TTY.
+    Tty,
+    /// A surface that owns its own input loop and brings its own responders
+    /// — the Command Deck. The host builds them over its channels and hands
+    /// them in, because only it knows how to reach its own driver.
+    Surface {
+        /// Answers a gate's `RequireApproval`.
+        approval: std::sync::Arc<dyn stella_tools::registry::approval::ApprovalResponder>,
+        /// Answers an agent's `ask_question`.
+        question: std::sync::Arc<dyn stella_tools::registry::question::QuestionResponder>,
+    },
+}
+
+impl MidTurnAsk {
+    /// The TTY surface when a human is present, headless otherwise.
+    ///
+    /// `human_present` is [`crate::interactive::human_can_answer`]'s answer,
+    /// derived once by the session driver and passed down — never re-derived
+    /// here, which is the #3035 discipline.
+    pub(crate) fn tty_when(human_present: bool) -> Self {
+        if human_present { Self::Tty } else { Self::Headless }
+    }
+}
+
 /// Session wiring shorthand: load the workspace rules and attach their
 /// Tier-2 guards to `registry`. Every session driver calls this right after
 /// constructing its registry.
 ///
-/// `interactive_approvals` declares whether this driver's surface can ask a
-/// human mid-turn, and now arms **both** mid-turn asks against that one fact
-/// (#4212): `true` (a TTY REPL/goal surface) attaches the #2676 approval
-/// responder so a gate's `RequireApproval` parks on a real yes/no, and the
-/// `ask_question` responder so an agent's question parks on a real answer;
-/// `false` (fleet workers, sub-agent lanes, machine-output runs, the deck
-/// until it grows an approval card) leaves both registry brokers headless —
-/// the approval refusal names the grant path, and the question decline tells
-/// the model to decide and state its assumption. It rides here because this
-/// is the same call that arms the guards able to produce a
-/// `RequireApproval`.
-///
-/// The parameter keeps its approvals-era name rather than growing a second
-/// one: two booleans would be two places for "is a human here?" to be
-/// answered differently, which is the exact defect #3035 collapsed.
+/// `ask` declares who can answer a mid-turn question on this surface — see
+/// [`MidTurnAsk`]. It rides here because this is the same call that arms the
+/// guards able to *produce* a `RequireApproval`.
 pub(crate) fn enforce_workspace_rules(
     registry: &ToolRegistry,
     workspace_root: &Path,
     authority: &crate::settings::AuthorityPolicy,
-    interactive_approvals: bool,
+    ask: MidTurnAsk,
 ) -> ResolvedRules {
-    crate::approval::attach_interactive_approvals(registry, interactive_approvals);
-    // The same fact answers both: a surface that can park a tool call on a
-    // human yes/no is exactly a surface that can park one on a question
-    // (#4212). Deriving it twice is what let two consumers of "is anyone
-    // here?" disagree before #3035.
-    crate::question::attach_interactive_questions(registry, interactive_approvals);
+    match ask {
+        MidTurnAsk::Headless => {}
+        MidTurnAsk::Tty => {
+            crate::approval::attach_interactive_approvals(registry);
+            crate::question::attach_interactive_questions(registry);
+        }
+        MidTurnAsk::Surface { approval, question } => {
+            registry.attach_approval_responder(
+                approval,
+                stella_tools::registry::approval::DEFAULT_APPROVAL_TTL,
+            );
+            registry.attach_question_responder(
+                question,
+                stella_tools::registry::question::DEFAULT_QUESTION_TTL,
+            );
+        }
+    }
     let rules = load_workspace_rules(workspace_root, authority);
     attach_rule_guards(registry, &rules);
     rules
@@ -686,7 +733,7 @@ mod tests {
                 &registry,
                 root.path(),
                 &crate::settings::AuthorityPolicy::default(),
-                false,
+                MidTurnAsk::Headless,
             );
         }
 
@@ -850,7 +897,7 @@ mod tests {
                 .unwrap();
         }
         let registry = ToolRegistry::new(root.path().to_path_buf());
-        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), false);
+        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), MidTurnAsk::Headless);
 
         let denied = registry
             .execute(
@@ -884,7 +931,7 @@ mod tests {
         std::fs::write(&target, "SELECT 1;\n").unwrap();
 
         let registry = ToolRegistry::new(root.path().to_path_buf());
-        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), false);
+        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), MidTurnAsk::Headless);
 
         let denied = registry
             .execute(
@@ -934,7 +981,7 @@ mod tests {
         // tool resolution — a shell-shaped custom or MCP tool carrying that
         // name is denied before it can run.
         let registry = ToolRegistry::new(root.path().to_path_buf());
-        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), false);
+        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), MidTurnAsk::Headless);
 
         let denied = registry
             .execute(

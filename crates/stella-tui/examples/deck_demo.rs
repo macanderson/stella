@@ -163,6 +163,13 @@ async fn main() -> std::io::Result<()> {
                     }
                     UserInput::Prompt { .. } | UserInput::Cancel => {}
                 },
+                // A settled question: the demo has no parked tool call to
+                // resolve, so it just withdraws the card — which is exactly
+                // what the deck's own fold already did locally, and is here
+                // so the round trip is visible rather than implied.
+                WorkspaceInput::QuestionAnswered(_) => {
+                    let _ = react_tx.send(Inbound::QuestionWithdrawn);
+                }
                 // Queue edits are already reflected in the deck's local queue
                 // (the shell's out-of-band echo); a real engine would also
                 // drop the prompt from its own backlog here.

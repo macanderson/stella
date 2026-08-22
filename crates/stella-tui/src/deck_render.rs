@@ -195,6 +195,16 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
 
+    // The parked question (#4220). Drawn above the cards and below help: the
+    // user can still open help over it (they may need to read what a key
+    // does before answering), but nothing else may cover the one overlay a
+    // turn is stopped on.
+    if ui.question.is_open() {
+        guarded_overlay(buf, area, "question", |b| {
+            views::question::render(&ui.question, area, b)
+        });
+    }
+
     // Startup system notifications: a transient dialog over the deck, drawn
     // last but one so help — which the user asked for — still wins the top.
     // It is a no-op once dismissed or expired — asked here rather than left to
@@ -217,6 +227,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // notice is deliberately excluded: it is non-modal, and a key still
     // reaches the composer while it's showing (see `handle_key`).
     let overlay_owns_keyboard = ui.help_open
+        // A parked question is claimed ahead of everything else in
+        // `handle_key_inner`, so it owns the keyboard whenever it is up.
+        || ui.question.is_open()
         || ui.queue_open
         || ui.graph_picker_open
         || ui.sessions_open
