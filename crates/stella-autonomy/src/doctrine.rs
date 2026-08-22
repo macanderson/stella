@@ -114,11 +114,26 @@ pub enum ContentionPolicy {
     /// `work::start` reachable — the fix belongs at the gathering site because
     /// weighing evidence is this enum's job and deciding what counts as
     /// evidence is not.
+    ///
+    /// That exclusion cannot be selective, because at claim time a **live
+    /// peer** self-driving process against the same clone leaves an
+    /// indistinguishable worktree under the same root. What keeps a live peer
+    /// deferring is therefore not the worktree at all but
+    /// [`Contention::ledger_claims`]: the loop holds a fenced lease on its
+    /// issue for as long as a turn is in flight, so the peer that is *still
+    /// running* is still evidence, and the run that died stops being evidence
+    /// when its lease lapses. Expiry is the difference the path could not
+    /// express, and it is the reason both halves of #4300 hold at once.
     Defer,
     /// Only a held ledger claim defers; branches and worktrees are advisory.
     ///
     /// For a solo operator whose remote is full of their own stale branches,
     /// where deferring on branch names would deadlock the loop against itself.
+    ///
+    /// It is the strictest policy that still separates a live peer from the
+    /// loop's own wreckage, because a lease is the one signal here that
+    /// carries a *time* — which is what makes it the remedy #4300's note
+    /// points at rather than a way of turning contention off.
     ClaimsOnly,
     /// Proceed regardless. Recorded, never silent.
     Proceed,

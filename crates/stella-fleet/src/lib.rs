@@ -81,7 +81,8 @@ pub mod plan;
 pub use cache_schedule::{RunnableSession, warmest_first};
 pub use fleet::{
     CacheWarmthLookup, Fleet, FleetConfig, FleetError, FleetRunReport, FleetWorker, LeaseLoss,
-    TaskHandle, WorkerControls, WorkerOutcome, notice::handle_notices,
+    TaskHandle, WorkerControls, WorkerOutcome, dispatch_claim_key, issue_claim_key,
+    notice::handle_notices,
 };
 pub use gc::{
     BranchAction, BranchVerdict, Gc, GcError, GcOptions, GcReport, KeepReason, WorktreeAction,

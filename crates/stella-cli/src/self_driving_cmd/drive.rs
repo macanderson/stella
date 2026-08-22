@@ -265,6 +265,11 @@ pub(super) fn drive(
     }
 
     let mut spent: HashMap<String, Spent> = HashMap::new();
+    // The ledger claims this run holds, one per issue taken and not yet
+    // worked. Keyed by issue so the Work arm can take back the one it is
+    // about to run; dropped wholesale if the run ends holding any, which
+    // releases them rather than leaving a peer to wait out the TTL.
+    let mut leases: HashMap<String, super::claim::Lease> = HashMap::new();
     // Issues this process already offered to triage. The escalation label is
     // the durable half; this covers the window before it lands, and stops a
     // provider that failed to accept the label costing a turn every pass.
@@ -385,7 +390,36 @@ pub(super) fn drive(
 
                     let seen = super::contention::for_issue(&root, &candidate);
                     match contention_verdict(doctrine.contention, &seen) {
-                        ContentionVerdict::Proceed => break Some(candidate),
+                        // The verdict weighs the evidence; the lease decides
+                        // the race the evidence cannot see. Two loops polling
+                        // one clone can both read "free" here, so the claim
+                        // that follows is a single conditional write and the
+                        // loser is told rather than left to duplicate the
+                        // work. It is also what makes this loop *visible* to
+                        // a peer's probe for as long as its turn runs — the
+                        // producer behind `Contention::ledger_claims` (#4300).
+                        ContentionVerdict::Proceed => {
+                            match super::claim::acquire(&root, &candidate) {
+                                super::claim::Claim::Granted(lease) => {
+                                    break Some((candidate, Some(lease)));
+                                }
+                                // Fails open, like every other probe: an
+                                // unopenable ledger is not a peer.
+                                super::claim::Claim::Unavailable => {
+                                    break Some((candidate, None));
+                                }
+                                super::claim::Claim::HeldBy(who) => audit::record(
+                                    durable,
+                                    Audit::Deferred,
+                                    Some(&candidate),
+                                    &format!(
+                                        "{who} holds the ledger claim on it and is still \
+                                         beating; taking the next candidate rather than \
+                                         duplicating"
+                                    ),
+                                ),
+                            }
+                        }
                         ContentionVerdict::Defer { evidence } => audit::record(
                             durable,
                             Audit::Deferred,
@@ -399,7 +433,7 @@ pub(super) fn drive(
                     }
                 };
 
-                let Some(key) = taken else {
+                let Some((key, lease)) = taken else {
                     // An empty queue is a state, not an ending.
                     //
                     // Returning here made "there is nothing to do right now"
@@ -434,11 +468,23 @@ pub(super) fn drive(
                     "taken off the ranked queue",
                 );
                 durable.update_stats(|s| s.issues_claimed += 1);
+                if let Some(lease) = lease {
+                    leases.insert(key.clone(), lease);
+                }
                 state.claimed.push(IssueRef(key));
             }
 
             LoopStep::Work { issue } => {
                 state.claimed.retain(|i| i != &issue);
+
+                // Held for the whole arm and released by dropping it, so
+                // every way out of here — the outcome, an early `continue`,
+                // the run reaching its bound — frees the key for the next
+                // pass instead of leaving it to expire. Taken out of the map
+                // rather than borrowed from it because *this* is the scope the
+                // lease belongs to: the window where a turn is in flight and
+                // no pull request exists yet for `open_prs` to speak for.
+                let _lease = leases.remove(&issue.0);
 
                 let resolved = match super::backlog::resolve(&provider, &issue.0) {
                     Ok(resolved) => resolved,

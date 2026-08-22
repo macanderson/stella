@@ -38,8 +38,24 @@
 //! So the claim site drops **only** worktrees under this verb's own root, and
 //! nothing else. An actor that is genuinely somebody else still shows up: in a
 //! worktree outside that root (a human's checkout, a fleet worktree, the
-//! `wip-<key>-preserved` branch #4002 was filed from), in a remote branch, in
-//! an open pull request, or in a ledger claim — the one authoritative signal.
+//! `wip-<key>-preserved` branch #4002 was filed from), in a remote branch, or
+//! in an open pull request.
+//!
+//! # And why that exclusion needs [`super::claim`] to be sound
+//!
+//! A live peer self-driving process against the same clone puts its worktree
+//! under **the same root**, so the exclusion drops that one too. Read as a
+//! path question this is unanswerable, and dropping it is how #4300's fix
+//! would take away the deferral #4300 explicitly asks to keep.
+//!
+//! It is answerable as a *liveness* question, and [`ledger_claims`] is where
+//! the answer comes from: the loop holds a fenced lease on `issue:<key>` for
+//! as long as a turn is in flight, and stops holding it the moment it stops
+//! heartbeating. A crashed run's lease lapses on its own; a live peer's does
+//! not. That is why this probe reads the ledger and why [`super::claim`]
+//! writes it — a reader with no producer is always empty, which would make
+//! this module report *no contention at all* for the one actor it most needs
+//! to see.
 //!
 //! [`ContentionPolicy`]: stella_autonomy::ContentionPolicy
 
@@ -135,17 +151,25 @@ pub(super) fn pr_numbers(raw: &str) -> Vec<String> {
 /// Live fleet dispatch claims naming this issue.
 ///
 /// The only *authoritative* signal — a lease with an owner and an expiry,
-/// rather than a name that resembles the work — and the only one
-/// [`ContentionPolicy::ClaimsOnly`] consults. Without it that policy could
-/// never defer at the claim site, which would make an operator-facing setting
+/// rather than a name that resembles the work — and, since the own-root
+/// exclusion above, the only thing that can tell a live peer self-driving
+/// process from this loop's own crashed run. It is also the only signal
+/// [`ContentionPolicy::ClaimsOnly`] consults, so without it that policy could
+/// never defer at the claim site and an operator-facing setting would be
 /// silently inert.
 ///
-/// Offline and read-only. A workspace with no ledger has never fanned out, so
+/// **Live** is the word doing the work: [`live_dispatch_claims`] filters on
+/// `expires_at_ms > now`, so a claim nothing is renewing stops counting
+/// without anything having to clean it up. That is the property #4300 needs
+/// and the reason this is a lease rather than a file.
+///
+/// Offline and read-only. A workspace with no ledger has never dispatched, so
 /// no claims is the correct answer rather than an error; so is a ledger this
 /// build cannot open, on the fail-open rule above.
 ///
 /// [`ContentionPolicy::ClaimsOnly`]: stella_autonomy::ContentionPolicy::ClaimsOnly
-fn ledger_claims(root: &Path, key: &str) -> Vec<String> {
+/// [`live_dispatch_claims`]: stella_fleet::Ledger::live_dispatch_claims
+pub(super) fn ledger_claims(root: &Path, key: &str) -> Vec<String> {
     let Ok(path) = stella_store::workspace_private_sqlite_path(root, "fleet.db") else {
         return Vec::new();
     };
@@ -155,10 +179,9 @@ fn ledger_claims(root: &Path, key: &str) -> Vec<String> {
     let Ok(ledger) = stella_fleet::Ledger::open(&path) else {
         return Vec::new();
     };
-    let Ok(now_ms) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+    let Some(now_ms) = super::claim::now_ms() else {
         return Vec::new();
     };
-    let now_ms = now_ms.as_millis().min(u128::from(u64::MAX)) as u64;
     let Ok(claims) = ledger.live_dispatch_claims(now_ms) else {
         return Vec::new();
     };
@@ -167,14 +190,17 @@ fn ledger_claims(root: &Path, key: &str) -> Vec<String> {
 
 /// The live claims that name this issue, as evidence strings.
 ///
-/// `issue:<n>` is the namespace an issue-driven dispatcher claims under
-/// (`stella_fleet::dispatch_claim_key`'s docs). Matched **exactly** rather
-/// than by substring, which is the one thing worth pinning here: `issue:41`
-/// answering for `issue:410` would defer a real issue on somebody else's
-/// unrelated work.
+/// The key comes from [`issue_claim_key`], the same function
+/// [`super::claim::acquire`] takes the lease under, so the reader and the
+/// producer cannot drift into two namespaces that never meet. Matched
+/// **exactly** rather than by substring, which is the one thing worth pinning
+/// here: `issue:41` answering for `issue:410` would defer a real issue on
+/// somebody else's unrelated work.
+///
+/// [`issue_claim_key`]: stella_fleet::issue_claim_key
 #[must_use]
 pub(super) fn claims_naming(claims: &[stella_fleet::DispatchClaim], key: &str) -> Vec<String> {
-    let wanted = format!("issue:{key}");
+    let wanted = stella_fleet::issue_claim_key(key);
     claims
         .iter()
         .filter(|claim| claim.claim_key == wanted)
@@ -294,6 +320,94 @@ mod tests {
         };
         assert!(matches!(
             contention_verdict(ContentionPolicy::Defer, &peer),
+            ContentionVerdict::Defer { .. }
+        ));
+    }
+
+    /// #4300's second half, in the shape that actually happens: **a live peer
+    /// whose worktree is inside the loop's own root**.
+    ///
+    /// This is the case the own-root exclusion cannot see and the case the
+    /// issue names as the constraint. A peer self-driving process runs the
+    /// same verb against the same clone, so its worktree is
+    /// `.stella/private/self-driving/stella-<key>-<slug>` — byte-identical in
+    /// shape to the crashed run's, and dropped by the same filter. Testing
+    /// the exclusion against a peer *outside* that root proves only that the
+    /// filter has an edge; it does not prove a live peer still defers.
+    ///
+    /// What separates them is liveness, held in the ledger by
+    /// [`super::super::claim`]. So the two halves are asserted here against
+    /// one indistinguishable worktree path, differing only in whether a lease
+    /// is live: crashed → `Proceed`, live peer → `Defer`.
+    #[test]
+    fn a_live_peer_in_the_same_root_defers_where_a_crashed_run_proceeds() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let own = super::super::work::worktrees_root(root.path());
+        // The one path. Both runs leave exactly this.
+        let seen = porcelain(&[&own.join("stella-4300-8f6b50dc").to_string_lossy()]);
+
+        let gathered = |root: &std::path::Path| Contention {
+            local_worktrees: worktrees_naming(&seen, "4300", Some(&own)),
+            ledger_claims: ledger_claims(root, "4300"),
+            ..Contention::default()
+        };
+
+        // The crashed run: its worktree is still registered and its lease is
+        // not, because nothing has renewed it since the process died.
+        assert_eq!(
+            contention_verdict(ContentionPolicy::Defer, &gathered(root.path())),
+            ContentionVerdict::Proceed,
+            "a crashed run's leftover must not defer its own issue (#4300)"
+        );
+
+        // The live peer: same worktree, same root, same string — and a lease
+        // it is holding.
+        let peer = super::super::claim::acquire(root.path(), "4300");
+        assert!(matches!(peer, super::super::claim::Claim::Granted(_)));
+
+        assert!(
+            matches!(
+                contention_verdict(ContentionPolicy::Defer, &gathered(root.path())),
+                ContentionVerdict::Defer { .. }
+            ),
+            "a live peer must still defer, worktree exclusion or not (#4300)"
+        );
+
+        // And it is the peer's claim that carries it, not a leftover name:
+        // dropping the lease returns the verdict to `Proceed`.
+        drop(peer);
+        assert_eq!(
+            contention_verdict(ContentionPolicy::Defer, &gathered(root.path())),
+            ContentionVerdict::Proceed
+        );
+    }
+
+    /// The same peer, under the policy that trusts nothing else.
+    ///
+    /// `ClaimsOnly` weighs *only* ledger claims, so before a producer existed
+    /// it could never defer at the claim site — an operator-facing setting
+    /// that silently did nothing. This is what makes it real.
+    #[test]
+    fn claims_only_defers_on_a_live_peer_and_on_nothing_else() {
+        let root = tempfile::tempdir().expect("tempdir");
+
+        let names_only = Contention {
+            remote_branches: vec!["stella/4300-fix".to_string()],
+            local_worktrees: vec!["/elsewhere/4300".to_string()],
+            ..Contention::default()
+        };
+        assert_eq!(
+            contention_verdict(ContentionPolicy::ClaimsOnly, &names_only),
+            ContentionVerdict::Proceed
+        );
+
+        let _peer = super::super::claim::acquire(root.path(), "4300");
+        let claimed = Contention {
+            ledger_claims: ledger_claims(root.path(), "4300"),
+            ..Contention::default()
+        };
+        assert!(matches!(
+            contention_verdict(ContentionPolicy::ClaimsOnly, &claimed),
             ContentionVerdict::Defer { .. }
         ));
     }
