@@ -258,6 +258,7 @@ fn v2_rows(
                 stage_label(name),
                 opening.model.as_deref(),
                 opening.budget_usd,
+                opening.queued_steer.as_deref(),
                 width,
             ));
             true

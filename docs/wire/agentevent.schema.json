@@ -1684,6 +1684,31 @@
         }
       ]
     },
+    "SteerCause": {
+      "description": "What put the message into the turn, for [`AgentEvent::Steered`].\n\nThree different things emit that event and they are different pathologies\nwith different remedies: a person interrupting, the stuck-loop rung, and\nthe stalled-turn rung (#2022). Before this field the only way to tell them\napart was to match the English prose — and `STALL_STEER_PREFIX` *extends*\n`LOOP_STEER_PREFIX`, so even the prefix test was a substring test on a\nsentence (#3622). That is precisely the practice\n[`AgentEvent::LoopDetected`] was introduced to end for the loop rung.\n\nThe consequence was that \"the turn was steered\" was one bucket, so no\nconsumer could answer *how often does the stall rung actually fire* — the\nquestion that decides whether the rung earns its keep.",
+      "oneOf": [
+        {
+          "const": "unknown",
+          "description": "Not recorded: an event written before this field existed. The default for an absent `cause` only — never `user`, which would relabel a whole recorded history as human input.",
+          "type": "string"
+        },
+        {
+          "const": "user",
+          "description": "A person's mid-turn message, drained from\n`stella_core::ports::TurnSteering` at a step boundary.",
+          "type": "string"
+        },
+        {
+          "const": "loop",
+          "description": "The stuck-loop rung's nudge, following a `LoopVerdict`. Paired with an\n[`AgentEvent::LoopDetected`] carrying the same evidence.",
+          "type": "string"
+        },
+        {
+          "const": "stall",
+          "description": "The stalled-turn rung's nudge (#2022): no loop, but the turn has spent\ntoo long waiting. Has no typed twin, which is why it was\nindistinguishable from [`Self::Loop`] on the wire.",
+          "type": "string"
+        }
+      ]
+    },
     "SubAgentPhase": {
       "description": "One point in a sub-agent's lifecycle. Exactly one `Started` and exactly\none `Finished` are emitted per spawn, in that order, even when the child\nis refused before its first model call (a refusal still brackets, so a\nconsumer folding these never sees an unclosed child).",
       "oneOf": [
@@ -2285,8 +2310,13 @@
       "type": "object"
     },
     {
-      "description": "A user message queued mid-turn was injected at a step boundary\n(`stella-core` steering) — the transcript's record that the model\nwas steered, and when.",
+      "description": "A message was injected into the turn at a step boundary — the\ntranscript's record that the model was steered, and when.\n\nThree rungs emit this and `cause` is what tells them apart: a person's\nmid-turn message, the stuck-loop nudge, and the stalled-turn nudge.\nBefore it, a consumer could only match the English prose (#3622).",
       "properties": {
+        "cause": {
+          "$ref": "#/$defs/SteerCause",
+          "default": "unknown",
+          "description": "Who or what steered. `serde(default)` so streams recorded before\nthis field parse — as [`SteerCause::Unknown`], never as\n[`SteerCause::User`], which would relabel the whole recorded\nhistory as human input."
+        },
         "text": {
           "type": "string"
         },

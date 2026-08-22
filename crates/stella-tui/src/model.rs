@@ -392,6 +392,11 @@ impl SessionModel {
                         // call back-fills it — see `TurnOpening::model`.
                         model: None,
                         budget_usd: self.hud.limit_usd,
+                        // Same shape, same reason: a steer is consumed mid-turn,
+                        // after this rule is drawn. The turn's own first
+                        // `SteerCause::User` steer back-fills it — see
+                        // `TurnOpening::queued_steer`.
+                        queued_steer: None,
                     })
                 };
                 self.transcript.push(TranscriptEntry::Stage {
@@ -594,12 +599,18 @@ impl SessionModel {
                     reason: reason.clone(),
                 });
             }
-            AgentEvent::Steered { text } => {
+            AgentEvent::Steered { text, cause } => {
                 // A steered message IS a user message — it entered the
                 // conversation mid-turn; the prefix is what tells the
                 // reader (and a replay) it landed at a step boundary.
                 self.transcript
                     .push(TranscriptEntry::User(format!("(steered mid-turn) {text}")));
+                // …and only a person's steer is the payoff SPEC 6.1's rule
+                // promises. The engine's loop and stall nudges keep their row
+                // and get no label (#4185).
+                if cause.is_from_a_person() {
+                    self.name_the_open_turns_steer(text);
+                }
             }
             AgentEvent::TurnParked {
                 description,
@@ -1262,6 +1273,33 @@ impl SessionModel {
             && opening.model.is_none()
         {
             opening.model = Some(model.to_owned());
+        }
+    }
+
+    /// Name the steer a person made on the opening rule of the turn now in
+    /// flight, if that rule has not been given one yet.
+    ///
+    /// The same walk as [`Self::name_the_open_turns_model`], and for the same
+    /// reason: the nearest stage boundary that opened a turn, stop there
+    /// whether or not it fills anything. That single stop is what makes this
+    /// first-write-wins per turn — an earlier turn's rule is settled and a
+    /// second steer in this turn does not rewrite what the turn opened by
+    /// consuming.
+    ///
+    /// A turn whose rule was never stamped simply finds nothing, and the steer
+    /// keeps the `(steered mid-turn)` transcript row it always had.
+    fn name_the_open_turns_steer(&mut self, text: &str) {
+        if let Some(TranscriptEntry::Stage {
+            opens: Some(opening),
+            ..
+        }) = self
+            .transcript
+            .iter_mut()
+            .rev()
+            .find(|e| matches!(e, TranscriptEntry::Stage { opens: Some(_), .. }))
+            && opening.queued_steer.is_none()
+        {
+            opening.queued_steer = Some(text.to_owned());
         }
     }
 

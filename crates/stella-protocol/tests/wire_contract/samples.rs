@@ -13,8 +13,8 @@ use stella_protocol::completion::FinishReason;
 use stella_protocol::delivery_event::{DeliveryDecline, DeliveryOutcome};
 use stella_protocol::event::{
     BudgetMode, BudgetScope, CiStatus, FileChangeKind, MediaJobState, MediaKind, ModelCallRole,
-    PolicyKind, PrStatus, ProofStep, ProofTree, ScopeProposal, StageKind, TaskItem, TaskStatus,
-    UsageIncompleteReason,
+    PolicyKind, PrStatus, ProofStep, ProofTree, ScopeProposal, StageKind, SteerCause, TaskItem,
+    TaskStatus, UsageIncompleteReason,
 };
 use stella_protocol::ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation};
 use stella_protocol::receipt::{
@@ -308,6 +308,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
         },
         AgentEvent::Steered {
             text: "actually, use the other file".into(),
+            cause: SteerCause::User,
         },
         AgentEvent::TurnParked {
             description: "CI for branch main settles".into(),

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::event::BudgetMode;
-use stella_protocol::{CompletionUsage, ToolSchema};
+use stella_protocol::{CompletionUsage, SteerCause, ToolSchema};
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
@@ -1002,9 +1002,11 @@ async fn steered_messages_inject_before_the_next_model_call() {
     );
     let events = drain_events(&mut rx);
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::Steered { text } if text == "also check the tests")),
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Steered { text, cause }
+                if text == "also check the tests" && *cause == SteerCause::User
+        )),
         "steering must be visible in the event stream: {events:?}"
     );
 }
@@ -1756,7 +1758,7 @@ async fn stuck_loop_steers_once_then_aborts_on_re_detection() {
     assert_eq!(steers.len(), 1, "one warning per loop; one loop here");
     assert!(matches!(
         steers[0],
-        AgentEvent::Steered { text } if text.contains("looping")
+        AgentEvent::Steered { text, .. } if text.contains("looping")
     ));
     // Typed decisions (receipts spec §6.3): each detection also lands as a
     // parseable LoopDetected — the steer with `aborted: false`, the kill

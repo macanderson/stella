@@ -42,7 +42,7 @@
 //! `crate::step::TurnState` can hold the budget it checkpoints; the ladder's
 //! policy belongs beside the ladder, not in the state container.
 
-use stella_protocol::{AgentEvent, CompletionMessage, MessageRole};
+use stella_protocol::{AgentEvent, CompletionMessage, MessageRole, SteerCause};
 
 use crate::event_sender::EventSender;
 use crate::loop_detect::{CallRecord, LoopIdentity, LoopVerdict, detect_loop};
@@ -276,7 +276,10 @@ pub(super) fn check_loop_detection(
             None,
             loop_steer.remaining(),
         );
-        let _ = events.send(AgentEvent::Steered { text: text.clone() });
+        let _ = events.send(AgentEvent::Steered {
+            text: text.clone(),
+            cause: SteerCause::Loop,
+        });
         messages.push(CompletionMessage::user(text));
         return None;
     };
@@ -500,7 +503,10 @@ fn steer_stalled_turn(
         return;
     }
     let text = stall_steer_text(stall_secs);
-    let _ = events.send(AgentEvent::Steered { text: text.clone() });
+    let _ = events.send(AgentEvent::Steered {
+        text: text.clone(),
+        cause: SteerCause::Stall,
+    });
     messages.push(CompletionMessage::user(text));
 }
 
@@ -1148,7 +1154,7 @@ mod tests {
         use proptest::prelude::*;
         use std::borrow::Cow;
         use stella_protocol::tool::{ToolCall, ToolOutput, ToolResult};
-        use stella_protocol::{AgentEvent, CompletionMessage, MessageRole};
+        use stella_protocol::{AgentEvent, CompletionMessage, MessageRole, SteerCause};
 
         /// One resolved `bash` call and the bytes it produced, as the pair of
         /// transcript messages the driver would have accumulated.
@@ -1252,10 +1258,13 @@ mod tests {
                 steer.content
             );
             assert!(
-                drained
-                    .iter()
-                    .any(|e| matches!(e, AgentEvent::Steered { text } if text == &steer.content)),
-                "the steer is on the transcript AND on the wire: {drained:?}"
+                drained.iter().any(|e| matches!(
+                    e,
+                    AgentEvent::Steered { text, cause }
+                        if text == &steer.content && *cause == SteerCause::Stall
+                )),
+                "the steer is on the transcript AND on the wire, named as the \
+                 stall rung rather than left for a prose match (#3622): {drained:?}"
             );
 
             // Warn once: a second pass over the same (still stalling) window

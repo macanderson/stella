@@ -801,10 +801,12 @@ impl WorkspaceModel {
     /// the one that left. Oldest match first, so two identical steers claim
     /// two rows rather than one row twice.
     ///
-    /// No match is the ordinary case, not a failure: `Steered` is also how the
-    /// engine narrates its OWN injections — the loop-escalation nudge — which
-    /// were never in anyone's queue and must leave the backlog untouched. That
-    /// is the same guard `PromptStarted` applies to a driver-side prompt.
+    /// No match is still an ordinary outcome, not a failure — a `>` steer the
+    /// deck did not originate leaves the backlog untouched. What no longer
+    /// reaches here at all is the engine narrating its OWN injections: the
+    /// loop and stall rungs were never in anyone's queue, and the caller now
+    /// filters them on [`stella_protocol::SteerCause`] rather than relying on
+    /// their text failing to match (#3622).
     fn claim_steered(&mut self, text: &str) {
         let steered = text.trim();
         let position = self.queue.items.iter().position(|queued| {
@@ -842,7 +844,9 @@ impl WorkspaceModel {
         // queue mirror of it, and the row would sit there as "waiting"
         // forever while the words it holds were long since delivered. This
         // ack is the only signal that says they were.
-        if let AgentEvent::Steered { text } = event {
+        if let AgentEvent::Steered { text, cause } = event
+            && cause.is_from_a_person()
+        {
             self.claim_steered(text);
         }
 

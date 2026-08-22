@@ -236,19 +236,26 @@ fn first_line(text: &str) -> &str {
 /// [`crate::model::TurnOpening`] for why a wrapped run's four inner stages do
 /// not each announce the same turn number.
 ///
-/// `queued_steer` is deliberately never fed here. A steer that landed is
-/// already its own transcript row ([`crate::TranscriptEntry::User`], prefixed
-/// `(steered mid-turn)`), so naming it a second time on the rule above it would
-/// report one interruption twice; and a steer *queued before* the turn opened
-/// arrives as an ordinary prompt, which the deck cannot tell apart from any
-/// other. The label stays unfed rather than fed something that is not it
-/// (#4185).
+/// `queued_steer` names the mid-turn steer **a person** made that this turn
+/// consumed — the visible payoff the composer's `⏎ queue (never blocks)`
+/// promises. It is back-filled onto [`crate::model::TurnOpening`] by the fold,
+/// gated on [`stella_protocol::SteerCause::is_from_a_person`], so the engine's
+/// own loop and stall nudges never reach it: a rule labelling a stall-rung
+/// auto-steer as something the user queued would be worse than the blank it
+/// replaces, which is why this stayed unfed until the cause was on the wire
+/// (#4185, #3622).
+///
+/// The steer also keeps its own `(steered mid-turn)` transcript row
+/// ([`crate::TranscriptEntry::User`]). The two are not one fact said twice:
+/// the row is *when* it landed, the rule is *what this turn opened by
+/// consuming* — the same relationship `model` has with the closing receipt.
 #[must_use]
 pub fn turn_begin_rows(
     turn: u32,
     stage: &str,
     model: Option<&str>,
     budget_usd: Option<f64>,
+    queued_steer: Option<&str>,
     width: usize,
 ) -> Vec<Line<'static>> {
     vec![turn_begin(
@@ -257,7 +264,7 @@ pub fn turn_begin_rows(
             stage: stage.to_string(),
             model: model.map(str::to_string),
             budget_usd,
-            queued_steer: None,
+            queued_steer: queued_steer.map(str::to_string),
         },
         width,
     )]

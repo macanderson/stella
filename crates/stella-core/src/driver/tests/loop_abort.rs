@@ -240,7 +240,7 @@ async fn a_second_distinct_loop_earns_its_own_steer_before_the_turn_dies() {
     let steers: Vec<&String> = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::Steered { text } => Some(text),
+            AgentEvent::Steered { text, .. } => Some(text),
             _ => None,
         })
         .collect();
@@ -645,4 +645,72 @@ async fn a_terminated_short_answer_after_investigation_still_completes() {
         "a stated, punctuated result must not be gated: {outcome:?}"
     );
     drain_events(&mut rx);
+}
+
+/// #3622: the stuck-loop rung stamps `SteerCause::Loop` on the wire, so a
+/// consumer separates it from a user steer without reading the prose.
+///
+/// Before the field there was nothing on the event but `text`, and the only
+/// available test was `text.starts_with(LOOP_STEER_PREFIX)` — a substring test
+/// on English, which is exactly what `AgentEvent::LoopDetected` was introduced
+/// to end for this rung.
+///
+/// The paired `LoopDetected` is asserted alongside deliberately: it is what
+/// establishes that the steer under inspection really came from the loop rung,
+/// so the cause assertion is about the emitter and not about this test's setup.
+#[tokio::test]
+async fn a_stuck_loop_steer_names_the_loop_rung_as_its_cause() {
+    let grep_open = |call_id: &str| {
+        call_of(
+            call_id,
+            "grep",
+            serde_json::json!({"pattern": "fn open", "path": "src/store.rs"}),
+        )
+    };
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(grep_open("c1")),
+            Ok(grep_open("c2")),
+            Ok(grep_open("c3")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = ConstantTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, exact_repeat_only(30), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("where is the store opened?"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let _ = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    let events = drain_events(&mut rx);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::LoopDetected { .. })),
+        "the loop rung must actually have fired: {events:?}"
+    );
+    let causes: Vec<SteerCause> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::Steered { cause, .. } => Some(*cause),
+            _ => None,
+        })
+        .collect();
+    assert!(!causes.is_empty(), "the loop rung steers: {events:?}");
+    assert!(
+        causes.iter().all(|c| *c == SteerCause::Loop),
+        "the engine's own nudge is not the user speaking: {causes:?}"
+    );
+    assert!(
+        !causes.iter().any(|c| c.is_from_a_person()),
+        "no loop steer may be attributed to a person"
+    );
 }
