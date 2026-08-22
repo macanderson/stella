@@ -117,13 +117,20 @@
   --stella-muted-fg: #4B4B56;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand-deep); /* gold that passes on light */
-  /* The mark itself — shapes, not text. v3.0 retired the "full strength on
-     both grounds" rule because ion measured 1.61:1 on paper, a logotype
-     nobody can see. Gold is not in that position — brand-500 measures 2.63:1
-     on paper — but the rule is kept anyway: 2.63:1 is still under the 3:1
-     graphical floor, and brand-700 clears it at 4.99:1. The committed light
-     lockups under logo/svg/ are cut to this value. */
-  --stella-mark-shape: var(--stella-brand-700);
+  /* The mark itself — shapes, not text. v5.0 retires the darker light cut:
+     gold, text and ink are the only three mark colours, and the mark is the
+     same gold on both grounds. It stands on the WCAG logotype exemption
+     rather than on the 3:1 graphical floor, which is the honest reason — the
+     v3.0/v4.0 rule here stepped the mark down to a `brand-700` stop, and that
+     stop does not exist in v5.0.
+
+     This declaration used to name it anyway. `--stella-brand-700` is defined
+     nowhere in this file, so `--stella-mark-shape` resolved to nothing for
+     every light-mode consumer and each one silently fell through to the
+     literal in its own `var(--stella-mark-shape, …)` fallback. The rendered
+     colour does not change with this fix; the variable simply means something
+     again. */
+  --stella-mark-shape: var(--stella-brand);
 }
 .dark, [data-theme="dark"] {
   --stella-bg: var(--stella-ink);

@@ -1,5 +1,6 @@
 #![allow(clippy::field_reassign_with_default)]
 
+use super::footer::render_composer_footer;
 use super::*;
 use crate::envelope::{AgentMeta, Inbound};
 use ratatui::Terminal;
@@ -398,12 +399,16 @@ fn render_deck_hides_the_hardware_cursor_under_a_modal_overlay() {
     );
 }
 
+/// 140 columns, not 100: this asserts the *whole* left run is drawn, and since
+/// #3591 that is a claim about a row wide enough to hold it. At 100 the steer
+/// hint outranks `queue (never blocks)` and takes its columns — which used to
+/// look like both being present only because the row was clipped mid-word.
 #[test]
 fn composer_footer_shows_keys_line_counter_and_queue_status() {
     let model = running_model_with_queue();
     let ui = DeckUi::default();
     let layout = crate::composer::layout(&ui.composer, 40);
-    let area = Rect::new(0, 0, 100, 1);
+    let area = Rect::new(0, 0, 140, 1);
     let mut buf = Buffer::empty(area);
     render_composer_footer(&model, &ui, &layout, area, &mut buf);
     let text = buffer_text(&buf);
@@ -448,6 +453,57 @@ fn the_footer_advertises_the_steer_marker_while_a_turn_runs() {
         text.contains("steer this turn"),
         "steer affordance:\n{text}"
     );
+}
+
+/// Every hint on the footer's left run is drawn whole, or not drawn at all.
+///
+/// The row is two groups sharing one line, and the left one is clipped to
+/// whatever the right-aligned readout leaves. Before #3591 the steer hint was
+/// pushed without consulting that budget, so a narrow row cut it mid-word and
+/// landed the remainder directly against the readout —
+/// `esc / > steer thturn $0.0390`, which reads as a typo in the product.
+///
+/// This pins the invariant rather than a column count, because a count goes
+/// stale the moment someone edits a label: strip the readout, and whatever is
+/// left must be a `·`-separated run of **complete** hints, with at least one
+/// blank column before the readout begins.
+#[test]
+fn the_footer_never_clips_a_hint_into_the_counter_at_any_width() {
+    /// Every affordance the left run can carry, exactly as it composes.
+    const HINTS: [&str; 5] = [
+        "⌘⏎ new line",
+        "⏎ queue (never blocks)",
+        "esc / > steer this turn",
+        "! shell",
+        "/ commands",
+    ];
+    let model = running_model_with_queue();
+    let ui = DeckUi::default();
+    let layout = crate::composer::layout(&ui.composer, 40);
+    for width in 60u16..=160 {
+        let area = Rect::new(0, 0, width, 1);
+        let mut buf = Buffer::empty(area);
+        render_composer_footer(&model, &ui, &layout, area, &mut buf);
+        let text = buffer_text(&buf);
+        let readout = text
+            .rfind("turn $")
+            .unwrap_or_else(|| panic!("the right readout is drawn at width {width}:\n{text}"));
+        assert!(
+            text[..readout].ends_with(' '),
+            "the left run abuts the readout at width {width}:\n{text}"
+        );
+        let left = text[..readout].trim();
+        if left.is_empty() {
+            continue; // a row too narrow for even one hint is a clean drop
+        }
+        for part in left.split('·') {
+            let part = part.trim();
+            assert!(
+                HINTS.contains(&part),
+                "width {width} drew a partial hint {part:?}:\n{text}"
+            );
+        }
+    }
 }
 
 /// …and only then. At an idle agent a leading `>` is not a steer marker, it

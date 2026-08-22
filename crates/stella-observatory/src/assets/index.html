@@ -213,85 +213,105 @@
 }
 
 /* ── Light mode ───────────────────────────────────────────────────────────
-   The same slots on paper, and byte-identical to arenabench's light scheme
-   (arenabench/ui/app/globals.css) — the two surfaces are one design system
-   and are meant to move together, so a value that differs between them is a
-   bug in whichever moved last.
-
-   Contrast, computed against WCAG 2.1 relative luminance rather than
-   estimated, worst case on --surface (#F6F6F8 — the lightest surface a mark
-   can land on, so the binding constraint):
-
-     --text 18.71:1   --text-2 7.37:1   --text-3 3.24:1
-     --ok    6.25:1   --warn   7.48:1   --bad    6.81:1
-     --identity 8.25:1 (#EFC53F)
-
-   and on the dark side against --raised (#11171D):
-
-     --text 15.34:1   --text-2 7.78:1   --text-3 4.27:1
-     --ok    9.97:1   --warn   6.98:1   --bad    6.04:1
-     --identity 6.06:1 (#EFC53F)
-
-   Text and --text-2 clear AAA (7:1) on both; the three semantic colours clear
-   AA (4.5:1) on both. --text-3 clears AAA on neither and is not meant to,
-   which is the constraint to hold when editing: it carries non-essential
-   labelling only — a legend key, a units suffix — and never a value a reader
-   must act on. The inversion pair (--ink on --accent) is 19.73:1 light,
-   16.78:1 dark, and the identity fill pair (--identity-ink on --identity) is
-   8.70:1 light, 6.63:1 dark — both clear AA for the one primary action the
-   rule allows.
-
-   The --c1..--c4 series ramp is lightness-ordered rather than
-   contrast-matched on purpose: a series is identified by its position in the
-   ramp, and --c4 is the recessive "everything else" mark.
-
-   Two gates apply it, same pattern as docs/brand/css/tokens.css: the OS
+   The same slots on paper. Two gates apply it, the same pattern as
+   docs/brand/css/tokens.css and crates/stella-cli/src/export.rs: the OS
    preference, unless the page has been told "dark" explicitly, and an
    explicit choice stamped on <html data-theme> by the toggle in the header —
    see the init script below and the click handler in the page script. The
    explicit choice wins in both directions, because :not([data-theme="dark"])
    excludes it from the media-query block and the attribute block below has
-   no media guard at all. */
+   no media guard at all.
+
+   **The two gates carry byte-identical declarations, and that is the
+   invariant, not a coincidence.** They paint the same page for two different
+   readers — one who left their desktop on light, one who clicked the toggle
+   — so a role that differs between them is one design shipping in two casts,
+   and only the second half is checked: the cross-surface matrix
+   (crates/stella-cli/tests/design_token_parity.rs) reads its canon from the
+   explicit data-theme gate alone and has never looked at the media query.
+   Its slicing keys off that selector as a literal, which is the other reason
+   this note spells the selector out nowhere above the block it opens.
+   It had drifted exactly the way an unchecked half does — the media query
+   kept the pre-v5.0 cool-graphite ramp (--text-2 #4D535A, --text-3 #828C97,
+   --hairline #E7EBF0, a gold --identity) against the attribute gate's
+   product neutrals, seventeen roles apart, the worst of them an *absence*:
+   nothing re-pointed --text-emph, so an OS-light reader got the ink page's
+   #BFC1CC on paper at 1.68:1, which is not a contrast failure so much as
+   invisible ink. tests/light_mode.rs's `the_two_light_gates_declare_one_scheme`
+   is what holds them together now; edit one block and it names the other.
+
+   Every value below comes from the v5.0 product palette
+   (design/tokens/stella-tokens.json, mirrored to .css) except the four
+   lifted grounds — --surface, --sunken, --hairline, --hairline-strong — and
+   --text-emph, which the palette does not specify because it is dark-only;
+   those five are this system's own derivation, carried here in the values
+   every peer surface already mirrors (#4072).
+
+   The light scheme reads the SAME neutral ramp from the other end: --text-2
+   and --text-3 are literally the palette's own `dim` and `muted`, so a theme
+   switch changes the lightness and not the temperature. Every neutral in
+   both schemes holds OKLCH hue 281.9–286.3 at chroma ≤ 0.019; the two pure
+   stops (#FFFFFF, #000000) are achromatic and have no hue to hold.
+
+   The three semantics keep their dark twins' hues — --ok 152.0° vs 153.9°,
+   --warn 50.7° vs 51.7°, --bad 13.1° vs 12.8°, --identity 90.6° vs 90.8°,
+   each inside 2° — and take the lightness the paper ground needs, so the
+   dark block's hue-separation derivation survives the theme switch rather
+   than being re-argued on paper.
+
+   Contrast, computed against WCAG 2.1 relative luminance rather than
+   estimated, on --ground (#FFFFFF) and on --surface (#F7F7FA — the lightest
+   panel a mark can land on, so the binding constraint):
+
+     --text 19.78 / 18.50   --text-2  8.61 /  8.05   --text-3 4.43 / 4.14
+     --ok    6.84 /  6.40   --warn    7.52 /  7.04   --bad    8.14 / 7.61
+     --identity 6.61 / 6.18 (#725A00)   --text-emph 10.90 / 10.19
+
+   and on the dark side against --raised (#17171B):
+
+     --text 14.63   --text-2 7.75   --text-3 4.04   --text-emph 9.97
+     --ok    8.94   --warn   7.10   --bad    5.47   --identity 10.83
+
+   --text and --text-2 clear AAA (7:1) on both; the three semantics and
+   --identity clear AA (4.5:1) on both. --text-3 clears AA on neither —
+   4.43:1 light, 4.04:1 dark, stated rather than rounded up (#4070) — and is
+   not meant to, which is the constraint to hold when editing: it carries
+   non-essential labelling only, a legend key or a units suffix, never a
+   value a reader must act on. The inversion pair (--ink on --accent) is
+   19.78:1 light and 16.19:1 dark; the identity fill pair (--identity-ink on
+   --identity) is 6.61:1 light and 11.99:1 dark — both clear AA for the one
+   primary action the rule allows. --identity is measured on --surface too,
+   not only on the page ground (#2591): 6.18:1 there.
+
+   The --c1..--c4 series ramp is lightness-ordered rather than
+   contrast-matched on purpose: a series is identified by its position in the
+   ramp, and --c4 is the recessive "everything else" mark. */
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     color-scheme:light;
-    --void:#E8E8EC; --ground:#FFFFFF; --surface:#F6F6F8; --raised:#FFFFFF;
-    --hairline:#E7EBF0; --hairline-strong:#E3E3E8;
-    --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#4D535A;
-    /* Gold fill, INK label: the light theme carried a white label, which the
-     v5.0 recolour turned into white-on-gold at 1.65:1. Rule 6 is explicit
-     that a gold fill on a light ground carries ink text — 11.15:1. */
-  --identity:#EFC53F; --identity-ink:#141416;
-    --text:#0A0A0C; --text-2:#4D535A; --text-3:#828C97;
-    --ok:#0B6B3D; --warn:#913200; --bad:#A82036;
-    --c1:#0A0A0C; --c2:#4D535A; --c3:#828C97; --c4:#C2C9D1;
-    --neutral-mark:#C2C9D1;
-    --ink:#FFFFFF;                      /* the inversion flips with the page */
+    --void:#E8E8EC; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
+    --hairline:#E9E9EE; --hairline-strong:#D0D0D8;
+    --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#4B4B56;
+    --identity:#725A00; --identity-ink:#FFFFFF;
+    --text:#0A0A0C; --text-2:#4B4B56; --text-3:#777782;
+    --text-emph:#3C3C46;
+    --ok:#006933; --warn:#8A3F00; --bad:#96213C;
+    --c1:#0A0A0C; --c2:#4B4B56; --c3:#777782; --c4:#A9AAB5;
+    --neutral-mark:#A9AAB5;
+    --ink:#FFFFFF;
     --accent-wash:rgba(10,10,12,.06);
     --accent-edge:rgba(10,10,12,.28);
-    --sunken:#F3F6F9;                   /* inset wells */
+    --sunken:#F7F7FA;
   }
 }
 :root[data-theme="light"]{
   color-scheme:light;
-  /* The light scheme reads the SAME neutral ramp from the other end: --text-2
-     and --text-3 are the palette's own dim and muted values, so a theme
-     switch changes the lightness and not the temperature (every neutral here
-     holds OKLCH hue 285.6–286.4, the same band as the dark block above).
-     --text-3 is 4.43:1 on white — the same just-under-AA caption tier its
-     dark twin is, stated rather than rounded up. */
   --void:#E8E8EC; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
   --hairline:#E9E9EE; --hairline-strong:#D0D0D8;
   --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#4B4B56;
   --identity:#725A00; --identity-ink:#FFFFFF;
   --text:#0A0A0C; --text-2:#4B4B56; --text-3:#777782;
   --text-emph:#3C3C46;
-  /* The three semantics keep the dark scheme's hues (152.0° / 50.7° / 13.1°,
-     each within 2° of its dark twin) and take the lightness the paper ground
-     needs: 6.84 / 7.52 / 8.14 on white, 6.40 / 7.04 / 7.61 on --surface.
-     --warn stays 40.0° from the light identity and 37.6° from --bad, so the
-     dark block's derivation survives the theme switch rather than being
-     re-argued on paper. */
   --ok:#006933; --warn:#8A3F00; --bad:#96213C;
   --c1:#0A0A0C; --c2:#4B4B56; --c3:#777782; --c4:#A9AAB5;
   --neutral-mark:#A9AAB5;

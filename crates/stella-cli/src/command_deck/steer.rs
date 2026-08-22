@@ -10,27 +10,83 @@
 //! the driver does with the texts once they arrive.
 
 use crate::session_persist::DurableQueue;
-use crate::subsession::{self, SteeringTap};
+use crate::subsession::SteeringTap;
+
+/// One leading `>` marker off a text, and nothing else.
+///
+/// The deck strips the marker before sending (`stella_tui::deck_ui::steer`),
+/// so a prompt parked as `> fix the tests` arrives here as `fix the tests`.
+/// Both sides of a backlog claim go through this, or the queued copy would
+/// never match the text it was delivered as.
+fn unmarked(text: &str) -> &str {
+    match text.trim_start().strip_prefix('>') {
+        Some(rest) => rest.trim_start(),
+        None => text,
+    }
+}
+
+/// Take one delivered prompt out of the driver's backlog.
+///
+/// The backlog lives in two places: the deck's mirror, which the deck clears
+/// as it sends the steer ("leaving the rows up would show prompts as 'waiting'
+/// that are already in the model's hands"), and this `DurableQueue`, which is
+/// what dispatch actually pops. Handing a held prompt to the turn without
+/// claiming it here is how the same words ran twice, with `queue.json`
+/// recording the doubled order for the next resume to replay (#4026).
+///
+/// Matching is on the words, because the two sides share no indices, and
+/// oldest-first, so N copies of one text claim N entries rather than the same
+/// one N times. **A miss is the ordinary case, not an error**: the composer
+/// draft rides in the same message and was never queued.
+///
+/// A wholesale `clear()` would be wrong in the other direction — the driver's
+/// backlog can hold prompts restored from a previous session that the deck's
+/// mirror never showed, and destroying those is the same lost-work failure
+/// this whole path exists to prevent.
+fn claim(queue: &mut DurableQueue, text: &str) {
+    let wanted = unmarked(text);
+    let found = queue.iter().position(|queued| unmarked(queued) == wanted);
+    if let Some(index) = found {
+        // `remove` is the write-through path; `items` is never touched directly.
+        queue.remove(index);
+    }
+}
 
 /// Deliver a mid-turn steer to the LEAD's running turn.
 ///
-/// Each text is routed through [`subsession::route_mid_turn`], the same
-/// decision a `>`-prefixed prompt takes — so the one case a steer cannot serve
-/// is handled identically: a turn that is only *settling* has no boundary left
-/// to inject at, and its texts continue the thread as the next turn instead of
-/// being dropped.
+/// The route is **not** re-derived from the text.
+/// [`WorkspaceInput::Steer`](stella_tui::WorkspaceInput) already *is* the
+/// intent — the deck said "steer" by choosing this message type, and strips the
+/// `>` marker off every text on its way out — so asking
+/// [`crate::subsession::route_mid_turn`] to classify a markerless text here
+/// answered `Sidecar` and sent an Esc-steer at a live turn to a stranger
+/// sub-session that could not see the conversation (#4025).
+///
+/// One question is left, and it is about the turn rather than the words: a turn
+/// that is only *settling* is past its last model step, so it has no boundary
+/// left to inject at. Its texts continue the thread as the next turn instead of
+/// being dropped — the same fallback `route_mid_turn` applies for a settling
+/// turn, taken here directly.
 ///
 /// The texts arrive as one message precisely so that decision is taken once
 /// for all of them. Drained as N separate inputs, a second Esc landing between
 /// two of them would steer half the backlog and cancel the turn holding the
 /// rest — the same lost-work failure the change exists to end.
 pub(super) fn steer_lead(tap: &SteeringTap, queue: &mut DurableQueue, texts: Vec<String>) {
+    // Branch once, on the turn — never per text, or a `mark_settling` landing
+    // mid-batch would split one steer across both destinations.
+    let settling = tap.is_settling();
     for text in texts {
-        match subsession::route_mid_turn(text, tap.is_settling()) {
-            subsession::MidTurnRoute::Steer(note) => tap.push(note),
-            subsession::MidTurnRoute::NextTurn(text) | subsession::MidTurnRoute::Sidecar(text) => {
-                queue.push_back(text)
-            }
+        // Defensive: the deck already strips the marker, and a stray one is a
+        // prefix rather than a word the user meant to send either way.
+        let text = unmarked(&text).to_string();
+        // Delivered means delivered: whichever destination it takes below, this
+        // prompt must stop being a parked one (#4026).
+        claim(queue, &text);
+        if settling {
+            queue.push_back(text);
+        } else {
+            tap.push(text);
         }
     }
 }
@@ -47,6 +103,9 @@ pub(super) fn steer_lead(tap: &SteeringTap, queue: &mut DurableQueue, texts: Vec
 /// would be the failure this whole change exists to fix, in a quieter costume.
 pub(super) fn steer_worker(queue: &mut DurableQueue, texts: Vec<String>) {
     for text in texts {
+        // Claim before re-parking, or a held backlog handed back here lands on
+        // top of the copy it was handed from and dispatches twice (#4026).
+        claim(queue, &text);
         queue.push_back(text);
     }
 }
@@ -61,6 +120,14 @@ pub(super) fn steer_worker(queue: &mut DurableQueue, texts: Vec<String>) {
 pub(super) fn steer_at_rest(queue: &mut DurableQueue, mut texts: Vec<String>) -> Option<String> {
     if texts.is_empty() {
         return None;
+    }
+    // The whole batch is claimed before any of it is re-parked: this is the
+    // sharpest form of the double-dispatch, since a double-Esc hold parks the
+    // backlog and the Esc-steer then front-inserts the tail straight back on
+    // top of it (#4026). Claiming in delivery order keeps "oldest entry first"
+    // meaningful for duplicated texts.
+    for text in &texts {
+        claim(queue, text);
     }
     let first = texts.remove(0);
     // Front-inserted in reverse so the tail keeps its own order ahead of

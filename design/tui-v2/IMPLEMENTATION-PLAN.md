@@ -62,7 +62,7 @@ Acceptance: snapshots for a scripted turn (begin, skill, read, run, receipt); fo
 - Diff rendering: two-layer rows, sign column, line-number gutter.
 - `edit`, `write`, `delete` (with the pre-execution graph check line), and expanded `read` bodies.
 
-Acceptance: snapshot of a Rust diff with add and remove rows; benchmark proving highlight runs once per event (call counter in tests); delete event refuses to render without a graph check result in state.
+Acceptance: snapshot of a Rust diff with add and remove rows; a call-counter test proving highlight runs once per event rather than once per frame — shipped as `an_unchanged_tail_is_highlighted_once_not_once_per_frame` in `crates/stella-tui/src/views/session/fold.rs`; delete event refuses to render without a graph check result in state.
 
 ### P3: plan panel and task contracts
 
@@ -119,9 +119,10 @@ Acceptance: palette snapshot for query `ga` during a verify turn showing `/gates
   tree-sitter) would be accurate, and silent on languages it does not know.
   That is a real cost and it is accepted for now. Mitigation is about **where** a
   better lexer lands, not whether: it goes into `stella-transcript`, so the deck,
-  the export grid and the Observatory gain it together. A deck-local highlighter
-  buys the deck accuracy by making the three surfaces disagree again, which is
-  the one outcome #4036 forbade (#4196).
+  the export grid and the Observatory gain it together — that upgrade is tracked
+  as #4283, and it lands there or not at all. A deck-local highlighter buys the
+  deck accuracy by making the three surfaces disagree again, which is the one
+  outcome #4036 forbade (#4196).
 - **Terminal variance on Windows**: legacy conhost degrades truecolor. Mitigation: fallback map plus recommending Windows Terminal; the desktop shell solves it permanently later.
 - **Registry and tracker latency**: never block the draw path; all remote work is async with visible `◐` states and stale-data tags.
 - **Scope creep in tabs**: AGENTS and SETTINGS are restyle-only in this cycle (SPEC 9.5).

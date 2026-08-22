@@ -124,6 +124,28 @@ pub fn footer_line(added: u32, removed: u32, width: usize) -> Line<'static> {
 /// headerless pseudo-diff whose own content (`--- an SQL comment`) can spoof
 /// a header. Only with no path at all is the diff's real `diff --git` /
 /// `+++` header consulted. An unknown language renders plain, byte-for-byte.
+///
+/// # The preamble is dropped here too (#4268)
+///
+/// This is the *standalone viewer's* entry point, and #4268 asked whether it
+/// specifically should regain the per-file preamble #4248 removed from every
+/// surface — the argument being that a reader navigating a whole multi-file
+/// patch has no other file boundary to orient on once `diff --git a/x b/x` is
+/// gone. It does not, because that reader does not exist: both viewer call
+/// sites hand this **one file's** diff, with that file's path already drawn a
+/// row away. `crates/stella-tui/src/views/files.rs` renders the selected
+/// record's own `best_diff()` under a [`header_line`] carrying its path, and
+/// `crates/stella-tui/src/render.rs`'s approval card renders one hunk under a
+/// row naming `hunk.path`. A per-file boundary inside a rendering that holds
+/// one file is not orientation; it is the path a second time, and `index `/
+/// `--- `/`+++ ` are the path a third time plus two blob hashes. One rule,
+/// every surface.
+///
+/// The decision is scoped to that premise on purpose. Should a multi-file
+/// patch ever reach a viewer, the boundary question is live again — and
+/// `the_preamble_is_dropped_for_every_file_of_a_multi_file_patch` is the test
+/// that would have to change, which is why it renders a two-file patch
+/// through a path nothing feeds a two-file patch today.
 pub fn body_lines(diff: &str, path: Option<&str>) -> Vec<Line<'static>> {
     body_lines_capped(diff, path, usize::MAX, None).0
 }
@@ -178,8 +200,11 @@ pub fn body_lines_inline(
 /// nothing about which question that `true` answers.
 ///
 /// It carried a second bool, `file_headers`, until the per-file preamble
-/// stopped rendering on every surface (#4248) and left nothing for the flag to
-/// decide. Whether the standalone viewer should get it back is #4268.
+/// stopped rendering on every surface (#4248). #4268 asked whether the
+/// standalone viewer should get it back and the answer is no — see
+/// [`body_lines`] for the argument — so one field is what this permanently is,
+/// and the flag stays a struct field rather than becoming a second bare
+/// argument for the reason above.
 #[derive(Clone, Copy)]
 struct Chrome {
     /// Draw `@@ -a,b +c,d @@`.
@@ -258,7 +283,7 @@ fn render_body(
         // happens to look like a header — an SQL comment, a diff of a diff —
         // and dropping them would delete a line of the change.
         // (`count_diff_lines` makes the same distinction for the same reason.)
-        let preamble = !in_hunk && is_meta(text);
+        let preamble = is_preamble(text, in_hunk);
         let line = body_line(
             text,
             lang,
@@ -320,6 +345,26 @@ fn is_meta(line: &str) -> bool {
         || line.starts_with("--- ")
         || line.starts_with("diff ")
         || line.starts_with("index ")
+}
+
+/// Whether a line is a file's git plumbing — the preamble no surface draws —
+/// given whether the walk is currently inside a hunk.
+///
+/// The two halves are recognized differently, and a patch holding more than
+/// one file is the input that shows why. `index `/`--- `/`+++ ` are headers
+/// only *before* a file's first hunk: inside one, those bytes are added or
+/// removed source text that happens to look like a header (an SQL comment, a
+/// diff of a diff), and dropping them would delete a line of the change.
+/// `diff ` is a boundary wherever it appears, because it is what *ends* the
+/// preceding file's last hunk — testing it against `in_hunk` would keep the
+/// second and every later file's boundary while dropping the first's, which
+/// is neither of the rules #4268 was choosing between.
+///
+/// [`body_line`] and [`count_diff_lines`] draw the same line in the same
+/// place, and must: this decides whether a row is *shown*, those decide what
+/// it *counts as*, and a disagreement is a renumbered gutter.
+fn is_preamble(line: &str, in_hunk: bool) -> bool {
+    line.starts_with("diff ") || (!in_hunk && is_meta(line))
 }
 
 /// The byte range within each changed line that actually differs from its
@@ -771,10 +816,10 @@ mod tests {
     /// header — which does — carries no line number.
     ///
     /// This asserted the other half until #4248: that `--- a/x.rs` and
-    /// `+++ b/x.rs` rendered *with* a blank gutter. They render nowhere now.
-    /// Whether the standalone viewer should get them back is #4268; until that
-    /// is answered one rule covers every surface, and this says so in the one
-    /// place a reader looks for it.
+    /// `+++ b/x.rs` rendered *with* a blank gutter. They render nowhere now,
+    /// the viewer included — #4268 settled that the standalone viewer does not
+    /// get them back (see [`body_lines`]'s own doc for why), so one rule covers
+    /// every surface and this says so in the one place a reader looks for it.
     #[test]
     fn the_preamble_does_not_render_and_the_hunk_header_keeps_a_blank_gutter() {
         let texts: Vec<String> = body_lines(SAMPLE, None).iter().map(line_text).collect();
@@ -799,8 +844,8 @@ mod tests {
     /// rows restating the path the call row already names and a pair of blob
     /// hashes nobody can act on. Inline under a tool call that is most of the
     /// row budget spent before the first changed line; in a standalone viewer
-    /// it is arguably orientation, but #4248 settled on one rule for every
-    /// surface and #4268 tracks whether the viewer should get it back.
+    /// it would be orientation only if a viewer were ever handed a second
+    /// file, which #4268 established it is not.
     ///
     /// Both surfaces are asserted here on purpose. They are rendered by the
     /// same `render_body`, and #4269 moved the viewer to this rule while the
@@ -836,6 +881,82 @@ mod tests {
             !viewer.iter().any(|t| t.contains("+++ b/x.rs")),
             "the viewer still renders the preamble: {viewer:?}"
         );
+    }
+
+    /// #4268's answer, at the one input that can tell the two candidate rules
+    /// apart: a patch holding **more than one file**.
+    ///
+    /// The viewer does not regain the per-file preamble, so `diff --git` is
+    /// dropped for the second file exactly as it is for the first. The rule is
+    /// "nowhere", not "nowhere except after a hunk has been seen" — the
+    /// distinction only becomes visible here, which is why the single-file
+    /// tests above could not pin it.
+    #[test]
+    fn the_preamble_is_dropped_for_every_file_of_a_multi_file_patch() {
+        let patch = "diff --git a/x.rs b/x.rs\nindex 1111111..2222222 100644\n--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n keep x\n-old x\n+new x\ndiff --git a/y.rs b/y.rs\nindex 3333333..4444444 100644\n--- a/y.rs\n+++ b/y.rs\n@@ -10,2 +10,2 @@\n keep y\n-old y\n+new y";
+        let viewer: Vec<String> = body_lines(patch, None).iter().map(line_text).collect();
+        let (inline, _) = body_lines_inline(patch, None, usize::MAX, None);
+        let inline: Vec<String> = inline.iter().map(line_text).collect();
+        for (surface, texts) in [("viewer", &viewer), ("inline", &inline)] {
+            for meta in ["diff --git", "index ", "--- a/", "+++ b/"] {
+                assert!(
+                    !texts.iter().any(|t| t.contains(meta)),
+                    "{meta:?} still renders on the {surface}: {texts:?}"
+                );
+            }
+            // Nothing of either file was lost with its boundary, and the
+            // second file's gutter is its own — `diff --git` resets the
+            // counters whether or not the row it sits on is drawn.
+            assert!(
+                texts.iter().any(|t| t.starts_with("   1  keep x")),
+                "first file's context keeps its line number on the {surface}: {texts:?}"
+            );
+            assert!(
+                texts.iter().any(|t| t.starts_with("  10  keep y")),
+                "second file's context is numbered from its own hunk on the {surface}: {texts:?}"
+            );
+            assert!(texts.iter().any(|t| t.contains("+new y")), "{texts:?}");
+        }
+        // Two hunks, so the inline surface keeps their boundary — the other
+        // half of the rule `a_full_git_patch_renders_only_its_hunk_inline`
+        // exercises from the single-hunk side.
+        assert_eq!(
+            inline.iter().filter(|t| t.contains("@@ -")).count(),
+            2,
+            "two hunks keep their headers inline: {inline:?}"
+        );
+    }
+
+    /// `Chrome::inline_for`'s `> 1` branch, which shipped in #4244 untested and
+    /// is what the preamble decision (#4268) leaves the inline surface deciding.
+    ///
+    /// A lone hunk header inline restates what the call row and the gutter
+    /// already say; a second one is a boundary between disjoint regions and
+    /// there is nothing else to draw it. The viewer keeps it either way, so
+    /// this is the one rule the two surfaces genuinely disagree about.
+    #[test]
+    fn the_lone_hunk_header_is_inline_only_suppression_the_viewer_keeps_it() {
+        let one = "@@ -1,2 +1,2 @@\n keep\n-old\n+new";
+        let two = "@@ -1,2 +1,2 @@\n keep\n-old\n+new\n@@ -9,1 +9,1 @@\n-far\n+near";
+        let inline_of = |d: &str| {
+            body_lines_inline(d, None, usize::MAX, None)
+                .0
+                .iter()
+                .map(line_text)
+                .filter(|t| t.contains("@@ -"))
+                .count()
+        };
+        let viewer_of = |d: &str| {
+            body_lines(d, None)
+                .iter()
+                .map(line_text)
+                .filter(|t| t.contains("@@ -"))
+                .count()
+        };
+        assert_eq!(inline_of(one), 0, "a lone hunk header is dropped inline");
+        assert_eq!(inline_of(two), 2, "two hunks keep their boundary inline");
+        assert_eq!(viewer_of(one), 1, "the viewer keeps a lone hunk header");
+        assert_eq!(viewer_of(two), 2, "and keeps both of two");
     }
 
     #[test]

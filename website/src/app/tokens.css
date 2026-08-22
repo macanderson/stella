@@ -205,12 +205,18 @@
   /* the gold stop that holds its edge as TEXT on the light ground: the
      full-strength signal is 1.32:1 on paper, this stop is 6.02:1 */
   --stella-accent-text: var(--stella-signal-ink);
-  /* the stop the MARK takes on a light ground — shapes, not text. v3.0
-     retired the kit's "full strength on both grounds" rule because ion was
-     1.61:1 on paper, a logotype nobody can see. v4.0 keeps the split: gold is
-     not in that position, but brand-500 is still only 2.63:1 on paper, under
-     the 3:1 graphical floor, and brand-700 clears it at 4.99:1. */
-  --stella-mark-shape: var(--stella-brand-700);
+  /* the stop the MARK takes on a light ground — shapes, not text. v5.0
+     retires the split that v3.0 introduced and v4.0 kept: gold, text and ink
+     are the only three mark colours, and the mark is the same gold on both
+     grounds, standing on the WCAG logotype exemption rather than on the 3:1
+     graphical floor.
+
+     The `brand-700` stop this used to name does not exist in v5.0 and is
+     defined nowhere in this file, so the variable resolved to nothing and
+     every light-mode consumer fell through to the literal in its own
+     `var(--stella-mark-shape, …)` fallback — which was already this gold.
+     Nothing renders differently; the variable means something again. */
+  --stella-mark-shape: var(--stella-brand);
 }
 
 /* ── semantic aliases — dark (ink) ───────────────────────────────────── */

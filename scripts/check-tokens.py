@@ -79,19 +79,16 @@ SELF = (
 # *worse*, not a place the migration ran out of patience. That distinction is
 # the only thing separating a ledger from an allowlist, so it is stated per
 # entry rather than assumed.
-MIGRATING: dict[str, str] = {
-    # The 143 hexes here are the subject matter, not the styling: the page
-    # renders the palette as swatches, quotes contrast ratios as prose, and
-    # documents two 50-950 ramps that v5.0 deletes. Remapping them yields a
-    # gold swatch labelled "Bronze Gold" beside ratios true of no pair on the
-    # page.
-    "docs/brand/brand-guidelines.html": "#4056",
-    # Design *briefs*, where a hex is an instruction. Remapping without
-    # rewriting the surrounding prose tells the reader to build the old system
-    # with new numbers. stella-tui-prompt.md is superseded outright by
-    # SPEC-stella-tui-v2.md and still specifies the retired `✦ stella` lockup.
-    "docs/brand/prompts/": "#4057",
-}
+# Empty, and #4056 / #4057 are what emptied it. Both entries were correct while
+# they stood — a hex remap really would have made those files worse, which is
+# what a ledger records and an allowlist does not. They came off the way the
+# comment above asks: the guidelines page's §03 was rewritten against v5.0 from
+# design/tokens/stella-tokens.json rather than remapped, and the two design
+# briefs were rewritten (stella-design-system-prompt.md) and marked superseded
+# by design/tui-v2/SPEC.md §2-4 with their retired hexes removed
+# (stella-tui-prompt.md). Adding an entry back is not a way to make this script
+# green.
+MIGRATING: dict[str, str] = {}
 
 HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
 

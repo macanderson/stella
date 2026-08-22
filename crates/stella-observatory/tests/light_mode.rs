@@ -8,7 +8,7 @@
 //! `file-size` guard) — the same reason `tests/journal_era.rs` gives for
 //! being here instead of there.
 //!
-//! Two things this pins down:
+//! Three things this pins down:
 //!
 //! 1. **Both wordmark cuts are served and wired into the header.** The dark
 //!    cut (`/assets/wordmark.svg`) already had a route test; this adds the
@@ -37,9 +37,140 @@
 //!    declared in the dark root and re-pointed in both light gates, and the
 //!    selectors that need an on-accent colour still reach for it rather than
 //!    for `--ground`.
+//! 3. **The page's two light gates declare one scheme.** See
+//!    [`the_two_light_gates_declare_one_scheme`] — the media query had kept
+//!    the pre-v5.0 cool-graphite neutrals while the explicit `data-theme`
+//!    gate moved to the product ramp, so which cast of the page a reader got
+//!    depended on whether they used their OS preference or the toggle
+//!    (#4072).
+
+use std::collections::BTreeMap;
 
 use stella_observatory::respond;
 use tempfile::TempDir;
+
+/// The slice of `css` between two markers, exclusive of the trailing one.
+fn between<'a>(css: &'a str, start: &str, end: &str) -> &'a str {
+    let from = css
+        .find(start)
+        .unwrap_or_else(|| panic!("marker `{start}` not found"));
+    let rest = &css[from + start.len()..];
+    let to = rest
+        .find(end)
+        .unwrap_or_else(|| panic!("marker `{end}` not found after `{start}`"));
+    &rest[..to]
+}
+
+/// `css` with every `/* … */` comment removed. These blocks carry more prose
+/// than declarations, and that prose quotes contrast ratios (`4.43:1`) and
+/// measurements (`needs: 6.84`) — so a parser that splits on `:` before
+/// stripping comments reads a sentence as a declaration and, worse, swallows
+/// the real declaration that follows it.
+fn strip_comments(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let mut rest = css;
+    while let Some(open) = rest.find("/*") {
+        out.push_str(&rest[..open]);
+        match rest[open..].find("*/") {
+            Some(close) => rest = &rest[open + close + 2..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Every `--token: value` declaration in a block, custom properties only.
+fn declarations(block: &str) -> BTreeMap<String, String> {
+    let mut found = BTreeMap::new();
+    for decl in strip_comments(block).split(';') {
+        let Some((name, value)) = decl.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        if !name.starts_with("--") {
+            continue;
+        }
+        let value = value.trim().to_ascii_uppercase();
+        if value.is_empty() {
+            continue;
+        }
+        found.insert(name.to_string(), value);
+    }
+    found
+}
+
+/// **The page's two light gates are one scheme, not two.**
+///
+/// The OS-preference gate and the explicit `data-theme` gate paint the same
+/// page for different readers — one who left their desktop on light, one who
+/// clicked the toggle — so a role that differs between them is the same
+/// design shipping in two casts, and only the second is checked: the
+/// cross-surface matrix (`crates/stella-cli/tests/design_token_parity.rs`)
+/// reads its canon from `:root[data-theme="light"]` alone and has never
+/// looked at the media query.
+///
+/// It had drifted exactly the way an unchecked half does. The media query
+/// still carried the pre-v5.0 cool-graphite ramp — `--text-2 #4D535A`,
+/// `--text-3 #828C97`, `--hairline #E7EBF0`, a gold `--identity` — against
+/// the attribute gate's product neutrals, seventeen roles apart. The worst of
+/// them was an *absence*: the media query never re-pointed `--text-emph`, so
+/// an OS-light reader got the dark scheme's `#BFC1CC` on white — 1.68:1 on
+/// `--surface`, which is not a contrast failure so much as invisible ink.
+///
+/// This asserts the invariant `crates/stella-cli/src/export.rs` states for
+/// its own two gates and holds: no colour is defined only inside the media
+/// query, and no colour disagrees across them.
+#[test]
+fn the_two_light_gates_declare_one_scheme() {
+    let ws = TempDir::new().unwrap();
+    let page = String::from_utf8(respond(ws.path(), "/").body).unwrap();
+
+    let dark = declarations(between(&page, "BEGIN palette", "END palette"));
+    let media = declarations(between(
+        &page,
+        r#":root:not([data-theme="dark"]){"#,
+        "\n  }",
+    ));
+    let attr = declarations(between(&page, r#":root[data-theme="light"]{"#, "\n}"));
+
+    assert!(
+        media.len() > 20 && attr.len() > 20,
+        "the light blocks did not parse: media={}, attr={}",
+        media.len(),
+        attr.len()
+    );
+
+    let mut drift = Vec::new();
+    for (token, want) in &attr {
+        match media.get(token) {
+            Some(got) if got == want => {}
+            Some(got) => drift.push(format!("  {token}: media {got} vs attribute {want}")),
+            None => {
+                let inherited = dark
+                    .get(token)
+                    .map(|v| format!("inherits the ink page's {v}"))
+                    .unwrap_or_else(|| "is undeclared".to_string());
+                drift.push(format!(
+                    "  {token}: absent from the media query, {inherited}"
+                ));
+            }
+        }
+    }
+    for token in media.keys() {
+        if !attr.contains_key(token) {
+            drift.push(format!("  {token}: absent from the attribute gate"));
+        }
+    }
+
+    assert!(
+        drift.is_empty(),
+        "the two light gates disagree on {} role(s); an OS-light reader and a \
+         reader who clicked the toggle see different casts of the same page:\n{}",
+        drift.len(),
+        drift.join("\n")
+    );
+}
 
 #[test]
 fn both_wordmark_cuts_are_served_and_referenced() {

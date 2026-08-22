@@ -760,24 +760,38 @@ pub fn fold_mark(open: bool) -> &'static str {
     if open { "▾" } else { "▸" }
 }
 
+/// The longest prefix of `text` that fits in `budget` display cells, and how
+/// many cells that prefix occupies.
+///
+/// The one cut this module makes, so a cut made to fill a fixed gutter and a
+/// cut made to break an over-long word cannot disagree about where the
+/// boundary is. It counts columns rather than characters and stops *before* a
+/// double-width character that would straddle the budget, so the answer is
+/// always whole characters and never one cell over. It can come back one cell
+/// under, and empty when even the first character is wider than `budget`.
+fn head_cells(text: &str, budget: usize) -> (&str, usize) {
+    let mut used = 0;
+    for (i, ch) in text.char_indices() {
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + w > budget {
+            return (&text[..i], used);
+        }
+        used += w;
+    }
+    (text, used)
+}
+
 /// `text`, in exactly `width` display cells: padded when short, truncated when
 /// long.
 ///
-/// Truncation counts columns rather than characters, and stops before a
-/// double-width character that would straddle the boundary — the cell it would
-/// have half-filled becomes a space, so the column after it starts where the
+/// Truncation goes through [`head_cells`], so it stops before a double-width
+/// character that would straddle the boundary — the cell it would have
+/// half-filled becomes a space, and the column after it starts where the
 /// constant says it does whether or not the text was cut mid-ideograph.
 fn pad(text: &str, width: usize) -> String {
-    let mut out = String::new();
-    let mut used = 0;
-    for ch in text.chars() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used + w > width {
-            break;
-        }
-        out.push(ch);
-        used += w;
-    }
+    let (head, used) = head_cells(text, width);
+    let mut out = String::with_capacity(head.len() + (width - used));
+    out.push_str(head);
     out.push_str(&" ".repeat(width - used));
     out
 }
@@ -832,7 +846,33 @@ fn output_color(text: &str) -> Color {
     }
 }
 
+/// Fold `text` into rows of at most `width` display cells.
+///
+/// # An over-wide unit is hard-broken, not allowed to overflow
+///
+/// The preferred break is between words, and it is tried first. But a single
+/// unbreakable unit can be wider than the whole measure — a URL, a minified
+/// line, a stack-frame path, or a Japanese or Chinese paragraph, which is
+/// normally written with no spaces at all. There is no whitespace to break at,
+/// so the choice is to cut inside the unit or to emit a row past the right
+/// edge, and this function **cuts** (#3769).
+///
+/// Overflow is the worse of the two because the terminal, not this renderer,
+/// then decides what happens to the excess: it either soft-wraps — shifting
+/// every row below it and walking the fixed columns this module exists to hold
+/// (see the module doc) — or truncates, silently losing the tail. A cut at a
+/// cell boundary keeps every character *and* keeps the frame; nothing is
+/// dropped, because the remainder simply starts the next row.
+///
+/// The cut goes through [`head_cells`], so it counts columns rather than
+/// characters and never straddles a double-width character. The one row that
+/// can still exceed `width` is a single character wider than the entire
+/// measure, which is placed alone rather than dropped or looped on; no caller
+/// here can reach it, because each clamps its measure to at least 20 cells.
 fn wrap(text: &str, width: usize) -> Vec<String> {
+    // The narrowest grid that can make progress. Clamping here is what lets the
+    // hard break below terminate: at zero cells no prefix ever fits.
+    let width = width.max(1);
     let mut out = Vec::new();
     for paragraph in text.trim().lines() {
         let mut current = String::new();
@@ -845,6 +885,29 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
             if !current.is_empty() && used + 1 + word_w > width {
                 out.push(std::mem::take(&mut current));
                 used = 0;
+            }
+            if word_w > width {
+                // Wider than any row, so breaking *between* words cannot help.
+                // `current` is necessarily empty: the flush above fires for
+                // every non-empty row once the word cannot join it. Emit full
+                // rows and carry the remainder, which the next word may join.
+                let mut rest = word;
+                while cells(rest) > width {
+                    let (head, _) = head_cells(rest, width);
+                    // Empty only when one character is wider than the whole
+                    // measure. Place it alone: the row is a cell over, which
+                    // beats dropping the character or never advancing.
+                    let cut = if head.is_empty() {
+                        rest.chars().next().map_or(rest.len(), char::len_utf8)
+                    } else {
+                        head.len()
+                    };
+                    out.push(rest[..cut].to_string());
+                    rest = &rest[cut..];
+                }
+                current.push_str(rest);
+                used = cells(rest);
+                continue;
             }
             if !current.is_empty() {
                 current.push(' ');
@@ -932,4 +995,73 @@ fn encode(lines: &[Line], basic: bool) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Run, Status, Turn};
+
+    /// A run of one open turn whose only content is `prompt`.
+    fn run_with_prompt(prompt: &str) -> Run {
+        Run {
+            name: "wrap-probe".to_string(),
+            model: "z-ai/glm-5.2".to_string(),
+            started_at: "14:02:11".to_string(),
+            turns: vec![Turn {
+                name: "probe".to_string(),
+                prompt: prompt.to_string(),
+                prose: Vec::new(),
+                notes: Vec::new(),
+                steps: Vec::new(),
+                answer: None,
+                status: Status::Ok,
+                duration_ms: 1,
+            }],
+        }
+    }
+
+    #[test]
+    fn wrap_hard_breaks_a_unit_wider_than_the_measure() {
+        let word = "x".repeat(90);
+        let rows = wrap(&word, 20);
+        for row in &rows {
+            assert!(cells(row) <= 20, "row of {} cells: {row:?}", cells(row));
+        }
+        assert_eq!(rows.concat(), word, "the hard break dropped characters");
+    }
+
+    #[test]
+    fn wrap_hard_breaks_without_straddling_a_double_width_character() {
+        // No spaces anywhere — the normal way a CJK paragraph is written — and
+        // an odd measure, so a naive cell cut would land mid-ideograph.
+        let text = "日本語".repeat(10);
+        let rows = wrap(&text, 21);
+        for row in &rows {
+            assert!(cells(row) <= 21, "row of {} cells: {row:?}", cells(row));
+        }
+        assert_eq!(rows.concat(), text, "the hard break dropped characters");
+    }
+
+    #[test]
+    fn wrap_still_breaks_between_words_when_it_can() {
+        assert_eq!(
+            wrap("alpha beta gamma delta", 12),
+            vec!["alpha beta".to_string(), "gamma delta".to_string()],
+        );
+    }
+
+    #[test]
+    fn an_unbreakable_prompt_stays_inside_the_grid() {
+        const WIDTH: usize = 100;
+        let run = run_with_prompt(&"x".repeat(400));
+        for line in &render(&run, &FoldState::new(), WIDTH) {
+            assert!(
+                line_width(line) <= WIDTH,
+                "row of {} cells: {:?}",
+                line_width(line),
+                to_plain(std::slice::from_ref(line)),
+            );
+        }
+    }
 }

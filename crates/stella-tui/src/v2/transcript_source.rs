@@ -51,8 +51,7 @@ pub fn head_rows(
     width: usize,
 ) -> Vec<Line<'static>> {
     let kind = kind_for(name, measured);
-    let subject = subject_for(name, path, input);
-    let mut event = Event::new(kind, subject);
+    let mut event = Event::new(kind, subject_for(name, path, input));
     // The head is drawn the moment the call dispatches, so it is never
     // "collapsed" in the fold sense — there is no body under it yet.
     event.collapsed = Some(false);
@@ -157,14 +156,16 @@ pub fn compaction_rows(
 /// Which half of the pair a kind states is a property of the verb, and lives
 /// here so one measurement cannot be read two ways: an edit states both sides
 /// (they are one reading), a write states what it wrote, a deletion what it
-/// removed. A read never resolves one at all — only a *mutation* stamps an
-/// inline-diff reference, so a read's line count has no source on this path and
-/// stays honestly absent (#4180).
+/// removed. A read states **no size**, and [`EventKind::Read`] carries no field
+/// to state one with: only a *mutation* stamps the inline-diff reference
+/// [`measured_delta`] resolves through, so `measured` is `None` for a read on
+/// every live path and always was. The field was removed rather than left
+/// defaulted so that the absence is structural instead of conventional
+/// (#4180); #4297 tracks the wire-level producer that would earn the column
+/// back.
 fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
     match name {
-        "read_file" => EventKind::Read {
-            extent: Extent::default(),
-        },
+        "read_file" => EventKind::Read,
         "edit_file" => EventKind::Edit {
             extent: measured.map_or_else(Extent::default, |(added, removed)| {
                 Extent::delta(added, removed)
@@ -187,6 +188,12 @@ fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
 
 /// The object of the verb: the path for a file tool, the command for `bash`,
 /// the raw input for anything else.
+///
+/// [`Subject::is_path`] leaves with the text it describes, out of the one match
+/// that chose it, so the two cannot come to disagree. Downstream the only
+/// evidence left is a `/`, and re-deriving the answer from one would emphasise
+/// a fragment of `sed -n '1,20p' foo/bar.rs` — a command line that names no
+/// file this row touched (#4168).
 fn subject_for(name: &str, path: Option<&str>, input: &str) -> Subject {
     match (name, path) {
         // The one arm that yields a path, and the only one that may: the caller
@@ -206,6 +213,9 @@ fn subject_for(name: &str, path: Option<&str>, input: &str) -> Subject {
             // without asking the server.
             let label = stella_tools::catalog::label_for(name);
             let head = first_line(input);
+            // A raw input blob is not a path even when it contains one: the
+            // subject here opens with the tool's own name, so there is no file
+            // identity for a basename to carry.
             if head.is_empty() {
                 label.into()
             } else {
@@ -296,6 +306,7 @@ mod tests {
     use super::*;
     use crate::model::SessionModel;
     use stella_protocol::{AgentEvent, FileChangeKind, ToolCall, ToolOutput};
+    use stella_tui_theme::token;
 
     fn text_of(line: &Line<'static>) -> String {
         line.spans.iter().map(|s| s.content.clone()).collect()
@@ -549,6 +560,60 @@ mod tests {
         );
     }
 
+    /// Every span of a head, as `(content, foreground)`.
+    fn styled_spans(rows: &[Line<'static>]) -> Vec<(String, Option<Color>)> {
+        rows.iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| (span.content.to_string(), span.style.fg))
+            .collect()
+    }
+
+    /// The witness for #4168: a path subject renders as a dim directory and a
+    /// bright basename, so a column of calls is scanned by file identity rather
+    /// than by the `crates/stella-tui/src/…` prefix every one of them shares.
+    #[test]
+    fn a_path_subject_splits_dim_directory_from_bright_basename() {
+        let spans = styled_spans(&head_rows("read_file", Some("a/b/c.rs"), "{}", None, 120));
+        let cut = spans
+            .iter()
+            .position(|(content, _)| content.ends_with("a/b/"))
+            .unwrap_or_else(|| panic!("the path is not split at its last separator: {spans:?}"));
+        assert_eq!(
+            spans[cut],
+            (" a/b/".to_string(), Some(token::DIM)),
+            "the directory is context and recedes: {spans:?}"
+        );
+        assert_eq!(
+            spans.get(cut + 1),
+            Some(&("c.rs".to_string(), Some(token::TEXT))),
+            "the basename is the identity the eye is hunting: {spans:?}"
+        );
+    }
+
+    /// And the half that stops the fix over-reaching: a `bash` head's subject is
+    /// a command line, so a slash inside it names no file this row touched and
+    /// must not be emphasised. Derived from the call's `path` argument, never
+    /// from the presence of a separator.
+    #[test]
+    fn a_command_subject_stays_one_unemphasised_span() {
+        let spans = styled_spans(&head_rows("bash", None, "grep -r foo/ .", None, 120));
+        let subject: Vec<_> = spans
+            .iter()
+            .filter(|(content, _)| content.contains("foo/"))
+            .collect();
+        assert_eq!(
+            subject.len(),
+            1,
+            "the command was split as though it named a file: {spans:?}"
+        );
+        assert_eq!(subject[0].0, " grep -r foo/ .", "{spans:?}");
+        assert_eq!(
+            subject[0].1,
+            Some(token::TEXT),
+            "a command keeps the text tone: {spans:?}"
+        );
+    }
+
     /// A measured extent still renders its numbers — the fix removes the
     /// fabrication, not the column.
     #[test]
@@ -563,5 +628,43 @@ mod tests {
         let text = text_of_rows(&event_rows(&event, 120));
         assert!(text.contains("+3"), "{text}");
         assert!(text.contains("-1"), "{text}");
+    }
+
+    /// The witness for #4180: a kind carries an [`Extent`] only where
+    /// [`kind_for`] can fill one.
+    ///
+    /// Both halves are asserted from the production constructor, so neither can
+    /// drift into a claim the other does not back. The left half — does this
+    /// kind *declare* a size at all — is read off the value's `Debug`
+    /// projection, because field presence is the one property of an enum
+    /// variant a test cannot otherwise observe without naming the field, and
+    /// naming it is exactly what must stop compiling. The right half is
+    /// behavioural: a kind that declares a size must render something different
+    /// once a measurement exists.
+    ///
+    /// `read_file` failed the left half for as long as `EventKind::Read` had an
+    /// `extent`: [`kind_for`] handed it `Extent::default()` unconditionally
+    /// because only a *mutation* stamps the inline-diff reference
+    /// [`measured_delta`] resolves through, so the column was expressible,
+    /// unreachable, and reached by nothing but a fixture.
+    #[test]
+    fn a_size_field_exists_only_where_a_producer_fills_it() {
+        for (tool, path) in [
+            ("read_file", "src/read.rs"),
+            ("edit_file", "src/edit.rs"),
+            ("write_file", "src/new.rs"),
+            ("delete_file", "src/old.rs"),
+        ] {
+            let declares_a_size = format!("{:?}", kind_for(tool, None)).contains("Extent");
+            let unmeasured = text_of_rows(&head_rows(tool, Some(path), "{}", None, 120));
+            let measured = text_of_rows(&head_rows(tool, Some(path), "{}", Some((7, 3)), 120));
+            assert_eq!(
+                declares_a_size,
+                measured != unmeasured,
+                "`{tool}` declares a size column its producer cannot fill \
+                 (declares: {declares_a_size}), so the row states the same \
+                 thing measured as unmeasured: {measured}"
+            );
+        }
     }
 }

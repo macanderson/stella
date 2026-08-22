@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::envelope::{AgentMeta, Inbound};
-use stella_protocol::{AgentEvent, StageKind};
+use stella_protocol::{AgentEvent, FileChangeKind, StageKind};
 
 fn reg(id: &str) -> Inbound {
     Inbound::Register(AgentMeta::new(id, format!("goal for {id}"), 0))
@@ -56,6 +56,168 @@ fn live() -> Scrollback {
     let mut sb = Scrollback::default();
     sb.set_live(true);
     sb
+}
+
+/// The flat text a reader is handed for `lines` — spans joined, rows newlined.
+fn spoken(lines: &[Line<'static>]) -> String {
+    lines
+        .iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn tool_start(agent: &str, call_id: &str, name: &str, path: &str) -> Inbound {
+    Inbound::Event {
+        agent: agent.into(),
+        event: AgentEvent::ToolStart {
+            call: stella_protocol::ToolCall {
+                call_id: call_id.into(),
+                name: name.into(),
+                input: serde_json::json!({ "path": path }),
+            },
+        },
+    }
+}
+
+fn measured(agent: &str, path: &str, added: u32, removed: u32) -> Inbound {
+    Inbound::Event {
+        agent: agent.into(),
+        event: AgentEvent::FileChange {
+            path: path.into(),
+            kind: FileChangeKind::Modified,
+            added,
+            removed,
+            diff: None,
+        },
+    }
+}
+
+fn tool_result(agent: &str, call_id: &str) -> Inbound {
+    Inbound::Event {
+        agent: agent.into(),
+        event: AgentEvent::ToolResult {
+            call_id: call_id.into(),
+            output: stella_protocol::ToolOutput::Ok {
+                content: "replaced 1 occurrence(s)".into(),
+                data: None,
+            },
+            duration_ms: 8,
+            speculated: false,
+        },
+    }
+}
+
+/// What the pane draws for `lane`'s entry at `idx`, against the ledger as it
+/// stands now — the comparison half of the divergence these two tests pin.
+fn pane_lines(model: &WorkspaceModel, id: &str, idx: usize) -> String {
+    let entry = model
+        .agents
+        .iter()
+        .find(|a| a.meta.id == id)
+        .expect("the lane is registered");
+    let transcript = &entry.model.transcript;
+    let mut out = Vec::new();
+    crate::render::entry_lines(
+        &transcript[idx],
+        crate::render::EntryView::at(&entry.model.files, transcript, idx),
+        false,
+        false,
+        false,
+        WIDTH,
+        &mut out,
+    );
+    spoken(&out)
+}
+
+/// Wide enough that the size column is never the thing that wraps away.
+const WIDTH: usize = 100;
+
+/// **Witness.** A mutating row measured by its own call carries its `+N −M`
+/// into scrollback.
+///
+/// The per-call producer (#4175) measures the work tree the moment a solo
+/// mutating call returns and publishes on the channel the engine then sends
+/// `ToolResult` on, so the `FileChange` folds *before* the row that made it.
+/// The ledger therefore already answers when [`Scrollback::plan`] flushes, and
+/// the reader hears the number the pane shows. Fails under the boundary-only
+/// ordering #4181 was filed against, where nothing had measured the change yet.
+#[test]
+fn a_flushed_mutating_row_carries_the_size_its_call_measured() {
+    let mut model = WorkspaceModel::new();
+    model.apply_inbound(&reg("lead"));
+    model.apply_inbound(&tool_start("lead", "c1", "edit_file", "src/x.rs"));
+    // The per-call work-tree measurement, before the result — see the doc
+    // above. Moving this line past the flush below is the pre-#4175 world, and
+    // the block then renders `● edit src/x.rs` with no size at all.
+    model.apply_inbound(&measured("lead", "src/x.rs", 3, 1));
+    model.apply_inbound(&tool_result("lead", "c1"));
+    // One more entry, so the result is no longer the trailing (growable) one
+    // and the whole call settles into a single block.
+    model.apply_inbound(&stage("lead"));
+
+    let sb = live();
+    let plan = sb.plan(&model, false);
+    assert_eq!(plan.len(), 1, "{plan:?}");
+    let heard = spoken(&block_lines(&model, &plan[0], false, WIDTH));
+
+    assert!(
+        heard.contains("+3") && heard.contains("−1"),
+        "scrollback states the measured size:\n{heard}"
+    );
+    let head = pane_lines(&model, "lead", 0);
+    assert!(
+        head.contains("+3"),
+        "and the head's own size column — the one #4154 added — is filled in:\n{head}"
+    );
+}
+
+/// **Witness.** A change only the turn boundary can measure still reaches
+/// scrollback without its size — and the pane still fills it in.
+///
+/// This is the residue #4181 named, narrowed to the cases the per-call producer
+/// cannot claim: a concurrent `delegate`'s writes, a tool that mutated while
+/// advertising `read_only`, a human editing in another window. Their aggregate
+/// `FileChange` lands after every `ToolResult` of the turn has folded, which is
+/// after the row settled and was written. Scrollback is append-only, so the
+/// divergence is permanent for that row — pinned here so it cannot silently
+/// widen back over the common case.
+#[test]
+fn a_boundary_measured_row_reaches_scrollback_without_its_size() {
+    let mut model = WorkspaceModel::new();
+    model.apply_inbound(&reg("lead"));
+    model.apply_inbound(&tool_start("lead", "c1", "edit_file", "src/x.rs"));
+    model.apply_inbound(&tool_result("lead", "c1"));
+    model.apply_inbound(&stage("lead"));
+
+    let mut sb = live();
+    let plan = sb.plan(&model, false);
+    let heard = spoken(&block_lines(&model, &plan[0], false, WIDTH));
+    for block in &plan {
+        sb.record(block);
+    }
+    assert!(
+        !heard.contains("+3"),
+        "nothing had measured the tree at flush time:\n{heard}"
+    );
+
+    // The turn boundary measures the tree, after the flush.
+    model.apply_inbound(&measured("lead", "src/x.rs", 3, 1));
+
+    assert!(
+        sb.plan(&model, false).is_empty(),
+        "scrollback is append-only: a settled row is never rewritten"
+    );
+    let pane = pane_lines(&model, "lead", 0);
+    assert!(
+        pane.contains("+3"),
+        "the pane re-resolves against the ledger every frame, so it fills in:\n{pane}"
+    );
 }
 
 #[test]

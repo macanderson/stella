@@ -626,3 +626,165 @@ fn an_already_marked_note_is_not_marked_twice() {
     };
     assert_eq!(delta, format!("{}already mine", stella_tui::NOTICE_MARKER));
 }
+
+/// The deck's Esc-steer must reach the running turn. `WorkspaceInput::Steer`
+/// already carries the intent, and the deck strips the `>` marker off every
+/// text before sending — so re-deriving the route from the text is how a live
+/// steer used to fall through to a sidecar sub-session (#4025).
+#[test]
+fn steer_lead_pushes_a_running_turn_into_the_tap_in_order() {
+    use stella_core::ports::TurnSteering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    let tap = subsession::SteeringTap::default();
+
+    steer::steer_lead(
+        &tap,
+        &mut queue,
+        vec![
+            "narrow it to the parser".to_string(),
+            "and add a test".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        tap.drain_steering(),
+        vec![
+            "narrow it to the parser".to_string(),
+            "and add a test".to_string()
+        ],
+        "a live steer belongs to the running turn, in the order it was written"
+    );
+    assert!(
+        queue.is_empty(),
+        "nothing may reach the backlog while the turn still has a boundary to steer at"
+    );
+}
+
+/// A settling turn is past its last model step, so it has no boundary left to
+/// inject at. The texts continue the thread as the next turn instead — the one
+/// case `steer_lead` still has to fall back for.
+#[test]
+fn steer_lead_falls_back_to_the_queue_once_the_turn_is_settling() {
+    use stella_core::ports::TurnSteering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    let tap = subsession::SteeringTap::default();
+    tap.mark_settling();
+
+    steer::steer_lead(
+        &tap,
+        &mut queue,
+        vec!["first".to_string(), "second".to_string()],
+    );
+
+    assert!(
+        tap.drain_steering().is_empty(),
+        "a settling turn has no boundary left to steer at"
+    );
+    assert_eq!(
+        stella_store::journal::read_queue(dir.path()),
+        vec!["first".to_string(), "second".to_string()],
+        "the backlog keeps the order the batch was written in"
+    );
+}
+
+/// The backlog lives in two places — the deck's mirror and the driver's
+/// `DurableQueue` — and the deck clears its copy as it sends the steer. So a
+/// held backlog that is handed to the turn has to leave the driver's copy too,
+/// or it dispatches a second time and `queue.json` records the doubled order
+/// for the next `stella resume` to replay (#4026).
+#[test]
+fn steer_lead_claims_each_delivered_prompt_out_of_the_durable_queue() {
+    use stella_core::ports::TurnSteering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    queue.push_back("a".to_string());
+    // The deck strips the `>` marker on its way out, so a queued
+    // `> fix the tests` arrives here markerless and must still match.
+    queue.push_back("> fix the tests".to_string());
+    let tap = subsession::SteeringTap::default();
+
+    steer::steer_lead(
+        &tap,
+        &mut queue,
+        vec![
+            "a".to_string(),
+            "fix the tests".to_string(),
+            "and the draft".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        tap.drain_steering(),
+        vec![
+            "a".to_string(),
+            "fix the tests".to_string(),
+            "and the draft".to_string()
+        ],
+        "every delivered text belongs to the running turn"
+    );
+    assert!(
+        queue.is_empty(),
+        "a prompt handed to the turn must not stay parked for a second dispatch"
+    );
+    assert!(
+        stella_store::journal::read_queue(dir.path()).is_empty(),
+        "the claim is write-through, or a resume replays the backlog"
+    );
+}
+
+/// The sharpest repro: a double-Esc hold parks the backlog, then an Esc-steer
+/// hands all of it back. The first text runs now, the tail is front-inserted —
+/// on top of the very entries it was just handed, unless each one is claimed
+/// out of the driver's copy first (#4026).
+#[test]
+fn esc_steer_at_rest_claims_each_delivered_prompt_out_of_the_durable_queue() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    queue.push_back("a".to_string());
+    queue.push_back("b".to_string());
+
+    let first = steer::steer_at_rest(
+        &mut queue,
+        vec!["a".to_string(), "b".to_string(), "draft".to_string()],
+    );
+
+    assert_eq!(first, Some("a".to_string()), "the head runs now");
+    assert_eq!(
+        queue.len(),
+        2,
+        "the tail plus the draft — never a second copy of the held backlog"
+    );
+    assert_eq!(
+        stella_store::journal::read_queue(dir.path()),
+        vec!["b".to_string(), "draft".to_string()],
+        "the composer draft was never queued, so it claims nothing and simply rides along"
+    );
+}
+
+/// The driver's backlog is not a superset of the deck's mirror: a prompt
+/// restored from a previous session sits in `DurableQueue` without the deck
+/// ever having drawn it. Claiming by text is what keeps it — `queue.clear()`
+/// would silently destroy work the user queued in an earlier session (#4026).
+#[test]
+fn a_restored_backlog_entry_the_deck_never_mirrored_survives_an_esc_steer() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    queue.adopt(
+        dir.path().to_path_buf(),
+        vec!["restored-only".to_string(), "a".to_string()],
+    );
+
+    let first = steer::steer_at_rest(&mut queue, vec!["a".to_string()]);
+
+    assert_eq!(first, Some("a".to_string()));
+    assert_eq!(
+        stella_store::journal::read_queue(dir.path()),
+        vec!["restored-only".to_string()],
+        "the delivered prompt is claimed; the entry the deck never showed stays parked"
+    );
+}
