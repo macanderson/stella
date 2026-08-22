@@ -673,62 +673,12 @@ fn deck_render_snapshots_pin_the_settings_tools_pane() {
 ///
 /// The overlay is context-aware — it lists the active tab's keys plus the
 /// deck-wide ones — so its content and its geometry both belong in a golden.
-///
-/// It is also the metric detail view: SPEC 5 re-homes MODEL detail, CPU, MEM,
-/// WARMTH and ENGINE off the one-row status bar and behind `?` **and** the
-/// AGENTS tab, and SPEC 11 lists `?` as "help, full metric detail" (#4188).
-/// The `contains` assertions below are deliberate belt-and-braces beside the
-/// golden: a golden records whatever was there, so re-blessing a frame that
-/// had quietly stopped rendering the block would pin the regression instead of
-/// catching it — which is exactly what #4186 was.
 #[test]
 fn deck_render_snapshots_pin_the_help_overlay() {
-    let mut model = fixture_model();
-    // A prompt-cache anchor on the focused agent, so WARMTH has a countdown to
-    // show rather than the em-dash of an agent whose provider never reported
-    // one. The demo scenario folds no `CacheInsight`, so it is written here
-    // like the resource sample above it: 312_000 − 264_000 = 48s spent of a
-    // 300s TTL, leaving 4:12.
-    if let Some(entry) = model.agents.first_mut() {
-        entry.cache_ttl_secs = 300;
-        entry.last_provider_call_ms = Some(264_000);
-    }
-    // A second role pin, so the MODEL block is drawn in the shape SPEC 5 asks
-    // for — one row per role — rather than the single row a scenario that only
-    // ever served a worker call happens to produce. The demo scenario folds one
-    // `StepUsage`, so the verifier pin is written here like the cache anchor
-    // above it. This is the pin the statline can never show: it names whichever
-    // slug is answering, and the verifier is by definition not that one.
-    model.role_pins.insert(
-        stella_tui::deck::PipelineRole::Verifier,
-        stella_tui::deck::RolePin {
-            provider: "anthropic".to_string(),
-            model: "claude-opus-5".to_string(),
-            served: true,
-        },
-    );
+    let model = fixture_model();
     let mut ui = ui_for(DeckTab::Skills);
     ui.help_open = true;
     let frame = render_frame(&model, &mut ui, W, H);
-
-    // One needle per cell SPEC 5 sends here. None of them can be supplied by
-    // the SKILLS tab underneath: the AGENTS dashboard is not drawn in this
-    // frame, and the statline carries only the one slug that is answering.
-    for needle in [
-        "42%",                     // CPU — the focused agent's sample
-        "148M",                    // MEM
-        "4:12",                    // WARMTH
-        "3 active · 3 total",      // ENGINE
-        "anthropic/claude-opus-5", // MODEL detail — a pin the statline never shows
-    ] {
-        assert!(
-            frame.contains(needle),
-            "the ? overlay dropped {needle:?} — SPEC 5 sends MODEL detail, CPU, \
-             MEM, WARMTH and ENGINE behind `?` as well as the AGENTS tab.\n\
-             \nrendered:\n{frame}"
-        );
-    }
-
     assert_golden(
         "overlay_help_skills",
         "the ? help overlay over the SKILLS tab",

@@ -16,7 +16,7 @@
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│stage execute   model glm-5.2   turn $3.7700  ·  off                                                                                                          │
+│stage execute   model —   turn $3.7700  ·  off                                                                                                                │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
 │    ⋯ ctrl+o for provenance and budget                                                                                ││Refactor the automations store into a…│

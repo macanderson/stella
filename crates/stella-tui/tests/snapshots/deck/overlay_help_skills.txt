@@ -3,14 +3,15 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌─────────────────────────────────────────────┌ help — SKILLS · esc close ───────────────────────────────────────┐─────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ │                                                                  │                                             │
-└─────────────────────────────────────────────│  SKILLS tab                                                      │─────────────────────────────────────────────┘
-┌ Installed — 4 (user + project) ─────────────│  ← →           switch panes                                      │─────────────────────────────────────────────┐
-│  [x] release-checklist v3  (project·workspac│  ↑ ↓           select a skill                                    │                                             │
-│▸ [x] rust-review v2/4  (user·user)  Review R│  space         enable / disable                                  │                                             │
-│  [ ] sql-tuning v1  (user·installed)  Read a│  e             edit the selected skill                           │o search                                     │
-│  [x] bench-rig-access v1  (project·auto)  Re│  p             pin / unpin                                       │                                             │
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
+│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ ┌ help — SKILLS · esc close ───────────────────────────────────────┐                                             │
+└─────────────────────────────────────────────│                                                                  │─────────────────────────────────────────────┘
+┌ Installed — 4 (user + project) ─────────────│  SKILLS tab                                                      │─────────────────────────────────────────────┐
+│  [x] release-checklist v3  (project·workspac│  ← →           switch panes                                      │                                             │
+│▸ [x] rust-review v2/4  (user·user)  Review R│  ↑ ↓           select a skill                                    │                                             │
+│  [ ] sql-tuning v1  (user·installed)  Read a│  space         enable / disable                                  │o search                                     │
+│  [x] bench-rig-access v1  (project·auto)  Re│  e             edit the selected skill                           │                                             │
+│                                             │  p             pin / unpin                                       │                                             │
 │                                             │  n             new skill — drafted by the LLM                    │                                             │
 │                                             │  ctrl-o        preview                                           │                                             │
 │                                             │  ctrl-x ×2     delete (press twice to confirm)                   │                                             │
@@ -34,12 +35,11 @@
 │                                             │                                                                  │                                             │
 │                                             │  model                                                           │                                             │
 │                                             │  worker        zai/glm-5.2-air · answering                       │                                             │
-│                                             │  verifier      anthropic/claude-opus-5                           │                                             │
 └─────────────────────────────────────────────│                                                                  │─────────────────────────────────────────────┘
  space on/off · ctrl+o preview · ctrl+x×2 dele│  machine                                                         │
 ──────────────────────────────────────────────│  engine        3 active · 3 total                                │──────────────────────────────────────────────
  ▸ stage  Refactor the automations store into │  cpu           42%                                               │
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50│  mem           148M                                              │
->>>                                           │  warmth        4:12                                              │
- ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! └──────────────────────────────────────────────────────────────────┘      turn $0.0390  ·  1 line  ·  queue empty
+>>>                                           └──────────────────────────────────────────────────────────────────┘
+ ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

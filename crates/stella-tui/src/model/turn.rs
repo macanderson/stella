@@ -15,45 +15,36 @@
 
 use stella_protocol::{BudgetMode, ModelCallRole, StageKind, StageName};
 
-/// Whether a call of this role is the one **answering the turn** — the model
-/// SPEC 6.1's opening rule names, and the one the statline means by "model".
+/// Whether one model call is the one **answering the turn**, and so may supply
+/// the model name on SPEC 6.1's opening rule.
 ///
-/// `StepUsage` reports every committed model call, and most of them are not
-/// the answer: an overflow summarizer, a reflection pass, or a wrapper
-/// plugin's verdict call each name a model that has no business labelling the
-/// turn. An unfiltered fold would make a long turn's rule read as though the
-/// summarizer had done the work.
+/// The one named place the fold asks this, deliberately. The role vocabulary is
+/// in flux — see the roleless-core work (#3903) — and a predicate spelled out at
+/// each call site is a predicate that gets updated at some of them.
 ///
-/// One named predicate rather than a `matches!` at the fold site, so the
-/// roleless-core churn (#3903) has exactly one place to land: the `match` is
-/// exhaustive, so a role added to the vocabulary is an `E0004` here and a
-/// maintainer has to answer "does this one answer a turn?" rather than
-/// inheriting a wildcard's guess.
+/// Two conditions, and each excludes a different wrong answer:
 ///
-/// [`ModelCallRole::Unknown`] counts, and deliberately: it is the
-/// `serde(default)` for an *absent* role on a stream recorded before call-role
-/// attribution existed, never a catch-all for a role this build does not know
-/// (an unrecognized token fails the whole event). On such a stream every call
-/// is `Unknown`, and the first one is the worker's — so admitting it is what
-/// keeps an old recording's opening rule readable, and it cannot admit a
-/// future auxiliary role.
-pub(super) fn answers_the_turn(role: ModelCallRole) -> bool {
-    match role {
-        ModelCallRole::Worker | ModelCallRole::Unknown => true,
-        ModelCallRole::Triage
-        | ModelCallRole::Research
-        | ModelCallRole::Plan
-        | ModelCallRole::PlanRepair
-        | ModelCallRole::WitnessAuthor
-        | ModelCallRole::WitnessRepair
-        | ModelCallRole::DistressGuidance
-        | ModelCallRole::Verdict
-        | ModelCallRole::AgentAuthor
-        | ModelCallRole::SkillAuthor
-        | ModelCallRole::DomainInference
-        | ModelCallRole::Reflection
-        | ModelCallRole::Summarization => false,
-    }
+/// * **[`ModelCallRole::Worker`]** is the ordinary execution role
+///   (`stella-core`'s `driver::capabilities`: "every call has a role, and
+///   `Worker` is the ordinary"). Every other role is auxiliary to the turn
+///   rather than the turn — a `Summarization` call is the overflow summarizer,
+///   a `Verdict` call is a verifier — and naming one of those on the rule would
+///   say the turn was answered by a model that never answered it.
+/// * **`call_seq == 0`** is the engine's own call for the step. Auxiliary calls
+///   riding the same `(turn_instance, step)` take 1, 2, … from a per-execution
+///   counter, so the zero is what separates the worker from whatever shared its
+///   step.
+///
+/// [`ModelCallRole::Unknown`] is deliberately **not** accepted, even though it
+/// is the `serde` default for an absent role and so covers every session
+/// recorded before call-role attribution existed. Naming a model from a call
+/// this build cannot identify is the same move #4124 refused when it declined
+/// to substitute the configured default: the rule would assert a routing
+/// decision nothing recorded. A replayed legacy session therefore keeps the
+/// blank it has today, which is the honest outcome rather than a regression.
+#[must_use]
+pub(crate) fn supplies_the_turns_model(role: ModelCallRole, call_seq: u64) -> bool {
+    matches!(role, ModelCallRole::Worker) && call_seq == 0
 }
 
 /// What SPEC 6.1's opening rule says out loud, stamped onto the stage boundary
@@ -84,41 +75,26 @@ pub struct TurnOpening {
     /// ordinal — which is the honest reading of a counter that means "turns
     /// this session has finished", not a renumbering.
     pub turn: u32,
-    /// The model answering this turn — the **first** committed call of the
-    /// turn whose role `answers_the_turn`, as reported by
-    /// `AgentEvent::StepUsage`.
+    /// The model answering **this** turn, from a call that actually happened.
     ///
-    /// # Why `StepUsage` and not `StepManifest`
+    /// Opens as `None` and is back-filled by the turn's own first worker call
+    /// (`AgentEvent::StepManifest`, gated on `supplies_the_turns_model` below —
+    /// crate-private, so named rather than linked),
+    /// rather than being stamped from [`Hud::model`] when the boundary is
+    /// pushed. Two defects made that the wrong source (#4183): `Hud::model` is
+    /// written only by `TurnComplete` and `RunComplete`, both of which are
+    /// terminal, so it was empty for the whole of turn 1 and named *the
+    /// previous turn's* model from turn 2 on.
     ///
-    /// The manifest arrives earlier — before the call, rather than after it —
-    /// and would spare the back-patch below. It names the model the engine
-    /// *asked for*, and this repo settles routing mid-turn, so the two can
-    /// disagree. A rule that stated what was asked and never what answered
-    /// would be asserting a routing decision that did not survive. `StepUsage`
-    /// reports a call that **committed**, so this only ever names a model that
-    /// actually ran.
+    /// Back-filled rather than deferred because the boundary is a settled
+    /// transcript entry: the rule renders the moment the stage lands, and the
+    /// deck's settled-prefix fold re-renders it when the manifest arrives — the
+    /// same shape the head's measured size uses (#4154).
     ///
-    /// # Why it is back-patched
-    ///
-    /// The boundary has to appear where the stage arrived, which is before any
-    /// call can have reported. So it is stamped with whatever the last turn ran
-    /// on — `None` on the session's first turn — and
-    /// `super::SessionModel::turn_head_idx` holds the slot until this turn's
-    /// own first answering call overwrites it. That provisional label is a
-    /// sticky route's best guess for the few hundred milliseconds it stands,
-    /// never the rule's final word.
-    ///
-    /// Only the **first** such call settles it. A later re-route in the same
-    /// turn moves [`Hud::model`] and leaves this alone: a boundary the reader
-    /// has already scrolled past changing its mind silently is worse than two
-    /// rules that differ, and the correction is already visible on the closing
-    /// rule, whose `TurnComplete` names the model the turn ended on.
-    ///
-    /// `None` therefore means **no answering call has reported** — a turn still
-    /// waiting on its first commit, one that died before it, or a stream
-    /// carrying no `StepUsage` at all. Not substituted with the configured
-    /// default even then: that is not evidence of what a router picked
-    /// (#4183, #4124).
+    /// Still `None` when nothing has committed a worker call, which is honest:
+    /// a turn that ended before reaching the model has no model to name, and
+    /// eliding beats substituting the configured default, which is not evidence
+    /// of what a router picked (#4124).
     pub model: Option<String>,
     /// This turn's spend ceiling, from [`Hud::limit_usd`].
     ///
@@ -270,15 +246,6 @@ pub struct Hud {
     /// it phase-less, and a phase-less stage falls back to phase 0 — the bar
     /// would snap back to "plan" and claim the run had gone backwards.
     pub host_stage: Option<StageKind>,
-    /// The model serving the turn, as the statline names it.
-    ///
-    /// Fed **during** the turn by every committed call that
-    /// `answers_the_turn`, so it tracks a mid-turn re-route as it settles,
-    /// and corrected at the end by `AgentEvent::TurnComplete`/`RunComplete`,
-    /// which are authoritative for the model the turn finished on (#4183).
-    /// Only the model name is taken from `StepUsage` — its token and cost
-    /// fields belong to `BudgetTick` and the store, and folding them here
-    /// would double-count the spend the gauge already shows.
     pub model: Option<String>,
     /// [`Hud::spent_usd`] as it stood when the current turn began, so live turn
     /// cost is the difference. Snapshotted in [`super::SessionModel::push_user_prompt`]
