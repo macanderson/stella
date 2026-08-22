@@ -107,7 +107,7 @@ PR must update AGENTS.md's workspace table and the root `Cargo.toml` members.
 
 The gate's `file-size` guard (`scripts/check-file-size.sh`) enforces a
 1500-line ratchet: a new file over the limit is a hard failure with no
-baseline escape, and the four files below are grandfathered at a recorded
+baseline escape, and the two files below are grandfathered at a recorded
 ceiling in `scripts/file-size-baseline.txt`. They are god files — already too
 big, closed to growth — and this crate hosts the workspace's single worst:
 the guard's own header cites [`src/deck_ui.rs`](src/deck_ui.rs), which had
@@ -115,21 +115,23 @@ reached 6,884 lines when the guard landed and has since been cut to its
 recorded ceiling in `scripts/file-size-baseline.txt`. Plan changes so no new line lands in any of them. The
 crate's own precedent is the [`src/views/`](src/views) directory — one render
 module per tab, split out of the deck files — so a change that adds rendering
-goes in a `views/` module, not `deck_ui.rs` or `deck_render.rs`; new modal
+goes in a `views/` module, not `deck_ui.rs`; new modal
 key handling goes in a `src/deck_ui/` submodule the way
 [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs) already does. Note that
 [`src/views/engine.rs`](src/views/engine.rs) is itself grandfathered: a split
 buys headroom, not immunity, so code you touch inside any of these files is a
 candidate to extract.
 
-- [`src/deck_render.rs`](src/deck_render.rs)
 - [`src/deck_ui.rs`](src/deck_ui.rs)
 - [`src/views/engine.rs`](src/views/engine.rs)
 
-`src/views/session.rs` left this list in #4127: its incremental transcript fold
-moved to [`src/views/session/fold.rs`](src/views/session/fold.rs), which took it
-under the limit. That is the shape a split is meant to have — a self-contained
-concern leaving, not lines redistributed.
+Two files have left this list, both the same way. `src/views/session.rs` left in
+#4127: its incremental transcript fold moved to
+[`src/views/session/fold.rs`](src/views/session/fold.rs), which took it under the
+limit. `src/deck_render.rs` left in #3591: the composer footer's affordance
+budgeting moved to [`src/deck_render/footer.rs`](src/deck_render/footer.rs),
+taking it from 1518 to 1383. That is the shape a split is meant to have — a
+self-contained concern leaving, not lines redistributed.
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an
@@ -155,7 +157,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/diff.rs`](src/diff.rs), [`src/syntax.rs`](src/syntax.rs), [`src/markdown.rs`](src/markdown.rs), [`src/textline.rs`](src/textline.rs) | Shared text presentation — one implementation each of "how a diff looks", source coloring, markdown, and the event→wording table (also consumed by `stella-cli`'s plain renderer). |
 | [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` mirrors the brand kit at `docs/brand/`; `theme.rs` is the only module allowed to reference it. |
 | [`src/v2/status_bar.rs`](src/v2/status_bar.rs) | SPEC 5's one-row status bar — `worker · stage · ctx [meter] % · $spend · saved $x · ✉ n`, with `? help` pinned right. `cells` is the one decision function (pure over `Status`, so the golden frames are fixture data); `render_band` draws it plus the cache-diagnosis row beneath. Replaced the two-row v1 statline in #4123/#4129; `src/statline.rs` is deleted (#4128) and this module's doc keeps the record of why the two-row shape lost. |
-| [`src/v2/project.rs`](src/v2/project.rs), [`src/v2/status_source.rs`](src/v2/status_source.rs) | `WorkspaceModel` → the v2 widgets' input structs. **Two projections of the same six values exist and disagree; `project.rs` is the one that draws** — see #4187 before changing either. |
+| [`src/v2/status_source.rs`](src/v2/status_source.rs) | `WorkspaceModel` → the v2 status bar's input struct. The **one** projection of SPEC 5's six values, since #4187 deleted the second one — which was the one that drew, and which printed the wire string `context_recall` where SPEC 5 says `context recall`. |
 | [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the unified stage stepper + progress row, the cache formatters behind the status bar's `saved` cell / context overlay, and the launch mark held over session init. |
 | [`src/views/cards.rs`](src/views/cards.rs) + [`plan_card`](src/views/plan_card.rs) · [`models_card`](src/views/models_card.rs) · [`budget_card`](src/views/budget_card.rs) | The three floating cards over one shared chrome; their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). |
 | [`src/views/subagents.rs`](src/views/subagents.rs) | The SESSION tab's nested `└─ ◆` subagent blocks under the lead's header. |
