@@ -57,29 +57,14 @@ fn roster_at(root: &Path) -> PluginRoster {
 
 /// `PluginRoster::load` reads the *user* tier through `crate::paths`, which a
 /// unit test must not touch — so the project tier is read directly here.
+///
+/// Through `roster::read_tier`, never a second scan of its own: what a tier
+/// admits is the policy under test in more than one place here, and a helper
+/// with a private copy of that filter would answer for a build that does not
+/// have it (#3530).
 fn read_project_tier(root: &Path) -> Vec<super::roster::InstalledPlugin> {
     let dir = stella_home::resolve_project_plugins_dir(root);
-    let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return found;
-    };
-    let mut paths: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect();
-    paths.sort();
-    for path in paths {
-        if let Some(manifest) = roster::load_manifest(&path).expect("a fixture manifest must load")
-        {
-            found.push(super::roster::InstalledPlugin {
-                manifest,
-                dir: path,
-                scope: PluginScope::Project,
-            });
-        }
-    }
-    found
+    roster::read_tier(&dir, PluginScope::Project, &mut Vec::new())
 }
 
 /// **Witness (c).** install → list → remove round-trips, and the removed
@@ -322,6 +307,75 @@ fn an_untrusted_projects_plugins_do_not_load_are_not_listed_and_dispatch_no_hook
         trusted.hook_routes().len(),
         2,
         "one route per declared hook, once trusted"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The symlink witness (#3530).** A symlinked tier entry is **not** a
+/// plugin: it is not loaded, not listed, dispatches no hook, and `remove`
+/// reports it as not installed instead of erroring on it.
+///
+/// The route assertion is the load-bearing one — a route is an `argv` a host
+/// spawns, with `${plugin_dir}` interpolated to the *link* path, so a test
+/// asserting only on the roster would pass against a build that still handed
+/// out dispatchable commands into a tree this CLI never copied. `install` has
+/// always refused a symlink (`a_symlink_in_a_package_is_refused`); the tier
+/// reader now holds the same line, so the two can no longer disagree in the
+/// direction that left a package loadable, routable and un-uninstallable.
+///
+/// Driven through `PluginRoster::load` rather than the `roster_at` helper on
+/// purpose: `load` is what the binary calls, so the trust gate and the user
+/// tier are in the picture and nothing here can be answered by a fixture's
+/// own reading of the directory.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_tier_entry_is_not_loaded_listed_or_routed() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("symlinked-entry");
+    // A home of our own, so the developer's `~/.stella/plugins` cannot answer.
+    let _paths = crate::paths::test_user_home(root.join("home"));
+
+    // A complete, loadable package that lives *outside* the tier, reachable
+    // only through the link — what a hand-run `ln -s` produces.
+    let source = package(&root, "vera");
+    let tier = stella_home::resolve_project_plugins_dir(&root);
+    std::fs::create_dir_all(&tier).expect("fixture tier");
+    std::os::unix::fs::symlink(&source, tier.join("vera")).expect("fixture symlink");
+
+    // Trusted, so the project-tier gate cannot be what refuses it (#3509).
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe {
+        std::env::set_var("STELLA_TRUST_PROJECT", "1");
+        std::env::remove_var("STELLA_PROJECT_HOOKS");
+    }
+    let (roster, notices) = PluginRoster::load(&root, &Settings::default());
+    assert!(roster.get("vera").is_none(), "not loaded");
+    assert!(
+        roster.plugins().is_empty(),
+        "not listed: {:?}",
+        roster.plugins()
+    );
+    assert!(
+        roster.hook_routes().is_empty(),
+        "and above all dispatches nothing — a route is an argv the host spawns: {:?}",
+        roster.hook_routes()
+    );
+    assert!(
+        notices.iter().any(|notice| notice.contains("symlink")),
+        "the skip is spoken, not silent: {notices:?}"
+    );
+
+    let error = remove(&root, "vera").expect_err("there is nothing installed to remove");
+    assert!(
+        error.contains("is not installed in either scope"),
+        "the link is reported as not installed, not refused as a removal: {error}"
+    );
+    assert!(
+        std::fs::symlink_metadata(tier.join("vera")).is_ok(),
+        "and the link itself is left for the operator to delete by hand"
     );
 
     let _ = std::fs::remove_dir_all(&root);

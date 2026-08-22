@@ -72,6 +72,12 @@ pub struct SessionStats {
     /// are different grades of evidence and a dashboard that merged them
     /// would hide which merges rested on which.
     pub verified_locally: u32,
+    /// Filings attempted, however they ended.
+    ///
+    /// The denominator `issues_created`, `filings_refused` and
+    /// `filings_duplicate` share, which is what makes
+    /// [`SessionStats::filings_balance`] a check rather than an assumption.
+    pub filings_attempted: u32,
     /// Filings refused for not matching the workspace's convention.
     pub filings_refused: u32,
     /// Filings skipped because the finding was already in the seen set.
@@ -106,9 +112,18 @@ pub struct SessionStats {
     pub base_broken_waits: u32,
 
     // -- what the loop learned ----------------------------------------------
-    /// Reflections written to the reflection log.
+    //
+    // A turn runs in a child process, so these three are deltas over the
+    // durable state it leaves behind rather than events this process saw. The
+    // writer is `stella-cli`'s `self_driving_cmd::learning`, which names the
+    // artifact each one is read from.
+    /// Lessons written to the reflection log, restatements included — a lesson
+    /// the loop keeps re-learning is the recurrence the miners exist to count.
     pub reflections_logged: u32,
-    /// Memories created.
+    /// Memories created: distinct memory lineages the context store gained.
+    ///
+    /// Lower than `reflections_logged` by design — a restated lesson reaches
+    /// the log and claims no memory.
     pub memories_created: u32,
     /// Proposals emitted for a human to accept or decline.
     pub proposals_made: u32,
@@ -186,11 +201,143 @@ impl SessionStats {
             _ => {}
         }
     }
+
+    /// Whether the filing counts add up.
+    ///
+    /// The companion to [`SessionStats::closures_balance`], for the same
+    /// reason: three outcomes rendered beside a total that disagrees with them
+    /// is worse than either alone, because a reader believes whichever they
+    /// read first.
+    #[must_use]
+    pub fn filings_balance(&self) -> bool {
+        self.issues_created + self.filings_refused + self.filings_duplicate
+            == self.filings_attempted
+    }
+
+    /// Record a filing by its canonical outcome.
+    ///
+    /// A `&str` rather than the caller's own enum, exactly as
+    /// [`SessionStats::record_closure`]: this is a leaf crate, and the
+    /// vocabulary of *why a filing did not happen* belongs to the surface that
+    /// tried. An unrecognised outcome still counts toward the attempts, so
+    /// [`SessionStats::filings_balance`] reports it rather than the number
+    /// silently going missing.
+    pub fn record_filing(&mut self, canonical: &str) {
+        self.filings_attempted += 1;
+        match canonical {
+            "new" => self.issues_created += 1,
+            "refused" => self.filings_refused += 1,
+            "duplicate" => self.filings_duplicate += 1,
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every counter, and the code that writes it.
+    ///
+    /// A counter with a printer and no producer renders `0` forever, and a
+    /// reader cannot tell that from "the session did none of that" — five of
+    /// them shipped that way (#4118). The compiler cannot catch it: a `pub`
+    /// field that nothing assigns is neither dead code nor a warning.
+    ///
+    /// This is the discipline of invariant #10's consumer ledger
+    /// (`stella_protocol::event::consumers`) pointed at production instead of
+    /// consumption, and it enforces the same half: a field cannot be added
+    /// without a line naming where it is written, which a reviewer reads. It
+    /// does not prove the named site still exists — that string is prose. The
+    /// test below proves totality, which is what makes the question
+    /// unavoidable at the moment a field is added.
+    const PRODUCERS: &[(&str, &str)] = &[
+        ("issues_claimed", "drive.rs — taken off the ranked queue"),
+        ("issues_attempted", "drive.rs — a turn was spent on it"),
+        ("issues_changed", "drive.rs — WorkOutcome::Changed"),
+        ("issues_no_change", "drive.rs — WorkOutcome::NoChange"),
+        ("issues_failed", "drive.rs — WorkOutcome::Failed"),
+        ("issues_escalated", "drive.rs — handed back to a human"),
+        (
+            "issues_deferred",
+            "drive.rs — a peer had it, or it would not start",
+        ),
+        (
+            "issues_created",
+            "SessionStats::record_filing, from self_driving_cmd.rs",
+        ),
+        ("issues_triaged", "drive.rs — placed on the ladder"),
+        (
+            "verified_locally",
+            "drive.rs — the project's own checks passed here",
+        ),
+        ("filings_attempted", "SessionStats::record_filing"),
+        ("filings_refused", "SessionStats::record_filing"),
+        ("filings_duplicate", "SessionStats::record_filing"),
+        (
+            "closed_total",
+            "SessionStats::record_closure, from lifecycle.rs",
+        ),
+        ("closed_completed", "SessionStats::record_closure"),
+        ("closed_not_planned", "SessionStats::record_closure"),
+        ("closed_duplicate", "SessionStats::record_closure"),
+        ("prs_opened", "drive.rs — delivery opened one"),
+        ("prs_merged", "drive.rs — the forge reported a merge"),
+        ("prs_escalated", "drive.rs — handed to a human instead"),
+        ("fixes_pushed", "drive.rs — a red build was answered"),
+        ("rebases", "drive.rs — a conflict was answered"),
+        (
+            "base_broken_waits",
+            "drive.rs — the red reproduced on the base",
+        ),
+        (
+            "reflections_logged",
+            "self_driving_cmd/learning.rs — reflection-log delta",
+        ),
+        (
+            "memories_created",
+            "self_driving_cmd/learning.rs — memory-lineage delta",
+        ),
+        (
+            "proposals_made",
+            "self_driving_cmd/learning.rs — proposal-record delta",
+        ),
+        ("turns_run", "drive.rs — a turn reached the model"),
+        (
+            "turns_over_budget",
+            "drive.rs — a turn hit its spend ceiling",
+        ),
+    ];
+
+    /// **The witness.** Every field the report renders names the code that
+    /// writes it. A counter added with a printer and no producer fails here
+    /// instead of shipping a zero somebody reads as a fact.
+    #[test]
+    fn every_counter_names_its_producer() {
+        let rendered = serde_json::to_value(SessionStats::default()).expect("serialize");
+        let fields: std::collections::BTreeSet<String> = rendered
+            .as_object()
+            .expect("a struct serializes to an object")
+            .keys()
+            .cloned()
+            .collect();
+        let declared: std::collections::BTreeSet<String> = PRODUCERS
+            .iter()
+            .map(|(field, _)| (*field).to_owned())
+            .collect();
+
+        let undeclared: Vec<&String> = fields.difference(&declared).collect();
+        assert!(
+            undeclared.is_empty(),
+            "these counters have a printer and no declared producer: {undeclared:?} \
+             — name the code that writes each one in PRODUCERS, or delete the field"
+        );
+        let stale: Vec<&String> = declared.difference(&fields).collect();
+        assert!(
+            stale.is_empty(),
+            "PRODUCERS names counters that no longer exist: {stale:?}"
+        );
+    }
 
     /// **The witness.** A loop filing faster than it finishes is losing ground,
     /// and the number that says so must be on the dashboard — the raw counts
@@ -252,6 +399,39 @@ mod tests {
         assert!(
             !stats.closures_balance(),
             "an unrecognised resolution must show up as an imbalance, not disappear"
+        );
+    }
+
+    /// The three outcomes must sum to the attempts, and `record_filing` is
+    /// what makes that true by construction. A refusal and a duplicate are
+    /// real outcomes of a filing, not silences.
+    #[test]
+    fn recording_filings_keeps_the_counts_balanced() {
+        let mut stats = SessionStats::default();
+        stats.record_filing("new");
+        stats.record_filing("refused");
+        stats.record_filing("duplicate");
+        stats.record_filing("duplicate");
+
+        assert_eq!(stats.filings_attempted, 4);
+        assert_eq!(stats.issues_created, 1);
+        assert_eq!(stats.filings_refused, 1);
+        assert_eq!(stats.filings_duplicate, 2);
+        assert!(stats.filings_balance());
+    }
+
+    /// A filing outcome this build does not know still counts toward the
+    /// attempts, so the balance check reports the gap rather than the number
+    /// vanishing — the same contract `record_closure` holds.
+    #[test]
+    fn an_unknown_filing_outcome_is_visible_rather_than_lost() {
+        let mut stats = SessionStats::default();
+        stats.record_filing("rate_limited");
+
+        assert_eq!(stats.filings_attempted, 1);
+        assert!(
+            !stats.filings_balance(),
+            "an unrecognised filing outcome must show up as an imbalance, not disappear"
         );
     }
 

@@ -5,9 +5,10 @@
 //! module is only the rendering.
 //!
 //! Split out of `self_driving_cmd.rs` rather than added to it: that file is
-//! over the 1500-line limit and `doc:backlog-self-driving` §9 records it as
-//! closed to growth (AGENTS.md § *God files* — plan around them, never into
-//! them).
+//! within a couple of hundred lines of the 1500-line ceiling `make file-size`
+//! enforces, and it carries no entry in `scripts/file-size-baseline.txt` — so
+//! a crossing fails the gate outright rather than being grandfathered
+//! (AGENTS.md § *God files* — plan around them, never into them).
 
 use crate::query_format::QueryFormat;
 
@@ -46,9 +47,16 @@ pub(super) fn session_stats(st: &LoopState, format: QueryFormat) -> Result<(), S
     println!("  deferred        {:>5}", stats.issues_deferred);
 
     println!("\nfiled");
+    println!("  attempted       {:>5}", stats.filings_attempted);
     println!("  created         {:>5}", stats.issues_created);
     println!("  refused         {:>5}", stats.filings_refused);
     println!("  duplicate       {:>5}", stats.filings_duplicate);
+    if !stats.filings_balance() {
+        eprintln!(
+            "  warning: the three outcomes do not sum to the attempts — a filing \
+             outcome this build does not recognise was recorded"
+        );
+    }
 
     println!("\nclosed");
     println!("  total           {:>5}", stats.closed_total);

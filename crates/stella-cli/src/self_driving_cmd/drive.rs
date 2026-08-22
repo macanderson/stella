@@ -60,9 +60,9 @@
 use std::collections::HashMap;
 
 use stella_autonomy::{
-    Action, Attempts, CarriedPr, CiConclusion, Contention, DeliverPolicy, IssueRef,
-    LoopObservation, LoopState, LoopStep, PrDisposition, PrRef, PrState, UnblockAttempt,
-    deliver_next, step,
+    Action, Attempts, CarriedPr, CiConclusion, Contention, ContentionPolicy, ContentionVerdict,
+    DeliverPolicy, IssueRef, LoopObservation, LoopState, LoopStep, PrDisposition, PrRef, PrState,
+    UnblockAttempt, contention_verdict, deliver_next, step,
 };
 
 use super::audit::{self, Action as Audit};
@@ -301,6 +301,20 @@ pub(super) fn drive(
                 // One per pass. Triage is a model call, and draining a
                 // hundred unlabelled issues before touching any work would
                 // turn a delivery loop into a labelling bot.
+                //
+                // Ranked is then filtered by contention as well as by what
+                // this run already holds — see [`next_claimable`]. Before
+                // that the branch-collision guard in `work::start` was the
+                // only thing that noticed a peer, which is a git failure
+                // after git state exists rather than a look before it (#4002).
+                //
+                // The two guards see different things and the order matters:
+                // a claim-time probe reads names, while `work::start` has a
+                // specific git error and asks the forge, which is what lets
+                // it tell the loop's own dead run from a live peer. An
+                // operator whose clone is full of their own leftovers wants
+                // `ContentionPolicy::ClaimsOnly`, which is what that policy
+                // is for (`stella_autonomy::ContentionPolicy`).
                 if let Err(error) =
                     assess_one(durable, &root, &provider, &cfg, spend_limit, &mut triaged)
                 {
@@ -330,10 +344,29 @@ pub(super) fn drive(
                     }
                 };
 
-                let Some(key) = ranked
-                    .into_iter()
-                    .find(|k| !state.claimed.iter().any(|c| &c.0 == k) && !spent.contains_key(k))
-                else {
+                let mut deferrals = 0_u32;
+                let pick = next_claimable(
+                    ranked,
+                    |k| state.claimed.iter().any(|c| c.0 == k) || spent.contains_key(k),
+                    doctrine.contention,
+                    |k| super::deliver::contention_for_issue(&root, k),
+                    |k, evidence| {
+                        deferrals += 1;
+                        audit::record(
+                            durable,
+                            Audit::Deferred,
+                            Some(k),
+                            &format!(
+                                "somebody else is already on it ({}); taking the next candidate \
+                                 rather than duplicating",
+                                evidence.join(", ")
+                            ),
+                        );
+                        durable.update_stats(|s| s.issues_deferred += 1);
+                    },
+                );
+
+                let Pick::Take(key) = pick else {
                     // An empty queue is a state, not an ending.
                     //
                     // Returning here made "there is nothing to do right now"
@@ -347,12 +380,18 @@ pub(super) fn drive(
                     // Waiting costs one queue read per poll and is the whole
                     // difference between a batch job and a loop somebody can
                     // walk away from.
+                    //
+                    // The deferral count is on this line because without it an
+                    // exhausted queue and a queue whose every candidate went to
+                    // a peer read identically, and the second is the one where
+                    // something is happening.
                     audit::record(
                         durable,
                         Audit::Waited,
                         None,
                         &format!(
-                            "the queue offers nothing this run has not already taken; \
+                            "the queue offers nothing this run has not already taken \
+                             ({deferrals} deferred to another actor this pass); \
                              re-asking in {poll_secs}s — a new issue, or an escalation \
                              label removed, is all it takes"
                         ),
@@ -402,6 +441,12 @@ pub(super) fn drive(
                     &format!("began work — {}", resolved.title),
                 );
 
+                // What the turn is about to learn, measured either side of it.
+                // The turn is a child process writing into the repository's
+                // own state root, so a delta over that state is the only
+                // producer these counters can have — see `learning`.
+                let learned_before = super::learning::tally(&root);
+
                 // A `work` that cannot start is one issue's problem, not the
                 // loop's: a single leftover branch must not halt a run that has
                 // other issues to get on with.
@@ -419,10 +464,12 @@ pub(super) fn drive(
                             continue;
                         }
                     };
+                let learned = super::learning::tally(&root).since(learned_before);
 
                 durable.update_stats(|s| {
                     s.issues_attempted += 1;
                     s.turns_run += 1;
+                    learned.add_to(s);
                 });
 
                 match outcome {
@@ -1043,6 +1090,46 @@ fn advance(
     }
 }
 
+/// What the ranked queue yielded.
+#[derive(Debug, PartialEq, Eq)]
+enum Pick {
+    /// The first candidate that is neither already taken nor contended.
+    Take(String),
+    /// Every candidate was taken or deferred.
+    Exhausted,
+}
+
+/// The first issue on the ranked queue this run may actually start.
+///
+/// Pure: no I/O and no clock, so the decision has a test seam of its own rather
+/// than only being reachable through `drive`'s network loop. `seen` and
+/// `deferred` are the two edges — the caller supplies the probe and the ledger
+/// write, and this supplies the walk.
+///
+/// **A deferral advances to the next candidate; it does not end the search.**
+/// The queue is priority-ordered, so stopping at the first contended issue would
+/// hand one peer's branch the power to stall the whole run — which is exactly
+/// what the loop did on #3691 by discovering the collision as a `git worktree
+/// add` failure and only then moving on (#4002).
+fn next_claimable(
+    ranked: impl IntoIterator<Item = String>,
+    taken: impl Fn(&str) -> bool,
+    policy: ContentionPolicy,
+    seen: impl Fn(&str) -> Contention,
+    mut deferred: impl FnMut(&str, &[String]),
+) -> Pick {
+    for key in ranked {
+        if taken(&key) {
+            continue;
+        }
+        match contention_verdict(policy, &seen(&key)) {
+            ContentionVerdict::Proceed => return Pick::Take(key),
+            ContentionVerdict::Defer { evidence } => deferred(&key, &evidence),
+        }
+    }
+    Pick::Exhausted
+}
+
 /// What the world looks like, in the shape the machine decides over.
 ///
 /// The bound is expressed as an exhausted queue rather than as a special case
@@ -1079,7 +1166,7 @@ fn observe(
     let filed = super::backlog::open_base_breakage(provider);
     let contention = filed
         .as_ref()
-        .map(|key| super::deliver::base_fix_contention(root, key))
+        .map(|key| super::deliver::contention_for_issue(root, key))
         .unwrap_or_default();
 
     LoopObservation {
@@ -1117,4 +1204,81 @@ fn report(durable: &Durable, tally: &Tally) -> Result<(), String> {
         ),
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A ranked queue whose top entry a peer is holding yields the next one,
+    /// and says why it skipped.
+    ///
+    /// The second half is what stops this passing vacuously: the identical
+    /// input under [`ContentionPolicy::Proceed`] must take the contended
+    /// candidate, so a `next_claimable` that ignored the verdict entirely
+    /// would fail the first half rather than satisfy both.
+    #[test]
+    fn a_candidate_a_peer_is_working_is_skipped_with_evidence() {
+        let ranked = || ["3691".to_owned(), "3702".to_owned()];
+        let seen = |key: &str| {
+            if key == "3691" {
+                Contention {
+                    local_worktrees: vec!["/tmp/wip-3691-preserved".to_owned()],
+                    ..Contention::default()
+                }
+            } else {
+                Contention::default()
+            }
+        };
+
+        let mut skipped: Vec<(String, Vec<String>)> = Vec::new();
+        let pick = next_claimable(
+            ranked(),
+            |_| false,
+            ContentionPolicy::Defer,
+            seen,
+            |key, evidence| skipped.push((key.to_owned(), evidence.to_vec())),
+        );
+
+        assert_eq!(pick, Pick::Take("3702".to_owned()));
+        assert_eq!(
+            skipped,
+            vec![(
+                "3691".to_owned(),
+                vec!["local worktree: /tmp/wip-3691-preserved".to_owned()]
+            )]
+        );
+
+        let mut skipped_under_proceed: Vec<String> = Vec::new();
+        let pick = next_claimable(
+            ranked(),
+            |_| false,
+            ContentionPolicy::Proceed,
+            seen,
+            |key, _| skipped_under_proceed.push(key.to_owned()),
+        );
+
+        assert_eq!(pick, Pick::Take("3691".to_owned()));
+        assert!(skipped_under_proceed.is_empty());
+    }
+
+    /// A queue whose every candidate is contended is exhausted, not merely
+    /// stalled on the first one.
+    #[test]
+    fn a_fully_contended_queue_defers_every_candidate() {
+        let mut skipped: Vec<String> = Vec::new();
+        let pick = next_claimable(
+            ["1".to_owned(), "2".to_owned()],
+            |_| false,
+            ContentionPolicy::Defer,
+            |_| Contention {
+                ledger_claims: vec!["fleet-run-7".to_owned()],
+                ..Contention::default()
+            },
+            |key, _| skipped.push(key.to_owned()),
+        );
+
+        assert_eq!(pick, Pick::Exhausted);
+        assert_eq!(skipped, vec!["1".to_owned(), "2".to_owned()]);
+    }
 }
