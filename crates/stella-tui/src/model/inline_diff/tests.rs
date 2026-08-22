@@ -409,6 +409,13 @@ fn a_failed_call_after_a_successful_one_claims_no_diff() {
 /// It rules out the other arithmetic too: `changes + 1` stamps a reference
 /// that resolves to nothing, so the row carries a handle on a change that does
 /// not exist rather than no handle at all.
+///
+/// Replaces `a_turn_that_measured_no_change_leaves_the_row_silent`, which
+/// covered this same situation under the turn-boundary design and asserted the
+/// half that changed: that such a call still *stamps* a reference, which then
+/// dangles. There is no reference to dangle now, so the old assertion could not
+/// be kept — and the row not picking up a *neighbour's* change, which that test
+/// did not check, is the part that discriminates the three designs.
 #[test]
 fn a_successful_call_that_changed_nothing_claims_no_diff() {
     let mut model = SessionModel::new();
