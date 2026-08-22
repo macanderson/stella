@@ -9,7 +9,10 @@
 # The original settings.json was NOT deleted. Check this file, then
 # remove the JSON — until you do, stella reads this one and says so.
 #
-# Full reference: docs/spec/config-system/stella.today.toml
+# Full reference: stella.example.toml at the repository root — every section,
+# commented, copy-pasteable. (It used to point at
+# docs/spec/config-system/stella.today.toml, which is a design-era artifact and
+# was missing five sections outright.)
 
 [meta]
 schema_version = 1

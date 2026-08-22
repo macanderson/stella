@@ -37,8 +37,8 @@
 //! the same discipline `stella-protocol`'s event-consumer table uses (`E0004`
 //! over a red test) — the answer may be "nothing", but it may not be silence.
 
-use super::toml_config::TomlConfig;
-use super::unknown::{PROVIDER_FIELDS, ROOT_FIELDS, TOML_ROOT_FIELDS};
+use super::toml_config::{AgentsSection, TomlConfig};
+use super::unknown::{PROVIDER_FIELDS, ROOT_FIELDS, TOML_AGENTS_FIELDS, TOML_ROOT_FIELDS};
 use super::*;
 
 /// What the three-scope merge is expected to do with one field.
@@ -589,6 +589,65 @@ fn the_toml_root_vocabulary_matches_the_document() {
             "`TOML_ROOT_FIELDS` lists `[{key}]`, which no `TomlConfig` field claims — a \
              stale entry silences a real typo. Remove it, or move it to \
              `unknown::RETIRED` with the sentence an operator needs."
+        );
+    }
+}
+
+/// Every key of `[agents]` is in the TOML vocabulary, and nothing else is.
+///
+/// The same check as above, one level down, and it needs its own test because
+/// this is where the two vocabularies genuinely diverge: `[agents]` flattens
+/// `agent_engine_config.agents.<name>` up a level, and three JSON keys are
+/// renamed into other sections entirely (`allowed_models` → `[models].allowed`,
+/// `model_output_caps` → `[models].output_caps`, `seat_models` → `[seats]`).
+///
+/// That divergence is deliberate — a JSON-only spelling must not look valid in
+/// TOML — and it is exactly what made the gap invisible: with the two lists
+/// legitimately different, nothing distinguished "renamed on purpose" from
+/// "forgotten". `model_timeout_secs`, `compaction_budget_tokens` and
+/// `tool_result_horizon_steps` were forgotten, so the same knob was accepted in
+/// `settings.json` and called a typo in `stella.toml`.
+///
+/// **Witness.** Fails on the base commit: `TOML_AGENTS_FIELDS` omits all three.
+#[test]
+fn the_toml_agents_vocabulary_matches_the_section() {
+    let AgentsSection {
+        default_model: _,
+        auto_mode: _,
+        effort_auto: _,
+        reasoning_auto: _,
+        headless_scope_bypass: _,
+        model_timeout_secs: _,
+        compaction_budget_tokens: _,
+        tool_result_horizon_steps: _,
+        default: _,
+    } = AgentsSection::default();
+
+    let declared = [
+        "default_model",
+        "auto_mode",
+        "effort_auto",
+        "reasoning_auto",
+        "headless_scope_bypass",
+        "model_timeout_secs",
+        "compaction_budget_tokens",
+        "tool_result_horizon_steps",
+        "default",
+    ];
+
+    for key in &declared {
+        assert!(
+            TOML_AGENTS_FIELDS.contains(key),
+            "`AgentsSection` has a field `agents.{key}` that `TOML_AGENTS_FIELDS` does not \
+             list, so writing it correctly in stella.toml is reported as a possible typo — \
+             while the same key is accepted in settings.json"
+        );
+    }
+    for key in TOML_AGENTS_FIELDS {
+        assert!(
+            declared.contains(key),
+            "`TOML_AGENTS_FIELDS` lists `agents.{key}`, which no `AgentsSection` field \
+             claims — a stale entry silences a real typo."
         );
     }
 }
