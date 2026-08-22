@@ -1,3 +1,8 @@
+// Imported here rather than inherited through `use super::*`: the label
+// belongs to the deck's ask io, which lives in `mid_turn_ask` now, and this
+// module is its only remaining user in `command_deck`'s namespace.
+use crate::interactive::FREE_TEXT_LABEL;
+
 use super::pr_observe::scrub_gh_command;
 use super::skills::{
     build_skill_creation_prompt, extract_skill_md, extract_skill_md_from_use, parse_installs_count,
@@ -288,7 +293,7 @@ fn mcp_outcome_report_names_every_claimant_of_a_contested_wire_name() {
 async fn run_prompt(options: &[&str], answer: &str) -> (Result<String, String>, Vec<Inbound>) {
     let (in_tx, mut in_rx) = mpsc::unbounded_channel();
     let (ans_tx, ans_rx) = mpsc::unbounded_channel();
-    let io = DeckAskUserIo {
+    let io = super::mid_turn_ask::DeckAskUserIo {
         agent: "lead".into(),
         inbound: in_tx,
         answers: Arc::new(tokio::sync::Mutex::new(ans_rx)),

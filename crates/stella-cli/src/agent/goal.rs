@@ -169,8 +169,12 @@ pub(crate) async fn run_raw_one_shot(
     // The one derivation of "a human is here to answer" — the #2676 approval
     // responder and the rules-enforcement prompt both read this value.
     let ask = human_is_present(format == OutputFormat::Text);
-    let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
+    let active_rules = crate::rules::enforce_workspace_rules(
+        &registry,
+        &cfg.workspace_root,
+        &cfg.authority,
+        crate::rules::MidTurnAsk::tty_when(ask),
+    );
     // Auto-build + live-refresh the code graph in the background so
     // `stella search` and the deck's Graph tab have a fresh index. Status
     // goes to stderr — stdout may be machine-readable JSON.
@@ -516,8 +520,12 @@ pub async fn run_goal_cmd(
     // Goal mode always renders human-readable output, so its half of the
     // fact is fixed at `true`; the stdio handles settle the rest.
     let ask = human_is_present(true);
-    let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
+    let active_rules = crate::rules::enforce_workspace_rules(
+        &registry,
+        &cfg.workspace_root,
+        &cfg.authority,
+        crate::rules::MidTurnAsk::tty_when(ask),
+    );
     // Auto-build + live-refresh the code-graph index in the background so
     // `stella search` and the deck's Graph tab stay current without a manual
     // `stella init`. Non-blocking; status to stderr. Kept alive until the
