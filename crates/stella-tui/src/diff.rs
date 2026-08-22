@@ -756,8 +756,8 @@ mod tests {
     fn body_numbers_added_lines_on_the_new_side_and_removed_on_the_old() {
         let lines = body_lines(SAMPLE, None);
         let texts: Vec<String> = lines.iter().map(line_text).collect();
-        // The `---`/`+++` preamble is stripped on every surface, so the `@@`
-        // header leads and the first numbered row is at index 1.
+        // The `---`/`+++` pair does not render, so the `@@` header leads and
+        // the first numbered row is at index 1.
         // "@@ -1,3 +1,4 @@" starts old=1/new=1; context takes new 1.
         assert!(texts[1].starts_with("   1  context"), "{:?}", texts[1]);
         // The removal is numbered on the OLD side (old line 2).
@@ -767,10 +767,16 @@ mod tests {
         assert!(texts[4].starts_with("   3 +another add"), "{:?}", texts[4]);
     }
 
-    /// The preamble does not render, and the hunk header — which does — carries
-    /// no line number, because it is not a line of the file.
+    /// The per-file preamble does not render on any surface, and the hunk
+    /// header — which does — carries no line number.
+    ///
+    /// This asserted the other half until #4248: that `--- a/x.rs` and
+    /// `+++ b/x.rs` rendered *with* a blank gutter. They render nowhere now.
+    /// Whether the standalone viewer should get them back is #4268; until that
+    /// is answered one rule covers every surface, and this says so in the one
+    /// place a reader looks for it.
     #[test]
-    fn plumbing_is_stripped_and_the_hunk_header_keeps_a_blank_gutter() {
+    fn the_preamble_does_not_render_and_the_hunk_header_keeps_a_blank_gutter() {
         let texts: Vec<String> = body_lines(SAMPLE, None).iter().map(line_text).collect();
         for meta in ["--- a/x.rs", "+++ b/x.rs"] {
             assert!(
@@ -786,14 +792,19 @@ mod tests {
         );
     }
 
-    /// A real git patch leads with `diff --git` and `index …` on top of the
-    /// `---`/`+++` pair, and none of the four reaches a row on either surface.
+    /// A whole git patch opens on its first changed line, inline and in the
+    /// viewer alike.
     ///
     /// `index 74f38f3..9e6e426 100644`, `--- a/<path>`, `+++ b/<path>`: three
-    /// rows restating the path the row above already names and a pair of blob
-    /// hashes nobody can act on. `render_body` drops them for every caller —
-    /// the viewer included — so this asks both entry points and expects the
-    /// same answer from each.
+    /// rows restating the path the call row already names and a pair of blob
+    /// hashes nobody can act on. Inline under a tool call that is most of the
+    /// row budget spent before the first changed line; in a standalone viewer
+    /// it is arguably orientation, but #4248 settled on one rule for every
+    /// surface and #4268 tracks whether the viewer should get it back.
+    ///
+    /// Both surfaces are asserted here on purpose. They are rendered by the
+    /// same `render_body`, and #4269 moved the viewer to this rule while the
+    /// tests still described the old one — a split this test now closes.
     #[test]
     fn a_full_git_patch_renders_only_its_hunk_inline() {
         // Spelled with explicit `\n` rather than `\`-continuation: that
@@ -818,16 +829,13 @@ mod tests {
             "context keeps its real line number: {texts:?}"
         );
 
-        // The viewer is the other half of the contract, and gives the same
-        // answer: the preamble is chrome wherever it is drawn, so one patch
-        // does not look like two different patches across two surfaces.
+        // The viewer is the other half of the contract, and it answers the
+        // same way — one rule, every surface, until #4268 says otherwise.
         let viewer: Vec<String> = body_lines(patch, None).iter().map(line_text).collect();
-        for meta in ["diff --git", "index 74f38f3", "--- a/", "+++ b/"] {
-            assert!(
-                !viewer.iter().any(|t| t.contains(meta)),
-                "{meta:?} still renders in the viewer: {viewer:?}"
-            );
-        }
+        assert!(
+            !viewer.iter().any(|t| t.contains("+++ b/x.rs")),
+            "the viewer still renders the preamble: {viewer:?}"
+        );
     }
 
     #[test]
@@ -865,7 +873,8 @@ mod tests {
         let diff = "--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n--- was a rule\n+++ is a rule\n";
         let lines = body_lines(diff, None);
         let texts: Vec<String> = lines.iter().map(line_text).collect();
-        // Index 0 is the `@@` header; the real preamble above it is stripped.
+        // The leading `---`/`+++` pair is the file's preamble and does not
+        // render, so the `@@` header is index 0 and the body starts at 1.
         assert!(
             !texts[1].starts_with("     "),
             "removed body line should get a gutter number, not read as a header: {:?}",
@@ -896,7 +905,8 @@ mod tests {
             "--- a/x.rs\n+++ b/x.rs\n@@ -1,1 +1,1 @@\n-old\n\\ No newline at end of file\n+new\n";
         let lines = body_lines(diff, None);
         let texts: Vec<String> = lines.iter().map(line_text).collect();
-        // Index 0 is the `@@` header; the real preamble above it is stripped.
+        // Preamble stripped, so: [0] `@@`, [1] `-old`, [2] the marker,
+        // [3] `+new`.
         assert!(
             texts[2].starts_with("     "),
             "the marker line itself gets a blank gutter: {:?}",
