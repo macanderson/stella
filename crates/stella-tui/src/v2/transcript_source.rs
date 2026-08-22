@@ -29,7 +29,7 @@ use ratatui::style::Color;
 use ratatui::text::Line;
 
 use super::transcript::{
-    Event, EventKind, Extent, Receipt, TurnHead, event_rows, receipt, turn_begin, turn_end,
+    Event, EventKind, Extent, Receipt, Subject, TurnHead, event_rows, receipt, turn_begin, turn_end,
 };
 use crate::model::{FileState, TranscriptEntry};
 
@@ -187,10 +187,13 @@ fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
 
 /// The object of the verb: the path for a file tool, the command for `bash`,
 /// the raw input for anything else.
-fn subject_for(name: &str, path: Option<&str>, input: &str) -> String {
+fn subject_for(name: &str, path: Option<&str>, input: &str) -> Subject {
     match (name, path) {
-        (_, Some(p)) if !p.is_empty() => p.to_string(),
-        ("bash", _) => first_line(input).to_string(),
+        // The one arm that yields a path, and the only one that may: the caller
+        // handed us `path`, so this is not a guess about the string's shape.
+        (_, Some(p)) if !p.is_empty() => Subject::path(p),
+        // A command line, not a file — even when it contains a slash.
+        ("bash", _) => first_line(input).into(),
         _ => {
             // A tool this host has no verb for is named by its own label, which
             // for an MCP tool is its trailing segment: the row read
@@ -204,9 +207,9 @@ fn subject_for(name: &str, path: Option<&str>, input: &str) -> String {
             let label = stella_tools::catalog::label_for(name);
             let head = first_line(input);
             if head.is_empty() {
-                label.to_string()
+                label.into()
             } else {
-                format!("{label} {head}")
+                format!("{label} {head}").into()
             }
         }
     }
