@@ -29,7 +29,7 @@ use ratatui::style::Color;
 use ratatui::text::Line;
 
 use super::transcript::{
-    Event, EventKind, Extent, Receipt, TurnHead, event_rows, receipt, turn_begin, turn_end,
+    Event, EventKind, Extent, Receipt, Subject, TurnHead, event_rows, receipt, turn_begin, turn_end,
 };
 use crate::model::{FileState, TranscriptEntry};
 
@@ -51,9 +51,7 @@ pub fn head_rows(
     width: usize,
 ) -> Vec<Line<'static>> {
     let kind = kind_for(name, measured);
-    let (subject, subject_is_path) = subject_for(name, path, input);
-    let mut event = Event::new(kind, subject);
-    event.subject_is_path = subject_is_path;
+    let mut event = Event::new(kind, subject_for(name, path, input));
     // The head is drawn the moment the call dispatches, so it is never
     // "collapsed" in the fold sense — there is no body under it yet.
     event.collapsed = Some(false);
@@ -186,19 +184,21 @@ fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
     }
 }
 
-/// The object of the verb — the path for a file tool, the command for `bash`,
-/// the raw input for anything else — and whether it is a path.
+/// The object of the verb: the path for a file tool, the command for `bash`,
+/// the raw input for anything else.
 ///
-/// The flag leaves with the text it describes, out of the one match that chose
-/// it, so the two cannot come to disagree. It is what lets
-/// [`super::transcript::Event::subject_is_path`] exist at all: downstream the
-/// only evidence left is a `/`, and re-deriving the answer from one would
-/// emphasise a fragment of `sed -n '1,20p' foo/bar.rs` — a command line that
-/// names no file this row touched (#4168).
-fn subject_for(name: &str, path: Option<&str>, input: &str) -> (String, bool) {
+/// [`Subject::is_path`] leaves with the text it describes, out of the one match
+/// that chose it, so the two cannot come to disagree. Downstream the only
+/// evidence left is a `/`, and re-deriving the answer from one would emphasise
+/// a fragment of `sed -n '1,20p' foo/bar.rs` — a command line that names no
+/// file this row touched (#4168).
+fn subject_for(name: &str, path: Option<&str>, input: &str) -> Subject {
     match (name, path) {
-        (_, Some(p)) if !p.is_empty() => (p.to_string(), true),
-        ("bash", _) => (first_line(input).to_string(), false),
+        // The one arm that yields a path, and the only one that may: the caller
+        // handed us `path`, so this is not a guess about the string's shape.
+        (_, Some(p)) if !p.is_empty() => Subject::path(p),
+        // A command line, not a file — even when it contains a slash.
+        ("bash", _) => first_line(input).into(),
         _ => {
             // A tool this host has no verb for is named by its own label, which
             // for an MCP tool is its trailing segment: the row read
@@ -215,9 +215,9 @@ fn subject_for(name: &str, path: Option<&str>, input: &str) -> (String, bool) {
             // subject here opens with the tool's own name, so there is no file
             // identity for a basename to carry.
             if head.is_empty() {
-                (label.to_string(), false)
+                label.into()
             } else {
-                (format!("{label} {head}"), false)
+                format!("{label} {head}").into()
             }
         }
     }
@@ -267,23 +267,36 @@ pub fn turn_begin_rows(
 /// turn its unit — so it renders whether or not the receipt has anything but
 /// money to say.
 ///
-/// Everything the receipt cannot source is elided rather than zeroed. Only
-/// `spend_usd` is fed today: the deck does not fold `StepUsage` (it would
-/// double-count the spend the budget gauge tracks), keeps no per-turn clock,
-/// and counts no per-turn files, tests or memories. A receipt reading
-/// `0 tok · 0 files · 0/0 tests` would be four measurements nobody took, on the
-/// one line whose whole job is to be the settled account of a turn. Sourcing
-/// the other five — `det %` above all, which SPEC 5 moved off the status bar
-/// and re-homed here — is #4184.
+/// Everything the receipt cannot source is elided rather than zeroed: a
+/// receipt reading `0 tok · 0/0 tests` would be measurements nobody took, on
+/// the one line whose whole job is to be the settled account of a turn.
+///
+/// `tally` is [`crate::model::TurnReceipt`] — counted at fold time and stamped
+/// onto the closing entry, because this renderer sees one entry and no session
+/// state. Tests are the one field still absent, and
+/// [`crate::model::TurnCounters`] states what would have to exist to feed it.
 #[must_use]
-pub fn turn_end_rows(turn: u32, cost_usd: f64, width: usize) -> Vec<Line<'static>> {
+pub fn turn_end_rows(
+    turn: u32,
+    cost_usd: f64,
+    tally: &crate::model::TurnReceipt,
+    width: usize,
+) -> Vec<Line<'static>> {
     vec![
-        turn_end(turn, None, width),
+        turn_end(turn, tally.elapsed_ms.map(human_elapsed).as_deref(), width),
         receipt(&Receipt {
             spend_usd: cost_usd,
+            tokens: tally.tokens,
+            files: tally.files,
+            memories: tally.memories,
             ..Receipt::default()
         }),
     ]
+}
+
+/// A turn's wall clock, in the deck's own duration wording.
+fn human_elapsed(ms: u64) -> String {
+    crate::render::human_duration(ms)
 }
 
 #[cfg(test)]

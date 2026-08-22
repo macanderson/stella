@@ -69,7 +69,7 @@ geometry still matches the committed SVGs; that the three wallpaper tiers draw
 the same picture; and that the spinner GIFs carry the current brand hue.
 
 Quick rules: lowercase always. Comet flies left→right. Gold is the signal,
-never the surface. On light backgrounds small brand text is **ink** `#141416`,
+never the surface. On light backgrounds small brand text is **ink** `#141413`,
 never gold — gold on paper measures 1.65:1. The *mark* stays full-strength gold
 on both grounds: v3.0 and v4.0 each stepped it down a darker stop to clear a
 3:1 graphical floor, and v5.0

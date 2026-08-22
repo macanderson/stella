@@ -21,15 +21,14 @@ stella is not a thin wrapper around one vendor's API. It is a large, serious
 piece of systems engineering, built and maintained by one person:
 
 - **A workspace of focused Rust crates** — a deterministic agent engine, a
-  staged inference pipeline with independent judging, a tree-sitter code
+  plugin socket for independent judging, a tree-sitter code
   graph, a bi-temporal context store, a multi-tab terminal UI, fleet
   orchestration over git worktrees, and native wire adapters for nine hosted
   providers plus any local OpenAI-compatible server.
 - **Verification engineering** — witness tests replayed against the previous
   code in a shadow worktree, fail→pass flip oracles, and cross-family judges
   are much harder to build than "the model said it's done." This machinery
-  ships in the built-in staged pipeline today and is also becoming Vera,
-  stella's installable verification plugin — either way it's what makes an
+  ships as Vera, stella's installable verification plugin — it's what makes an
   agent worth using unattended.
 - **Real, ongoing costs.** Developing, benchmarking, and regression-testing an
   agent against frontier models is paid for in real API bills — every

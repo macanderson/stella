@@ -159,6 +159,19 @@ def check_clamp(
                 f"got r={r} g={g} b={b}"
             )
         return None
+    if clamp == "warm-paper":
+        if not (r >= g >= b):
+            return (
+                f"{name} {hexv} fails warm-paper: needs r >= g >= b; "
+                f"got r={r} g={g} b={b}"
+            )
+        if g * 100 < r * spec["green_pct"] or b * 100 < r * spec["blue_pct"]:
+            return (
+                f"{name} {hexv} fails warm-paper floors: needs "
+                f"100*g >= {spec['green_pct']}*r and 100*b >= {spec['blue_pct']}*r; "
+                f"got r={r} g={g} b={b}"
+            )
+        return None
     if clamp in ("verdict", "surface"):
         return None
     return f"{name}: unknown clamp role {clamp!r}"
@@ -244,6 +257,7 @@ def render_rust(doc: dict) -> str:
     clamps = doc["clamps"]
     resting = clamps["resting-gold"]
     lift = clamps["gold-lift"]
+    paper = clamps["warm-paper"]
 
     def doc_block(text, indent: str = "//! ") -> list[str]:
         if isinstance(text, str):
@@ -300,6 +314,16 @@ def render_rust(doc: dict) -> str:
         "/// The token a lift is anchored to.",
         f'pub const GOLD_LIFT_ANCHOR: &str = "{lift["anchor"]}";',
         "",
+        "/// The green floor warm paper must clear, as a percentage of red.",
+        "///",
+    ]
+    out += doc_block(paper["why"], "/// ")
+    out += [
+        f"pub const PAPER_GREEN_PCT: u32 = {paper['green_pct']};",
+        "",
+        "/// The blue floor warm paper must clear, as a percentage of red.",
+        f"pub const PAPER_BLUE_PCT: u32 = {paper['blue_pct']};",
+        "",
         "// ── Tokens ─────────────────────────────────────────────────────────",
         "",
     ]
@@ -330,6 +354,9 @@ def render_rust(doc: dict) -> str:
         "    CoolSilver,",
         "    /// `r == g` and `b >= g` -- neutral, or tipped toward blue, never toward red.",
         "    NeutralGray,",
+        "    /// `r >= g >= b`, `100 g >= PAPER_GREEN_PCT r`, `100 b >= PAPER_BLUE_PCT r`",
+        "    /// -- the light ground, warm or neutral, never blue.",
+        "    WarmPaper,",
         "    /// Pass and fail. Deliberately neither metal nor gray; no channel predicate.",
         "    Verdict,",
         "    /// A tint carrying a sign column, not a hue in a role; no channel predicate.",
@@ -344,6 +371,7 @@ def render_rust(doc: dict) -> str:
         "gold-lift": "Clamp::GoldLift",
         "cool-silver": "Clamp::CoolSilver",
         "neutral-gray": "Clamp::NeutralGray",
+        "warm-paper": "Clamp::WarmPaper",
         "verdict": "Clamp::Verdict",
         "surface": "Clamp::Surface",
     }

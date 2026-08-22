@@ -156,12 +156,12 @@ $ stella daemon resume ses-1785956826121
 
 The relaunch continues the **same session** — same id, same sidecar, the crashed attempt's console preserved — as a fresh supervised child. Completed steps are already in the checkpointed transcript, tool results included, so nothing re-runs and no tool effect is applied twice; the no-clobber staleness map rides the same checkpoint, so a file something else edited while the run was dead is refused rather than overwritten. A run that ended cleanly has nothing to resume, and `resume` says so instead of restarting it.
 
-A turn that was mid-*pipeline* now **re-enters the pipeline** when its frame permits: the pipeline records its progress — task class, goal, plan cursor, test baseline — beside every checkpoint, and `resume` finishes the interrupted turn, runs the plan steps the crash never reached, then runs the witness and verify stages on the completed work. A resume that ends with a verdict files its audit row as `resumed_complete_verified` and keeps the green tick.
+A turn that was running under a wrapper plugin **re-enters that wrapper** when its frame permits: the wrapper records its progress — task class, goal, plan cursor, test baseline — beside every checkpoint, and `resume` finishes the interrupted turn, runs the plan steps the crash never reached, then runs the witness and verify steps on the completed work. A resume that ends with a verdict files its audit row as `resumed_complete_verified` and keeps the green tick.
 
 ```text
 $ stella daemon resume ses-1785956826121
   resuming ses-1785956826121-25167 at step 14 — completed steps stay done, nothing re-runs
-  ! this was a staged pipeline run — resuming INTO it: the interrupted turn continues, then the witness and verify stages run on the completed work
+  ! this was a wrapped run — resuming INTO it: the interrupted turn continues, then the witness and verify steps run on the completed work
     the pre-crash lint baseline is gone, so the lint-regression veto (#861) sits out this run
     an authored witness cannot be re-created after a crash — verification proceeds on the unauthored ladder
 ```
@@ -208,7 +208,7 @@ Waiting is not failing, so it does not spend one of the three attempts below: a 
 
 The two ways that ends need no new rules. A run that honoured the stop ended deliberately — same as a Ctrl-C — so the next sweep skips it and returns its attempts; it was merely slower than the ceiling, and `stella daemon resume <id>` by hand has no ceiling. A run so wedged it had to be killed keeps its resume point and is swept again next boot — and the attempt it was already charged (a timed-out resume **does** spend one) is exactly what retires it after three, because a run that hits the ceiling every boot is the recurring failure the attempt bound exists to stop.
 
-Everything `resume` says about a resumed turn applies here, including the honest limits above: a turn interrupted mid-pipeline resumes as a plain engine turn and says which stages it is not restoring — into the service console rather than a terminal.
+Everything `resume` says about a resumed turn applies here, including the honest limits above: a turn interrupted mid-wrapper resumes as a plain engine turn and says which steps it is not restoring — into the service console rather than a terminal.
 
 ## `install` / `uninstall`
 

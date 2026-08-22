@@ -42,8 +42,57 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::widgets::Widget;
 
-use stella_tui::v2::status_bar::{Status, StatusBar, cells};
+use stella_tui::v2::status_bar::{Status, StatusBar, cells, render_band};
 use stella_tui_theme::token;
+
+/// SPEC 5's stage cell is a word a human reads, not the wire token.
+///
+/// Rendered through `render_band` — the **live** path — on purpose. Two
+/// projections of these six values existed and only one was drawn, so a unit
+/// test on the stage-word mapping passed for as long as the deck was wired to
+/// the other one and printing `context_recall` at a reader (#4187). The whole
+/// defect was in the wiring, so the wiring is what the witness has to cross.
+#[test]
+fn the_live_bar_prints_the_stage_word_not_the_wire_string() {
+    for (kind, word, wire) in [
+        (
+            stella_protocol::StageKind::ContextRecall,
+            "context recall",
+            "context_recall",
+        ),
+        (
+            stella_protocol::StageKind::ScopeReview,
+            "scope review",
+            "scope_review",
+        ),
+    ] {
+        let mut model = stella_tui::deck::WorkspaceModel::new();
+        model.apply_inbound(&stella_tui::Inbound::Event {
+            agent: "lead".into(),
+            event: stella_protocol::AgentEvent::Stage {
+                name: stella_protocol::StageName::from(kind),
+                scope: stella_protocol::StageScope::Turn,
+            },
+        });
+        let ui = stella_tui::deck_ui::DeckUi::default();
+
+        let area = Rect::new(0, 0, 120, 1);
+        let mut buf = Buffer::empty(area);
+        render_band(&model, &ui, area, &mut buf);
+        let text: String = (0..area.width)
+            .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_owned()))
+            .collect();
+
+        assert!(
+            text.contains(word),
+            "the bar does not say {word:?} for {kind:?}; it drew:\n{text}"
+        );
+        assert!(
+            !text.contains(wire),
+            "the bar printed the wire string {wire:?} at a human:\n{text}"
+        );
+    }
+}
 
 // ── frame capture ───────────────────────────────────────────────────────────
 

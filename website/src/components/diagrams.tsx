@@ -206,57 +206,12 @@ export function HeroFlowDiagram() {
       <title>How Stella fits together</title>
       <Defs />
       <Node x={20} y={52} w={120} h={56} label="you" sub="a prompt, a goal" />
-      <Node x={280} y={40} w={160} h={80} label="stella" sub="tools · pipeline · verifier" accent />
+      <Node x={280} y={40} w={160} h={80} label="stella" sub="tools · plugins · verifier" accent />
       <Node x={580} y={52} w={120} h={56} label="provider" sub="your key, direct" />
       <Wire d="M140 80 H278" />
       <Wire d="M440 80 H578" />
       <Wire d="M360 120 V148" arrow={false} />
       <Node x={285} y={150} w={150} h={32} sub=".stella/ — telemetry stays here" />
-    </svg>
-  );
-}
-
-/** Inference pipeline: the staged flow with the revise return edge. */
-export function PipelineFlowDiagram() {
-  const stages: [string, string][] = [
-    ["triage", "route it"],
-    ["plan", "split context"],
-    ["execute", "step loop"],
-    ["witness", "failing test"],
-    ["verify", "flip oracle"],
-    ["complete", "verdict recorded"],
-  ];
-  return (
-    <svg
-      className="sdg"
-      viewBox="0 0 720 150"
-      role="img"
-      aria-label="The staged pipeline: triage, plan, execute, witness, verify, complete — with a revise loop back into execute. Verify runs the evidence ladder and records the verdict itself; no model rules on the outcome."
-    >
-      <title>The staged inference pipeline</title>
-      <Defs />
-      {stages.map(([name, sub], i) => {
-        const x = 16 + i * 118;
-        return (
-          <g key={name}>
-            <Node
-              x={x}
-              y={44}
-              w={100}
-              h={52}
-              label={name}
-              sub={sub}
-              accent={name === "witness" || name === "verify"}
-            />
-            {i < stages.length - 1 && <Wire d={`M${x + 100} 70 H${x + 116}`} />}
-          </g>
-        );
-      })}
-      {/* revise: back to execute */}
-      <Wire d="M672 96 C672 132 302 132 302 98" />
-      <text className="sdg-sub" x="487" y="142" textAnchor="middle">
-        revise — bounded, with evidence
-      </text>
     </svg>
   );
 }
@@ -1175,11 +1130,11 @@ export function EngineSequenceDiagram() {
  * its annotations wherever there was room and they landed on top of the boxes
  * they described. Three rules keep that from recurring:
  *
- * - The four pipeline doors sit directly above the lane they feed, so every
+ * - The four wrappable doors sit directly above the lane they feed, so every
  *   drop is a straight vertical and no wire needs an elbow to label around.
  * - The two always-raw doors sit *beside* the loop they drive rather than
  *   above it. That is also the honest position: they are not a third route
- *   through the pipeline, they start below it.
+ *   through a wrapper, they start below it.
  * - Edge annotations sit clear of their wire (anchored to one side), never
  *   centred over it.
  *
@@ -1192,7 +1147,7 @@ export function EngineSequenceDiagram() {
 export function EnginePathsDiagram() {
   // [x, width, command, what it is] — widths are sized to the longest of the
   // two strings, so the labels never need shortening to fit a uniform box.
-  const pipelineDoors: [number, number, string, string][] = [
+  const wrappableDoors: [number, number, string, string][] = [
     [16, 92, "stella", "Command Deck"],
     [118, 88, "stella run", "one-shot"],
     [216, 98, "stella goal", "judged rounds"],
@@ -1203,15 +1158,15 @@ export function EnginePathsDiagram() {
       className="sdg"
       viewBox="0 0 720 382"
       role="img"
-      aria-label="Six ways a session starts. stella, stella run, stella goal and stella fleet drive the staged pipeline, whose execute stage calls the engine's turn loop. stella --plain and stella-serve skip the pipeline: the plain REPL drives run_turn, and stella-serve drives run_step itself. Every path ends in the same step loop."
+      aria-label="Six ways a session starts. stella, stella run, stella goal and stella fleet can bind an installed wrapper plugin, which contributes context before the turn and gathers evidence after it before calling the engine's turn loop. stella --plain and stella-serve take no wrapper: the plain REPL drives run_turn, and stella-serve drives run_step itself. Every path ends in the same step loop."
     >
-      <title>Six doors, two loops, one step loop underneath</title>
+      <title>Six doors, one step loop underneath</title>
       <Defs />
 
       <text className="sdg-sub" x={16} y={16}>
-        four doors — the staged pipeline, by default
+        four doors — can bind a wrapper plugin
       </text>
-      {pipelineDoors.map(([x, w, cmd, sub]) => (
+      {wrappableDoors.map(([x, w, cmd, sub]) => (
         <g key={cmd}>
           <Node x={x} y={26} w={w} h={52} label={cmd} sub={sub} />
           <Wire d={`M${x + w / 2} 78 V112`} />
@@ -1222,7 +1177,7 @@ export function EnginePathsDiagram() {
        * straight drops. Hand-rolled rather than a Node: three lines of text. */}
       <rect className="sdg-box-accent" x={16} y={114} width={412} height={76} rx={6} />
       <text className="sdg-label" x={222} y={140} textAnchor="middle">
-        stella-pipeline :: Pipeline::run
+        stella-runtime :: WrapperDispatch
       </text>
       {/* `->`, not U+2192 — and this is not a downgrade. The self-hosted
        * JetBrains Mono is the latin subset, which carries ↑ and ↓ but no →, so
@@ -1232,15 +1187,15 @@ export function EnginePathsDiagram() {
        * two in-subset characters on a stable monospace advance. Guarded by
        * diagrams.test.ts. */}
       <text className="sdg-sub" x={222} y={160} textAnchor="middle">
-        triage -&gt; recall -&gt; research -&gt; plan -&gt; scope
+        optional — only with --pipeline &lt;variant&gt;
       </text>
       <text className="sdg-sub" x={222} y={176} textAnchor="middle">
-        execute -&gt; witness -&gt; verify -&gt; verdict
+        before_turn -&gt; turn -&gt; after_turn
       </text>
 
       <Wire d="M222 190 V222" />
       <text className="sdg-sub" x={210} y={212} textAnchor="end">
-        execute + revise call it N×
+        the declared rule may hold for another
       </text>
 
       <Node
@@ -1257,7 +1212,7 @@ export function EnginePathsDiagram() {
 
       {/* The raw doors, each level with the loop it actually drives. */}
       <text className="sdg-sub" x={520} y={212}>
-        two doors — no stages, ever
+        two doors — no wrapper, ever
       </text>
       <Node x={520} y={224} w={184} h={52} label="stella --plain" sub="line REPL" />
       <Wire d="M518 250 H374" />
@@ -1265,7 +1220,7 @@ export function EnginePathsDiagram() {
       <Wire d="M518 322 H374" />
 
       <text className="sdg-sub" x={360} y={368} textAnchor="middle">
-        --no-pipeline on run · goal · fleet skips every stage and drives the loop directly
+        with no --pipeline flag, run · goal · fleet drive the loop directly
       </text>
     </svg>
   );

@@ -47,8 +47,8 @@ stella fleet \
    default, with the standard toolbelt, honoring your
    [agent-engine config](/docs/configuration/agent-engine-config).
    Workers are headless by design: no MCP, no interactive prompts, nothing
-   that can block on stdin. Pass `--pipeline classic` to route each worker
-   through the [staged pipeline](/docs/inference-pipeline) instead.
+   that can block on stdin. Pass `--pipeline <variant>` to route each worker
+   through an installed [wrapper plugin](/docs/plugins) instead.
 5. **Record.** Every attempt, commit, and dollar lands in the fleet ledger
    at `.stella/private/fleet.db` — local SQLite, like all
    [stella telemetry](/docs/telemetry), with `runs`, `tasks`, `attempts`,
@@ -156,7 +156,7 @@ claims = ["src/store/read.rs"]
 [[tasks]]
 id = "writer"
 title = "Write path"
-prompt = "Record one receipt row per model call from the pipeline's emit path"
+prompt = "Record one receipt row per model call from the engine's emit path"
 depends_on = ["schema"]
 claims = ["src/store/write.rs"]
 
@@ -246,9 +246,9 @@ stella fleet --plan release-prep.toml --max-concurrency 2 --watch
     After the fan-out, watch each fleet branch's CI to completion and reconcile
     its PR status via `gh`. Exits non-zero if any watched branch ends red.
   </OptionCard>
-  <OptionCard name="--no-pipeline">
-    Deprecated no-op: the raw step loop is already the default. Use
-    `--pipeline classic` to opt workers into the staged pipeline.
+  <OptionCard name="--pipeline <VARIANT>">
+    Route each worker through the installed wrapper plugin whose manifest
+    declares this `[wrapper] id`. Omit it for the raw step loop.
   </OptionCard>
 </CardGrid>
 

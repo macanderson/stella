@@ -50,9 +50,9 @@ REPO = HERE.parents[2]
 # ---------------------------------------------------------------------------
 
 BRAND = "#EFC53F"  # gold — the comet, on every ground
-BRAND_DEEP = "#141416"  # small brand *text* on light surfaces only
+BRAND_DEEP = "#141413"  # small brand *text* on light surfaces only
 INK = "#0A0A0C"
-PAPER = "#E8E8EC"  # cool text on dark
+PAPER = "#F4F1EA"  # cool text on dark
 PAPER_BG = "#FFFFFF"  # light-mode surface
 MUTED_ON_DARK = "#777782"
 MUTED_ON_LIGHT = "#4B4B56"
@@ -204,9 +204,9 @@ LIGHT = Theme(
     fg=INK,
     muted=MUTED_ON_LIGHT,
     brand_text=BRAND_DEEP,
-    surface="#F6F6F8",
+    surface="#F9F6EF",
     surface_top="#E3E8EE",
-    border="#E3E3E8",
+    border="#E6E3DD",
     grid="#0A0A0C",
     grid_op=0.05,
     sweep_dark="#B4BCC6",

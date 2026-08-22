@@ -12,20 +12,20 @@ recorded into the same session store. The paths differ in how a turn is
 door is most of the craft.
 
 This page is the map. For the user-level tour of the modes, see
-[Agent Modes](/docs/agent-modes); for what happens *inside* a verified turn,
-see the [Inference Pipeline](/docs/inference-pipeline).
+[Agent Modes](/docs/agent-modes); for what can wrap a turn and gather evidence
+around it, see [Plugins](/docs/plugins).
 
 <EnginePathsDiagram />
 
-There are only **two loops**, and the picture above is the whole of it. Every
-door drives the raw step loop by default; four of them (`stella run`,
-`stella goal`, `stella fleet`, and the Command Deck) can additionally opt into
-the [staged pipeline](/docs/inference-pipeline) with `--pipeline classic`,
-whose `execute` stage calls the engine — the other two doors reach the engine
-directly and have no pipeline option at all. Underneath every door sits one
-step loop — `run_step`, twelve fixed phases around a single model call — so a
-fleet worker and a `--plain` prompt run the identical code, differing only in
-what is wrapped around it.
+There is only **one loop**, and the picture above is the whole of it. Every
+door drives the step loop; some of them (`stella run`, `stella goal`,
+`stella fleet`, `stella arena`) can additionally bind an installed
+[wrapper plugin](/docs/plugins) with `--pipeline <variant>`, which contributes
+context before the turn and gathers evidence after it — the other doors reach
+the engine directly and take no wrapper. Underneath every door sits one step
+loop — `run_step`, twelve fixed phases around a single model call — so a fleet
+worker and a `--plain` prompt run the identical code, differing only in what is
+wrapped around it.
 
 The two direct doors are not the same depth. `stella --plain` calls
 `Engine::run_turn`; `stella-serve` does not — it drives `run_step` itself, one
@@ -62,10 +62,9 @@ came through:
   store, feeding [telemetry](/docs/telemetry), `stella stats`, and the
   deck's AGENTS tab. Sessions are durable and resumable
   (`stella resume`).
-- **Per-role model routing applies.** The
+- **Per-seat model routing applies.** The
   [agent engine config](/docs/configuration/agent-engine-config) pins models
-  per role (worker, triage, verifier, research, plan), and every path that uses
-  those roles honors the pins.
+  per seat, and every path that uses those seats honors the pins.
 
 ## The map
 
@@ -83,17 +82,17 @@ came through:
     the verification. The default for `stella run`.
   </SpecCard>
   <SpecCard
-    title="One-shot, pipeline"
+    title="One-shot, wrapped"
     meta={[
-      { label: "Command", value: "stella run --pipeline classic \"…\"" },
-      { label: "Turn shape", value: "One staged pipeline run", mono: false },
-      { label: "Execution kind", value: "run (pipeline_variant: classic)", mono: false },
+      { label: "Command", value: "stella run --pipeline <variant> \"…\"" },
+      { label: "Turn shape", value: "One turn under an installed wrapper plugin", mono: false },
+      { label: "Execution kind", value: "run (pipeline_variant: the plugin id)", mono: false },
       { label: "Headless", value: "Yes — json / stream-json", mono: false },
     ]}
   >
-    Verified by the pipeline stages plus the verifier. `--test-command` arms the
-    deterministic fail→pass oracle, and a clean flip can submit without a verifier
-    call at all.
+    The plugin contributes context before the turn and reports its own evidence
+    after it; stella evaluates that evidence against the plugin's declared rule.
+    `--test-command` passes through to a wrapper that can honor it.
   </SpecCard>
   <SpecCard
     title="Plain REPL"
@@ -111,13 +110,13 @@ came through:
     title="Command Deck lead"
     meta={[
       { label: "Command", value: "stella" },
-      { label: "Turn shape", value: "One turn per prompt; /pipeline toggles raw (default) vs staged", mono: false },
-      { label: "Execution kind", value: "deck (pipeline_variant: classic when /pipeline is on)", mono: false },
+      { label: "Turn shape", value: "One turn per prompt", mono: false },
+      { label: "Execution kind", value: "deck" },
       { label: "Headless", value: "Interactive only", mono: false },
     ]}
   >
-    Raw turns while `/pipeline` is OFF — the default — pipeline stages once
-    you switch it ON, watching the FILES and DIFF tabs fill in either way.
+    One step-loop turn per prompt, watching the FILES and DIFF tabs fill in as
+    it works.
   </SpecCard>
   <SpecCard
     title="Deck sub-agents"
@@ -141,8 +140,8 @@ came through:
     ]}
   >
     An independent verifier assesses the goal from evidence, over a **read-only**
-    view of the tool stack. `--pipeline classic` makes each round a staged
-    pipeline run instead.
+    view of the tool stack. `--pipeline <variant>` binds a wrapper plugin to each
+    round's working turn; the goal verifier is unchanged either way.
   </SpecCard>
   <SpecCard
     title="CI monitor"
@@ -165,8 +164,8 @@ came through:
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    Verified per task — the raw step loop by default, the staged pipeline
-    when `--pipeline classic` is passed. Every attempt is recorded in
+    Verified per task — the step loop by default, or under a wrapper plugin when
+    `--pipeline <variant>` is passed. Every attempt is recorded in
     `.stella/private/fleet.db`.
   </SpecCard>
 </CardGrid>
@@ -174,9 +173,9 @@ came through:
 One command per door, to paste and compare:
 
 ```bash
-# One-shot, pipeline — the strongest verification a single command can buy.
-stella run --pipeline classic --test-command "cargo test -p stella-pipeline" \
-  "make the witness tamper check reject a renamed test file"
+# One-shot, wrapped — an installed plugin gathers evidence around the turn.
+stella run --pipeline my-verifier --test-command "cargo test -p stella-core" \
+  "make the tamper check reject a renamed test file"
 
 # One-shot, raw — a question, not a change. The default; no flag needed.
 stella run "what does resolve_engine_wiring do with an uncredentialed verifier?"
@@ -206,20 +205,19 @@ The scripting workhorse: one prompt in, verified work out, an exit code
 back.
 
 **Raw (default).** Plain `stella run "…"` drives one plain step-loop turn —
-no triage, no verifier, the model works until it decides it's done. Cheapest
+no wrapper, no verifier, the model works until it decides it's done. Cheapest
 and fastest; the right door for questions, small mechanical edits, and
 anything you'll eyeball anyway.
 
-**Pipeline (`--pipeline classic`).** The prompt runs the full
-[staged pipeline](/docs/inference-pipeline) — triage → recall → research →
-plan → scope review → execute → witness → verify → verdict, with a bounded
-revise loop —
-with per-role model routing and circuit-breaker fallback. Pass
-`--test-command "cargo test -p …"` alongside it and verification gets a
-deterministic oracle: a change that flips a failing test to passing can
-submit without spending a verifier call. Headless formats (`--output-format
-json` for one final object, `stream-json` for a line per agent event) make
-it automation-grade — see [Scripting](/docs/scripting).
+**Wrapped (`--pipeline <variant>`).** The turn runs under an installed
+[wrapper plugin](/docs/plugins), named by the `[wrapper] id` its manifest
+declares. The plugin contributes context before the turn and reports its own
+evidence after it; stella evaluates that evidence against the plugin's declared
+rule, which decides whether another turn runs. Pass
+`--test-command "cargo test -p …"` alongside it to hand the wrapper a command
+to check against. Headless formats (`--output-format json` for one final
+object, `stream-json` for a line per agent event) make it automation-grade —
+see [Scripting](/docs/scripting).
 
 The **session task board** is the one tool this door withholds: a one-shot
 turn has nothing to resume, so a card costs a model round trip and buys
@@ -228,20 +226,19 @@ delegation included — `delegate` spends money to do work, a different
 trade from `task_create`, and is available here as everywhere.
 
 **Use it when** the task is well-defined and you don't need to watch. Stay
-on the raw default when speed beats ceremony; opt into `--pipeline classic`
-whenever the result must be *provably* right.
+on the raw default when speed beats ceremony; bind a `--pipeline <variant>`
+wrapper whenever the result must carry evidence.
 
 ## Interactive: the Command Deck and the plain REPL
 
 Running `stella` on a real terminal opens the **Command Deck** — the tabbed
-TUI over the engine. Each prompt becomes a lead-agent turn; `/pipeline`
-toggles between the raw step loop (the default) and staged turns. The deck
+TUI over the engine. Each prompt becomes a lead-agent turn. The deck
 is more than a chat surface: prompts queue while a turn runs, `!` lines run
 shell commands inline in the transcript, `>` steers the turn in flight, Esc
 soft-stops (both below), and tabs expose the session's
 files, diff, code graph, skills, MCP servers, the AGENTS tab with live
 executions, and the SETTINGS tab's
-[config panel](/docs/configuration/agent-engine-config) with per-role model
+[config panel](/docs/configuration/agent-engine-config) with per-seat model
 pickers.
 
 Two things are unique to deck turns:
@@ -296,10 +293,8 @@ the run honestly as *not met*.
 
 Each working round is a raw step-loop turn by default; `--pipeline <variant>`
 binds an installed wrapper plugin once and dispatches each round's worker turn
-through it, leaving the goal verifier untouched (#3695, goal half). An
-arbiter-grade wrapper is refused on this door — the goal loop is already its
-own completion arbiter (#3832) — and `--pipeline classic` names a staged
-pipeline that no longer exists (#3865).
+through it, leaving the goal verifier untouched. An arbiter-grade wrapper is
+refused on this door — the goal loop is already its own completion arbiter.
 
 **Use it when** you can state the outcome crisply but not the steps —
 "the suite passes and clippy is clean", "the flaky test is fixed, proven by
@@ -321,8 +316,8 @@ When the work is *many tasks* rather than one, [fleets](/docs/agent-fleets)
 fan a dependency-ordered task DAG out to parallel workers — in one shared
 tree coordinated by cooperative file claims, or in dedicated worktrees for
 tasks marked `isolation = "isolated"`. Each worker drives the same engine
-per task (raw step loop by default, the staged pipeline when
-`--pipeline classic` is passed), and every attempt, commit, and dollar lands
+per task (the step loop by default, or under a wrapper plugin when
+`--pipeline <variant>` is passed), and every attempt, commit, and dollar lands
 in `.stella/private/fleet.db` for review.
 
 **Use it when** you have a backlog, not a task: migrations across many
@@ -341,7 +336,7 @@ differently:
     A file-change tap and a task tap on top: live FILES/DIFF tabs, the task
     board, sub-agent spawning — plus claim-on-first-write.
   </OptionCard>
-  <OptionCard name="Goal / pipeline verifier">
+  <OptionCard name="Goal verifier">
     A **read-only** view. Only tools marked `read_only: true` are visible or
     executable, so a verifier structurally cannot edit its way to a verdict.
   </OptionCard>
@@ -360,8 +355,8 @@ verifier can inspect anything it can see, and structurally cannot change it.
 - **Watching and steering** → the Command Deck (`stella`).
 - **Interactive, but minimal** → the plain REPL (`stella --plain`).
 - **One defined task, unattended** → `stella run` (the raw default is
-  fastest; add `--pipeline classic --test-command` for the strongest
-  verification).
+  fastest; add `--pipeline <variant> --test-command` to run it under a
+  wrapper plugin that gathers evidence).
 - **A defined outcome, unknown steps** → `stella goal`.
 - **CI must be green** → `stella monitor`.
 - **A backlog of tasks** → `stella fleet`.
@@ -381,10 +376,10 @@ If you're changing engine behavior, these are the seams:
     ]}
   />
   <SpecCard
-    title="One-shot pipeline (--pipeline classic)"
+    title="One-shot wrapped (--pipeline <variant>)"
     meta={[
       { label: "Entry", value: "agent::run_one_shot → run_pipeline_one_shot" },
-      { label: "Engine call", value: "staged pipeline over the engine", mono: false },
+      { label: "Engine call", value: "WrapperDispatch over the engine", mono: false },
     ]}
   />
   <SpecCard
@@ -397,8 +392,8 @@ If you're changing engine behavior, these are the seams:
   <SpecCard
     title="Deck lead"
     meta={[
-      { label: "Entry", value: "command_deck::run_lead_turn / run_lead_pipeline_turn" },
-      { label: "Engine call", value: "Engine::run_turn, or the pipeline", mono: false },
+      { label: "Entry", value: "command_deck::run_lead_turn" },
+      { label: "Engine call", value: "Engine::run_turn", mono: false },
     ]}
   />
   <SpecCard
@@ -416,17 +411,17 @@ If you're changing engine behavior, these are the seams:
     ]}
   />
   <SpecCard
-    title="Goal — pipeline rounds (--pipeline classic)"
+    title="Goal — wrapped rounds (--pipeline <variant>)"
     meta={[
       { label: "Entry", value: "agent::goal::run_goal_cmd → run_goal_pipeline_turn" },
-      { label: "Engine call", value: "pipeline rounds + a verifier engine over ReadOnlyTools", mono: false },
+      { label: "Engine call", value: "wrapped rounds + a verifier engine over ReadOnlyTools", mono: false },
     ]}
   />
   <SpecCard
     title="Fleet worker"
     meta={[
       { label: "Entry", value: "fleet_cmd::run_fleet, per task" },
-      { label: "Engine call", value: "Engine::run_turn by default, the pipeline when --pipeline classic is passed", mono: false },
+      { label: "Engine call", value: "Engine::run_turn by default, WrapperDispatch when --pipeline names a plugin", mono: false },
     ]}
   />
 </CardGrid>
@@ -452,12 +447,11 @@ sqlite3 .stella/private/store.db \
 
 - [Agent Modes](/docs/agent-modes) — the user-level guide to the same
   territory, with deck keybindings and examples.
-- [Inference Pipeline](/docs/inference-pipeline) — inside a staged turn:
-  triage → recall → research → plan → scope review → execute → witness →
-  verify → verdict, with a bounded revise loop.
+- [Plugins](/docs/plugins) — the wrapper socket a `--pipeline <variant>` turn
+  runs through, and what a plugin contributes around it.
 - [Agent Fleets](/docs/agent-fleets) — plan files, waves, claims in the
   shared tree, and opt-in isolated worktrees.
-- [Agent engine config](/docs/configuration/agent-engine-config) — per-role
+- [Agent engine config](/docs/configuration/agent-engine-config) — per-seat
   model pins the paths share.
 - [Built-in Tools](/docs/agent-tools) — the shared catalog, and how MCP and
   custom tools layer onto it.

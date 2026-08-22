@@ -64,7 +64,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   themeColor: [
     { media: "(prefers-color-scheme: dark)", color: "#0a0a0c" }, // --stella-canvas
-    { media: "(prefers-color-scheme: light)", color: "#f4f4f6" }, // --stella-paper-2
+    { media: "(prefers-color-scheme: light)", color: "#f7f4ed" }, // --stella-paper-2
   ],
 };
 

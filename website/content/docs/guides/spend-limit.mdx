@@ -65,14 +65,12 @@ instead — see [Local and air-gapped](/docs/examples#local-and-air-gapped).
 ## The gate that fires *before* you spend
 
 <Callout type="warn">
-This gate shipped as a stage of the built-in staged pipeline, and it was
-removed along with it. A plain `stella run` has never had it and does not gain
-it, and the `agent_engine_config.headless_scope_bypass` key that used to wave a
-headless run past it is now inert — setting it changes nothing either way. The
-section below is kept as the description of what a scope gate is *for*, because
-that shape is what a verification plugin implements on its own side of the
-wrapper socket; treat it as the contract to look for in a plugin, not as
-behavior this binary still has.
+**This gate is not built into stella.** A plain `stella run` does not have it,
+and the `agent_engine_config.headless_scope_bypass` key is inert — setting it
+changes nothing either way. The section below describes what a scope gate is
+*for*, because that shape is what a verification plugin implements on its own
+side of the wrapper socket; treat it as the contract to look for in a plugin,
+not as behavior this binary has.
 </Callout>
 
 A spend limit stops a run partway. A scope review stops it *before the first
@@ -226,7 +224,7 @@ different price points.
   <SpecCard title="Find out what a run cost" href="/docs/guides/what-a-run-cost">
     Accounting for a run after the fact, down to the individual model call.
   </SpecCard>
-  <SpecCard title="Inference pipeline" href="/docs/inference-pipeline">
+  <SpecCard title="Plugins" href="/docs/plugins">
     Every stage, what it costs, and when it is skipped.
   </SpecCard>
 </CardGrid>

@@ -55,8 +55,8 @@ Prints the **host-verb surface this build carries**: every verb a driver
 outside the binary may call, and the shape each writes to stdout.
 
 This exists because self-driving is a *host*, not a turn-loop wrapper — it
-drives stella from outside, as `scripts/self-driving.sh` already does
-(`doc:pipeline-as-plugins` §10, work item D2). A host reads this surface once
+drives stella from outside, as `scripts/self-driving.sh` already does.
+A host reads this surface once
 at start-up and refuses a build it was not written against, rather than meeting
 the skew halfway through a cycle as an `unrecognized subcommand`.
 

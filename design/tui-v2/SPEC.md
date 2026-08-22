@@ -11,7 +11,9 @@ Companion docs: `IMPLEMENTATION-PLAN.md`, `renderings/`
 
 Every screen exists to make these four claims visible without saying them:
 
-1. **Deterministic first, model last.** Anything answerable by computation never goes to a model. The UI prices deterministic work at $0.00 and shows the det/model split everywhere work is summarized.
+1. **Deterministic first, model last.** Anything answerable by computation never goes to a model. The UI prices deterministic work at $0.00 wherever it happens — a gate, a graph query — and marks each check with the kind of judge that settles it.
+
+   It does **not** report a `det %`. An earlier draft asked for the deterministic share of a turn's work as a percentage on the receipt, the task card and the start-work estimate; nothing in the workspace measures that, and this project does not build a metric to satisfy a layout. The thesis is carried by facts that already exist — a `$0.00` price on work that cost nothing, and a per-check `deterministic`/`model` tag the mechanism itself defines — not by a ratio over them.
 2. **Tasks close on checks, not on model self-report.** A task is a contract (definition of done), evidence, and cost. The model cannot mark its own homework.
 3. **Drift is recorded, not hidden.** The plan graph distinguishes `[:NEXT]` (planned) from `[:THEN]` (actual). Divergence is rendered, causal, and feeds the learner.
 4. **Traces are the product.** Verified traces train the customer's private model. The UI shows trace capture, learned skills, and receipts as first-class objects.
@@ -110,14 +112,14 @@ Top to bottom:
    - **PR** moves to the ISSUES tab (§9.4). A pull request is a tracker-side artifact of the current work, and that tab is where tracker-side artifacts live.
    - **LANES** moves to the AGENTS tab (§9.5), onto the EXECUTIONS header beside the active/total count that ENGINE became.
 
-   The status bar deliberately carries **no `det %`**. An earlier draft placed the deterministic/model split here; it was removed (2026-08-19, owner's call) rather than plumbed. Do not restore it — a permanent row is the wrong home for a number that changes meaning with scope, and the thesis it serves is expressed where work is actually summarized (the turn receipt, §6.1) and where deterministic work is priced (`$0.00 · det` on gates, §6.3; the graph footer, §9.1). Note that those `det` *tags* are booleans — this call did or did not reach a model — and need no computed ratio behind them.
+   No `det %` here, or anywhere — see §1. The `det` tags that remain (`$0.00 · det` on a gate, §6.3; the graph footer, §9.1) are **booleans**: this call did or did not reach a model. They need no ratio behind them and are not summed into one.
 
 ## 6. Transcript
 
 ### 6.1 Turn boundaries
 
 - **Turn begin**: full-width rule in `rule` color with an embedded label: `turn 14 · execute · kimi-k3 · budget $0.60`. If a queued steer is being consumed, append it: `queued: "<message>"`, so queue-never-blocks has a visible payoff.
-- **Turn end receipt**: rule labeled `turn 14 done · 0:42`, followed by one receipt line: `$0.11 · 18k tok · det 86% · 2 files · 4/4 tests · 1 memory · ↵ audit`. `↵ audit` opens the full trace.
+- **Turn end receipt**: rule labeled `turn 14 done · 0:42`, followed by one receipt line: `$0.11 · 18k tok · 2 files · 4/4 tests · 1 memory · ↵ audit`. Every field elides when nothing measured it, so the line states what a turn actually cost rather than a fixed shape with holes in it. `↵ audit` opens the full trace.
 - `^Z` folds an entire turn (everything between two rules).
 
 ### 6.2 Event anatomy
@@ -146,7 +148,9 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
 
 - Engine: `syntect` with a custom theme built from section 3.1 (keywords gold, types silver_type, identifiers text, comments comment, strings silver, primitives silver_type). Two metals plus white is the full syntax palette on purpose.
 - Highlight once when the event arrives, cache `Vec<Line<'static>>`. Never highlight per frame.
-- Diff rows are two-layer: a bg tint (`diff_add_bg` or `diff_del_bg`) under a syntax fg the spans keep. The constraint on the tint is where it stops, in both directions — it covers the **code column all the way to the pane edge**, so the ground reads as a band rather than tracing the ragged end of the code, and it covers **nothing to the left of that column**: not the line-number gutter, and not any rail or chrome the surface prepends, which belongs to the enclosing event (6.2) and not to the hunk. `Line.style` is one way to get there and is the wrong one for any row that carries a margin, because it paints the row's whole area — a transcript diff sits under the block's rail, so a line-level tint swallows the metal that says which call the hunk came from. Pad a trailing span out to the width instead; same two layers, margin excluded. `a_rust_diff_renders_add_and_remove_rows_per_spec_64` (`crates/stella-tui/src/render/tests/result_row.rs`) asserts both edges — the band reaches the pane edge, the rail span's `bg` stays `None` — and is the reference for what this bullet means.
+- Diff rows are two-layer: a background tint (`diff_add_bg` or `diff_del_bg`) under foreground spans that keep their syntax colors. The tint covers the **code column, out to the pane edge** — reaching the edge is what makes the ground read as a band rather than tracing the ragged right end of the code — and it covers **nothing to the left of it**. A rail, a line-number gutter, or any other chrome the surface draws in the margin is not part of the diff and never takes the tint.
+
+  Stated as a constraint because the obvious mechanism violates it. `Line.style` is the one-call way to tint a row and is correct only where the row is *nothing but* diff; on any row carrying a margin it paints the whole row's area, so a green band swallows the rail whose metal says which event the diff belongs to (SPEC 6.2) — the two layers then disagree about what the row is. In the transcript every diff row carries that rail, so the tint rides a per-span `bg` on the code plus one trailing padded span to the pane edge. A surface with no margin may use `Line.style`; a surface with one must not. The reference implementation is `push_diff_line` in `crates/stella-tui/src/render/row.rs`, and `a_rust_diff_renders_add_and_remove_rows_per_spec_64` asserts both halves — the band reaches the pane edge, and the rail span's `bg` stays `None`.
 - Line number gutter in `dim`. Sign column (`+`/`-`) is mandatory and colored; color is never the only diff signal.
 
 ## 7. Plan and task contracts
@@ -159,7 +163,7 @@ A task has three parts:
 
   Implemented in `stella_protocol::task_contract`, and the rule is the type rather than a validator: `TaskContract::ReadOnly` has no field a check could go in, and `DefinitionOfDone` is non-empty by construction in Rust and on the wire. Closure is **derived** (`TaskContract::closure`), never stored — there is no field a caller can set to mean done. `TaskBoard::set_status` refuses `Completed` while any check is outstanding, which is where "the model cannot mark its own homework" stops being a slogan. `Cancelled` is deliberately not gated: it is not a claim the work was done, and it has to stay available exactly when checks are failing.
 - **evidence**: the ledger of events tagged with this task id (edits, runs, graph writes).
-- **cost**: `$ · tok · cache rd% · det/model split · model calls · est remain`.
+- **cost**: `$ · tok · cache rd% · model calls · est remain`.
 
 Rule: contracts are **required only for tasks that produce diffs**. Read-only tasks close on completion of their events. This prevents fake checks written to satisfy the UI.
 
@@ -169,7 +173,7 @@ Rule: contracts are **required only for tasks that produce diffs**. Read-only ta
 
 ### 7.3 Plan panel
 
-Collapsed: the breadcrumb strip. Expanded (tab): task list with per-task right-aligned economics (`9k tok`, `det 94%`), the running task as a highlighted card showing its contract line, evidence line, and cost line. Drift-inserted tasks render with `⑂` in gold_bright and an `inserted` tag. Footer: `planned 6 · actual 7 · ⑂ 1 drift`, then `drift is recorded, not hidden. it trains your model.`
+Collapsed: the breadcrumb strip. Expanded (tab): task list with per-task right-aligned economics (`9k tok`), the running task as a highlighted card showing its contract line, evidence line, and cost line. Drift-inserted tasks render with `⑂` in gold_bright and an `inserted` tag. Footer: `planned 6 · actual 7 · ⑂ 1 drift`, then `drift is recorded, not hidden. it trains your model.`
 
 ### 7.4 Drift
 
@@ -202,7 +206,7 @@ The single best demo moment: an issue becomes a plan while the user watches, and
 2. Header: `w start work · <issue id> <title>`, subtitle `draft plan r1 · built from issue text + graph + memory`.
 3. Sources line names exactly what was used: the issue, the coupled files from the graph, and any applied memory RULEs with their text.
 4. Task list with contract previews: read-only tasks marked `read only · no contract`, diff-producing tasks each show one `definition of done` line with its mechanism and `det` tag, final task is `◇ verify · n gates · blocks merge`.
-5. Estimate line: `~$ · ~tok · det est % · ~minutes`.
+5. Estimate line: `~$ · ~tok · ~minutes`.
 6. Action row: `a approve and start · e edit tasks · x cancel`. Footer states plainly: `nothing runs before approval`.
 7. On approval, stella creates the branch, the plan becomes r1 with `[:NEXT]` edges, and the breadcrumb strip updates.
 

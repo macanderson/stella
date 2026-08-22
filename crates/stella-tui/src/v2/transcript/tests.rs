@@ -53,7 +53,6 @@ fn scripted_turn() -> (TurnHead, Vec<Event>, Receipt) {
     let receipt = Receipt {
         spend_usd: 0.11,
         tokens: Some(18_000),
-        det_pct: Some(86),
         tests_passed: 4,
         tests_total: 4,
         files: 2,
@@ -105,7 +104,7 @@ fn a_scripted_turn_renders_begin_events_and_receipt() {
         "● edit …/self_driving_cmd.rs +3 -1",
         "● run cargo test -p stella-core",
         "── turn 14 done · 0:42",
-        "receipt $0.11 · 18k tok · det 86% · 4/4 tests · 2 files · 1 memory · ↵ audit",
+        "receipt $0.11 · 18k tok · 4/4 tests · 2 files · 1 memory · ↵ audit",
     ] {
         assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
     }
@@ -302,6 +301,72 @@ fn a_partial_test_pass_is_not_green() {
         .find(|s| s.content.contains("3/4 tests"))
         .expect("the tests cell renders");
     assert_eq!(span.style.fg, Some(token::RED));
+}
+
+/// #4168: a path's basename carries the emphasis, the directory recedes.
+///
+/// The rule the v1 call row encoded in `render::row::path_spans`, deleted along
+/// with the unreachable arm that was keeping it alive. In a scan down the
+/// margin the eye hunts the file *identity*; without the split, a column of
+/// calls in one workspace is a column of near-identical
+/// `crates/stella-tui/src/render/…` strings differing only in their last cells.
+#[test]
+fn a_path_subject_dims_its_directory_and_brightens_its_basename() {
+    let mut event = Event::new(
+        EventKind::Read {
+            extent: Extent::default(),
+        },
+        Subject::path("a/b/c.rs"),
+    );
+    event.collapsed = Some(false);
+    let spans = head_row(&event, token::SILVER, W).spans;
+
+    let dir = spans
+        .iter()
+        .find(|s| s.content.contains("a/b/"))
+        .expect("the directory renders");
+    let base = spans
+        .iter()
+        .find(|s| s.content == "c.rs")
+        .expect("the basename is its own span");
+
+    assert_eq!(dir.style.fg, Some(token::DIM), "the directory is not dim");
+    assert_eq!(base.style.fg, Some(token::TEXT), "the basename is not lit");
+    assert_ne!(
+        dir.style.fg, base.style.fg,
+        "directory and basename render in one style — the split did not happen"
+    );
+}
+
+/// The other half, and the reason it is a separate test: the fix must not
+/// over-reach.
+///
+/// A `bash` head's subject is a command line, and `grep -r foo/ .` contains a
+/// slash while being no more a path than any other argument list. Brightening
+/// its tail would spend the row's contrast on the rows least able to use it.
+/// Deriving path-ness from the string instead of carrying it on the subject is
+/// precisely the implementation this rejects — that version passes the test
+/// above and fails this one.
+#[test]
+fn a_command_subject_stays_one_unemphasised_span() {
+    let mut event = Event::new(EventKind::Run, Subject::from("grep -r foo/ ."));
+    event.collapsed = Some(false);
+    let spans = head_row(&event, token::GOLD, W).spans;
+
+    let subject: Vec<_> = spans
+        .iter()
+        .filter(|s| s.content.contains("grep") || s.content.contains("foo/"))
+        .collect();
+    assert_eq!(
+        subject.len(),
+        1,
+        "a command line was split as though it were a path: {subject:?}"
+    );
+    assert_eq!(
+        subject[0].style.fg,
+        Some(token::TEXT),
+        "a command subject changed tone"
+    );
 }
 
 /// prompt.md rule 3: no hex literal outside the theme crate.

@@ -120,6 +120,14 @@ const nextConfig = {
         destination: "/docs/agent-modes#outcome-driven-goal-mode",
         permanent: true,
       },
+      // The Inference Pipeline page was removed. Verification lives behind the
+      // wrapper socket now, so /docs/plugins is where its subject continues —
+      // keep the URL alive rather than 404ing every inbound link to it.
+      {
+        source: "/docs/inference-pipeline",
+        destination: "/docs/plugins",
+        permanent: true,
+      },
       ...Object.entries(CONSOLIDATED).map(([source, destination]) => ({
         source,
         destination,
