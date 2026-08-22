@@ -167,6 +167,12 @@ reasoning_auto          = "on"
 # Inert (the scope-review stage it steered is gone); reserved rather than
 # retired because a published benchmark posture hashes the name.
 headless_scope_bypass   = "off"
+# NEW — and further from existing than the marker usually implies. Unlike every
+# other NEW key here, this one is already written about as if it shipped: the
+# deck renders a per-hunk approval card and its key map is tested, but nothing
+# constructs a `HunkProposal` outside tests, so the gate cannot fire. The name
+# is not a field of `EngineSettings` and not in `settings/unknown.rs` either, so
+# writing it today configures nothing AND warns about nothing. #3633.
 hunk_review             = "off"
 # `allowed_models` MOVED to [models].allowed. §6.1 migrates it and warns on
 # the old location for one release.
