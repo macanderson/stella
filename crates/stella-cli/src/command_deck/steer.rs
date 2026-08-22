@@ -10,27 +10,43 @@
 //! the driver does with the texts once they arrive.
 
 use crate::session_persist::DurableQueue;
-use crate::subsession::{self, SteeringTap};
+use crate::subsession::SteeringTap;
 
 /// Deliver a mid-turn steer to the LEAD's running turn.
 ///
-/// Each text is routed through [`subsession::route_mid_turn`], the same
-/// decision a `>`-prefixed prompt takes — so the one case a steer cannot serve
-/// is handled identically: a turn that is only *settling* has no boundary left
-/// to inject at, and its texts continue the thread as the next turn instead of
-/// being dropped.
+/// The route is **not** re-derived from the text.
+/// [`WorkspaceInput::Steer`](stella_tui::WorkspaceInput) already *is* the
+/// intent — the deck said "steer" by choosing this message type, and strips the
+/// `>` marker off every text on its way out — so asking
+/// [`crate::subsession::route_mid_turn`] to classify a markerless text here
+/// answered `Sidecar` and sent an Esc-steer at a live turn to a stranger
+/// sub-session that could not see the conversation (#4025).
+///
+/// One question is left, and it is about the turn rather than the words: a turn
+/// that is only *settling* is past its last model step, so it has no boundary
+/// left to inject at. Its texts continue the thread as the next turn instead of
+/// being dropped — the same fallback `route_mid_turn` applies for a settling
+/// turn, taken here directly.
 ///
 /// The texts arrive as one message precisely so that decision is taken once
 /// for all of them. Drained as N separate inputs, a second Esc landing between
 /// two of them would steer half the backlog and cancel the turn holding the
 /// rest — the same lost-work failure the change exists to end.
 pub(super) fn steer_lead(tap: &SteeringTap, queue: &mut DurableQueue, texts: Vec<String>) {
+    // Branch once, on the turn — never per text, or a `mark_settling` landing
+    // mid-batch would split one steer across both destinations.
+    let settling = tap.is_settling();
     for text in texts {
-        match subsession::route_mid_turn(text, tap.is_settling()) {
-            subsession::MidTurnRoute::Steer(note) => tap.push(note),
-            subsession::MidTurnRoute::NextTurn(text) | subsession::MidTurnRoute::Sidecar(text) => {
-                queue.push_back(text)
-            }
+        // Defensive: the deck already strips the marker, and a stray one is a
+        // prefix rather than a word the user meant to send either way.
+        let text = match text.trim_start().strip_prefix('>') {
+            Some(rest) => rest.trim_start().to_string(),
+            None => text,
+        };
+        if settling {
+            queue.push_back(text);
+        } else {
+            tap.push(text);
         }
     }
 }

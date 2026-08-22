@@ -626,3 +626,67 @@ fn an_already_marked_note_is_not_marked_twice() {
     };
     assert_eq!(delta, format!("{}already mine", stella_tui::NOTICE_MARKER));
 }
+
+/// The deck's Esc-steer must reach the running turn. `WorkspaceInput::Steer`
+/// already carries the intent, and the deck strips the `>` marker off every
+/// text before sending — so re-deriving the route from the text is how a live
+/// steer used to fall through to a sidecar sub-session (#4025).
+#[test]
+fn steer_lead_pushes_a_running_turn_into_the_tap_in_order() {
+    use stella_core::ports::TurnSteering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    let tap = subsession::SteeringTap::default();
+
+    steer::steer_lead(
+        &tap,
+        &mut queue,
+        vec![
+            "narrow it to the parser".to_string(),
+            "and add a test".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        tap.drain_steering(),
+        vec![
+            "narrow it to the parser".to_string(),
+            "and add a test".to_string()
+        ],
+        "a live steer belongs to the running turn, in the order it was written"
+    );
+    assert!(
+        queue.is_empty(),
+        "nothing may reach the backlog while the turn still has a boundary to steer at"
+    );
+}
+
+/// A settling turn is past its last model step, so it has no boundary left to
+/// inject at. The texts continue the thread as the next turn instead — the one
+/// case `steer_lead` still has to fall back for.
+#[test]
+fn steer_lead_falls_back_to_the_queue_once_the_turn_is_settling() {
+    use stella_core::ports::TurnSteering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    let tap = subsession::SteeringTap::default();
+    tap.mark_settling();
+
+    steer::steer_lead(
+        &tap,
+        &mut queue,
+        vec!["first".to_string(), "second".to_string()],
+    );
+
+    assert!(
+        tap.drain_steering().is_empty(),
+        "a settling turn has no boundary left to steer at"
+    );
+    assert_eq!(
+        stella_store::journal::read_queue(dir.path()),
+        vec!["first".to_string(), "second".to_string()],
+        "the backlog keeps the order the batch was written in"
+    );
+}
