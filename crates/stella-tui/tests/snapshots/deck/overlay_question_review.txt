@@ -29,7 +29,7 @@
 │                                         │  • Which auth should the new endpoint use?                               │ ││                                      │
 │── EXECUTE ──────────────────────────────│      → Session cookie                                                    │─││                                      │
 │                                         │        note: admin routes only                                           │ ││                                      │
-│ │ ● apps/app/automations/page.tsx       │                                                                          │ ││                                      │
+│ │ ⊙ apps/app/automations/page.tsx       │                                                                          │ ││                                      │
 │ │ ⎿ 312 lines                           │  • Which environments should it reach first?                             │s││                                      │
 │                                         │      → staging                                                           │ ││                                      │
 │☰  plan  5/7  ·  Workflows canvas        │                                                                          │ ││                                      │

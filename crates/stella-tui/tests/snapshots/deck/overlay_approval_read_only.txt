@@ -29,7 +29,7 @@
 │                                         ┌ approval ─────────────────────────────── ↑↓ move · ⏎ choose · esc denies ┐ ││                                      │
 │── EXECUTE ──────────────────────────────│read_file  read-only                                                      │─││                                      │
 │                                         │  .stella/private/credentials.toml                                        │ ││                                      │
-│ │ ● apps/app/automations/page.tsx       │                                                                          │ ││                                      │
+│ │ ⊙ apps/app/automations/page.tsx       │                                                                          │ ││                                      │
 │ │ ⎿ 312 lines                           │gate    tool.call.requested                                               │s││                                      │
 │                                         │reason  matched rule secrets-are-off-limits                               │ ││                                      │
 │☰  plan  5/7  ·  Workflows canvas        │                                                                          │ ││                                      │

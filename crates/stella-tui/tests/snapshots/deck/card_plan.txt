@@ -29,7 +29,7 @@
 │                                                   │▸ ○ 1. extract types                                  │           ││                                      │
 │── EXECUTE ────────────────────────────────────────│  ○ 2. move hooks                                     │───────────││                                      │
 │                                                   │  ○ 3. update 9 imports                               │           ││                                      │
-│ │ ● apps/app/automations/page.tsx                 │                                                      │           ││                                      │
+│ │ ⊙ apps/app/automations/page.tsx                 │                                                      │           ││                                      │
 │ │ ⎿ 312 lines                                     │repo      macanderson/web-app ⎇ feat/automations-store│       42ms││                                      │
 │                                                   │write     packages/automations/** · apps/app/automatio│           ││                                      │
 │☰  plan  5/7  ·  Workflows canvas                  │read      apps/** · packages/**  (2 globs)            │           ││                                      │
