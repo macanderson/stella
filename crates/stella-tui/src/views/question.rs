@@ -504,8 +504,9 @@ fn cancelled() -> QuestionOutcome {
 /// Paint the overlay over `area`. A no-op when nothing is parked.
 ///
 /// `accessible` spans the card across the frame instead of floating it, the
-/// same contract every other card here honours ([`cards::card_area`]). It
-/// matters more on this one than on any of them: a float clips its rows at
+/// same contract every other card here honours (`cards::card_area` — not a
+/// link: it is `pub(crate)`, and this is a `pub fn`). It matters more on this
+/// one than on any of them: a float clips its rows at
 /// its right border, and a screen reader that never reaches the end of an
 /// option is a driver answering a question they only half heard — on the one
 /// overlay where the answer stops a turn.
