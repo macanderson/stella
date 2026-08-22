@@ -79,9 +79,8 @@ use stella_tools::custom::CustomTool;
 use stella_tools::hook_runner::ShellHookRunner;
 use stella_tools::registry::approval::ApprovalResponse;
 use stella_tui::{
-    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound, SkillOp,
-    SkillScope, SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput,
-    run_deck,
+    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityHit, Inbound, SkillOp, SkillScope,
+    SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedSender};
 
@@ -117,6 +116,9 @@ use task_tap::TaskTap;
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
+
+/// ISSUES-tab requests, served by the workspace's issue provider.
+mod issues;
 
 /// The lead agent's id — the one conversation this driver runs.
 pub(crate) const LEAD: &str = "lead";
@@ -1312,7 +1314,7 @@ pub async fn run_deck_session(
                             )
                             && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
                             && !handle_agents_input(&other, cfg, &in_tx)
-                            && !handle_issues_input(&other, cfg, &in_tx)
+                            && !issues::handle_issues_input(&other, cfg, &in_tx)
                             && !handle_engine_config_input(&other, cfg, &mut settings_stale, &in_tx)
                         {
                             // The tool list is enumerated here rather than
@@ -1937,7 +1939,7 @@ pub async fn run_deck_session(
                             | WorkspaceInput::IssueAct { .. }
                             | WorkspaceInput::EntitySearch { .. }),
                         ) => {
-                            handle_issues_input(&input, cfg, &in_tx);
+                            issues::handle_issues_input(&input, cfg, &in_tx);
                         }
                         // Everything above peeled off `Stop` and every worker
                         // lane, so this is the LEAD's own pause/resume/restart.
@@ -2964,15 +2966,12 @@ fn spawn_notification_poller(in_tx: mpsc::UnboundedSender<Inbound>) {
 
 // ── ISSUES tab: tracker-backed operations ───────────────────────────────────
 
-/// What every ISSUES-tab request answers with — the tab renders it as its
-/// empty-state hint. Issue trackers reach a session as MCP tools, and the
-/// deck has no tracker transport of its own.
-const NO_TRACKER_HINT: &str =
-    "no issue tracker backend — tracker workflows ride MCP tools (`stella mcp`)";
-
 /// Installed agents whose name or description contains `query`
 /// (case-insensitive; an empty query matches all) as "Agent" hits.
-fn agent_entity_hits(entries: &[stella_tui::InstalledAgentEntry], query: &str) -> Vec<EntityHit> {
+pub(super) fn agent_entity_hits(
+    entries: &[stella_tui::InstalledAgentEntry],
+    query: &str,
+) -> Vec<EntityHit> {
     let needle = query.trim().to_lowercase();
     entries
         .iter()
@@ -3062,7 +3061,7 @@ fn symbol_hit(frame: &contextgraph_types::ContextFrame) -> EntityHit {
 /// definitions when an index exists. Read-only politeness (the `stella
 /// stats` discipline): a missing database reads as "no hits", never a
 /// write. Failures of one source never kill another.
-fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<EntityHit> {
+pub(super) fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<EntityHit> {
     let needle = query.trim().to_lowercase();
     let mut hits = Vec::new();
 
@@ -3130,7 +3129,7 @@ fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<EntityHit> {
 
 /// Merge the assignee sources in priority order — installed agents first,
 /// then local memories/symbols — capped at `cap`.
-fn merge_assignee_hits(
+pub(super) fn merge_assignee_hits(
     agents: Vec<EntityHit>,
     local: Vec<EntityHit>,
     cap: usize,
@@ -3139,88 +3138,6 @@ fn merge_assignee_hits(
     merged.extend(local);
     merged.truncate(cap);
     merged
-}
-
-/// Service one ISSUES-tab request. The deck carries no tracker transport —
-/// issue trackers reach a session as MCP tools — so the list/mutate requests
-/// answer with the tab's empty-state hint, and entity search serves the
-/// local sources (installed agents, memories, code-graph symbols). Spawned
-/// where work is real (the `spawn_mcp_oauth_login` shape) so a slow SQLite
-/// or grammar load never stalls the driver loop. Returns `true` when the
-/// input was one of the tab's.
-fn handle_issues_input(
-    input: &WorkspaceInput,
-    cfg: &Config,
-    in_tx: &UnboundedSender<Inbound>,
-) -> bool {
-    match input {
-        WorkspaceInput::IssuesRefresh { seq, .. } => {
-            let _ = in_tx.send(Inbound::IssuesList {
-                seq: *seq,
-                outcome: Err(NO_TRACKER_HINT.to_string()),
-            });
-            true
-        }
-        WorkspaceInput::IssueCreate { seq, .. } => {
-            let _ = in_tx.send(Inbound::IssueActDone {
-                seq: *seq,
-                key: String::new(),
-                outcome: Err(NO_TRACKER_HINT.to_string()),
-            });
-            true
-        }
-        WorkspaceInput::IssueAct { key, seq, .. } => {
-            let _ = in_tx.send(Inbound::IssueActDone {
-                seq: *seq,
-                key: key.clone(),
-                outcome: Err(NO_TRACKER_HINT.to_string()),
-            });
-            true
-        }
-        WorkspaceInput::EntitySearch { field, query, seq } => {
-            let (in_tx, seq, field) = (in_tx.clone(), *seq, *field);
-            let query = query.clone();
-            let root = cfg.workspace_root.clone();
-            tokio::spawn(async move {
-                let hits = match field {
-                    // No tracker transport: no label vocabulary. The popup
-                    // shows "no matches"; the list-level requests carry the
-                    // hint.
-                    EntityField::Label => Vec::new(),
-                    EntityField::Assignee => {
-                        // Independent sources — a failure of one must not
-                        // kill the others; collect what succeeds.
-                        let agents = {
-                            let project = crate::agents_installed::project_agents_dir(&root);
-                            let user = crate::agents_installed::user_agents_dir();
-                            agent_entity_hits(
-                                &crate::agents_installed::discover(user.as_deref(), &project),
-                                &query,
-                            )
-                        };
-                        let local = {
-                            let root = root.clone();
-                            let query = query.clone();
-                            // SQLite opens + tree-sitter grammar loading are
-                            // synchronous — keep them off the async workers.
-                            tokio::task::spawn_blocking(move || local_assignee_hits(&root, &query))
-                                .await
-                                .unwrap_or_default()
-                        };
-                        merge_assignee_hits(agents, local, 20)
-                    }
-                };
-                let _ = in_tx.send(Inbound::EntityHits {
-                    field,
-                    seq,
-                    query,
-                    hits,
-                });
-            });
-            true
-        }
-        _ => false,
-    }
 }
 
 /// The disposition of a would-be slash command.

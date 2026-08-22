@@ -50,6 +50,11 @@ struct GhIssue {
     body: String,
     #[serde(default)]
     labels: Vec<GhLabel>,
+    /// Present only when the query asks for it — `list_open` does not, the
+    /// deck's browse/search read does, because a list of mixed-state issues
+    /// cannot tell the reader which bucket each row is in without it.
+    #[serde(default)]
+    state: String,
     #[serde(rename = "createdAt", default)]
     created_at: String,
     #[serde(default)]
@@ -90,9 +95,14 @@ impl GhIssue {
             title: self.title,
             body: self.body,
             // `list_open` asks `gh` for open issues only, so every row it
-            // returns is open by construction. This adapter does not invent a
-            // status map because the query already is one.
-            state: IssueState::Open,
+            // returns is open by construction. The mixed-state reads
+            // (`search` with no state filter) ask `gh` for the field and
+            // map what it says; either way this adapter does not invent a
+            // status map — the query already is one, or the payload is.
+            state: match self.state.to_ascii_lowercase().as_str() {
+                "closed" => IssueState::Closed,
+                _ => IssueState::Open,
+            },
             class,
             labels: self
                 .labels
@@ -148,6 +158,18 @@ impl IssueProvider for GhIssueProvider {
         for label in &draft.labels {
             args.push("--label".into());
             args.push(label.name.clone());
+        }
+        // Assigned in the create call rather than a follow-up `gh issue edit`:
+        // one call cannot half-succeed, and a second one could leave the issue
+        // filed but unassigned with nothing to retry against.
+        if let Some(assignee) = draft
+            .assignee
+            .as_deref()
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+        {
+            args.push("--assignee".into());
+            args.push(assignee.to_owned());
         }
 
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -238,6 +260,60 @@ impl IssueProvider for GhIssueProvider {
         }
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         gh_json(&borrowed).map(|_| ())
+    }
+
+    async fn reopen(&self, key: &IssueKey) -> Result<(), IssueError> {
+        gh_json(&["issue", "reopen", key.as_str()]).map(|_| ())
+    }
+
+    async fn search(
+        &self,
+        query: &str,
+        state: Option<IssueState>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Issue>, IssueError> {
+        // `gh issue list` has no server-side offset, so one call fetches
+        // offset+limit rows and this slices the page out. That is the cheap
+        // correct thing at tracker scale: the alternative (one call per page,
+        // each re-fetching the prefix) costs the same bandwidth and adds a
+        // failure mode per extra call.
+        let fetch = (offset + limit).to_string();
+        let state_arg = match state {
+            Some(IssueState::Open) | Some(IssueState::InProgress) => "open",
+            Some(IssueState::Closed) => "closed",
+            None => "all",
+        };
+        // GitHub has no in-progress state (doc:agent-native-delivery §4.2),
+        // so `InProgress` reads as open — the honest approximation, and the
+        // payload's own `state` field is what the caller renders.
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "list".into(),
+            "--state".into(),
+            state_arg.into(),
+            "--limit".into(),
+            fetch,
+            "--json".into(),
+            "number,title,body,labels,state,createdAt,url".into(),
+        ];
+        if !query.trim().is_empty() {
+            args.push("--search".into());
+            args.push(query.trim().to_owned());
+        }
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        let raw = gh_json(&borrowed)?;
+        let rows: Vec<GhIssue> =
+            serde_json::from_str(&raw).map_err(|error| IssueError::Malformed {
+                provider: GITHUB.into(),
+                reason: error.to_string(),
+            })?;
+        Ok(rows
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(GhIssue::into_issue)
+            .collect())
     }
 }
 

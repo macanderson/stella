@@ -330,6 +330,7 @@ pub(super) fn file_base_breakage(
             IssueLabel::from("P0"),
         ],
         parent: None,
+        assignee: None,
     };
 
     runtime
@@ -746,6 +747,7 @@ mod tests {
             body: "a handoff".into(),
             labels: labels.iter().copied().map(IssueLabel::from).collect(),
             parent: None,
+            assignee: None,
         }
     }
 
