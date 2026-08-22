@@ -75,8 +75,20 @@ const SECURITY_HEADERS = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
 ];
 
+/**
+ * `standalone` emits `.next/standalone/server.js` together with only the
+ * modules the server actually loads — a few tens of megabytes instead of the
+ * whole dependency tree. That is what makes the site shippable to a small
+ * instance without copying `node_modules` across the network.
+ *
+ * Gated on an environment variable so local development and any other
+ * deployment target are untouched; the AWS deploy sets STANDALONE=1.
+ */
+const isStandalone = process.env.STANDALONE === "1";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  ...(isStandalone ? { output: "standalone" } : {}),
   reactStrictMode: true,
   // The site is fully static (MDX + generateStaticParams); no image
   // optimization server is needed.
