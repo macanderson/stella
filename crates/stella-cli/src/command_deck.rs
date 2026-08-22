@@ -73,14 +73,15 @@ use stella_model::provider::Provider;
 use stella_protocol::{
     AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, TaskItem, ToolOutput,
 };
+use stella_protocol::issue::IssueProvider;
 use stella_store::Store;
 use stella_tools::ToolRegistry;
 use stella_tools::custom::CustomTool;
 use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{
-    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound, SkillOp,
-    SkillScope, SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput,
-    run_deck,
+    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound, IssueAction,
+    IssueRow, SkillOp, SkillScope, SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput,
+    WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -2935,11 +2936,128 @@ fn spawn_notification_poller(in_tx: mpsc::UnboundedSender<Inbound>) {
 
 // ── ISSUES tab: tracker-backed operations ───────────────────────────────────
 
-/// What every ISSUES-tab request answers with — the tab renders it as its
-/// empty-state hint. Issue trackers reach a session as MCP tools, and the
-/// deck has no tracker transport of its own.
-const NO_TRACKER_HINT: &str =
-    "no issue tracker backend — tracker workflows ride MCP tools (`stella mcp`)";
+/// One page of the ISSUES tab's browse list, from the workspace's issue
+/// provider.
+///
+/// Runs on a blocking thread (`gh` is a subprocess), so the provider call —
+/// async over a synchronous CLI — gets the same fresh current-thread runtime
+/// the self-driving commands use rather than a handle on the deck's.
+fn issues_list(
+    root: &std::path::Path,
+    query: Option<&str>,
+    state: Option<String>,
+) -> Result<Vec<IssueRow>, String> {
+    let provider = crate::issue_provider::GhIssueProvider;
+    let state = match state.as_deref() {
+        Some("open") => Some(stella_protocol::issue::IssueState::Open),
+        Some("closed") => Some(stella_protocol::issue::IssueState::Closed),
+        _ => None,
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
+    let issues = runtime
+        .block_on(provider.search(query.unwrap_or(""), state, ISSUES_PAGE, 0))
+        .map_err(|error| error.to_string())?;
+    let _ = root; // the provider binds to the workspace through `gh`'s cwd
+    Ok(issues.iter().map(issue_row).collect())
+}
+
+/// File one issue through the provider; answer with the created key and a
+/// human status line (the created key + url on success).
+fn issues_create(
+    root: &std::path::Path,
+    title: &str,
+    body: &str,
+    labels: &[String],
+    assignee: Option<&str>,
+) -> (String, Result<String, String>) {
+    let provider = crate::issue_provider::GhIssueProvider;
+    let draft = stella_protocol::issue::IssueDraft {
+        title: title.to_owned(),
+        body: body.to_owned(),
+        labels: labels.iter().map(|l| stella_protocol::issue::IssueLabel::from(l.as_str())).collect(),
+        parent: None,
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(error) => {
+            return (
+                String::new(),
+                Err(format!("could not start a runtime for the issue provider: {error}")),
+            )
+        }
+    };
+    let _ = (root, assignee); // assignee rides the tracker's own field map later
+    match runtime.block_on(provider.file(&draft)) {
+        Ok(key) => {
+            let key = key.as_str().to_owned();
+            (key.clone(), Ok(format!("created #{key}")))
+        }
+        Err(error) => (String::new(), Err(error.to_string())),
+    }
+}
+
+/// Act on one existing issue: comment, close, re-open, or move status.
+fn issues_act(root: &std::path::Path, key: &str, action: &IssueAction) -> Result<String, String> {
+    let provider = crate::issue_provider::GhIssueProvider;
+    let key = stella_protocol::issue::IssueKey::from(key.trim_start_matches('#'));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
+    let _ = root;
+    match action {
+        IssueAction::Comment(body) => runtime
+            .block_on(provider.comment(&key, body))
+            .map(|_| format!("comment added to #{key}"))
+            .map_err(|error| error.to_string()),
+        IssueAction::Close => runtime
+            .block_on(provider.close(&key, "", "completed"))
+            .map(|_| format!("closed #{key}"))
+            .map_err(|error| error.to_string()),
+        IssueAction::SetStatus(status) if status.eq_ignore_ascii_case("open") => runtime
+            .block_on(provider.reopen(&key))
+            .map(|_| format!("re-opened #{key}"))
+            .map_err(|error| error.to_string()),
+        IssueAction::SetStatus(status) => Err(format!(
+            "unsupported status `{status}` — GitHub issues are open or closed"
+        )),
+        IssueAction::StartWork => Err(
+            "start work is the self-driving loop's claim, not a tracker status".to_string(),
+        ),
+    }
+}
+
+/// Map the kernel's [`stella_protocol::issue::Issue`] into the tab's row.
+///
+/// The key gets its `#` here, at the boundary: the provider's key is the
+/// tracker's bare identifier (what `gh` and the API take), the row's is the
+/// display spelling a human reads and the tab echoes back — and `issues_act`
+/// strips it again on the way out.
+fn issue_row(issue: &stella_protocol::issue::Issue) -> IssueRow {
+    IssueRow {
+        key: format!("#{}", issue.key.as_str()),
+        title: issue.title.clone(),
+        state: match issue.state {
+            stella_protocol::issue::IssueState::Open => "open",
+            stella_protocol::issue::IssueState::InProgress => "in progress",
+            stella_protocol::issue::IssueState::Closed => "closed",
+        }
+        .to_owned(),
+        labels: issue.labels.iter().map(|l| l.name.clone()).collect(),
+        assignee: None,
+        url: issue.url.clone(),
+        updated_at: None,
+    }
+}
+
+/// The page size the ISSUES tab browses by — one `gh issue list` read.
+const ISSUES_PAGE: usize = 30;
 
 /// Installed agents whose name or description contains `query`
 /// (case-insensitive; an empty query matches all) as "Agent" hits.
@@ -3112,39 +3230,58 @@ fn merge_assignee_hits(
     merged
 }
 
-/// Service one ISSUES-tab request. The deck carries no tracker transport —
-/// issue trackers reach a session as MCP tools — so the list/mutate requests
-/// answer with the tab's empty-state hint, and entity search serves the
-/// local sources (installed agents, memories, code-graph symbols). Spawned
-/// where work is real (the `spawn_mcp_oauth_login` shape) so a slow SQLite
-/// or grammar load never stalls the driver loop. Returns `true` when the
-/// input was one of the tab's.
+/// Service one ISSUES-tab request. The tab's tracker is the workspace's
+/// configured issue provider (GitHub by default, reached through the `gh`
+/// CLI — see [`crate::issue_provider`]); entity search serves the local
+/// sources (installed agents, memories, code-graph symbols). Spawned where
+/// work is real (the `spawn_mcp_oauth_login` shape) so a slow `gh` call,
+/// SQLite read, or grammar load never stalls the driver loop. Returns `true`
+/// when the input was one of the tab's.
 fn handle_issues_input(
     input: &WorkspaceInput,
     cfg: &Config,
     in_tx: &UnboundedSender<Inbound>,
 ) -> bool {
     match input {
-        WorkspaceInput::IssuesRefresh { seq, .. } => {
-            let _ = in_tx.send(Inbound::IssuesList {
-                seq: *seq,
-                outcome: Err(NO_TRACKER_HINT.to_string()),
+        WorkspaceInput::IssuesRefresh {
+            query,
+            state,
+            seq,
+        } => {
+            let (in_tx, seq) = (in_tx.clone(), *seq);
+            let query = query.clone();
+            let state = state.clone();
+            let root = cfg.workspace_root.clone();
+            tokio::task::spawn_blocking(move || {
+                let outcome = issues_list(&root, query.as_deref(), state);
+                let _ = in_tx.send(Inbound::IssuesList { seq, outcome });
             });
             true
         }
-        WorkspaceInput::IssueCreate { seq, .. } => {
-            let _ = in_tx.send(Inbound::IssueActDone {
-                seq: *seq,
-                key: String::new(),
-                outcome: Err(NO_TRACKER_HINT.to_string()),
+        WorkspaceInput::IssueCreate {
+            title,
+            body,
+            labels,
+            assignee,
+            seq,
+        } => {
+            let (in_tx, seq) = (in_tx.clone(), *seq);
+            let (title, body, labels, assignee) =
+                (title.clone(), body.clone(), labels.clone(), assignee.clone());
+            let root = cfg.workspace_root.clone();
+            tokio::task::spawn_blocking(move || {
+                let (key, outcome) = issues_create(&root, &title, &body, &labels, assignee.as_deref());
+                let _ = in_tx.send(Inbound::IssueActDone { seq, key, outcome });
             });
             true
         }
-        WorkspaceInput::IssueAct { key, seq, .. } => {
-            let _ = in_tx.send(Inbound::IssueActDone {
-                seq: *seq,
-                key: key.clone(),
-                outcome: Err(NO_TRACKER_HINT.to_string()),
+        WorkspaceInput::IssueAct { key, action, seq } => {
+            let (in_tx, seq) = (in_tx.clone(), *seq);
+            let (key, action) = (key.clone(), action.clone());
+            let root = cfg.workspace_root.clone();
+            tokio::task::spawn_blocking(move || {
+                let outcome = issues_act(&root, &key, &action);
+                let _ = in_tx.send(Inbound::IssueActDone { seq, key, outcome });
             });
             true
         }

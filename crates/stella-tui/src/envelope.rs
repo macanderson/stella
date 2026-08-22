@@ -484,6 +484,8 @@ pub enum IssueAction {
     /// Move to a named status (`open`/`closed` on GitHub; any workflow-state
     /// word on Linear).
     SetStatus(String),
+    /// Close the issue (the deck's `x`).
+    Close,
     /// Start work: the driver moves the issue to in-progress (`w`).
     StartWork,
 }

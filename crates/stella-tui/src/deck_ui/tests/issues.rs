@@ -413,3 +413,175 @@ fn issue_act_done_ingest_reports_the_outcome() {
         ui.issues.notice
     );
 }
+
+#[test]
+fn issues_space_toggles_a_pick_and_the_pick_follows_the_key() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7"), a_issue("#8")];
+    ui.issues.loaded = true;
+
+    handle_deck_key(key(KeyCode::Char(' ')), &model, &mut ui);
+    assert!(ui.issues.picked.contains("#7"), "space picks the cursor row");
+
+    // Moving the cursor leaves the pick on the issue, not the row index.
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    assert!(ui.issues.picked.contains("#7"));
+    assert!(!ui.issues.picked.contains("#8"));
+
+    // A second space on the same row unpicks it.
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char(' ')), &model, &mut ui);
+    assert!(ui.issues.picked.is_empty(), "space again unpicks");
+}
+
+#[test]
+fn issues_refresh_prunes_picks_that_left_the_list() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7"), a_issue("#8")];
+    ui.issues.picked.insert("#7".into());
+    ui.issues.picked.insert("#8".into());
+    ui.issues.list_wait = 1;
+    ingest_inbound(
+        &Inbound::IssuesList {
+            seq: 1,
+            outcome: Ok(vec![a_issue("#8")]),
+        },
+        &mut model,
+        &mut ui,
+    );
+    assert!(!ui.issues.picked.contains("#7"), "gone from the list, gone from the picks");
+    assert!(ui.issues.picked.contains("#8"));
+}
+
+#[test]
+fn issues_x_closes_an_open_issue_and_reopens_a_closed_one() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    let mut closed = a_issue("#9");
+    closed.state = "closed".into();
+    ui.issues.rows = vec![a_issue("#7"), closed];
+    ui.issues.loaded = true;
+
+    // Cursor on the open row: close.
+    let action = handle_deck_key(ch('x'), &model, &mut ui);
+    match action {
+        DeckAction::Send(WorkspaceInput::IssueAct { key, action, .. }) => {
+            assert_eq!(key, "#7");
+            assert_eq!(action, IssueAction::Close);
+        }
+        other => panic!("expected IssueAct::Close, got {other:?}"),
+    }
+
+    // Cursor on the closed row: re-open (SetStatus("open") — the driver maps
+    // it to the provider's reopen).
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    let action = handle_deck_key(ch('x'), &model, &mut ui);
+    match action {
+        DeckAction::Send(WorkspaceInput::IssueAct { key, action, .. }) => {
+            assert_eq!(key, "#9");
+            assert_eq!(action, IssueAction::SetStatus("open".into()));
+        }
+        other => panic!("expected IssueAct::SetStatus(open), got {other:?}"),
+    }
+}
+
+#[test]
+fn issues_p_submits_the_picked_issues_as_a_prompt() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7"), a_issue("#8")];
+    ui.issues.loaded = true;
+    ui.issues.picked.insert("#7".into());
+    ui.issues.picked.insert("#8".into());
+
+    let action = handle_deck_key(ch('p'), &model, &mut ui);
+    match action {
+        DeckAction::Send(WorkspaceInput::Enqueue { text }) => {
+            assert!(text.contains("#7 title of #7"), "{text}");
+            assert!(text.contains("#8 title of #8"), "{text}");
+        }
+        other => panic!("expected an enqueued prompt, got {other:?}"),
+    }
+    assert!(ui.issues.picked.is_empty(), "submitting clears the picks");
+}
+
+#[test]
+fn issues_p_with_no_picks_submits_the_cursor_row() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7")];
+    ui.issues.loaded = true;
+
+    let action = handle_deck_key(ch('p'), &model, &mut ui);
+    match action {
+        DeckAction::Send(WorkspaceInput::Enqueue { text }) => {
+            assert!(text.contains("#7"), "{text}");
+        }
+        other => panic!("expected an enqueued prompt, got {other:?}"),
+    }
+}
+
+#[test]
+fn issues_brackets_page_the_active_query() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    // A full page of rows — a short page is how the tab knows the list is
+    // exhausted, so paging needs `ISSUES_PAGE_SIZE` rows to move forward.
+    ui.issues.rows = (0..30).map(|i| a_issue(&format!("#{i}"))).collect();
+    ui.issues.loaded = true;
+    ui.issues.active_query = Some("flaky".into());
+
+    let action = handle_deck_key(ch(']'), &model, &mut ui);
+    match action {
+        DeckAction::Send(WorkspaceInput::IssuesRefresh { query, .. }) => {
+            assert_eq!(query.as_deref(), Some("flaky"), "paging re-issues the search");
+        }
+        other => panic!("expected IssuesRefresh, got {other:?}"),
+    }
+    assert_eq!(ui.issues.page, 1);
+
+    let action = handle_deck_key(ch('['), &model, &mut ui);
+    assert!(matches!(
+        action,
+        DeckAction::Send(WorkspaceInput::IssuesRefresh { .. })
+    ));
+    assert_eq!(ui.issues.page, 0);
+
+    // `[` on the first page goes nowhere.
+    let action = handle_deck_key(ch('['), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert_eq!(ui.issues.page, 0);
+}
+
+#[test]
+fn issues_bracket_on_a_short_page_says_there_is_no_next() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7")];
+    ui.issues.loaded = true;
+
+    let action = handle_deck_key(ch(']'), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled, "a short page is the last page");
+    assert_eq!(ui.issues.page, 0);
+    assert!(
+        ui.issues.notice.as_deref().is_some_and(|n| n.contains("no next page")),
+        "{:?}",
+        ui.issues.notice
+    );
+}
+
+#[test]
+fn issues_search_resets_the_page_and_remembers_the_query() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.page = 3;
+    handle_deck_key(ch('/'), &model, &mut ui);
+    for c in "race".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(ui.issues.page, 0, "a new search is a new list");
+    assert_eq!(ui.issues.active_query.as_deref(), Some("race"));
+}

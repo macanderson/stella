@@ -420,6 +420,15 @@ pub struct IssuesPanel {
     pub list_wait: u64,
     /// Newest seq expected to answer with [`Inbound::IssueActDone`].
     pub act_wait: u64,
+    /// Keys of the rows the multiselect has picked (Space toggles). A set of
+    /// keys rather than indices because a refresh re-orders the list — the
+    /// pick follows the issue, not the row.
+    pub picked: std::collections::BTreeSet<String>,
+    /// The page the browse list is showing (0-based). `]`/`[` page forward
+    /// and back; a new search or refresh resets to the first page.
+    pub page: usize,
+    /// The query the current page was fetched with — paging re-issues it.
+    pub active_query: Option<String>,
 }
 
 impl Default for IssuesPanel {
@@ -442,6 +451,9 @@ impl Default for IssuesPanel {
             next_seq: 0,
             list_wait: 0,
             act_wait: 0,
+            picked: std::collections::BTreeSet::new(),
+            page: 0,
+            active_query: None,
         }
     }
 }
@@ -450,6 +462,36 @@ impl IssuesPanel {
     /// The browse list's selected row, if any.
     pub fn selected(&self) -> Option<&IssueRow> {
         self.rows.get(self.sel)
+    }
+
+    /// The rows the multiselect has picked, in list order. Falls back to the
+    /// cursor row when nothing is picked, so every verb that works on "the
+    /// selection" also works on a bare cursor.
+    pub fn picked_rows(&self) -> Vec<&IssueRow> {
+        if self.picked.is_empty() {
+            return self.selected().into_iter().collect();
+        }
+        self.rows
+            .iter()
+            .filter(|row| self.picked.contains(&row.key))
+            .collect()
+    }
+
+    /// Toggle the cursor row in the multiselect.
+    fn toggle_pick(&mut self) {
+        if let Some(row) = self.rows.get(self.sel) {
+            let key = row.key.clone();
+            if !self.picked.remove(&key) {
+                self.picked.insert(key);
+            }
+        }
+    }
+
+    /// Drop picks that no longer name a row (a refresh re-fetched the list).
+    fn prune_picks(&mut self) {
+        let keys: std::collections::BTreeSet<&str> =
+            self.rows.iter().map(|r| r.key.as_str()).collect();
+        self.picked.retain(|k| keys.contains(k.as_str()));
     }
 
     /// The next request seq (monotonic; starts at 1 so the `0` defaults of
@@ -1274,6 +1316,7 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
             Ok(rows) => {
                 ui.issues.rows = rows.clone();
                 ui.issues.sel = ui.issues.sel.min(rows.len().saturating_sub(1));
+                ui.issues.prune_picks();
                 ui.issues.notice = Some(format!("{} issue(s)", rows.len()));
             }
             Err(e) => ui.issues.notice = Some(e.clone()),
@@ -1884,7 +1927,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         DeckTab::Graph => handle_graph_key(key, ui, composer_empty),
         DeckTab::Files => handle_files_key(key, model, ui, composer_empty),
         DeckTab::Mcp => handle_mcp_key(key, ui, composer_empty),
-        DeckTab::Issues => handle_issues_browse_key(key, ui, composer_empty),
+        DeckTab::Issues => handle_issues_browse_key(key, model, ui, composer_empty),
         DeckTab::Session => handle_session_key(key, model, ui),
         DeckTab::Settings => handle_settings_key(key, ui, composer_empty),
         // The SKILLS tab claims its keys earlier (before the composer), so a
@@ -2561,6 +2604,10 @@ fn handle_issues_search_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
             ui.issues.list_wait = seq;
             ui.issues.busy = true;
             ui.issues.mode = IssuesMode::Browse;
+            // A new search is a new list: back to page one, and remember the
+            // query so `]` pages the results rather than the unfiltered list.
+            ui.issues.page = 0;
+            ui.issues.active_query = (!query.is_empty()).then_some(query.clone());
             ui.issues.notice = Some(if query.is_empty() {
                 "refreshing…".to_string()
             } else {
@@ -2833,10 +2880,13 @@ fn handle_issue_form_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 
 /// The ISSUES tab's browse keys (non-modal — the composer stays live, so
 /// every letter verb is gated on a blank composer, exactly like the MCP
-/// tab): ↑/↓ select · `r` refresh · `/` tracker search · `n` create ·
-/// `c` comment · `s` set status · `w` start work.
+/// tab): ↑/↓ select · Space multiselect · `r` refresh · `/` tracker search ·
+/// `]`/`[` page · `o` open in the browser · `p` push the pick to the prompt
+/// and submit · `n` create · `c` comment · `x` close / re-open · `s` set
+/// status · `w` start work.
 fn handle_issues_browse_key(
     key: KeyEvent,
+    model: &WorkspaceModel,
     ui: &mut DeckUi,
     composer_empty: bool,
 ) -> Option<DeckAction> {
@@ -2852,7 +2902,13 @@ fn handle_issues_browse_key(
             }
             Some(DeckAction::Handled)
         }
+        KeyCode::Char(' ') if composer_empty => {
+            ui.issues.toggle_pick();
+            Some(DeckAction::Handled)
+        }
         KeyCode::Char('r') if composer_empty => {
+            ui.issues.page = 0;
+            ui.issues.active_query = None;
             let seq = ui.issues.bump_seq();
             ui.issues.list_wait = seq;
             ui.issues.busy = true;
@@ -2868,6 +2924,51 @@ fn handle_issues_browse_key(
             ui.issues.search_query.clear();
             Some(DeckAction::Handled)
         }
+        KeyCode::Char(']') if composer_empty => {
+            // A short last page means there is no next one — the tracker
+            // answered with fewer rows than a full page.
+            if count < ISSUES_PAGE_SIZE {
+                ui.issues.notice = Some("no next page".into());
+                return Some(DeckAction::Handled);
+            }
+            ui.issues.page += 1;
+            Some(issues_page_request(ui))
+        }
+        KeyCode::Char('[') if composer_empty => {
+            if ui.issues.page == 0 {
+                ui.issues.notice = Some("already on the first page".into());
+                return Some(DeckAction::Handled);
+            }
+            ui.issues.page -= 1;
+            Some(issues_page_request(ui))
+        }
+        KeyCode::Char('o') if composer_empty => {
+            let Some(row) = ui.issues.selected() else {
+                ui.issues.notice = Some("no issue selected — r loads the list".into());
+                return Some(DeckAction::Handled);
+            };
+            if row.url.is_empty() {
+                ui.issues.notice = Some(format!("#{} has no url to open", row.key));
+                return Some(DeckAction::Handled);
+            }
+            open_in_browser(&row.url);
+            ui.issues.notice = Some(format!("opened #{} in the browser", row.key));
+            Some(DeckAction::Handled)
+        }
+        KeyCode::Char('p') if composer_empty => {
+            let rows = ui.issues.picked_rows();
+            if rows.is_empty() {
+                ui.issues.notice = Some("no issue selected — r loads the list".into());
+                return Some(DeckAction::Handled);
+            }
+            let text = rows
+                .iter()
+                .map(|row| format!("#{} {}", row.key, row.title))
+                .collect::<Vec<_>>()
+                .join("\n");
+            ui.issues.picked.clear();
+            Some(submit_prompt(ui, model, text))
+        }
         KeyCode::Char('n') if composer_empty => {
             ui.issues.clear_form();
             ui.issues.mode = IssuesMode::Create;
@@ -2882,6 +2983,30 @@ fn handle_issues_browse_key(
                 ui.issues.notice = Some("no issue selected — r loads the list".into());
             }
             Some(DeckAction::Handled)
+        }
+        KeyCode::Char('x') if composer_empty => {
+            let Some(row) = ui.issues.selected() else {
+                ui.issues.notice = Some("no issue selected — r loads the list".into());
+                return Some(DeckAction::Handled);
+            };
+            // One key, both directions: the row's own state says which
+            // transition applies, so `x` on an open issue closes it and on a
+            // closed one re-opens it.
+            let (action, verb) = if row.state.eq_ignore_ascii_case("closed") {
+                (IssueAction::SetStatus("open".into()), "re-opening")
+            } else {
+                (IssueAction::Close, "closing")
+            };
+            let issue_key = row.key.clone();
+            let seq = ui.issues.bump_seq();
+            ui.issues.act_wait = seq;
+            ui.issues.busy = true;
+            ui.issues.notice = Some(format!("{verb} #{issue_key}…"));
+            Some(DeckAction::Send(WorkspaceInput::IssueAct {
+                key: issue_key,
+                action,
+                seq,
+            }))
         }
         KeyCode::Char('s') if composer_empty => {
             if ui.issues.selected().is_some() {
@@ -2910,6 +3035,45 @@ fn handle_issues_browse_key(
         }
         _ => None,
     }
+}
+
+/// The page size the ISSUES tab browses by — kept in step with the driver's
+/// own page read, so a short page is how the tab knows the list is exhausted.
+const ISSUES_PAGE_SIZE: usize = 30;
+
+/// Re-issue the current page's fetch after `]`/`[` moved `page` — the query
+/// the page was fetched with rides along, so paging a search result pages
+/// the search, not the unfiltered list.
+fn issues_page_request(ui: &mut DeckUi) -> DeckAction {
+    let seq = ui.issues.bump_seq();
+    ui.issues.list_wait = seq;
+    ui.issues.busy = true;
+    ui.issues.notice = Some(format!("loading page {}…", ui.issues.page + 1));
+    DeckAction::Send(WorkspaceInput::IssuesRefresh {
+        query: ui.issues.active_query.clone(),
+        state: None,
+        seq,
+    })
+}
+
+/// Open a url in the system browser, fire-and-forget: the deck does not wait
+/// on the browser, and a failure surfaces as the OS's own error rather than
+/// a deck notice (there is no useful recovery either way).
+fn open_in_browser(url: &str) {
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "cmd"
+    } else {
+        "xdg-open"
+    };
+    let mut command = std::process::Command::new(opener);
+    if cfg!(target_os = "windows") {
+        command.args(["/c", "start", "", url]);
+    } else {
+        command.arg(url);
+    }
+    let _ = command.spawn();
 }
 
 /// SKILLS-tab keys. Returns `Some` for keys the tab claims ahead of the

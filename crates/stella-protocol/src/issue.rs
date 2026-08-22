@@ -380,6 +380,46 @@ pub trait IssueProvider: Send + Sync {
         title: Option<&str>,
         body: Option<&str>,
     ) -> Result<(), IssueError>;
+
+    /// Re-open a closed issue.
+    ///
+    /// The inverse of [`IssueProvider::close`] and deliberately a separate
+    /// method rather than a `SetStatus("open")`: re-opening is how a human
+    /// (or a regression sweep) says the closure's receipt did not hold, which
+    /// is a different event in the issue's history than any other status move.
+    ///
+    /// Default is a typed refusal so a provider that predates the method —
+    /// or a tracker with no re-open transition — fails loudly instead of
+    /// silently doing nothing.
+    async fn reopen(&self, key: &IssueKey) -> Result<(), IssueError> {
+        Err(IssueError::Failed {
+            provider: self.id().to_owned(),
+            reason: format!("re-opening issues is not supported (tried `{key}`)"),
+        })
+    }
+
+    /// Full-text search, in either state, one page at a time.
+    ///
+    /// `list_open` is the loop's queue read; this is the human's browse read
+    /// (the command deck's ISSUES tab). The differences are the point:
+    /// `state = None` means *all* states rather than open-only, the query is
+    /// passed through to the tracker's own search syntax rather than filtered
+    /// client-side, and `offset` pages a large result set without the caller
+    /// holding every row. Ordering stays the tracker's, exactly as
+    /// [`IssueProvider::list_open`].
+    ///
+    /// Default falls back to the queue read with the query ignored — a
+    /// provider that cannot search still lists, and the caller can see the
+    /// query had no effect rather than receive a fabricated empty page.
+    async fn search(
+        &self,
+        _query: &str,
+        _state: Option<IssueState>,
+        limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<Issue>, IssueError> {
+        self.list_open(limit).await
+    }
 }
 
 #[cfg(test)]
