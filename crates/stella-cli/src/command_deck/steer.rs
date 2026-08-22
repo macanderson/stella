@@ -12,6 +12,46 @@
 use crate::session_persist::DurableQueue;
 use crate::subsession::SteeringTap;
 
+/// One leading `>` marker off a text, and nothing else.
+///
+/// The deck strips the marker before sending (`stella_tui::deck_ui::steer`),
+/// so a prompt parked as `> fix the tests` arrives here as `fix the tests`.
+/// Both sides of a backlog claim go through this, or the queued copy would
+/// never match the text it was delivered as.
+fn unmarked(text: &str) -> &str {
+    match text.trim_start().strip_prefix('>') {
+        Some(rest) => rest.trim_start(),
+        None => text,
+    }
+}
+
+/// Take one delivered prompt out of the driver's backlog.
+///
+/// The backlog lives in two places: the deck's mirror, which the deck clears
+/// as it sends the steer ("leaving the rows up would show prompts as 'waiting'
+/// that are already in the model's hands"), and this `DurableQueue`, which is
+/// what dispatch actually pops. Handing a held prompt to the turn without
+/// claiming it here is how the same words ran twice, with `queue.json`
+/// recording the doubled order for the next resume to replay (#4026).
+///
+/// Matching is on the words, because the two sides share no indices, and
+/// oldest-first, so N copies of one text claim N entries rather than the same
+/// one N times. **A miss is the ordinary case, not an error**: the composer
+/// draft rides in the same message and was never queued.
+///
+/// A wholesale `clear()` would be wrong in the other direction — the driver's
+/// backlog can hold prompts restored from a previous session that the deck's
+/// mirror never showed, and destroying those is the same lost-work failure
+/// this whole path exists to prevent.
+fn claim(queue: &mut DurableQueue, text: &str) {
+    let wanted = unmarked(text);
+    let found = queue.iter().position(|queued| unmarked(queued) == wanted);
+    if let Some(index) = found {
+        // `remove` is the write-through path; `items` is never touched directly.
+        queue.remove(index);
+    }
+}
+
 /// Deliver a mid-turn steer to the LEAD's running turn.
 ///
 /// The route is **not** re-derived from the text.
@@ -39,10 +79,10 @@ pub(super) fn steer_lead(tap: &SteeringTap, queue: &mut DurableQueue, texts: Vec
     for text in texts {
         // Defensive: the deck already strips the marker, and a stray one is a
         // prefix rather than a word the user meant to send either way.
-        let text = match text.trim_start().strip_prefix('>') {
-            Some(rest) => rest.trim_start().to_string(),
-            None => text,
-        };
+        let text = unmarked(&text).to_string();
+        // Delivered means delivered: whichever destination it takes below, this
+        // prompt must stop being a parked one (#4026).
+        claim(queue, &text);
         if settling {
             queue.push_back(text);
         } else {
@@ -63,6 +103,9 @@ pub(super) fn steer_lead(tap: &SteeringTap, queue: &mut DurableQueue, texts: Vec
 /// would be the failure this whole change exists to fix, in a quieter costume.
 pub(super) fn steer_worker(queue: &mut DurableQueue, texts: Vec<String>) {
     for text in texts {
+        // Claim before re-parking, or a held backlog handed back here lands on
+        // top of the copy it was handed from and dispatches twice (#4026).
+        claim(queue, &text);
         queue.push_back(text);
     }
 }
@@ -77,6 +120,14 @@ pub(super) fn steer_worker(queue: &mut DurableQueue, texts: Vec<String>) {
 pub(super) fn steer_at_rest(queue: &mut DurableQueue, mut texts: Vec<String>) -> Option<String> {
     if texts.is_empty() {
         return None;
+    }
+    // The whole batch is claimed before any of it is re-parked: this is the
+    // sharpest form of the double-dispatch, since a double-Esc hold parks the
+    // backlog and the Esc-steer then front-inserts the tail straight back on
+    // top of it (#4026). Claiming in delivery order keeps "oldest entry first"
+    // meaningful for duplicated texts.
+    for text in &texts {
+        claim(queue, text);
     }
     let first = texts.remove(0);
     // Front-inserted in reverse so the tail keeps its own order ahead of
