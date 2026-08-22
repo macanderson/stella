@@ -263,6 +263,18 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .tdigest .aq { color: var(--ink); }
 .tdigest .sep { color: var(--faint); }
 
+/* An expanded turn's closing receipt — the web counterpart of `grid`'s bottom
+   rail, and placed to match it: status on the left, chips pushed right. */
+.turnreceipt {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--raised);
+}
+
 .chips { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
 .chip {
   font-size: 10.5px;
