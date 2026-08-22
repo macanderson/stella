@@ -299,12 +299,19 @@ pub struct IssueDraft {
 /// path with nothing calling it is the unwired code AGENTS.md's "nothing left
 /// behind" rule exists to prevent.
 ///
-/// **There are no default implementations**, and that is the point. A provider
-/// that cannot write must say so in its own `id`'s voice by returning a typed
-/// error, because a default that silently no-ops would let the loop believe it
-/// had filed what it found — which is precisely the failure the residue
-/// discipline exists to prevent, arriving through the mechanism meant to stop
-/// it.
+/// **No write verb has a default implementation**, and that is the point. A
+/// provider that cannot write must say so in its own `id`'s voice by returning
+/// a typed error, because a default that silently no-ops would let the loop
+/// believe it had filed what it found — which is precisely the failure the
+/// residue discipline exists to prevent, arriving through the mechanism meant
+/// to stop it. [`Self::reopen`] keeps that discipline as a default: it refuses
+/// loudly rather than doing nothing quietly.
+///
+/// The reads a tracker may genuinely not offer do carry defaults, and each one
+/// degrades to an answer a caller can *see* is degraded rather than to a
+/// fabrication: [`Self::search`] falls back to the queue read with the query
+/// visibly ignored, and [`Self::labels`] to an empty vocabulary — a picker with
+/// no suggestions, never a form that refuses to submit.
 ///
 /// Claiming is **not** here. A tracker's assignee field has no
 /// compare-and-swap and no lease, so a claim goes in the fleet ledger where the
@@ -428,6 +435,29 @@ pub trait IssueProvider: Send + Sync {
         _offset: usize,
     ) -> Result<Vec<Issue>, IssueError> {
         self.list_open(limit).await
+    }
+
+    /// The labels this tracker already knows, for a picker.
+    ///
+    /// `query` is passed through to the tracker's own label search rather than
+    /// filtered here, for the same reason [`IssueProvider::search`] passes a
+    /// query through: the vocabulary is the tracker's, and a repository with
+    /// hundreds of labels should not send all of them across this boundary to
+    /// match a two-character prefix. `limit` bounds the read the way
+    /// [`IssueProvider::list_open`]'s does.
+    ///
+    /// Read-only, and deliberately not the inverse of
+    /// [`IssueProvider::relabel`]: this reads what a tracker *has*, never
+    /// creates one. Applying a label the tracker does not carry is the
+    /// provider's problem to report, not this method's to pre-empt.
+    ///
+    /// Default is an empty list rather than [`IssueProvider::reopen`]'s typed
+    /// refusal, because the consumer is a *suggestion* surface. A provider that
+    /// cannot enumerate its vocabulary should leave the human typing a label by
+    /// hand; failing here would fail the form they were filling in, over the
+    /// one part of it that was optional.
+    async fn labels(&self, _query: &str, _limit: usize) -> Result<Vec<IssueLabel>, IssueError> {
+        Ok(Vec::new())
     }
 }
 

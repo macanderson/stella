@@ -11,7 +11,7 @@
 //! Split from `command_deck.rs` (#629's 1500-line ratchet).
 
 use stella_protocol::issue::{Issue, IssueDraft, IssueKey, IssueLabel, IssueProvider, IssueState};
-use stella_tui::{EntityField, Inbound, IssueAction, IssueRow, WorkspaceInput};
+use stella_tui::{EntityField, EntityHit, Inbound, IssueAction, IssueRow, WorkspaceInput};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::{agent_entity_hits, local_assignee_hits, merge_assignee_hits};
@@ -24,6 +24,13 @@ use crate::issue_provider::GhIssueProvider;
 /// page" by seeing fewer rows come back than it asked for, so a driver reading
 /// a different number would either hide a page or offer one that is empty.
 pub(super) const ISSUES_PAGE: usize = 30;
+
+/// How many suggestions one create-form type-ahead popup offers.
+///
+/// One number for both fields on purpose: the popup is the same widget in the
+/// same box either way, so a cap that differed by field would make the list
+/// change height as the human tabbed between them.
+const TYPEAHEAD_HITS: usize = 20;
 
 /// Run one provider call to completion on the calling thread.
 ///
@@ -127,6 +134,42 @@ pub(super) fn issues_act<P: IssueProvider + ?Sized>(
     }
 }
 
+/// The tracker's own label vocabulary, as create-form type-ahead hits.
+///
+/// The query goes to the port rather than being matched here: which labels
+/// exist, and which of them a prefix means, are the tracker's answers to give
+/// (`IssueProvider::labels`). Nothing in this file knows that GitHub is the
+/// tracker — invariant 1, which is also why `gh label list` is not spelled
+/// here.
+///
+/// A failed read is an empty popup, not an error the human has to dismiss.
+/// The suggestion is the optional half of the field: a tracker that cannot
+/// enumerate its labels leaves them typing one by hand, which is exactly what
+/// they did before this popup could answer at all.
+pub(super) fn label_hits<P: IssueProvider + ?Sized>(
+    provider: &P,
+    query: &str,
+    limit: usize,
+) -> Vec<EntityHit> {
+    let Ok(Ok(labels)) = block_on(provider.labels(query, limit)) else {
+        return Vec::new();
+    };
+    labels
+        .into_iter()
+        .map(|label| EntityHit {
+            kind: "Label".to_owned(),
+            // The port carries a label's name and nothing else, so the popup
+            // shows the name and says nothing it cannot know. A tracker's
+            // label description would have to cross the port first — see
+            // `IssueLabel`'s own docs, which reserve the field for exactly
+            // that.
+            description: String::new(),
+            insert: label.name.clone(),
+            label: label.name,
+        })
+        .collect()
+}
+
 /// Map the kernel's [`Issue`] into the tab's row.
 ///
 /// The key gets its `#` here, at the boundary: the provider's key is the
@@ -223,13 +266,16 @@ pub(super) fn handle_issues_input(
             let root = cfg.workspace_root.clone();
             tokio::spawn(async move {
                 let hits = match field {
-                    // The tracker has a label vocabulary now (the ISSUES tab
-                    // reaches it), but nothing reads it into this popup yet —
-                    // it would be a `gh label list` behind a port method the
-                    // `IssueProvider` trait does not have. Declared gap, not a
-                    // silence: the popup shows "no matches" until #4251 adds
-                    // the read.
-                    EntityField::Label => Vec::new(),
+                    EntityField::Label => {
+                        let query = query.clone();
+                        // `gh` is a subprocess — the same reason every other
+                        // tracker read on this tab is spawned blocking.
+                        tokio::task::spawn_blocking(move || {
+                            label_hits(&GhIssueProvider, &query, TYPEAHEAD_HITS)
+                        })
+                        .await
+                        .unwrap_or_default()
+                    }
                     EntityField::Assignee => {
                         // Independent sources — a failure of one must not
                         // kill the others; collect what succeeds.
@@ -250,7 +296,7 @@ pub(super) fn handle_issues_input(
                                 .await
                                 .unwrap_or_default()
                         };
-                        merge_assignee_hits(agents, local, 20)
+                        merge_assignee_hits(agents, local, TYPEAHEAD_HITS)
                     }
                 };
                 let _ = in_tx.send(Inbound::EntityHits {
@@ -280,12 +326,18 @@ mod tests {
         filed: Vec<IssueDraft>,
         reopened: Vec<String>,
         closed: Vec<String>,
+        labels: Vec<(String, usize)>,
     }
 
     #[derive(Default)]
     struct FakeTracker {
         calls: Mutex<Calls>,
         rows: Vec<Issue>,
+        /// What this tracker answers a label-vocabulary read with.
+        vocabulary: Vec<IssueLabel>,
+        /// When set, the vocabulary read fails the way an uninstalled `gh`
+        /// does — so a test can pin what the popup does with a failed read.
+        vocabulary_fails: bool,
     }
 
     impl FakeTracker {
@@ -353,6 +405,17 @@ mod tests {
         async fn reopen(&self, key: &IssueKey) -> Result<(), IssueError> {
             self.calls().reopened.push(key.as_str().to_owned());
             Ok(())
+        }
+
+        async fn labels(&self, query: &str, limit: usize) -> Result<Vec<IssueLabel>, IssueError> {
+            self.calls().labels.push((query.to_owned(), limit));
+            if self.vocabulary_fails {
+                return Err(IssueError::Unavailable {
+                    provider: "fake".into(),
+                    reason: "no `gh` on PATH".into(),
+                });
+            }
+            Ok(self.vocabulary.clone())
         }
 
         // Not reachable from the ISSUES tab's verbs; the trait requires them.
@@ -459,6 +522,49 @@ mod tests {
         let calls = tracker.calls();
         assert_eq!(calls.closed, ["874"]);
         assert_eq!(calls.reopened, ["875"]);
+    }
+
+    /// **The witness for #4251.** The create form's Labels type-ahead serves
+    /// the tracker's own vocabulary through the port. The arm used to answer
+    /// `Vec::new()` unconditionally, so the popup could never show a match no
+    /// matter what was typed.
+    #[test]
+    fn the_label_typeahead_serves_the_trackers_vocabulary() {
+        let tracker = FakeTracker {
+            vocabulary: vec![IssueLabel::from("area:tui"), IssueLabel::from("area:core")],
+            ..FakeTracker::default()
+        };
+        let hits = label_hits(&tracker, "area", TYPEAHEAD_HITS);
+
+        assert_eq!(
+            tracker.calls().labels,
+            [("area".to_string(), TYPEAHEAD_HITS)],
+            "the typed prefix reaches the tracker verbatim — the vocabulary is \
+             the tracker's, not a list filtered here"
+        );
+        assert_eq!(hits.len(), 2, "both labels reach the popup");
+        assert!(
+            hits.iter().all(|hit| hit.kind == "Label"),
+            "the popup groups by kind: {hits:?}"
+        );
+        assert_eq!(hits[0].label, "area:tui");
+        assert_eq!(
+            hits[0].insert, "area:tui",
+            "picking a hit inserts the label's own spelling"
+        );
+    }
+
+    /// A tracker that cannot answer leaves the popup empty rather than failing
+    /// the form the human was filling in — the suggestion is optional, the
+    /// label they typed by hand is not.
+    #[test]
+    fn a_failed_vocabulary_read_is_an_empty_popup() {
+        let tracker = FakeTracker {
+            vocabulary_fails: true,
+            ..FakeTracker::default()
+        };
+        assert!(label_hits(&tracker, "area", TYPEAHEAD_HITS).is_empty());
+        assert_eq!(tracker.calls().labels.len(), 1, "it did ask");
     }
 
     /// A status GitHub does not have is refused by name, not silently ignored.

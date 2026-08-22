@@ -315,6 +315,38 @@ impl IssueProvider for GhIssueProvider {
             .map(GhIssue::into_issue)
             .collect())
     }
+
+    async fn labels(&self, query: &str, limit: usize) -> Result<Vec<IssueLabel>, IssueError> {
+        // `gh label list -S` searches names *and* descriptions and sorts by
+        // best match, which is what a picker wants; an empty query lists the
+        // repository's labels in its own order. A zero limit would be rejected
+        // by `gh` as invalid rather than read as "none", so it is clamped
+        // here — a caller asking for nothing gets one row, not an error.
+        let limit = limit.max(1).to_string();
+        let mut args: Vec<String> = vec![
+            "label".into(),
+            "list".into(),
+            "--limit".into(),
+            limit,
+            "--json".into(),
+            "name".into(),
+        ];
+        if !query.trim().is_empty() {
+            args.push("--search".into());
+            args.push(query.trim().to_owned());
+        }
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        let raw = gh_json(&borrowed)?;
+        let rows: Vec<GhLabel> =
+            serde_json::from_str(&raw).map_err(|error| IssueError::Malformed {
+                provider: GITHUB.into(),
+                reason: error.to_string(),
+            })?;
+        Ok(rows
+            .into_iter()
+            .map(|label| IssueLabel { name: label.name })
+            .collect())
+    }
 }
 
 /// Create a label if the repository does not already carry one by that name.
