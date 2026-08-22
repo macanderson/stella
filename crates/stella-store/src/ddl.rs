@@ -529,6 +529,7 @@ pub(crate) const TASKS_DDL: &str = "CREATE TABLE IF NOT EXISTS tasks (
        description TEXT,
        status TEXT NOT NULL,
        owner TEXT,
+       contract TEXT,
        updated_at INTEGER NOT NULL,
        UNIQUE(session_id, task_id)
      );";

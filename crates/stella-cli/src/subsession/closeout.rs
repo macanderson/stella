@@ -78,6 +78,7 @@ mod tests {
             description: None,
             status: TaskStatus::Pending,
             owner: None,
+            contract: None,
         }
     }
 
@@ -109,7 +110,7 @@ mod tests {
             .task_board()
             .lock()
             .unwrap()
-            .create("read the grammar", None);
+            .create("read the grammar", None, None);
         (store, worker_exec, registry, root)
     }
 

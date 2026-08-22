@@ -587,6 +587,7 @@ fn task(id: &str, subject: &str, status: TaskStatus, owner: Option<&str>) -> Tas
         description: None,
         status,
         owner: owner.map(str::to_string),
+        contract: None,
     }
 }
 
@@ -1036,8 +1037,11 @@ fn skill_usage_records_per_execution_version_rows() {
     //       role (#3395) out of `kind`. v28 identifies a `tool_calls` row by
     //       the event that announced it, not by a `call_id` that is only
     //       unique within one response (#4033), and re-folds the histories
-    //       the old key collapsed.
-    assert_eq!(SCHEMA_VERSION, 28);
+    //       the old key collapsed. v29 `tasks.contract` (#4238): what a task
+    //       promised, not only what became of it — nullable with no backfill,
+    //       because NULL (no contract recorded) and a stored `read_only` are
+    //       different facts and a default would invent the second.
+    assert_eq!(SCHEMA_VERSION, 29);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

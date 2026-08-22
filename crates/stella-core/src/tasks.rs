@@ -14,7 +14,7 @@
 //! driver drains them (`stella-tools`' `ToolRegistry::take_spawn_requests`)
 //! and runs each on its own deck sub-session lane.
 
-use stella_protocol::{TaskItem, TaskStatus};
+use stella_protocol::{Closure, TaskContract, TaskItem, TaskStatus};
 
 /// Why a board mutation was rejected. Named errors, never a bare string —
 /// the tools surface these verbatim to the model so it can self-correct.
@@ -35,6 +35,21 @@ pub enum TaskBoardError {
         id: String,
         open_id: String,
         open_subject: String,
+    },
+    #[error(
+        "task {id} cannot be completed: its definition of done has {pending} check(s) not yet \
+         run and {failed} that did not pass — {outstanding}. Run them and record the outcome; a \
+         task closes when its checks pass, not when it is reported done. If a check turns out to \
+         be the wrong check, change the contract deliberately — do not cancel the task to get \
+         past this."
+    )]
+    ContractUnsatisfied {
+        id: String,
+        pending: usize,
+        failed: usize,
+        /// The outstanding clauses, quoted, so the refusal names the work
+        /// rather than only its count.
+        outstanding: String,
     },
 }
 
@@ -70,6 +85,20 @@ impl TaskBoard {
         &self.items
     }
 
+    /// A task's contract, mutably — how a check runner records an outcome.
+    ///
+    /// Scoped to the contract rather than handing out the whole item (or the
+    /// whole board) because recording an outcome is the only mutation anything
+    /// outside this module needs, and `status` in particular must stay
+    /// reachable only through [`Self::set_status`] — that is where the refusal
+    /// lives, and an escape hatch beside it would be a way around it.
+    ///
+    /// `Ok(None)` is a task that declared no contract; the error is an unknown
+    /// id.
+    pub fn contract_mut(&mut self, id: &str) -> Result<Option<&mut TaskContract>, TaskBoardError> {
+        Ok(Self::find(&mut self.items, id)?.contract.as_mut())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
@@ -92,7 +121,19 @@ impl TaskBoard {
     /// Create a task in `Pending`; returns the new item. Ids are ordinal and
     /// never reused — cancelling task "2" does not renumber task "3", so ids
     /// in the transcript stay valid for the whole session.
-    pub fn create(&mut self, subject: impl Into<String>, description: Option<String>) -> &TaskItem {
+    /// `contract` is what the task means by done (SPEC 7.1). `None` records
+    /// that nobody has said yet — deliberately not the same fact as
+    /// [`TaskContract::ReadOnly`], which records that someone looked and found
+    /// nothing to prove. An undeclared task is created rather than refused, and
+    /// pays for it at [`Self::set_status`]: it can be completed, because
+    /// refusing every legacy task would break every board that predates
+    /// contracts, while a *declared* one closes only on its checks.
+    pub fn create(
+        &mut self,
+        subject: impl Into<String>,
+        description: Option<String>,
+        contract: Option<TaskContract>,
+    ) -> &TaskItem {
         let id = (self.items.len() + 1).to_string();
         self.items.push(TaskItem {
             id,
@@ -100,6 +141,7 @@ impl TaskBoard {
             description,
             status: TaskStatus::Pending,
             owner: None,
+            contract,
         });
         self.items.last().expect("just pushed")
     }
@@ -125,7 +167,7 @@ impl TaskBoard {
             return false;
         }
         for step in steps {
-            self.create(step.as_ref(), None);
+            self.create(step.as_ref(), None, None);
         }
         true
     }
@@ -192,6 +234,32 @@ impl TaskBoard {
                 open_subject,
             });
         }
+        // A task closes when its checks pass (SPEC 7.1, and SPEC 1's second
+        // thesis). This is the enforcement point `TaskStatus`'s own doc has
+        // always pointed at: `set_status` is the single transition gate, so a
+        // refusal here cannot be routed around by a caller that reaches for a
+        // different setter — there is no different setter.
+        //
+        // Only `Completed` is gated. `Cancelled` is not a claim that the work
+        // was done and must stay available precisely when the checks are
+        // failing, or the board would trap a task nobody can honestly close.
+        if status == TaskStatus::Completed
+            && let Some(contract) = &item.contract
+            && let Closure::Outstanding { pending, failed } = contract.closure()
+        {
+            let outstanding = contract
+                .checks()
+                .filter(|c| !c.passed())
+                .map(|c| format!("`{}`", c.statement))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(TaskBoardError::ContractUnsatisfied {
+                id: id.to_string(),
+                pending,
+                failed,
+                outstanding,
+            });
+        }
         item.status = status;
         Ok(item)
     }
@@ -233,10 +301,10 @@ mod tests {
     #[test]
     fn ids_are_ordinal_and_survive_cancellation() {
         let mut board = TaskBoard::new();
-        board.create("one", None);
-        board.create("two", None);
+        board.create("one", None, None);
+        board.create("two", None, None);
         board.set_status("1", TaskStatus::Cancelled).unwrap();
-        board.create("three", None);
+        board.create("three", None, None);
         let ids: Vec<&str> = board.items().iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["1", "2", "3"]);
         assert_eq!(board.items()[2].subject, "three");
@@ -249,8 +317,8 @@ mod tests {
     #[test]
     fn clear_empties_the_board_and_restarts_the_ids() {
         let mut board = TaskBoard::new();
-        board.create("one", None);
-        board.create("two", None);
+        board.create("one", None, None);
+        board.create("two", None, None);
         board.set_status("1", TaskStatus::Completed).unwrap();
         board.assign("2", "sub:2").unwrap();
 
@@ -258,7 +326,7 @@ mod tests {
 
         assert!(board.is_empty());
         assert!(board.items().is_empty());
-        let fresh = board.create("a brand new plan", None);
+        let fresh = board.create("a brand new plan", None, None);
         assert_eq!(
             fresh.id, "1",
             "ids restart — the cleared board is a new one"
@@ -267,7 +335,7 @@ mod tests {
         // And seeding works again, which it would not if `clear` had merely
         // hidden the rows: `seed_from_plan` no-ops on a non-empty board.
         let mut seeded = TaskBoard::new();
-        seeded.create("stale", None);
+        seeded.create("stale", None, None);
         seeded.clear();
         assert!(seeded.seed_from_plan(&["step one", "step two"]));
         assert_eq!(seeded.items().len(), 2);
@@ -276,7 +344,7 @@ mod tests {
     #[test]
     fn terminal_tasks_reject_every_transition() {
         let mut board = TaskBoard::new();
-        board.create("t", None);
+        board.create("t", None, None);
         board.set_status("1", TaskStatus::Completed).unwrap();
         for attempt in [
             board.set_status("1", TaskStatus::Pending).unwrap_err(),
@@ -318,7 +386,7 @@ mod tests {
     #[test]
     fn seeding_never_disturbs_a_board_that_has_rows() {
         let mut board = TaskBoard::new();
-        board.create("already here", None);
+        board.create("already here", None, None);
         board.set_status("1", TaskStatus::Completed).unwrap();
         assert!(!board.seed_from_plan(&["a", "b"]));
         assert_eq!(board.items().len(), 1);
@@ -400,8 +468,8 @@ mod tests {
     #[test]
     fn cancelling_the_open_task_also_frees_the_lane() {
         let mut board = TaskBoard::new();
-        board.create("abandoned", None);
-        board.create("the real work", None);
+        board.create("abandoned", None, None);
+        board.create("the real work", None, None);
         board.set_status("1", TaskStatus::InProgress).unwrap();
         board.set_status("1", TaskStatus::Cancelled).unwrap();
         board.set_status("2", TaskStatus::InProgress).unwrap();
@@ -414,7 +482,7 @@ mod tests {
     #[test]
     fn restarting_the_task_you_already_hold_is_not_a_collision() {
         let mut board = TaskBoard::new();
-        board.create("mine", None);
+        board.create("mine", None, None);
         board.set_status("1", TaskStatus::InProgress).unwrap();
         board.set_status("1", TaskStatus::InProgress).unwrap();
         assert_eq!(board.items()[0].status, TaskStatus::InProgress);
@@ -433,7 +501,7 @@ mod tests {
             "port the printer",
             "review it all",
         ] {
-            board.create(subject, None);
+            board.create(subject, None, None);
         }
         board.assign("1", "sub:1").unwrap();
         board.assign("2", "sub:2").unwrap();
@@ -450,8 +518,8 @@ mod tests {
     #[test]
     fn a_terminal_target_reports_terminality_not_the_open_lane() {
         let mut board = TaskBoard::new();
-        board.create("open", None);
-        board.create("done", None);
+        board.create("open", None, None);
+        board.create("done", None, None);
         board.set_status("1", TaskStatus::InProgress).unwrap();
         board.set_status("2", TaskStatus::Completed).unwrap();
         assert_eq!(
@@ -466,7 +534,7 @@ mod tests {
     #[test]
     fn assign_records_owner_and_marks_in_progress() {
         let mut board = TaskBoard::new();
-        board.create("t", None);
+        board.create("t", None, None);
         let item = board.assign("1", "sub:1").unwrap();
         assert_eq!(item.owner.as_deref(), Some("sub:1"));
         assert_eq!(item.status, TaskStatus::InProgress);
@@ -508,7 +576,7 @@ mod tests {
             for board in [&mut a, &mut b] {
                 for op in &ops {
                     match op {
-                        Op::Create(s) => { board.create(s.clone(), None); }
+                        Op::Create(s) => { board.create(s.clone(), None, None); }
                         Op::SetStatus(i, s) => { let _ = board.set_status(&(i + 1).to_string(), *s); }
                         Op::Assign(i, o) => { let _ = board.assign(&(i + 1).to_string(), o.clone()); }
                     }
@@ -522,17 +590,123 @@ mod tests {
         #[test]
         fn terminal_states_are_absorbing(ops in proptest::collection::vec(arb_op(), 0..40)) {
             let mut board = TaskBoard::new();
-            board.create("pinned", None);
+            board.create("pinned", None, None);
             board.set_status("1", TaskStatus::Cancelled).unwrap();
             let frozen = board.items()[0].clone();
             for op in &ops {
                 match op {
-                    Op::Create(s) => { board.create(s.clone(), None); }
+                    Op::Create(s) => { board.create(s.clone(), None, None); }
                     Op::SetStatus(i, s) => { let _ = board.set_status(&(i + 1).to_string(), *s); }
                     Op::Assign(i, o) => { let _ = board.assign(&(i + 1).to_string(), o.clone()); }
                 }
             }
             prop_assert_eq!(&board.items()[0], &frozen);
         }
+    }
+
+    // ── SPEC 7.1: a task closes on its checks, not on being reported done ────
+
+    fn contracted(statement: &str) -> TaskContract {
+        TaskContract::DefinitionOfDone(stella_protocol::DefinitionOfDone::new(
+            stella_protocol::Check::new(
+                statement,
+                stella_protocol::CheckMechanism::Known(stella_protocol::CheckKind::Unit),
+            ),
+            Vec::new(),
+        ))
+    }
+
+    /// The witness. On the old board this was a plain `Ok` — `task_complete`
+    /// set the field and the task was done because something said so.
+    #[test]
+    fn a_contracted_task_is_refused_a_close_while_a_check_is_outstanding() {
+        let mut board = TaskBoard::default();
+        board.create(
+            "wire the dedup digest",
+            None,
+            Some(contracted("the dedup suite is green")),
+        );
+        let err = board
+            .set_status("1", TaskStatus::Completed)
+            .expect_err("an unsatisfied contract must refuse the close");
+        assert!(
+            matches!(
+                err,
+                TaskBoardError::ContractUnsatisfied {
+                    pending: 1,
+                    failed: 0,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        // The refusal names the work, not just its count — a reader who cannot
+        // tell *which* check is outstanding cannot act on the message.
+        assert!(
+            err.to_string().contains("the dedup suite is green"),
+            "{err}"
+        );
+        assert_eq!(board.items()[0].status, TaskStatus::Pending);
+    }
+
+    #[test]
+    fn a_contracted_task_closes_once_its_checks_pass() {
+        let mut board = TaskBoard::default();
+        board.create(
+            "wire the dedup digest",
+            None,
+            Some(contracted("the dedup suite is green")),
+        );
+        if let Some(TaskContract::DefinitionOfDone(dod)) =
+            board.contract_mut("1").expect("known task")
+        {
+            for check in dod.iter_mut() {
+                check.outcome = stella_protocol::CheckOutcome::Passed {
+                    evidence: "12 tests, 0 failures".into(),
+                };
+            }
+        }
+        board
+            .set_status("1", TaskStatus::Completed)
+            .expect("a satisfied contract permits the close");
+        assert_eq!(board.items()[0].status, TaskStatus::Completed);
+    }
+
+    /// A read-only task has nothing to prove and must not be trapped by a gate
+    /// meant for tasks that produce diffs.
+    #[test]
+    fn a_read_only_task_still_closes() {
+        let mut board = TaskBoard::default();
+        board.create("read the retry policy", None, Some(TaskContract::ReadOnly));
+        board
+            .set_status("1", TaskStatus::Completed)
+            .expect("a read-only task closes on its events");
+    }
+
+    /// Every board that predates contracts keeps working: `None` means nobody
+    /// said, and the gate has nothing to enforce.
+    #[test]
+    fn an_undeclared_task_closes_as_it_always_did() {
+        let mut board = TaskBoard::default();
+        board.create("legacy task", None, None);
+        board
+            .set_status("1", TaskStatus::Completed)
+            .expect("an undeclared task is not gated");
+    }
+
+    /// Cancelling must stay available precisely when the checks are failing, or
+    /// a task nobody can honestly close would be stuck on the board forever —
+    /// and the pressure would be to fake a passing check.
+    #[test]
+    fn a_failing_contract_can_still_be_cancelled() {
+        let mut board = TaskBoard::default();
+        board.create(
+            "wire the dedup digest",
+            None,
+            Some(contracted("the suite is green")),
+        );
+        board
+            .set_status("1", TaskStatus::Cancelled)
+            .expect("cancel is not a claim that the work was done");
     }
 }

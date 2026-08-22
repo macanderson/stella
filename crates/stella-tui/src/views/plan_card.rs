@@ -334,6 +334,7 @@ mod tests {
             ),
             status: TaskStatus::InProgress,
             owner: None,
+            contract: None,
         }]);
         let text: String = step_rows(&plan, 52, None, 0, false)
             .0
@@ -362,6 +363,7 @@ mod tests {
             description: Some(long.into()),
             status: TaskStatus::Pending,
             owner: None,
+            contract: None,
         }]);
         let (rows, _) = step_rows(&plan, 40, None, 0, false);
         assert!(rows.len() > 2, "the detail wrapped onto its own rows");

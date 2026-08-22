@@ -1266,6 +1266,7 @@ fn file_finding(
             .map(|name| stella_protocol::issue::IssueLabel { name: name.clone() })
             .collect(),
         parent: None,
+        assignee: None,
     };
 
     let runtime = tokio::runtime::Builder::new_current_thread()

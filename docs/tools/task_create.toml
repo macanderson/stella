@@ -34,6 +34,42 @@ Add tasks to the session task board — the board is the session's visible plan,
 input_schema = '''
 {
   "properties": {
+    "definition_of_done": {
+      "description": "What would make this task done. \"read_only\" if it produces no diff; otherwise a non-empty array of checks. A task that produces a diff closes when these pass — task_complete is refused while any is outstanding.",
+      "oneOf": [
+        {
+          "const": "read_only"
+        },
+        {
+          "items": {
+            "properties": {
+              "judge": {
+                "description": "Only read for a mechanism this host does not know; the four above judge themselves",
+                "enum": [
+                  "deterministic",
+                  "model"
+                ],
+                "type": "string"
+              },
+              "mechanism": {
+                "description": "How it is settled: graph | unit | harness | review, or a plugin's own name",
+                "type": "string"
+              },
+              "statement": {
+                "description": "What must be true (e.g. \"the auth suite is green\")",
+                "type": "string"
+              }
+            },
+            "required": [
+              "statement"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      ]
+    },
     "description": {
       "description": "What needs to be done, if the subject alone is not enough",
       "type": "string"

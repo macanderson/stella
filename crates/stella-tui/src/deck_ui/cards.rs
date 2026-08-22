@@ -229,6 +229,7 @@ mod tests {
                         description: None,
                         status: TaskStatus::Completed,
                         owner: Some("lead".into()),
+                        contract: None,
                     },
                     TaskItem {
                         id: "2".into(),
@@ -236,6 +237,7 @@ mod tests {
                         description: Some("the long form".into()),
                         status: TaskStatus::InProgress,
                         owner: Some("lead".into()),
+                        contract: None,
                     },
                     TaskItem {
                         id: "3".into(),
@@ -243,6 +245,7 @@ mod tests {
                         description: None,
                         status: TaskStatus::Pending,
                         owner: None,
+                        contract: None,
                     },
                 ],
             },
