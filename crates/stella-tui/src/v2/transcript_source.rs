@@ -182,7 +182,15 @@ fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
         // not necessarily this workspace's `read`, and a familiar verb on a row
         // that did something else is the one error a transcript cannot afford.
         // It keeps its name as the subject instead — see `subject_for`.
-        _ => EventKind::Other,
+        //
+        // The class is the one thing that *can* be said about it without
+        // claiming a verb, and it comes off the same gate-enforced catalog the
+        // policy layer reads rather than a second table here, so a tool cannot
+        // be filed under one family for `tools.<group>: "off"` and a different
+        // one on screen. It renders as a glyph, never as a hue (#4125).
+        _ => EventKind::Other {
+            class: crate::tool_class::classify(name),
+        },
     }
 }
 
@@ -306,7 +314,7 @@ mod tests {
     use super::*;
     use crate::model::SessionModel;
     use stella_protocol::{AgentEvent, FileChangeKind, ToolCall, ToolOutput};
-    use stella_tui_theme::token;
+    use stella_tui_theme::{glyph, token};
 
     fn text_of(line: &Line<'static>) -> String {
         line.spans.iter().map(|s| s.content.clone()).collect()
@@ -665,6 +673,116 @@ mod tests {
                  (declares: {declares_a_size}), so the row states the same \
                  thing measured as unmeasured: {measured}"
             );
+        }
+    }
+
+    /// The three calls #4125 named, and the three cells that have to tell them
+    /// apart.
+    ///
+    /// `get_state` is an inspection, `mcp__github__create_pull_request` an
+    /// opaque external call and `delegate` a hand-off. All three are
+    /// `EventKind::Other`, so all three rail gold — which under v1's
+    /// class-coloured tool names was the whole signal, and under v2 left every
+    /// one of them drawing the same `●`. The glyph is the only cell left that
+    /// can carry the distinction.
+    const CLASS_CASES: [(&str, char); 4] = [
+        ("get_state", glyph::TOOL_INSPECT),
+        ("save_state", glyph::TOOL_MUTATE),
+        ("mcp__github__create_pull_request", glyph::TOOL_EXECUTE),
+        ("delegate", glyph::TOOL_DELEGATE),
+    ];
+
+    /// The glyph cell of a head row: the rail is span 0, the glyph span 1
+    /// (`" x "`), which `head_row` composes in that order.
+    fn head_glyph_of(name: &str) -> char {
+        let rows = head_rows(name, None, "{}", None, 120);
+        let row = rows
+            .first()
+            .expect("a head always renders at least one row");
+        let cell = row.spans[1].content.trim().to_string();
+        let mut chars = cell.chars();
+        let glyph = chars
+            .next()
+            .unwrap_or_else(|| panic!("`{name}` drew no glyph"));
+        assert_eq!(
+            chars.next(),
+            None,
+            "`{name}` drew more than one glyph: {cell:?}"
+        );
+        glyph
+    }
+
+    /// **The witness (#4125).** A look, a write, an opaque external call and a
+    /// hand-off render four *different* glyphs.
+    ///
+    /// Before this they were four `●`, so a reader scanning the margin could
+    /// not tell a `get_state` from an MCP pull-request call from a sub-agent
+    /// delegation — the exact confusion the issue was filed about.
+    #[test]
+    fn a_tool_calls_class_is_legible_from_its_glyph_alone() {
+        let mut seen: Vec<(char, &str)> = Vec::new();
+        for (name, want) in CLASS_CASES {
+            let got = head_glyph_of(name);
+            assert_eq!(
+                got, want,
+                "`{name}` drew {got:?} rather than its class glyph {want:?}"
+            );
+            if let Some((_, other)) = seen.iter().find(|(ch, _)| *ch == got) {
+                panic!(
+                    "`{name}` and `{other}` both drew {got:?} — the class is \
+                     illegible in the one cell that carries it (#4125)"
+                );
+            }
+            seen.push((got, name));
+        }
+    }
+
+    /// The other half of the law, and the reason this fix is a *glyph* and not
+    /// a hue: the four classes still share one rail and spend no colour.
+    ///
+    /// SPEC 2 gives the scheme two metals and spends them on **kind**. #4125
+    /// declined a third colour channel for class precisely because it would
+    /// erode that rule, so a future change that re-reaches for
+    /// `ToolClass::color` — v1's categorical `data-*` hues, which SPEC 3.2's
+    /// clamp rejects outright — has to fail here rather than pass quietly.
+    #[test]
+    fn a_tool_classs_glyph_spends_no_colour() {
+        let banned = [
+            ("teal", crate::theme::TEAL),
+            ("magenta", crate::theme::MAGENTA),
+            ("violet", crate::theme::VIOLET),
+            ("orchid", crate::theme::ORCHID),
+        ];
+        for (name, _) in CLASS_CASES {
+            let rows = head_rows(name, None, "{}", None, 120);
+            let row = rows
+                .first()
+                .expect("a head always renders at least one row");
+
+            // One rail, one metal, for every class alike.
+            assert_eq!(
+                row.spans[0].style.fg,
+                Some(token::GOLD),
+                "`{name}` moved off the shared gold rail — class is not a metal"
+            );
+            // The glyph takes the row's metal and adds none of its own.
+            assert_eq!(
+                row.spans[1].style.fg,
+                Some(token::GOLD),
+                "`{name}`'s class glyph wears a colour of its own"
+            );
+            for span in &row.spans {
+                for (hue, colour) in banned {
+                    assert_ne!(
+                        span.style.fg,
+                        Some(colour),
+                        "`{name}` paints {:?} in the categorical `{hue}` — \
+                         class came back as a hue, which #4125 declined and \
+                         SPEC 3.2's clamp rejects",
+                        span.content
+                    );
+                }
+            }
         }
     }
 }

@@ -29,7 +29,7 @@
 │                                         ┌ approval ─────────────────────────────── ↑↓ move · ⏎ choose · esc denies ┐ ││                                      │
 │── EXECUTE ──────────────────────────────│bash  mutating                                                            │─││                                      │
 │                                         │  rm -rf build/                                                           │ ││                                      │
-│ │ ● apps/app/automations/page.tsx       │                                                                          │ ││                                      │
+│ │ ⊙ apps/app/automations/page.tsx       │                                                                          │ ││                                      │
 │ │ ⎿ 312 lines                           │gate    command.started                                                   │s││                                      │
 │                                         │reason  matched rule no-destructive-shell                                 │ ││                                      │
 │☰  plan  5/7  ·  Workflows canvas        │                                                                          │ ││                                      │

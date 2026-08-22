@@ -29,7 +29,7 @@
 │                                                                                                                      ││                                      │
 │── EXECUTE ───────────────────────────────────────────────────────────────────────────────────────────────────────────││                                      │
 │                                         ┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐ ││                                      │
-│ │ ● apps/app/automations/page.tsx       │from the `research-child` sub-agent                                       │ ││                                      │
+│ │ ⊙ apps/app/automations/page.tsx       │from the `research-child` sub-agent                                       │ ││                                      │
 │ │ ⎿ 312 lines                           │                                                                          │s││                                      │
 │                                         │Which auth should the new endpoint use?                                   │ ││                                      │
 │☰  plan  5/7  ·  Workflows canvas        │                                                                          │ ││                                      │

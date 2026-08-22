@@ -29,7 +29,7 @@
 │                                         │from the `research-child` sub-agent                                       │ ││                                      │
 │── EXECUTE ──────────────────────────────│                                                                          │─││                                      │
 │                                         │● Auth method  ○ Rollout                                                  │ ││                                      │
-│ │ ● apps/app/automations/page.tsx       │                                                                          │ ││                                      │
+│ │ ⊙ apps/app/automations/page.tsx       │                                                                          │ ││                                      │
 │ │ ⎿ 312 lines                           │[2/2] Which environments should it reach first?                           │s││                                      │
 │                                         │several answers may be chosen                                             │ ││                                      │
 │☰  plan  5/7  ·  Workflows canvas        │                                                                          │ ││                                      │

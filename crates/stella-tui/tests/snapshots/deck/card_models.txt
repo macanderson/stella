@@ -29,7 +29,7 @@
 │                                           │          low · thinking off · from agents.triage.model               │   ││                                      │
 │── EXECUTE ────────────────────────────────│research  zai/glm-5.2-air                                             │───││                                      │
 │                                           │          low · thinking off · from default_model                     │   ││                                      │
-│ │ ● apps/app/automations/page.tsx         │plan      zai/glm-5.2-air                                             │   ││                                      │
+│ │ ⊙ apps/app/automations/page.tsx         │plan      zai/glm-5.2-air                                             │   ││                                      │
 │ │ ⎿ 312 lines                             │          medium · thinking on · from default_model                   │2ms││                                      │
 │                                           │work      zai/glm-5.2-air                                     served  │   ││                                      │
 │☰  plan  5/7  ·  Workflows canvas          │          medium · thinking on · from default_model                   │   ││                                      │
